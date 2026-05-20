@@ -1,0 +1,280 @@
+{
+  "mock_interview": {
+    "entities": [
+      {"name": "Ria", "label": "Person"},
+      {"name": "Ziad", "label": "Person"},
+      {"name": "Morocco", "label": "Location"},
+      {"name": "Boston", "label": "Location"},
+      {"name": "Northeastern University", "label": "Organisation"},
+      {"name": "Amazon Robotics", "label": "Organisation"},
+      {"name": "Amazon", "label": "Organisation"},
+      {"name": "Boston Consulting Group", "label": "Organisation"},
+      {"name": "South Korea", "label": "Location"},
+      {"name": "France", "label": "Location"}
+    ],
+    "min_relationships": 5
+  },
+  "tech_standup": {
+    "entities": [
+      {"name": "Marcus", "label": "Person"},
+      {"name": "Sarah", "label": "Person"},
+      {"name": "Dmitri", "label": "Person"},
+      {"name": "Chen Wei", "label": "Person"},
+      {"name": "Jake", "label": "Person"},
+      {"name": "Kubernetes", "label": "Technology"},
+      {"name": "Redis", "label": "Technology"},
+      {"name": "PostgreSQL", "label": "Technology"},
+      {"name": "Grafana", "label": "Tool"},
+      {"name": "React Native", "label": "Technology"},
+      {"name": "OAuth2", "label": "Technology"},
+      {"name": "Terraform", "label": "Tool"},
+      {"name": "AWS Lambda", "label": "Technology"}
+    ],
+    "min_relationships": 5
+  },
+  "podcast_interview": {
+    "entities": [
+      {"name": "Priya Sharma", "label": "Person"},
+      {"name": "Elena Vasquez", "label": "Person"},
+      {"name": "James Park", "label": "Person"},
+      {"name": "Stanford University", "label": "Organisation"},
+      {"name": "Australian Institute of Marine Science", "label": "Organisation"},
+      {"name": "Great Barrier Reef Marine Park Authority", "label": "Organisation"},
+      {"name": "National Science Foundation", "label": "Organisation"},
+      {"name": "Howard Hughes Medical Institute", "label": "Organisation"},
+      {"name": "CoralWatch AI", "label": "Organisation"},
+      {"name": "NOAA", "label": "Organisation"},
+      {"name": "Great Barrier Reef", "label": "Location"},
+      {"name": "Brisbane", "label": "Location"},
+      {"name": "Raja Ampat", "label": "Location"},
+      {"name": "Indonesia", "label": "Location"},
+      {"name": "Acropora millepora", "label": "Species"}
+    ],
+    "min_relationships": 5
+  },
+  "sales_call": {
+    "entities": [
+      {"name": "Rachel", "label": "Person"},
+      {"name": "Tom", "label": "Person"},
+      {"name": "David Park", "label": "Person"},
+      {"name": "Anita Krishnamurthy", "label": "Person"},
+      {"name": "Kevin Oduya", "label": "Person"},
+      {"name": "Nexus Analytics", "label": "Organisation"},
+      {"name": "Cascade Financial Group", "label": "Organisation"},
+      {"name": "Meridian Healthcare", "label": "Organisation"},
+      {"name": "Snowflake", "label": "Product"},
+      {"name": "Salesforce", "label": "Product"},
+      {"name": "Looker", "label": "Product"},
+      {"name": "Chicago", "label": "Location"}
+    ],
+    "min_relationships": 5
+  },
+  "legal_deposition": {
+    "entities": [
+      {"name": "Gregory Tanaka", "label": "Person"},
+      {"name": "CLIFFORD REEVES", "label": "Person"},
+      {"name": "DIANA OHLSSON", "label": "Person"},
+      {"name": "Sandra Obi", "label": "Person"},
+      {"name": "Felix Drummond", "label": "Person"},
+      {"name": "Margaret Solis", "label": "Person"},
+      {"name": "Collette Beaumont", "label": "Person"},
+      {"name": "Harlow Industries, Inc.", "label": "Organisation"},
+      {"name": "Pinnacle Supply Co.", "label": "Organisation"},
+      {"name": "Feldstein & Moorhouse LLP", "label": "Organisation"},
+      {"name": "California Department of Industrial Relations", "label": "Organisation"},
+      {"name": "Los Angeles Superior Court", "label": "Court"},
+      {"name": "Los Angeles", "label": "Location"},
+      {"name": "Fresno", "label": "Location"},
+      {"name": "Alameda County", "label": "Location"},
+      {"name": "February 14, 2024", "label": "Date"}
+    ],
+    "min_relationships": 8
+  },
+  "medical_consultation": {
+    "entities": [
+      {"name": "Yemi Adebayo", "label": "Person"},
+      {"name": "Rosa Fortunato", "label": "Person"},
+      {"name": "Dr. Patel", "label": "Person"},
+      {"name": "Helena Marsh", "label": "Person"},
+      {"name": "St. Catherine's General Hospital", "label": "Organisation"},
+      {"name": "Riverside Family Practice", "label": "Organisation"},
+      {"name": "Sunridge Pathology", "label": "Organisation"},
+      {"name": "Ramipril", "label": "Drug"},
+      {"name": "Losartan", "label": "Drug"},
+      {"name": "Metformin", "label": "Drug"},
+      {"name": "Atorvastatin", "label": "Drug"},
+      {"name": "Aspirin", "label": "Drug"},
+      {"name": "hypertrophic cardiomyopathy", "label": "Condition"},
+      {"name": "type 2 diabetes", "label": "Condition"}
+    ],
+    "min_relationships": 7
+  },
+  "academic_lecture": {
+    "entities": [
+      {"name": "Ferdinand de Saussure", "label": "Person"},
+      {"name": "Nikolai Trubetzkoy", "label": "Person"},
+      {"name": "Roman Jakobson", "label": "Person"},
+      {"name": "Noam Chomsky", "label": "Person"},
+      {"name": "B. F. Skinner", "label": "Person"},
+      {"name": "Michael Halliday", "label": "Person"},
+      {"name": "Joseph Greenberg", "label": "Person"},
+      {"name": "George Lakoff", "label": "Person"},
+      {"name": "Mark Johnson", "label": "Person"},
+      {"name": "Olusegun Bello", "label": "Person"},
+      {"name": "University of Geneva", "label": "Organisation"},
+      {"name": "Charles University", "label": "Organisation"},
+      {"name": "MIT", "label": "Organisation"},
+      {"name": "University of Edinburgh", "label": "Organisation"},
+      {"name": "Stanford University", "label": "Organisation"},
+      {"name": "UC Berkeley", "label": "Organisation"},
+      {"name": "University of Chicago Press", "label": "Organisation"},
+      {"name": "Course in General Linguistics", "label": "Publication"},
+      {"name": "Syntactic Structures", "label": "Publication"},
+      {"name": "Verbal Behavior", "label": "Publication"},
+      {"name": "Metaphors We Live By", "label": "Publication"},
+      {"name": "Universal Grammar", "label": "Theory"}
+    ],
+    "min_relationships": 11
+  },
+  "customer_support": {
+    "entities": [
+      {"name": "Preethi Nair", "label": "Person"},
+      {"name": "Dan Kowalski", "label": "Person"},
+      {"name": "Marcus Webb", "label": "Person"},
+      {"name": "Veloscape", "label": "Organisation"},
+      {"name": "Axon Logistics", "label": "Organisation"},
+      {"name": "Veloscape Pro", "label": "Product"},
+      {"name": "Jira", "label": "Software"},
+      {"name": "Confluence", "label": "Software"},
+      {"name": "Windows 11", "label": "Software"}
+    ],
+    "min_relationships": 4
+  },
+  "board_meeting": {
+    "entities": [
+      {"name": "Ingrid Holmberg", "label": "Person"},
+      {"name": "Kwame Asante", "label": "Person"},
+      {"name": "Patricia Lim", "label": "Person"},
+      {"name": "Roland Strasser", "label": "Person"},
+      {"name": "Beatriz Souza", "label": "Person"},
+      {"name": "Niall O'Brien", "label": "Person"},
+      {"name": "Elspeth Cairns", "label": "Person"},
+      {"name": "Yusuf Demirci", "label": "Person"},
+      {"name": "Verdant Capital Partners Ltd.", "label": "Organisation"},
+      {"name": "Ashurst LLP", "label": "Organisation"},
+      {"name": "Fenbrook Asset Management", "label": "Organisation"},
+      {"name": "Competition and Markets Authority", "label": "Organisation"},
+      {"name": "Companies House", "label": "Organisation"},
+      {"name": "Remuneration Committee", "label": "Committee"},
+      {"name": "Audit and Risk Committee", "label": "Committee"},
+      {"name": "Dublin", "label": "Location"},
+      {"name": "London", "label": "Location"}
+    ],
+    "min_relationships": 8
+  },
+  "news_article": {
+    "entities": [
+      {"name": "Victoria Okonkwo", "label": "Person"},
+      {"name": "Alejandro Fuentes", "label": "Person"},
+      {"name": "Priya Mehta", "label": "Person"},
+      {"name": "Meridian Systems", "label": "Organisation"},
+      {"name": "Meridian Cloud Services", "label": "Organisation"},
+      {"name": "DataBridge Analytics", "label": "Organisation"},
+      {"name": "Federal Trade Commission", "label": "Organisation"},
+      {"name": "Senate Commerce Committee", "label": "Organisation"},
+      {"name": "Apex Technology Group", "label": "Organisation"},
+      {"name": "Goldman Sachs", "label": "Organisation"},
+      {"name": "Alvarez & Marsal", "label": "Organisation"},
+      {"name": "Forrester Research", "label": "Organisation"},
+      {"name": "San Francisco", "label": "Location"},
+      {"name": "Washington D.C.", "label": "Location"},
+      {"name": "Seattle", "label": "Location"},
+      {"name": "New York Stock Exchange", "label": "Organisation"}
+    ],
+    "min_relationships": 8
+  },
+  "slack_thread": {
+    "entities": [
+      {"name": "Tomás Reyes", "label": "Person"},
+      {"name": "Lin Pham", "label": "Person"},
+      {"name": "Bryn Castellan", "label": "Person"},
+      {"name": "Nadia Volkov", "label": "Person"},
+      {"name": "PagerDuty", "label": "Tool"},
+      {"name": "Grafana", "label": "Tool"},
+      {"name": "Datadog", "label": "Tool"},
+      {"name": "Confluence", "label": "Tool"},
+      {"name": "Aurora", "label": "Product"},
+      {"name": "Postgres", "label": "Product"},
+      {"name": "Kubernetes", "label": "Technology"},
+      {"name": "Stripe", "label": "Organisation"}
+    ],
+    "min_relationships": 6
+  },
+  "product_review": {
+    "entities": [
+      {"name": "Zephyr Audio", "label": "Organisation"},
+      {"name": "Sony", "label": "Organisation"},
+      {"name": "Bose", "label": "Organisation"},
+      {"name": "Zephyr Audio ZA-900 Pro", "label": "Product"},
+      {"name": "Sony WH-1000XM5", "label": "Product"},
+      {"name": "Bose QuietComfort 45", "label": "Product"},
+      {"name": "ZA-800", "label": "Product"},
+      {"name": "Zephyr Audio Connect", "label": "Product"},
+      {"name": "Headphones Connect", "label": "Product"},
+      {"name": "active noise cancellation", "label": "Feature"}
+    ],
+    "min_relationships": 5
+  },
+  "short_snippet": {
+    "entities": [
+      {"name": "Amara Osei", "label": "Person"},
+      {"name": "James Whitfield", "label": "Person"},
+      {"name": "Bridgewater Genomics", "label": "Organisation"},
+      {"name": "Novartis", "label": "Organisation"}
+    ],
+    "min_relationships": 2
+  },
+  "long_report": {
+    "entities": [
+      {"name": "Margaret Beauchamp", "label": "Person"},
+      {"name": "Sanjiv Rao", "label": "Person"},
+      {"name": "Chidinma Okafor", "label": "Person"},
+      {"name": "Rafael Mendes", "label": "Person"},
+      {"name": "Helena Brandt", "label": "Person"},
+      {"name": "Yuki Tanaka", "label": "Person"},
+      {"name": "Adaeze Nwosu", "label": "Person"},
+      {"name": "Petra Vogel", "label": "Person"},
+      {"name": "Antoine Dubois", "label": "Person"},
+      {"name": "Tomás Herrera", "label": "Person"},
+      {"name": "Nexagen Corporation", "label": "Organisation"},
+      {"name": "Deutsche Telekom AG", "label": "Organisation"},
+      {"name": "Renault Group", "label": "Organisation"},
+      {"name": "Handelsbanken AB", "label": "Organisation"},
+      {"name": "JPMorgan Chase", "label": "Organisation"},
+      {"name": "Lafarge Holcim", "label": "Organisation"},
+      {"name": "Tata Consultancy Services", "label": "Organisation"},
+      {"name": "Siemens AG", "label": "Organisation"},
+      {"name": "Münchener Rückversicherungs-Gesellschaft", "label": "Organisation"},
+      {"name": "Woolworths Group", "label": "Organisation"},
+      {"name": "Barclays plc", "label": "Organisation"},
+      {"name": "Société Générale", "label": "Organisation"},
+      {"name": "Lazard Ltd.", "label": "Organisation"},
+      {"name": "Orbis Data Systems", "label": "Organisation"},
+      {"name": "Bureau Veritas", "label": "Organisation"},
+      {"name": "Palantir Technologies", "label": "Organisation"},
+      {"name": "Databricks Inc.", "label": "Organisation"},
+      {"name": "Mercer LLC", "label": "Organisation"},
+      {"name": "Nexagen Horizon 3.0", "label": "Product"},
+      {"name": "Nexagen Horizon 4.0", "label": "Product"},
+      {"name": "Amazon Web Services", "label": "Organisation"},
+      {"name": "Microsoft Azure OpenAI Service", "label": "Product"},
+      {"name": "Google Cloud Vertex AI", "label": "Product"},
+      {"name": "Columbus, Ohio", "label": "Location"},
+      {"name": "Eindhoven", "label": "Location"},
+      {"name": "Berlin", "label": "Location"},
+      {"name": "Bangalore", "label": "Location"},
+      {"name": "NASDAQ Global Select Market", "label": "Organisation"}
+    ],
+    "min_relationships": 18
+  }
+}

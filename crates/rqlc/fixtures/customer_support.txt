@@ -1,0 +1,25 @@
+Support Agent (Preethi Nair): Hi there! You're through to Veloscape Support. Can I get your account reference number?
+
+Customer (Dan Kowalski): Sure, it's VSC-448821. I'm having an issue with the desktop client on Windows 11.
+
+Preethi Nair: Thanks, Dan. I can see your account. You're on Veloscape Pro version 4.2.1. What's the issue you're seeing?
+
+Dan Kowalski: Every time I try to sync my project with the cloud, I get error code E-5503. It started after yesterday's automatic update.
+
+Preethi Nair: Error E-5503 is a TLS handshake failure — it usually means the client can't verify the certificate chain. This started coming in after the 4.2.1 update pushed last night. Our engineering team at Veloscape is aware of it.
+
+Dan Kowalski: Great, so it's a known issue. Is there a fix?
+
+Preethi Nair: A hotfix is being released as version 4.2.2 later today. In the meantime, you can roll back to 4.2.0 from the Veloscape downloads page. If you're using the Microsoft Store version, you'd need to uninstall first and use the direct installer instead.
+
+Dan Kowalski: I'm on the direct installer. I use Veloscape mainly with our Jira and Confluence setup at Axon Logistics, so the sync is pretty critical for us.
+
+Preethi Nair: Understood. I'm escalating your ticket to a Priority 2 so our enterprise team monitors it. You should also get an email from our enterprise customer success manager, Marcus Webb, within the hour.
+
+Dan Kowalski: That's helpful, thanks. Also — does this affect the Veloscape API integration too?
+
+Preethi Nair: The REST API is on a separate auth path, so no — only the desktop sync is affected by E-5503.
+
+Dan Kowalski: Perfect. I'll hold off on the rollback and wait for 4.2.2 then.
+
+Preethi Nair: Sounds good. Your ticket number is SUP-109342. Is there anything else I can help you with today?

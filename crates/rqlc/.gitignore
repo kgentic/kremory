@@ -1,0 +1,7 @@
+/target/
+/logs/
+*.rlib
+/ground_truth/
+/spike/
+/checkpoints/
+*.xml

@@ -1,0 +1,23 @@
+Dr. Yemi Adebayo: Good morning, Mrs. Fortunato. I've reviewed your file from St. Catherine's General Hospital. Let's go through what's been happening since your last visit.
+
+Mrs. Rosa Fortunato: Morning, Doctor. The chest tightness has been worse since I started the new prescription.
+
+Dr. Adebayo: You were put on Ramipril 5mg by Dr. Patel at the cardiology clinic, correct?
+
+Mrs. Fortunato: Yes, about six weeks ago. I'm also still taking the Metformin 500mg twice a day for the type 2 diabetes.
+
+Dr. Adebayo: Right. The chest tightness is a known side effect of ACE inhibitors like Ramipril — it can present as a dry cough or tightness. I'm going to switch you to Losartan 50mg, which is an ARB. It works on the same pathway but typically doesn't cause that side effect.
+
+Mrs. Fortunato: Will it interact with the Metformin?
+
+Dr. Adebayo: No clinically significant interaction. I also want to review your Atorvastatin 20mg dose. Your LDL from the Sunridge Pathology lab results came back at 3.1 mmol/L, which is higher than we'd like. I'm going to increase to Atorvastatin 40mg.
+
+Mrs. Fortunato: My daughter looked up hypertrophic cardiomyopathy online after what Dr. Patel mentioned. Should I be worried about that?
+
+Dr. Adebayo: Dr. Patel flagged it as a query. The echocardiogram at St. Catherine's General Hospital didn't show definitive thickening, but I want to repeat it in three months. We'll also refer you back to the cardiology clinic for a stress test.
+
+Mrs. Fortunato: Do I need to stop the Aspirin 100mg?
+
+Dr. Adebayo: Continue it for now. I'll write all of this up and send a summary to Dr. Patel and to your GP, Dr. Helena Marsh at Riverside Family Practice.
+
+Mrs. Fortunato: Thank you, Doctor.

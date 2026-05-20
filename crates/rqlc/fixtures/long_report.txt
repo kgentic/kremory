@@ -1,0 +1,83 @@
+NEXAGEN CORPORATION
+QUARTERLY BUSINESS REVIEW — Q3 FY2024
+PREPARED BY: Office of the CFO
+DISTRIBUTION: Executive Leadership Team, Board Audit Committee
+
+---
+
+EXECUTIVE SUMMARY
+
+Nexagen Corporation delivered consolidated revenues of $312.4 million in Q3 FY2024, a 9.3% increase compared to $285.8 million in Q3 FY2023. Gross margin improved to 61.2% from 58.7% in the prior-year period, driven by product mix shift toward higher-margin enterprise software licences and a reduction in third-party hosting costs following the migration of workloads from Amazon Web Services to our proprietary data centres in Columbus, Ohio and Eindhoven, Netherlands.
+
+CEO Margaret Beauchamp attributed the performance to strong pipeline conversion in the EMEA region and the successful launch of Nexagen Horizon 3.0, the company's flagship data orchestration platform, in July 2024.
+
+---
+
+SEGMENT PERFORMANCE
+
+1. Enterprise Software (Revenue: $187.6 million, +14.1% YoY)
+
+The Enterprise Software segment, led by Division President Sanjiv Rao, achieved record quarterly revenue. Key drivers included:
+
+- The $22 million expansion contract with Deutsche Telekom AG signed in August 2024, covering a three-year deployment of Nexagen Horizon 3.0 across Deutsche Telekom's 12 European data centres.
+- New logo wins at Renault Group and Handelsbanken AB, contributing $8.4 million combined in first-year contract value.
+- Renewal of the master services agreement with JPMorgan Chase at an 18% uplift, effective 1 October 2024.
+
+Sanjiv Rao noted that the pipeline entering Q4 FY2024 is the strongest in the division's history, with $340 million in qualified opportunities across North America and EMEA.
+
+2. Managed Services (Revenue: $89.2 million, +3.8% YoY)
+
+Managed Services, under VP Chidinma Okafor, grew modestly. The segment absorbed $4.1 million in one-time transition costs related to the migration from Amazon Web Services. Excluding these costs, organic growth was 8.5%.
+
+Chidinma Okafor flagged the loss of the Lafarge Holcim contract ($6.2 million annualised), which was not renewed following a competitive tender process. The replacement pipeline includes discussions with Tata Consultancy Services and Siemens AG, expected to close in Q4.
+
+3. Professional Services (Revenue: $35.6 million, -2.1% YoY)
+
+The Professional Services segment, led by Director Rafael Mendes, faced headwinds from project delays at two large clients. A $4.8 million implementation project for Münchener Rückversicherungs-Gesellschaft (Munich Re) was pushed to Q4 following a change in their internal procurement process. A separate $3.2 million project for Woolworths Group in Australia was placed on hold pending regulatory approval.
+
+Rafael Mendes expects both projects to recognise revenue in Q4 FY2024 and Q1 FY2025 respectively.
+
+---
+
+FINANCIAL POSITION
+
+Cash and equivalents at 30 September 2024: $214.7 million
+Gross debt: $180.0 million (Revolving Credit Facility with Barclays plc and Société Générale, drawn $80.0 million)
+Net cash: $34.7 million
+
+CFO Helena Brandt noted that the Board of Directors approved a $50 million share buyback programme at the August 2024 meeting. As of 30 September 2024, $12.3 million has been repurchased through open-market transactions on the NASDAQ Global Select Market.
+
+Helena Brandt also confirmed that Nexagen Corporation has engaged Lazard Ltd. to advise on the potential acquisition of Orbis Data Systems, a Berlin-based data governance software company with reported revenues of $48 million for FY2023. Due diligence is ongoing; no binding agreement has been reached.
+
+---
+
+OPERATIONAL HIGHLIGHTS
+
+Product & Technology
+
+CTO Yuki Tanaka announced that Nexagen Horizon 3.0 has achieved ISO/IEC 27001:2022 certification, completing an audit conducted by Bureau Veritas. The certification covers the Columbus, Ohio and Eindhoven, Netherlands data centres as well as the Bangalore development centre.
+
+Tanaka also presented the roadmap for Nexagen Horizon 4.0, planned for release in Q2 FY2025. Key features include native integration with Microsoft Azure OpenAI Service and Google Cloud Vertex AI, and a redesigned workflow engine co-developed with AWS Labs.
+
+People
+
+CHRO Adaeze Nwosu reported that headcount reached 4,847 employees globally as of 30 September 2024, up from 4,612 a year earlier. Key hires in the quarter included Dr. Petra Vogel as VP of Engineering (Berlin office) and Antoine Dubois as Regional Vice President for France and Benelux (Paris office).
+
+Voluntary attrition remains at 11.2%, below the industry average of 13.8% as benchmarked by Mercer LLC.
+
+---
+
+RISKS AND OUTLOOK
+
+Chief Risk Officer Tomás Herrera identified three principal risks for Q4 FY2024:
+1. Foreign exchange exposure, particularly EUR/USD volatility, with approximately 38% of revenues denominated in euros.
+2. Competitive pressure from Palantir Technologies and Databricks Inc. in the enterprise data orchestration market.
+3. Regulatory uncertainty in the European Union following the adoption of the EU AI Act.
+
+Full-year FY2024 guidance is maintained: revenues of $1.21 billion to $1.23 billion, EBITDA margin of 24% to 25%.
+
+The next Quarterly Business Review will be presented by Margaret Beauchamp to the Board of Directors on 14 January 2025.
+
+---
+
+END OF REPORT

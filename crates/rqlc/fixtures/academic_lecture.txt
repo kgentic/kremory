@@ -1,0 +1,13 @@
+Welcome back, everyone. Today we're continuing our survey of twentieth-century linguistics, and I want to focus on what I think is one of the most underappreciated paradigm shifts in the field.
+
+Most of you are familiar with Ferdinand de Saussure's foundational claim in his 1916 work Course in General Linguistics — that the relationship between a linguistic sign and its referent is arbitrary. This was revolutionary at the time, and it formed the basis of structural linguistics as practised at the University of Geneva and later at Charles University in Prague by scholars like Nikolai Trubetzkoy and Roman Jakobson.
+
+But I want to push us into a more contested territory. By the 1950s, Noam Chomsky at MIT was challenging the behaviourist framework championed by B. F. Skinner. Chomsky's 1957 monograph Syntactic Structures proposed that human language ability is innate — what he called Universal Grammar. This position was directly opposed to Skinner's Verbal Behavior, published the same year, and Chomsky's 1959 review of that book in Language journal is still required reading for anyone in this room.
+
+Now, the European response was interesting. Michael Halliday at the University of Edinburgh — and later University College London — developed Systemic Functional Linguistics as an explicit counter-model, arguing that language is fundamentally social, not biological. His 1985 book An Introduction to Functional Grammar remains the core reference.
+
+Meanwhile, over at Stanford University, Joseph Greenberg was doing something quite different: corpus-based typological studies culminating in his landmark 1963 paper Universals of Language, published in the journal Language. Greenberg's universals are statistical, not generative, and that distinction matters enormously.
+
+By the 1980s, cognitive linguistics emerged as its own school, anchored by George Lakoff at UC Berkeley and his 1980 collaboration with Mark Johnson, Metaphors We Live By, published by the University of Chicago Press. The embodied cognition thesis there fundamentally challenged Chomskyan nativism from a different angle than Halliday.
+
+For your essays, I want you to pick one of these debates — Chomsky versus Skinner, or Halliday versus generative grammar — and situate it within its institutional context. The deadline is March 15th. See me or my teaching assistant, Olusegun Bello, if you need an extension.

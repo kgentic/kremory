@@ -1,0 +1,15 @@
+Host: Welcome back to The Deep Dive. I'm your host, Priya Sharma, and today I'm joined by Dr. Elena Vasquez from the Marine Biology Institute at Stanford University. Elena, you've just published a groundbreaking paper in Nature on coral reef regeneration in the Great Barrier Reef. Tell us about it.
+
+Dr. Vasquez: Thanks for having me, Priya. So we've been studying a species called Acropora millepora — it's a staghorn coral that's been particularly devastated by bleaching events. What we found is that certain genetic variants can survive water temperatures up to 2 degrees Celsius above what would normally kill them. We call these "super corals."
+
+Host: That's fascinating. And you're working with the Australian Institute of Marine Science on this?
+
+Dr. Vasquez: Exactly. We partnered with AIMS and also with the Great Barrier Reef Marine Park Authority. The three-year study cost about $4.2 million, funded by the National Science Foundation and the Howard Hughes Medical Institute. We deployed underwater monitoring stations across 12 reef sites from Cairns to the Whitsunday Islands.
+
+Host: Now I understand you're also collaborating with a tech startup called CoralWatch AI?
+
+Dr. Vasquez: Yes! CoralWatch AI is based in Brisbane and they've developed a machine learning system that analyses underwater camera footage to track coral health in real time. Their CTO, James Park, actually built the computer vision model that detects early signs of bleaching before it's visible to the human eye. We're combining their technology with our genetic data to create a predictive model.
+
+Host: Where does the research go from here?
+
+Dr. Vasquez: We're planning an expedition to the Coral Triangle in Indonesia next March, specifically around Raja Ampat. That region has the highest marine biodiversity on Earth. If we can find similar heat-resistant genetic variants there, it would validate our theory that this isn't just a Great Barrier Reef phenomenon. We've also submitted a proposal to NOAA for a five-year follow-up study worth $8.5 million.

@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rqlc",
+    "crates/rqlm",
+]
+
+# rqlm-mcp moved with workspace but excluded from members until D.4b handler
+# bodies land. Per ADR-Phase-D.0 §"rqlm-mcp tool surface": D.4 ships scaffold
+# only with "pending D.4b" stubs. Re-add to members list at D.4b.
+exclude = [
+    "crates/rqlm-mcp",
+]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+# Faster incremental builds during Ralph Loop iteration. v0.1.0 publish uses
+# `--release` regardless; dev profile optimisations don't affect crates.io.
+opt-level = 0
+debug = 1

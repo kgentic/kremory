@@ -1,0 +1,17 @@
+Rachel: Hi Tom, thanks for making time today. I'm Rachel from Nexus Analytics. I wanted to follow up on our demo last week and talk about how we can solve the reporting bottleneck your finance team is facing.
+
+Tom: Sure, Rachel. I discussed it with our CFO, David Park, and our Head of Data Engineering, Anita Krishnamurthy. They both watched the recording. The main concern is integration with our existing Snowflake warehouse and the Salesforce CRM data.
+
+Rachel: Great question. We have a native Snowflake connector that syncs in real time — no batch jobs. For Salesforce, we use their Bulk API 2.0. One of our clients, Meridian Healthcare, had the exact same stack and was up and running in two weeks. They went from 3-day reporting cycles to same-day.
+
+Tom: What about pricing? We have about 200 users across the finance and operations teams at Cascade Financial Group.
+
+Rachel: For 200 seats, we're looking at the Enterprise tier — $42,000 annually. That includes unlimited dashboards, the Snowflake connector, SSO via Okta, and dedicated support. We also offer a 90-day pilot at 50% discount — $10,500 for the quarter — so your team can validate the ROI before committing.
+
+Tom: That's competitive. Our current tool, Looker, is costing us about $65,000 a year and the team still spends 20 hours a week on manual Excel reconciliation. What's the implementation timeline?
+
+Rachel: Typically 10 business days for the core setup. We assign a dedicated solutions architect — for your region that would be Kevin Oduya from our Chicago office. He handled the Meridian rollout and knows the Snowflake-Salesforce pattern well.
+
+Tom: I'll need to get budget approval from David before end of quarter — that's March 31st. Can you send over a formal proposal and the Meridian case study?
+
+Rachel: Absolutely. I'll have both in your inbox by tomorrow morning. And I'll cc Anita on the technical architecture doc so her team can review the integration approach.

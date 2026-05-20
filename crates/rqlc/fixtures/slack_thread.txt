@@ -1,0 +1,25 @@
+#incident-response | Thursday 09:14
+
+@Tomás Reyes: heads up — prod DB is throwing connection timeouts, started ~09:05. PagerDuty fired. Grafana shows spike in p99 latency on the orders-service. cc @Lin Pham
+
+@Lin Pham: on it. checked Datadog — looks like a connection pool exhaustion on the Postgres replica. the Aurora auto-scaling hasn't kicked in yet
+
+@Tomás Reyes: k. should we page the Stripe oncall too? they depend on orders-service for webhook delivery
+
+@Lin Pham: not yet, let's confirm root cause first. @Bryn Castellan can you check if the deploy from 08:50 touched any DB pool config?
+
+@Bryn Castellan: yep — PR #4471 bumped max_connections in the Kubernetes ConfigMap from 20 to 50. might have overwhelmed the replica
+
+@Lin Pham: that's it. I'm reverting the ConfigMap now. give me 2 mins
+
+@Tomás Reyes: AWS support ticket opened just in case — ticket ID AWS-20240314-7731. also looped in Nadia Volkov from the SRE team
+
+@Nadia Volkov: thanks. Aurora replica lag is at 4s, not critical yet. let the revert land before we consider failover
+
+@Lin Pham: revert deployed. pool config is back to 20. watching metrics now
+
+@Bryn Castellan: p99 dropping. orders-service looks healthy. PagerDuty auto-resolved
+
+@Tomás Reyes: nice work all. post-mortem doc in Confluence by EOD — @Nadia Volkov can you own that?
+
+@Nadia Volkov: sure. will share draft in #sre-postmortems before 17:00

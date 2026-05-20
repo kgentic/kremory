@@ -1,0 +1,13 @@
+Marcus: Good morning team. Let's do a quick round. Sarah, you start.
+
+Sarah: I finished the authentication refactor on the user-service yesterday. Merged the PR into develop. Today I'm picking up the rate limiter for the API gateway. There's an open issue in Jira — PLAT-4521 — about Redis connection pooling that I need to look at first.
+
+Dmitri: I'm still debugging the Kubernetes memory leak we found on Friday. The monitoring dashboard in Grafana shows the billing-service pods are climbing to 2GB before OOM kills them. I've narrowed it down to the gRPC stream handler not releasing connections properly. I might need to pair with Marcus on this since it touches the shared protobuf definitions.
+
+Marcus: Happy to help. I spent yesterday reviewing the PostgreSQL migration scripts for the analytics database. We're moving from version 14 to 16. The pg_upgrade dry run passed but I found a breaking change in the jsonb indexing behaviour that affects our search queries. I've opened a PR with a workaround — needs review from Sarah.
+
+Chen Wei: The React Native app is blocked on the new OAuth2 flow. The iOS build is fine but Android is crashing on the token refresh callback. I think it's a threading issue in the Java bridge. I've raised it with Google's Android team on their issue tracker.
+
+Sarah: One more thing — the deployment pipeline for staging broke last night. The Terraform plan is showing drift on the AWS Lambda functions. I'll fix it after the rate limiter work.
+
+Marcus: Noted. Let's sync on the PostgreSQL PR at 2pm. Dmitri, can you have the memory profiling data from Grafana by then? And Chen Wei, loop in Jake from the mobile team on the Android issue — he dealt with a similar Java bridge problem on the payments app last quarter.

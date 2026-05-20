@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/target/
+Cargo.lock.bak
+*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env / secrets
+.env
+.env.local
+
+# Local Claude / aidocs runtime state
+.claude/sessions/
+.ship/sessions/
+.ai-docs/.cache/
+
+# Logs from rqlc/rqlm dev runs
+crates/*/logs/
+crates/*/*.log
+
+# Test artefacts
+crates/*/tests/output/
+crates/*/fixtures/output/
