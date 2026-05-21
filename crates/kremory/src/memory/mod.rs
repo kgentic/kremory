@@ -31,9 +31,11 @@
 
 pub mod events;
 pub mod graph;
+pub mod stub;
 pub mod types;
 
 pub use graph::GraphHandle;
+pub use stub::StubGraphHandle;
 pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamOpts,
     DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, Result, RetrievedContext,
