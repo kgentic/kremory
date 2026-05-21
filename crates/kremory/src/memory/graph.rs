@@ -6,7 +6,7 @@
 //! pattern (verified context7 2026-05-13): rqlm orchestrates over an
 //! opaque graph handle that consumers (the host application, paying SDK customers,
 //! aidocs) implement against their own concrete graph. Generics on the
-//! 4 public fns would propagate `<L: ChatProvider, Emb: EmbeddingProvider>`
+//! public fns would propagate `<L: ChatProvider, Emb: EmbeddingProvider>`
 //! through every consumer signature — that's a stability hazard for the
 //! SDK contract. A trait-object behind `&dyn GraphHandle` erases both
 //! generics at the boundary.
@@ -20,20 +20,29 @@
 //! concrete-graph API into the trait, so a future backend swap (libsql
 //! → kuzu → Neo4j) doesn't break rqlm's public surface.
 //!
-//! ## Greenfield D.2b-trait
+//! ## D.6.4 extension — canonical definition (supersedes D.0a)
 //!
-//! This module ships the trait definition. The rqlm public fns
-//! (`ingest_episode` / `run_dream_phase` / `search`) take
-//! `&dyn GraphHandle` instead of the D.1b `_graph: &()` placeholder.
-//! Bodies still return `Unimplemented` — wiring the trait calls is
-//! the D.2b-impl slice. The signature change is what locks the API.
+//! Per ADR rqlm-async-event-handle-api-design-2026-05-19 §4.9:
+//! all methods are required — NO defaults. Every impl (the host applicationGraphHandle,
+//! StubGraphHandle in tests) must explicitly implement all methods.
+//! Compile failure is the enforcement mechanism.
 
-use async_trait::async_trait;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
+
+use crate::core::error::IngestStatus;
+
 use super::{
-    ChatProvider, DreamPhaseResult, IngestResult, Result, RetrievedContext, SearchOpts, SourceRef,
-    StructuredFact, WorkspaceScope,
+    events::EnrichmentEventSink,
+    types::{
+        BatchStatus, CancelOutcome, DreamHandle, DreamOpts, DreamPhaseResult, DreamStatus,
+        EpisodeCommit, RetrievedContext, SearchOpts, SourceRef, StructuredFact, SubmitOpts,
+        WorkspaceScope,
+    },
+    ChatProvider, Result,
 };
 
 /// Storage-backend boundary for rqlm. Consumers implement this trait
@@ -44,21 +53,22 @@ use super::{
 /// (`Box<dyn GraphHandle>` / `&dyn GraphHandle` work). The trait extends
 /// `Send + Sync` so it can be cloned into `tokio::spawn` closures by
 /// downstream consumers.
+///
+/// **All methods are required — no defaults.** This is the compiler-enforced
+/// shape-stability constraint per ADR §4.9 (cycle-1 Vera finding #1 resolved).
 #[async_trait]
 pub trait GraphHandle: Send + Sync {
-    /// Ingest one episode into the scoped graph.
+    // ── Phase 1 + 2: episode ingest ──────────────────────────────────────────
+
+    /// Ingest one episode.
     ///
-    /// Implementations are responsible for:
-    /// - LLM entity + edge extraction (via `provider`) per Graphiti's
-    ///   `add_episode` cycle.
-    /// - Temporal validity inference (`valid_at` / `invalid_at` on facts).
-    /// - Entity deduplication against the scoped existing graph.
-    /// - Per-episode fact invalidation when new facts contradict prior.
-    /// - Honouring `structured_facts` as caller-pinned high-confidence
-    ///   data alongside LLM extraction.
+    /// Phase 1 (store + embed) commits synchronously and returns before
+    /// Phase 2 (LLM enrich) if `opts.run_in_background = true`.
+    /// Episode is searchable from the moment this fn returns.
     ///
-    /// Returns counts of new entities + edges added + facts invalidated
-    /// + duration of the cycle.
+    /// `sink` receives Phase 2 events if `enrich_per_episode = true`.
+    /// `batch_id` groups this episode with others under a single caller-set string.
+    #[allow(clippy::too_many_arguments)]
     async fn graph_ingest_episode(
         &self,
         scope: &WorkspaceScope,
@@ -66,16 +76,58 @@ pub trait GraphHandle: Send + Sync {
         content: &str,
         structured_facts: &[StructuredFact],
         provider: Arc<dyn ChatProvider>,
-    ) -> Result<IngestResult>;
+        batch_id: Option<String>,
+        opts: SubmitOpts,
+        sink: Option<Arc<dyn EnrichmentEventSink>>,
+    ) -> Result<EpisodeCommit>;
 
-    /// Hybrid retrieval over the scoped graph. Implementations apply
-    /// rqlc's underlying primitives (FTS5 + vector + graph traversal)
-    /// then rerank per rqlm's opinionated defaults. Returns top results
-    /// ordered by score descending; caller renders via `context_block`.
+    /// Query Phase 2 status for a `run_id` returned by `graph_ingest_episode`.
+    async fn graph_ingest_status(&self, run_id: Uuid) -> Result<IngestStatus>;
+
+    /// Cancel an in-flight Phase 2 or Phase 3 run.
+    async fn graph_cancel(&self, run_id: Uuid) -> Result<CancelOutcome>;
+
+    // ── Phase 3: batch consolidation (dream) ─────────────────────────────────
+
+    /// Submit a dream-phase batch consolidation over the scope.
+    /// Returns immediately with `DreamHandle`.
     ///
-    /// `opts.limit` defaults to 10 when None; `opts.as_of` switches the
-    /// retrieval to bi-temporal mode (return rows valid at the supplied
-    /// instant); `opts.source_kind` filters by SourceKind variant.
+    /// Idempotent: if a run is already active for `(workspace_id, thread_id, batch_id)`,
+    /// returns the existing `DreamHandle` without starting a new run.
+    /// Parameter mismatch on existing key → `tracing::warn!` (not error).
+    async fn graph_submit_dream(
+        &self,
+        scope: &WorkspaceScope,
+        provider: Arc<dyn ChatProvider>,
+        batch_id: Option<String>,
+        opts: DreamOpts,
+        sink: Option<Arc<dyn EnrichmentEventSink>>,
+    ) -> Result<DreamHandle>;
+
+    /// Query Phase 3 status for a `DreamHandle` run_id.
+    async fn graph_dream_status(&self, run_id: Uuid) -> Result<DreamStatus>;
+
+    // ── Batch / policy support ───────────────────────────────────────────────
+
+    /// Track whether all Phase 2 runs for a `batch_id` are terminal.
+    /// Returns `BatchStatus` with explicit completed/skipped/failed counts.
+    async fn graph_batch_status(&self, batch_id: &str) -> Result<BatchStatus>;
+
+    /// When did the last dream phase complete for this scope? `None` if never run.
+    async fn graph_last_consolidated_at(
+        &self,
+        scope: &WorkspaceScope,
+    ) -> Result<Option<DateTime<Utc>>>;
+
+    /// Count of episodes committed since the last dream phase completed.
+    async fn graph_episodes_since_last_dream(&self, scope: &WorkspaceScope) -> Result<usize>;
+
+    /// `true` if a dream phase is currently running for this scope.
+    async fn graph_is_consolidating(&self, scope: &WorkspaceScope) -> Result<bool>;
+
+    // ── Search (from D.0a — signature unchanged) ─────────────────────────────
+
+    /// Hybrid retrieval over the scoped graph.
     async fn graph_search(
         &self,
         scope: &WorkspaceScope,
@@ -83,14 +135,11 @@ pub trait GraphHandle: Send + Sync {
         opts: &SearchOpts,
     ) -> Result<Vec<RetrievedContext>>;
 
-    /// Run the batch consolidation cycle over the scope. Composes
-    /// rqlc's batch primitives: community recompute + cross-meeting
-    /// distillation + supersession sweep + stale-fact archival. NOT a
-    /// daemon — consumer-triggered (the host application fires on meeting-end;
-    /// aidocs on doc-batch-flush).
-    ///
-    /// Idempotent within a scope/version: a re-run that finds nothing
-    /// to consolidate returns zero counts cleanly.
+    // ── Legacy consolidation (from D.0a — retained for backwards compat) ─────
+    //
+    // New code should use `graph_submit_dream`. This method runs dream
+    // synchronously, blocking until complete. Backing implementation for
+    // the `run_dream_phase()` backwards-compat wrapper in mod.rs.
     async fn graph_run_consolidation(
         &self,
         scope: &WorkspaceScope,
