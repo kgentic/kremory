@@ -234,6 +234,10 @@ pub async fn ingest_episode(
 }
 
 /// Legacy wrapper for D.5b callers. New code: use `submit_dream_phase`.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use submit_dream_phase + await_dream for non-blocking dream orchestration"
+)]
 pub async fn run_dream_phase(
     graph: &dyn GraphHandle,
     scope: WorkspaceScope,
@@ -606,6 +610,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn run_dream_phase_delegates_to_consolidation() {
         let graph = StubGraphHandle::default();
         let scope = WorkspaceScope::new("ws-3");
