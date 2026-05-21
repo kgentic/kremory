@@ -29,6 +29,7 @@
 //!   batch consolidation recipe (`run_dream_phase`) + opinionated retrieval
 //!   defaults over core's hybrid search + context-block templates.
 
+pub mod events;
 pub mod graph;
 pub mod types;
 
