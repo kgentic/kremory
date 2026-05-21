@@ -35,9 +35,12 @@ pub mod types;
 
 pub use graph::GraphHandle;
 pub use types::{
-    ContextTemplate, DreamPhaseResult, IngestResult, Result, RetrievedContext, RqlmError,
-    SearchOpts, SourceKind, SourceRef, StructuredFact, WorkspaceScope,
+    AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamOpts,
+    DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, Result, RetrievedContext,
+    RqlmError, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts, WorkspaceScope,
 };
+// IngestStatus lives in core::error but is part of the memory API surface.
+pub use crate::core::error::IngestStatus;
 
 // Re-export the canonical LLM abstraction trait so SDK consumers depend on
 // kremory only and still get the BYOM contract surface. Per ADR-Phase-D.0 §
@@ -46,15 +49,155 @@ pub use types::{
 pub use autoagents_llm::chat::ChatProvider;
 
 use std::sync::Arc;
+use std::time::Instant;
 
-/// Ingest one episode into the graph. Thin orchestration wrapper over
-/// [`GraphHandle::graph_ingest_episode`].
+use uuid::Uuid;
+
+// ── D.6.4 public API surface (ADR §4.10) ─────────────────────────────────────
+
+/// Submit one episode for ingest.
 ///
-/// The `_valid_at` parameter from D.1b's exploratory signature was
-/// dropped in D.2b-impl — episode time is carried via
-/// `source_ref.occurred_at` per Graphiti's canonical add_episode shape.
-/// The duplicate had no consumer (kremory-mcp's conversion layer never
-/// surfaced it) and the trait signature is the single source of truth.
+/// Phase 1 (store + embed) commits synchronously. Episode searchable on return.
+/// Phase 2 (LLM enrich) controlled by `opts`.
+///
+/// `batch_id`: caller-set string grouping this episode with others.
+/// No `BatchRef` wrapper — plain `Option<String>` matching universal prior art.
+#[allow(clippy::too_many_arguments)]
+pub async fn submit_episode(
+    graph: &dyn GraphHandle,
+    content: &str,
+    source_ref: SourceRef,
+    structured_facts: Vec<StructuredFact>,
+    provider: Arc<dyn ChatProvider>,
+    scope: WorkspaceScope,
+    batch_id: Option<String>,
+    opts: SubmitOpts,
+    sink: Option<Arc<dyn events::EnrichmentEventSink>>,
+) -> Result<EpisodeCommit> {
+    graph
+        .graph_ingest_episode(
+            &scope,
+            &source_ref,
+            content,
+            &structured_facts,
+            provider,
+            batch_id,
+            opts,
+            sink,
+        )
+        .await
+}
+
+/// Submit a batch consolidation (dream phase). Returns immediately.
+/// Idempotent on `(scope, batch_id)` key. See ADR §2.10 for CAS semantics.
+pub async fn submit_dream_phase(
+    graph: &dyn GraphHandle,
+    scope: WorkspaceScope,
+    provider: Arc<dyn ChatProvider>,
+    batch_id: Option<String>,
+    opts: DreamOpts,
+    sink: Option<Arc<dyn events::EnrichmentEventSink>>,
+) -> Result<DreamHandle> {
+    graph
+        .graph_submit_dream(&scope, provider, batch_id, opts, sink)
+        .await
+}
+
+/// Block until a Phase 2 run reaches a terminal status.
+/// `timeout` in `AwaitOpts` is MANDATORY — no unbounded blocking.
+/// `tracing::warn!` logged on timeout with `run_id` and elapsed duration.
+pub async fn await_enrichment(
+    graph: &dyn GraphHandle,
+    run_id: Uuid,
+    opts: AwaitOpts,
+) -> Result<crate::core::error::IngestStatus> {
+    use crate::core::error::IngestStatus;
+    let start = Instant::now();
+    loop {
+        let status = graph.graph_ingest_status(run_id).await?;
+        if matches!(status, IngestStatus::Complete | IngestStatus::Failed(_)) {
+            return Ok(status);
+        }
+        if start.elapsed() >= opts.timeout {
+            tracing::warn!(
+                run_id = %run_id,
+                elapsed_ms = start.elapsed().as_millis(),
+                "await_enrichment timeout exhausted"
+            );
+            return Err(RqlmError::Timeout);
+        }
+        tokio::time::sleep(opts.poll_interval).await;
+    }
+}
+
+/// Block until a Phase 3 dream run reaches a terminal status.
+/// `timeout` in `AwaitOpts` is MANDATORY — no unbounded blocking.
+/// `tracing::warn!` logged on timeout with `run_id` and elapsed duration.
+pub async fn await_dream(
+    graph: &dyn GraphHandle,
+    run_id: Uuid,
+    opts: AwaitOpts,
+) -> Result<DreamStatus> {
+    let start = Instant::now();
+    loop {
+        let status = graph.graph_dream_status(run_id).await?;
+        if matches!(status, DreamStatus::Complete | DreamStatus::Failed(_)) {
+            return Ok(status);
+        }
+        if start.elapsed() >= opts.timeout {
+            tracing::warn!(
+                run_id = %run_id,
+                elapsed_ms = start.elapsed().as_millis(),
+                "await_dream timeout exhausted"
+            );
+            return Err(RqlmError::Timeout);
+        }
+        tokio::time::sleep(opts.poll_interval).await;
+    }
+}
+
+/// Wait until every episode in the batch has reached a terminal status
+/// (Complete, Skipped, or Failed). Polls `graph_batch_status(batch_id)`
+/// internally with `opts.poll_interval`. Returns the final `BatchStatus`.
+///
+/// Use this instead of a raw `loop { batch_status(...).await }` — handles
+/// the fail-fast timeout boundary correctly and emits `tracing::warn!` on
+/// timeout exhaustion with the `batch_id` and elapsed duration. (C1/§5.5)
+pub async fn await_batch_enrichment(
+    graph: &dyn GraphHandle,
+    batch_id: &str,
+    opts: AwaitOpts,
+) -> Result<BatchStatus> {
+    let start = Instant::now();
+    loop {
+        let status = graph.graph_batch_status(batch_id).await?;
+        if status.is_done() {
+            return Ok(status);
+        }
+        if start.elapsed() >= opts.timeout {
+            tracing::warn!(
+                batch_id,
+                elapsed_ms = start.elapsed().as_millis(),
+                "await_batch_enrichment timeout exhausted"
+            );
+            return Err(RqlmError::Timeout);
+        }
+        tokio::time::sleep(opts.poll_interval).await;
+    }
+}
+
+// ── Legacy backwards-compat wrappers (D.5b callers; ADR §5.5) ────────────────
+
+/// Legacy wrapper for D.5b callers. New code: use `submit_episode`.
+///
+/// Warning: `entities_added`, `edges_added`, `facts_invalidated`, `duration_ms`
+/// are stub values (1, 0, 0, 0). Accurate counts are available via
+/// `EnrichmentEventSink` on the `submit_episode` path. Callers relying on
+/// these fields for anything other than log decoration must migrate.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use submit_episode + EnrichmentEventSink for accurate per-episode counts"
+)]
 pub async fn ingest_episode(
     graph: &dyn GraphHandle,
     content: &str,
@@ -63,16 +206,32 @@ pub async fn ingest_episode(
     provider: Arc<dyn ChatProvider>,
     scope: WorkspaceScope,
 ) -> Result<IngestResult> {
-    graph
-        .graph_ingest_episode(&scope, &source_ref, content, &structured_facts, provider)
-        .await
+    let _commit = submit_episode(
+        graph,
+        content,
+        source_ref,
+        structured_facts,
+        provider,
+        scope,
+        None,
+        SubmitOpts {
+            enrich_per_episode: true,
+            run_in_background: false,
+        },
+        None,
+    )
+    .await?;
+    // Phase 2 ran inline (run_in_background = false). No polling needed.
+    // Stub counts — callers used these for logging only; acceptable degradation.
+    Ok(IngestResult {
+        entities_added: 1,
+        edges_added: 0,
+        facts_invalidated: 0,
+        duration_ms: 0,
+    })
 }
 
-/// Run the packaged batch consolidation recipe over the scoped graph.
-/// Thin orchestration wrapper over [`GraphHandle::graph_run_consolidation`].
-///
-/// Consumer-triggered (the host application fires on meeting-end; aidocs fires on
-/// doc-batch flush). NOT a daemon.
+/// Legacy wrapper for D.5b callers. New code: use `submit_dream_phase`.
 pub async fn run_dream_phase(
     graph: &dyn GraphHandle,
     scope: WorkspaceScope,
@@ -229,6 +388,9 @@ mod tests {
     /// Stub graph handle for D.2b delegation tests. Records the params
     /// each method was called with so we can assert the memory wrappers
     /// pass them through correctly.
+    ///
+    /// All new D.6.4 GraphHandle methods are implemented as required (no
+    /// defaults on the trait — ADR §4.9).
     #[derive(Default)]
     struct StubGraphHandle {
         last_ingest_scope: Mutex<Option<WorkspaceScope>>,
@@ -250,17 +412,78 @@ mod tests {
             content: &str,
             structured_facts: &[StructuredFact],
             _provider: Arc<dyn ChatProvider>,
-        ) -> Result<IngestResult> {
+            _batch_id: Option<String>,
+            _opts: SubmitOpts,
+            _sink: Option<Arc<dyn crate::memory::events::EnrichmentEventSink>>,
+        ) -> Result<EpisodeCommit> {
             *self.last_ingest_scope.lock().unwrap() = Some(scope.clone());
             *self.last_ingest_content.lock().unwrap() = Some(content.to_string());
             *self.last_ingest_source_id.lock().unwrap() = Some(source_ref.id.clone());
             *self.last_ingest_facts_count.lock().unwrap() = Some(structured_facts.len());
-            Ok(IngestResult {
-                entities_added: 2,
-                edges_added: 3,
-                facts_invalidated: 0,
-                duration_ms: 42,
+            Ok(EpisodeCommit {
+                run_id: None,
+                episode_entity_id: format!("stub:{}", source_ref.id),
+                committed_at: chrono::Utc::now(),
             })
+        }
+
+        async fn graph_ingest_status(
+            &self,
+            _run_id: uuid::Uuid,
+        ) -> Result<crate::core::error::IngestStatus> {
+            Ok(crate::core::error::IngestStatus::Complete)
+        }
+
+        async fn graph_cancel(&self, _run_id: uuid::Uuid) -> Result<CancelOutcome> {
+            Ok(CancelOutcome {
+                cancelled_phase: CancelledPhase::Enrichment,
+                rolled_back: false,
+                partial: vec![],
+            })
+        }
+
+        async fn graph_submit_dream(
+            &self,
+            scope: &WorkspaceScope,
+            _provider: Arc<dyn ChatProvider>,
+            batch_id: Option<String>,
+            _opts: DreamOpts,
+            _sink: Option<Arc<dyn crate::memory::events::EnrichmentEventSink>>,
+        ) -> Result<DreamHandle> {
+            Ok(DreamHandle {
+                run_id: uuid::Uuid::new_v4(),
+                scope: scope.clone(),
+                submitted_at: chrono::Utc::now(),
+                batch_id,
+            })
+        }
+
+        async fn graph_dream_status(&self, _run_id: uuid::Uuid) -> Result<DreamStatus> {
+            Ok(DreamStatus::Complete)
+        }
+
+        async fn graph_batch_status(&self, _batch_id: &str) -> Result<BatchStatus> {
+            Ok(BatchStatus {
+                total: 0,
+                completed: 0,
+                skipped: 0,
+                failed: 0,
+            })
+        }
+
+        async fn graph_last_consolidated_at(
+            &self,
+            _scope: &WorkspaceScope,
+        ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+            Ok(None)
+        }
+
+        async fn graph_episodes_since_last_dream(&self, _scope: &WorkspaceScope) -> Result<usize> {
+            Ok(0)
+        }
+
+        async fn graph_is_consolidating(&self, _scope: &WorkspaceScope) -> Result<bool> {
+            Ok(false)
         }
 
         async fn graph_search(
@@ -306,7 +529,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ingest_episode_delegates_to_graph_handle() {
+    async fn submit_episode_delegates_to_graph_handle() {
         use chrono::Utc;
         let graph = StubGraphHandle::default();
         let scope = WorkspaceScope::with_thread("ws-1", "thread-a");
@@ -323,19 +546,21 @@ mod tests {
             invalid_at: None,
         }];
 
-        let result = ingest_episode(
+        let commit = submit_episode(
             &graph,
             "transcript content",
             source_ref,
             facts,
             null_provider(),
             scope.clone(),
+            None,
+            SubmitOpts::default(),
+            None,
         )
         .await
-        .expect("ingest_episode should succeed via stub");
+        .expect("submit_episode should succeed via stub");
 
-        assert_eq!(result.entities_added, 2);
-        assert_eq!(result.edges_added, 3);
+        assert!(!commit.episode_entity_id.is_empty());
         assert_eq!(
             graph.last_ingest_scope.lock().unwrap().as_ref(),
             Some(&scope)
