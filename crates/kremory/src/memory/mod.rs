@@ -34,7 +34,7 @@ pub mod types;
 
 pub use graph::GraphHandle;
 pub use types::{
-    ContextTemplate, DreamPhaseResult, IngestResult, RetrievedContext, Result, RqlmError,
+    ContextTemplate, DreamPhaseResult, IngestResult, Result, RetrievedContext, RqlmError,
     SearchOpts, SourceKind, SourceRef, StructuredFact, WorkspaceScope,
 };
 
@@ -335,7 +335,10 @@ mod tests {
 
         assert_eq!(result.entities_added, 2);
         assert_eq!(result.edges_added, 3);
-        assert_eq!(graph.last_ingest_scope.lock().unwrap().as_ref(), Some(&scope));
+        assert_eq!(
+            graph.last_ingest_scope.lock().unwrap().as_ref(),
+            Some(&scope)
+        );
         assert_eq!(
             graph.last_ingest_content.lock().unwrap().as_deref(),
             Some("transcript content")
@@ -363,7 +366,10 @@ mod tests {
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entity_id, "ent-stub");
-        assert_eq!(graph.last_search_scope.lock().unwrap().as_ref(), Some(&scope));
+        assert_eq!(
+            graph.last_search_scope.lock().unwrap().as_ref(),
+            Some(&scope)
+        );
         assert_eq!(
             graph.last_search_query.lock().unwrap().as_deref(),
             Some("go-live")

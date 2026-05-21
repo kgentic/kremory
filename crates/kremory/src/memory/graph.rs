@@ -32,7 +32,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::{
-    ChatProvider, DreamPhaseResult, IngestResult, RetrievedContext, Result, SearchOpts, SourceRef,
+    ChatProvider, DreamPhaseResult, IngestResult, Result, RetrievedContext, SearchOpts, SourceRef,
     StructuredFact, WorkspaceScope,
 };
 

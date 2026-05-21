@@ -451,12 +451,12 @@ mod spike_real_llm {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use super::common::build_llm;
     use super::common::{ArchitectureBenchmarkRecord, JsonlBenchmarkWriter};
-    use serde::Deserialize;
     use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::provider::{chat_msg_system, chat_msg_user, ChatProvider as _};
-    use super::common::build_llm;
     use kremory::core::text_utils::OovAuditor;
+    use serde::Deserialize;
 
     // ── Serde models ─────────────────────────────────────────────────────────
 

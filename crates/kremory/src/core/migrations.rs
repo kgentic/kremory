@@ -492,7 +492,10 @@ mod tests {
             sql: "THIS IS NOT VALID SQL",
         }];
         let runner = MigrationRunner::new(&conn, "schema_version");
-        let err = runner.run(&bad).await.expect_err("must surface syntax error");
+        let err = runner
+            .run(&bad)
+            .await
+            .expect_err("must surface syntax error");
         let msg = format!("{err}");
         assert!(
             msg.contains("syntax_error"),
@@ -564,9 +567,7 @@ mod tests {
         set_mtime(&old1, sixty_days_ago).await;
         set_mtime(&old2, sixty_days_ago).await;
 
-        let count = prune_old_backups(&backup_root, 30)
-            .await
-            .expect("prune");
+        let count = prune_old_backups(&backup_root, 30).await.expect("prune");
         assert_eq!(count, 2);
         assert!(!old1.exists());
         assert!(!old2.exists());
@@ -585,14 +586,14 @@ mod tests {
     async fn prune_old_backups_ignores_non_db_files() {
         let tmp = tempdir_for_test().await;
         let backup_root = tmp.join("backups");
-        tokio::fs::create_dir_all(&backup_root).await.expect("mkdir");
+        tokio::fs::create_dir_all(&backup_root)
+            .await
+            .expect("mkdir");
         let non_db = backup_root.join("notes.txt");
         tokio::fs::write(&non_db, b"keep").await.expect("write");
         let sixty_days_ago = SystemTime::now() - Duration::from_secs(60 * 86_400);
         set_mtime(&non_db, sixty_days_ago).await;
-        let count = prune_old_backups(&backup_root, 30)
-            .await
-            .expect("prune");
+        let count = prune_old_backups(&backup_root, 30).await.expect("prune");
         assert_eq!(count, 0, "non-.db files must be ignored");
         assert!(non_db.exists());
     }

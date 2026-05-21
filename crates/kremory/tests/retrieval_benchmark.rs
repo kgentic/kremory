@@ -10,14 +10,14 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use metrics_util::debugging::DebuggingRecorder;
-use serde::Deserialize;
 use kremory::core::config::PipelineConfig;
 use kremory::core::context::ContextResult;
 use kremory::core::ingest::RqlGraph;
 use kremory::core::provider::{EmbeddingProvider, MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::{Entity, TemporalGraph};
 use kremory::core::search::{SearchFilters, SearchHit};
+use metrics_util::debugging::DebuggingRecorder;
+use serde::Deserialize;
 
 mod common;
 

@@ -6,7 +6,9 @@ use std::time::Instant;
 use crate::core::error::Result;
 use crate::core::extraction::{PromptVersion, SingleCallExtractor};
 use crate::core::grounding::{GroundingChecker, TokenOverlapGroundingChecker};
-use crate::core::intelligence::{EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult};
+use crate::core::intelligence::{
+    EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult,
+};
 use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
 use crate::core::resolver::normalize_name;
 use crate::core::text_utils::OovAuditor;
@@ -133,7 +135,9 @@ impl<L: ChatProvider> HybridExtractor<L> {
             let prompt = build_gleaning_prompt(text, &discovered, ctx);
             let start = Instant::now();
             let gleaning_msgs = vec![
-                chat_msg_system("You are a knowledge graph extraction system. Output valid JSON only."),
+                chat_msg_system(
+                    "You are a knowledge graph extraction system. Output valid JSON only.",
+                ),
                 chat_msg_user(prompt),
             ];
             let response = self
@@ -367,12 +371,11 @@ mod tests {
             "Review the text and return only entities that were missed".to_string(),
             r#"{"entities":[{"name":"Alice","label":"Person"},{"name":"Mercury Bank","label":"Organisation"}]}"#.to_string(),
         );
-        let extractor = HybridExtractor::new(Arc::new(MockChatProvider::new(responses))).with_config(
-            ExtractionConfig {
+        let extractor = HybridExtractor::new(Arc::new(MockChatProvider::new(responses)))
+            .with_config(ExtractionConfig {
                 gleaning_rounds: 1,
                 ..ExtractionConfig::default()
-            },
-        );
+            });
         let base_entities = vec![ExtractedEntity {
             name: "Alice".to_string(),
             label: "Person".to_string(),

@@ -5,11 +5,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 use kremory::core::config::ContentType;
 use kremory::core::extraction::{GroundedNuExtractExtractor, NuExtractExtractor};
 use kremory::core::intelligence::{EntityExtractor, ExtractionContext};
 use kremory::core::provider::MockChatProvider;
+use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
 fn block_on<F: std::future::Future>(f: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()

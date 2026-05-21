@@ -15,11 +15,11 @@ mod common;
 
 #[cfg(feature = "ner")]
 mod ner_tests {
-    use metrics_util::debugging::DebuggingRecorder;
     use kremory::core::{
         intelligence::{EntityExtractor, ExtractionContext},
         ner::GlinerExtractor,
     };
+    use metrics_util::debugging::DebuggingRecorder;
 
     use super::common;
 

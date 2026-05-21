@@ -367,7 +367,10 @@ mod tests {
 
         // Cold search
         let cold_start = Instant::now();
-        let _cold_results = g.vector_search_entities(&emb(1.0), 5, &SearchFilters::new()).await.unwrap();
+        let _cold_results = g
+            .vector_search_entities(&emb(1.0), 5, &SearchFilters::new())
+            .await
+            .unwrap();
         let cold_duration = cold_start.elapsed();
 
         // Prefetch neighbours of alice

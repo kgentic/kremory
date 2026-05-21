@@ -10,8 +10,8 @@
 /// Requires: rql-core/fixtures/dictionaries/en_US.{aff,dic}
 
 mod spike {
-    use std::collections::{HashMap, HashSet};
     use kremory::core::text_utils::scan_proper_nouns;
+    use std::collections::{HashMap, HashSet};
     use unicode_segmentation::UnicodeSegmentation;
 
     // ── Fixture loading (same pattern as spike_programmatic_extraction) ──────

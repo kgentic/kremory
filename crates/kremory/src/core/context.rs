@@ -31,7 +31,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
         };
 
         // Step 1: Search for matching entities via FTS
-        let search_hits = self.graph.fts_search_entities(query, limit, &filters).await?;
+        let search_hits = self
+            .graph
+            .fts_search_entities(query, limit, &filters)
+            .await?;
 
         if search_hits.is_empty() {
             return Ok(ContextResult {

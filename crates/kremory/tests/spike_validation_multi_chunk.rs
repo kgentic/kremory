@@ -24,10 +24,10 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use super::common::build_llm;
     use kremory::core::config::ContentType;
     use kremory::core::extraction::SingleCallExtractor;
     use kremory::core::intelligence::{EntityExtractor, ExtractedEntity, ExtractionContext};
-    use super::common::build_llm;
     use kremory::core::text_utils::{scan_proper_nouns, OovAuditor};
 
     struct Fix {

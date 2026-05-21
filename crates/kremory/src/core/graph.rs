@@ -156,7 +156,10 @@ impl TemporalGraph {
         );
         self.conn
             .execute(
-                &format!("UPDATE rql_entities SET embedding = {} WHERE id = ?1", vec_str),
+                &format!(
+                    "UPDATE rql_entities SET embedding = {} WHERE id = ?1",
+                    vec_str
+                ),
                 libsql::params![id],
             )
             .await?;
@@ -229,11 +232,7 @@ impl TemporalGraph {
     /// Returns the number of rows updated (`0` when `id` doesn't exist
     /// in `rql_entities` — caller decides whether that is a legitimate
     /// no-op or an integrity failure).
-    pub async fn set_entity_group_only(
-        &self,
-        id: &str,
-        group_id: Option<&str>,
-    ) -> Result<u64> {
+    pub async fn set_entity_group_only(&self, id: &str, group_id: Option<&str>) -> Result<u64> {
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let n = self
@@ -729,7 +728,9 @@ impl TemporalGraph {
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
         let row = rows.next().await?.ok_or_else(|| {
-            crate::core::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_fact_with_group"))
+            crate::core::error::RqlError::Other(anyhow::anyhow!(
+                "no rowid after insert_fact_with_group"
+            ))
         })?;
         let fact_id = row.get::<i64>(0)?;
         if let Some(ov) = object_value {
@@ -1550,7 +1551,8 @@ mod tests {
 
         let updated = g.get_entity("doc_chunk_0").await.unwrap().unwrap();
         assert_eq!(updated.group_id.as_deref(), Some("group-b"));
-        let props: serde_json::Value = serde_json::from_str(&serde_json::to_string(&updated.properties).unwrap()).unwrap();
+        let props: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&updated.properties).unwrap()).unwrap();
         assert_eq!(props["text"], "updated content");
     }
 
@@ -1558,14 +1560,9 @@ mod tests {
     async fn test_update_entity_group_to_none() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        g.insert_entity_with_group(
-            "e1",
-            "Test",
-            serde_json::json!({}),
-            Some("scoped"),
-        )
-        .await
-        .unwrap();
+        g.insert_entity_with_group("e1", "Test", serde_json::json!({}), Some("scoped"))
+            .await
+            .unwrap();
 
         g.update_entity_group("e1", None, serde_json::json!({}))
             .await
@@ -1592,7 +1589,11 @@ mod tests {
             .expect("DROP TABLE rql_entities_fts must succeed on fresh in-memory DB");
 
         let result = g
-            .insert_entity("test-atomic-1", "Test", serde_json::json!({"text": "hello"}))
+            .insert_entity(
+                "test-atomic-1",
+                "Test",
+                serde_json::json!({"text": "hello"}),
+            )
             .await;
         assert!(
             result.is_err(),

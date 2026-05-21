@@ -1752,6 +1752,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "autoagents-llm",
+ "bumpalo",
  "chrono",
  "futures",
  "hf-hub",

@@ -23,13 +23,13 @@ mod domain_tests {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use super::common::build_llm;
+    use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::config::{ContentType, PipelineConfig};
     use kremory::core::extraction::NuExtractExtractor;
     use kremory::core::ingest::RqlGraph;
-    use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::provider::NullEmbeddingProvider;
     use kremory::core::schema::TemporalGraph;
-    use super::common::build_llm;
 
     struct DomainFixture {
         name: &'static str,

@@ -22,11 +22,11 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use super::common::{ArchitectureBenchmarkRecord, JsonlBenchmarkWriter};
-    use serde::Deserialize;
-    use kremory::core::provider::{chat_msg_system, chat_msg_user, ChatProvider as _};
     use super::common::build_llm;
+    use super::common::{ArchitectureBenchmarkRecord, JsonlBenchmarkWriter};
+    use kremory::core::provider::{chat_msg_system, chat_msg_user, ChatProvider as _};
     use kremory::core::text_utils::scan_proper_nouns;
+    use serde::Deserialize;
     use unicode_segmentation::UnicodeSegmentation;
 
     // ─── Serde models ───────────────────────────────────────────────────────

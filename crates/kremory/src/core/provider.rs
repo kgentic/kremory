@@ -15,10 +15,10 @@
 // GraphHandle trait always needs ChatProvider.
 // ---------------------------------------------------------------------------
 
+pub use autoagents_llm::chat::ChatResponse;
 pub use autoagents_llm::chat::{
     ChatMessage, ChatProvider, ChatRole, MessageType, StructuredOutputFormat, Tool,
 };
-pub use autoagents_llm::chat::ChatResponse;
 pub use autoagents_llm::error::LLMError;
 
 // ---------------------------------------------------------------------------
@@ -148,7 +148,10 @@ impl ChatProvider for MockChatProvider {
         messages: &[ChatMessage],
         _tools: Option<&[autoagents_llm::chat::Tool]>,
         _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
-    ) -> std::result::Result<Box<dyn autoagents_llm::chat::ChatResponse>, autoagents_llm::error::LLMError> {
+    ) -> std::result::Result<
+        Box<dyn autoagents_llm::chat::ChatResponse>,
+        autoagents_llm::error::LLMError,
+    > {
         let text = mock_match_response(&self.responses, messages);
         Ok(Box::new(MockChatResponse { text }))
     }
@@ -398,7 +401,8 @@ impl OnnxEmbeddingProvider {
 #[cfg(feature = "embeddings")]
 impl EmbeddingProvider for OnnxEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.embed_sync(text).map_err(crate::core::error::RqlError::from)
+        self.embed_sync(text)
+            .map_err(crate::core::error::RqlError::from)
     }
 }
 
@@ -429,7 +433,9 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("runtime build failed");
-        let vec = rt.block_on(provider.embed("anything")).expect("embed failed");
+        let vec = rt
+            .block_on(provider.embed("anything"))
+            .expect("embed failed");
         assert_eq!(vec.len(), 128);
     }
 

@@ -127,25 +127,16 @@ impl TemporalGraph {
         // FTS5 rename is best-effort — the FTS virtual table may not
         // have been installed yet on partially-migrated DBs.
         let _ = conn
-            .execute(
-                "ALTER TABLE entities_fts RENAME TO rql_entities_fts",
-                (),
-            )
+            .execute("ALTER TABLE entities_fts RENAME TO rql_entities_fts", ())
             .await;
         // Indexes — vector + group_id. Both are CREATE INDEX IF NOT EXISTS
         // downstream, so on failure (missing index) the re-create path
         // covers them.
         let _ = conn
-            .execute(
-                "DROP INDEX IF EXISTS entities_vec_idx",
-                (),
-            )
+            .execute("DROP INDEX IF EXISTS entities_vec_idx", ())
             .await;
         let _ = conn
-            .execute(
-                "DROP INDEX IF EXISTS idx_entities_group",
-                (),
-            )
+            .execute("DROP INDEX IF EXISTS idx_entities_group", ())
             .await;
         Ok(())
     }

@@ -25,12 +25,12 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use super::common::build_llm;
     use kremory::core::config::ContentType;
     use kremory::core::extraction::DefaultExtractor;
     use kremory::core::intelligence::{
         EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult,
     };
-    use super::common::build_llm;
     use kremory::core::text_utils::scan_proper_nouns;
 
     struct Fixture {
