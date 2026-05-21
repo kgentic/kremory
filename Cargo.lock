@@ -1746,6 +1746,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "kremory"
+version = "0.1.0-dev"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "autoagents-llm",
+ "chrono",
+ "futures",
+ "hf-hub",
+ "libsql",
+ "llm_json",
+ "metrics",
+ "metrics-util",
+ "ndarray",
+ "ort",
+ "petgraph",
+ "serde",
+ "serde_json",
+ "stop-words",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "tracing",
+ "unicode-segmentation",
+ "zspell",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2910,50 +2938,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rql-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "autoagents-llm",
- "chrono",
- "futures",
- "hf-hub",
- "libsql",
- "llm_json",
- "metrics",
- "metrics-util",
- "ndarray",
- "ort",
- "petgraph",
- "serde",
- "serde_json",
- "stop-words",
- "thiserror 2.0.18",
- "tokenizers",
- "tokio",
- "tracing",
- "unicode-segmentation",
- "zspell",
-]
-
-[[package]]
-name = "rql-memory"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "autoagents-llm",
- "chrono",
- "rql-core",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]
