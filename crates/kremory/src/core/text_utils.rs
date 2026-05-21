@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use metrics::counter;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::intelligence::ExtractedEntity;
-use super::resolver::normalize_name;
+use crate::core::intelligence::ExtractedEntity;
+use crate::core::resolver::normalize_name;
 
 // ─── LanguageAdapter trait ───────────────────────────────────────────────────
 

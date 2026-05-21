@@ -21,10 +21,10 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
-use super::config::ContentType;
-use super::error::RqlError;
-use super::ingest::RqlGraph;
-use super::provider::{ChatProvider, EmbeddingProvider};
+use crate::core::config::ContentType;
+use crate::core::error::RqlError;
+use crate::core::ingest::RqlGraph;
+use crate::core::provider::{ChatProvider, EmbeddingProvider};
 
 // ---------------------------------------------------------------------------
 // IngestRequest
@@ -510,9 +510,9 @@ fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::ingest::SimpleGraph;
+    use crate::core::ingest::SimpleGraph;
 
-    use super::provider::ChatProvider;
+    use crate::core::provider::ChatProvider;
     use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
     use autoagents_llm::error::LLMError;
 
@@ -636,9 +636,9 @@ mod tests {
     #[cfg(not(feature = "ner"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn errors_are_observable() {
-        use super::config::PipelineConfig;
-        use super::provider::NullEmbeddingProvider;
-        use super::schema::TemporalGraph;
+        use crate::core::config::PipelineConfig;
+        use crate::core::provider::NullEmbeddingProvider;
+        use crate::core::schema::TemporalGraph;
         use std::sync::Arc;
         use std::time::Duration;
 
@@ -787,7 +787,7 @@ mod tests {
             _json_schema: Option<StructuredOutputFormat>,
         ) -> Result<Box<dyn ChatResponse>, LLMError> {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            Ok(Box::new(super::provider::MockChatResponse {
+            Ok(Box::new(crate::core::provider::MockChatResponse {
                 text: String::new(),
             }))
         }
@@ -829,7 +829,7 @@ mod tests {
             let n = self.call_count.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 // First call: NER extraction → empty string = 0 entities, 0 facts
-                Ok(Box::new(super::provider::MockChatResponse {
+                Ok(Box::new(crate::core::provider::MockChatResponse {
                     text: String::new(),
                 }))
             } else {
@@ -845,10 +845,10 @@ mod tests {
     #[allow(dead_code)]
     async fn graph_with_llm<L: ChatProvider + 'static>(
         llm: L,
-    ) -> super::ingest::RqlGraph<L, super::provider::NullEmbeddingProvider> {
-        use super::config::PipelineConfig;
-        use super::provider::NullEmbeddingProvider;
-        use super::schema::TemporalGraph;
+    ) -> crate::core::ingest::RqlGraph<L, crate::core::provider::NullEmbeddingProvider> {
+        use crate::core::config::PipelineConfig;
+        use crate::core::provider::NullEmbeddingProvider;
+        use crate::core::schema::TemporalGraph;
 
         let temporal = TemporalGraph::open_in_memory()
             .await
@@ -857,7 +857,7 @@ mod tests {
             .build()
             .expect("config build failed");
         let dim = config.embedding_dim.0;
-        super::ingest::RqlGraph::new(
+        crate::core::ingest::RqlGraph::new(
             temporal,
             Arc::new(llm),
             Arc::new(NullEmbeddingProvider { dim }),

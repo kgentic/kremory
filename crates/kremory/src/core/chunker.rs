@@ -1,4 +1,4 @@
-use super::config::{ChunkConfig, ContentType};
+use crate::core::config::{ChunkConfig, ContentType};
 
 pub struct Chunker {
     config: ChunkConfig,
@@ -204,7 +204,7 @@ fn enforce_max_tokens(text: &str, max_tokens: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::config::ChunkConfig;
+    use crate::core::config::ChunkConfig;
 
     fn config_with(min_tokens: usize, max_tokens: usize, density_threshold: f64) -> ChunkConfig {
         ChunkConfig {

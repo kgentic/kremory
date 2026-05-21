@@ -1,6 +1,6 @@
-use super::config::ContentType;
-use super::error::Result;
-use super::schema::{Entity, Fact};
+use crate::core::config::ContentType;
+use crate::core::error::Result;
+use crate::core::schema::{Entity, Fact};
 
 // ─── Result Types ────────────────────────────────────────────────────────────
 

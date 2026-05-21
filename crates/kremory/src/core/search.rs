@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use metrics::histogram;
 use std::time::Instant;
 
-use super::error::Result;
-use super::schema::{Entity, Fact, TemporalGraph};
+use crate::core::error::Result;
+use crate::core::schema::{Entity, Fact, TemporalGraph};
 
 /// A search hit with BM25 relevance score.
 #[derive(Debug, Clone)]

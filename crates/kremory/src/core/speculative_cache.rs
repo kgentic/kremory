@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use super::error::Result;
-use super::schema::{Entity, TemporalGraph};
-use super::search::SearchHit;
+use crate::core::error::Result;
+use crate::core::schema::{Entity, TemporalGraph};
+use crate::core::search::SearchHit;
 
 /// A cached entity with its pre-computed PageRank score and expiry time.
 #[derive(Debug, Clone)]
@@ -179,8 +179,8 @@ impl SpeculativeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::schema::TemporalGraph;
-    use super::search::SearchFilters;
+    use crate::core::schema::TemporalGraph;
+    use crate::core::search::SearchFilters;
     use chrono::{Duration as ChronoDuration, Utc};
     use std::time::Duration;
 
