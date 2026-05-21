@@ -1,15 +1,12 @@
 [workspace]
 resolver = "2"
-members = [
-    "crates/rqlc",
-    "crates/rqlm",
-]
+members = ["crates/kremory"]
 
-# rqlm-mcp moved with workspace but excluded from members until D.4b handler
-# bodies land. Per ADR-Phase-D.0 §"rqlm-mcp tool surface": D.4 ships scaffold
-# only with "pending D.4b" stubs. Re-add to members list at D.4b.
+# kremory-mcp excluded until D.4b handler bodies land.
+# Per ADR-Phase-D.0 §"rqlm-mcp tool surface": D.4 ships scaffold only with
+# "pending D.4b" stubs. Re-add to members list at D.4b.
 exclude = [
-    "crates/rqlm-mcp",
+    "crates/kremory-mcp",
 ]
 
 [profile.release]

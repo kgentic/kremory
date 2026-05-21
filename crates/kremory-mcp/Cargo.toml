@@ -1,0 +1,46 @@
+[package]
+name = "kremory-mcp"
+version = "0.1.0"
+edition = "2021"
+
+# kremory-mcp — MCP server crate wrapping kremory::memory's 4 public entry
+# points as JSON-RPC tools over rmcp stdio transport.
+#
+# Per ADR-Phase-D.0 §"rqlm-mcp tool surface" + master plan §3 D.4: this
+# crate is the bridge between MCP clients (e.g. aidocs in
+# kgentic-marketplace) and the kremory SDK. Lives in this workspace because
+# it depends on path = "../kremory".
+#
+# D.4 (this slice) ships the SCAFFOLD: tool registration, JSON parameter
+# shapes, error contract pins. Handler BODIES return "pending D.4b" errors
+# until kremory::memory's D.2b lands the real RqlGraph<L, Emb> wiring.
+
+[lib]
+name = "kremory_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kremory-mcp-server"
+path = "src/main.rs"
+
+[dependencies]
+kremory = { path = "../kremory" }
+rmcp = { version = "1.5", features = ["server", "transport-io", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1.2"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+# kremory bundles core + memory in one crate; MockChatProvider::null() is
+# available from kremory::core::provider for integration tests.
+# autoagents-llm is a required kremory dep (not optional), so no extra feature flag needed.
+kremory = { path = "../kremory" }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }

@@ -1,0 +1,65 @@
+[package]
+name = "kremory"
+version = "0.1.0-dev"
+edition = "2021"
+license = "Apache-2.0"
+description = "Bi-temporal knowledge graph engine + agent memory orchestration in pure Rust"
+repository = "https://github.com/kgentic/kremory"
+homepage = "https://kremory.dev"
+keywords = ["agent", "memory", "knowledge-graph", "bi-temporal", "embedding"]
+categories = ["database", "data-structures"]
+
+[features]
+ner = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]
+# BYOM invariant: kremory consumes the trait crate (autoagents-llm) ONLY —
+# never the concrete `autoagents-llamacpp` impl, neither in [dependencies] nor
+# [dev-dependencies]. `cargo tree -p kremory | grep autoagents-llamacpp` MUST
+# print empty. The concrete impl lives in rust-pipeline / tauri-app where the
+# the host application binary co-locates LlamaCppClient + synthesis::autoagents.
+# autoagents-llm is a REQUIRED dep (not optional) because kremory::memory's
+# GraphHandle trait surface always needs ChatProvider.
+embeddings = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]
+test-utils = []
+
+[lib]
+name = "kremory"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# tokio: use full feature set (superset of rqlm's macros + rt-multi-thread)
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+petgraph = "0.7"
+# libSQL: native vectors (F32_BLOB + DiskANN) + FTS5 + SQL. Replaces rusqlite + sqlite-vec.
+libsql = "*"
+# BYOM invariant: autoagents-llm trait only — never concrete impl.
+# Required (not optional) because kremory::memory::GraphHandle uses ChatProvider.
+autoagents-llm = { path = "../../../oss/AutoAgents/crates/autoagents-llm" }
+futures = "0.3"
+async-trait = "0.1"
+llm_json = "1.0.3"
+metrics = "0.24"
+tracing = "0.1"
+zspell = "0.5"
+stop-words = "0.8"
+unicode-segmentation = "1.11"
+ort = { version = "=2.0.0-rc.12", features = ["ndarray"], optional = true }
+ndarray = { version = "0.17", optional = true }
+tokenizers = { version = "*", optional = true }
+hf-hub = { version = "*", optional = true }
+
+[dev-dependencies]
+metrics-util = "0.18"
+tokio = { version = "1", features = ["full", "test-util"] }
+zspell = "0.5"
+stop-words = "0.8"
+unicode-segmentation = "1.11"
+# BYOM invariant: kremory MUST NOT depend on `autoagents-llamacpp` as a dev-dep.
+# The trait surface (autoagents-llm) is the only LLM crate kremory touches;
+# downstream consumers wire the concrete impl.
+autoagents-llm = { path = "../../../oss/AutoAgents/crates/autoagents-llm" }
+anyhow = "1"

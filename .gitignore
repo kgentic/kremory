@@ -20,10 +20,17 @@ Thumbs.db
 
 # Local Claude / aidocs runtime state
 .claude/sessions/
-.ship/sessions/
+.ship/
 .ai-docs/.cache/
 
-# Logs from rqlc/rqlm dev runs
+# codebase-memory-mcp local index
+.index.db
+.index.db-*
+
+# policy MCP local cache
+.policy/
+
+# Logs from kremory dev runs
 crates/*/logs/
 crates/*/*.log
 
