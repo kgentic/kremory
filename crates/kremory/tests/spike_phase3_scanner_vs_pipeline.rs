@@ -23,11 +23,11 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use serde::Deserialize;
+    use super::common::build_llm;
     use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::provider::{chat_msg_system, chat_msg_user, ChatProvider as _};
-    use super::common::build_llm;
     use kremory::core::text_utils::scan_proper_nouns;
+    use serde::Deserialize;
     use unicode_segmentation::UnicodeSegmentation;
 
     #[derive(Debug, Deserialize, Default)]
@@ -404,11 +404,11 @@ Rules: unique (subject, predicate, object) triples. Use specific predicates.\n\n
             let s_cands = scanner_candidates(&text);
             let p_cands = pipeline_candidates(&text, &dict, &stops);
 
-            let (s_ents, s_rels, s1, s2) = two_call(&*llm,&text, &s_cands).await;
+            let (s_ents, s_rels, s1, s2) = two_call(&*llm, &text, &s_cands).await;
             let s_sec = s1 + s2;
             let (_, s_rec) = recall_ct(&s_ents, exp);
 
-            let (p_ents, p_rels, p1, p2) = two_call(&*llm,&text, &p_cands).await;
+            let (p_ents, p_rels, p1, p2) = two_call(&*llm, &text, &p_cands).await;
             let p_sec = p1 + p2;
             let (_, p_rec) = recall_ct(&p_ents, exp);
 

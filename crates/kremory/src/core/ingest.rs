@@ -127,7 +127,8 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
             use std::sync::OnceLock;
             static GLINER: OnceLock<crate::core::ner::GlinerExtractor> = OnceLock::new();
             if GLINER.get().is_none() {
-                let g = crate::core::ner::GlinerExtractor::new().map_err(crate::core::error::RqlError::from)?;
+                let g = crate::core::ner::GlinerExtractor::new()
+                    .map_err(crate::core::error::RqlError::from)?;
                 let _ = GLINER.set(g);
             }
             let extractor = GLINER.get().expect("just initialised");
@@ -293,7 +294,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
                 .await?;
 
             // For pool_b, use FTS search on the predicate to find semantically related facts
-            let pool_b_hits = self.graph.fts_search_facts(&fact.predicate, 10, &SearchFilters::new()).await?;
+            let pool_b_hits = self
+                .graph
+                .fts_search_facts(&fact.predicate, 10, &SearchFilters::new())
+                .await?;
             let pool_b: Vec<crate::core::schema::Fact> =
                 pool_b_hits.into_iter().map(|h| h.item).collect();
 
@@ -446,7 +450,9 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
         // reference them by their original surface form are resolved correctly.
         for name in ner_entity_names {
             let norm = normalize_name(name);
-            name_to_id.entry(norm).or_insert_with(|| normalize_name(name));
+            name_to_id
+                .entry(norm)
+                .or_insert_with(|| normalize_name(name));
         }
 
         // Store facts (contradiction detection + insert), same logic as ingest_with.
@@ -481,7 +487,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
                 .get_facts_by_subject_predicate(&subject_id, &fact.predicate)
                 .await?;
 
-            let pool_b_hits = self.graph.fts_search_facts(&fact.predicate, 10, &SearchFilters::new()).await?;
+            let pool_b_hits = self
+                .graph
+                .fts_search_facts(&fact.predicate, 10, &SearchFilters::new())
+                .await?;
             let pool_b: Vec<crate::core::schema::Fact> =
                 pool_b_hits.into_iter().map(|h| h.item).collect();
 

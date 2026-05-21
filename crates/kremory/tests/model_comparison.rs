@@ -27,14 +27,14 @@ mod model_comparison_tests {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use super::common::build_llm;
+    use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::config::{ContentType, PipelineConfig};
     use kremory::core::extraction::{
         DefaultExtractor, GroundedNuExtractExtractor, NuExtractExtractor,
     };
     use kremory::core::ingest::RqlGraph;
-    use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::provider::NullEmbeddingProvider;
-    use super::common::build_llm;
     use kremory::core::schema::TemporalGraph;
 
     // ─── Model configuration ──────────────────────────────────────────────────
@@ -688,7 +688,8 @@ mod model_comparison_tests {
         println!("  {sep_model}-+-{sep_metric}-+-{sep_metric}-+-{sep_metric}-+-{sep_metric}-+-{sep_metric}");
 
         for mr in results {
-            println!("  {:<COL_MODEL$} | {:>5.0}%   | {:>5.0}%   | {:>5.0}%   | {:>6.1}  | {:>6.1} ",
+            println!(
+                "  {:<COL_MODEL$} | {:>5.0}%   | {:>5.0}%   | {:>5.0}%   | {:>6.1}  | {:>6.1} ",
                 mr.model_name,
                 mr.overall_recall * 100.0,
                 mr.overall_precision * 100.0,

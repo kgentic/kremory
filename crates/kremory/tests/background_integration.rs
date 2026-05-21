@@ -21,7 +21,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::Utc;
-use metrics_util::debugging::DebuggingRecorder;
 use kremory::core::background::{BackgroundIngestor, IngestorConfig};
 use kremory::core::config::PipelineConfig;
 use kremory::core::extraction::NuExtractExtractor;
@@ -31,6 +30,7 @@ use kremory::core::provider::{
     MockEmbeddingProvider, StructuredOutputFormat, Tool,
 };
 use kremory::core::schema::TemporalGraph;
+use metrics_util::debugging::DebuggingRecorder;
 
 mod common;
 
@@ -92,8 +92,7 @@ impl EmbeddingProvider for ScriptedEmbeddingProvider {
     fn embed<'a>(
         &'a self,
         text: &'a str,
-    ) -> impl std::future::Future<Output = kremory::core::error::Result<Vec<f32>>> + Send + 'a
-    {
+    ) -> impl std::future::Future<Output = kremory::core::error::Result<Vec<f32>>> + Send + 'a {
         self.0.embed(text)
     }
 }

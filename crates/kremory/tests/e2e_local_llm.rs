@@ -18,13 +18,13 @@ mod llm_tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    use super::common::build_llm;
     use kremory::core::config::PipelineConfig;
     use kremory::core::extraction::NuExtractExtractor;
     use kremory::core::ingest::RqlGraph;
     use kremory::core::provider::{ChatProvider as _, NullEmbeddingProvider};
-    use super::common::build_llm;
     use kremory::core::schema::TemporalGraph;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
     const MEETING_TRANSCRIPT: &str = "\
 Alice: Good morning everyone. Let's get started. We need to review the \

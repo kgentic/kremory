@@ -60,8 +60,7 @@ impl TemporalGraph {
         };
 
         // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit)
-        let (group_clause, group_params) =
-            build_group_id_clause(&filters.group_ids, "e", 3);
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
 
         let sql = format!(
             "SELECT fts.entity_id, fts.rank \
@@ -118,8 +117,7 @@ impl TemporalGraph {
         };
 
         // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit)
-        let (group_clause, group_params) =
-            build_group_id_clause(&filters.group_ids, "f", 3);
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "f", 3);
 
         let sql = format!(
             "SELECT f.id, f.subject_id, f.predicate, f.object_id, f.object_value, f.properties,
@@ -201,8 +199,7 @@ impl TemporalGraph {
         filters: &SearchFilters,
     ) -> anyhow::Result<Vec<SearchHit<Entity>>> {
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
-        let (group_clause, group_params) =
-            build_group_id_clause(&filters.group_ids, "e", 3);
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
 
         let sql = format!(
             "SELECT e.id, e.label, e.properties, e.created_at, e.updated_at, e.group_id,
@@ -356,8 +353,7 @@ impl TemporalGraph {
         filters: &SearchFilters,
     ) -> anyhow::Result<Vec<SearchHit<Fact>>> {
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
-        let (group_clause, group_params) =
-            build_group_id_clause(&filters.group_ids, "f", 3);
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "f", 3);
 
         let sql = format!(
             "SELECT f.id, f.subject_id, f.predicate, f.object_id, f.object_value, f.properties,
@@ -398,8 +394,7 @@ impl TemporalGraph {
         filters: &SearchFilters,
     ) -> anyhow::Result<Vec<SearchHit<Fact>>> {
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
-        let (group_clause, group_params) =
-            build_group_id_clause(&filters.group_ids, "facts", 3);
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "facts", 3);
 
         let sql = format!(
             "SELECT id, subject_id, predicate, object_id, object_value, properties,
@@ -829,7 +824,10 @@ mod tests {
     async fn test_fts_search_entities_by_label() {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g.fts_search_entities("Person", 10, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_entities("Person", 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 2, "should find 2 Person entities");
         // BM25 scores should be negative
         for hit in &hits {
@@ -841,7 +839,10 @@ mod tests {
     async fn test_fts_search_entities_by_properties() {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g.fts_search_entities("engineer", 10, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_entities("engineer", 10, &no_filter)
+            .await
+            .unwrap();
         assert!(
             !hits.is_empty(),
             "should find entities with 'engineer' in properties"
@@ -864,7 +865,10 @@ mod tests {
     async fn test_fts_search_entities_limit() {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g.fts_search_entities("Person", 1, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_entities("Person", 1, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1, "limit should cap results");
     }
 
@@ -940,7 +944,10 @@ mod tests {
     async fn test_fts_search_facts_by_object_value() {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g.fts_search_facts("Engineer", 10, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_facts("Engineer", 10, &no_filter)
+            .await
+            .unwrap();
         assert!(
             !hits.is_empty(),
             "should find facts with 'Engineer' in object_value"
@@ -952,7 +959,10 @@ mod tests {
     async fn test_fts_search_facts_by_predicate() {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g.fts_search_facts("has_title", 10, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_facts("has_title", 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 2, "should find 2 has_title facts");
     }
 
@@ -1016,7 +1026,10 @@ mod tests {
         g.set_entity_embedding("acme", &acme_emb).await.unwrap();
 
         // Search with alice's embedding — should find alice first, acme second (similar), bob last
-        let hits = g.vector_search_entities(&alice_emb, 10, &no_filter).await.unwrap();
+        let hits = g
+            .vector_search_entities(&alice_emb, 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 3, "should find all 3 entities with embeddings");
         assert_eq!(
             hits[0].item.id, "alice",
@@ -1058,7 +1071,10 @@ mod tests {
         let no_filter = SearchFilters::new();
         // No entities, no embeddings
         let emb = make_embedding(1.0);
-        let hits = g.vector_search_entities(&emb, 10, &no_filter).await.unwrap();
+        let hits = g
+            .vector_search_entities(&emb, 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 0);
     }
 
@@ -1078,7 +1094,10 @@ mod tests {
         g.set_entity_embedding("with_emb", &emb).await.unwrap();
         // no_emb has no embedding set
 
-        let hits = g.vector_search_entities(&emb, 10, &no_filter).await.unwrap();
+        let hits = g
+            .vector_search_entities(&emb, 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1, "should only find entities with embeddings");
         assert_eq!(hits[0].item.id, "with_emb");
     }
@@ -1102,7 +1121,10 @@ mod tests {
         g.set_entity_embedding("close", &close_emb).await.unwrap();
         g.set_entity_embedding("far", &far_emb).await.unwrap();
 
-        let hits = g.vector_search_entities(&query, 10, &no_filter).await.unwrap();
+        let hits = g
+            .vector_search_entities(&query, 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(
             hits[0].item.id, "close",
@@ -1263,37 +1285,71 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // Insert entities in different groups
-        g.insert_entity_with_group("alice", "Person", serde_json::json!({"role": "engineer"}), Some("group-a"))
-            .await
-            .unwrap();
-        g.insert_entity_with_group("bob", "Person", serde_json::json!({"role": "manager"}), Some("group-b"))
-            .await
-            .unwrap();
-        g.insert_entity_with_group("carol", "Person", serde_json::json!({"role": "designer"}), Some("group-a"))
-            .await
-            .unwrap();
-        g.insert_entity_with_group("dave", "Person", serde_json::json!({"role": "analyst"}), None)
-            .await
-            .unwrap();
+        g.insert_entity_with_group(
+            "alice",
+            "Person",
+            serde_json::json!({"role": "engineer"}),
+            Some("group-a"),
+        )
+        .await
+        .unwrap();
+        g.insert_entity_with_group(
+            "bob",
+            "Person",
+            serde_json::json!({"role": "manager"}),
+            Some("group-b"),
+        )
+        .await
+        .unwrap();
+        g.insert_entity_with_group(
+            "carol",
+            "Person",
+            serde_json::json!({"role": "designer"}),
+            Some("group-a"),
+        )
+        .await
+        .unwrap();
+        g.insert_entity_with_group(
+            "dave",
+            "Person",
+            serde_json::json!({"role": "analyst"}),
+            None,
+        )
+        .await
+        .unwrap();
 
         // No filter: all 4 Person entities
         let no_filter = SearchFilters::new();
-        let all = g.fts_search_entities("Person", 10, &no_filter).await.unwrap();
+        let all = g
+            .fts_search_entities("Person", 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(all.len(), 4, "no filter should return all entities");
 
         // Filter to group-a: alice + carol + dave (NULL = workspace-wide, visible in all scopes)
         let group_a = SearchFilters::for_group("group-a");
         let hits_a = g.fts_search_entities("Person", 10, &group_a).await.unwrap();
-        assert_eq!(hits_a.len(), 3, "group-a should have 2 scoped + 1 NULL (workspace-wide)");
+        assert_eq!(
+            hits_a.len(),
+            3,
+            "group-a should have 2 scoped + 1 NULL (workspace-wide)"
+        );
         let ids: Vec<&str> = hits_a.iter().map(|h| h.item.id.as_str()).collect();
         assert!(ids.contains(&"alice"));
         assert!(ids.contains(&"carol"));
-        assert!(ids.contains(&"dave"), "NULL group_id entities must be visible in all scopes");
+        assert!(
+            ids.contains(&"dave"),
+            "NULL group_id entities must be visible in all scopes"
+        );
 
         // Filter to group-b: bob + dave (NULL = workspace-wide)
         let group_b = SearchFilters::for_group("group-b");
         let hits_b = g.fts_search_entities("Person", 10, &group_b).await.unwrap();
-        assert_eq!(hits_b.len(), 2, "group-b should have 1 scoped + 1 NULL (workspace-wide)");
+        assert_eq!(
+            hits_b.len(),
+            2,
+            "group-b should have 1 scoped + 1 NULL (workspace-wide)"
+        );
         let ids_b: Vec<&str> = hits_b.iter().map(|h| h.item.id.as_str()).collect();
         assert!(ids_b.contains(&"bob"));
         assert!(ids_b.contains(&"dave"));
@@ -1301,7 +1357,11 @@ mod tests {
         // Filter to non-existent group: dave only (NULL = workspace-wide)
         let group_x = SearchFilters::for_group("group-x");
         let hits_x = g.fts_search_entities("Person", 10, &group_x).await.unwrap();
-        assert_eq!(hits_x.len(), 1, "non-existent group should still return NULL entities");
+        assert_eq!(
+            hits_x.len(),
+            1,
+            "non-existent group should still return NULL entities"
+        );
         assert_eq!(hits_x[0].item.id, "dave");
     }
 
@@ -1340,11 +1400,16 @@ mod tests {
 
         let emb = make_embedding(1.0);
         g.set_entity_embedding("alice", &emb).await.unwrap();
-        g.set_entity_embedding("bob", &make_embedding(1.01)).await.unwrap();
+        g.set_entity_embedding("bob", &make_embedding(1.01))
+            .await
+            .unwrap();
 
         // No filter: both
         let no_filter = SearchFilters::new();
-        let all = g.vector_search_entities(&emb, 10, &no_filter).await.unwrap();
+        let all = g
+            .vector_search_entities(&emb, 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2);
 
         // Filter to group-a: alice only
@@ -1365,21 +1430,38 @@ mod tests {
             .unwrap();
 
         g.insert_fact_with_group(
-            "alice", "has_title", None, Some("Engineer"), t0, 1.0, None,
-            Some("group-a"), None,
+            "alice",
+            "has_title",
+            None,
+            Some("Engineer"),
+            t0,
+            1.0,
+            None,
+            Some("group-a"),
+            None,
         )
         .await
         .unwrap();
         g.insert_fact_with_group(
-            "alice", "has_title", None, Some("Manager"), t0, 1.0, None,
-            Some("group-b"), None,
+            "alice",
+            "has_title",
+            None,
+            Some("Manager"),
+            t0,
+            1.0,
+            None,
+            Some("group-b"),
+            None,
         )
         .await
         .unwrap();
 
         // No filter: both facts
         let no_filter = SearchFilters::new();
-        let all = g.fts_search_facts("has_title", 10, &no_filter).await.unwrap();
+        let all = g
+            .fts_search_facts("has_title", 10, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2);
 
         // Filter to group-a: 1 fact
@@ -1407,8 +1489,15 @@ mod tests {
 
         // Chat queries with space scope — should NOT find it
         let space_filter = SearchFilters::for_group("space-abc");
-        let hits = g.fts_search_entities("price", 10, &space_filter).await.unwrap();
-        assert_eq!(hits.len(), 0, "entity in 'default' group should not appear in space-abc");
+        let hits = g
+            .fts_search_entities("price", 10, &space_filter)
+            .await
+            .unwrap();
+        assert_eq!(
+            hits.len(),
+            0,
+            "entity in 'default' group should not appear in space-abc"
+        );
 
         // Re-scope entity to space-abc (simulates update_entity_group fix)
         g.update_entity_group(
@@ -1420,15 +1509,29 @@ mod tests {
         .unwrap();
 
         // Now chat queries with space scope — SHOULD find it
-        let hits = g.fts_search_entities("price", 10, &space_filter).await.unwrap();
-        assert_eq!(hits.len(), 1, "re-scoped entity should be findable under new group");
+        let hits = g
+            .fts_search_entities("price", 10, &space_filter)
+            .await
+            .unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "re-scoped entity should be findable under new group"
+        );
         assert_eq!(hits[0].item.id, "pricing_chunk_0");
         assert_eq!(hits[0].item.group_id.as_deref(), Some("space-abc"));
 
         // Old group should NOT find it
         let old_filter = SearchFilters::for_group("default");
-        let old_hits = g.fts_search_entities("price", 10, &old_filter).await.unwrap();
-        assert_eq!(old_hits.len(), 0, "entity should no longer appear under old group");
+        let old_hits = g
+            .fts_search_entities("price", 10, &old_filter)
+            .await
+            .unwrap();
+        assert_eq!(
+            old_hits.len(),
+            0,
+            "entity should no longer appear under old group"
+        );
     }
 
     /// NULL group_id = workspace-wide visibility. Scoped searches must include
@@ -1439,13 +1542,18 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // Insert entity WITHOUT group_id (NULL) — workspace-wide visibility.
-        g.insert_entity("kb_doc", "Document", serde_json::json!({ "text": "revenue targets" }))
-            .await
-            .unwrap();
+        g.insert_entity(
+            "kb_doc",
+            "Document",
+            serde_json::json!({ "text": "revenue targets" }),
+        )
+        .await
+        .unwrap();
 
         // Insert entity WITH group_id — scoped to space-1.
         g.insert_entity_with_group(
-            "scoped_doc", "Document",
+            "scoped_doc",
+            "Document",
             serde_json::json!({ "text": "revenue analysis" }),
             Some("space-1"),
         )
@@ -1453,14 +1561,27 @@ mod tests {
         .unwrap();
 
         // Unscoped search → both entities found.
-        let all = g.fts_search_entities("revenue", 10, &SearchFilters::new()).await.unwrap();
+        let all = g
+            .fts_search_entities("revenue", 10, &SearchFilters::new())
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2, "unscoped should return both entities");
 
         // Scoped search → both returned (NULL = visible in all scopes).
-        let scoped = g.fts_search_entities("revenue", 10, &SearchFilters::for_group("space-1")).await.unwrap();
-        assert_eq!(scoped.len(), 2, "scoped search must include NULL group_id (workspace-wide) entities");
+        let scoped = g
+            .fts_search_entities("revenue", 10, &SearchFilters::for_group("space-1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            scoped.len(),
+            2,
+            "scoped search must include NULL group_id (workspace-wide) entities"
+        );
         let ids: Vec<&str> = scoped.iter().map(|h| h.item.id.as_str()).collect();
-        assert!(ids.contains(&"kb_doc"), "NULL group_id entity must be visible");
+        assert!(
+            ids.contains(&"kb_doc"),
+            "NULL group_id entity must be visible"
+        );
         assert!(ids.contains(&"scoped_doc"), "scoped entity must be visible");
     }
 
@@ -1470,14 +1591,16 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         g.insert_entity_with_group(
-            "doc_a", "Document",
+            "doc_a",
+            "Document",
             serde_json::json!({ "text": "alpha project" }),
             Some("group-1"),
         )
         .await
         .unwrap();
         g.insert_entity_with_group(
-            "doc_b", "Document",
+            "doc_b",
+            "Document",
             serde_json::json!({ "text": "alpha budget" }),
             Some("group-2"),
         )
@@ -1485,7 +1608,14 @@ mod tests {
         .unwrap();
 
         // Empty group_ids → no filter → both returned.
-        let results = g.fts_search_entities("alpha", 10, &SearchFilters::new()).await.unwrap();
-        assert_eq!(results.len(), 2, "empty group_ids should return all entities");
+        let results = g
+            .fts_search_entities("alpha", 10, &SearchFilters::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            results.len(),
+            2,
+            "empty group_ids should return all entities"
+        );
     }
 }

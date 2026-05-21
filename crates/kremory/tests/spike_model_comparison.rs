@@ -26,13 +26,11 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use kremory::core::config::ContentType;
-    use kremory::core::extraction::{
-        DefaultExtractor, GraphitiStyleExtractor, NuExtractExtractor,
-    };
-    use kremory::core::intelligence::{EntityExtractor, ExtractionContext, ExtractionResult};
-    use autoagents_llamacpp::LlamaCppProvider;
     use super::common::build_llm;
+    use autoagents_llamacpp::LlamaCppProvider;
+    use kremory::core::config::ContentType;
+    use kremory::core::extraction::{DefaultExtractor, GraphitiStyleExtractor, NuExtractExtractor};
+    use kremory::core::intelligence::{EntityExtractor, ExtractionContext, ExtractionResult};
 
     struct Fixture {
         name: &'static str,

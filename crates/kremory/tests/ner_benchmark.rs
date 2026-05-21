@@ -12,14 +12,14 @@ mod common;
 
 #[cfg(feature = "ner")]
 mod ner_benchmark_tests {
-    use metrics_util::debugging::DebuggingRecorder;
-    use serde::Deserialize;
-    use std::collections::HashMap;
-    use std::time::Instant;
     use kremory::core::{
         intelligence::{EntityExtractor, ExtractionContext},
         ner::GlinerExtractor,
     };
+    use metrics_util::debugging::DebuggingRecorder;
+    use serde::Deserialize;
+    use std::collections::HashMap;
+    use std::time::Instant;
 
     use super::common::{self, ArchitectureBenchmarkRecord, JsonlBenchmarkWriter};
 

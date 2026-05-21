@@ -63,3 +63,4 @@ unicode-segmentation = "1.11"
 # downstream consumers wire the concrete impl.
 autoagents-llm = { path = "../../../oss/AutoAgents/crates/autoagents-llm" }
 anyhow = "1"
+bumpalo = "3.20.2"

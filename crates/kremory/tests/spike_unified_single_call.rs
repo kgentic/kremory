@@ -24,15 +24,15 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use super::common::build_llm;
     use super::common::{
         dedup_entities, fixtures, load_auditor, load_ground_truth, merge_results, recall,
         ArchitectureBenchmarkRecord, JsonlBenchmarkWriter,
     };
+    use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::config::ContentType;
     use kremory::core::extraction::{PromptVersion, SingleCallExtractor};
     use kremory::core::intelligence::{EntityExtractor, ExtractionContext, ExtractionResult};
-    use autoagents_llamacpp::LlamaCppProvider;
-    use super::common::build_llm;
 
     async fn extract_with_optional_gleaning(
         extractor: &SingleCallExtractor<LlamaCppProvider>,

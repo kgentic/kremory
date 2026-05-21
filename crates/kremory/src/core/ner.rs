@@ -248,10 +248,7 @@ mod inner {
     ///
     /// Returns `(span_idx [batch, num_spans, 2] i64, span_mask [batch, num_spans] bool)`
     /// and the list of per-text span lists (needed by the decoder).
-    fn build_span_tensors(
-        word_counts: &[usize],
-        max_width: usize,
-    ) -> anyhow::Result<SpanTensors> {
+    fn build_span_tensors(word_counts: &[usize], max_width: usize) -> anyhow::Result<SpanTensors> {
         let batch = word_counts.len();
 
         let all_spans: Vec<Vec<(usize, usize)>> = word_counts
@@ -466,8 +463,7 @@ mod inner {
     pub(crate) fn reconstruct_text(words: &[&str], word_start: usize, word_end: usize) -> String {
         let raw = words[word_start..=word_end.min(words.len().saturating_sub(1))].join(" ");
         // Strip trailing punctuation that gets attached to the last word
-        raw.trim_end_matches(['.', ',', ';', ':'])
-            .to_string()
+        raw.trim_end_matches(['.', ',', ';', ':']).to_string()
     }
 
     // ---------------------------------------------------------------------------

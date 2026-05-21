@@ -25,11 +25,11 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use serde::Deserialize;
+    use super::common::build_llm;
     use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::provider::{chat_msg_system, chat_msg_user, ChatProvider as _};
-    use super::common::build_llm;
     use kremory::core::text_utils::scan_proper_nouns;
+    use serde::Deserialize;
     use unicode_segmentation::UnicodeSegmentation;
 
     #[derive(Debug, Deserialize, Default)]
@@ -365,10 +365,7 @@ Rules: unique (subject, predicate, object) triples. Use specific predicates.\n\n
         let ents = de(&o1.entities);
 
         let t2 = Instant::now();
-        let msgs2 = vec![
-            chat_msg_system(SYS),
-            chat_msg_user(prompt_rel(text, &ents)),
-        ];
+        let msgs2 = vec![chat_msg_system(SYS), chat_msg_user(prompt_rel(text, &ents))];
         let r2: Result<Box<dyn kremory::core::provider::ChatResponse>, _> =
             llm.chat_with_tools(&msgs2, None, None).await;
         let rel_sec = t2.elapsed().as_secs_f64();

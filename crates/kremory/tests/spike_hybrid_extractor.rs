@@ -19,6 +19,7 @@ mod spike {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use super::common::build_llm;
     use super::common::{
         fixtures, load_auditor, load_ground_truth, recall, ArchitectureBenchmarkRecord,
         JsonlBenchmarkWriter,
@@ -27,7 +28,6 @@ mod spike {
     use kremory::core::extraction::PromptVersion;
     use kremory::core::hybrid_extractor::{ExtractionConfig, HybridExtractor};
     use kremory::core::intelligence::{EntityExtractor, ExtractionContext};
-    use super::common::build_llm;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn spike_hybrid_extractor_bakeoff() {

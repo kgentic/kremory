@@ -804,8 +804,8 @@ fn repair_to_array(raw: &str) -> String {
     }
 
     // Use llm_json for fine-grained repairs (quotes, booleans, commas).
-    let repaired = llm_json::repair_json(&wrapped, &llm_json::RepairOptions::default())
-        .unwrap_or(wrapped);
+    let repaired =
+        llm_json::repair_json(&wrapped, &llm_json::RepairOptions::default()).unwrap_or(wrapped);
 
     // llm_json sometimes reduces arrays to a single object — re-wrap if needed.
     let repaired = repaired.trim();
@@ -981,7 +981,6 @@ pub enum PromptVersion {
     /// Combines V2's schema-first structure with V1's content-type awareness.
     V3SchemaHybrid,
 }
-
 
 impl std::fmt::Display for PromptVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1275,8 +1274,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .record(typing_start.elapsed().as_secs_f64() * 1000.0);
         let typing_text = typing_resp.text().unwrap_or_default();
 
-        let entity_output: EntityOnlyOutput =
-            parse_json_lenient(&typing_text).unwrap_or_default();
+        let entity_output: EntityOnlyOutput = parse_json_lenient(&typing_text).unwrap_or_default();
         let mut entities: Vec<ExtractedEntity> = entity_output
             .entities
             .into_iter()
