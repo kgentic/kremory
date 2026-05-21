@@ -1,10 +1,10 @@
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
-use super::error::Result;
-use super::intelligence::ExtractedFact;
-use super::provider::{chat_msg_system, chat_msg_user, ChatProvider};
-use super::schema::Fact;
+use crate::core::error::Result;
+use crate::core::intelligence::ExtractedFact;
+use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
+use crate::core::schema::Fact;
 
 // ---------------------------------------------------------------------------
 // Temporal Overlap
@@ -232,7 +232,7 @@ impl<L: ChatProvider> TwoPoolDetector<L> {
             .llm
             .chat_with_tools(&contradiction_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         let response_text = response.text().unwrap_or_default();
 
         let indices = parse_index_list(&response_text);
@@ -262,7 +262,7 @@ impl<L: ChatProvider> TwoPoolDetector<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::provider::MockChatProvider;
+    use crate::core::provider::MockChatProvider;
     use chrono::{Duration, Utc};
     use std::collections::HashMap;
 

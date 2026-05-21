@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::error::Result;
+use crate::core::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {

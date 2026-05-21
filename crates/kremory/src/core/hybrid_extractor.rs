@@ -3,13 +3,13 @@ use std::sync::Arc;
 use metrics::{counter, histogram};
 use std::time::Instant;
 
-use super::error::Result;
-use super::extraction::{PromptVersion, SingleCallExtractor};
-use super::grounding::{GroundingChecker, TokenOverlapGroundingChecker};
-use super::intelligence::{EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult};
-use super::provider::{chat_msg_system, chat_msg_user, ChatProvider};
-use super::resolver::normalize_name;
-use super::text_utils::OovAuditor;
+use crate::core::error::Result;
+use crate::core::extraction::{PromptVersion, SingleCallExtractor};
+use crate::core::grounding::{GroundingChecker, TokenOverlapGroundingChecker};
+use crate::core::intelligence::{EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult};
+use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
+use crate::core::resolver::normalize_name;
+use crate::core::text_utils::OovAuditor;
 
 #[path = "hybrid_extractor_helpers.rs"]
 mod helpers;
@@ -140,7 +140,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
                 .llm
                 .chat_with_tools(&gleaning_msgs, None, None)
                 .await
-                .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+                .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
             histogram!("rql.extraction.stage_ms", "stage" => "hybrid_gleaning")
                 .record(start.elapsed().as_secs_f64() * 1000.0);
             let response_text = response.text().unwrap_or_default();
@@ -202,7 +202,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
             .llm
             .chat_with_tools(&typing_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "hybrid_typing")
             .record(start.elapsed().as_secs_f64() * 1000.0);
         let response_text = response.text().unwrap_or_default();
@@ -255,12 +255,12 @@ mod tests {
     use serde_json::Value;
 
     use super::{ExtractionConfig, HybridExtractor};
-    use super::config::ContentType;
-    use super::extraction::PromptVersion;
-    use super::grounding::TokenOverlapGroundingChecker;
-    use super::intelligence::{EntityExtractor, ExtractedEntity, ExtractionContext};
-    use super::provider::MockChatProvider;
-    use super::text_utils::OovAuditor;
+    use crate::core::config::ContentType;
+    use crate::core::extraction::PromptVersion;
+    use crate::core::grounding::TokenOverlapGroundingChecker;
+    use crate::core::intelligence::{EntityExtractor, ExtractedEntity, ExtractionContext};
+    use crate::core::provider::MockChatProvider;
+    use crate::core::text_utils::OovAuditor;
 
     fn block_on<F: std::future::Future>(future: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()

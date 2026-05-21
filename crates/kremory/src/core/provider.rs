@@ -184,7 +184,7 @@ impl autoagents_llm::chat::ChatResponse for MockChatResponse {
 // (unchanged from original — embeddings are a separate concern)
 // ---------------------------------------------------------------------------
 
-use super::error::Result;
+use crate::core::error::Result;
 use std::future::Future;
 
 pub trait EmbeddingProvider: Send + Sync {
@@ -398,7 +398,7 @@ impl OnnxEmbeddingProvider {
 #[cfg(feature = "embeddings")]
 impl EmbeddingProvider for OnnxEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.embed_sync(text).map_err(super::error::RqlError::from)
+        self.embed_sync(text).map_err(crate::core::error::RqlError::from)
     }
 }
 

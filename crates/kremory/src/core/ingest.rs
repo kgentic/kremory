@@ -6,22 +6,22 @@ use metrics::histogram;
 
 use chrono::{DateTime, Utc};
 
-use super::chunker::Chunker;
-use super::config::{ContentType, PipelineConfig};
-use super::contradiction::TwoPoolDetector;
-use super::error::Result;
-use super::extraction::NuExtractExtractor;
-use super::intelligence::{
+use crate::core::chunker::Chunker;
+use crate::core::config::{ContentType, PipelineConfig};
+use crate::core::contradiction::TwoPoolDetector;
+use crate::core::error::Result;
+use crate::core::extraction::NuExtractExtractor;
+use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
     ResolutionResult,
 };
-use super::provider::{
+use crate::core::provider::{
     ChatProvider, EmbeddingProvider, MockChatProvider, NullEmbeddingProvider, TokenUsage,
 };
-use super::resolver::{normalize_name, CascadeResolver, UnionFind};
-use super::schema::TemporalGraph;
-use super::search::SearchFilters;
-use super::text_utils;
+use crate::core::resolver::{normalize_name, CascadeResolver, UnionFind};
+use crate::core::schema::TemporalGraph;
+use crate::core::search::SearchFilters;
+use crate::core::text_utils;
 
 /// Result of a single ingest() call.
 #[derive(Debug)]
@@ -125,9 +125,9 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
         #[cfg(feature = "ner")]
         {
             use std::sync::OnceLock;
-            static GLINER: OnceLock<super::ner::GlinerExtractor> = OnceLock::new();
+            static GLINER: OnceLock<crate::core::ner::GlinerExtractor> = OnceLock::new();
             if GLINER.get().is_none() {
-                let g = super::ner::GlinerExtractor::new().map_err(super::error::RqlError::from)?;
+                let g = crate::core::ner::GlinerExtractor::new().map_err(crate::core::error::RqlError::from)?;
                 let _ = GLINER.set(g);
             }
             let extractor = GLINER.get().expect("just initialised");
@@ -294,7 +294,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
 
             // For pool_b, use FTS search on the predicate to find semantically related facts
             let pool_b_hits = self.graph.fts_search_facts(&fact.predicate, 10, &SearchFilters::new()).await?;
-            let pool_b: Vec<super::schema::Fact> =
+            let pool_b: Vec<crate::core::schema::Fact> =
                 pool_b_hits.into_iter().map(|h| h.item).collect();
 
             // Run contradiction detection
@@ -482,7 +482,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
                 .await?;
 
             let pool_b_hits = self.graph.fts_search_facts(&fact.predicate, 10, &SearchFilters::new()).await?;
-            let pool_b: Vec<super::schema::Fact> =
+            let pool_b: Vec<crate::core::schema::Fact> =
                 pool_b_hits.into_iter().map(|h| h.item).collect();
 
             let contradiction_result = detector.detect(fact, &pool_a, &pool_b, &ref_time).await?;
@@ -569,8 +569,8 @@ impl SimpleGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::intelligence::{ExtractionContext, ExtractionResult};
-    use super::provider::{MockChatProvider, MockEmbeddingProvider};
+    use crate::core::intelligence::{ExtractionContext, ExtractionResult};
+    use crate::core::provider::{MockChatProvider, MockEmbeddingProvider};
     use std::collections::HashMap;
 
     /// A FixedExtractor returns a predetermined entity list regardless of input text.
@@ -584,7 +584,7 @@ mod tests {
             &'a self,
             _text: &'a str,
             _ctx: &'a ExtractionContext<'a>,
-        ) -> super::error::Result<ExtractionResult> {
+        ) -> crate::core::error::Result<ExtractionResult> {
             Ok(ExtractionResult {
                 entities: self.entities.clone(),
                 facts: vec![],
@@ -689,7 +689,7 @@ mod tests {
     #[tokio::test]
     async fn test_ingest_creates_entities_and_facts() {
         let rql = make_rql_with_mock().await;
-        let extractor = super::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
+        let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
             .ingest_with(&extractor, "Alice works at Acme", None, None, None)
             .await
@@ -719,7 +719,7 @@ mod tests {
     #[tokio::test]
     async fn test_ingest_creates_episodic_edges() {
         let rql = make_rql_with_mock().await;
-        let extractor = super::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
+        let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
             .ingest_with(&extractor, "Alice works at Acme", None, None, None)
             .await
@@ -748,7 +748,7 @@ mod tests {
     #[tokio::test]
     async fn test_ingest_returns_result_with_correct_counts() {
         let rql = make_rql_with_mock().await;
-        let extractor = super::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
+        let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
             .ingest_with(&extractor, "Alice works at Acme", None, None, None)
             .await

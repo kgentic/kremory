@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use super::config::{EntropyConfig, MinHashConfig};
-use super::error::Result;
-use super::intelligence::{EntityResolver, ExtractedEntity, ResolutionResult};
-use super::provider::{chat_msg_system, chat_msg_user, ChatProvider};
-use super::schema::Entity;
+use crate::core::config::{EntropyConfig, MinHashConfig};
+use crate::core::error::Result;
+use crate::core::intelligence::{EntityResolver, ExtractedEntity, ResolutionResult};
+use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
+use crate::core::schema::Entity;
 
 // ---------------------------------------------------------------------------
 // Part 1: Name Normalization
@@ -264,7 +264,7 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
             .llm
             .chat_with_tools(&resolution_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         let response_text = response.text().unwrap_or_default();
 
         match response_text.trim().trim_matches('"') {
@@ -282,10 +282,10 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::config::{EntropyConfig, MinHashConfig};
-    use super::intelligence::ExtractedEntity;
-    use super::provider::MockChatProvider;
-    use super::schema::Entity;
+    use crate::core::config::{EntropyConfig, MinHashConfig};
+    use crate::core::intelligence::ExtractedEntity;
+    use crate::core::provider::MockChatProvider;
+    use crate::core::schema::Entity;
     use chrono::Utc;
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {

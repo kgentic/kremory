@@ -1,8 +1,8 @@
-use super::error::Result;
-use super::ingest::RqlGraph;
-use super::provider::{ChatProvider, EmbeddingProvider};
-use super::schema::{Entity, Fact};
-use super::search::SearchFilters;
+use crate::core::error::Result;
+use crate::core::ingest::RqlGraph;
+use crate::core::provider::{ChatProvider, EmbeddingProvider};
+use crate::core::schema::{Entity, Fact};
+use crate::core::search::SearchFilters;
 
 /// Result of a contextualize() call: entities + facts from search + 1-hop expansion.
 #[derive(Debug)]
@@ -83,7 +83,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
 
 #[cfg(test)]
 mod tests {
-    use super::ingest::SimpleGraph;
+    use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
 
     /// Build a SimpleGraph and insert some test entities and facts directly.

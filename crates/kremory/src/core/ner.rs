@@ -25,7 +25,7 @@
 
 #[cfg(feature = "ner")]
 mod inner {
-    use super::intelligence::{
+    use crate::core::intelligence::{
         EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult,
     };
     use anyhow::Context as _;
@@ -625,12 +625,12 @@ mod inner {
             &'a self,
             text: &'a str,
             ctx: &'a ExtractionContext<'a>,
-        ) -> super::error::Result<ExtractionResult> {
+        ) -> crate::core::error::Result<ExtractionResult> {
             let start = std::time::Instant::now();
 
             // Consumer must provide entity types — GLiNER is closed-vocabulary.
             if ctx.allowed_entity_types.is_empty() {
-                return Err(super::error::RqlError::Config(
+                return Err(crate::core::error::RqlError::Config(
                     "GlinerExtractor requires allowed_entity_types — \
                      the model cannot run open-ended. Set PipelineConfig::allowed_entity_types \
                      with domain-specific entity labels."
@@ -681,7 +681,7 @@ pub use inner::GlinerExtractor;
 mod tests {
     use super::inner::{decode_logits, generate_spans, reconstruct_text, sigmoid};
     use super::GlinerExtractor;
-    use super::intelligence::{EntityExtractor, ExtractionContext};
+    use crate::core::intelligence::{EntityExtractor, ExtractionContext};
 
     // -----------------------------------------------------------------------
     // sigmoid

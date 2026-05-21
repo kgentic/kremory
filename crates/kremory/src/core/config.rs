@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::error::{Result, RqlError};
+use crate::core::error::{Result, RqlError};
 
 /// The content type of a document being ingested into the pipeline.
 #[derive(Debug, Clone, PartialEq)]

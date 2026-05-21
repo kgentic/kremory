@@ -3,8 +3,8 @@ use metrics::histogram;
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
-use super::error::Result;
-use super::schema::{Entity, EpisodicEdge, Fact, TemporalGraph};
+use crate::core::error::Result;
+use crate::core::schema::{Entity, EpisodicEdge, Fact, TemporalGraph};
 
 #[derive(Debug, Clone)]
 pub struct SubGraph {
@@ -385,7 +385,7 @@ impl TemporalGraph {
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
         let row = rows.next().await?.ok_or_else(|| {
-            super::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_fact"))
+            crate::core::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_fact"))
         })?;
         let fact_id = row.get::<i64>(0)?;
         if let Some(ov) = object_value {
@@ -627,7 +627,7 @@ impl TemporalGraph {
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
         let row = rows.next().await?.ok_or_else(|| {
-            super::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_episode"))
+            crate::core::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_episode"))
         })?;
         let episode_id = row.get::<i64>(0)?;
         histogram!("rql.db.insert_episode_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
@@ -729,7 +729,7 @@ impl TemporalGraph {
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
         let row = rows.next().await?.ok_or_else(|| {
-            super::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_fact_with_group"))
+            crate::core::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_fact_with_group"))
         })?;
         let fact_id = row.get::<i64>(0)?;
         if let Some(ov) = object_value {
@@ -769,7 +769,7 @@ impl TemporalGraph {
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
         let row = rows.next().await?.ok_or_else(|| {
-            super::error::RqlError::Other(anyhow::anyhow!(
+            crate::core::error::RqlError::Other(anyhow::anyhow!(
                 "no rowid after insert_episode_with_group"
             ))
         })?;
@@ -917,7 +917,7 @@ impl TemporalGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::schema::TemporalGraph;
+    use crate::core::schema::TemporalGraph;
     use chrono::Duration;
 
     // === Entity CRUD ===

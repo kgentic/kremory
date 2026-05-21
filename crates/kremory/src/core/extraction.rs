@@ -4,13 +4,13 @@ use std::time::Instant;
 use metrics::{counter, histogram};
 use serde::Deserialize;
 
-use super::error::Result;
+use crate::core::error::Result;
 
-use super::config::ContentType;
-use super::intelligence::{
+use crate::core::config::ContentType;
+use crate::core::intelligence::{
     EntityExtractor, ExtractedEntity, ExtractedFact, ExtractionContext, ExtractionResult,
 };
-use super::provider::{chat_msg_system, chat_msg_user, ChatProvider};
+use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
 
 // ─── Serde models for LLM JSON output coercion ──────────────────────────────
 
@@ -132,7 +132,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage1_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "entities")
             .record(stage1_start.elapsed().as_secs_f64() * 1000.0);
         let stage1_text = stage1_resp.text().unwrap_or_default();
@@ -154,7 +154,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage2_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "relations")
             .record(stage2_start.elapsed().as_secs_f64() * 1000.0);
         let stage2_text = stage2_resp.text().unwrap_or_default();
@@ -171,7 +171,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage3_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "triplets")
             .record(stage3_start.elapsed().as_secs_f64() * 1000.0);
         let stage3_text = stage3_resp.text().unwrap_or_default();
@@ -234,7 +234,7 @@ impl<L: ChatProvider> EntityExtractor for NuExtractExtractor<L> {
             .llm
             .chat_with_tools(&nuextract_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "nuextract")
             .record(start.elapsed().as_secs_f64() * 1000.0);
         let resp_text = resp.text().unwrap_or_default();
@@ -290,7 +290,7 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             .llm
             .chat_with_tools(&pass1_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "grounded_entities")
             .record(start.elapsed().as_secs_f64() * 1000.0);
         let pass1_text = pass1_resp.text().unwrap_or_default();
@@ -317,7 +317,7 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             .llm
             .chat_with_tools(&pass2_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "grounded_relationships")
             .record(start2.elapsed().as_secs_f64() * 1000.0);
         let pass2_text = pass2_resp.text().unwrap_or_default();
@@ -389,7 +389,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             .llm
             .chat_with_tools(&graphiti_s1_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "graphiti_entities")
             .record(stage1_start.elapsed().as_secs_f64() * 1000.0);
         let stage1_text = stage1_resp.text().unwrap_or_default();
@@ -417,7 +417,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             .llm
             .chat_with_tools(&graphiti_s2_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "graphiti_relationships")
             .record(stage2_start.elapsed().as_secs_f64() * 1000.0);
         let stage2_text = stage2_resp.text().unwrap_or_default();
@@ -1114,7 +1114,7 @@ impl<L: ChatProvider> EntityExtractor for SingleCallExtractor<L> {
             .llm
             .chat_with_tools(&sc_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "single_call")
             .record(start.elapsed().as_secs_f64() * 1000.0);
         let resp_text = resp.text().unwrap_or_default();
@@ -1159,7 +1159,7 @@ struct RelOnlyOutput {
 /// Replaces the old "LLM discovers everything, OOV audits after" pattern.
 pub struct ProgrammaticFirstExtractor<L: ChatProvider> {
     llm: Arc<L>,
-    auditor: Arc<super::text_utils::OovAuditor>,
+    auditor: Arc<crate::core::text_utils::OovAuditor>,
     max_candidates: usize,
 }
 
@@ -1168,7 +1168,7 @@ const PROG_ENTITY_TYPES: &str = "Person, Organisation, Location, Technology, Pro
 impl<L: ChatProvider> ProgrammaticFirstExtractor<L> {
     pub fn new(
         llm: Arc<L>,
-        auditor: Arc<super::text_utils::OovAuditor>,
+        auditor: Arc<crate::core::text_utils::OovAuditor>,
         max_candidates: usize,
     ) -> Self {
         Self {
@@ -1270,7 +1270,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .llm
             .chat_with_tools(&typing_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "entity_typing")
             .record(typing_start.elapsed().as_secs_f64() * 1000.0);
         let typing_text = typing_resp.text().unwrap_or_default();
@@ -1304,7 +1304,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .llm
             .chat_with_tools(&rel_msgs, None, None)
             .await
-            .map_err(|e| super::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
         histogram!("rql.extraction.stage_ms", "stage" => "relationships")
             .record(rel_start.elapsed().as_secs_f64() * 1000.0);
         let rel_text = rel_resp.text().unwrap_or_default();
@@ -1361,8 +1361,8 @@ fn parse_json_lenient<T: for<'de> serde::Deserialize<'de> + Default>(raw: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::intelligence::ExtractionContext;
-    use super::provider::MockChatProvider;
+    use crate::core::intelligence::ExtractionContext;
+    use crate::core::provider::MockChatProvider;
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     use std::collections::HashMap;
 
@@ -1755,7 +1755,7 @@ mod tests {
 
     // ─── ProgrammaticFirstExtractor tests ────────────────────────────────────
 
-    fn load_test_auditor() -> super::text_utils::OovAuditor {
+    fn load_test_auditor() -> crate::core::text_utils::OovAuditor {
         let aff = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/fixtures/dictionaries/en_US.aff"
@@ -1776,7 +1776,7 @@ mod tests {
                 .into_iter()
                 .map(|s| s.to_string())
                 .collect();
-        super::text_utils::OovAuditor::new(dict, stops)
+        crate::core::text_utils::OovAuditor::new(dict, stops)
     }
 
     #[test]
