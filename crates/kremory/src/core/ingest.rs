@@ -6,7 +6,7 @@ use metrics::histogram;
 
 use chrono::{DateTime, Utc};
 
-use crate::core::chunker::Chunker;
+use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::config::{ContentType, PipelineConfig};
 use crate::core::contradiction::TwoPoolDetector;
 use crate::core::error::Result;
@@ -165,11 +165,14 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
             .insert_episode(text, ref_time, Some("ingest"), None)
             .await?;
 
-        // 2. Chunk
-        let chunker = Chunker::new(self.config.chunk.clone());
-        let chunks = chunker.split(text, &content_type);
+        // 2. Slice into LLM-extraction-prompt windows (no-op for normally-sized episodes;
+        //    see core/extraction_window.rs module docstring for kind-2 semantics).
+        let splitter = ExtractionWindowSplitter::new(self.config.extraction_window.clone());
+        let chunks = splitter.split(text, &content_type);
 
-        histogram!("rql.ingest.chunk_count").record(chunks.len() as f64);
+        let chunk_count = chunks.len();
+        histogram!("rql.ingest.chunk_count").record(chunk_count as f64);
+        tracing::info!(chunk_count, "kremory.ingest.chunked");
 
         // 3. Extract from all chunks, merge results.
         // known_entities grows with each iteration so subsequent chunks receive
@@ -367,11 +370,24 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
             }
         }
 
-        histogram!("rql.ingest.total_ms").record(ingest_start.elapsed().as_secs_f64() * 1000.0);
-        histogram!("rql.ingest.entity_count").record(upserted_entities.len() as f64);
-        histogram!("rql.ingest.fact_count").record(inserted_fact_ids.len() as f64);
-        histogram!("rql.ingest.merge_count").record(merged_entities.len() as f64);
-        histogram!("rql.ingest.contradiction_count").record(invalidated_fact_ids.len() as f64);
+        let total_ms = ingest_start.elapsed().as_secs_f64() * 1000.0;
+        let entity_count = upserted_entities.len();
+        let fact_count = inserted_fact_ids.len();
+        let merge_count = merged_entities.len();
+        let contradiction_count = invalidated_fact_ids.len();
+        histogram!("rql.ingest.total_ms").record(total_ms);
+        histogram!("rql.ingest.entity_count").record(entity_count as f64);
+        histogram!("rql.ingest.fact_count").record(fact_count as f64);
+        histogram!("rql.ingest.merge_count").record(merge_count as f64);
+        histogram!("rql.ingest.contradiction_count").record(contradiction_count as f64);
+        tracing::info!(
+            total_ms,
+            entity_count,
+            fact_count,
+            merge_count,
+            contradiction_count,
+            "kremory.ingest.completed"
+        );
 
         Ok(IngestionResult {
             episode_id,
@@ -418,8 +434,8 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
 
         // Run LLM extractor to obtain relationship triplets.
         let extractor = NuExtractExtractor::new(Arc::clone(&self.llm));
-        let chunker = Chunker::new(self.config.chunk.clone());
-        let chunks = chunker.split(text, &content_type);
+        let splitter = ExtractionWindowSplitter::new(self.config.extraction_window.clone());
+        let chunks = splitter.split(text, &content_type);
 
         let mut all_facts: Vec<ExtractedFact> = Vec::new();
         for chunk in &chunks {
@@ -436,6 +452,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
 
         if all_facts.is_empty() {
             histogram!("rql.ingest.deferred_fact_count").record(0.0);
+            tracing::info!(
+                deferred_fact_count = 0,
+                "kremory.ingest.deferred_facts empty"
+            );
             return Ok(0);
         }
 
@@ -550,6 +570,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
         }
 
         histogram!("rql.ingest.deferred_fact_count").record(inserted_count as f64);
+        tracing::info!(inserted_count, "kremory.ingest.deferred_facts inserted");
         Ok(inserted_count)
     }
 }

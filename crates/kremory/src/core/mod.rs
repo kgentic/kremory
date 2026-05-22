@@ -11,11 +11,13 @@
 //! `core` consumes the `ChatProvider` trait from `autoagents-llm` ONLY — never
 //! the concrete `autoagents-llamacpp` impl. Consumers wire their own backend.
 
+pub mod arena;
 pub mod background;
-pub mod chunker;
+pub mod extraction_window;
 pub mod config;
 pub mod context;
 pub mod contradiction;
+pub mod embedding;
 pub mod error;
 pub mod extraction;
 pub mod graph;
