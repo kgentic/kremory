@@ -17,9 +17,14 @@ pub enum ContentType {
     Document,
 }
 
-/// Chunking parameters that control how documents are split before embedding.
+/// LLM-extraction-prompt-window parameters.
+///
+/// **This is kind-2 chunking only** — slices an oversized episode body into prompt-sized
+/// windows so the extractor LLM can read it within its context budget. Slices are throwaway
+/// and never enter storage/embedding. See `core/extraction_window.rs` module docstring and
+/// ADR-Phase-D.0:88 for the kind-1 vs kind-2 distinction.
 #[derive(Debug, Clone)]
-pub struct ChunkConfig {
+pub struct ExtractionWindowConfig {
     /// Default: 100 words. Shorter text rarely benefits from splitting; below
     /// this the overhead of extra chunks exceeds the gain.  Graphiti ratio:
     /// min/max ≈ 33%.
@@ -45,7 +50,7 @@ pub struct ChunkConfig {
     pub overlap_tokens: usize,
 }
 
-impl ChunkConfig {
+impl ExtractionWindowConfig {
     /// Build from environment variables, falling back to sensible defaults.
     ///
     /// | Env var | Default | Rationale |
@@ -64,7 +69,7 @@ impl ChunkConfig {
     }
 }
 
-impl Default for ChunkConfig {
+impl Default for ExtractionWindowConfig {
     fn default() -> Self {
         Self {
             min_tokens: 100,
@@ -206,8 +211,8 @@ impl Default for EmbeddingDim {
 pub struct PipelineConfig {
     /// Dimensionality of embedding vectors produced by the model.
     pub embedding_dim: EmbeddingDim,
-    /// Chunking / splitting parameters.
-    pub chunk: ChunkConfig,
+    /// LLM-extraction-prompt-window splitting parameters (kind-2 chunking).
+    pub extraction_window: ExtractionWindowConfig,
     /// MinHash LSH parameters for near-duplicate detection.
     pub minhash: MinHashConfig,
     /// Entropy pre-filter parameters.
@@ -234,7 +239,7 @@ impl PipelineConfig {
         PipelineConfigBuilder {
             inner: PipelineConfig {
                 embedding_dim: EmbeddingDim::default(),
-                chunk: ChunkConfig::default(),
+                extraction_window: ExtractionWindowConfig::default(),
                 minhash: MinHashConfig::default(),
                 entropy: EntropyConfig::default(),
                 search: SearchConfig::default(),
@@ -261,25 +266,25 @@ impl PipelineConfigBuilder {
         self
     }
 
-    // ── ChunkConfig ──────────────────────────────────────────────────────────
+    // ── ExtractionWindowConfig ───────────────────────────────────────────────
 
     pub fn min_tokens(mut self, v: usize) -> Self {
-        self.inner.chunk.min_tokens = v;
+        self.inner.extraction_window.min_tokens = v;
         self
     }
 
     pub fn density_threshold(mut self, v: f64) -> Self {
-        self.inner.chunk.density_threshold = v;
+        self.inner.extraction_window.density_threshold = v;
         self
     }
 
     pub fn max_tokens(mut self, v: usize) -> Self {
-        self.inner.chunk.max_tokens = v;
+        self.inner.extraction_window.max_tokens = v;
         self
     }
 
     pub fn overlap_tokens(mut self, v: usize) -> Self {
-        self.inner.chunk.overlap_tokens = v;
+        self.inner.extraction_window.overlap_tokens = v;
         self
     }
 
@@ -411,18 +416,18 @@ impl PipelineConfigBuilder {
             ));
         }
 
-        if c.chunk.min_tokens == 0 {
+        if c.extraction_window.min_tokens == 0 {
             return Err(RqlError::Config("min_tokens must be greater than 0".into()));
         }
 
-        if c.chunk.max_tokens < c.chunk.min_tokens {
+        if c.extraction_window.max_tokens < c.extraction_window.min_tokens {
             return Err(RqlError::Config(format!(
                 "max_tokens ({}) must be >= min_tokens ({})",
-                c.chunk.max_tokens, c.chunk.min_tokens
+                c.extraction_window.max_tokens, c.extraction_window.min_tokens
             )));
         }
 
-        let dt = c.chunk.density_threshold;
+        let dt = c.extraction_window.density_threshold;
         if dt <= 0.0 || dt > 1.0 {
             return Err(RqlError::Config(format!(
                 "density_threshold must be in (0.0, 1.0], got {}",
@@ -542,9 +547,9 @@ mod tests {
             .expect("custom config should build");
 
         assert_eq!(cfg.embedding_dim, EmbeddingDim(768));
-        assert_eq!(cfg.chunk.min_tokens, 200);
-        assert_eq!(cfg.chunk.max_tokens, 600);
-        assert!((cfg.chunk.density_threshold - 0.2).abs() < 1e-12);
+        assert_eq!(cfg.extraction_window.min_tokens, 200);
+        assert_eq!(cfg.extraction_window.max_tokens, 600);
+        assert!((cfg.extraction_window.density_threshold - 0.2).abs() < 1e-12);
         assert_eq!(cfg.minhash.num_permutations, 64);
         assert_eq!(cfg.minhash.shingle_size, 4);
         assert_eq!(cfg.minhash.band_size, 8);
@@ -567,9 +572,9 @@ mod tests {
             .expect("default config should build");
 
         assert_eq!(cfg.embedding_dim, EmbeddingDim(384));
-        assert_eq!(cfg.chunk.min_tokens, 100);
-        assert!((cfg.chunk.density_threshold - 0.15).abs() < 1e-12);
-        assert_eq!(cfg.chunk.max_tokens, 300);
+        assert_eq!(cfg.extraction_window.min_tokens, 100);
+        assert!((cfg.extraction_window.density_threshold - 0.15).abs() < 1e-12);
+        assert_eq!(cfg.extraction_window.max_tokens, 300);
         assert_eq!(cfg.minhash.num_permutations, 32);
         assert_eq!(cfg.minhash.shingle_size, 3);
         assert_eq!(cfg.minhash.band_size, 4);
@@ -607,4 +612,37 @@ mod tests {
         assert!(!cfg.allowed_entity_types.contains(&"StopWord".to_string()));
         assert!(cfg.excluded_entity_types.contains(&"StopWord".to_string()));
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RqlcConfig — core-layer telemetry prefix config (ADR D15)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Core-layer (rqlc) telemetry configuration.
+///
+/// Controls the `metrics_prefix` and `span_prefix` namespace so callers can
+/// co-deploy multiple kremory instances without metric label collision (ADR D15).
+///
+/// Default prefixes match the canonical names in `monitoring/kremory-memory-slos.toml`.
+/// Override only when running multiple kremory deployments in the same Prometheus
+/// namespace (e.g. staging vs prod scraping into one cluster).
+///
+/// # Cardinality note (ADR D7)
+///
+/// Prefixes are `Option<String>` set once at startup — not per-request strings.
+/// The prefix is prepended to the base metric name at registration time, not at
+/// emit time, so there is no per-call allocation overhead.
+#[derive(Debug, Clone, Default)]
+pub struct RqlcConfig {
+    /// Optional prefix prepended to all `metrics::counter!/histogram!/gauge!` names.
+    ///
+    /// Example: `Some("kremory_prod".to_string())` → `kremory_prod_core_tokens_total`.
+    /// `None` (default) uses the canonical `kremory_core_*` namespace.
+    pub metrics_prefix: Option<String>,
+
+    /// Optional prefix prepended to all `tracing::info!/warn!/error!` span names.
+    ///
+    /// Example: `Some("prod".to_string())` → `prod.kremory.embed completed`.
+    /// `None` (default) uses the canonical `kremory.*` span namespace.
+    pub span_prefix: Option<String>,
 }
