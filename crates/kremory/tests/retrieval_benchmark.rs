@@ -506,9 +506,11 @@ async fn test_fts_fact_retrieval() {
 
 #[tokio::test]
 async fn test_contextualize_one_hop_expansion() {
-    let graph = TemporalGraph::open_in_memory()
-        .await
-        .expect("failed to open in-memory graph");
+    let graph = Arc::new(
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("failed to open in-memory graph"),
+    );
 
     let now = Utc::now();
 

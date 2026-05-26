@@ -173,9 +173,11 @@ async fn background_ingestor_contradiction_round_trip() {
     let recorder = DebuggingRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    let temporal = TemporalGraph::open_in_memory()
-        .await
-        .expect("open_in_memory failed");
+    let temporal = Arc::new(
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory failed"),
+    );
 
     let config = PipelineConfig::builder()
         .build()
@@ -247,9 +249,11 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     let recorder = DebuggingRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    let temporal = TemporalGraph::open_in_memory()
-        .await
-        .expect("open_in_memory failed");
+    let temporal = Arc::new(
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory failed"),
+    );
 
     let config = PipelineConfig::builder()
         .build()
@@ -384,9 +388,11 @@ async fn deferred_extraction_invoked_after_successful_ner() {
     let recorder = DebuggingRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    let temporal = TemporalGraph::open_in_memory()
-        .await
-        .expect("open_in_memory failed");
+    let temporal = Arc::new(
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory failed"),
+    );
 
     let config = PipelineConfig::builder()
         .build()
@@ -475,9 +481,11 @@ async fn background_ingestor_drains_without_errors() {
     let recorder = DebuggingRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    let temporal = TemporalGraph::open_in_memory()
-        .await
-        .expect("open_in_memory failed");
+    let temporal = Arc::new(
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory failed"),
+    );
 
     let config = PipelineConfig::builder()
         .build()
