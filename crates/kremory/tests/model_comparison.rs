@@ -33,7 +33,7 @@ mod model_comparison_tests {
     use kremory::core::extraction::{
         DefaultExtractor, GroundedNuExtractExtractor, NuExtractExtractor,
     };
-    use kremory::core::ingest::RqlGraph;
+    use kremory::core::ingest::Engine;
     use kremory::core::provider::NullEmbeddingProvider;
     use kremory::core::schema::TemporalGraph;
 
@@ -364,7 +364,7 @@ mod model_comparison_tests {
         let graph = TemporalGraph::open_in_memory()
             .await
             .expect("failed to open graph");
-        let rql = RqlGraph::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
         let extractor = NuExtractExtractor::new(llm);
 
         let start = Instant::now();
@@ -411,7 +411,7 @@ mod model_comparison_tests {
         let graph = TemporalGraph::open_in_memory()
             .await
             .expect("failed to open graph");
-        let rql = RqlGraph::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
         let extractor = DefaultExtractor::new(llm);
 
         let start = Instant::now();
@@ -458,7 +458,7 @@ mod model_comparison_tests {
         let graph = TemporalGraph::open_in_memory()
             .await
             .expect("failed to open graph");
-        let rql = RqlGraph::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
         let extractor = DefaultExtractor::new(llm);
 
         let start = Instant::now();
@@ -505,7 +505,7 @@ mod model_comparison_tests {
         let graph = TemporalGraph::open_in_memory()
             .await
             .expect("failed to open graph");
-        let rql = RqlGraph::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
         let extractor = GroundedNuExtractExtractor::new(llm);
 
         let start = Instant::now();

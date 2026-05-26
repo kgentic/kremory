@@ -27,7 +27,7 @@ mod domain_tests {
     use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::config::{ContentType, PipelineConfig};
     use kremory::core::extraction::NuExtractExtractor;
-    use kremory::core::ingest::RqlGraph;
+    use kremory::core::ingest::Engine;
     use kremory::core::provider::NullEmbeddingProvider;
     use kremory::core::schema::TemporalGraph;
 
@@ -284,7 +284,7 @@ mod domain_tests {
         let graph = TemporalGraph::open_in_memory()
             .await
             .expect("failed to open graph");
-        let rql = RqlGraph::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
         let extractor = NuExtractExtractor::new(llm);
 
         let start = Instant::now();

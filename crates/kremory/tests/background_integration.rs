@@ -24,7 +24,7 @@ use chrono::Utc;
 use kremory::core::background::{BackgroundIngestor, IngestorConfig};
 use kremory::core::config::PipelineConfig;
 use kremory::core::extraction::NuExtractExtractor;
-use kremory::core::ingest::RqlGraph;
+use kremory::core::ingest::Engine;
 use kremory::core::provider::{
     ChatMessage, ChatProvider, ChatResponse, EmbeddingProvider, LLMError, MockChatResponse,
     MockEmbeddingProvider, StructuredOutputFormat, Tool,
@@ -185,7 +185,7 @@ async fn background_ingestor_contradiction_round_trip() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = RqlGraph::new(temporal, llm, embedder, config);
+    let graph = Engine::new(temporal, llm, embedder, config);
 
     // Ingestor config: tiny channel — only 2 slots needed
     let ingestor_config = IngestorConfig {
@@ -234,12 +234,12 @@ async fn background_ingestor_contradiction_round_trip() {
     //   2. The worker thread exiting without panic (guard.shutdown() succeeds)
     //
     // To assert on graph state we use a second test (below) that calls
-    // RqlGraph::ingest() directly — this is the pattern used in ingest.rs tests.
+    // Engine::ingest() directly — this is the pattern used in ingest.rs tests.
     // That test is the source of truth for contradiction semantics; this test
     // proves the BackgroundIngestor plumbing works end-to-end.
 }
 
-/// Prove the contradiction round-trip on RqlGraph directly (same logic as the
+/// Prove the contradiction round-trip on Engine directly (same logic as the
 /// background worker executes).  This verifies that after two ingestions with
 /// a conflicting fact, Fact#1 has invalid_at set and Fact#2 does not.
 #[tokio::test]
@@ -259,7 +259,7 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = RqlGraph::new(temporal, Arc::clone(&llm), embedder, config);
+    let graph = Engine::new(temporal, Arc::clone(&llm), embedder, config);
 
     // Use NuExtractExtractor explicitly so the scripted LLM responses are consumed
     // regardless of whether the `ner` feature is enabled (which would otherwise
@@ -425,7 +425,7 @@ async fn deferred_extraction_invoked_after_successful_ner() {
     let queue_handle = Arc::clone(&scripted_llm.queue);
 
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
-    let graph = RqlGraph::new(temporal, Arc::new(scripted_llm), embedder, config);
+    let graph = Engine::new(temporal, Arc::new(scripted_llm), embedder, config);
 
     let ingestor_config = IngestorConfig {
         deferred_extraction_enabled: true,
@@ -487,7 +487,7 @@ async fn background_ingestor_drains_without_errors() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = RqlGraph::new(temporal, llm, embedder, config);
+    let graph = Engine::new(temporal, llm, embedder, config);
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 
     ingestor

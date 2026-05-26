@@ -17,7 +17,7 @@ pub mod core;
 pub mod memory;
 
 // Convenience re-exports from core
-pub use core::error::{Result as CoreResult, RqlError};
+pub use core::error::{Error as CoreError, Result as CoreResult};
 pub use core::{
     BackgroundIngestor, IngestError, IngestErrorKind, IngestGuard, IngestSendError, IngestorConfig,
 };
@@ -26,13 +26,13 @@ pub use core::{
 pub use memory::init_telemetry;
 pub use memory::ChatProvider;
 pub use memory::{
-    ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, Result as MemoryResult,
-    RetrievedContext, RqlmError, RqlmTelemetryConfig, SearchOpts, SourceKind, SourceRef,
-    StructuredFact, TelemetryHandle, WorkspaceScope,
+    ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, MemoryError,
+    Result as MemoryResult, RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact,
+    TelemetryConfig, TelemetryHandle, WorkspaceScope,
 };
 
 // Convenience re-exports from core::config (ADR D15)
-pub use core::config::RqlcConfig;
+pub use core::config::Config as CoreConfig;
 
 // Embedding observability wrapper (ADR D10)
 pub use core::embedding::TokenTrackingEmbedder;

@@ -397,12 +397,12 @@ impl TemporalGraph {
             )
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
-        let row =
-            rows.next()
-                .await?
-                .ok_or(crate::core::error::RqlError::InsertReturnedNoRowId {
-                    operation: "insert_fact",
-                })?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or(crate::core::error::Error::InsertReturnedNoRowId {
+                operation: "insert_fact",
+            })?;
         let fact_id = row.get::<i64>(0)?;
         if let Some(ov) = object_value {
             self.conn
@@ -658,12 +658,12 @@ impl TemporalGraph {
             )
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
-        let row =
-            rows.next()
-                .await?
-                .ok_or(crate::core::error::RqlError::InsertReturnedNoRowId {
-                    operation: "insert_episode",
-                })?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or(crate::core::error::Error::InsertReturnedNoRowId {
+                operation: "insert_episode",
+            })?;
         let episode_id = row.get::<i64>(0)?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.db.insert_episode_ms").record(_ms);
@@ -766,12 +766,12 @@ impl TemporalGraph {
             )
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
-        let row =
-            rows.next()
-                .await?
-                .ok_or(crate::core::error::RqlError::InsertReturnedNoRowId {
-                    operation: "insert_fact_with_group",
-                })?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or(crate::core::error::Error::InsertReturnedNoRowId {
+                operation: "insert_fact_with_group",
+            })?;
         let fact_id = row.get::<i64>(0)?;
         if let Some(ov) = object_value {
             self.conn
@@ -810,12 +810,12 @@ impl TemporalGraph {
             )
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
-        let row =
-            rows.next()
-                .await?
-                .ok_or(crate::core::error::RqlError::InsertReturnedNoRowId {
-                    operation: "insert_episode_with_group",
-                })?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or(crate::core::error::Error::InsertReturnedNoRowId {
+                operation: "insert_episode_with_group",
+            })?;
         let episode_id = row.get::<i64>(0)?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.db.insert_episode_with_group_ms").record(_ms);
