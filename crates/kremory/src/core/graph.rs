@@ -1031,7 +1031,9 @@ impl TemporalGraph {
     /// be identified via this function and re-embedded by the caller. The reverse
     /// ordering (vector-first) has NO recovery path — this is the entire
     /// justification for the SQLite-first contract.
-    pub async fn facts_missing_embeddings(&self) -> Result<Vec<(i64, String, String, Option<String>)>> {
+    pub async fn facts_missing_embeddings(
+        &self,
+    ) -> Result<Vec<(i64, String, String, Option<String>)>> {
         let mut rows = self
             .conn
             .query(
@@ -1886,7 +1888,9 @@ mod tests {
 
         // Backfill with a stub embedding
         let embedding: Vec<f32> = vec![0.1_f32; 384];
-        g.backfill_fact_embedding(fact_id, &embedding).await.unwrap();
+        g.backfill_fact_embedding(fact_id, &embedding)
+            .await
+            .unwrap();
 
         // After backfill, no facts should be missing
         let still_missing = g.facts_missing_embeddings().await.unwrap();
@@ -1909,8 +1913,12 @@ mod tests {
             .unwrap();
         let embedding: Vec<f32> = vec![0.2_f32; 384];
         // First backfill
-        g.backfill_fact_embedding(fact_id, &embedding).await.unwrap();
+        g.backfill_fact_embedding(fact_id, &embedding)
+            .await
+            .unwrap();
         // Second backfill on same fact must not error
-        g.backfill_fact_embedding(fact_id, &embedding).await.unwrap();
+        g.backfill_fact_embedding(fact_id, &embedding)
+            .await
+            .unwrap();
     }
 }
