@@ -26,6 +26,9 @@ pub struct Entity {
     pub recorded_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
+    /// Number of times this entity was retrieved by a search query (Story #247).
+    /// Column lives on `rql_entities`; incremented atomically by search paths.
+    pub access_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +57,10 @@ pub struct Fact {
     /// SHA-256 content hash for dedup (Story #209). Absent on legacy rows.
     pub content_hash: Option<String>,
     /// Number of times this fact was retrieved (Story #247).
+    /// DEPRECATED: active access tracking moved to `Entity.access_count` on
+    /// `rql_entities`. This field remains for backward compat (libsql does not
+    /// support DROP COLUMN on older SQLite builds). Value is always 0 going
+    /// forward; do not write to `facts.access_count` in new code.
     pub access_count: i64,
 }
 
@@ -333,7 +340,8 @@ impl TemporalGraph {
                     embedding F32_BLOB(384),
                     recorded_at TEXT NOT NULL,
                     updated_at TEXT,
-                    group_id TEXT
+                    group_id TEXT,
+                    access_count INTEGER NOT NULL DEFAULT 0
                 )",
                 (),
             )
@@ -347,6 +355,18 @@ impl TemporalGraph {
             .conn
             .execute(
                 "CREATE INDEX IF NOT EXISTS idx_rql_entities_group ON rql_entities(group_id)",
+                (),
+            )
+            .await;
+        // Story #247 migration: add access_count column to existing rql_entities tables
+        // created before this column was added to the DDL. Idempotent — ALTER TABLE ADD
+        // COLUMN is a no-op when the column already exists in libsql (SQLite 3.37+).
+        // Errors are swallowed: duplicate-column errors are expected on fresh DBs where
+        // the CREATE TABLE IF NOT EXISTS already includes the column.
+        let _ = self
+            .conn
+            .execute(
+                "ALTER TABLE rql_entities ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
                 (),
             )
             .await;
