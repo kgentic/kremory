@@ -32,8 +32,12 @@ pub enum EntityOrEdgeRef {
 ///
 /// Per ADR §4.8 — carries just enough context for sink subscribers to
 /// understand what changed, without requiring a full database row read.
+///
+/// Named `SinkFact` to disambiguate from `core::schema::Fact` (the
+/// bi-temporal graph-storage struct). Wildcard imports of both modules
+/// previously collided.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Fact {
+pub struct SinkFact {
     pub subject: String,
     pub predicate: String,
     pub object: String,
@@ -48,8 +52,8 @@ pub struct Fact {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContradictionDetected {
     pub entity_id: EntityId,
-    pub prior_fact: Fact,
-    pub new_fact: Fact,
+    pub prior_fact: SinkFact,
+    pub new_fact: SinkFact,
     pub resolution: ContradictionResolution,
     pub detected_at: DateTime<Utc>,
 }

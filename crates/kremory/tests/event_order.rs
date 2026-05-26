@@ -20,7 +20,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use kremory::core::error::{ContradictionResolution, IngestStatus};
-use kremory::core::sink::{ContradictionDetected, EntityId, Fact, IngestEventSink, IngestionError};
+use kremory::core::sink::{
+    ContradictionDetected, EntityId, IngestEventSink, IngestionError, SinkFact,
+};
 use kremory::memory::{
     events::EnrichmentEventSink,
     submit_episode,
@@ -397,13 +399,13 @@ async fn submit_episode_contradiction_events_reach_sink() {
                     s.on_stage_change(IngestStatus::Extracting);
                     s.on_contradiction(ContradictionDetected {
                         entity_id: EntityId("ent-a".to_string()),
-                        prior_fact: Fact {
+                        prior_fact: SinkFact {
                             subject: "Alice".to_string(),
                             predicate: "works_at".to_string(),
                             object: "OldCo".to_string(),
                             valid_at: None,
                         },
-                        new_fact: Fact {
+                        new_fact: SinkFact {
                             subject: "Alice".to_string(),
                             predicate: "works_at".to_string(),
                             object: "NewCo".to_string(),
