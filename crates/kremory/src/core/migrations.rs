@@ -23,6 +23,18 @@
 //!   `max_age_days`. Used by the host application's startup cleanup to keep the
 //!   backup root bounded.
 //!
+//! ## Idempotency invariant
+//!
+//! Every SQL DDL statement in a `Migration::sql` field MUST use:
+//! - `CREATE TABLE IF NOT EXISTS`
+//! - `CREATE INDEX IF NOT EXISTS`
+//! - `CREATE VIRTUAL TABLE IF NOT EXISTS`
+//!
+//! This guarantees that running `MigrationRunner::run` on an already-applied
+//! migration set (e.g. on reconnect to an existing database) is a no-op with
+//! no errors. The gate `cargo test -p kremory migration_idempotency` verifies
+//! this end-to-end for `TemporalGraph::open_in_memory`.
+//!
 //! ## Failure mode
 //!
 //! `MigrationRunner::run` issues `BEGIN` per migration if the SQL is
