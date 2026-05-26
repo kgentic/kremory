@@ -299,7 +299,7 @@ impl TemporalGraph {
                     label TEXT NOT NULL,
                     properties TEXT,
                     embedding F32_BLOB(384),
-                    created_at TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
                     updated_at TEXT,
                     group_id TEXT
                 )",
@@ -352,7 +352,7 @@ impl TemporalGraph {
                     embedding F32_BLOB(384),
                     valid_from TEXT NOT NULL,
                     valid_to TEXT,
-                    created_at TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
                     expired_at TEXT,
                     invalid_at TEXT,
                     group_id TEXT,
@@ -402,7 +402,7 @@ impl TemporalGraph {
                     episode_id INTEGER NOT NULL,
                     entity_id TEXT NOT NULL,
                     role TEXT NOT NULL DEFAULT 'mentioned',
-                    created_at TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
                     FOREIGN KEY (episode_id) REFERENCES episodes(id),
                     FOREIGN KEY (entity_id) REFERENCES rql_entities(id)
                 )",
@@ -442,5 +442,61 @@ impl TemporalGraph {
             )
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    /// G3 gate: DDL must use `recorded_at` not `created_at`. Story #A1.
+    #[test]
+    fn schema_uses_recorded_at_not_created_at() {
+        // Inline the DDL strings that run_migrations executes and verify
+        // they contain `recorded_at` and NOT `created_at`.
+        let ddl_entities = "CREATE TABLE IF NOT EXISTS rql_entities (
+                    id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    properties TEXT,
+                    embedding F32_BLOB(384),
+                    recorded_at TEXT NOT NULL,
+                    updated_at TEXT,
+                    group_id TEXT
+                )";
+        let ddl_facts = "CREATE TABLE IF NOT EXISTS facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject_id TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object_id TEXT,
+                    object_value TEXT,
+                    properties TEXT,
+                    embedding F32_BLOB(384),
+                    valid_from TEXT NOT NULL,
+                    valid_to TEXT,
+                    recorded_at TEXT NOT NULL,
+                    expired_at TEXT,
+                    invalid_at TEXT,
+                    group_id TEXT,
+                    confidence REAL DEFAULT 1.0
+                )";
+        let ddl_edges = "CREATE TABLE IF NOT EXISTS episodic_edges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    episode_id INTEGER NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'mentioned',
+                    recorded_at TEXT NOT NULL
+                )";
+        for (name, ddl) in [
+            ("rql_entities", ddl_entities),
+            ("facts", ddl_facts),
+            ("episodic_edges", ddl_edges),
+        ] {
+            assert!(
+                ddl.contains("recorded_at"),
+                "DDL for `{name}` must contain `recorded_at`"
+            );
+            assert!(
+                !ddl.contains("created_at"),
+                "DDL for `{name}` must NOT contain `created_at` (G3)"
+            );
+        }
     }
 }

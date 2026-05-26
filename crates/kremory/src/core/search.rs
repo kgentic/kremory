@@ -126,7 +126,7 @@ impl TemporalGraph {
 
         let sql = format!(
             "SELECT f.id, f.subject_id, f.predicate, f.object_id, f.object_value, f.properties,
-                    f.valid_from, f.valid_to, f.created_at, f.expired_at, f.invalid_at, f.group_id,
+                    f.valid_from, f.valid_to, f.recorded_at, f.expired_at, f.invalid_at, f.group_id,
                     f.confidence, f.source_episode_id,
                     fts.rank
              FROM facts_fts AS fts
@@ -211,7 +211,7 @@ impl TemporalGraph {
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
 
         let sql = format!(
-            "SELECT e.id, e.label, e.properties, e.created_at, e.updated_at, e.group_id,
+            "SELECT e.id, e.label, e.properties, e.recorded_at, e.updated_at, e.group_id,
                     vector_distance_cos(e.embedding, vector(?1)) as distance
              FROM vector_top_k('rql_entities_vec_idx', vector(?1), ?2) AS v
              JOIN rql_entities AS e ON e.rowid = v.id
@@ -220,9 +220,10 @@ impl TemporalGraph {
             group_clause
         );
 
+        let clamped = effective_k(limit, usize::MAX);
         let mut params: Vec<libsql::Value> = vec![
             libsql::Value::from(vec_str.to_owned()),
-            libsql::Value::from(limit as i64),
+            libsql::Value::from(clamped as i64),
         ];
         params.extend(group_params);
 
@@ -252,7 +253,7 @@ impl TemporalGraph {
             build_group_id_clause(&filters.group_ids, "rql_entities", 3);
 
         let sql = format!(
-            "SELECT id, label, properties, created_at, updated_at, group_id,
+            "SELECT id, label, properties, recorded_at, updated_at, group_id,
                     vector_distance_cos(embedding, vector(?1)) as distance
              FROM rql_entities
              WHERE embedding IS NOT NULL{}
@@ -370,7 +371,7 @@ impl TemporalGraph {
 
         let sql = format!(
             "SELECT f.id, f.subject_id, f.predicate, f.object_id, f.object_value, f.properties,
-                    f.valid_from, f.valid_to, f.created_at, f.expired_at, f.invalid_at, f.group_id,
+                    f.valid_from, f.valid_to, f.recorded_at, f.expired_at, f.invalid_at, f.group_id,
                     f.confidence, f.source_episode_id,
                     vector_distance_cos(f.embedding, vector(?1)) as distance
              FROM vector_top_k('facts_vec_idx', vector(?1), ?2) AS v
@@ -380,9 +381,10 @@ impl TemporalGraph {
             group_clause
         );
 
+        let clamped = effective_k(limit, usize::MAX);
         let mut params: Vec<libsql::Value> = vec![
             libsql::Value::from(vec_str.to_owned()),
-            libsql::Value::from(limit as i64),
+            libsql::Value::from(clamped as i64),
         ];
         params.extend(group_params);
 
@@ -411,7 +413,7 @@ impl TemporalGraph {
 
         let sql = format!(
             "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                    valid_from, valid_to, created_at, expired_at, invalid_at, group_id,
+                    valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id,
                     confidence, source_episode_id,
                     vector_distance_cos(embedding, vector(?1)) as distance
              FROM facts
@@ -641,8 +643,24 @@ fn rrf_fuse_facts(
     results
 }
 
+/// Clamp a requested top-K to the actual number of available results.
+///
+/// Story #166 / turbovec prior-art pattern: prevents `vector_top_k` from
+/// requesting more results than the index contains, which causes a runtime
+/// panic on sparse allowlist queries.
+///
+/// `k` — caller-requested limit. `n_available` — how many candidates are
+/// available (e.g. size of an allowlist or total indexed vectors). The
+/// effective K is `k.min(n_available)` clamped to at least 1.
+///
+/// Callers that do not know `n_available` at call time pass `usize::MAX`
+/// and only the lower bound (≥ 1) is enforced.
+pub(crate) fn effective_k(k: usize, n_available: usize) -> usize {
+    k.min(n_available).max(1)
+}
+
 /// Helper to extract an Entity from a query row.
-/// Expected columns: id(0), label(1), properties(2), created_at(3), updated_at(4), group_id(5).
+/// Expected columns: id(0), label(1), properties(2), recorded_at(3), updated_at(4), group_id(5).
 fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
     use chrono::DateTime;
     let id = row.get::<String>(0)?;
@@ -677,7 +695,7 @@ fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
 
 /// Helper to extract a Fact from a query row (same column order as fts_search_facts query).
 /// Columns: id, subject_id, predicate, object_id, object_value, properties,
-///          valid_from, valid_to, created_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+///          valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
 fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
     use chrono::DateTime;
 
@@ -736,6 +754,31 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
 mod tests {
     use super::*;
     use chrono::{Duration, Utc};
+
+    // === effective_k clamp (Story #166) ===
+
+    #[test]
+    fn effective_k_clamps_to_n_available() {
+        // AC: k=100, n_allowed=3 → 3 results
+        assert_eq!(effective_k(100, 3), 3);
+    }
+
+    #[test]
+    fn effective_k_min_one_when_zero_available() {
+        // Even with n_available=0, effective_k returns at least 1 (avoids LIMIT 0).
+        assert_eq!(effective_k(10, 0), 1);
+    }
+
+    #[test]
+    fn effective_k_no_clamp_when_k_lt_n_available() {
+        assert_eq!(effective_k(5, 100), 5);
+    }
+
+    #[test]
+    fn effective_k_passthrough_when_no_allowlist() {
+        // Caller passes usize::MAX when n_available is unknown.
+        assert_eq!(effective_k(10, usize::MAX), 10);
+    }
 
     #[test]
     fn test_search_filters_default() {
