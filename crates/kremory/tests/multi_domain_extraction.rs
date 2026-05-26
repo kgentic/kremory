@@ -281,9 +281,11 @@ mod domain_tests {
         let embedder = NullEmbeddingProvider {
             dim: config.embedding_dim.0,
         };
-        let graph = TemporalGraph::open_in_memory()
-            .await
-            .expect("failed to open graph");
+        let graph = Arc::new(
+            TemporalGraph::open_in_memory()
+                .await
+                .expect("failed to open graph"),
+        );
         let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
         let extractor = NuExtractExtractor::new(llm);
 

@@ -43,7 +43,7 @@ pub struct IngestionResult {
 /// High-level kremory graph engine with intelligence pipeline.
 /// Wraps TemporalGraph and adds extraction, resolution, and contradiction detection.
 pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
-    pub(crate) graph: TemporalGraph,
+    pub(crate) graph: Arc<TemporalGraph>,
     pub(crate) llm: Arc<L>,
     pub(crate) embedder: Arc<Emb>,
     pub(crate) config: PipelineConfig,
@@ -54,8 +54,11 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
 
 impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Create a new `Engine` wrapping a `TemporalGraph`.
+    ///
+    /// Accepts `Arc<TemporalGraph>` so callers can share the same graph
+    /// instance with the process-global singleton returned by `engine()`.
     pub fn new(
-        graph: TemporalGraph,
+        graph: Arc<TemporalGraph>,
         llm: Arc<L>,
         embedder: Arc<Emb>,
         config: PipelineConfig,
@@ -75,9 +78,12 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         self
     }
 
-    /// Access the underlying TemporalGraph for direct queries.
-    pub fn graph(&self) -> &TemporalGraph {
-        &self.graph
+    /// Access the underlying `Arc<TemporalGraph>`.
+    ///
+    /// Returns a clone of the `Arc` so callers can hold a shared reference
+    /// without borrowing the `Engine`.
+    pub fn graph(&self) -> Arc<TemporalGraph> {
+        Arc::clone(&self.graph)
     }
 
     /// Unified document ingestion: store document as a searchable entity with
@@ -605,7 +611,7 @@ pub type SimpleGraph = Engine<MockChatProvider, NullEmbeddingProvider>;
 impl SimpleGraph {
     /// Open an in-memory graph with null providers and default config.
     pub async fn open_in_memory_simple() -> Result<Self> {
-        let graph = TemporalGraph::open_in_memory().await?;
+        let graph = Arc::new(TemporalGraph::open_in_memory().await?);
         let config = PipelineConfig::builder().build()?;
         Ok(Self::new(
             graph,
@@ -696,7 +702,7 @@ mod tests {
     }
 
     async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvider> {
-        let graph = TemporalGraph::open_in_memory().await.unwrap();
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
         let config = PipelineConfig::builder()
             .allowed_entity_types(vec![
                 "person".to_string(),
@@ -839,7 +845,7 @@ mod tests {
     /// the proper noun scan that runs inside ingest_with().
     #[tokio::test]
     async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
-        let graph = TemporalGraph::open_in_memory().await.unwrap();
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
         let config = PipelineConfig::builder().build().unwrap();
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
@@ -883,7 +889,7 @@ mod tests {
     async fn ingest_intra_batch_duplicate_returns_error() {
         use crate::core::error::Error;
 
-        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
         let config = PipelineConfig::builder().build().expect("config");
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
@@ -929,7 +935,7 @@ mod tests {
     /// are written to the DB.
     #[tokio::test]
     async fn ingest_intra_batch_duplicate_no_partial_write() {
-        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
         let config = PipelineConfig::builder().build().expect("config");
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
@@ -937,10 +943,7 @@ mod tests {
         // Count entities before the failing batch.
         let before_count = graph.list_entities().await.expect("list").len();
 
-        let engine = Engine::new(
-            // SAFETY: graph moved into engine; we access it via engine.graph below.
-            graph, llm, embedder, config,
-        );
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
         let extractor = FixedExtractor {
             entities: vec![

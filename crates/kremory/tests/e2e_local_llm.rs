@@ -89,9 +89,11 @@ three business days after the API merge to run the full regression suite.";
             dim: config.embedding_dim.0,
         };
 
-        let graph = TemporalGraph::open_in_memory()
-            .await
-            .expect("failed to open in-memory TemporalGraph");
+        let graph = Arc::new(
+            TemporalGraph::open_in_memory()
+                .await
+                .expect("failed to open in-memory TemporalGraph"),
+        );
 
         let rql = Engine::new(graph, Arc::new(llm), Arc::new(embedder), config);
 
@@ -371,9 +373,11 @@ three business days after the API merge to run the full regression suite.";
             dim: config.embedding_dim.0,
         };
 
-        let graph = TemporalGraph::open_in_memory()
-            .await
-            .expect("failed to open in-memory TemporalGraph");
+        let graph = Arc::new(
+            TemporalGraph::open_in_memory()
+                .await
+                .expect("failed to open in-memory TemporalGraph"),
+        );
 
         let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
 

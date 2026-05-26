@@ -21,6 +21,8 @@ pub use core::error::{Error as CoreError, Result as CoreResult};
 pub use core::{
     BackgroundIngestor, IngestError, IngestErrorKind, IngestGuard, IngestSendError, IngestorConfig,
 };
+// Process-global graph singleton — spec §2 step 3 (consumer-facing, intentional).
+pub use core::engine::{engine, engine_init};
 
 // Convenience re-exports from memory
 pub use memory::init_telemetry;

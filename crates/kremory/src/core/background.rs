@@ -663,9 +663,11 @@ mod tests {
         use std::sync::Arc;
         use std::time::Duration;
 
-        let temporal = TemporalGraph::open_in_memory()
-            .await
-            .expect("open in-memory db failed");
+        let temporal = Arc::new(
+            TemporalGraph::open_in_memory()
+                .await
+                .expect("open in-memory db failed"),
+        );
         let config = PipelineConfig::builder()
             .build()
             .expect("config build failed");
@@ -871,9 +873,11 @@ mod tests {
         use crate::core::provider::NullEmbeddingProvider;
         use crate::core::schema::TemporalGraph;
 
-        let temporal = TemporalGraph::open_in_memory()
-            .await
-            .expect("open_in_memory failed");
+        let temporal = Arc::new(
+            TemporalGraph::open_in_memory()
+                .await
+                .expect("open_in_memory failed"),
+        );
         let config = PipelineConfig::builder()
             .build()
             .expect("config build failed");
