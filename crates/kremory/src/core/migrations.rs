@@ -672,6 +672,36 @@ mod tests {
         assert!(non_db.exists());
     }
 
+    /// Story #212: bump_version writes to BOTH app_meta AND PRAGMA user_version.
+    #[tokio::test]
+    async fn bump_version_dual_writes_pragma_user_version() {
+        let conn = in_memory_conn().await;
+        seed_app_meta(&conn).await;
+        let migrations = [Migration {
+            version: 1,
+            name: "001_create_x",
+            sql: "CREATE TABLE x (id INTEGER PRIMARY KEY)",
+        }];
+        let runner = MigrationRunner::new(&conn, "schema_version");
+        runner.run(&migrations).await.expect("run");
+
+        // Verify app_meta write
+        let v = runner.current_version().await.expect("app_meta version");
+        assert_eq!(v, 1, "app_meta schema_version must be 1 after migration");
+
+        // Verify PRAGMA user_version dual-write
+        let mut rows = conn
+            .query("PRAGMA user_version", ())
+            .await
+            .expect("pragma query");
+        let row = rows.next().await.expect("row").expect("Some(row)");
+        let pragma_v: i64 = row.get(0).expect("col 0");
+        assert_eq!(
+            pragma_v, 1,
+            "PRAGMA user_version must match app_meta version"
+        );
+    }
+
     // ── Test helpers ──────────────────────────────────────────────────
 
     async fn tempdir_for_test() -> PathBuf {
