@@ -7,7 +7,7 @@
 //! ## Greenfield contract
 //!
 //! D.1b ships scaffolding only. The 4 public functions return
-//! `RqlmError::Unimplemented(...)` until D.2's TDD lane lands the real
+//! `MemoryError::Unimplemented(...)` until D.2's TDD lane lands the real
 //! implementations. This keeps the public surface visible to downstream
 //! consumers (the-host-application, kremory-mcp) while the implementation is built.
 //!
@@ -39,8 +39,8 @@ pub use graph::GraphHandle;
 pub use stub::StubGraphHandle;
 pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
-    DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, Result,
-    RetrievedContext, RqlmError, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
+    DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, MemoryError, Result,
+    RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
     WorkspaceScope,
 };
 // IngestStatus lives in core::error but is part of the memory API surface.
@@ -128,7 +128,7 @@ pub async fn await_enrichment(
                 elapsed_ms = start.elapsed().as_millis(),
                 "await_enrichment timeout exhausted"
             );
-            return Err(RqlmError::Timeout);
+            return Err(MemoryError::Timeout);
         }
         tokio::time::sleep(opts.poll_interval).await;
     }
@@ -154,7 +154,7 @@ pub async fn await_dream(
                 elapsed_ms = start.elapsed().as_millis(),
                 "await_dream timeout exhausted"
             );
-            return Err(RqlmError::Timeout);
+            return Err(MemoryError::Timeout);
         }
         tokio::time::sleep(opts.poll_interval).await;
     }
@@ -184,7 +184,7 @@ pub async fn await_batch_enrichment(
                 elapsed_ms = start.elapsed().as_millis(),
                 "await_batch_enrichment timeout exhausted"
             );
-            return Err(RqlmError::Timeout);
+            return Err(MemoryError::Timeout);
         }
         tokio::time::sleep(opts.poll_interval).await;
     }
@@ -274,7 +274,7 @@ pub async fn search(
 /// This is the only memory public fn that has no core primitive dependency,
 /// so D.2a (this commit) ships it ahead of the rest. The other three fns
 /// (`ingest_episode`, `run_dream_phase`, `search`) wrap core primitives
-/// and ship in D.2b once the `RqlGraph<L, Emb>` API shape (generic vs
+/// and ship in D.2b once the `Engine<L, Emb>` API shape (generic vs
 /// trait-object vs concrete wrapper) is locked.
 pub fn context_block(results: &[RetrievedContext], template: ContextTemplate) -> String {
     if results.is_empty() {
@@ -361,21 +361,21 @@ fn source_kind_label(k: SourceKind) -> &'static str {
 pub use crate::core::schema as core_schema;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// RqlmTelemetryConfig + TelemetryHandle (ADR D15)
+// TelemetryConfig + TelemetryHandle (ADR D15)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Memory-layer (rqlm) telemetry configuration.
+/// Memory-layer telemetry configuration.
 ///
 /// Passed to `init_telemetry` to wire the metrics recorder and optional OTel
-/// OTLP exporter. Callers that want no telemetry pass `RqlmTelemetryConfig::default()`.
+/// OTLP exporter. Callers that want no telemetry pass `TelemetryConfig::default()`.
 ///
 /// # Cardinality note (ADR D7)
 ///
 /// All prefix strings are set once at init time — not per-request. There is
 /// no per-call allocation after `init_telemetry` returns.
 #[derive(Debug, Clone, Default)]
-pub struct RqlmTelemetryConfig {
-    /// Optional prefix for all metric names (see `RqlcConfig::metrics_prefix`).
+pub struct TelemetryConfig {
+    /// Optional prefix for all metric names (see `Config::metrics_prefix`).
     pub metrics_prefix: Option<String>,
     /// Optional prefix for all tracing span names.
     pub span_prefix: Option<String>,
@@ -419,7 +419,7 @@ impl TelemetryHandle {
 /// Returns `Err` if the OTLP exporter fails to connect (when `otel` feature enabled
 /// and `config.otlp_endpoint` is `Some`). Plain metrics-only config always succeeds.
 pub fn init_telemetry(
-    _config: RqlmTelemetryConfig,
+    _config: TelemetryConfig,
 ) -> std::result::Result<TelemetryHandle, Box<dyn std::error::Error + Send + Sync>> {
     // Library-safe: kremory does NOT install a global metrics recorder (ADR D2).
     // The host binary is responsible for calling `metrics_exporter_prometheus::install()`

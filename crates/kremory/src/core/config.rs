@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::core::error::{Result, RqlError};
+use crate::core::error::{Error, Result};
 
 /// The content type of a document being ingested into the pipeline.
 #[derive(Debug, Clone, PartialEq)]
@@ -396,7 +396,7 @@ impl PipelineConfigBuilder {
 
         let jt = c.minhash.jaccard_threshold;
         if jt <= 0.0 || jt > 1.0 {
-            return Err(RqlError::Config(format!(
+            return Err(Error::Config(format!(
                 "jaccard_threshold must be in (0.0, 1.0], got {}",
                 jt
             )));
@@ -404,22 +404,22 @@ impl PipelineConfigBuilder {
 
         let weight_sum = c.search.bm25_weight + c.search.vector_weight;
         if (weight_sum - 1.0_f64).abs() > 1e-9 {
-            return Err(RqlError::WeightSumInvalid {
+            return Err(Error::WeightSumInvalid {
                 bm25: c.search.bm25_weight,
                 vector: c.search.vector_weight,
             });
         }
 
         if c.embedding_dim.0 == 0 {
-            return Err(RqlError::EmbeddingDimZero);
+            return Err(Error::EmbeddingDimZero);
         }
 
         if c.extraction_window.min_tokens == 0 {
-            return Err(RqlError::Config("min_tokens must be greater than 0".into()));
+            return Err(Error::Config("min_tokens must be greater than 0".into()));
         }
 
         if c.extraction_window.max_tokens < c.extraction_window.min_tokens {
-            return Err(RqlError::TokenWindowInvalid {
+            return Err(Error::TokenWindowInvalid {
                 min: c.extraction_window.min_tokens,
                 got: c.extraction_window.max_tokens,
             });
@@ -427,7 +427,7 @@ impl PipelineConfigBuilder {
 
         let dt = c.extraction_window.density_threshold;
         if dt <= 0.0 || dt > 1.0 {
-            return Err(RqlError::Config(format!(
+            return Err(Error::Config(format!(
                 "density_threshold must be in (0.0, 1.0], got {}",
                 dt
             )));
@@ -613,10 +613,10 @@ mod tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// RqlcConfig — core-layer telemetry prefix config (ADR D15)
+// Config — core-layer telemetry prefix config (ADR D15)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Core-layer (rqlc) telemetry configuration.
+/// Core-layer telemetry configuration.
 ///
 /// Controls the `metrics_prefix` and `span_prefix` namespace so callers can
 /// co-deploy multiple kremory instances without metric label collision (ADR D15).
@@ -631,7 +631,7 @@ mod tests {
 /// The prefix is prepended to the base metric name at registration time, not at
 /// emit time, so there is no per-call allocation overhead.
 #[derive(Debug, Clone, Default)]
-pub struct RqlcConfig {
+pub struct Config {
     /// Optional prefix prepended to all `metrics::counter!/histogram!/gauge!` names.
     ///
     /// Example: `Some("kremory_prod".to_string())` → `kremory_prod_core_tokens_total`.

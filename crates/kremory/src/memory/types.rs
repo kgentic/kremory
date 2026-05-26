@@ -224,7 +224,7 @@ pub struct DreamHandle {
 /// A `tracing::warn!` is emitted on timeout exhaustion (per ADR §4.5 / C1).
 #[derive(Debug, Clone)]
 pub struct AwaitOpts {
-    /// Maximum wait before returning `Err(RqlmError::Timeout)`.
+    /// Maximum wait before returning `Err(MemoryError::Timeout)`.
     pub timeout: Duration,
     /// Interval between status polls.
     pub poll_interval: Duration,
@@ -277,11 +277,11 @@ pub use crate::memory::dream_phase::DreamMode;
 
 // ── Error surface ─────────────────────────────────────────────────────────────
 
-/// Error surface for rqlm operations.
+/// Error surface for memory-layer operations.
 #[derive(Debug, Error)]
-pub enum RqlmError {
-    #[error("rqlc layer error: {0}")]
-    Core(#[from] crate::core::error::RqlError),
+pub enum MemoryError {
+    #[error("core layer error: {0}")]
+    Core(#[from] crate::core::error::Error),
     #[error("invalid scope: {0}")]
     InvalidScope(String),
     #[error("unimplemented — landed in D.2: {0}")]
@@ -292,4 +292,4 @@ pub enum RqlmError {
     Other(String),
 }
 
-pub type Result<T> = std::result::Result<T, RqlmError>;
+pub type Result<T> = std::result::Result<T, MemoryError>;

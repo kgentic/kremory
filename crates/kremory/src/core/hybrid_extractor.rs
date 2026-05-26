@@ -145,7 +145,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
                 .llm
                 .chat_with_tools(&gleaning_msgs, None, None)
                 .await
-                .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+                .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
             let _ms = start.elapsed().as_secs_f64() * 1000.0;
             histogram!("rql.extraction.stage_ms", "stage" => "hybrid_gleaning").record(_ms);
             tracing::info!(
@@ -216,7 +216,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
             .llm
             .chat_with_tools(&typing_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "hybrid_typing").record(_ms);
         tracing::info!(_ms, stage = "hybrid_typing", "kremory.extraction.stage_ms");

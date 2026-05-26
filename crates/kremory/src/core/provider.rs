@@ -414,7 +414,7 @@ impl OnnxEmbeddingProvider {
 impl EmbeddingProvider for OnnxEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         self.embed_sync(text)
-            .map_err(crate::core::error::RqlError::from)
+            .map_err(crate::core::error::Error::from)
     }
 }
 

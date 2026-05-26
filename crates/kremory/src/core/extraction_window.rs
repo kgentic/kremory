@@ -6,7 +6,7 @@
 //! Slices an episode's text into LLM-extraction-prompt-sized windows so the extractor LLM
 //! can read oversized episode bodies within its context budget. The slices are **throwaway**:
 //! never stored, never embedded, never retrieved. They exist only as local-loop variables
-//! consumed by [`crate::core::ingest::RqlGraph::ingest_with`] and dropped at function return.
+//! consumed by [`crate::core::ingest::Engine::ingest_with`] and dropped at function return.
 //!
 //! Kremory does NOT do kind-1 retrieval chunking (slicing for vector-index rows). Episodes
 //! are stored whole and embeddings are per-entity-name + per-fact, never per-window-slice.

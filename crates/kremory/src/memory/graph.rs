@@ -15,7 +15,7 @@
 //!
 //! The trait method signatures speak in rqlm vocabulary
 //! (`WorkspaceScope`, `IngestResult`, `RetrievedContext`) — NOT
-//! rqlc's `RqlGraph<L, Emb>::ingest_document(source, title, text)`
+//! kremory::core's `Engine<L, Emb>::ingest_document(source, title, text)`
 //! signature. This is deliberate: each consumer translates its
 //! concrete-graph API into the trait, so a future backend swap (libsql
 //! → kuzu → Neo4j) doesn't break rqlm's public surface.
