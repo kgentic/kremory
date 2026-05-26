@@ -80,6 +80,10 @@ autoagents-llm = "0.3"
 anyhow = "1"
 dashmap = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
+# Enable test-utils feature for integration tests so Mock*/Stub* types are
+# visible to the tests/ directory (integration tests are separate binaries
+# and do NOT inherit #[cfg(test)] from the library — only feature flags work).
+kremory = { path = ".", features = ["test-utils"] }
 
 [lints.rust]
 warnings = "deny"
