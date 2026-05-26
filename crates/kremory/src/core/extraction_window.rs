@@ -17,12 +17,12 @@
 
 use crate::core::config::{ContentType, ExtractionWindowConfig};
 
-pub struct ExtractionWindowSplitter {
+pub(crate) struct ExtractionWindowSplitter {
     config: ExtractionWindowConfig,
 }
 
 impl ExtractionWindowSplitter {
-    pub fn new(config: ExtractionWindowConfig) -> Self {
+    pub(crate) fn new(config: ExtractionWindowConfig) -> Self {
         Self { config }
     }
 

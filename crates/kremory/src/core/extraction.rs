@@ -1157,7 +1157,7 @@ JSON:"
 }
 
 /// Build the Stage 1 extraction prompt for a specific version.
-pub fn build_single_call_prompt_versioned(
+pub(crate) fn build_single_call_prompt_versioned(
     text: &str,
     ctx: &ExtractionContext<'_>,
     version: PromptVersion,

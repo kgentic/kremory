@@ -1,3 +1,6 @@
+// SpeculativeCache is implemented and tested inline but not yet wired into
+// the search hot-path. Suppress dead_code until integration point is ready.
+#![allow(dead_code)]
 //! # Three-Cache Separation (Story #149)
 //!
 //! kremory uses three distinct cache tiers with explicit invalidation contracts:
@@ -61,7 +64,7 @@ struct CachedEntry {
 ///
 /// Invalidation: entries are TTL-bounded. Callers MUST call `evict_expired()`
 /// or `clear()` when `DIRTY` is observed (see three-cache separation above).
-pub struct SpeculativeCache {
+pub(crate) struct SpeculativeCache {
     /// entity_id -> cached entry
     entries: Mutex<HashMap<String, CachedEntry>>,
     /// How long cached entries remain valid

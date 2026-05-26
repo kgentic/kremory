@@ -36,17 +36,18 @@ pub(crate) fn temporal_overlap(
 
 /// Result of contradiction detection for a single fact.
 #[derive(Debug, Clone)]
-pub struct ContradictionResult {
+#[allow(dead_code)]
+pub(crate) struct ContradictionResult {
     /// Facts identified as contradictions (should be invalidated).
-    pub contradictions: Vec<i64>,
+    pub(crate) contradictions: Vec<i64>,
     /// Facts identified as duplicates (same content, should be merged).
-    pub duplicates: Vec<i64>,
+    pub(crate) duplicates: Vec<i64>,
     /// Whether the new fact is consistent with all existing facts.
-    pub is_consistent: bool,
+    pub(crate) is_consistent: bool,
 }
 
 impl ContradictionResult {
-    pub fn no_conflicts() -> Self {
+    pub(crate) fn no_conflicts() -> Self {
         Self {
             contradictions: vec![],
             duplicates: vec![],
@@ -156,12 +157,12 @@ ws ::= [ \t\n]*"#;
 // ---------------------------------------------------------------------------
 
 /// Contradiction detector using two candidate pools and temporal overlap filtering.
-pub struct TwoPoolDetector<L: ChatProvider> {
+pub(crate) struct TwoPoolDetector<L: ChatProvider> {
     llm: Arc<L>,
 }
 
 impl<L: ChatProvider> TwoPoolDetector<L> {
-    pub fn new(llm: Arc<L>) -> Self {
+    pub(crate) fn new(llm: Arc<L>) -> Self {
         Self { llm }
     }
 

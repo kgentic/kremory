@@ -7,9 +7,9 @@ pub trait GroundingChecker: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct TokenOverlapGroundingChecker {
-    pub min_token_overlap: usize,
-    pub require_head_noun: bool,
+pub(crate) struct TokenOverlapGroundingChecker {
+    pub(crate) min_token_overlap: usize,
+    pub(crate) require_head_noun: bool,
 }
 
 impl Default for TokenOverlapGroundingChecker {

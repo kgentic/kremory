@@ -306,7 +306,8 @@ impl ContradictionDetector for MockContradictionDetector {
 // ─── Pipeline Result Types ────────────────────────────────────────────────────
 
 #[derive(Debug)]
-pub struct ResolvedEntity {
+#[allow(dead_code)]
+pub(crate) struct ResolvedEntity {
     pub extracted: ExtractedEntity,
     /// Existing entity ID if resolved to Same, otherwise None.
     pub matched_id: Option<String>,
@@ -314,7 +315,8 @@ pub struct ResolvedEntity {
 }
 
 #[derive(Debug)]
-pub struct ProcessedFact {
+#[allow(dead_code)]
+pub(crate) struct ProcessedFact {
     pub extracted: ExtractedFact,
     pub relation: FactRelation,
     /// ID of the conflicting/superseded fact if relation is Update or Contradiction.
@@ -322,7 +324,8 @@ pub struct ProcessedFact {
 }
 
 #[derive(Debug)]
-pub struct ProcessedIngestion {
+#[allow(dead_code)]
+pub(crate) struct ProcessedIngestion {
     pub entities: Vec<ResolvedEntity>,
     pub facts: Vec<ProcessedFact>,
 }
@@ -332,12 +335,14 @@ pub struct ProcessedIngestion {
 /// Orchestrates the intelligence pipeline: extract → resolve → contradict-check → return results.
 ///
 /// The caller is responsible for committing the results to the graph store.
-pub struct IntelligencePipeline<E, R, C> {
+#[allow(dead_code)]
+pub(crate) struct IntelligencePipeline<E, R, C> {
     extractor: E,
     resolver: R,
     contradiction_detector: C,
 }
 
+#[allow(dead_code)]
 impl<E: EntityExtractor, R: EntityResolver, C: ContradictionDetector>
     IntelligencePipeline<E, R, C>
 {
