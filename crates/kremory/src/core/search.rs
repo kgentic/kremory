@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use metrics::histogram;
 use std::time::Instant;
+use tracing;
 
 use crate::core::error::Result;
 use crate::core::schema::{Entity, Fact, TemporalGraph};
@@ -52,9 +53,10 @@ impl TemporalGraph {
         let safe_query = match sanitise_fts5_query(query) {
             Some(q) => q,
             None => {
+                let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
                 histogram!("rql.search.fts_entities_hits").record(0.0);
-                histogram!("rql.search.fts_entities_ms")
-                    .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+                histogram!("rql.search.fts_entities_ms").record(_ms);
+                tracing::info!(hits = 0u64, _ms, "kremory.search.fts_entities empty query");
                 return Ok(vec![]);
             }
         };
@@ -90,9 +92,11 @@ impl TemporalGraph {
                 });
             }
         }
-        histogram!("rql.search.fts_entities_hits").record(hits.len() as f64);
-        histogram!("rql.search.fts_entities_ms")
-            .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+        let hits_count = hits.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.search.fts_entities_hits").record(hits_count as f64);
+        histogram!("rql.search.fts_entities_ms").record(_ms);
+        tracing::info!(hits = hits_count, _ms, "kremory.search.fts_entities");
         Ok(hits)
     }
 
@@ -109,9 +113,10 @@ impl TemporalGraph {
         let safe_query = match sanitise_fts5_query(query) {
             Some(q) => q,
             None => {
+                let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
                 histogram!("rql.search.fts_facts_hits").record(0.0);
-                histogram!("rql.search.fts_facts_ms")
-                    .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+                histogram!("rql.search.fts_facts_ms").record(_ms);
+                tracing::info!(hits = 0u64, _ms, "kremory.search.fts_facts empty query");
                 return Ok(vec![]);
             }
         };
@@ -147,9 +152,11 @@ impl TemporalGraph {
             let score = row.get::<f64>(14)?;
             hits.push(SearchHit { item: fact, score });
         }
-        histogram!("rql.search.fts_facts_hits").record(hits.len() as f64);
-        histogram!("rql.search.fts_facts_ms")
-            .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+        let hits_count = hits.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.search.fts_facts_hits").record(hits_count as f64);
+        histogram!("rql.search.fts_facts_ms").record(_ms);
+        tracing::info!(hits = hits_count, _ms, "kremory.search.fts_facts");
         Ok(hits)
     }
 
@@ -186,9 +193,11 @@ impl TemporalGraph {
                     .await?
             }
         };
-        histogram!("rql.search.vector_entities_hits").record(hits.len() as f64);
-        histogram!("rql.search.vector_entities_ms")
-            .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+        let hits_count = hits.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.search.vector_entities_hits").record(hits_count as f64);
+        histogram!("rql.search.vector_entities_ms").record(_ms);
+        tracing::info!(hits = hits_count, _ms, "kremory.search.vector_entities");
         Ok(hits)
     }
 
@@ -301,9 +310,11 @@ impl TemporalGraph {
 
         // Return top `limit` results
         let results: Vec<SearchHit<Entity>> = fused.into_iter().take(limit).collect();
-        histogram!("rql.search.hybrid_entities_hits").record(results.len() as f64);
-        histogram!("rql.search.hybrid_entities_ms")
-            .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+        let result_count = results.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.search.hybrid_entities_hits").record(result_count as f64);
+        histogram!("rql.search.hybrid_entities_ms").record(_ms);
+        tracing::info!(hits = result_count, _ms, "kremory.search.hybrid_entities");
         Ok(results)
     }
 
@@ -340,9 +351,11 @@ impl TemporalGraph {
                     .await?
             }
         };
-        histogram!("rql.search.vector_facts_hits").record(hits.len() as f64);
-        histogram!("rql.search.vector_facts_ms")
-            .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+        let hits_count = hits.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.search.vector_facts_hits").record(hits_count as f64);
+        histogram!("rql.search.vector_facts_ms").record(_ms);
+        tracing::info!(hits = hits_count, _ms, "kremory.search.vector_facts");
         Ok(hits)
     }
 
@@ -458,9 +471,11 @@ impl TemporalGraph {
 
         // Return top `limit` results
         let results: Vec<SearchHit<Fact>> = fused.into_iter().take(limit).collect();
-        histogram!("rql.search.hybrid_facts_hits").record(results.len() as f64);
-        histogram!("rql.search.hybrid_facts_ms")
-            .record(_search_start.elapsed().as_secs_f64() * 1000.0);
+        let result_count = results.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.search.hybrid_facts_hits").record(result_count as f64);
+        histogram!("rql.search.hybrid_facts_ms").record(_ms);
+        tracing::info!(hits = result_count, _ms, "kremory.search.hybrid_facts");
         Ok(results)
     }
 }

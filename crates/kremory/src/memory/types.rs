@@ -272,6 +272,9 @@ pub struct DreamOpts {
     pub since: Option<DateTime<Utc>>,
 }
 
+// Re-export DreamMode so consumers can import from kremory::memory::types.
+pub use crate::memory::dream_phase::DreamMode;
+
 // ── Error surface ─────────────────────────────────────────────────────────────
 
 /// Error surface for rqlm operations.

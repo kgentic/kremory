@@ -341,6 +341,7 @@ async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("rql.background.ingest_duration_ms").record(elapsed_ms);
             metrics::counter!("rql.background.ingested_total").increment(1);
+            tracing::info!(elapsed_ms, "kremory.background.ingest completed");
 
             if deferred_enabled {
                 let ner_entity_names = result.upserted_entities.clone();
@@ -360,6 +361,7 @@ async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("rql.background.ingest_duration_ms").record(elapsed_ms);
             metrics::counter!("rql.background.errors_total").increment(1);
+            tracing::error!(elapsed_ms, error = %e, "kremory.background.ingest failed");
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),
@@ -368,6 +370,7 @@ async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
             };
             if error_tx.try_send(err).is_err() {
                 metrics::counter!("rql.background.errors_dropped_total").increment(1);
+                tracing::warn!("kremory.background.ingest error dropped (channel full)");
             }
             None
         }
@@ -400,12 +403,18 @@ async fn process_deferred<L: ChatProvider, Emb: EmbeddingProvider>(
                 .record(elapsed_ms);
             metrics::counter!("rql.background.deferred_facts_extracted_total")
                 .increment(facts_extracted as u64);
+            tracing::info!(
+                elapsed_ms,
+                facts_extracted,
+                "kremory.background.deferred_extraction completed"
+            );
         }
         Err(e) => {
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("rql.background.deferred_extraction_duration_ms")
                 .record(elapsed_ms);
             metrics::counter!("rql.background.deferred_errors_total").increment(1);
+            tracing::error!(elapsed_ms, error = %e, "kremory.background.deferred_extraction failed");
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),
@@ -414,6 +423,7 @@ async fn process_deferred<L: ChatProvider, Emb: EmbeddingProvider>(
             };
             if error_tx.try_send(err).is_err() {
                 metrics::counter!("rql.background.errors_dropped_total").increment(1);
+                tracing::warn!("kremory.background.deferred error dropped (channel full)");
             }
         }
     }
@@ -459,15 +469,17 @@ fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
                     {
                         deferred_queue.push_back(deferred);
                     }
-                    metrics::gauge!("rql.background.deferred_queue_depth")
-                        .set(deferred_queue.len() as f64);
+                    let depth = deferred_queue.len();
+                    metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
+                    tracing::info!(depth, "kremory.background.deferred_queue updated");
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     // NER channel is idle — process one deferred item if available,
                     // then loop back to check for new NER work (NER priority).
                     if let Some(deferred) = deferred_queue.pop_front() {
-                        metrics::gauge!("rql.background.deferred_queue_depth")
-                            .set(deferred_queue.len() as f64);
+                        let depth = deferred_queue.len();
+                        metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
+                        tracing::info!(depth, "kremory.background.deferred_queue draining");
                         process_deferred(&graph, deferred, &error_tx).await;
                     }
                 }
@@ -487,13 +499,15 @@ fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
                     while let Some(deferred) = deferred_queue.pop_front() {
                         if stop.load(Ordering::Acquire) {
                             let abandoned = deferred_queue.len() + 1;
+                            tracing::warn!(abandoned, "kremory.background.deferred_queue abandoned (stop signal)");
                             eprintln!(
                                 "[BackgroundIngestor] stop signal — abandoning {abandoned} deferred item(s)"
                             );
                             break;
                         }
-                        metrics::gauge!("rql.background.deferred_queue_depth")
-                            .set(deferred_queue.len() as f64);
+                        let depth = deferred_queue.len();
+                        metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
+                        tracing::info!(depth, "kremory.background.deferred_queue drain-on-disconnect");
                         process_deferred(&graph, deferred, &error_tx).await;
                     }
                     break;

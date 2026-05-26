@@ -192,6 +192,18 @@ use std::future::Future;
 
 pub trait EmbeddingProvider: Send + Sync {
     fn embed<'a>(&'a self, text: &'a str) -> impl Future<Output = Result<Vec<f32>>> + Send + 'a;
+
+    /// Token count from the provider's last embed call, if the backend reports usage.
+    ///
+    /// Per ADR D10: `TokenTrackingEmbedder` calls this after `embed()` to get
+    /// server-reported token counts. When the backend doesn't report usage (most
+    /// local providers), this returns `None` and the wrapper falls back to a
+    /// pre-call approximation.
+    ///
+    /// Default: `None` (backend does not report token usage).
+    fn last_usage_tokens(&self) -> Option<u64> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

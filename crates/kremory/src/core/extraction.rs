@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use metrics::{counter, histogram};
 use serde::Deserialize;
+use tracing;
 
 use crate::core::error::Result;
 
@@ -133,8 +134,9 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .chat_with_tools(&stage1_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "entities")
-            .record(stage1_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = stage1_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "entities").record(_ms);
+        tracing::info!(_ms, stage = "entities", "kremory.extraction.stage_ms");
         let stage1_text = stage1_resp.text().unwrap_or_default();
         let mut entities: Vec<ExtractedEntity> = parse_entities(&stage1_text)?;
 
@@ -155,8 +157,9 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .chat_with_tools(&stage2_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "relations")
-            .record(stage2_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = stage2_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "relations").record(_ms);
+        tracing::info!(_ms, stage = "relations", "kremory.extraction.stage_ms");
         let stage2_text = stage2_resp.text().unwrap_or_default();
         let relation_names: Vec<String> = parse_relation_names(&stage2_text)?;
 
@@ -172,13 +175,22 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .chat_with_tools(&stage3_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "triplets")
-            .record(stage3_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = stage3_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "triplets").record(_ms);
+        tracing::info!(_ms, stage = "triplets", "kremory.extraction.stage_ms");
         let stage3_text = stage3_resp.text().unwrap_or_default();
         let facts: Vec<ExtractedFact> = parse_facts(&stage3_text)?;
 
-        histogram!("rql.extraction.entity_count").record(entities.len() as f64);
-        histogram!("rql.extraction.fact_count").record(facts.len() as f64);
+        let entity_count = entities.len();
+        let fact_count = facts.len();
+        histogram!("rql.extraction.entity_count").record(entity_count as f64);
+        histogram!("rql.extraction.fact_count").record(fact_count as f64);
+        tracing::info!(
+            entity_count,
+            fact_count,
+            extractor = "three_stage",
+            "kremory.extraction.result"
+        );
 
         Ok(ExtractionResult { entities, facts })
     }
@@ -235,14 +247,23 @@ impl<L: ChatProvider> EntityExtractor for NuExtractExtractor<L> {
             .chat_with_tools(&nuextract_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "nuextract")
-            .record(start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "nuextract").record(_ms);
+        tracing::info!(_ms, stage = "nuextract", "kremory.extraction.stage_ms");
         let resp_text = resp.text().unwrap_or_default();
 
         let (entities, facts) = parse_nuextract_response(&resp_text, ctx)?;
 
-        histogram!("rql.extraction.entity_count").record(entities.len() as f64);
-        histogram!("rql.extraction.fact_count").record(facts.len() as f64);
+        let entity_count = entities.len();
+        let fact_count = facts.len();
+        histogram!("rql.extraction.entity_count").record(entity_count as f64);
+        histogram!("rql.extraction.fact_count").record(fact_count as f64);
+        tracing::info!(
+            entity_count,
+            fact_count,
+            extractor = "nuextract",
+            "kremory.extraction.result"
+        );
 
         Ok(ExtractionResult { entities, facts })
     }
@@ -291,14 +312,20 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             .chat_with_tools(&pass1_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "grounded_entities")
-            .record(start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "grounded_entities").record(_ms);
+        tracing::info!(
+            _ms,
+            stage = "grounded_entities",
+            "kremory.extraction.stage_ms"
+        );
         let pass1_text = pass1_resp.text().unwrap_or_default();
 
         let (entities, _) = parse_nuextract_response(&pass1_text, ctx)?;
 
         if entities.is_empty() {
             counter!("rql.extraction.grounded_empty_pass1").increment(1);
+            tracing::info!("kremory.extraction.grounded_empty_pass1");
             return Ok(ExtractionResult {
                 entities: vec![],
                 facts: vec![],
@@ -318,8 +345,13 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             .chat_with_tools(&pass2_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "grounded_relationships")
-            .record(start2.elapsed().as_secs_f64() * 1000.0);
+        let _ms = start2.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "grounded_relationships").record(_ms);
+        tracing::info!(
+            _ms,
+            stage = "grounded_relationships",
+            "kremory.extraction.stage_ms"
+        );
         let pass2_text = pass2_resp.text().unwrap_or_default();
 
         let (_, mut facts) = parse_nuextract_response(&pass2_text, ctx)?;
@@ -332,8 +364,16 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             fact.is_entity_ref = entity_name_set.contains(&fact.object.to_lowercase());
         }
 
-        histogram!("rql.extraction.entity_count").record(entities.len() as f64);
-        histogram!("rql.extraction.fact_count").record(facts.len() as f64);
+        let entity_count = entities.len();
+        let fact_count = facts.len();
+        histogram!("rql.extraction.entity_count").record(entity_count as f64);
+        histogram!("rql.extraction.fact_count").record(fact_count as f64);
+        tracing::info!(
+            entity_count,
+            fact_count,
+            extractor = "grounded_nuextract",
+            "kremory.extraction.result"
+        );
 
         Ok(ExtractionResult { entities, facts })
     }
@@ -390,8 +430,13 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             .chat_with_tools(&graphiti_s1_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "graphiti_entities")
-            .record(stage1_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = stage1_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "graphiti_entities").record(_ms);
+        tracing::info!(
+            _ms,
+            stage = "graphiti_entities",
+            "kremory.extraction.stage_ms"
+        );
         let stage1_text = stage1_resp.text().unwrap_or_default();
         let mut entities: Vec<ExtractedEntity> = parse_entities(&stage1_text)?;
 
@@ -418,8 +463,13 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             .chat_with_tools(&graphiti_s2_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "graphiti_relationships")
-            .record(stage2_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = stage2_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "graphiti_relationships").record(_ms);
+        tracing::info!(
+            _ms,
+            stage = "graphiti_relationships",
+            "kremory.extraction.stage_ms"
+        );
         let stage2_text = stage2_resp.text().unwrap_or_default();
         let mut facts: Vec<ExtractedFact> = parse_facts(&stage2_text)?;
 
@@ -430,8 +480,16 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             fact.is_entity_ref = entity_name_set.contains(&fact.object.to_lowercase());
         }
 
-        histogram!("rql.extraction.entity_count").record(entities.len() as f64);
-        histogram!("rql.extraction.fact_count").record(facts.len() as f64);
+        let entity_count = entities.len();
+        let fact_count = facts.len();
+        histogram!("rql.extraction.entity_count").record(entity_count as f64);
+        histogram!("rql.extraction.fact_count").record(fact_count as f64);
+        tracing::info!(
+            entity_count,
+            fact_count,
+            extractor = "graphiti_style",
+            "kremory.extraction.result"
+        );
 
         Ok(ExtractionResult { entities, facts })
     }
@@ -605,6 +663,10 @@ fn parse_nuextract_response(
     let trimmed = json.trim();
     if trimmed.is_empty() {
         counter!("rql.extraction.json_parse_fail").increment(1);
+        tracing::warn!(
+            parser = "nuextract",
+            "kremory.extraction.json_parse_fail empty response"
+        );
         return Ok((vec![], vec![]));
     }
 
@@ -646,6 +708,7 @@ fn parse_nuextract_response(
                                 }
                                 Err(e) => {
                                     counter!("rql.extraction.json_parse_fail").increment(1);
+                                    tracing::warn!(error = %e, parser = "nuextract", "kremory.extraction.json_parse_fail after repair");
                                     eprintln!(
                                         "warn: failed to parse NuExtract JSON after repair: {e}"
                                     );
@@ -655,6 +718,7 @@ fn parse_nuextract_response(
                         }
                         Err(e) => {
                             counter!("rql.extraction.json_parse_fail").increment(1);
+                            tracing::warn!(error = %e, parser = "nuextract", "kremory.extraction.json_parse_fail array repair");
                             eprintln!("warn: failed to parse NuExtract JSON after repair: {e}");
                             return Ok((vec![], vec![]));
                         }
@@ -838,6 +902,7 @@ fn parse_relation_names(json: &str) -> anyhow::Result<Vec<String>> {
                 }
                 Err(e) => {
                     counter!("rql.extraction.json_parse_fail").increment(1);
+                    tracing::warn!(error = %e, parser = "relation_names", "kremory.extraction.json_parse_fail");
                     eprintln!("warn: failed to parse relation names JSON after repair: {e}");
                     return Ok(vec![]);
                 }
@@ -874,6 +939,7 @@ fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>> {
                 }
                 Err(e) => {
                     counter!("rql.extraction.json_parse_fail").increment(1);
+                    tracing::warn!(error = %e, parser = "entities", "kremory.extraction.json_parse_fail");
                     eprintln!("warn: failed to parse entity JSON after repair: {e}");
                     return Ok(vec![]);
                 }
@@ -912,6 +978,7 @@ fn parse_facts(json: &str) -> anyhow::Result<Vec<ExtractedFact>> {
                 }
                 Err(e) => {
                     counter!("rql.extraction.json_parse_fail").increment(1);
+                    tracing::warn!(error = %e, parser = "facts", "kremory.extraction.json_parse_fail");
                     eprintln!("warn: failed to parse fact JSON after repair: {e}");
                     return Ok(vec![]);
                 }
@@ -1114,15 +1181,24 @@ impl<L: ChatProvider> EntityExtractor for SingleCallExtractor<L> {
             .chat_with_tools(&sc_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "single_call")
-            .record(start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "single_call").record(_ms);
+        tracing::info!(_ms, stage = "single_call", "kremory.extraction.stage_ms");
         let resp_text = resp.text().unwrap_or_default();
 
         // Reuse the NuExtract parser — same JSON shape {"entities": [...], "relationships": [...]}
         let (entities, facts) = parse_nuextract_response(&resp_text, ctx)?;
 
-        histogram!("rql.extraction.entity_count").record(entities.len() as f64);
-        histogram!("rql.extraction.fact_count").record(facts.len() as f64);
+        let entity_count = entities.len();
+        let fact_count = facts.len();
+        histogram!("rql.extraction.entity_count").record(entity_count as f64);
+        histogram!("rql.extraction.fact_count").record(fact_count as f64);
+        tracing::info!(
+            entity_count,
+            fact_count,
+            extractor = "single_call",
+            "kremory.extraction.result"
+        );
 
         Ok(ExtractionResult { entities, facts })
     }
@@ -1254,9 +1330,17 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
         // Step 1: Programmatic pipeline → candidates (zero LLM, <5ms)
         let pipeline_start = Instant::now();
         let candidates = self.auditor.extract_candidates(text, self.max_candidates);
+        let _pipeline_ms = pipeline_start.elapsed().as_secs_f64() * 1000.0;
+        let candidate_count = candidates.len() as u64;
         histogram!("rql.extraction.stage_ms", "stage" => "programmatic_pipeline")
-            .record(pipeline_start.elapsed().as_secs_f64() * 1000.0);
-        counter!("rql.extraction.programmatic_candidate_count").increment(candidates.len() as u64);
+            .record(_pipeline_ms);
+        counter!("rql.extraction.programmatic_candidate_count").increment(candidate_count);
+        tracing::info!(
+            _pipeline_ms,
+            candidate_count,
+            stage = "programmatic_pipeline",
+            "kremory.extraction.stage_ms"
+        );
 
         // Step 2: LLM Call 1 — type/classify candidates + catch remaining ~5%
         let typing_prompt = build_entity_typing_prompt(text, &candidates, ctx);
@@ -1270,8 +1354,9 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .chat_with_tools(&typing_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "entity_typing")
-            .record(typing_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = typing_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "entity_typing").record(_ms);
+        tracing::info!(_ms, stage = "entity_typing", "kremory.extraction.stage_ms");
         let typing_text = typing_resp.text().unwrap_or_default();
 
         let entity_output: EntityOnlyOutput = parse_json_lenient(&typing_text).unwrap_or_default();
@@ -1303,8 +1388,9 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .chat_with_tools(&rel_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "relationships")
-            .record(rel_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = rel_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "relationships").record(_ms);
+        tracing::info!(_ms, stage = "relationships", "kremory.extraction.stage_ms");
         let rel_text = rel_resp.text().unwrap_or_default();
 
         let rel_output: RelOnlyOutput = parse_json_lenient(&rel_text).unwrap_or_default();
@@ -1321,8 +1407,16 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             })
             .collect();
 
-        histogram!("rql.extraction.entity_count").record(entities.len() as f64);
-        histogram!("rql.extraction.fact_count").record(facts.len() as f64);
+        let entity_count = entities.len();
+        let fact_count = facts.len();
+        histogram!("rql.extraction.entity_count").record(entity_count as f64);
+        histogram!("rql.extraction.fact_count").record(fact_count as f64);
+        tracing::info!(
+            entity_count,
+            fact_count,
+            extractor = "programmatic_first",
+            "kremory.extraction.result"
+        );
 
         Ok(ExtractionResult { entities, facts })
     }

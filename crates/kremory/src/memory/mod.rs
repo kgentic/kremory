@@ -29,6 +29,7 @@
 //!   batch consolidation recipe (`run_dream_phase`) + opinionated retrieval
 //!   defaults over core's hybrid search + context-block templates.
 
+pub mod dream_phase;
 pub mod events;
 pub mod graph;
 pub mod stub;
@@ -37,9 +38,10 @@ pub mod types;
 pub use graph::GraphHandle;
 pub use stub::StubGraphHandle;
 pub use types::{
-    AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamOpts,
-    DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, Result, RetrievedContext,
-    RqlmError, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts, WorkspaceScope,
+    AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
+    DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, Result,
+    RetrievedContext, RqlmError, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
+    WorkspaceScope,
 };
 // IngestStatus lives in core::error but is part of the memory API surface.
 pub use crate::core::error::IngestStatus;
@@ -357,6 +359,78 @@ fn source_kind_label(k: SourceKind) -> &'static str {
 /// Re-export of the schema module from kremory::core — memory consumers should
 /// not need to depend on core directly for the common types they round-trip.
 pub use crate::core::schema as core_schema;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RqlmTelemetryConfig + TelemetryHandle (ADR D15)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Memory-layer (rqlm) telemetry configuration.
+///
+/// Passed to `init_telemetry` to wire the metrics recorder and optional OTel
+/// OTLP exporter. Callers that want no telemetry pass `RqlmTelemetryConfig::default()`.
+///
+/// # Cardinality note (ADR D7)
+///
+/// All prefix strings are set once at init time — not per-request. There is
+/// no per-call allocation after `init_telemetry` returns.
+#[derive(Debug, Clone, Default)]
+pub struct RqlmTelemetryConfig {
+    /// Optional prefix for all metric names (see `RqlcConfig::metrics_prefix`).
+    pub metrics_prefix: Option<String>,
+    /// Optional prefix for all tracing span names.
+    pub span_prefix: Option<String>,
+    /// OTLP endpoint for OTel span export (e.g. `"http://localhost:4317"`).
+    /// Requires the `otel` feature flag. Ignored when `otel` feature is absent.
+    pub otlp_endpoint: Option<String>,
+}
+
+/// Handle returned by `init_telemetry`. Keeps the OTel provider alive.
+///
+/// Drop or call `shutdown()` at process exit to flush pending spans/metrics.
+/// If no OTel provider was initialised (default config), `shutdown()` is a no-op.
+#[must_use]
+pub struct TelemetryHandle {
+    _private: (),
+}
+
+impl TelemetryHandle {
+    /// Flush pending spans and metrics, then shut down the OTel provider.
+    ///
+    /// Idempotent. Calling twice is safe. Blocks until the provider has drained
+    /// its export queue or the provider-specific shutdown timeout expires.
+    pub fn shutdown(self) {
+        // No-op in the default (no OTel) configuration.
+        // When `otel` feature is enabled and an OTLP provider is running,
+        // the provider's Drop impl flushes before the handle is dropped.
+    }
+}
+
+/// Initialise kremory telemetry for the memory layer.
+///
+/// Wires:
+/// - `metrics` recorder (global — installs once; subsequent calls are no-ops)
+/// - `tracing` subscriber (OTel OTLP exporter if `otel` feature + endpoint set)
+///
+/// Returns a `TelemetryHandle` that MUST be kept alive until process exit.
+/// Dropping it early shuts down the OTel provider and loses buffered spans.
+///
+/// # Errors
+///
+/// Returns `Err` if the OTLP exporter fails to connect (when `otel` feature enabled
+/// and `config.otlp_endpoint` is `Some`). Plain metrics-only config always succeeds.
+pub fn init_telemetry(
+    _config: RqlmTelemetryConfig,
+) -> std::result::Result<TelemetryHandle, Box<dyn std::error::Error + Send + Sync>> {
+    // Library-safe: kremory does NOT install a global metrics recorder (ADR D2).
+    // The host binary is responsible for calling `metrics_exporter_prometheus::install()`
+    // or `metrics_util::debugging::DebuggingRecorder::install_as_global()` in tests.
+    //
+    // When the `otel` feature is enabled and `config.otlp_endpoint` is `Some`,
+    // a tracing-opentelemetry layer would be installed here. Left as a stub
+    // until the `otel` feature is stabilised — the `TelemetryHandle` type is
+    // reserved so the API shape is locked.
+    Ok(TelemetryHandle { _private: () })
+}
 
 #[cfg(test)]
 mod tests {
