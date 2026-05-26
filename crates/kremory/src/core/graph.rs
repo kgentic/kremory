@@ -1,11 +1,32 @@
 use chrono::{DateTime, Utc};
 use metrics::histogram;
+use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 use tracing;
 
 use crate::core::error::Result;
 use crate::core::schema::{Entity, EpisodicEdge, Fact, TemporalGraph};
+
+/// Compute a hex-encoded SHA-256 content hash for a fact triple.
+/// Hash input: `"{subject_id}\x00{predicate}\x00{object_key}"` where
+/// `object_key` is `object_id` if set, otherwise `object_value`, otherwise `""`.
+/// Story #209.
+fn fact_content_hash(
+    subject_id: &str,
+    predicate: &str,
+    object_id: Option<&str>,
+    object_value: Option<&str>,
+) -> String {
+    let object_key = object_id.or(object_value).unwrap_or("");
+    let mut hasher = Sha256::new();
+    hasher.update(subject_id.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(predicate.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(object_key.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
 
 #[derive(Debug, Clone)]
 pub struct SubGraph {
@@ -379,6 +400,19 @@ impl TemporalGraph {
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
+        // Story #209: compute SHA-256 content hash for dedup
+        let hash = fact_content_hash(subject_id, predicate, object_id, object_value);
+        // Check for existing non-expired fact with same content hash
+        let mut dup_check = self
+            .conn
+            .query(
+                "SELECT id FROM facts WHERE content_hash = ?1 AND expired_at IS NULL LIMIT 1",
+                libsql::params![hash.clone()],
+            )
+            .await?;
+        if dup_check.next().await?.is_some() {
+            return Err(crate::core::error::Error::Duplicate { content_hash: hash });
+        }
         let vec_str = embedding.map(|e| {
             format!(
                 "[{}]",
@@ -390,8 +424,8 @@ impl TemporalGraph {
         });
         self.conn
             .execute(
-                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id)
-                 VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9)",
+                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, content_hash)
+                 VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10)",
                 libsql::params![
                     subject_id,
                     predicate,
@@ -402,6 +436,7 @@ impl TemporalGraph {
                     now,
                     confidence,
                     source_episode_id,
+                    hash,
                 ],
             )
             .await?;
@@ -751,6 +786,18 @@ impl TemporalGraph {
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
+        // Story #209: compute SHA-256 content hash for dedup
+        let hash = fact_content_hash(subject_id, predicate, object_id, object_value);
+        let mut dup_check = self
+            .conn
+            .query(
+                "SELECT id FROM facts WHERE content_hash = ?1 AND expired_at IS NULL LIMIT 1",
+                libsql::params![hash.clone()],
+            )
+            .await?;
+        if dup_check.next().await?.is_some() {
+            return Err(crate::core::error::Error::Duplicate { content_hash: hash });
+        }
         let vec_str = embedding.map(|e| {
             format!(
                 "[{}]",
@@ -762,8 +809,8 @@ impl TemporalGraph {
         });
         self.conn
             .execute(
-                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, group_id)
-                 VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, group_id, content_hash)
+                 VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10, ?11)",
                 libsql::params![
                     subject_id,
                     predicate,
@@ -775,6 +822,7 @@ impl TemporalGraph {
                     confidence,
                     source_episode_id,
                     group_id,
+                    hash,
                 ],
             )
             .await?;
@@ -1714,5 +1762,56 @@ mod tests {
             count, 0,
             "entities row must be rolled back when FTS insert fails (HIGH-2, insert_entity_with_group)"
         );
+    }
+
+    // === SHA-256 dedup (Story #209) ===
+
+    #[tokio::test]
+    async fn insert_fact_duplicate_returns_error() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        g.insert_entity("alice", "Person", serde_json::json!({}))
+            .await
+            .unwrap();
+        let t = Utc::now();
+        // First insert succeeds
+        g.insert_fact("alice", "likes", None, Some("coffee"), t, 1.0, None, None)
+            .await
+            .unwrap();
+        // Second insert with same triple must return Duplicate error
+        let err = g
+            .insert_fact("alice", "likes", None, Some("coffee"), t, 0.9, None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::core::error::Error::Duplicate { .. }),
+            "expected Duplicate error, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_fact_different_triples_both_succeed() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        g.insert_entity("alice", "Person", serde_json::json!({}))
+            .await
+            .unwrap();
+        let t = Utc::now();
+        g.insert_fact("alice", "likes", None, Some("coffee"), t, 1.0, None, None)
+            .await
+            .unwrap();
+        // Different object_value → different hash → succeeds
+        g.insert_fact("alice", "likes", None, Some("tea"), t, 1.0, None, None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn fact_content_hash_deterministic() {
+        let h1 = fact_content_hash("alice", "likes", None, Some("coffee"));
+        let h2 = fact_content_hash("alice", "likes", None, Some("coffee"));
+        assert_eq!(h1, h2, "hash must be deterministic");
+        let h3 = fact_content_hash("alice", "likes", None, Some("tea"));
+        assert_ne!(h1, h3, "different facts must have different hashes");
+        // SHA-256 produces 64 hex chars
+        assert_eq!(h1.len(), 64);
     }
 }
