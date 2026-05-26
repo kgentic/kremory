@@ -61,21 +61,27 @@ fn row_to_fact(row: &libsql::Row) -> anyhow::Result<Fact> {
     let props_str: Option<String> = row.get::<Option<String>>(5)?;
     let valid_from_str: String = row.get::<String>(6)?;
     let valid_to_str: Option<String> = row.get::<Option<String>>(7)?;
-    let created_str: String = row.get::<String>(8)?;
+    let recorded_str: String = row.get::<String>(8)?;
     let expired_str: Option<String> = row.get::<Option<String>>(9)?;
     let invalid_str: Option<String> = row.get::<Option<String>>(10)?;
     let group_id: Option<String> = row.get::<Option<String>>(11)?;
     let confidence: f64 = row.get::<f64>(12)?;
     let source_episode_id: Option<i64> = row.get::<Option<i64>>(13)?;
+    let memory_type_str: Option<String> = row.get::<Option<String>>(14)?;
+    let content_hash: Option<String> = row.get::<Option<String>>(15)?;
+    let access_count: i64 = row.get::<i64>(16)?;
 
     let properties: Option<serde_json::Value> = props_str
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
     let valid_from = parse_dt(&valid_from_str)?;
     let valid_to = valid_to_str.as_deref().map(parse_dt).transpose()?;
-    let recorded_at = parse_dt(&created_str)?;
+    let recorded_at = parse_dt(&recorded_str)?;
     let expired_at = expired_str.as_deref().map(parse_dt).transpose()?;
     let invalid_at = invalid_str.as_deref().map(parse_dt).transpose()?;
+    let memory_type = memory_type_str
+        .as_deref()
+        .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
 
     Ok(Fact {
         id,
@@ -92,9 +98,9 @@ fn row_to_fact(row: &libsql::Row) -> anyhow::Result<Fact> {
         group_id,
         confidence,
         source_episode_id,
-        memory_type: None,
-        content_hash: None,
-        access_count: 0,
+        memory_type,
+        content_hash,
+        access_count,
     })
 }
 
@@ -445,7 +451,8 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                        memory_type, content_hash, access_count
                  FROM facts
                  WHERE valid_from <= ?1
                    AND (valid_to IS NULL OR valid_to > ?1)
@@ -471,7 +478,8 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                        memory_type, content_hash, access_count
                  FROM facts
                  WHERE subject_id = ?1
                    AND valid_from <= ?2
@@ -493,7 +501,8 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                        memory_type, content_hash, access_count
                  FROM facts
                  WHERE subject_id = ?1
                  ORDER BY valid_from, recorded_at",
@@ -534,7 +543,8 @@ impl TemporalGraph {
                 .conn
                 .query(
                     "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                            valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                            valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                        memory_type, content_hash, access_count
                      FROM facts
                      WHERE (subject_id = ?1 OR object_id = ?1)
                        AND expired_at IS NULL",
@@ -908,7 +918,8 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                        memory_type, content_hash, access_count
                  FROM facts
                  WHERE subject_id = ?1 AND predicate = ?2 AND expired_at IS NULL",
                 libsql::params![subject_id, predicate],
@@ -940,7 +951,8 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                        memory_type, content_hash, access_count
                  FROM facts
                  WHERE object_id IS NOT NULL
                    AND expired_at IS NULL",
