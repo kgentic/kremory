@@ -495,6 +495,38 @@ mod schema_tests {
         );
     }
 
+    /// Story #210: concurrent BEGIN IMMEDIATE calls serialise via write_lock.
+    /// Two tasks both call begin_immediate_if_needed concurrently — one opens,
+    /// the other blocks until the first commits. Both writes succeed without error.
+    #[tokio::test]
+    async fn concurrent_begin_immediate_serialises_via_write_lock() {
+        use std::sync::Arc;
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
+
+        let g1 = Arc::clone(&graph);
+        let t1 = tokio::spawn(async move {
+            let guard = g1.begin_immediate_if_needed().await.expect("t1 begin");
+            // Yield to allow t2 to attempt begin while we hold the lock
+            tokio::task::yield_now().await;
+            guard.commit().await.expect("t1 commit");
+        });
+
+        let g2 = Arc::clone(&graph);
+        let t2 = tokio::spawn(async move {
+            let guard = g2.begin_immediate_if_needed().await.expect("t2 begin");
+            guard.commit().await.expect("t2 commit");
+        });
+
+        t1.await.expect("t1 join");
+        t2.await.expect("t2 join");
+        // After both commits, flag must be clear
+        use std::sync::atomic::Ordering;
+        assert!(
+            !graph.has_outer_transaction.load(Ordering::Acquire),
+            "flag must be clear after both tasks complete"
+        );
+    }
+
     /// G3 gate: DDL must use `recorded_at` not `created_at`. Story #A1.
     #[test]
     fn schema_uses_recorded_at_not_created_at() {
