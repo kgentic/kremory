@@ -78,3 +78,10 @@ autoagents-llm = "0.3"
 anyhow = "1"
 dashmap = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

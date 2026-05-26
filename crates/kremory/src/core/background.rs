@@ -218,7 +218,7 @@ impl BackgroundIngestor {
                     deferred_enabled,
                 );
             })
-            .expect("failed to spawn rql-ingestor thread");
+            .unwrap_or_else(|e| panic!("invariant: OS rejected rql-ingestor thread spawn: {e}"));
 
         let ingestor = BackgroundIngestor {
             inner: Arc::new(Inner {
@@ -266,7 +266,10 @@ impl BackgroundIngestor {
 
     /// Poll for ingestion errors since the last call.  Non-blocking.
     pub fn drain_errors(&self) -> Vec<IngestError> {
-        let rx = self.inner.error_rx.lock().expect("error_rx mutex poisoned");
+        let rx =
+            self.inner.error_rx.lock().unwrap_or_else(|poisoned| {
+                panic!("invariant: error_rx mutex poisoned: {poisoned}")
+            });
         let mut errors = Vec::new();
         while let Ok(e) = rx.try_recv() {
             errors.push(e);
@@ -441,7 +444,9 @@ fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
         .worker_threads(1)
         .enable_all()
         .build()
-        .expect("failed to build tokio runtime for rql-ingestor");
+        .unwrap_or_else(|e| {
+            panic!("invariant: tokio runtime build failed for rql-ingestor worker: {e}")
+        });
 
     rt.block_on(async {
         let mut deferred_queue: VecDeque<DeferredRequest> = VecDeque::new();

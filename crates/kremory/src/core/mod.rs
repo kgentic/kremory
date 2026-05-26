@@ -13,13 +13,13 @@
 
 pub mod arena;
 pub mod background;
-pub mod extraction_window;
 pub mod config;
 pub mod context;
 pub mod contradiction;
 pub mod embedding;
 pub mod error;
 pub mod extraction;
+pub mod extraction_window;
 pub mod graph;
 pub mod grounding;
 pub mod hybrid_extractor;

@@ -372,7 +372,6 @@ async fn submit_episode_without_sink_completes() {
 /// Uses a separate stub that fires on_contradiction + on_dedup_merge.
 #[tokio::test]
 async fn submit_episode_contradiction_events_reach_sink() {
-    use kremory::core::sink::EntityOrEdgeRef;
     use kremory::memory::types::SourceKind;
 
     struct ContradictingHandle;
