@@ -1,3 +1,6 @@
+// Items in this module are tested inline but not yet called from other modules.
+// Suppress dead_code lint; remove when snapshot write/read paths are wired up.
+#![allow(dead_code)]
 //! Binary format constants and validation for kremory snapshot files.
 //!
 //! All kremory-produced binary blobs (export snapshots, embedded vector stores)
@@ -13,13 +16,13 @@
 /// ASCII encoding of `"KMRY"`. Every kremory-produced binary blob begins with
 /// these 4 bytes; any blob that does NOT start with them is rejected before
 /// further parsing.
-pub const KREMORY_MAGIC: [u8; 4] = *b"KMRY";
+pub(crate) const KREMORY_MAGIC: [u8; 4] = *b"KMRY";
 
 /// Current binary format version byte. Story #152.
 ///
 /// Increment when the binary layout changes in an incompatible way.
 /// Version 1 = initial kremory v0.1.0 layout.
-pub const FORMAT_VERSION: u8 = 1;
+pub(crate) const FORMAT_VERSION: u8 = 1;
 
 /// Rebuild-hint flag byte. Story #152.
 ///
@@ -27,14 +30,14 @@ pub const FORMAT_VERSION: u8 = 1;
 /// instructs the consumer to invalidate and rebuild all derived data
 /// (speculative cache, community clusters) before using the snapshot.
 /// Value `0x00` = no rebuild required (incremental update).
-pub const REBUILD_HINT: u8 = 0x01;
+pub(crate) const REBUILD_HINT: u8 = 0x01;
 
 /// Minimum valid snapshot header length: magic (4) + version (1) + hint (1).
 const MIN_HEADER_LEN: usize = 6;
 
 /// Reason a binary blob was rejected by `validate_snapshot_header`. Story #164.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CorruptReason {
+pub(crate) enum CorruptReason {
     /// Blob is shorter than the minimum header size.
     TooShort { actual: usize, minimum: usize },
     /// Magic bytes do not match `KREMORY_MAGIC`.
@@ -74,7 +77,7 @@ impl std::fmt::Display for CorruptReason {
 ///
 /// This function is deliberately allocation-free (no `String`, no `Vec`)
 /// so it can run in hot paths (e.g. before seeking into a large file).
-pub fn validate_snapshot_header(data: &[u8]) -> Result<bool, CorruptReason> {
+pub(crate) fn validate_snapshot_header(data: &[u8]) -> Result<bool, CorruptReason> {
     if data.len() < MIN_HEADER_LEN {
         return Err(CorruptReason::TooShort {
             actual: data.len(),

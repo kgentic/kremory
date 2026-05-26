@@ -1,3 +1,7 @@
+// engine_init and engine() are tested inline but not yet wired into
+// the application entry point. Suppress dead_code until the CLI/server
+// integration point is added.
+#![allow(dead_code)]
 //! Process-global `TemporalGraph` singleton. Story #5.
 //!
 //! `engine_init` initialises the singleton once; subsequent calls are no-ops
@@ -37,7 +41,7 @@ static ENGINE: OnceLock<Arc<TemporalGraph>> = OnceLock::new();
 ///
 /// Propagates any `TemporalGraph::open` error (I/O, migration failure).
 /// Does NOT error on a second call — second call is a no-op.
-pub async fn engine_init(path: &str) -> Result<()> {
+pub(crate) async fn engine_init(path: &str) -> Result<()> {
     // Fast path: already initialised.
     if ENGINE.get().is_some() {
         return Ok(());
@@ -55,7 +59,7 @@ pub async fn engine_init(path: &str) -> Result<()> {
 ///
 /// Panics with the message `"invariant: engine_init must be called before engine()"`
 /// when called before `engine_init` has successfully returned.
-pub fn engine() -> Arc<TemporalGraph> {
+pub(crate) fn engine() -> Arc<TemporalGraph> {
     match ENGINE.get() {
         Some(arc) => arc.clone(),
         None => panic!("invariant: engine_init must be called before engine()"),

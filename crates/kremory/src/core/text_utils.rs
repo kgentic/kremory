@@ -465,7 +465,8 @@ impl OovAuditor {
 /// PMI = log2(P(w1,w2) / (P(w1) * P(w2)))
 /// Threshold 2.0 validated in spike: high recall as multi-word boundary detector.
 /// NPMI is broken on short documents (needs 100k+ tokens) — use raw PMI only.
-pub fn compute_pmi_bigrams(text: &str, threshold: f64) -> Vec<(String, f64)> {
+#[allow(dead_code)]
+pub(crate) fn compute_pmi_bigrams(text: &str, threshold: f64) -> Vec<(String, f64)> {
     let words: Vec<String> = text
         .unicode_words()
         .filter(|w| w.len() >= 2)

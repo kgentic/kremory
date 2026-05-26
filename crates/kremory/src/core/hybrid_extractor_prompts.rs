@@ -1,7 +1,7 @@
 use super::super::config::ContentType;
 use super::super::intelligence::{ExtractedEntity, ExtractionContext};
 
-pub fn build_known_hint(known: &[ExtractedEntity], cap: usize) -> String {
+pub(crate) fn build_known_hint(known: &[ExtractedEntity], cap: usize) -> String {
     if known.is_empty() {
         return String::new();
     }
@@ -15,7 +15,7 @@ pub fn build_known_hint(known: &[ExtractedEntity], cap: usize) -> String {
     format!("\nPreviously seen entities: {}\n", names.join(", "))
 }
 
-pub fn build_gleaning_prompt(
+pub(crate) fn build_gleaning_prompt(
     text: &str,
     found_entities: &[ExtractedEntity],
     ctx: &ExtractionContext<'_>,
@@ -43,7 +43,7 @@ Rules:\n\
     )
 }
 
-pub fn build_typing_prompt(
+pub(crate) fn build_typing_prompt(
     text: &str,
     candidates: &[String],
     ctx: &ExtractionContext<'_>,
