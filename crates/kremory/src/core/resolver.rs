@@ -307,6 +307,7 @@ mod tests {
             recorded_at: Utc::now(),
             updated_at: None,
             group_id: None,
+            access_count: 0,
         }
     }
 
