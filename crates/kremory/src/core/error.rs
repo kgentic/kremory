@@ -125,14 +125,16 @@ pub enum Error {
     TokenWindowInvalid { got: usize, min: usize },
 
     // ── Engine lifecycle (Story #5) ───────────────────────────────────────────
-    /// `init_engine` was called a second time in the same process.
-    /// The OnceLock singleton can only be initialised once; subsequent calls
-    /// return this error so double-init bugs surface at startup.
-    #[error("engine already initialised — init_engine must be called exactly once per process")]
+    /// Reserved for external callers that need to signal engine-already-init.
+    /// `engine_init` itself is idempotent (no-op on second call); this variant
+    /// exists for callers that enforce single-init semantics at a higher layer.
+    #[error("engine already initialised")]
     EngineAlreadyInitialised,
 
-    /// `engine()` was called before `init_engine` completed successfully.
-    #[error("engine not yet initialised — call init_engine before using the engine")]
+    /// Reserved; `engine()` panics rather than returning this error (Story #5).
+    /// Kept in the enum for backward compatibility with any downstream code that
+    /// matches on `Error::EngineNotInitialised`.
+    #[error("engine not yet initialised — call engine_init before using the engine")]
     EngineNotInitialised,
 
     // ── Content-hash dedup (Story #209) ──────────────────────────────────────
