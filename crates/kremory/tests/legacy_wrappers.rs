@@ -153,6 +153,7 @@ async fn legacy_ingest_episode_compiles_and_returns_stub_counts() {
         kind: SourceKind::Meeting,
         id: "mtg-legacy".into(),
         occurred_at: Utc::now(),
+        published_at: None,
     };
 
     let result: IngestResult = ingest_episode(
@@ -220,6 +221,7 @@ async fn legacy_ingest_episode_is_deprecated_and_functional() {
         kind: SourceKind::Chat,
         id: "chat-deprecated".into(),
         occurred_at: Utc::now(),
+        published_at: None,
     };
 
     // This call would emit a `use of deprecated function` compiler warning
