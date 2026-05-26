@@ -197,14 +197,18 @@ impl UnionFind {
 // Part 6: CascadeResolver
 // ---------------------------------------------------------------------------
 
-pub struct CascadeResolver<L: ChatProvider> {
+pub(crate) struct CascadeResolver<L: ChatProvider> {
     llm: Arc<L>,
     minhash_config: MinHashConfig,
     entropy_config: EntropyConfig,
 }
 
 impl<L: ChatProvider> CascadeResolver<L> {
-    pub fn new(llm: Arc<L>, minhash_config: MinHashConfig, entropy_config: EntropyConfig) -> Self {
+    pub(crate) fn new(
+        llm: Arc<L>,
+        minhash_config: MinHashConfig,
+        entropy_config: EntropyConfig,
+    ) -> Self {
         Self {
             llm,
             minhash_config,

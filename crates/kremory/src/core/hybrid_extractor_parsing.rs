@@ -6,24 +6,24 @@ use super::super::intelligence::ExtractedEntity;
 use super::super::resolver::normalize_name;
 
 #[derive(Debug, Default, Deserialize)]
-pub struct EntityListOutput {
+pub(crate) struct EntityListOutput {
     #[serde(default)]
-    pub entities: Vec<HybridRawEntity>,
+    pub(crate) entities: Vec<HybridRawEntity>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct HybridRawEntity {
+pub(crate) struct HybridRawEntity {
     #[serde(default)]
-    pub name: String,
+    pub(crate) name: String,
     #[serde(default = "default_entity_label")]
-    pub label: String,
+    pub(crate) label: String,
 }
 
 fn default_entity_label() -> String {
     "Entity".to_string()
 }
 
-pub fn parse_entity_list_response(raw: &str) -> Result<Vec<ExtractedEntity>> {
+pub(crate) fn parse_entity_list_response(raw: &str) -> Result<Vec<ExtractedEntity>> {
     let output: EntityListOutput = parse_json_lenient(raw).unwrap_or_default();
     Ok(output
         .entities
@@ -37,7 +37,7 @@ pub fn parse_entity_list_response(raw: &str) -> Result<Vec<ExtractedEntity>> {
         .collect())
 }
 
-pub fn parse_typed_orphans_response(
+pub(crate) fn parse_typed_orphans_response(
     raw: &str,
     candidates: &[String],
 ) -> Result<Vec<ExtractedEntity>> {
@@ -65,7 +65,9 @@ pub fn parse_typed_orphans_response(
     Ok(typed)
 }
 
-pub fn parse_json_lenient<T: for<'de> Deserialize<'de> + Default>(raw: &str) -> AnyhowResult<T> {
+pub(crate) fn parse_json_lenient<T: for<'de> Deserialize<'de> + Default>(
+    raw: &str,
+) -> AnyhowResult<T> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(T::default());

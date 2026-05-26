@@ -4,7 +4,7 @@ use super::super::grounding::GroundingChecker;
 use super::super::intelligence::ExtractedEntity;
 use super::super::resolver::normalize_name;
 
-pub fn filter_new_entities(
+pub(crate) fn filter_new_entities(
     entities: Vec<ExtractedEntity>,
     known: &[ExtractedEntity],
 ) -> Vec<ExtractedEntity> {
@@ -23,7 +23,7 @@ pub fn filter_new_entities(
         .collect()
 }
 
-pub fn merge_entities_with_grounding(
+pub(crate) fn merge_entities_with_grounding(
     mut base: Vec<ExtractedEntity>,
     additive: Vec<ExtractedEntity>,
     source_text: &str,
