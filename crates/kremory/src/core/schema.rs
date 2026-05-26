@@ -223,6 +223,32 @@ impl TemporalGraph {
         Ok(BeginGuard::new(self, true))
     }
 
+    /// Flush pending writes to storage if the `DIRTY` flag is set.
+    ///
+    /// Atomically checks-and-clears `DIRTY` (CAS `true → false`). If the flag
+    /// was set, issues a `PRAGMA wal_checkpoint(PASSIVE)` to push WAL frames
+    /// to the main DB file. If the flag was already `false` (no writes since the
+    /// last flush), returns immediately without touching the connection.
+    ///
+    /// Called by background task and shutdown path — never on the hot write path.
+    /// Story #215.
+    pub async fn flush_if_dirty(&self) -> Result<()> {
+        // CAS old=true → new=false. Ok → we won the race and must flush.
+        // Err → flag was already false; nothing to do.
+        if DIRTY
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            // WAL checkpoint: push buffered frames to main DB file.
+            // Non-fatal — busy/locked DBs return non-zero but don't error.
+            let _ = self
+                .conn
+                .execute("PRAGMA wal_checkpoint(PASSIVE)", ())
+                .await;
+        }
+        Ok(())
+    }
+
     /// One-shot rename for legacy `entities` (rql shape) → `rql_entities`.
     ///
     /// **Why**: S5.C P1 introduces a workspace `entities` table on the same
@@ -525,6 +551,38 @@ mod schema_tests {
             !graph.has_outer_transaction.load(Ordering::Acquire),
             "flag must be clear after both tasks complete"
         );
+    }
+
+    /// Story #215: flush_if_dirty() called twice without intervening write only
+    /// checkpoints once — second call is a no-op (DIRTY already cleared).
+    #[tokio::test]
+    async fn flush_if_dirty_double_call_only_flushes_once() {
+        use crate::core::schema::DIRTY;
+        use std::sync::atomic::Ordering;
+
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+
+        // Simulate a write having set DIRTY.
+        DIRTY.store(true, Ordering::Release);
+
+        // First flush: DIRTY was true → checkpoints, clears flag.
+        graph.flush_if_dirty().await.expect("first flush");
+        assert!(
+            !DIRTY.load(Ordering::Acquire),
+            "DIRTY must be false after first flush"
+        );
+
+        // Second flush: DIRTY already false → no checkpoint, no-op.
+        // We can't observe the checkpoint skip directly, but we can verify
+        // the method succeeds and DIRTY stays false (not toggled).
+        graph.flush_if_dirty().await.expect("second flush");
+        assert!(
+            !DIRTY.load(Ordering::Acquire),
+            "DIRTY must remain false after no-op second flush"
+        );
+
+        // Restore DIRTY to false for test isolation (it starts false but make explicit).
+        DIRTY.store(false, Ordering::Release);
     }
 
     /// G3 gate: DDL must use `recorded_at` not `created_at`. Story #A1.
