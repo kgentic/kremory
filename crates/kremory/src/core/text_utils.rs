@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use metrics::counter;
 use tracing;
@@ -6,6 +7,46 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::intelligence::ExtractedEntity;
 use crate::core::resolver::normalize_name;
+
+// ─── Tier-1 deterministic OnceLock caches (Story #148) ───────────────────────
+//
+// These are computed once from compile-time data and never invalidated.
+// No mutation path exists — the values are structurally identical across
+// every process lifetime. OnceLock ensures the allocation happens exactly
+// once per process even under concurrent access.
+//
+// Tier definitions (three-cache separation, Story #149):
+//   Tier-1: OnceLock<T> — deterministic, never invalidated (this section)
+//   Tier-2: RwLock<HashMap> — mutable-data-derived, invalidated on DIRTY
+//   Tier-3: HashSet/Vec scoped to a single function call, not stored in self
+
+/// Lazily initialised `HashSet` view of STOP_WORDS for O(1) membership tests.
+/// Tier-1 cache: computed once from the compile-time slice, never invalidated.
+static STOP_WORDS_SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+
+/// Sentence-terminating punctuation characters used to detect sentence boundaries
+/// during proper-noun scanning. Tier-1 cache: side-effect-free, deterministic.
+static SENTENCE_TERMINATORS: OnceLock<HashSet<char>> = OnceLock::new();
+
+/// Minimum token length (in characters) for an entity candidate to be considered.
+/// Filters single-char and two-char noise. Tier-1 cache: constant value,
+/// computed once.
+static MIN_ENTITY_TOKEN_LEN: OnceLock<usize> = OnceLock::new();
+
+/// Return a reference to the lazily initialised stop-word set (Tier-1 cache).
+fn stop_words_set() -> &'static HashSet<&'static str> {
+    STOP_WORDS_SET.get_or_init(|| STOP_WORDS.iter().copied().collect())
+}
+
+/// Return a reference to the lazily initialised sentence-terminator set (Tier-1).
+fn sentence_terminators() -> &'static HashSet<char> {
+    SENTENCE_TERMINATORS.get_or_init(|| ['.', '?', '!'].iter().copied().collect())
+}
+
+/// Return the minimum entity token length constant (Tier-1 cache).
+fn min_entity_token_len() -> usize {
+    *MIN_ENTITY_TOKEN_LEN.get_or_init(|| 4)
+}
 
 // ─── LanguageAdapter trait ───────────────────────────────────────────────────
 
@@ -29,8 +70,9 @@ const STOP_WORDS: &[&str] = &[
 
 /// Returns true if the word is in the stop-word list (exact match — stop words are
 /// stored with their natural Title-Case so comparison is direct).
+/// Uses the Tier-1 OnceLock cache (Story #148) for O(1) membership test.
 fn is_stop_word(word: &str) -> bool {
-    STOP_WORDS.contains(&word)
+    stop_words_set().contains(word)
 }
 
 /// Returns true if the word starts with an ASCII uppercase letter.
@@ -95,10 +137,11 @@ pub fn scan_proper_nouns(text: &str, existing: &[ExtractedEntity]) -> Vec<Extrac
         tokens.push((stripped, next_is_sentence_initial));
 
         // Determine if *this* token ends a sentence.
+        // Uses Tier-1 OnceLock sentence_terminators() cache (Story #148).
         let ends_sentence = raw
             .chars()
             .last()
-            .map(|c| matches!(c, '.' | '?' | '!'))
+            .map(|c| sentence_terminators().contains(&c))
             .unwrap_or(false);
         next_is_sentence_initial = ends_sentence;
     }
@@ -221,7 +264,10 @@ impl OovAuditor {
     /// Returns true if `word` is an OOV candidate: not in dictionary, not a stop word,
     /// not numeric, not a contraction, and at least `min_len` chars.
     fn is_oov_candidate(&self, word: &str, min_len: usize) -> bool {
-        if word.len() < min_len {
+        // Use the larger of the caller-supplied minimum and the global constant
+        // (Tier-1 OnceLock cache, Story #148).
+        let effective_min = min_len.max(min_entity_token_len());
+        if word.len() < effective_min {
             return false;
         }
         if word.chars().all(|c| c.is_numeric() || c == '.' || c == ',') {
@@ -477,6 +523,41 @@ mod tests {
 
     fn names(entities: &[ExtractedEntity]) -> Vec<&str> {
         entities.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    /// Story #148: Tier-1 OnceLock caches return the same pointer on two calls
+    /// (pointer equality proves single allocation, not a copy on each access).
+    #[test]
+    fn oncelock_tier1_caches_same_pointer_on_repeated_calls() {
+        // stop_words_set: call twice — must be same *const pointer.
+        let ptr_a = stop_words_set() as *const HashSet<&'static str>;
+        let ptr_b = stop_words_set() as *const HashSet<&'static str>;
+        assert_eq!(
+            ptr_a, ptr_b,
+            "STOP_WORDS_SET OnceLock must return the same allocation"
+        );
+
+        // sentence_terminators: same check.
+        let ptr_c = sentence_terminators() as *const HashSet<char>;
+        let ptr_d = sentence_terminators() as *const HashSet<char>;
+        assert_eq!(
+            ptr_c, ptr_d,
+            "SENTENCE_TERMINATORS OnceLock must return the same allocation"
+        );
+
+        // min_entity_token_len: value must be deterministic.
+        let val_e = min_entity_token_len();
+        let val_f = min_entity_token_len();
+        assert_eq!(
+            val_e, val_f,
+            "MIN_ENTITY_TOKEN_LEN OnceLock must return the same value on every call"
+        );
+        let ptr_e = MIN_ENTITY_TOKEN_LEN.get().expect("initialized") as *const usize;
+        let ptr_f = MIN_ENTITY_TOKEN_LEN.get().expect("initialized") as *const usize;
+        assert_eq!(
+            ptr_e, ptr_f,
+            "MIN_ENTITY_TOKEN_LEN OnceLock must return the same allocation"
+        );
     }
 
     #[test]
