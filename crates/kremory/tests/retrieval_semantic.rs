@@ -405,9 +405,11 @@ mod semantic_tests {
                 .expect("OnnxEmbeddingProvider::new() failed"),
         );
 
-        let graph = TemporalGraph::open_in_memory()
-            .await
-            .expect("failed to open in-memory graph");
+        let graph = Arc::new(
+            TemporalGraph::open_in_memory()
+                .await
+                .expect("failed to open in-memory graph"),
+        );
 
         let now = Utc::now();
 
