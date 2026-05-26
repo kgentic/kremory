@@ -1,3 +1,38 @@
+//! # Three-Cache Separation (Story #149)
+//!
+//! kremory uses three distinct cache tiers with explicit invalidation contracts:
+//!
+//! ## Tier-1: Deterministic OnceLock Caches
+//!
+//! `static FOO: OnceLock<T>` for values computed exactly once from compile-time
+//! constants. **No mutation path exists.** Examples: stop-word sets, sentence
+//! terminator sets, minimum token lengths (`text_utils.rs`). These are computed
+//! on first access and reused for the lifetime of the process.
+//!
+//! *Invalidation contract*: never invalidated.
+//!
+//! ## Tier-2: Mutable-Data-Derived Cache (this module)
+//!
+//! `SpeculativeCache` holds entity prefetch entries whose validity is tied to
+//! the graph's write state. Entries are time-bounded (TTL) and evicted when
+//! the `DIRTY` flag (set in `BeginGuard::commit()`) signals that the graph has
+//! been mutated since the last cache fill.
+//!
+//! Consumers that observe `DIRTY == true` MUST call `SpeculativeCache::clear()`
+//! or let TTL expiry discard stale entries before reading from the cache.
+//!
+//! *Invalidation contract*: entries expire after `ttl`; callers should call
+//! `evict_expired()` periodically or check `DIRTY` before read.
+//!
+//! ## Tier-3: Per-Request HashSet / Vec
+//!
+//! Short-lived dedup structures allocated on the stack (or heap, but never
+//! stored in `self`) for the duration of a single function call. Examples: the
+//! `seen: HashSet<String>` in `scan_proper_nouns`, `extract_candidates`, and
+//! `ingest_episode`. Dropped at end of call — zero inter-request leakage.
+//!
+//! *Invalidation contract*: automatic (scope drop).
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -16,13 +51,16 @@ struct CachedEntry {
     cached_at: Instant,
 }
 
-/// Speculative cache that pre-warms graph neighbours after searches.
+/// Speculative cache that pre-warms graph neighbours after searches (Tier-2).
 ///
 /// After a search returns results, the cache traverses graph edges from
 /// the result entities, ranks neighbours by PageRank importance, and
 /// stores them for instant retrieval on subsequent searches.
 ///
 /// Predictions affect LATENCY only, never RANKING.
+///
+/// Invalidation: entries are TTL-bounded. Callers MUST call `evict_expired()`
+/// or `clear()` when `DIRTY` is observed (see three-cache separation above).
 pub struct SpeculativeCache {
     /// entity_id -> cached entry
     entries: Mutex<HashMap<String, CachedEntry>>,
@@ -367,6 +405,50 @@ mod tests {
             .await
             .unwrap();
         assert!(cache.len() <= 2, "cache should respect max_prefetch limit");
+    }
+
+    /// Story #149: Tier-2 cache must not return stale data after a write.
+    ///
+    /// Flow:
+    ///   1. Prefetch neighbours of entity A → cache is warm with entity B.
+    ///   2. Simulate a graph write by setting DIRTY = true.
+    ///   3. Caller MUST evict stale entries (clear or evict_expired).
+    ///   4. After eviction, cache.get(B) returns None — no stale read.
+    ///
+    /// This test validates the invalidation contract documented in the
+    /// three-cache separation module comment.
+    #[tokio::test]
+    async fn tier2_cache_stale_data_evicted_after_dirty_write() {
+        use crate::core::schema::DIRTY;
+        use std::sync::atomic::Ordering;
+
+        let g = setup_graph().await;
+        let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
+
+        // Step 1: warm the cache.
+        cache
+            .prefetch(&g, &["project_alpha".to_string()])
+            .await
+            .expect("prefetch");
+        assert!(
+            cache.get("alice").is_some(),
+            "cache should be warm with alice before write"
+        );
+
+        // Step 2: simulate a write by setting DIRTY.
+        DIRTY.store(true, Ordering::Release);
+
+        // Step 3: caller's responsibility — observe DIRTY and evict.
+        if DIRTY.load(Ordering::Acquire) {
+            cache.clear();
+            DIRTY.store(false, Ordering::Release);
+        }
+
+        // Step 4: cache must now return None — no stale tier-2 read.
+        assert!(
+            cache.get("alice").is_none(),
+            "after write + eviction, cache must not return stale data"
+        );
     }
 
     #[tokio::test]
