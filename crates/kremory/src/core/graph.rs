@@ -1021,6 +1021,56 @@ impl TemporalGraph {
 
         Ok(graph)
     }
+
+    /// Find all facts that have no embedding and return their IDs + object_value.
+    ///
+    /// # SQLite-first ordering invariant (Story #214)
+    ///
+    /// SQLite commit MUST precede vector write (Story #214). If a crash occurs
+    /// between SQLite commit and vector write, all facts with NULL embedding can
+    /// be identified via this function and re-embedded by the caller. The reverse
+    /// ordering (vector-first) has NO recovery path — this is the entire
+    /// justification for the SQLite-first contract.
+    pub async fn facts_missing_embeddings(&self) -> Result<Vec<(i64, String, String, Option<String>)>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, subject_id, predicate, object_value FROM facts WHERE embedding IS NULL AND expired_at IS NULL",
+                (),
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id: i64 = row.get(0)?;
+            let subject_id: String = row.get(1)?;
+            let predicate: String = row.get(2)?;
+            let object_value: Option<String> = row.get(3)?;
+            out.push((id, subject_id, predicate, object_value));
+        }
+        Ok(out)
+    }
+
+    /// Backfill a vector embedding for a specific fact by ID.
+    ///
+    /// Called after crash-recovery when SQLite has the row but the vector index
+    /// did not receive the write. Story #214.
+    pub async fn backfill_fact_embedding(&self, fact_id: i64, embedding: &[f32]) -> Result<()> {
+        let vec_str = format!(
+            "[{}]",
+            embedding
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        self.conn
+            .execute(
+                "UPDATE facts SET embedding = CASE WHEN ?1 IS NULL THEN NULL ELSE vector(?1) END WHERE id = ?2",
+                libsql::params![vec_str, fact_id],
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1813,5 +1863,54 @@ mod tests {
         assert_ne!(h1, h3, "different facts must have different hashes");
         // SHA-256 produces 64 hex chars
         assert_eq!(h1.len(), 64);
+    }
+
+    // === SQLite-first vector ordering backfill (Story #214) ===
+
+    #[tokio::test]
+    async fn facts_missing_embeddings_returns_all_null_embedding_facts() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        g.insert_entity("alice", "Person", serde_json::json!({}))
+            .await
+            .unwrap();
+        let t = Utc::now();
+        // Insert a fact without embedding (None) — simulates SQLite-committed, vector-not-written
+        let fact_id = g
+            .insert_fact("alice", "works_at", None, Some("ACME"), t, 1.0, None, None)
+            .await
+            .unwrap();
+
+        let missing = g.facts_missing_embeddings().await.unwrap();
+        assert_eq!(missing.len(), 1, "one fact has no embedding");
+        assert_eq!(missing[0].0, fact_id);
+
+        // Backfill with a stub embedding
+        let embedding: Vec<f32> = vec![0.1_f32; 384];
+        g.backfill_fact_embedding(fact_id, &embedding).await.unwrap();
+
+        // After backfill, no facts should be missing
+        let still_missing = g.facts_missing_embeddings().await.unwrap();
+        assert!(
+            still_missing.is_empty(),
+            "backfill must clear the missing-embedding list"
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_fact_embedding_is_idempotent() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        g.insert_entity("bob", "Person", serde_json::json!({}))
+            .await
+            .unwrap();
+        let t = Utc::now();
+        let fact_id = g
+            .insert_fact("bob", "knows", None, Some("alice"), t, 1.0, None, None)
+            .await
+            .unwrap();
+        let embedding: Vec<f32> = vec![0.2_f32; 384];
+        // First backfill
+        g.backfill_fact_embedding(fact_id, &embedding).await.unwrap();
+        // Second backfill on same fact must not error
+        g.backfill_fact_embedding(fact_id, &embedding).await.unwrap();
     }
 }
