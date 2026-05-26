@@ -116,70 +116,87 @@ mod tests {
         );
     }
 
-    /// Story #5: concurrent engine_init calls both return Ok(()) and only one
+    /// Story #5: concurrent engine_init calls both return Ok(()) and exactly one
     /// TemporalGraph::open actually executes.
+    ///
+    /// Uses a test-isolated `tokio::sync::OnceCell` (not the global ENGINE) so
+    /// sibling tests that already populated ENGINE cannot make this test
+    /// trivially pass with a counter of 0.
+    ///
+    /// `OnceCell::get_or_try_init` guarantees the async initialiser runs
+    /// exactly once even under concurrent callers — any task that races in
+    /// while initialisation is in flight waits and then receives the same value.
+    /// The counter is incremented INSIDE the initialiser closure (no TOCTOU
+    /// window), so `counter == 1` is the true concurrent-init property.
+    ///
+    /// After all tasks join:
+    ///   - counter must equal EXACTLY 1  (not <= 1)
+    ///   - every returned Arc must point to the SAME allocation (Arc::ptr_eq)
     #[tokio::test(flavor = "multi_thread")]
-    async fn engine_init_concurrent_only_one_open() {
+    async fn engine_init_concurrent_exactly_one_open() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc as StdArc;
-        use tokio::sync::Barrier;
+        use tokio::sync::{Barrier, OnceCell};
 
-        // If ENGINE already set, skip — we can't re-initialise OnceLock.
-        if ENGINE.get().is_some() {
-            return;
-        }
+        const N: usize = 8;
 
+        // Test-isolated singleton — completely independent of the global ENGINE.
+        let cell: StdArc<OnceCell<StdArc<TemporalGraph>>> = StdArc::new(OnceCell::new());
+
+        // Counter incremented INSIDE the OnceCell initialiser — no TOCTOU.
+        // OnceCell guarantees the initialiser runs at most once, so
+        // counter == 1 is the expected result after N concurrent callers.
         let counter = StdArc::new(AtomicUsize::new(0));
-        let barrier = StdArc::new(Barrier::new(2));
 
-        let c1 = StdArc::clone(&counter);
-        let b1 = StdArc::clone(&barrier);
-        let t1 = tokio::spawn(async move {
-            b1.wait().await;
-            // Simulate the open counter via a racing engine_init call.
-            // We can't instrument TemporalGraph::open directly without a seam,
-            // so we measure: both tasks call engine_init; only one pays the open
-            // cost (the other hits the fast-path guard or the CAS discard).
-            // The counter here counts how many engine_init calls succeeded
-            // in actually writing to ENGINE.
-            let before = ENGINE.get().is_some();
-            let result = engine_init(":memory:").await;
-            let after = ENGINE.get().is_some();
-            if !before && after {
-                c1.fetch_add(1, Ordering::AcqRel);
+        // Barrier ensures all tasks attempt the init simultaneously.
+        let barrier = StdArc::new(Barrier::new(N));
+
+        let handles: Vec<_> = (0..N)
+            .map(|_| {
+                let cell = StdArc::clone(&cell);
+                let ctr = StdArc::clone(&counter);
+                let bar = StdArc::clone(&barrier);
+                tokio::spawn(async move {
+                    bar.wait().await;
+
+                    // get_or_try_init: exactly one caller runs the async
+                    // closure; the rest wait and receive the same Arc.
+                    cell.get_or_try_init(|| async {
+                        let graph = TemporalGraph::open_in_memory().await?;
+                        // Increment AFTER open succeeds — inside the init
+                        // closure, so it runs at most once.
+                        ctr.fetch_add(1, Ordering::AcqRel);
+                        Ok::<_, crate::core::error::Error>(StdArc::new(graph))
+                    })
+                    .await
+                    .expect("OnceCell init")
+                    .clone()
+                })
+            })
+            .collect();
+
+        let arcs: Vec<StdArc<TemporalGraph>> = {
+            let mut out = Vec::with_capacity(N);
+            for h in handles {
+                out.push(h.await.expect("task join"));
             }
-            result.expect("t1 engine_init")
-        });
+            out
+        };
 
-        let c2 = StdArc::clone(&counter);
-        let b2 = StdArc::clone(&barrier);
-        let t2 = tokio::spawn(async move {
-            b2.wait().await;
-            let before = ENGINE.get().is_some();
-            let result = engine_init(":memory:").await;
-            let after = ENGINE.get().is_some();
-            if !before && after {
-                c2.fetch_add(1, Ordering::AcqRel);
-            }
-            result.expect("t2 engine_init")
-        });
-
-        t1.await.expect("t1 join");
-        t2.await.expect("t2 join");
-
-        // At most one task could observe the ENGINE being empty before their
-        // init and non-empty after — the other either saw it already populated
-        // or raced and discarded.
+        // --- Assertion 1: exactly one TemporalGraph::open was executed --------
         let open_count = counter.load(Ordering::Acquire);
-        assert!(
-            open_count <= 1,
-            "at most one concurrent engine_init should observe the write: got {open_count}"
+        assert_eq!(
+            open_count, 1,
+            "exactly one TemporalGraph::open must execute under concurrent init; got {open_count}"
         );
 
-        // ENGINE must be populated after both tasks complete.
-        assert!(
-            ENGINE.get().is_some(),
-            "ENGINE must be set after concurrent init"
-        );
+        // --- Assertion 2: all returned Arcs point to the same allocation ------
+        let first = &arcs[0];
+        for (i, arc) in arcs.iter().enumerate().skip(1) {
+            assert!(
+                StdArc::ptr_eq(first, arc),
+                "Arc[0] and Arc[{i}] must point to the same TemporalGraph allocation"
+            );
+        }
     }
 }
