@@ -48,7 +48,13 @@ pub struct Migration {
     /// within a domain (no gaps allowed — the runner pins gap-detection
     /// as a hard error to prevent silent drift).
     pub version: u32,
-    /// Human-readable name for logs / debugging — does NOT affect ordering.
+    /// Human-readable name following the `NNN_descriptive_name` convention:
+    /// exactly 3 decimal digits, an underscore, then a lowercase snake_case
+    /// description (`[a-z][a-z0-9_]*`). Example: `"001_create_rql_entities"`.
+    ///
+    /// Why: uniform naming lets tooling (audit scripts, runbooks, CLI) sort
+    /// and correlate migrations by version without parsing the `version` field.
+    /// Enforced at runtime by `validate_migration_set`.
     pub name: &'static str,
     /// One or more SQL DDL statements separated by `;`. Multi-statement
     /// DDL is supported via `libsql::Connection::execute_batch`. Single
@@ -189,6 +195,13 @@ fn validate_migration_set(migrations: &[Migration]) -> Result<()> {
     if migrations.is_empty() {
         return Ok(());
     }
+
+    // Enforce NNN_descriptive_name convention on every migration name.
+    // Pattern: exactly 3 decimal digits, underscore, lowercase snake_case body.
+    for m in migrations {
+        validate_migration_name(m.name)?;
+    }
+
     let mut versions: Vec<u32> = migrations.iter().map(|m| m.version).collect();
     versions.sort();
     if versions[0] != 1 {
@@ -207,6 +220,48 @@ fn validate_migration_set(migrations: &[Migration]) -> Result<()> {
         if next != prev + 1 {
             return Err(MigrationError::Invalid(format!(
                 "non-dense migration sequence: {prev} → {next} (gap)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate that a migration name follows the `NNN_descriptive_name` convention.
+///
+/// Valid: `"001_create_rql_entities"`, `"042_add_content_hash"`.
+/// Invalid: `"create_foo"` (no prefix), `"01_foo"` (2-digit prefix),
+///          `"001_CreateFoo"` (uppercase), `"001_"` (empty body).
+fn validate_migration_name(name: &str) -> Result<()> {
+    let bytes = name.as_bytes();
+    // Must start with exactly 3 ASCII decimal digits followed by '_'.
+    let prefix_ok = bytes.len() > 4
+        && bytes[0].is_ascii_digit()
+        && bytes[1].is_ascii_digit()
+        && bytes[2].is_ascii_digit()
+        && bytes[3] == b'_';
+    if !prefix_ok {
+        return Err(MigrationError::Invalid(format!(
+            "migration name {name:?} does not follow NNN_descriptive convention \
+             (must start with exactly 3 digits and an underscore, e.g. \"001_create_foo\")"
+        )));
+    }
+    // Body (after the leading NNN_) must be lowercase snake_case: [a-z][a-z0-9_]*.
+    let body = &name[4..];
+    let mut chars = body.chars();
+    let first_ok = chars
+        .next()
+        .map(|c| c.is_ascii_lowercase())
+        .unwrap_or(false);
+    if !first_ok {
+        return Err(MigrationError::Invalid(format!(
+            "migration name {name:?} body must start with a lowercase letter after 'NNN_'"
+        )));
+    }
+    for c in chars {
+        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_' {
+            return Err(MigrationError::Invalid(format!(
+                "migration name {name:?} body contains invalid char {c:?}: \
+                 only lowercase letters, digits, and underscores allowed"
             )));
         }
     }
@@ -347,12 +402,12 @@ mod tests {
         let migrations = [
             Migration {
                 version: 1,
-                name: "create_foo",
+                name: "001_create_foo",
                 sql: "CREATE TABLE foo (id INTEGER PRIMARY KEY)",
             },
             Migration {
                 version: 2,
-                name: "create_bar",
+                name: "002_create_bar",
                 sql: "CREATE TABLE bar (id INTEGER PRIMARY KEY)",
             },
         ];
@@ -375,12 +430,12 @@ mod tests {
         let bad = [
             Migration {
                 version: 1,
-                name: "ok",
+                name: "001_create_x",
                 sql: "CREATE TABLE x (id INTEGER PRIMARY KEY)",
             },
             Migration {
                 version: 3,
-                name: "skip-2",
+                name: "003_create_y",
                 sql: "CREATE TABLE y (id INTEGER PRIMARY KEY)",
             },
         ];
@@ -400,12 +455,12 @@ mod tests {
         let bad = [
             Migration {
                 version: 1,
-                name: "first",
+                name: "001_create_x",
                 sql: "CREATE TABLE x (id INTEGER PRIMARY KEY)",
             },
             Migration {
                 version: 1,
-                name: "duplicate",
+                name: "001_create_y_dup",
                 sql: "CREATE TABLE y (id INTEGER PRIMARY KEY)",
             },
         ];
@@ -420,7 +475,7 @@ mod tests {
         seed_app_meta(&conn).await;
         let bad = [Migration {
             version: 5,
-            name: "should-start-at-1",
+            name: "005_should_start_at_1",
             sql: "CREATE TABLE x (id INTEGER PRIMARY KEY)",
         }];
         let runner = MigrationRunner::new(&conn, "schema_version");
@@ -434,12 +489,12 @@ mod tests {
         seed_app_meta(&conn).await;
         let rql_migs = [Migration {
             version: 1,
-            name: "rql-baseline",
+            name: "001_rql_baseline",
             sql: "CREATE TABLE rql_entities (id INTEGER PRIMARY KEY)",
         }];
         let the-host-application_migs = [Migration {
             version: 1,
-            name: "the-host-application-baseline",
+            name: "001_the-host-application_baseline",
             sql: "CREATE TABLE folders (id INTEGER PRIMARY KEY)",
         }];
 
@@ -488,7 +543,7 @@ mod tests {
         seed_app_meta(&conn).await;
         let bad = [Migration {
             version: 1,
-            name: "syntax_error",
+            name: "001_syntax_error",
             sql: "THIS IS NOT VALID SQL",
         }];
         let runner = MigrationRunner::new(&conn, "schema_version");
@@ -498,7 +553,7 @@ mod tests {
             .expect_err("must surface syntax error");
         let msg = format!("{err}");
         assert!(
-            msg.contains("syntax_error"),
+            msg.contains("001_syntax_error"),
             "expected migration name in error: {msg}"
         );
         assert!(
