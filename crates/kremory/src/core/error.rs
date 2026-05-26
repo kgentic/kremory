@@ -60,6 +60,7 @@ pub enum ContradictionResolution {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RqlError {
     #[error("configuration error: {0}")]
     Config(String),
@@ -90,6 +91,38 @@ pub enum RqlError {
 
     #[error("{0}")]
     Other(#[from] anyhow::Error),
+
+    // ── Named struct variants (Story #155) ────────────────────────────────────
+    /// SQLite INSERT succeeded but `SELECT last_insert_rowid()` returned no row.
+    /// `operation` names the specific insert path (e.g. "insert_fact",
+    /// "insert_episode_with_group") so callers can correlate with metrics.
+    #[error("database invariant violated: no rowid returned after {operation}")]
+    InsertReturnedNoRowId { operation: &'static str },
+
+    /// `embedding_dim` was configured as zero — embeddings require at least one
+    /// dimension. Distinct from `Config(String)` so callers can match precisely
+    /// without substring parsing.
+    #[error("embedding_dim must be greater than 0")]
+    EmbeddingDimZero,
+
+    /// An LLM call during the multi-stage extraction pipeline failed.
+    /// `stage` identifies which pipeline step failed ("entities", "relations",
+    /// "triplets", …); `detail` carries the underlying provider error message.
+    #[error("extraction stage '{stage}' failed: {detail}")]
+    ExtractionStage { stage: String, detail: String },
+
+    /// BM25 and vector search weights must sum to 1.0.
+    /// Carries both values so callers see the actual misconfiguration without
+    /// parsing the message string.
+    #[error("bm25_weight ({bm25}) + vector_weight ({vector}) must sum to 1.0")]
+    WeightSumInvalid { bm25: f64, vector: f64 },
+
+    /// Extraction window `max_tokens` is smaller than `min_tokens`.
+    /// `min` is the configured minimum; `got` is the configured maximum that
+    /// violates the invariant. Using `got` (the wrong value) rather than `max`
+    /// aligns with Rust's conventional `expected`/`got` diagnostic naming.
+    #[error("max_tokens must be >= min_tokens ({min}), got {got}")]
+    TokenWindowInvalid { got: usize, min: usize },
 }
 
 pub type Result<T> = std::result::Result<T, RqlError>;

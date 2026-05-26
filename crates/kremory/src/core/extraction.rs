@@ -133,7 +133,10 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage1_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::ExtractionStage {
+                stage: "entities".to_string(),
+                detail: e.to_string(),
+            })?;
         let _ms = stage1_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "entities").record(_ms);
         tracing::info!(_ms, stage = "entities", "kremory.extraction.stage_ms");
@@ -156,7 +159,10 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage2_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::RqlError::ExtractionStage {
+                stage: "relations".to_string(),
+                detail: e.to_string(),
+            })?;
         let _ms = stage2_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "relations").record(_ms);
         tracing::info!(_ms, stage = "relations", "kremory.extraction.stage_ms");
