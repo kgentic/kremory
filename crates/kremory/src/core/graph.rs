@@ -39,14 +39,14 @@ fn row_to_entity(row: &libsql::Row) -> anyhow::Result<Entity> {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or(serde_json::Value::Null);
-    let created_at = parse_dt(&created_str)?;
+    let recorded_at = parse_dt(&created_str)?;
     let updated_at = updated_str.as_deref().map(parse_dt).transpose()?;
 
     Ok(Entity {
         id,
         label,
         properties,
-        created_at,
+        recorded_at,
         updated_at,
         group_id,
     })
@@ -73,7 +73,7 @@ fn row_to_fact(row: &libsql::Row) -> anyhow::Result<Fact> {
         .and_then(|s| serde_json::from_str(s).ok());
     let valid_from = parse_dt(&valid_from_str)?;
     let valid_to = valid_to_str.as_deref().map(parse_dt).transpose()?;
-    let created_at = parse_dt(&created_str)?;
+    let recorded_at = parse_dt(&created_str)?;
     let expired_at = expired_str.as_deref().map(parse_dt).transpose()?;
     let invalid_at = invalid_str.as_deref().map(parse_dt).transpose()?;
 
@@ -86,12 +86,15 @@ fn row_to_fact(row: &libsql::Row) -> anyhow::Result<Fact> {
         properties,
         valid_from,
         valid_to,
-        created_at,
+        recorded_at,
         expired_at,
         invalid_at,
         group_id,
         confidence,
         source_episode_id,
+        memory_type: None,
+        content_hash: None,
+        access_count: 0,
     })
 }
 
@@ -860,14 +863,14 @@ impl TemporalGraph {
             let episode_id: i64 = row.get::<i64>(1)?;
             let eid: String = row.get::<String>(2)?;
             let role: String = row.get::<String>(3)?;
-            let created_str: String = row.get::<String>(4)?;
-            let created_at = parse_dt(&created_str)?;
+            let recorded_str: String = row.get::<String>(4)?;
+            let recorded_at = parse_dt(&recorded_str)?;
             edges.push(EpisodicEdge {
                 id,
                 episode_id,
                 entity_id: eid,
                 role,
-                created_at,
+                recorded_at,
             });
         }
         Ok(edges)

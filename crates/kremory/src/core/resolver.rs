@@ -300,7 +300,7 @@ mod tests {
             id: id.to_string(),
             label: label.to_string(),
             properties: serde_json::json!({"name": name}),
-            created_at: Utc::now(),
+            recorded_at: Utc::now(),
             updated_at: None,
             group_id: None,
         }

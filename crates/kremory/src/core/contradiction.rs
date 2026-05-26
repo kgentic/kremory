@@ -291,12 +291,15 @@ mod tests {
             properties: None,
             valid_from,
             valid_to,
-            created_at: now,
+            recorded_at: now,
             expired_at: None,
             invalid_at: None,
             group_id: None,
             confidence: 1.0,
             source_episode_id: None,
+            memory_type: None,
+            content_hash: None,
+            access_count: 0,
         }
     }
 
