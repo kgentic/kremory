@@ -404,16 +404,14 @@ impl PipelineConfigBuilder {
 
         let weight_sum = c.search.bm25_weight + c.search.vector_weight;
         if (weight_sum - 1.0_f64).abs() > 1e-9 {
-            return Err(RqlError::Config(format!(
-                "bm25_weight ({}) + vector_weight ({}) must sum to 1.0, got {}",
-                c.search.bm25_weight, c.search.vector_weight, weight_sum
-            )));
+            return Err(RqlError::WeightSumInvalid {
+                bm25: c.search.bm25_weight,
+                vector: c.search.vector_weight,
+            });
         }
 
         if c.embedding_dim.0 == 0 {
-            return Err(RqlError::Config(
-                "embedding_dim must be greater than 0".into(),
-            ));
+            return Err(RqlError::EmbeddingDimZero);
         }
 
         if c.extraction_window.min_tokens == 0 {
@@ -421,10 +419,10 @@ impl PipelineConfigBuilder {
         }
 
         if c.extraction_window.max_tokens < c.extraction_window.min_tokens {
-            return Err(RqlError::Config(format!(
-                "max_tokens ({}) must be >= min_tokens ({})",
-                c.extraction_window.max_tokens, c.extraction_window.min_tokens
-            )));
+            return Err(RqlError::TokenWindowInvalid {
+                min: c.extraction_window.min_tokens,
+                got: c.extraction_window.max_tokens,
+            });
         }
 
         let dt = c.extraction_window.density_threshold;
