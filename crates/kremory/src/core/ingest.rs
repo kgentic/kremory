@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -203,6 +203,20 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // Post-extraction: scan for proper nouns the LLM missed (domain-agnostic, <2ms)
         let proper_noun_candidates = text_utils::scan_proper_nouns(text, &all_entities);
         all_entities.extend(proper_noun_candidates);
+
+        // 3b. Pre-mutation intra-batch duplicate scan (Tier-3 per-call HashSet, Story #150).
+        // Run BEFORE dedup so that a caller who submits two entities with the same
+        // normalized name gets a structured error rather than a silent drop. This
+        // guards the contract: no DB write occurs for a malformed batch.
+        {
+            let mut seen_this_call: HashSet<String> = HashSet::new();
+            for extracted in &all_entities {
+                let id = normalize_name(&extracted.name);
+                if !seen_this_call.insert(id.clone()) {
+                    return Err(crate::core::error::Error::IntraBatchDuplicate { id });
+                }
+            }
+        } // seen_this_call dropped here — Tier-3 lifetime ends.
 
         // Deduplicate extracted entities by normalized name.
         // sort + dedup_by because dedup_by only removes consecutive duplicates.
@@ -852,6 +866,98 @@ mod tests {
                 .any(|e| e.contains("zenith")),
             "proper noun scan should have caught 'Zenith Dynamics'; got: {:?}",
             result.upserted_entities
+        );
+    }
+
+    /// Story #150: batch with two entities that normalise to the same ID returns
+    /// Err(IntraBatchDuplicate) before any DB write occurs.
+    #[tokio::test]
+    async fn ingest_intra_batch_duplicate_returns_error() {
+        use crate::core::error::Error;
+
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let config = PipelineConfig::builder().build().expect("config");
+        let llm = Arc::new(MockChatProvider::null());
+        let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+        let engine = Engine::new(graph, llm, embedder, config);
+
+        // FixedExtractor returns two entities that normalise to the same ID.
+        // normalize_name("Alice Corp") == normalize_name("alice corp") == "alice_corp"
+        // (or similar — what matters is two entries with same normalized name).
+        let extractor = FixedExtractor {
+            entities: vec![
+                ExtractedEntity {
+                    name: "Alice Corp".to_string(),
+                    label: "Organization".to_string(),
+                    properties: serde_json::Value::Null,
+                },
+                ExtractedEntity {
+                    name: "Alice Corp".to_string(), // exact duplicate → same normalized id
+                    label: "Organization".to_string(),
+                    properties: serde_json::Value::Null,
+                },
+            ],
+        };
+
+        let result = engine
+            .ingest_with(&extractor, "Alice Corp is a company.", None, None, None)
+            .await;
+
+        match result {
+            Err(Error::IntraBatchDuplicate { id }) => {
+                assert!(
+                    !id.is_empty(),
+                    "IntraBatchDuplicate must carry the offending id"
+                );
+            }
+            other => panic!(
+                "expected IntraBatchDuplicate, got: {:?}",
+                other.map(|_| "<ok>")
+            ),
+        }
+    }
+
+    /// Story #150: after a batch rejection due to IntraBatchDuplicate, no entities
+    /// are written to the DB.
+    #[tokio::test]
+    async fn ingest_intra_batch_duplicate_no_partial_write() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let config = PipelineConfig::builder().build().expect("config");
+        let llm = Arc::new(MockChatProvider::null());
+        let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+
+        // Count entities before the failing batch.
+        let before_count = graph.list_entities().await.expect("list").len();
+
+        let engine = Engine::new(
+            // SAFETY: graph moved into engine; we access it via engine.graph below.
+            graph, llm, embedder, config,
+        );
+
+        let extractor = FixedExtractor {
+            entities: vec![
+                ExtractedEntity {
+                    name: "Dup Entity".to_string(),
+                    label: "Entity".to_string(),
+                    properties: serde_json::Value::Null,
+                },
+                ExtractedEntity {
+                    name: "Dup Entity".to_string(),
+                    label: "Entity".to_string(),
+                    properties: serde_json::Value::Null,
+                },
+            ],
+        };
+
+        let _ = engine
+            .ingest_with(&extractor, "Dup Entity test.", None, None, None)
+            .await;
+
+        // No entity rows should have been written — list count unchanged.
+        let after_count = engine.graph.list_entities().await.expect("list").len();
+        assert_eq!(
+            before_count, after_count,
+            "no entities must be written after IntraBatchDuplicate rejection"
         );
     }
 }
