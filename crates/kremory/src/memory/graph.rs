@@ -95,6 +95,8 @@ pub trait GraphHandle: Send + Sync {
     /// Idempotent: if a run is already active for `(workspace_id, thread_id, batch_id)`,
     /// returns the existing `DreamHandle` without starting a new run.
     /// Parameter mismatch on existing key → `tracing::warn!` (not error).
+    // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+    #[allow(clippy::too_many_arguments)]
     async fn graph_submit_dream(
         &self,
         scope: &WorkspaceScope,

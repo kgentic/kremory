@@ -94,6 +94,8 @@ pub async fn submit_episode(
 
 /// Submit a batch consolidation (dream phase). Returns immediately.
 /// Idempotent on `(scope, batch_id)` key. See ADR §2.10 for CAS semantics.
+// Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_dream_phase(
     graph: &dyn GraphHandle,
     scope: WorkspaceScope,
@@ -202,6 +204,8 @@ pub async fn await_batch_enrichment(
     since = "0.1.0",
     note = "Use submit_episode + EnrichmentEventSink for accurate per-episode counts"
 )]
+// Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+#[allow(clippy::too_many_arguments)]
 pub async fn ingest_episode(
     graph: &dyn GraphHandle,
     content: &str,
