@@ -57,6 +57,8 @@ opentelemetry = { version = "0.31", optional = true }
 opentelemetry_sdk = { version = "0.31", optional = true }
 # P4 arena allocator — per-episode bump allocation (B.1 / A.0 K7=PASS).
 bumpalo = "3.20.2"
+# SHA-256 content hash for insert-level dedup (Story #209)
+sha2 = "0.10"
 zspell = "0.5"
 stop-words = "0.8"
 unicode-segmentation = "1.11"
