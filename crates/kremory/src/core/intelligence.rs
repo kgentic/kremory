@@ -202,7 +202,9 @@ impl EntityExtractor for MockExtractor {
                 for word in clause.split_whitespace() {
                     let clean: String = word.chars().filter(|c| c.is_alphabetic()).collect();
                     if clean.len() > 1 {
-                        let first_char = clean.chars().next().unwrap();
+                        let first_char = clean.chars().next().unwrap_or_else(|| {
+                            panic!("invariant: non-empty clean string has no first char")
+                        });
                         if first_char.is_uppercase() {
                             let key = clean.to_lowercase();
                             // Skip common sentence-starting words that aren't names.

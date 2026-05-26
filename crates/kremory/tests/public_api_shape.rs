@@ -9,8 +9,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use kremory::memory::{
-    await_batch_enrichment, await_dream, await_enrichment, context_block, search,
-    submit_dream_phase, submit_episode,
+    await_batch_enrichment, await_dream, await_enrichment, submit_dream_phase, submit_episode,
 };
 use kremory::memory::{
     events::EnrichmentEventSink,
@@ -27,8 +26,8 @@ use uuid::Uuid;
 use async_trait::async_trait;
 use kremory::memory::{
     types::{
-        CancelOutcome, CancelledPhase, DreamPhaseResult, IngestResult, RetrievedContext,
-        SearchOpts, SourceRef, StructuredFact,
+        CancelOutcome, CancelledPhase, DreamPhaseResult, RetrievedContext, SearchOpts, SourceRef,
+        StructuredFact,
     },
     ChatProvider,
 };
@@ -39,7 +38,7 @@ struct StubHandle;
 impl GraphHandle for StubHandle {
     async fn graph_ingest_episode(
         &self,
-        scope: &WorkspaceScope,
+        _scope: &WorkspaceScope,
         source_ref: &SourceRef,
         _content: &str,
         _structured_facts: &[StructuredFact],

@@ -6,11 +6,11 @@ use metrics::histogram;
 
 use chrono::{DateTime, Utc};
 
-use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::config::{ContentType, PipelineConfig};
 use crate::core::contradiction::TwoPoolDetector;
 use crate::core::error::Result;
 use crate::core::extraction::NuExtractExtractor;
+use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
     ResolutionResult,
@@ -131,7 +131,9 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
                     .map_err(crate::core::error::RqlError::from)?;
                 let _ = GLINER.set(g);
             }
-            let extractor = GLINER.get().expect("just initialised");
+            let extractor = GLINER.get().unwrap_or_else(|| {
+                panic!("invariant: GLINER OnceLock empty immediately after set")
+            });
             return self
                 .ingest_with(extractor, text, reference_time, _group_id, content_type)
                 .await;

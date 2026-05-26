@@ -17,9 +17,9 @@ use kremory::memory::{
     events::EnrichmentEventSink,
     submit_dream_phase,
     types::{
-        AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts,
-        DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, IngestStatus, RetrievedContext,
-        SearchOpts, SourceRef, StructuredFact, SubmitOpts, WorkspaceScope,
+        BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
+        DreamStatus, EpisodeCommit, IngestStatus, RetrievedContext, SearchOpts, SourceRef,
+        StructuredFact, SubmitOpts, WorkspaceScope,
     },
     ChatProvider, GraphHandle,
 };
@@ -37,7 +37,7 @@ struct StubIdempotentHandle {
 impl GraphHandle for StubIdempotentHandle {
     async fn graph_ingest_episode(
         &self,
-        scope: &WorkspaceScope,
+        _scope: &WorkspaceScope,
         source_ref: &SourceRef,
         _content: &str,
         _structured_facts: &[StructuredFact],

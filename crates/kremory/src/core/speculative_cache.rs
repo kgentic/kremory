@@ -46,7 +46,9 @@ impl SpeculativeCache {
 
     /// Check cache for an entity by ID. Returns Some if cached and not expired.
     pub fn get(&self, entity_id: &str) -> Option<(Entity, f64)> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|poisoned| {
+            panic!("invariant: SpeculativeCache entries mutex poisoned: {poisoned}")
+        });
         if let Some(entry) = entries.get(entity_id) {
             if entry.cached_at.elapsed() < self.ttl {
                 return Some((entry.entity.clone(), entry.pagerank));
@@ -57,7 +59,9 @@ impl SpeculativeCache {
 
     /// Check cache for multiple entity IDs. Returns cached hits sorted by PageRank descending.
     pub fn get_many(&self, entity_ids: &[&str]) -> Vec<SearchHit<Entity>> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|poisoned| {
+            panic!("invariant: SpeculativeCache entries mutex poisoned: {poisoned}")
+        });
         let mut hits = Vec::new();
         for id in entity_ids {
             if let Some(entry) = entries.get(*id) {
@@ -133,7 +137,9 @@ impl SpeculativeCache {
         // Store in cache
         let now = Instant::now();
         let count = sorted.len();
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|poisoned| {
+            panic!("invariant: SpeculativeCache entries mutex poisoned: {poisoned}")
+        });
 
         // Evict expired entries first
         entries.retain(|_, entry| entry.cached_at.elapsed() < self.ttl);
@@ -154,7 +160,9 @@ impl SpeculativeCache {
 
     /// Evict all expired entries. Returns count of evicted entries.
     pub fn evict_expired(&self) -> usize {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|poisoned| {
+            panic!("invariant: SpeculativeCache entries mutex poisoned: {poisoned}")
+        });
         let before = entries.len();
         entries.retain(|_, entry| entry.cached_at.elapsed() < self.ttl);
         before - entries.len()
@@ -162,7 +170,12 @@ impl SpeculativeCache {
 
     /// Number of currently cached entries (including possibly expired ones).
     pub fn len(&self) -> usize {
-        self.entries.lock().unwrap().len()
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                panic!("invariant: SpeculativeCache entries mutex poisoned: {poisoned}")
+            })
+            .len()
     }
 
     /// Returns true if there are no cached entries.
@@ -172,7 +185,12 @@ impl SpeculativeCache {
 
     /// Clear all cached entries.
     pub fn clear(&self) {
-        self.entries.lock().unwrap().clear();
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                panic!("invariant: SpeculativeCache entries mutex poisoned: {poisoned}")
+            })
+            .clear();
     }
 }
 
