@@ -148,6 +148,8 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
     /// Full pipeline with a caller-supplied extractor.
     /// Any type implementing `EntityExtractor` can be used (DefaultExtractor, NuExtractExtractor, etc.).
+    // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ingest_with<E: EntityExtractor>(
         &self,
         extractor: &E,
@@ -426,6 +428,8 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     ///
     /// Entity insertion is skipped — Phase 1 (NER) already owns that path.
     /// Only facts (relationship triplets) are added in this phase.
+    // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ingest_deferred(
         &self,
         text: &str,
