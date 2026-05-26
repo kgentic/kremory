@@ -161,6 +161,7 @@ async fn submit_episode_signature_compiles() {
         kind: SourceKind::Meeting,
         id: "mtg-1".into(),
         occurred_at: Utc::now(),
+        published_at: None,
     };
     let commit = submit_episode(
         &handle,

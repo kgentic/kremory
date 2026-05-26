@@ -264,6 +264,7 @@ async fn submit_episode_with_enrich_emits_events_in_order() {
         kind: SourceKind::Meeting,
         id: "mtg-events".into(),
         occurred_at: Utc::now(),
+        published_at: None,
     };
 
     let commit = submit_episode(
@@ -310,6 +311,7 @@ async fn submit_episode_without_enrich_emits_no_events() {
         kind: SourceKind::Document,
         id: "doc-no-enrich".into(),
         occurred_at: Utc::now(),
+        published_at: None,
     };
 
     let commit = submit_episode(
@@ -346,6 +348,7 @@ async fn submit_episode_without_sink_completes() {
         kind: SourceKind::Chat,
         id: "chat-no-sink".into(),
         occurred_at: Utc::now(),
+        published_at: None,
     };
 
     let commit = submit_episode(
@@ -510,6 +513,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
         kind: SourceKind::Document,
         id: "doc-contradiction".into(),
         occurred_at: Utc::now(),
+        published_at: None,
     };
 
     submit_episode(

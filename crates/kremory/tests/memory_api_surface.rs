@@ -25,6 +25,7 @@ fn sample_results() -> Vec<RetrievedContext> {
                 kind: SourceKind::Meeting,
                 id: "mtg-001".into(),
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 17, 14, 0, 0).unwrap(),
+                published_at: None,
             }],
         },
         RetrievedContext {
@@ -36,6 +37,7 @@ fn sample_results() -> Vec<RetrievedContext> {
                 kind: SourceKind::Document,
                 id: "doc-007".into(),
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 18, 9, 30, 0).unwrap(),
+                published_at: None,
             }],
         },
     ]
@@ -127,6 +129,7 @@ fn context_block_multiple_sources_per_entity_all_rendered() {
         kind: SourceKind::Chat,
         id: "chat-42".into(),
         occurred_at: Utc.with_ymd_and_hms(2026, 5, 17, 14, 5, 0).unwrap(),
+        published_at: None,
     });
     let entities_out = context_block(&results, ContextTemplate::Entities);
     assert!(entities_out.contains("meeting:mtg-001"));
