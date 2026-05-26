@@ -41,6 +41,37 @@ fn sanitise_fts5_query(raw: &str) -> Option<String> {
 }
 
 impl TemporalGraph {
+    /// Increment `access_count` for a batch of entity IDs (Story #247).
+    ///
+    /// Called by all entity-returning search paths immediately after the
+    /// result set is collected. Each entity in the result gets `access_count
+    /// += 1` atomically via a single UPDATE statement. Empty `ids` is a
+    /// no-op. Errors are swallowed with a warning — an access-count failure
+    /// must never cause the search call to fail.
+    async fn increment_entity_access_counts(&self, ids: &[String]) {
+        if ids.is_empty() {
+            return;
+        }
+        // Build `UPDATE rql_entities SET access_count = access_count + 1
+        // WHERE id IN (?1, ?2, ...)`. Each id is bound positionally.
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "UPDATE rql_entities SET access_count = access_count + 1 WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+        let params: Vec<libsql::Value> = ids
+            .iter()
+            .map(|id| libsql::Value::from(id.clone()))
+            .collect();
+        if let Err(e) = self.conn.execute(&sql, params).await {
+            tracing::warn!(
+                entity_count = ids.len(),
+                error = %e,
+                "kremory.search.access_count_update_failed"
+            );
+        }
+    }
+
     /// Full-text search entities by label/properties.
     /// Returns entities ranked by BM25 relevance, scoped by `filters.group_ids`.
     pub async fn fts_search_entities(
@@ -92,6 +123,9 @@ impl TemporalGraph {
                 });
             }
         }
+        // Story #247: increment access_count for every returned entity.
+        let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
+        self.increment_entity_access_counts(&returned_ids).await;
         let hits_count = hits.len();
         let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.search.fts_entities_hits").record(hits_count as f64);
@@ -194,6 +228,9 @@ impl TemporalGraph {
                     .await?
             }
         };
+        // Story #247: increment access_count for every returned entity.
+        let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
+        self.increment_entity_access_counts(&returned_ids).await;
         let hits_count = hits.len();
         let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.search.vector_entities_hits").record(hits_count as f64);
@@ -213,6 +250,7 @@ impl TemporalGraph {
 
         let sql = format!(
             "SELECT e.id, e.label, e.properties, e.recorded_at, e.updated_at, e.group_id,
+                    e.access_count,
                     vector_distance_cos(e.embedding, vector(?1)) as distance
              FROM vector_top_k('rql_entities_vec_idx', vector(?1), ?2) AS v
              JOIN rql_entities AS e ON e.rowid = v.id
@@ -233,7 +271,7 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let entity = row_to_entity_from_row(&row)?;
-            let distance = row.get::<f64>(6)?;
+            let distance = row.get::<f64>(7)?;
             // Convert cosine distance to a score (negative distance so lower = closer, matching FTS convention)
             hits.push(SearchHit {
                 item: entity,
@@ -255,6 +293,7 @@ impl TemporalGraph {
 
         let sql = format!(
             "SELECT id, label, properties, recorded_at, updated_at, group_id,
+                    access_count,
                     vector_distance_cos(embedding, vector(?1)) as distance
              FROM rql_entities
              WHERE embedding IS NOT NULL{}
@@ -274,7 +313,7 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let entity = row_to_entity_from_row(&row)?;
-            let distance = row.get::<f64>(6)?;
+            let distance = row.get::<f64>(7)?;
             hits.push(SearchHit {
                 item: entity,
                 score: -distance,
@@ -663,7 +702,8 @@ pub(crate) fn effective_k(k: usize, n_available: usize) -> usize {
 }
 
 /// Helper to extract an Entity from a query row.
-/// Expected columns: id(0), label(1), properties(2), recorded_at(3), updated_at(4), group_id(5).
+/// Expected columns: id(0), label(1), properties(2), recorded_at(3), updated_at(4),
+///                   group_id(5), access_count(6).
 fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
     use chrono::DateTime;
     let id = row.get::<String>(0)?;
@@ -672,6 +712,7 @@ fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
     let created_str = row.get::<String>(3)?;
     let updated_str = row.get::<Option<String>>(4)?;
     let group_id = row.get::<Option<String>>(5)?;
+    let access_count = row.get::<i64>(6)?;
 
     let parse_dt = |s: &str| -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
         Ok(DateTime::parse_from_rfc3339(s)
@@ -693,6 +734,7 @@ fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
         recorded_at,
         updated_at,
         group_id,
+        access_count,
     })
 }
 
@@ -1654,6 +1696,55 @@ mod tests {
             "NULL group_id entity must be visible"
         );
         assert!(ids.contains(&"scoped_doc"), "scoped entity must be visible");
+    }
+
+    /// Story #247 gate: access_count increments on every entity-returning search.
+    ///
+    /// AC: access_count starts at 0; after first search that returns the entity it
+    /// must be 1; after second search it must be 2. Deterministic in-memory DB.
+    #[tokio::test]
+    async fn access_count_increments_on_search() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        // Insert entity with a unique label so FTS will return it deterministically.
+        g.insert_entity(
+            "ac_entity_1",
+            "AccessCountTestEntity",
+            serde_json::json!({ "text": "kremory_ac_probe_term_unique" }),
+        )
+        .await
+        .unwrap();
+
+        // Baseline: access_count must be 0 before any search.
+        let initial = g.get_entity("ac_entity_1").await.unwrap().unwrap();
+        assert_eq!(
+            initial.access_count, 0,
+            "access_count must start at 0 before any search"
+        );
+
+        // First search — must return the entity and increment access_count to 1.
+        let hits = g
+            .fts_search_entities("kremory_ac_probe_term_unique", 10, &SearchFilters::new())
+            .await
+            .unwrap();
+        assert!(!hits.is_empty(), "first search must return the entity");
+        let after_first = g.get_entity("ac_entity_1").await.unwrap().unwrap();
+        assert_eq!(
+            after_first.access_count, 1,
+            "access_count must be 1 after first search"
+        );
+
+        // Second search — must increment to 2.
+        let hits2 = g
+            .fts_search_entities("kremory_ac_probe_term_unique", 10, &SearchFilters::new())
+            .await
+            .unwrap();
+        assert!(!hits2.is_empty(), "second search must return the entity");
+        let after_second = g.get_entity("ac_entity_1").await.unwrap().unwrap();
+        assert_eq!(
+            after_second.access_count, 2,
+            "access_count must be 2 after second search"
+        );
     }
 
     /// Regression guard: empty group_ids = no filter (returns all entities).

@@ -55,6 +55,7 @@ fn row_to_entity(row: &libsql::Row) -> anyhow::Result<Entity> {
     let created_str: String = row.get::<String>(3)?;
     let updated_str: Option<String> = row.get::<Option<String>>(4)?;
     let group_id: Option<String> = row.get::<Option<String>>(5)?;
+    let access_count: i64 = row.get::<i64>(6)?;
 
     let properties: serde_json::Value = props_str
         .as_deref()
@@ -70,6 +71,7 @@ fn row_to_entity(row: &libsql::Row) -> anyhow::Result<Entity> {
         recorded_at,
         updated_at,
         group_id,
+        access_count,
     })
 }
 
@@ -207,7 +209,7 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, label, properties, recorded_at, updated_at, group_id FROM rql_entities WHERE id = ?1",
+                "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count FROM rql_entities WHERE id = ?1",
                 libsql::params![id],
             )
             .await?;
@@ -367,7 +369,7 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, label, properties, recorded_at, updated_at, group_id FROM rql_entities",
+                "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count FROM rql_entities",
                 (),
             )
             .await?;
