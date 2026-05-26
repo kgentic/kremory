@@ -432,6 +432,8 @@ async fn process_deferred<L: ChatProvider, Emb: EmbeddingProvider>(
     }
 }
 
+// Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+#[allow(clippy::too_many_arguments)]
 fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
     graph: Engine<L, Emb>,
     work_rx: Receiver<IngestRequest>,
