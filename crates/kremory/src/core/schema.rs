@@ -114,6 +114,9 @@ impl<'a> BeginGuard<'a> {
         if self.opened {
             self.graph.conn.execute("COMMIT", ()).await?;
             DIRTY.store(true, Ordering::Release);
+            self.graph
+                .has_outer_transaction
+                .store(false, Ordering::Release);
         }
         Ok(())
     }
@@ -123,6 +126,9 @@ impl<'a> BeginGuard<'a> {
         self.dispatched = true;
         if self.opened {
             let _ = self.graph.conn.execute("ROLLBACK", ()).await;
+            self.graph
+                .has_outer_transaction
+                .store(false, Ordering::Release);
         }
         Ok(())
     }
@@ -450,6 +456,45 @@ impl TemporalGraph {
 
 #[cfg(test)]
 mod schema_tests {
+    use super::TemporalGraph;
+
+    /// Story #246: nested begin_immediate_if_needed is a no-op (guard.opened == false).
+    #[tokio::test]
+    async fn begin_immediate_nested_call_does_not_issue_second_begin() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        // First call opens a real transaction
+        let outer = graph
+            .begin_immediate_if_needed()
+            .await
+            .expect("outer begin");
+        // Second call while outer is active must NOT issue another BEGIN
+        let inner = graph
+            .begin_immediate_if_needed()
+            .await
+            .expect("inner begin (nested)");
+        // inner.commit() is a no-op (it did not open a tx)
+        inner.commit().await.expect("inner commit no-op");
+        // outer.commit() commits the real transaction
+        outer.commit().await.expect("outer commit");
+    }
+
+    /// Story #246: has_outer_transaction is cleared after commit.
+    #[tokio::test]
+    async fn begin_immediate_outer_transaction_flag_cleared_after_commit() {
+        use std::sync::atomic::Ordering;
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let guard = graph.begin_immediate_if_needed().await.expect("begin");
+        assert!(
+            graph.has_outer_transaction.load(Ordering::Acquire),
+            "flag must be set while guard is active"
+        );
+        guard.commit().await.expect("commit");
+        assert!(
+            !graph.has_outer_transaction.load(Ordering::Acquire),
+            "flag must be cleared after commit"
+        );
+    }
+
     /// G3 gate: DDL must use `recorded_at` not `created_at`. Story #A1.
     #[test]
     fn schema_uses_recorded_at_not_created_at() {
