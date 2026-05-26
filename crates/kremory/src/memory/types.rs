@@ -54,6 +54,25 @@ pub enum SourceKind {
     Chat,
 }
 
+/// Semantic memory classification for a `Fact`. Story #208.
+///
+/// Variants match the architect detail doc (kremory-v010-architect-detail-01-schema):
+/// Decision/Pattern/Preference/Style/Habit/Insight/Observation.
+///
+/// Stored as a nullable TEXT column in the `facts` table, serialised as snake_case.
+/// `None` = unclassified (legacy rows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryType {
+    Decision,
+    Pattern,
+    Preference,
+    Style,
+    Habit,
+    Insight,
+    Observation,
+}
+
 /// Reference to the originating event for an ingested episode.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceRef {

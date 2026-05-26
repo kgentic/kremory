@@ -662,14 +662,14 @@ fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or(serde_json::Value::Null);
-    let created_at = parse_dt(&created_str)?;
+    let recorded_at = parse_dt(&created_str)?;
     let updated_at = updated_str.as_deref().map(parse_dt).transpose()?;
 
     Ok(Entity {
         id,
         label,
         properties,
-        created_at,
+        recorded_at,
         updated_at,
         group_id,
     })
@@ -707,7 +707,7 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
         .and_then(|s| serde_json::from_str(s).ok());
     let valid_from = parse_dt(&valid_from_str)?;
     let valid_to = valid_to_str.as_deref().map(parse_dt).transpose()?;
-    let created_at = parse_dt(&created_str)?;
+    let recorded_at = parse_dt(&created_str)?;
     let expired_at = expired_str.as_deref().map(parse_dt).transpose()?;
     let invalid_at = invalid_str.as_deref().map(parse_dt).transpose()?;
 
@@ -720,12 +720,15 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
         properties,
         valid_from,
         valid_to,
-        created_at,
+        recorded_at,
         expired_at,
         invalid_at,
         group_id,
         confidence,
         source_episode_id,
+        memory_type: None,
+        content_hash: None,
+        access_count: 0,
     })
 }
 
