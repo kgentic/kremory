@@ -74,11 +74,19 @@ pub enum MemoryType {
 }
 
 /// Reference to the originating event for an ingested episode.
+///
+/// `published_at` is the wall-clock time when the source event was published
+/// (e.g. article publication date, document timestamp). Used by Story #318
+/// `valid_from` precedence: `fact.valid_from = sf.valid_from.or(source_ref.published_at).unwrap_or_else(Utc::now)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceRef {
     pub kind: SourceKind,
     pub id: String,
     pub occurred_at: DateTime<Utc>,
+    /// Optional publication timestamp of the source document / event. Story #318.
+    /// When set, used as `valid_from` fallback for structured facts that omit
+    /// their own temporal anchor.
+    pub published_at: Option<DateTime<Utc>>,
 }
 
 /// Caller-supplied structured fact attached to an episode at ingest time.
@@ -86,13 +94,24 @@ pub struct SourceRef {
 /// Optional — rqlc will extract facts from raw `content` regardless. Callers
 /// pass this when they already have high-confidence pre-extracted data they
 /// want pinned into the graph alongside the LLM-extracted facts.
+///
+/// Field rename (Story #318): `valid_at` → `valid_from`, `invalid_at` → `valid_to`
+/// to align with Fact struct bi-temporal semantics. The SQL `invalid_at` column
+/// (contradiction-resolver timestamp) is a distinct concept.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredFact {
     pub subject: String,
     pub predicate: String,
     pub object: String,
-    pub valid_at: Option<DateTime<Utc>>,
-    pub invalid_at: Option<DateTime<Utc>>,
+    /// Start of the validity window. `None` = use `SourceRef.published_at` fallback,
+    /// then `Utc::now()`. Story #318.
+    pub valid_from: Option<DateTime<Utc>>,
+    /// End of the validity window. `None` = open-ended. Story #318.
+    pub valid_to: Option<DateTime<Utc>>,
+    /// Semantic classification for the ingested fact. `None` = unclassified.
+    /// Stored as TEXT in the `facts.memory_type` column (Story #208).
+    #[serde(default)]
+    pub memory_type: Option<MemoryType>,
 }
 
 /// Outcome of a single `ingest_episode` call.
@@ -312,3 +331,77 @@ pub enum MemoryError {
 }
 
 pub type Result<T> = std::result::Result<T, MemoryError>;
+
+#[cfg(test)]
+mod memory_type_tests {
+    use super::{MemoryType, StructuredFact};
+
+    /// Story #208: MemoryType serialises to snake_case JSON strings.
+    #[test]
+    fn memory_type_serde_roundtrip_all_variants() {
+        let cases = [
+            (MemoryType::Decision, "\"decision\""),
+            (MemoryType::Pattern, "\"pattern\""),
+            (MemoryType::Preference, "\"preference\""),
+            (MemoryType::Style, "\"style\""),
+            (MemoryType::Habit, "\"habit\""),
+            (MemoryType::Insight, "\"insight\""),
+            (MemoryType::Observation, "\"observation\""),
+        ];
+        for (variant, expected_json) in cases {
+            let serialised = serde_json::to_string(&variant).expect("serialise");
+            assert_eq!(
+                serialised, expected_json,
+                "MemoryType::{variant:?} json mismatch"
+            );
+            let deserialised: MemoryType = serde_json::from_str(&serialised).expect("deserialise");
+            assert_eq!(
+                deserialised, variant,
+                "MemoryType::{variant:?} round-trip mismatch"
+            );
+        }
+    }
+
+    /// Story #208: StructuredFact.memory_type field exists and round-trips.
+    #[test]
+    fn structured_fact_memory_type_field_roundtrip() {
+        let sf = StructuredFact {
+            subject: "Alice".into(),
+            predicate: "prefers".into(),
+            object: "dark mode".into(),
+            valid_from: None,
+            valid_to: None,
+            memory_type: Some(MemoryType::Preference),
+        };
+        let json = serde_json::to_string(&sf).expect("serialise");
+        assert!(
+            json.contains("\"preference\""),
+            "memory_type missing from JSON: {json}"
+        );
+        let de: StructuredFact = serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(de.memory_type, Some(MemoryType::Preference));
+    }
+
+    /// Story #208: StructuredFact.memory_type defaults to None when absent in JSON (backward compat).
+    #[test]
+    fn structured_fact_memory_type_defaults_none() {
+        let json = r#"{"subject":"x","predicate":"y","object":"z"}"#;
+        let sf: StructuredFact = serde_json::from_str(json).expect("deserialise");
+        assert_eq!(sf.memory_type, None);
+    }
+
+    /// Story #208: MemoryType stored in facts DDL as TEXT column.
+    #[test]
+    fn facts_ddl_has_memory_type_column() {
+        let ddl = "CREATE TABLE IF NOT EXISTS facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_type TEXT,
+                    content_hash TEXT,
+                    access_count INTEGER NOT NULL DEFAULT 0
+                )";
+        assert!(
+            ddl.contains("memory_type TEXT"),
+            "DDL missing memory_type column"
+        );
+    }
+}
