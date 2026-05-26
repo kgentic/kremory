@@ -424,7 +424,7 @@ mod tests {
             id: id.to_string(),
             label: label.to_string(),
             properties: serde_json::json!({"name": name}),
-            created_at: Utc::now(),
+            recorded_at: Utc::now(),
             updated_at: None,
             group_id: None,
         }
@@ -447,12 +447,15 @@ mod tests {
             properties: None,
             valid_from: now,
             valid_to: None,
-            created_at: now,
+            recorded_at: now,
             expired_at: None,
             invalid_at: None,
             group_id: None,
             confidence: 1.0,
             source_episode_id: None,
+            memory_type: None,
+            content_hash: None,
+            access_count: 0,
         }
     }
 
