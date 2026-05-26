@@ -92,15 +92,20 @@ pub fn chat_msg_user(content: impl Into<String>) -> ChatMessage {
 // Substring-match: looks for any key in `responses` that appears in the last
 // user-role message.  Falls back to "" (empty string) so extractors see an
 // empty JSON response and return zero entities / facts — safe no-op.
+//
+// Gated: test-infra only — not part of the production public API.
 // ---------------------------------------------------------------------------
 
+#[cfg(any(test, feature = "test-utils"))]
 use std::collections::HashMap;
 
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug, Clone)]
 pub struct MockChatProvider {
     pub responses: HashMap<String, String>,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl MockChatProvider {
     /// Create a mock that returns `""` for every prompt (safe no-op).
     pub fn null() -> Self {
@@ -126,6 +131,7 @@ impl MockChatProvider {
 }
 
 /// Internal helper: find a matching response for the last user message.
+#[cfg(any(test, feature = "test-utils"))]
 fn mock_match_response(responses: &HashMap<String, String>, messages: &[ChatMessage]) -> String {
     let last_user = messages
         .iter()
@@ -141,6 +147,7 @@ fn mock_match_response(responses: &HashMap<String, String>, messages: &[ChatMess
         .unwrap_or_default()
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 #[async_trait::async_trait]
 impl ChatProvider for MockChatProvider {
     async fn chat_with_tools(
@@ -157,17 +164,20 @@ impl ChatProvider for MockChatProvider {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug)]
 pub struct MockChatResponse {
     pub text: String,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl std::fmt::Display for MockChatResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.text)
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl autoagents_llm::chat::ChatResponse for MockChatResponse {
     fn text(&self) -> Option<String> {
         if self.text.is_empty() {
@@ -224,16 +234,20 @@ impl EmbeddingProvider for NullEmbeddingProvider {
 
 // ---------------------------------------------------------------------------
 // MockEmbeddingProvider
+//
+// Gated: test-infra only — not part of the production public API.
 // ---------------------------------------------------------------------------
 
 /// Returns a deterministic embedding by using a simple FNV-1a hash over the
 /// input bytes to seed each dimension.  Same text always → same vector; different
 /// texts produce different vectors with overwhelming probability.
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug, Clone)]
 pub struct MockEmbeddingProvider {
     pub dim: usize,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl MockEmbeddingProvider {
     pub fn new(dim: usize) -> Self {
         Self { dim }
@@ -252,6 +266,7 @@ impl MockEmbeddingProvider {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl EmbeddingProvider for MockEmbeddingProvider {
     fn embed<'a>(&'a self, text: &'a str) -> impl Future<Output = Result<Vec<f32>>> + Send + 'a {
         let dim = self.dim;
