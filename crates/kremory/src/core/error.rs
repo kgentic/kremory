@@ -123,6 +123,32 @@ pub enum Error {
     /// aligns with Rust's conventional `expected`/`got` diagnostic naming.
     #[error("max_tokens must be >= min_tokens ({min}), got {got}")]
     TokenWindowInvalid { got: usize, min: usize },
+
+    // ── Engine lifecycle (Story #5) ───────────────────────────────────────────
+    /// `init_engine` was called a second time in the same process.
+    /// The OnceLock singleton can only be initialised once; subsequent calls
+    /// return this error so double-init bugs surface at startup.
+    #[error("engine already initialised — init_engine must be called exactly once per process")]
+    EngineAlreadyInitialised,
+
+    /// `engine()` was called before `init_engine` completed successfully.
+    #[error("engine not yet initialised — call init_engine before using the engine")]
+    EngineNotInitialised,
+
+    // ── Content-hash dedup (Story #209) ──────────────────────────────────────
+    /// An episode or fact with the same content hash already exists in the graph.
+    ///
+    /// `content_hash` is the SHA-256 hex digest of the deduplicated content so
+    /// callers can surface the existing entity without re-parsing.
+    #[error("duplicate content detected: hash {content_hash} already present")]
+    Duplicate { content_hash: String },
+
+    // ── Pre-mutation validation (Story #150) ──────────────────────────────────
+    /// Two episodes within the same ingest batch share an ID, which would
+    /// produce a primary-key conflict after the first INSERT. `id` is the
+    /// duplicate episode identifier detected during the pre-mutation scan.
+    #[error("intra-batch duplicate episode id '{id}'")]
+    IntraBatchDuplicate { id: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

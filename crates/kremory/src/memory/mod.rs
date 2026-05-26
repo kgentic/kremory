@@ -39,8 +39,8 @@ pub use graph::GraphHandle;
 pub use stub::StubGraphHandle;
 pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
-    DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, MemoryError, Result,
-    RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
+    DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, MemoryError, MemoryType,
+    Result, RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
     WorkspaceScope,
 };
 // IngestStatus lives in core::error but is part of the memory API surface.

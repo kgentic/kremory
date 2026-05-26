@@ -199,6 +199,13 @@ impl<'a> MigrationRunner<'a> {
         self.conn
             .execute(&sql, libsql::params![new_version as i64])
             .await?;
+        // Story #212 / ADR D11: dual-write PRAGMA user_version so OS-level tools
+        // (sqlite3 CLI, sqlitebrowser) observe the canonical version without parsing
+        // app_meta. PRAGMA user_version does NOT support `?` binding — must inline
+        // the integer literal (verified: libsql PRAGMA write is a DDL-level op).
+        self.conn
+            .execute(&format!("PRAGMA user_version = {new_version}"), ())
+            .await?;
         Ok(())
     }
 }

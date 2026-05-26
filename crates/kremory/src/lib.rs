@@ -26,7 +26,7 @@ pub use core::{
 pub use memory::init_telemetry;
 pub use memory::ChatProvider;
 pub use memory::{
-    ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, MemoryError,
+    ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, MemoryError, MemoryType,
     Result as MemoryResult, RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact,
     TelemetryConfig, TelemetryHandle, WorkspaceScope,
 };
