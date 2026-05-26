@@ -358,6 +358,9 @@ impl TemporalGraph {
                     group_id TEXT,
                     confidence REAL DEFAULT 1.0,
                     source_episode_id INTEGER,
+                    memory_type TEXT,
+                    content_hash TEXT,
+                    access_count INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY (subject_id) REFERENCES rql_entities(id),
                     FOREIGN KEY (object_id) REFERENCES rql_entities(id),
                     FOREIGN KEY (source_episode_id) REFERENCES episodes(id)

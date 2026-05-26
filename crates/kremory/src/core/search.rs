@@ -128,6 +128,7 @@ impl TemporalGraph {
             "SELECT f.id, f.subject_id, f.predicate, f.object_id, f.object_value, f.properties,
                     f.valid_from, f.valid_to, f.recorded_at, f.expired_at, f.invalid_at, f.group_id,
                     f.confidence, f.source_episode_id,
+                    f.memory_type, f.content_hash, f.access_count,
                     fts.rank
              FROM facts_fts AS fts
              JOIN facts AS f ON CAST(fts.fact_id AS INTEGER) = f.id
@@ -149,7 +150,7 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let fact = row_to_fact_from_row(&row)?;
-            let score = row.get::<f64>(14)?;
+            let score = row.get::<f64>(17)?;
             hits.push(SearchHit { item: fact, score });
         }
         let hits_count = hits.len();
@@ -373,6 +374,7 @@ impl TemporalGraph {
             "SELECT f.id, f.subject_id, f.predicate, f.object_id, f.object_value, f.properties,
                     f.valid_from, f.valid_to, f.recorded_at, f.expired_at, f.invalid_at, f.group_id,
                     f.confidence, f.source_episode_id,
+                    f.memory_type, f.content_hash, f.access_count,
                     vector_distance_cos(f.embedding, vector(?1)) as distance
              FROM vector_top_k('facts_vec_idx', vector(?1), ?2) AS v
              JOIN facts AS f ON f.rowid = v.id
@@ -393,7 +395,7 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let fact = row_to_fact_from_row(&row)?;
-            let distance = row.get::<f64>(14)?;
+            let distance = row.get::<f64>(17)?;
             hits.push(SearchHit {
                 item: fact,
                 score: -distance,
@@ -415,6 +417,7 @@ impl TemporalGraph {
             "SELECT id, subject_id, predicate, object_id, object_value, properties,
                     valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id,
                     confidence, source_episode_id,
+                    memory_type, content_hash, access_count,
                     vector_distance_cos(embedding, vector(?1)) as distance
              FROM facts
              WHERE embedding IS NOT NULL
@@ -435,7 +438,7 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let fact = row_to_fact_from_row(&row)?;
-            let distance = row.get::<f64>(14)?;
+            let distance = row.get::<f64>(17)?;
             hits.push(SearchHit {
                 item: fact,
                 score: -distance,
@@ -695,7 +698,8 @@ fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
 
 /// Helper to extract a Fact from a query row (same column order as fts_search_facts query).
 /// Columns: id, subject_id, predicate, object_id, object_value, properties,
-///          valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+///          valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence,
+///          source_episode_id, memory_type, content_hash, access_count
 fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
     use chrono::DateTime;
 
@@ -707,12 +711,15 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
     let props_str = row.get::<Option<String>>(5)?;
     let valid_from_str = row.get::<String>(6)?;
     let valid_to_str = row.get::<Option<String>>(7)?;
-    let created_str = row.get::<String>(8)?;
+    let recorded_str = row.get::<String>(8)?;
     let expired_str = row.get::<Option<String>>(9)?;
     let invalid_str = row.get::<Option<String>>(10)?;
     let group_id = row.get::<Option<String>>(11)?;
     let confidence = row.get::<f64>(12)?;
     let source_episode_id = row.get::<Option<i64>>(13)?;
+    let memory_type_str = row.get::<Option<String>>(14)?;
+    let content_hash = row.get::<Option<String>>(15)?;
+    let access_count = row.get::<i64>(16)?;
 
     let parse_dt = |s: &str| -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
         Ok(DateTime::parse_from_rfc3339(s)
@@ -725,9 +732,12 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
         .and_then(|s| serde_json::from_str(s).ok());
     let valid_from = parse_dt(&valid_from_str)?;
     let valid_to = valid_to_str.as_deref().map(parse_dt).transpose()?;
-    let recorded_at = parse_dt(&created_str)?;
+    let recorded_at = parse_dt(&recorded_str)?;
     let expired_at = expired_str.as_deref().map(parse_dt).transpose()?;
     let invalid_at = invalid_str.as_deref().map(parse_dt).transpose()?;
+    let memory_type = memory_type_str
+        .as_deref()
+        .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
 
     Ok(Fact {
         id,
@@ -744,9 +754,9 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
         group_id,
         confidence,
         source_episode_id,
-        memory_type: None,
-        content_hash: None,
-        access_count: 0,
+        memory_type,
+        content_hash,
+        access_count,
     })
 }
 
