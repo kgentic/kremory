@@ -117,7 +117,7 @@ impl TemporalGraph {
         let inner: Result<()> = async {
             self.conn
                 .execute(
-                    "INSERT INTO rql_entities (id, label, properties, created_at) VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO rql_entities (id, label, properties, recorded_at) VALUES (?1, ?2, ?3, ?4)",
                     libsql::params![id, label, props_str.clone(), now],
                 )
                 .await?;
@@ -180,7 +180,7 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, label, properties, created_at, updated_at, group_id FROM rql_entities WHERE id = ?1",
+                "SELECT id, label, properties, recorded_at, updated_at, group_id FROM rql_entities WHERE id = ?1",
                 libsql::params![id],
             )
             .await?;
@@ -340,7 +340,7 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, label, properties, created_at, updated_at, group_id FROM rql_entities",
+                "SELECT id, label, properties, recorded_at, updated_at, group_id FROM rql_entities",
                 (),
             )
             .await?;
@@ -384,7 +384,7 @@ impl TemporalGraph {
         });
         self.conn
             .execute(
-                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, created_at, confidence, source_episode_id)
+                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id)
                  VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9)",
                 libsql::params![
                     subject_id,
@@ -445,7 +445,7 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, created_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
                  FROM facts
                  WHERE valid_from <= ?1
                    AND (valid_to IS NULL OR valid_to > ?1)
@@ -471,7 +471,7 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, created_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
                  FROM facts
                  WHERE subject_id = ?1
                    AND valid_from <= ?2
@@ -493,10 +493,10 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, created_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
                  FROM facts
                  WHERE subject_id = ?1
-                 ORDER BY valid_from, created_at",
+                 ORDER BY valid_from, recorded_at",
                 libsql::params![entity_id],
             )
             .await?;
@@ -534,7 +534,7 @@ impl TemporalGraph {
                 .conn
                 .query(
                     "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                            valid_from, valid_to, created_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                            valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
                      FROM facts
                      WHERE (subject_id = ?1 OR object_id = ?1)
                        AND expired_at IS NULL",
@@ -695,7 +695,7 @@ impl TemporalGraph {
         let inner: Result<()> = async {
             self.conn
                 .execute(
-                    "INSERT INTO rql_entities (id, label, properties, created_at, group_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO rql_entities (id, label, properties, recorded_at, group_id) VALUES (?1, ?2, ?3, ?4, ?5)",
                     libsql::params![id, label, props_str.clone(), now, group_id],
                 )
                 .await?;
@@ -752,7 +752,7 @@ impl TemporalGraph {
         });
         self.conn
             .execute(
-                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, created_at, confidence, source_episode_id, group_id)
+                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, group_id)
                  VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10)",
                 libsql::params![
                     subject_id,
@@ -838,7 +838,7 @@ impl TemporalGraph {
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO episodic_edges (episode_id, entity_id, role, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO episodic_edges (episode_id, entity_id, role, recorded_at) VALUES (?1, ?2, ?3, ?4)",
             libsql::params![episode_id, entity_id, role, now],
         ).await?;
         let edge_id = self.conn.last_insert_rowid();
@@ -853,7 +853,7 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, episode_id, entity_id, role, created_at FROM episodic_edges WHERE entity_id = ?1",
+                "SELECT id, episode_id, entity_id, role, recorded_at FROM episodic_edges WHERE entity_id = ?1",
                 libsql::params![entity_id],
             )
             .await?;
@@ -908,7 +908,7 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, created_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
                  FROM facts
                  WHERE subject_id = ?1 AND predicate = ?2 AND expired_at IS NULL",
                 libsql::params![subject_id, predicate],
@@ -940,7 +940,7 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, subject_id, predicate, object_id, object_value, properties,
-                        valid_from, valid_to, created_at, expired_at, invalid_at, group_id, confidence, source_episode_id
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id
                  FROM facts
                  WHERE object_id IS NOT NULL
                    AND expired_at IS NULL",
