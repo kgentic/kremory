@@ -120,13 +120,13 @@ fn ingest_event_sink_stub_compiles_and_records_events() {
     sink.on_dedup_merge("ent-1", "ent-3");
     sink.on_contradiction(ContradictionDetected {
         entity_id: EntityId("ent-1".to_string()),
-        prior_fact: kremory::core::sink::Fact {
+        prior_fact: kremory::core::sink::SinkFact {
             subject: "Alice".to_string(),
             predicate: "works_at".to_string(),
             object: "OldCo".to_string(),
             valid_at: None,
         },
-        new_fact: kremory::core::sink::Fact {
+        new_fact: kremory::core::sink::SinkFact {
             subject: "Alice".to_string(),
             predicate: "works_at".to_string(),
             object: "NewCo".to_string(),

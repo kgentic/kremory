@@ -70,6 +70,6 @@ pub use background::{
 };
 pub use error::{ContradictionResolution, Error, IngestStatus, IngestionErrorKind, Result};
 pub use sink::{
-    ContradictionDetected, EntityId, EntityOrEdgeRef, Fact as SinkFact, IngestEventSink,
-    IngestionError as SinkIngestionError,
+    ContradictionDetected, EntityId, EntityOrEdgeRef, IngestEventSink,
+    IngestionError as SinkIngestionError, SinkFact,
 };
