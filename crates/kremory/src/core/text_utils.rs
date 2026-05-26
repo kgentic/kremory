@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use metrics::counter;
+use tracing;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::intelligence::ExtractedEntity;
@@ -313,7 +314,12 @@ impl OovAuditor {
         // 3. Cap at max_candidates (preserves insertion order)
         result.truncate(max_candidates);
 
-        counter!("rql.extraction.programmatic_candidates").increment(result.len() as u64);
+        let programmatic_candidates = result.len() as u64;
+        counter!("rql.extraction.programmatic_candidates").increment(programmatic_candidates);
+        tracing::info!(
+            programmatic_candidates,
+            "kremory.extraction.programmatic_candidates"
+        );
         result
     }
 
@@ -398,7 +404,9 @@ impl OovAuditor {
             }
         }
 
-        counter!("rql.extraction.oov_audit_adds").increment(candidates.len() as u64);
+        let oov_audit_adds = candidates.len() as u64;
+        counter!("rql.extraction.oov_audit_adds").increment(oov_audit_adds);
+        tracing::info!(oov_audit_adds, "kremory.extraction.oov_audit_adds");
         candidates
     }
 }

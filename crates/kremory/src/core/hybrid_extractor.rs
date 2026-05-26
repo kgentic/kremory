@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use metrics::{counter, histogram};
 use std::time::Instant;
+use tracing;
 
 use crate::core::error::Result;
 use crate::core::extraction::{PromptVersion, SingleCallExtractor};
@@ -145,8 +146,13 @@ impl<L: ChatProvider> HybridExtractor<L> {
                 .chat_with_tools(&gleaning_msgs, None, None)
                 .await
                 .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-            histogram!("rql.extraction.stage_ms", "stage" => "hybrid_gleaning")
-                .record(start.elapsed().as_secs_f64() * 1000.0);
+            let _ms = start.elapsed().as_secs_f64() * 1000.0;
+            histogram!("rql.extraction.stage_ms", "stage" => "hybrid_gleaning").record(_ms);
+            tracing::info!(
+                _ms,
+                stage = "hybrid_gleaning",
+                "kremory.extraction.stage_ms"
+            );
             let response_text = response.text().unwrap_or_default();
 
             let gleaned = parse_entity_list_response(&response_text)?;
@@ -155,7 +161,9 @@ impl<L: ChatProvider> HybridExtractor<L> {
                 break;
             }
 
-            counter!("rql.extraction.gleaning_entity_adds").increment(new_entities.len() as u64);
+            let gleaning_adds = new_entities.len() as u64;
+            counter!("rql.extraction.gleaning_entity_adds").increment(gleaning_adds);
+            tracing::info!(gleaning_adds, "kremory.extraction.gleaning_entity_adds");
             discovered.extend(new_entities.clone());
             additive.extend(new_entities);
         }
@@ -182,7 +190,9 @@ impl<L: ChatProvider> HybridExtractor<L> {
             }
         }
 
-        counter!("rql.extraction.oov_orphan_count").increment(orphans.len() as u64);
+        let oov_orphan_count = orphans.len() as u64;
+        counter!("rql.extraction.oov_orphan_count").increment(oov_orphan_count);
+        tracing::info!(oov_orphan_count, "kremory.extraction.oov_orphan_count");
         orphans
     }
 
@@ -207,12 +217,15 @@ impl<L: ChatProvider> HybridExtractor<L> {
             .chat_with_tools(&typing_msgs, None, None)
             .await
             .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
-        histogram!("rql.extraction.stage_ms", "stage" => "hybrid_typing")
-            .record(start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.extraction.stage_ms", "stage" => "hybrid_typing").record(_ms);
+        tracing::info!(_ms, stage = "hybrid_typing", "kremory.extraction.stage_ms");
         let response_text = response.text().unwrap_or_default();
 
         let typed = parse_typed_orphans_response(&response_text, orphans)?;
-        counter!("rql.extraction.oov_typed_adds").increment(typed.len() as u64);
+        let oov_typed_adds = typed.len() as u64;
+        counter!("rql.extraction.oov_typed_adds").increment(oov_typed_adds);
+        tracing::info!(oov_typed_adds, "kremory.extraction.oov_typed_adds");
         Ok(typed)
     }
 

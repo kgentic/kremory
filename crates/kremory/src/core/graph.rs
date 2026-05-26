@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use metrics::histogram;
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
+use tracing;
 
 use crate::core::error::Result;
 use crate::core::schema::{Entity, EpisodicEdge, Fact, TemporalGraph};
@@ -136,7 +137,9 @@ impl TemporalGraph {
                 return Err(e);
             }
         }
-        histogram!("rql.db.insert_entity_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.insert_entity_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.insert_entity");
         Ok(())
     }
 
@@ -163,8 +166,9 @@ impl TemporalGraph {
                 libsql::params![id],
             )
             .await?;
-        histogram!("rql.db.update_entity_embedding_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.update_entity_embedding_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.update_entity_embedding");
         Ok(())
     }
 
@@ -181,7 +185,9 @@ impl TemporalGraph {
             None => Ok(None),
             Some(row) => Ok(Some(row_to_entity(&row)?)),
         };
-        histogram!("rql.db.get_entity_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.get_entity_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.get_entity");
         result
     }
 
@@ -195,7 +201,9 @@ impl TemporalGraph {
                 libsql::params![props_str, now, id],
             )
             .await?;
-        histogram!("rql.db.update_entity_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.update_entity_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.update_entity");
         Ok(())
     }
 
@@ -216,8 +224,9 @@ impl TemporalGraph {
                 libsql::params![group_id, props_str, now, id],
             )
             .await?;
-        histogram!("rql.db.update_entity_group_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.update_entity_group_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.update_entity_group");
         Ok(())
     }
 
@@ -242,8 +251,9 @@ impl TemporalGraph {
                 libsql::params![group_id, now, id],
             )
             .await?;
-        histogram!("rql.db.set_entity_group_only_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.set_entity_group_only_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.set_entity_group_only");
         Ok(n)
     }
 
@@ -316,8 +326,9 @@ impl TemporalGraph {
             )
             .await?;
 
-        histogram!("rql.db.delete_entities_by_prefix_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.delete_entities_by_prefix_ms").record(_ms);
+        tracing::info!(_ms, deleted, "kremory.db.delete_entities_by_prefix");
         Ok(deleted)
     }
 
@@ -334,8 +345,11 @@ impl TemporalGraph {
         while let Some(row) = rows.next().await? {
             entities.push(row_to_entity(&row)?);
         }
-        histogram!("rql.db.list_entities_count").record(entities.len() as f64);
-        histogram!("rql.db.list_entities_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        let count = entities.len();
+        histogram!("rql.db.list_entities_count").record(count as f64);
+        histogram!("rql.db.list_entities_ms").record(_ms);
+        tracing::info!(_ms, count, "kremory.db.list_entities");
         Ok(entities)
     }
 
@@ -395,7 +409,9 @@ impl TemporalGraph {
                 )
                 .await?;
         }
-        histogram!("rql.db.insert_fact_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.insert_fact_ms").record(_ms);
+        tracing::info!(_ms, fact_id, "kremory.db.insert_fact");
         Ok(fact_id)
     }
 
@@ -408,7 +424,9 @@ impl TemporalGraph {
                 libsql::params![at_str, fact_id],
             )
             .await?;
-        histogram!("rql.db.invalidate_fact_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.invalidate_fact_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.invalidate_fact");
         Ok(())
     }
 
@@ -433,8 +451,11 @@ impl TemporalGraph {
         while let Some(row) = rows.next().await? {
             facts.push(row_to_fact(&row)?);
         }
-        histogram!("rql.db.facts_at_count").record(facts.len() as f64);
-        histogram!("rql.db.facts_at_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        let count = facts.len();
+        histogram!("rql.db.facts_at_count").record(count as f64);
+        histogram!("rql.db.facts_at_ms").record(_ms);
+        tracing::info!(_ms, count, "kremory.db.facts_at");
         Ok(facts)
     }
 
@@ -477,8 +498,11 @@ impl TemporalGraph {
         while let Some(row) = rows.next().await? {
             facts.push(row_to_fact(&row)?);
         }
-        histogram!("rql.db.entity_history_count").record(facts.len() as f64);
-        histogram!("rql.db.entity_history_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        let count = facts.len();
+        histogram!("rql.db.entity_history_count").record(count as f64);
+        histogram!("rql.db.entity_history_ms").record(_ms);
+        tracing::info!(_ms, count, "kremory.db.entity_history");
         Ok(facts)
     }
 
@@ -548,9 +572,13 @@ impl TemporalGraph {
             }
         }
 
-        histogram!("rql.db.get_neighbours_entities").record(entities.len() as f64);
-        histogram!("rql.db.get_neighbours_facts").record(collected_facts.len() as f64);
-        histogram!("rql.db.get_neighbours_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        let entity_count = entities.len();
+        let fact_count = collected_facts.len();
+        histogram!("rql.db.get_neighbours_entities").record(entity_count as f64);
+        histogram!("rql.db.get_neighbours_facts").record(fact_count as f64);
+        histogram!("rql.db.get_neighbours_ms").record(_ms);
+        tracing::info!(_ms, entity_count, fact_count, "kremory.db.get_neighbours");
         Ok(SubGraph {
             entities,
             facts: collected_facts,
@@ -578,8 +606,9 @@ impl TemporalGraph {
                 libsql::params![vec_str, id],
             )
             .await?;
-        histogram!("rql.db.set_entity_embedding_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.set_entity_embedding_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.set_entity_embedding");
         Ok(())
     }
 
@@ -601,8 +630,9 @@ impl TemporalGraph {
                 libsql::params![vec_str, fact_id],
             )
             .await?;
-        histogram!("rql.db.set_fact_embedding_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.set_fact_embedding_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.set_fact_embedding");
         Ok(())
     }
 
@@ -629,7 +659,9 @@ impl TemporalGraph {
             crate::core::error::RqlError::Other(anyhow::anyhow!("no rowid after insert_episode"))
         })?;
         let episode_id = row.get::<i64>(0)?;
-        histogram!("rql.db.insert_episode_ms").record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.insert_episode_ms").record(_ms);
+        tracing::info!(_ms, episode_id, "kremory.db.insert_episode");
         Ok(episode_id)
     }
 
@@ -677,8 +709,9 @@ impl TemporalGraph {
                 return Err(e);
             }
         }
-        histogram!("rql.db.insert_entity_with_group_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.insert_entity_with_group_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.insert_entity_with_group");
         Ok(())
     }
 
@@ -741,8 +774,9 @@ impl TemporalGraph {
                 )
                 .await?;
         }
-        histogram!("rql.db.insert_fact_with_group_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.insert_fact_with_group_ms").record(_ms);
+        tracing::info!(_ms, fact_id, "kremory.db.insert_fact_with_group");
         Ok(fact_id)
     }
 
@@ -775,8 +809,9 @@ impl TemporalGraph {
             ))
         })?;
         let episode_id = row.get::<i64>(0)?;
-        histogram!("rql.db.insert_episode_with_group_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.insert_episode_with_group_ms").record(_ms);
+        tracing::info!(_ms, episode_id, "kremory.db.insert_episode_with_group");
         Ok(episode_id)
     }
 
@@ -796,8 +831,9 @@ impl TemporalGraph {
             libsql::params![episode_id, entity_id, role, now],
         ).await?;
         let edge_id = self.conn.last_insert_rowid();
-        histogram!("rql.db.insert_episodic_edge_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.insert_episodic_edge_ms").record(_ms);
+        tracing::info!(_ms, edge_id, "kremory.db.insert_episodic_edge");
         Ok(edge_id)
     }
 
@@ -845,8 +881,9 @@ impl TemporalGraph {
                 libsql::params![expired_at.to_rfc3339(), invalid_at.to_rfc3339(), fact_id],
             )
             .await?;
-        histogram!("rql.db.invalidate_fact_with_reason_ms")
-            .record(_db_start.elapsed().as_secs_f64() * 1000.0);
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.invalidate_fact_with_reason_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.invalidate_fact_with_reason");
         Ok(())
     }
 

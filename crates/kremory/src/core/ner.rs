@@ -659,8 +659,10 @@ mod inner {
             let entities = self.extract_sync(text, &entity_types)?;
 
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let entity_count = entities.len();
             metrics::histogram!("rql.ner.extraction_ms").record(elapsed_ms);
-            metrics::histogram!("rql.ner.entity_count").record(entities.len() as f64);
+            metrics::histogram!("rql.ner.entity_count").record(entity_count as f64);
+            tracing::info!(elapsed_ms, entity_count, "kremory.ner.extraction");
 
             Ok(ExtractionResult {
                 entities,

@@ -23,8 +23,16 @@ pub use core::{
 };
 
 // Convenience re-exports from memory
+pub use memory::init_telemetry;
 pub use memory::ChatProvider;
 pub use memory::{
     ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, Result as MemoryResult,
-    RetrievedContext, RqlmError, SearchOpts, SourceKind, SourceRef, StructuredFact, WorkspaceScope,
+    RetrievedContext, RqlmError, RqlmTelemetryConfig, SearchOpts, SourceKind, SourceRef,
+    StructuredFact, TelemetryHandle, WorkspaceScope,
 };
+
+// Convenience re-exports from core::config (ADR D15)
+pub use core::config::RqlcConfig;
+
+// Embedding observability wrapper (ADR D10)
+pub use core::embedding::TokenTrackingEmbedder;
