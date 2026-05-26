@@ -15,9 +15,9 @@ use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
     ResolutionResult,
 };
-use crate::core::provider::{
-    ChatProvider, EmbeddingProvider, MockChatProvider, NullEmbeddingProvider, TokenUsage,
-};
+use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
+#[cfg(any(test, feature = "test-utils"))]
+use crate::core::provider::{MockChatProvider, NullEmbeddingProvider};
 use crate::core::resolver::{normalize_name, CascadeResolver, UnionFind};
 use crate::core::schema::TemporalGraph;
 use crate::core::search::SearchFilters;
@@ -596,8 +596,12 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 }
 
 /// Convenience type alias for tests and simple usage (no LLM/embedding).
+///
+/// Gated: test-infra only — not part of the production public API.
+#[cfg(any(test, feature = "test-utils"))]
 pub type SimpleGraph = Engine<MockChatProvider, NullEmbeddingProvider>;
 
+#[cfg(any(test, feature = "test-utils"))]
 impl SimpleGraph {
     /// Open an in-memory graph with null providers and default config.
     pub async fn open_in_memory_simple() -> Result<Self> {

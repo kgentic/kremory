@@ -25,14 +25,21 @@
 //! trait, this struct's compile failure surfaces the gap immediately — the same
 //! compiler-enforced invariant as the contract-pin tests.
 
+// Gated: test-infra only — not part of the production public API.
+#[cfg(any(test, feature = "test-utils"))]
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "test-utils"))]
 use async_trait::async_trait;
+#[cfg(any(test, feature = "test-utils"))]
 use chrono::{DateTime, Utc};
+#[cfg(any(test, feature = "test-utils"))]
 use uuid::Uuid;
 
+#[cfg(any(test, feature = "test-utils"))]
 use crate::core::error::IngestStatus;
 
+#[cfg(any(test, feature = "test-utils"))]
 use super::{
     events::EnrichmentEventSink,
     graph::GraphHandle,
@@ -54,8 +61,10 @@ use super::{
 /// constructing a local type and implementing only the needed methods —
 /// `StubGraphHandle` can serve as the fallback for the remaining ones by
 /// delegation or by using it as the base in your own impl.
+#[cfg(any(test, feature = "test-utils"))]
 pub struct StubGraphHandle;
 
+#[cfg(any(test, feature = "test-utils"))]
 #[async_trait]
 impl GraphHandle for StubGraphHandle {
     async fn graph_ingest_episode(
@@ -139,6 +148,9 @@ impl GraphHandle for StubGraphHandle {
 /// Convenience constructor returning a non-rolled-back, empty cancel outcome.
 /// Use when the cancel method must return a value but the test doesn't care
 /// about the specifics.
+///
+/// Gated: test-infra helper only — not part of the production public API.
+#[cfg(any(test, feature = "test-utils"))]
 impl CancelOutcome {
     /// Returns a stub `CancelOutcome` with `CancelledPhase::Enrichment`,
     /// `rolled_back = false`, `partial = []`.

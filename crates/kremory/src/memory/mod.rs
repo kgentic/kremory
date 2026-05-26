@@ -32,10 +32,12 @@
 pub mod dream_phase;
 pub mod events;
 pub mod graph;
+#[cfg(any(test, feature = "test-utils"))]
 pub mod stub;
 pub mod types;
 
 pub use graph::GraphHandle;
+#[cfg(any(test, feature = "test-utils"))]
 pub use stub::StubGraphHandle;
 pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
