@@ -264,7 +264,7 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
             .llm
             .chat_with_tools(&resolution_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let response_text = response.text().unwrap_or_default();
 
         match response_text.trim().trim_matches('"') {

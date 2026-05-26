@@ -40,9 +40,9 @@ pub struct IngestionResult {
     pub token_usage: TokenUsage,
 }
 
-/// High-level RQL graph with intelligence pipeline.
+/// High-level kremory graph engine with intelligence pipeline.
 /// Wraps TemporalGraph and adds extraction, resolution, and contradiction detection.
-pub struct RqlGraph<L: ChatProvider, Emb: EmbeddingProvider> {
+pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     pub(crate) graph: TemporalGraph,
     pub(crate) llm: Arc<L>,
     pub(crate) embedder: Arc<Emb>,
@@ -52,8 +52,8 @@ pub struct RqlGraph<L: ChatProvider, Emb: EmbeddingProvider> {
     pub(crate) oov_auditor: Option<text_utils::OovAuditor>,
 }
 
-impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
-    /// Create a new RqlGraph wrapping a TemporalGraph.
+impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
+    /// Create a new `Engine` wrapping a `TemporalGraph`.
     pub fn new(
         graph: TemporalGraph,
         llm: Arc<L>,
@@ -128,7 +128,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
             static GLINER: OnceLock<crate::core::ner::GlinerExtractor> = OnceLock::new();
             if GLINER.get().is_none() {
                 let g = crate::core::ner::GlinerExtractor::new()
-                    .map_err(crate::core::error::RqlError::from)?;
+                    .map_err(crate::core::error::Error::from)?;
                 let _ = GLINER.set(g);
             }
             let extractor = GLINER.get().unwrap_or_else(|| {
@@ -578,7 +578,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
 }
 
 /// Convenience type alias for tests and simple usage (no LLM/embedding).
-pub type SimpleGraph = RqlGraph<MockChatProvider, NullEmbeddingProvider>;
+pub type SimpleGraph = Engine<MockChatProvider, NullEmbeddingProvider>;
 
 impl SimpleGraph {
     /// Open an in-memory graph with null providers and default config.
@@ -673,7 +673,7 @@ mod tests {
         MockChatProvider::new(map)
     }
 
-    async fn make_rql_with_mock() -> RqlGraph<MockChatProvider, MockEmbeddingProvider> {
+    async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvider> {
         let graph = TemporalGraph::open_in_memory().await.unwrap();
         let config = PipelineConfig::builder()
             .allowed_entity_types(vec![
@@ -693,7 +693,7 @@ mod tests {
             "[]",
         ));
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        RqlGraph::new(graph, llm, embedder, config)
+        Engine::new(graph, llm, embedder, config)
     }
 
     #[tokio::test]
@@ -707,7 +707,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_creates_episode() {
-        let rql = make_rql_with_mock().await;
+        let rql = make_engine_with_mock().await;
         let result = rql
             .ingest("Alice works at Acme", None, None, None)
             .await
@@ -720,7 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_creates_entities_and_facts() {
-        let rql = make_rql_with_mock().await;
+        let rql = make_engine_with_mock().await;
         let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
             .ingest_with(&extractor, "Alice works at Acme", None, None, None)
@@ -750,7 +750,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_creates_episodic_edges() {
-        let rql = make_rql_with_mock().await;
+        let rql = make_engine_with_mock().await;
         let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
             .ingest_with(&extractor, "Alice works at Acme", None, None, None)
@@ -779,7 +779,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_returns_result_with_correct_counts() {
-        let rql = make_rql_with_mock().await;
+        let rql = make_engine_with_mock().await;
         let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
             .ingest_with(&extractor, "Alice works at Acme", None, None, None)
@@ -796,7 +796,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_entities_stored_in_graph() {
-        let rql = make_rql_with_mock().await;
+        let rql = make_engine_with_mock().await;
         rql.ingest("Alice works at Acme", None, None, None)
             .await
             .unwrap();
@@ -821,8 +821,8 @@ mod tests {
         let config = PipelineConfig::builder().build().unwrap();
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let rql: RqlGraph<MockChatProvider, MockEmbeddingProvider> =
-            RqlGraph::new(graph, llm, embedder, config);
+        let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
+            Engine::new(graph, llm, embedder, config);
 
         // Extractor deliberately omits "Zenith Dynamics"
         let extractor = FixedExtractor {

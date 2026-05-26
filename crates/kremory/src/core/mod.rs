@@ -66,7 +66,7 @@ pub mod text_utils;
 pub use background::{
     BackgroundIngestor, IngestError, IngestErrorKind, IngestGuard, IngestSendError, IngestorConfig,
 };
-pub use error::{ContradictionResolution, IngestStatus, IngestionErrorKind, Result, RqlError};
+pub use error::{ContradictionResolution, Error, IngestStatus, IngestionErrorKind, Result};
 pub use sink::{
     ContradictionDetected, EntityId, EntityOrEdgeRef, Fact as SinkFact, IngestEventSink,
     IngestionError as SinkIngestionError,

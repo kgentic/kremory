@@ -11,7 +11,7 @@
 
 use chrono::{TimeZone, Utc};
 use kremory::memory::{
-    context_block, ContextTemplate, RetrievedContext, RqlmError, SourceKind, SourceRef,
+    context_block, ContextTemplate, MemoryError, RetrievedContext, SourceKind, SourceRef,
 };
 
 fn sample_results() -> Vec<RetrievedContext> {
@@ -175,9 +175,9 @@ async fn search_contract_pin_returns_unimplemented() {
 }
 
 #[test]
-fn rqlm_error_unimplemented_variant_carries_static_str() {
+fn memory_error_unimplemented_variant_carries_static_str() {
     // Verifies the error variant the stubs return is well-formed.
-    let e = RqlmError::Unimplemented("test marker");
+    let e = MemoryError::Unimplemented("test marker");
     let s = format!("{e}");
     assert!(s.contains("test marker"), "expected marker in display: {s}");
 }

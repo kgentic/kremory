@@ -133,7 +133,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage1_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::ExtractionStage {
+            .map_err(|e| crate::core::error::Error::ExtractionStage {
                 stage: "entities".to_string(),
                 detail: e.to_string(),
             })?;
@@ -159,7 +159,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage2_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::ExtractionStage {
+            .map_err(|e| crate::core::error::Error::ExtractionStage {
                 stage: "relations".to_string(),
                 detail: e.to_string(),
             })?;
@@ -180,7 +180,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             .llm
             .chat_with_tools(&stage3_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = stage3_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "triplets").record(_ms);
         tracing::info!(_ms, stage = "triplets", "kremory.extraction.stage_ms");
@@ -252,7 +252,7 @@ impl<L: ChatProvider> EntityExtractor for NuExtractExtractor<L> {
             .llm
             .chat_with_tools(&nuextract_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "nuextract").record(_ms);
         tracing::info!(_ms, stage = "nuextract", "kremory.extraction.stage_ms");
@@ -317,7 +317,7 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             .llm
             .chat_with_tools(&pass1_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "grounded_entities").record(_ms);
         tracing::info!(
@@ -350,7 +350,7 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             .llm
             .chat_with_tools(&pass2_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start2.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "grounded_relationships").record(_ms);
         tracing::info!(
@@ -435,7 +435,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             .llm
             .chat_with_tools(&graphiti_s1_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = stage1_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "graphiti_entities").record(_ms);
         tracing::info!(
@@ -468,7 +468,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             .llm
             .chat_with_tools(&graphiti_s2_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = stage2_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "graphiti_relationships").record(_ms);
         tracing::info!(
@@ -1186,7 +1186,7 @@ impl<L: ChatProvider> EntityExtractor for SingleCallExtractor<L> {
             .llm
             .chat_with_tools(&sc_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "single_call").record(_ms);
         tracing::info!(_ms, stage = "single_call", "kremory.extraction.stage_ms");
@@ -1359,7 +1359,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .llm
             .chat_with_tools(&typing_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = typing_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "entity_typing").record(_ms);
         tracing::info!(_ms, stage = "entity_typing", "kremory.extraction.stage_ms");
@@ -1393,7 +1393,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .llm
             .chat_with_tools(&rel_msgs, None, None)
             .await
-            .map_err(|e| crate::core::error::RqlError::Llm(e.to_string()))?;
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = rel_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "relationships").record(_ms);
         tracing::info!(_ms, stage = "relationships", "kremory.extraction.stage_ms");

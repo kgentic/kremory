@@ -1,4 +1,4 @@
-//! G12 acceptance tests — named struct variants on `RqlError`.
+//! G12 acceptance tests — named struct variants on `Error`.
 //!
 //! Each test constructs a new struct variant, verifies field extraction via
 //! pattern matching, asserts the `Display` impl renders readably, and confirms
@@ -7,7 +7,7 @@
 //! Story #155 — must pass before #156 (downstream Result<_, Error> signatures
 //! depend on final taxonomy).
 
-use kremory::core::error::RqlError;
+use kremory::core::error::Error;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -17,11 +17,11 @@ fn is_std_error<E: std::error::Error>(_: &E) {}
 
 #[test]
 fn insert_returned_no_row_id_fields_extractable() {
-    let e = RqlError::InsertReturnedNoRowId {
+    let e = Error::InsertReturnedNoRowId {
         operation: "insert_fact",
     };
     match &e {
-        RqlError::InsertReturnedNoRowId { operation } => {
+        Error::InsertReturnedNoRowId { operation } => {
             assert_eq!(*operation, "insert_fact");
         }
         _ => panic!("wrong variant"),
@@ -30,7 +30,7 @@ fn insert_returned_no_row_id_fields_extractable() {
 
 #[test]
 fn insert_returned_no_row_id_display_contains_operation() {
-    let e = RqlError::InsertReturnedNoRowId {
+    let e = Error::InsertReturnedNoRowId {
         operation: "insert_episode",
     };
     let msg = e.to_string();
@@ -42,7 +42,7 @@ fn insert_returned_no_row_id_display_contains_operation() {
 
 #[test]
 fn insert_returned_no_row_id_is_std_error() {
-    let e = RqlError::InsertReturnedNoRowId {
+    let e = Error::InsertReturnedNoRowId {
         operation: "insert_fact",
     };
     is_std_error(&e);
@@ -52,16 +52,16 @@ fn insert_returned_no_row_id_is_std_error() {
 
 #[test]
 fn embedding_dim_zero_constructs() {
-    let e = RqlError::EmbeddingDimZero;
+    let e = Error::EmbeddingDimZero;
     match e {
-        RqlError::EmbeddingDimZero => {}
+        Error::EmbeddingDimZero => {}
         _ => panic!("wrong variant"),
     }
 }
 
 #[test]
 fn embedding_dim_zero_display_is_readable() {
-    let e = RqlError::EmbeddingDimZero;
+    let e = Error::EmbeddingDimZero;
     let msg = e.to_string();
     // Must mention "embedding" or "dim" or "zero" — something diagnostic
     let lower = msg.to_lowercase();
@@ -73,7 +73,7 @@ fn embedding_dim_zero_display_is_readable() {
 
 #[test]
 fn embedding_dim_zero_is_std_error() {
-    let e = RqlError::EmbeddingDimZero;
+    let e = Error::EmbeddingDimZero;
     is_std_error(&e);
 }
 
@@ -81,12 +81,12 @@ fn embedding_dim_zero_is_std_error() {
 
 #[test]
 fn extraction_stage_fields_extractable() {
-    let e = RqlError::ExtractionStage {
+    let e = Error::ExtractionStage {
         stage: "entities".to_string(),
         detail: "LLM timed out".to_string(),
     };
     match &e {
-        RqlError::ExtractionStage { stage, detail } => {
+        Error::ExtractionStage { stage, detail } => {
             assert_eq!(stage, "entities");
             assert_eq!(detail, "LLM timed out");
         }
@@ -96,7 +96,7 @@ fn extraction_stage_fields_extractable() {
 
 #[test]
 fn extraction_stage_display_contains_stage_and_detail() {
-    let e = RqlError::ExtractionStage {
+    let e = Error::ExtractionStage {
         stage: "triplets".to_string(),
         detail: "parse error".to_string(),
     };
@@ -113,7 +113,7 @@ fn extraction_stage_display_contains_stage_and_detail() {
 
 #[test]
 fn extraction_stage_is_std_error() {
-    let e = RqlError::ExtractionStage {
+    let e = Error::ExtractionStage {
         stage: "relations".to_string(),
         detail: "upstream err".to_string(),
     };
@@ -124,12 +124,12 @@ fn extraction_stage_is_std_error() {
 
 #[test]
 fn weight_sum_invalid_fields_extractable() {
-    let e = RqlError::WeightSumInvalid {
+    let e = Error::WeightSumInvalid {
         bm25: 0.8,
         vector: 0.5,
     };
     match &e {
-        RqlError::WeightSumInvalid { bm25, vector } => {
+        Error::WeightSumInvalid { bm25, vector } => {
             assert!((*bm25 - 0.8).abs() < f64::EPSILON);
             assert!((*vector - 0.5).abs() < f64::EPSILON);
         }
@@ -139,7 +139,7 @@ fn weight_sum_invalid_fields_extractable() {
 
 #[test]
 fn weight_sum_invalid_display_contains_weights() {
-    let e = RqlError::WeightSumInvalid {
+    let e = Error::WeightSumInvalid {
         bm25: 0.6,
         vector: 0.6,
     };
@@ -153,7 +153,7 @@ fn weight_sum_invalid_display_contains_weights() {
 
 #[test]
 fn weight_sum_invalid_is_std_error() {
-    let e = RqlError::WeightSumInvalid {
+    let e = Error::WeightSumInvalid {
         bm25: 0.3,
         vector: 0.4,
     };
@@ -164,9 +164,9 @@ fn weight_sum_invalid_is_std_error() {
 
 #[test]
 fn token_window_invalid_fields_extractable() {
-    let e = RqlError::TokenWindowInvalid { got: 100, min: 300 };
+    let e = Error::TokenWindowInvalid { got: 100, min: 300 };
     match &e {
-        RqlError::TokenWindowInvalid { got, min } => {
+        Error::TokenWindowInvalid { got, min } => {
             assert_eq!(*got, 100);
             assert_eq!(*min, 300);
         }
@@ -176,7 +176,7 @@ fn token_window_invalid_fields_extractable() {
 
 #[test]
 fn token_window_invalid_display_contains_values() {
-    let e = RqlError::TokenWindowInvalid { got: 50, min: 200 };
+    let e = Error::TokenWindowInvalid { got: 50, min: 200 };
     let msg = e.to_string();
     assert!(
         msg.contains("50") && msg.contains("200"),
@@ -186,6 +186,6 @@ fn token_window_invalid_display_contains_values() {
 
 #[test]
 fn token_window_invalid_is_std_error() {
-    let e = RqlError::TokenWindowInvalid { got: 10, min: 100 };
+    let e = Error::TokenWindowInvalid { got: 10, min: 100 };
     is_std_error(&e);
 }

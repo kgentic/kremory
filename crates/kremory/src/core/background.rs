@@ -22,8 +22,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::core::config::ContentType;
-use crate::core::error::RqlError;
-use crate::core::ingest::RqlGraph;
+use crate::core::error::Error;
+use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 
 // ---------------------------------------------------------------------------
@@ -72,14 +72,14 @@ pub enum IngestErrorKind {
     Other,
 }
 
-impl From<&RqlError> for IngestErrorKind {
-    fn from(e: &RqlError) -> Self {
+impl From<&Error> for IngestErrorKind {
+    fn from(e: &Error) -> Self {
         match e {
-            RqlError::Database(_) => IngestErrorKind::Database,
-            RqlError::Extraction(_) => IngestErrorKind::Extraction,
-            RqlError::Resolution(_) => IngestErrorKind::Resolution,
-            RqlError::Llm(_) => IngestErrorKind::Llm,
-            RqlError::Embedding(_) => IngestErrorKind::Embedding,
+            Error::Database(_) => IngestErrorKind::Database,
+            Error::Extraction(_) => IngestErrorKind::Extraction,
+            Error::Resolution(_) => IngestErrorKind::Resolution,
+            Error::Llm(_) => IngestErrorKind::Llm,
+            Error::Embedding(_) => IngestErrorKind::Embedding,
             // Config, Search, Parse, Serialization, Other all collapse to Other.
             _ => IngestErrorKind::Other,
         }
@@ -190,7 +190,7 @@ impl BackgroundIngestor {
     ///
     /// `graph` is moved into the worker thread; this is the only place where
     /// the generics `L` and `Emb` appear.
-    pub fn new<L, Emb>(graph: RqlGraph<L, Emb>, config: IngestorConfig) -> (Self, IngestGuard)
+    pub fn new<L, Emb>(graph: Engine<L, Emb>, config: IngestorConfig) -> (Self, IngestGuard)
     where
         L: ChatProvider + 'static,
         Emb: EmbeddingProvider + 'static,
@@ -325,7 +325,7 @@ impl Drop for IngestGuard {
 /// Returns `Some(DeferredRequest)` when Phase 2 should be enqueued, or `None`
 /// on error (error already forwarded to `error_tx`).
 async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
-    graph: &RqlGraph<L, Emb>,
+    graph: &Engine<L, Emb>,
     req: IngestRequest,
     error_tx: &SyncSender<IngestError>,
     deferred_enabled: bool,
@@ -384,7 +384,7 @@ async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
 ///
 /// Errors are logged via metrics and the error channel but do NOT crash the worker.
 async fn process_deferred<L: ChatProvider, Emb: EmbeddingProvider>(
-    graph: &RqlGraph<L, Emb>,
+    graph: &Engine<L, Emb>,
     req: DeferredRequest,
     error_tx: &SyncSender<IngestError>,
 ) {
@@ -433,7 +433,7 @@ async fn process_deferred<L: ChatProvider, Emb: EmbeddingProvider>(
 }
 
 fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
-    graph: RqlGraph<L, Emb>,
+    graph: Engine<L, Emb>,
     work_rx: Receiver<IngestRequest>,
     error_tx: SyncSender<IngestError>,
     queued: Arc<AtomicUsize>,
@@ -668,7 +668,7 @@ mod tests {
             .build()
             .expect("config build failed");
         let dim = config.embedding_dim.0;
-        let graph = RqlGraph::new(
+        let graph = Engine::new(
             temporal,
             Arc::new(FailingLlmClient),
             Arc::new(NullEmbeddingProvider { dim }),
@@ -860,11 +860,11 @@ mod tests {
 
     // -----------------------------------------------------------------------
 
-    /// Helper: build an RqlGraph backed by the supplied ChatProvider.
+    /// Helper: build an Engine backed by the supplied ChatProvider.
     #[allow(dead_code)]
     async fn graph_with_llm<L: ChatProvider + 'static>(
         llm: L,
-    ) -> crate::core::ingest::RqlGraph<L, crate::core::provider::NullEmbeddingProvider> {
+    ) -> crate::core::ingest::Engine<L, crate::core::provider::NullEmbeddingProvider> {
         use crate::core::config::PipelineConfig;
         use crate::core::provider::NullEmbeddingProvider;
         use crate::core::schema::TemporalGraph;
@@ -876,7 +876,7 @@ mod tests {
             .build()
             .expect("config build failed");
         let dim = config.embedding_dim.0;
-        crate::core::ingest::RqlGraph::new(
+        crate::core::ingest::Engine::new(
             temporal,
             Arc::new(llm),
             Arc::new(NullEmbeddingProvider { dim }),
@@ -1085,7 +1085,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
-        // Verify the error kind is Llm (FailAfterFirstLlmClient returns RqlError::Llm).
+        // Verify the error kind is Llm (FailAfterFirstLlmClient returns Error::Llm).
         assert!(
             deferred_errors
                 .iter()

@@ -626,7 +626,7 @@ mod inner {
 
             // Consumer must provide entity types — GLiNER is closed-vocabulary.
             if ctx.allowed_entity_types.is_empty() {
-                return Err(crate::core::error::RqlError::Config(
+                return Err(crate::core::error::Error::Config(
                     "GlinerExtractor requires allowed_entity_types — \
                      the model cannot run open-ended. Set PipelineConfig::allowed_entity_types \
                      with domain-specific entity labels."

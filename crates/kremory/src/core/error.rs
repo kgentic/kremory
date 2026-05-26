@@ -61,7 +61,7 @@ pub enum ContradictionResolution {
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum RqlError {
+pub enum Error {
     #[error("configuration error: {0}")]
     Config(String),
 
@@ -125,4 +125,4 @@ pub enum RqlError {
     TokenWindowInvalid { got: usize, min: usize },
 }
 
-pub type Result<T> = std::result::Result<T, RqlError>;
+pub type Result<T> = std::result::Result<T, Error>;

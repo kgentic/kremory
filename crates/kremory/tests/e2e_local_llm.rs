@@ -21,7 +21,7 @@ mod llm_tests {
     use super::common::build_llm;
     use kremory::core::config::PipelineConfig;
     use kremory::core::extraction::NuExtractExtractor;
-    use kremory::core::ingest::RqlGraph;
+    use kremory::core::ingest::Engine;
     use kremory::core::provider::{ChatProvider as _, NullEmbeddingProvider};
     use kremory::core::schema::TemporalGraph;
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -93,7 +93,7 @@ three business days after the API merge to run the full regression suite.";
             .await
             .expect("failed to open in-memory TemporalGraph");
 
-        let rql = RqlGraph::new(graph, Arc::new(llm), Arc::new(embedder), config);
+        let rql = Engine::new(graph, Arc::new(llm), Arc::new(embedder), config);
 
         let result = rql
             .ingest(MEETING_TRANSCRIPT, None, None, None)
@@ -140,7 +140,7 @@ three business days after the API merge to run the full regression suite.";
                 _ => vec![],
             })
             .collect();
-        // RqlGraph::ingest() uses NuExtractExtractor which emits a single
+        // Engine::ingest() uses NuExtractExtractor which emits a single
         // "nuextract" stage timing.  DefaultExtractor (3-stage) emits 3; that
         // path is exercised by model_comparison and spike_hybrid_extractor.
         assert_eq!(
@@ -375,7 +375,7 @@ three business days after the API merge to run the full regression suite.";
             .await
             .expect("failed to open in-memory TemporalGraph");
 
-        let rql = RqlGraph::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
 
         let extractor = NuExtractExtractor::new(llm);
         let result = rql

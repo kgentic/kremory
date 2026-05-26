@@ -1,5 +1,5 @@
 use crate::core::error::Result;
-use crate::core::ingest::RqlGraph;
+use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 use crate::core::schema::{Entity, Fact};
 use crate::core::search::SearchFilters;
@@ -13,7 +13,7 @@ pub struct ContextResult {
     pub facts: Vec<Fact>,
 }
 
-impl<L: ChatProvider, Emb: EmbeddingProvider> RqlGraph<L, Emb> {
+impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Search for entities matching the query, then expand 1-hop to get context.
     /// Returns entities and their connecting facts.
     pub async fn contextualize(

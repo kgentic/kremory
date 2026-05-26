@@ -18,7 +18,7 @@ mod semantic_tests {
 
     use kremory::core::config::PipelineConfig;
     use kremory::core::context::ContextResult;
-    use kremory::core::ingest::RqlGraph;
+    use kremory::core::ingest::Engine;
     use kremory::core::provider::{EmbeddingProvider, MockChatProvider, OnnxEmbeddingProvider};
     use kremory::core::schema::{Entity, TemporalGraph};
     use kremory::core::search::{SearchFilters, SearchHit};
@@ -473,8 +473,8 @@ mod semantic_tests {
         let config = PipelineConfig::builder()
             .build()
             .expect("PipelineConfig::build");
-        let rql: RqlGraph<MockChatProvider, OnnxEmbeddingProvider> =
-            RqlGraph::new(graph, Arc::new(MockChatProvider::null()), embedder, config);
+        let rql: Engine<MockChatProvider, OnnxEmbeddingProvider> =
+            Engine::new(graph, Arc::new(MockChatProvider::null()), embedder, config);
 
         // contextualize() uses FTS — "Ria" in the label should match.
         let ctx: ContextResult = rql

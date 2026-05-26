@@ -12,7 +12,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use kremory::core::config::PipelineConfig;
 use kremory::core::context::ContextResult;
-use kremory::core::ingest::RqlGraph;
+use kremory::core::ingest::Engine;
 use kremory::core::provider::{EmbeddingProvider, MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::{Entity, TemporalGraph};
 use kremory::core::search::{SearchFilters, SearchHit};
@@ -562,8 +562,8 @@ async fn test_contextualize_one_hop_expansion() {
         .build()
         .expect("PipelineConfig build");
 
-    let rql: RqlGraph<MockChatProvider, MockEmbeddingProvider> =
-        RqlGraph::new(graph, llm, embedder, config);
+    let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
+        Engine::new(graph, llm, embedder, config);
 
     let result: ContextResult = rql
         .contextualize("alice", None, None)
