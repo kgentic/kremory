@@ -404,6 +404,9 @@ impl TemporalGraph {
         let valid_from_str = valid_from.to_rfc3339();
         // Story #209: compute SHA-256 content hash for dedup
         let hash = fact_content_hash(subject_id, predicate, object_id, object_value);
+        // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
+        // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
+        let guard = self.begin_immediate_if_needed().await?;
         // Check for existing non-expired fact with same content hash
         let mut dup_check = self
             .conn
@@ -413,6 +416,7 @@ impl TemporalGraph {
             )
             .await?;
         if dup_check.next().await?.is_some() {
+            guard.rollback().await?;
             return Err(crate::core::error::Error::Duplicate { content_hash: hash });
         }
         let vec_str = embedding.map(|e| {
@@ -458,6 +462,7 @@ impl TemporalGraph {
                 )
                 .await?;
         }
+        guard.commit().await?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.db.insert_fact_ms").record(_ms);
         tracing::info!(_ms, fact_id, "kremory.db.insert_fact");
@@ -790,6 +795,9 @@ impl TemporalGraph {
         let valid_from_str = valid_from.to_rfc3339();
         // Story #209: compute SHA-256 content hash for dedup
         let hash = fact_content_hash(subject_id, predicate, object_id, object_value);
+        // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
+        // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
+        let guard = self.begin_immediate_if_needed().await?;
         let mut dup_check = self
             .conn
             .query(
@@ -798,6 +806,7 @@ impl TemporalGraph {
             )
             .await?;
         if dup_check.next().await?.is_some() {
+            guard.rollback().await?;
             return Err(crate::core::error::Error::Duplicate { content_hash: hash });
         }
         let vec_str = embedding.map(|e| {
@@ -844,6 +853,7 @@ impl TemporalGraph {
                 )
                 .await?;
         }
+        guard.commit().await?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.db.insert_fact_with_group_ms").record(_ms);
         tracing::info!(_ms, fact_id, "kremory.db.insert_fact_with_group");
@@ -1922,5 +1932,80 @@ mod tests {
         g.backfill_fact_embedding(fact_id, &embedding)
             .await
             .unwrap();
+    }
+
+    /// FU.1: N concurrent callers racing to insert_fact with the same content must
+    /// produce exactly 1 Ok(id) and N-1 Err(Duplicate). Only 1 row must exist.
+    ///
+    /// AC from Story #209 / FU.1: insert_fact_concurrent_dedup_exactly_one_wins.
+    #[tokio::test]
+    async fn insert_fact_concurrent_dedup_exactly_one_wins() {
+        use std::sync::Arc;
+        use tokio::sync::Barrier;
+
+        const N: usize = 4;
+
+        let g = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
+        g.insert_entity("alice", "Person", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let barrier = Arc::new(Barrier::new(N));
+        let valid_from = Utc::now();
+
+        let handles: Vec<_> = (0..N)
+            .map(|_| {
+                let g = Arc::clone(&g);
+                let barrier = Arc::clone(&barrier);
+                tokio::spawn(async move {
+                    // All tasks reach the barrier before any begins — maximises race window.
+                    barrier.wait().await;
+                    g.insert_fact(
+                        "alice",
+                        "concurrent_pred",
+                        None,
+                        Some("same_value"),
+                        valid_from,
+                        1.0,
+                        None,
+                        None,
+                    )
+                    .await
+                })
+            })
+            .collect();
+
+        let mut ok_count = 0usize;
+        let mut dup_count = 0usize;
+        for h in handles {
+            match h.await.expect("task panicked") {
+                Ok(_) => ok_count += 1,
+                Err(crate::core::error::Error::Duplicate { .. }) => dup_count += 1,
+                Err(e) => panic!("unexpected error: {e:?}"),
+            }
+        }
+
+        assert_eq!(ok_count, 1, "exactly 1 insert must succeed");
+        assert_eq!(
+            dup_count,
+            N - 1,
+            "all other N-1 callers must return Duplicate"
+        );
+
+        // Verify exactly 1 row with this content_hash in facts
+        let mut rows = g
+            .conn
+            .query(
+                "SELECT COUNT(*) FROM facts WHERE predicate = 'concurrent_pred' AND expired_at IS NULL",
+                (),
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        let count: i64 = row.get(0).unwrap();
+        assert_eq!(
+            count, 1,
+            "exactly 1 row must exist in facts after concurrent inserts"
+        );
     }
 }

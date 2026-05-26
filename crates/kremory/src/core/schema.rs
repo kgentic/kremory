@@ -450,6 +450,25 @@ impl TemporalGraph {
             "CREATE INDEX IF NOT EXISTS facts_vec_idx ON facts(libsql_vector_idx(embedding, 'metric=cosine'))",
             (),
         ).await;
+        // FU.1: UNIQUE partial index on content_hash — storage-layer backstop for the
+        // TOCTTOU-safe check+insert (partial: NULL allowed for pre-hash-rollout rows).
+        self.conn
+            .execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_content_hash_unique \
+                 ON facts(content_hash) WHERE content_hash IS NOT NULL",
+                (),
+            )
+            .await?;
+        // FU.1: non-unique index for dedup-check SELECT performance (eliminates full-table scan).
+        // Note: SQLite can use the unique index above for equality lookups; this non-unique
+        // index is kept as an explicit covering hint and for parity with the spec AC.3.
+        self.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_facts_content_hash \
+                 ON facts(content_hash)",
+                (),
+            )
+            .await?;
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS episodic_edges (
