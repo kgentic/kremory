@@ -1,0 +1,13 @@
+# kremory dual-emit exception allowlist (ADR D1)
+#
+# Format: one entry per line.
+#   <metric_name> | <reason> | <approved_by> | <date>
+#
+# Any metrics::counter!/histogram!/gauge! site that intentionally does NOT have
+# a paired tracing::info!/warn!/error! within 5 source lines MUST be listed here.
+# The CI grep-gate (`scripts/check-dual-emit.sh`) will flag unlisted violations.
+#
+# Exceptions require sign-off from the kremory maintainer. Add the GitHub handle
+# of the approver in the `approved_by` field.
+#
+# Currently no exceptions are approved. All metrics sites have paired tracing.

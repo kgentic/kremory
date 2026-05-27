@@ -1,0 +1,70 @@
+# kremory provider rates — canonical cost table (ADR D9)
+#
+# Used by `TokenTrackingEmbedder` to compute cost estimates from
+# `kremory_core_tokens_total{provider, model, direction}` counter data.
+#
+# `cost_per_1k_tokens_usd`: USD cost per 1000 input tokens as of `rates_as_of`.
+# Update this file when providers publish new pricing. Include a reference link.
+#
+# ADR D7 cardinality discipline:
+#   `provider` and `model` label values in metrics MUST match the keys here.
+#   Unlisted provider/model combos will not produce cost estimates in dashboards.
+
+rates_as_of = "2026-05-21"
+
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+# Source: https://openai.com/pricing (accessed 2026-05-21)
+
+[[providers]]
+provider = "openai"
+model    = "text-embedding-3-small"
+cost_per_1k_tokens_usd = 0.00002
+dimensions = 1536
+
+[[providers]]
+provider = "openai"
+model    = "text-embedding-3-large"
+cost_per_1k_tokens_usd = 0.00013
+dimensions = 3072
+
+[[providers]]
+provider = "openai"
+model    = "text-embedding-ada-002"
+cost_per_1k_tokens_usd = 0.00010
+dimensions = 1536
+
+# ── VoyageAI ──────────────────────────────────────────────────────────────────
+# Source: https://www.voyageai.com/pricing (accessed 2026-05-21)
+
+[[providers]]
+provider = "voyage"
+model    = "voyage-3"
+cost_per_1k_tokens_usd = 0.00006
+dimensions = 1024
+
+[[providers]]
+provider = "voyage"
+model    = "voyage-3-lite"
+cost_per_1k_tokens_usd = 0.00002
+dimensions = 512
+
+[[providers]]
+provider = "voyage"
+model    = "voyage-code-3"
+cost_per_1k_tokens_usd = 0.00006
+dimensions = 1024
+
+# ── Local / self-hosted ───────────────────────────────────────────────────────
+# Zero cost — CPU/GPU amortised separately via infra cost accounting.
+
+[[providers]]
+provider = "local"
+model    = "all-minilm-l6-v2"
+cost_per_1k_tokens_usd = 0.0
+dimensions = 384
+
+[[providers]]
+provider = "local"
+model    = "nomic-embed-text-v1.5"
+cost_per_1k_tokens_usd = 0.0
+dimensions = 768
