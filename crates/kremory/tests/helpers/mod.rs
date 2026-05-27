@@ -4,4 +4,5 @@
 //! The submodules expose types used exclusively by `tests/llm_integration.rs`.
 
 pub mod metrics_capture;
+pub mod mock_chat;
 pub mod ollama_adapter;

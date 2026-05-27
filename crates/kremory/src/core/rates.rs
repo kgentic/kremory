@@ -135,3 +135,81 @@ pub enum RatesError {
     #[error("toml parse: {0}")]
     Parse(#[from] toml::de::Error),
 }
+
+// ── Unit tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    // ── G_v012_4: provider_rates_bundled_defaults_load ───────────────────────
+
+    /// G_v012_4 — Parse bundled rates TOML; assert `rates_as_of` matches the
+    /// committed date and spot-check known rates for 3 embedder models and 5
+    /// chat model × direction entries.
+    #[test]
+    fn provider_rates_bundled_defaults_load() {
+        let rates = ProviderRates::from_bundled().expect("bundled rates must parse");
+
+        assert_eq!(
+            rates.rates_as_of, "2026-05-21",
+            "rates_as_of must match the committed date"
+        );
+
+        // ── Embedder spot-checks (direction = None) ──────────────────────────
+        let embedder_cases: &[(&str, &str)] = &[
+            ("openai", "text-embedding-3-small"),
+            ("voyage", "voyage-3"),
+            ("local", "all-minilm-l6-v2"),
+        ];
+        for &(provider, model) in embedder_cases {
+            assert!(
+                rates.lookup_rate(provider, model, None).is_some(),
+                "embedder rate for {provider}/{model} must exist in bundled TOML"
+            );
+        }
+
+        // ── Chat spot-checks (direction = Some) ──────────────────────────────
+        let chat_cases: &[(&str, &str, &str)] = &[
+            ("openai", "gpt-4o-mini", "input"),
+            ("openai", "gpt-4o-mini", "output"),
+            ("openai", "gpt-4o", "input"),
+            ("anthropic", "claude-haiku-4-5", "input"),
+            ("ollama", "*", "input"),
+        ];
+        for &(provider, model, direction) in chat_cases {
+            assert!(
+                rates
+                    .lookup_rate(provider, model, Some(direction))
+                    .is_some(),
+                "chat rate for {provider}/{model}/{direction} must exist in bundled TOML"
+            );
+        }
+    }
+
+    // ── G_v012_5: lookup_rate_unknown_provider_returns_none ──────────────────
+
+    /// G_v012_5 — `lookup_rate` for a nonexistent provider/model triple must
+    /// return `None` (no panics, no partial matches).
+    #[test]
+    fn lookup_rate_unknown_provider_returns_none() {
+        let rates = ProviderRates::from_bundled().expect("bundled rates must parse");
+
+        assert_eq!(
+            rates.lookup_rate("nonexistent", "x", None),
+            None,
+            "lookup_rate for unknown provider must return None"
+        );
+        assert_eq!(
+            rates.lookup_rate("openai", "nonexistent-model", Some("input")),
+            None,
+            "lookup_rate for known provider but unknown model must return None"
+        );
+        assert_eq!(
+            rates.lookup_rate("openai", "gpt-4o-mini", Some("forward")),
+            None,
+            "lookup_rate for known provider/model but unknown direction must return None"
+        );
+    }
+}

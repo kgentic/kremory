@@ -49,10 +49,7 @@ fn ollama_chat_model() -> String {
 }
 
 /// Build a `Memory` instance with real Ollama providers wired to the given tempdir.
-async fn build_mem(
-    dir: &tempfile::TempDir,
-    ns: &str,
-) -> kremory::memory::Result<Memory> {
+async fn build_mem(dir: &tempfile::TempDir, ns: &str) -> kremory::memory::Result<Memory> {
     let base_url = ollama_base_url();
 
     let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
@@ -114,7 +111,10 @@ async fn entity_extraction_alice_bob_stanford() {
         .await
         .expect("recall must succeed");
 
-    assert!(!results.is_empty(), "recall must return at least one result");
+    assert!(
+        !results.is_empty(),
+        "recall must return at least one result"
+    );
 
     let alice = results
         .iter()
@@ -154,7 +154,10 @@ async fn entity_extraction_alice_bob_stanford() {
             kremory::SourceKind::Episode,
             "source_refs must use SourceKind::Episode variant (not Document) — Bug A fix"
         );
-        assert!(!sr.id.is_empty(), "episode id in source_ref must be non-empty");
+        assert!(
+            !sr.id.is_empty(),
+            "episode id in source_ref must be non-empty"
+        );
     }
 
     // Bug B: summary must contain an entity mention from the source text.
@@ -204,13 +207,13 @@ async fn dedup_invariant_same_text_twice() {
         .await
         .expect("first remember must succeed");
 
-    assert!(!c1.episode_entity_id.is_empty(), "c1 episode_entity_id must be non-empty");
+    assert!(
+        !c1.episode_entity_id.is_empty(),
+        "c1 episode_entity_id must be non-empty"
+    );
 
     // Second submit with identical content — must deduplicate.
-    let second_result = mem
-        .remember(content)
-        .from_chat("dedup-session")
-        .await;
+    let second_result = mem.remember(content).from_chat("dedup-session").await;
 
     match second_result {
         Err(e) => {
@@ -310,18 +313,33 @@ async fn concurrent_ingest_three_episodes_no_panic() {
     // Blocking ingest returns the DB row ID (starts at 1 per fresh DB), which
     // would be "1" for all three separate Memory instances and fail the distinctness check.
     let (c1, c2, c3) = tokio::join!(
-        m1.remember("Carol is a distributed systems engineer.").from_chat("s1").no_wait(),
-        m2.remember("Dave leads the platform reliability team.").from_chat("s2").no_wait(),
-        m3.remember("Eve specialises in Byzantine fault-tolerant consensus.").from_chat("s3").no_wait(),
+        m1.remember("Carol is a distributed systems engineer.")
+            .from_chat("s1")
+            .no_wait(),
+        m2.remember("Dave leads the platform reliability team.")
+            .from_chat("s2")
+            .no_wait(),
+        m3.remember("Eve specialises in Byzantine fault-tolerant consensus.")
+            .from_chat("s3")
+            .no_wait(),
     );
 
     let c1 = c1.expect("Carol ingest must succeed");
     let c2 = c2.expect("Dave ingest must succeed");
     let c3 = c3.expect("Eve ingest must succeed");
 
-    assert!(!c1.episode_entity_id.is_empty(), "c1 episode_entity_id must be non-empty");
-    assert!(!c2.episode_entity_id.is_empty(), "c2 episode_entity_id must be non-empty");
-    assert!(!c3.episode_entity_id.is_empty(), "c3 episode_entity_id must be non-empty");
+    assert!(
+        !c1.episode_entity_id.is_empty(),
+        "c1 episode_entity_id must be non-empty"
+    );
+    assert!(
+        !c2.episode_entity_id.is_empty(),
+        "c2 episode_entity_id must be non-empty"
+    );
+    assert!(
+        !c3.episode_entity_id.is_empty(),
+        "c3 episode_entity_id must be non-empty"
+    );
 
     let ids: std::collections::HashSet<&str> = [
         c1.episode_entity_id.as_str(),
@@ -424,7 +442,10 @@ async fn recall_ranks_alice_episodes_above_unrelated() {
             kremory::SourceKind::Episode,
             "all source_refs must be SourceKind::Episode"
         );
-        assert!(!sr.id.is_empty(), "episode id in source_ref must be non-empty");
+        assert!(
+            !sr.id.is_empty(),
+            "episode id in source_ref must be non-empty"
+        );
     }
 
     // score must be > 0.0 when recalled by name.
@@ -472,7 +493,11 @@ async fn dream_phase_not_implemented() {
     // F-01 contract: dream() must return Err(NotImplemented) — not Ok, not panic.
     let result = mem.dream().await;
     match result {
-        Err(kremory::memory::MemoryError::NotImplemented { feature, available_in, adr_ref }) => {
+        Err(kremory::memory::MemoryError::NotImplemented {
+            feature,
+            available_in,
+            adr_ref,
+        }) => {
             assert!(
                 !feature.is_empty(),
                 "NotImplemented.feature must be non-empty"
@@ -486,12 +511,10 @@ async fn dream_phase_not_implemented() {
                 "NotImplemented.adr_ref must reference ADR-007; got: {adr_ref}"
             );
         }
-        Err(other) => panic!(
-            "dream() must return Err(NotImplemented) per F-01; got: {other:?}"
-        ),
-        Ok(summary) => panic!(
-            "dream() must return Err(NotImplemented) per F-01; got Ok: {summary:?}"
-        ),
+        Err(other) => panic!("dream() must return Err(NotImplemented) per F-01; got: {other:?}"),
+        Ok(summary) => {
+            panic!("dream() must return Err(NotImplemented) per F-01; got Ok: {summary:?}")
+        }
     }
 }
 
@@ -559,7 +582,8 @@ async fn namespace_isolation() {
     let mock_llm: Arc<dyn ChatProvider + Send + Sync> = Arc::new(MockChatProvider::new(responses));
     // Null provider for the ignored _provider parameter of graph_ingest_episode.
     let noop_provider: Arc<dyn ChatProvider> = Arc::new(MockChatProvider::null());
-    let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(DeterministicEmbeddingProvider::new(384));
+    let embedder: Arc<dyn DynEmbeddingProvider> =
+        Arc::new(DeterministicEmbeddingProvider::new(384));
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let db_path = tmp.path().join("ns-iso.db");
@@ -576,12 +600,8 @@ async fn namespace_isolation() {
         .build()
         .expect("PipelineConfig default");
 
-    let handle = EngineGraphHandle::with_config(
-        Arc::clone(&graph),
-        Arc::clone(&mock_llm),
-        embedder,
-        config,
-    );
+    let handle =
+        EngineGraphHandle::with_config(Arc::clone(&graph), Arc::clone(&mock_llm), embedder, config);
 
     let ns_alpha = Namespace::new("ns-alpha");
     let ns_beta = Namespace::new("ns-beta");
@@ -639,7 +659,11 @@ async fn namespace_isolation() {
         .graph_search(
             &ns_beta,
             "ALPHA",
-            &SearchOpts { limit: Some(20), as_of: None, source_kind: None },
+            &SearchOpts {
+                limit: Some(20),
+                as_of: None,
+                source_kind: None,
+            },
         )
         .await
         .expect("graph_search ns-beta OK");
@@ -747,13 +771,11 @@ async fn build_mock_handle_with_response(
             .await
             .expect("TemporalGraph::open"),
     );
-    let config = PipelineConfig::builder().build().expect("PipelineConfig::default");
-    let handle = EngineGraphHandle::with_config(
-        Arc::clone(&graph),
-        Arc::clone(&mock_llm),
-        embedder,
-        config,
-    );
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("PipelineConfig::default");
+    let handle =
+        EngineGraphHandle::with_config(Arc::clone(&graph), Arc::clone(&mock_llm), embedder, config);
     (handle, graph)
 }
 
@@ -803,14 +825,25 @@ async fn source_refs_carries_episode_kind() {
             &[],
             Arc::clone(&noop_provider),
             None,
-            SubmitOpts { enrich_per_episode: true, run_in_background: false },
+            SubmitOpts {
+                enrich_per_episode: true,
+                run_in_background: false,
+            },
             None,
         )
         .await
         .expect("graph_ingest_episode OK");
 
     let results = handle
-        .graph_search(&ns, "Alice", &SearchOpts { limit: Some(10), as_of: None, source_kind: None })
+        .graph_search(
+            &ns,
+            "Alice",
+            &SearchOpts {
+                limit: Some(10),
+                as_of: None,
+                source_kind: None,
+            },
+        )
         .await
         .expect("graph_search OK");
 
@@ -880,7 +913,10 @@ async fn rrf_single_result_scores_one() {
             &[],
             Arc::clone(&noop_provider),
             None,
-            SubmitOpts { enrich_per_episode: true, run_in_background: false },
+            SubmitOpts {
+                enrich_per_episode: true,
+                run_in_background: false,
+            },
             None,
         )
         .await
@@ -890,12 +926,20 @@ async fn rrf_single_result_scores_one() {
         .graph_search(
             &ns,
             "Zephyr",
-            &SearchOpts { limit: Some(10), as_of: None, source_kind: None },
+            &SearchOpts {
+                limit: Some(10),
+                as_of: None,
+                source_kind: None,
+            },
         )
         .await
         .expect("graph_search OK");
 
-    assert_eq!(results.len(), 1, "exactly one result for unique entity Zephyr");
+    assert_eq!(
+        results.len(),
+        1,
+        "exactly one result for unique entity Zephyr"
+    );
     assert_eq!(
         results[0].score, 1.0_f32,
         "single unique match must score 1.0 (degenerate normalisation fix RISK-001)"
@@ -948,7 +992,10 @@ async fn standalone_entity_has_episodic_edge() {
             &[],
             Arc::clone(&noop_provider),
             None,
-            SubmitOpts { enrich_per_episode: true, run_in_background: false },
+            SubmitOpts {
+                enrich_per_episode: true,
+                run_in_background: false,
+            },
             None,
         )
         .await
@@ -958,7 +1005,11 @@ async fn standalone_entity_has_episodic_edge() {
         .graph_search(
             &ns,
             "Carol",
-            &SearchOpts { limit: Some(10), as_of: None, source_kind: None },
+            &SearchOpts {
+                limit: Some(10),
+                as_of: None,
+                source_kind: None,
+            },
         )
         .await
         .expect("graph_search OK");
@@ -1031,7 +1082,10 @@ async fn stub_entity_inserted_on_forward_reference() {
             &[],
             Arc::clone(&noop_provider),
             None,
-            SubmitOpts { enrich_per_episode: true, run_in_background: false },
+            SubmitOpts {
+                enrich_per_episode: true,
+                run_in_background: false,
+            },
             None,
         )
         .await
@@ -1042,7 +1096,11 @@ async fn stub_entity_inserted_on_forward_reference() {
         .graph_search(
             &ns,
             "Bob",
-            &SearchOpts { limit: Some(10), as_of: None, source_kind: None },
+            &SearchOpts {
+                limit: Some(10),
+                as_of: None,
+                source_kind: None,
+            },
         )
         .await
         .expect("graph_search OK");
@@ -1063,7 +1121,11 @@ async fn stub_entity_inserted_on_forward_reference() {
         .graph_search(
             &ns,
             "Alice",
-            &SearchOpts { limit: Some(10), as_of: None, source_kind: None },
+            &SearchOpts {
+                limit: Some(10),
+                as_of: None,
+                source_kind: None,
+            },
         )
         .await
         .expect("graph_search for Alice OK");
@@ -1077,7 +1139,10 @@ async fn stub_entity_inserted_on_forward_reference() {
         .iter()
         .find(|r| r.entity_name.to_lowercase().contains("alice"))
         .unwrap();
-    assert!(!alice.incomplete, "non-stub entity Alice must have incomplete: false");
+    assert!(
+        !alice.incomplete,
+        "non-stub entity Alice must have incomplete: false"
+    );
 }
 
 /// G_v011_stub_promoted — stub_entity_promoted_on_reingestion
@@ -1132,16 +1197,13 @@ async fn stub_entity_promoted_on_reingestion() {
             .await
             .expect("TemporalGraph::open"),
     );
-    let config = PipelineConfig::builder().build().expect("PipelineConfig::default");
-    let handle = EngineGraphHandle::with_config(
-        Arc::clone(&graph),
-        Arc::clone(&mock_llm),
-        embedder,
-        config,
-    );
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("PipelineConfig::default");
+    let handle =
+        EngineGraphHandle::with_config(Arc::clone(&graph), Arc::clone(&mock_llm), embedder, config);
 
-    let noop_provider: Arc<dyn kremory::memory::ChatProvider> =
-        Arc::new(MockChatProvider::null());
+    let noop_provider: Arc<dyn kremory::memory::ChatProvider> = Arc::new(MockChatProvider::null());
     let ns = Namespace::new("g-v011-promoted");
 
     // Batch 1: creates stub Bob.
@@ -1158,7 +1220,10 @@ async fn stub_entity_promoted_on_reingestion() {
             &[],
             Arc::clone(&noop_provider),
             None,
-            SubmitOpts { enrich_per_episode: true, run_in_background: false },
+            SubmitOpts {
+                enrich_per_episode: true,
+                run_in_background: false,
+            },
             None,
         )
         .await
@@ -1178,7 +1243,10 @@ async fn stub_entity_promoted_on_reingestion() {
             &[],
             Arc::clone(&noop_provider),
             None,
-            SubmitOpts { enrich_per_episode: true, run_in_background: false },
+            SubmitOpts {
+                enrich_per_episode: true,
+                run_in_background: false,
+            },
             None,
         )
         .await
@@ -1189,7 +1257,11 @@ async fn stub_entity_promoted_on_reingestion() {
         .graph_search(
             &ns,
             "Bob",
-            &SearchOpts { limit: Some(10), as_of: None, source_kind: None },
+            &SearchOpts {
+                limit: Some(10),
+                as_of: None,
+                source_kind: None,
+            },
         )
         .await
         .expect("graph_search OK");
@@ -1211,12 +1283,185 @@ async fn stub_entity_promoted_on_reingestion() {
     );
     if let Some(e) = bob_entity {
         // After promotion, stub property must be gone or false.
-        let stub_flag = e.properties.get("stub").and_then(|v| v.as_bool()).unwrap_or(false);
+        let stub_flag = e
+            .properties
+            .get("stub")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         assert!(
             !stub_flag,
             "promoted entity must not have stub=true in properties — G_v011_stub_promoted"
         );
     }
+}
+
+// ── LLM.3 — Token observability: kremory_core_tokens_total counter ────────────
+
+// ── G_v012_* — v0.1.2 LLM observability facade integration tests ──────────────
+//
+// These tests validate the TokenTrackingChatProvider integration via the public
+// MemoryBuilder API and the Tier 1 shortcuts. No live Ollama required for
+// G_v012_7 and G_v012_8 — they use MockChatProviderTracking +
+// DeterministicEmbeddingProvider. G_v012_9 requires live Ollama (`#[ignore]`).
+
+/// G_v012_7 — `with_llm_unchanged_v011_compat`
+///
+/// Build via `Memory::open(..).with_llm(..)` (plain, no tracking). Ingest must
+/// succeed. kremory_core_tokens_total must NOT be emitted — the untracked path
+/// must not pollute the metrics surface. This is a v0.1.1 backward-compat guard.
+///
+/// No Ollama required.
+#[tokio::test]
+#[cfg(feature = "llm-integration")]
+async fn with_llm_unchanged_v011_compat() {
+    use kremory::core::provider::{DeterministicEmbeddingProvider, MockChatProvider};
+    use kremory::{DynEmbeddingProvider, Namespace};
+    use std::collections::HashMap;
+
+    let recorder = metrics_util::debugging::DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    // Simple extraction response: one entity, no relationships.
+    let mut responses: HashMap<String, String> = HashMap::new();
+    responses.insert(
+        "g012-7-content".to_string(),
+        serde_json::json!({
+            "entities": [{"name": "Dave", "label": "Person"}],
+            "relationships": []
+        })
+        .to_string(),
+    );
+    let mock_llm: Arc<dyn kremory::memory::ChatProvider> =
+        Arc::new(MockChatProvider::new(responses));
+    let embedder: Arc<dyn DynEmbeddingProvider> =
+        Arc::new(DeterministicEmbeddingProvider::new(384));
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mem = Memory::open(tmp.path().join("g_v012_7.db"))
+        .with_llm(mock_llm)
+        .with_embedder(embedder)
+        .default_namespace(Namespace::new("g-v012-7"))
+        .await
+        .expect("Memory::open must succeed");
+
+    mem.remember("g012-7-content: Dave is an engineer.")
+        .from_chat("g-v012-7-session")
+        .await
+        .expect("remember must succeed");
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let has_token_counter = snapshot.iter().any(|(k, _, _, _)| {
+        k.key().name() == "kremory_core_tokens_total"
+            && k.key()
+                .labels()
+                .any(|l| l.key() == "operation" && l.value() == "chat")
+    });
+    assert!(
+        !has_token_counter,
+        "kremory_core_tokens_total must NOT be emitted via plain with_llm() (v0.1.1 compat guard)"
+    );
+}
+
+/// G_v012_8 — `with_llm_tracked_emits_chat_metrics`
+///
+/// Build via `Memory::open(..).with_llm_tracked(..)`. Ingest with a
+/// `MockChatProviderTracking(WithUsage{input:50, output:25})`. Assert that
+/// `kremory_core_tokens_total` is emitted with `operation=chat`.
+///
+/// No Ollama required.
+#[tokio::test]
+#[cfg(feature = "llm-integration")]
+async fn with_llm_tracked_emits_chat_metrics() {
+    use helpers::mock_chat::{MockBehavior, MockChatProviderTracking};
+    use kremory::core::provider::DeterministicEmbeddingProvider;
+    use kremory::{DynEmbeddingProvider, Namespace};
+
+    let recorder = metrics_util::debugging::DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let mock_llm = MockChatProviderTracking::new(MockBehavior::WithUsage {
+        input: 50,
+        output: 25,
+    });
+    let embedder: Arc<dyn DynEmbeddingProvider> =
+        Arc::new(DeterministicEmbeddingProvider::new(384));
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mem = Memory::open(tmp.path().join("g_v012_8.db"))
+        .with_llm_tracked("test-provider", "test-model", mock_llm)
+        .with_embedder(embedder)
+        .default_namespace(Namespace::new("g-v012-8"))
+        .await
+        .expect("Memory::open must succeed");
+
+    mem.remember("Eve leads the security team.")
+        .from_chat("g-v012-8-session")
+        .await
+        .expect("remember must succeed");
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let has_token_counter = snapshot.iter().any(|(k, _, _, _)| {
+        k.key().name() == "kremory_core_tokens_total"
+            && k.key()
+                .labels()
+                .any(|l| l.key() == "operation" && l.value() == "chat")
+    });
+    assert!(
+        has_token_counter,
+        "kremory_core_tokens_total must be emitted when using with_llm_tracked(); \
+         counters: {:?}",
+        snapshot
+            .iter()
+            .map(|(k, _, _, _)| k.key().name().to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// G_v012_9 — `tier_1_with_ollama_auto_emits_chat_metrics`
+///
+/// Build via `Memory::with_ollama_at(..)` (Tier 1 shortcut). Ingest one episode.
+/// Assert that `kremory_core_tokens_total{operation="chat"}` appears in the
+/// metrics snapshot, confirming Tier 1 shortcuts wire `TokenTrackingChatProvider`.
+///
+/// `#[ignore]`: requires live Ollama with a chat model (default: llama3.2) + nomic-embed-text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "g_v012_9 — requires live Ollama; run with --ignored"]
+#[cfg(feature = "llm-integration")]
+async fn tier_1_with_ollama_auto_emits_chat_metrics() {
+    let recorder = metrics_util::debugging::DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let base_url = ollama_base_url();
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let mem = Memory::with_ollama_at(&base_url, tmp.path().join("g_v012_9.db"))
+        .await
+        .expect("Memory::with_ollama_at must succeed with live Ollama");
+
+    mem.remember("Frank is a principal engineer at Acme.")
+        .from_chat("g-v012-9-session")
+        .await
+        .expect("remember must succeed");
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let has_token_counter = snapshot.iter().any(|(k, _, _, _)| {
+        k.key().name() == "kremory_core_tokens_total"
+            && k.key()
+                .labels()
+                .any(|l| l.key() == "operation" && l.value() == "chat")
+    });
+    assert!(
+        has_token_counter,
+        "kremory_core_tokens_total must be emitted by Tier 1 with_ollama_at(); \
+         counters: {:?}",
+        snapshot
+            .iter()
+            .map(|(k, _, _, _)| k.key().name().to_string())
+            .collect::<Vec<_>>()
+    );
 }
 
 // ── LLM.3 — Token observability: kremory_core_tokens_total counter ────────────
@@ -1237,8 +1482,8 @@ async fn stub_entity_promoted_on_reingestion() {
 #[ignore]
 #[cfg(feature = "llm-integration")]
 fn token_tracking_embedder_counter_increments() {
-    use kremory::TokenTrackingEmbedder;
     use kremory::core::provider::EmbeddingProvider as _;
+    use kremory::TokenTrackingEmbedder;
 
     let capture = MetricsCapture::new();
 
