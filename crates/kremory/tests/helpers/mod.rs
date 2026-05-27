@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Shared test helpers for LLM integration tests.
 //!
 //! Gated: only compiled when `llm-integration` feature is active.

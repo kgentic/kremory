@@ -289,6 +289,7 @@ impl SpeculativeCache {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::core::schema::TemporalGraph;
     use crate::core::search::SearchFilters;
@@ -359,7 +360,7 @@ mod tests {
             .await
             .unwrap();
         assert!(count > 0, "should prefetch neighbours of project_alpha");
-        assert!(cache.len() > 0, "cache should have entries");
+        assert!(!cache.is_empty(), "cache should have entries");
 
         // Reset before reads so prefetch entries survive.
         dirty.store(false, Ordering::Release);
@@ -433,7 +434,7 @@ mod tests {
             .prefetch(&g, &["project_alpha".to_string()])
             .await
             .unwrap();
-        assert!(cache.len() > 0);
+        assert!(!cache.is_empty());
 
         // Wait for TTL to expire
         tokio::time::sleep(Duration::from_millis(10)).await;

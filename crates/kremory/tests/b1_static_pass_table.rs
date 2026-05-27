@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! B.1 — Static pass table RED gate.
 //!
 //! Verifies that `DreamMode` enum exists in `kremory::memory::types` and

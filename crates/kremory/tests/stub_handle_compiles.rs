@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.5 — D.6.8 compile-time pin test for StubGraphHandle.
 //!
 //! Verifies that `kremory::memory::StubGraphHandle` exists, implements the

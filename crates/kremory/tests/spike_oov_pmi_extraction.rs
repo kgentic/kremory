@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::redundant_closure,
+    clippy::useless_vec
+)]
 /// Spike: OOV Dictionary Subtraction + PMI Collocation Detection
 ///
 /// Tests whether zspell (Hunspell) + PMI can identify entity candidates
@@ -8,7 +14,6 @@
 ///   cargo test -p rql-core --test spike_oov_pmi_extraction -- --nocapture
 ///
 /// Requires: rql-core/fixtures/dictionaries/en_US.{aff,dic}
-
 mod spike {
     use kremory::core::text_utils::scan_proper_nouns;
     use std::collections::{HashMap, HashSet};

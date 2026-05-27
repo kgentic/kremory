@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.6 — D.6.9 backward-compat wrapper tests.
 //!
 //! Verifies that the deprecated legacy wrappers (`ingest_episode`, `run_dream_phase`)

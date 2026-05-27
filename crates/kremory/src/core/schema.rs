@@ -607,6 +607,7 @@ impl TemporalGraph {
 
 #[cfg(test)]
 mod schema_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::TemporalGraph;
 
     /// Story #246: nested begin_immediate_if_needed is a no-op (guard.opened == false).

@@ -119,6 +119,7 @@ pub(crate) fn validate_snapshot_header(data: &[u8]) -> Result<bool, CorruptReaso
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn make_header(magic: &[u8; 4], version: u8, hint: u8) -> Vec<u8> {

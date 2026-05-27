@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// NER extraction benchmark using GlinerExtractor across 14 domains.
 ///
 /// Compares GLiNER zero-shot NER against the 208-entity ground truth.

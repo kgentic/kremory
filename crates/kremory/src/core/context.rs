@@ -160,6 +160,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
 

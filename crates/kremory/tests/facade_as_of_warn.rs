@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8a — `recall().as_of()` warning path tests.
 //!
 //! At v0.1.0, `.as_of(ts)` is accepted in the builder but the point-in-time

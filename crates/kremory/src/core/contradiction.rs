@@ -262,6 +262,7 @@ impl<L: ChatProvider> TwoPoolDetector<L> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::core::provider::MockChatProvider;
     use chrono::{Duration, Utc};
@@ -273,6 +274,7 @@ mod tests {
         Utc::now() + Duration::days(offset_days)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn make_fact(
         id: i64,
         subject_id: &str,

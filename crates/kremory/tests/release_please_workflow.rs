@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Story #6 — release-please CI workflow.
 //!
 //! AC: .github/workflows/release-please.yml exists, uses

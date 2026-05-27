@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// Integration tests for GlinerExtractor — GLiNER-based zero-shot NER.
 ///
 /// All tests are `#[ignore]` because they require downloading

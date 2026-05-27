@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.7 gating test — ensures `WorkspaceScope` is fully removed from the substrate src.
 //!
 //! The substrate must be consumer-neutral. `WorkspaceScope` was the-host-application-flavored

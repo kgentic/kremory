@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! G12 acceptance tests — named struct variants on `Error`.
 //!
 //! Each test constructs a new struct variant, verifies field extraction via

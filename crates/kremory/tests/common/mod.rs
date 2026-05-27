@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 use metrics_util::debugging::{DebugValue, Snapshotter};
 use serde::Serialize;
 use serde_json::json;

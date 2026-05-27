@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8a/A.8d — Tier 1 shortcut shape and env-gate tests.
 //!
 //! Tests `Memory::auto`, `Memory::with_ollama`, `Memory::with_openai`,

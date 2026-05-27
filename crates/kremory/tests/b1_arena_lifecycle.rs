@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! B.1 — Arena lifecycle RED gate.
 //!
 //! Verifies that `kremory::core::arena` exposes a `Bump` arena allocator

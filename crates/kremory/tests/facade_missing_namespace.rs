@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8a — MissingNamespace error tests.
 //!
 //! When neither `.in_namespace()` nor `default_namespace` is set, every

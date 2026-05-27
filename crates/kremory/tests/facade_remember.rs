@@ -4,6 +4,8 @@
 //! now route to `EngineGraphHandle` (wired at v0.1.0). Tests that exercise
 //! real ingest use a null LLM + null embedder backed by an in-memory graph.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use kremory::{DynEmbeddingProvider, Memory, MemoryError, Namespace, SourceKind};
 use std::sync::Arc;
 

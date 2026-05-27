@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! B.1 — Observability RED gate.
 //!
 //! Verifies that `TokenTrackingEmbedder` exists and emits the canonical

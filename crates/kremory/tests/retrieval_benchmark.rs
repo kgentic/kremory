@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// Retrieval quality benchmark for the rql-core crate.
 ///
 /// Validates that data inserted into the graph can be correctly retrieved

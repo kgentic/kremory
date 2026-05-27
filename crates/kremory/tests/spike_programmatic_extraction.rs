@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// Spike: Programmatic entity extraction (zero LLM) recall benchmark
 ///
 /// Tests scan_proper_nouns() against the same ground truth to measure
@@ -5,7 +6,6 @@
 ///
 /// Run with:
 ///   cargo test -p rql-core --test spike_programmatic_extraction -- --nocapture
-
 mod spike {
     use std::collections::HashMap;
 

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.3 — D.6.4 compile-time contract pin tests.
 //!
 //! These tests verify that the four locked public fn signatures from

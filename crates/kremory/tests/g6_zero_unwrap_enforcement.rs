@@ -18,6 +18,8 @@
 //!
 //! **Story lock**: #9 (zero-unwrap / -D warnings policy, gate G6 + G7).
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::path::Path;
 use std::process::Command;
 

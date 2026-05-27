@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Consumer-facing compile-time snippet tests.
 //!
 //! Tests here MUST:

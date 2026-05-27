@@ -62,6 +62,7 @@ impl GroundingChecker for TokenOverlapGroundingChecker {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::{GroundingChecker, TokenOverlapGroundingChecker};
 
     #[test]

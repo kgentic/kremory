@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// Unit tests for NuExtractExtractor — template-based single-pass extraction.
 ///
 /// Tests the public API through EntityExtractor::extract() with MockChatProvider

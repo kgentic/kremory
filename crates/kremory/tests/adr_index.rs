@@ -4,6 +4,8 @@
 //! with status, title, slug; superseded ADRs have superseded_by frontmatter.
 //! Gate G1: doc-only, build remains clean.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::path::Path;
 
 /// INDEX.md must exist at .ai-docs/adrs/INDEX.md (relative to workspace root).

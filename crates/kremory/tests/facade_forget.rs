@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8a — ForgetRequest shape and stub tests.
 //!
 //! `ForgetRequest` must use `.execute()` (not `.await`) and validates namespace
