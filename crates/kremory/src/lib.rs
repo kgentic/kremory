@@ -53,7 +53,7 @@ pub use memory::ChatProvider;
 pub use memory::{
     ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, MemoryError, MemoryType,
     Namespace, Result as MemoryResult, RetrievedContext, SearchOpts, SourceKind, SourceRef,
-    StructuredFact, TelemetryConfig, TelemetryHandle,
+    StructuredFact, TelemetryConfig, TelemetryHandle, TelemetryInitError,
 };
 // Handle / lifecycle types (facade + substrate consumers)
 pub use memory::types::{

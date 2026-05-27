@@ -406,51 +406,158 @@ pub struct TelemetryConfig {
     pub otlp_endpoint: Option<String>,
 }
 
-/// Handle returned by `init_telemetry`. Keeps the OTel provider alive.
+/// Handle returned by [`init_telemetry`]. Keeps the OTel provider alive.
 ///
-/// Drop or call `shutdown()` at process exit to flush pending spans/metrics.
-/// If no OTel provider was initialised (default config), `shutdown()` is a no-op.
+/// Drop or call [`TelemetryHandle::shutdown`] at process exit to flush pending spans.
+/// If no OTel provider was initialised (default config or `otel` feature absent),
+/// `shutdown()` is a no-op.
 #[must_use]
 pub struct TelemetryHandle {
+    /// When the `otel` feature is enabled and an OTLP provider was wired,
+    /// this holds the provider so its `Drop` impl can flush buffered spans.
+    #[cfg(feature = "otel")]
+    provider: Option<opentelemetry_sdk::trace::TracerProvider>,
+    #[cfg(not(feature = "otel"))]
     _private: (),
 }
 
 impl TelemetryHandle {
-    /// Flush pending spans and metrics, then shut down the OTel provider.
+    /// Flush pending spans and shut down the OTel provider.
     ///
-    /// Idempotent. Calling twice is safe. Blocks until the provider has drained
-    /// its export queue or the provider-specific shutdown timeout expires.
+    /// With the `otel` feature: calls `TracerProvider::shutdown()` to drain the
+    /// OTLP export queue before returning. Without the feature: no-op.
     pub fn shutdown(self) {
-        // No-op in the default (no OTel) configuration.
-        // When `otel` feature is enabled and an OTLP provider is running,
-        // the provider's Drop impl flushes before the handle is dropped.
+        #[cfg(feature = "otel")]
+        if let Some(provider) = self.provider {
+            // Ignore shutdown errors — best-effort flush at process exit.
+            let _ = provider.shutdown();
+        }
     }
+}
+
+/// Errors returned by [`init_telemetry`].
+#[derive(Debug, thiserror::Error)]
+pub enum TelemetryInitError {
+    /// OTLP exporter build failed (only possible when `otel` feature is enabled).
+    #[error("OTLP exporter build failed: {0}")]
+    Exporter(String),
+    /// `tracing-subscriber` global default could not be installed.
+    /// Usually means another subscriber was already registered.
+    #[error("tracing subscriber init failed: {0}")]
+    Subscriber(String),
 }
 
 /// Initialise kremory telemetry for the memory layer.
 ///
 /// Wires:
-/// - `metrics` recorder (global — installs once; subsequent calls are no-ops)
-/// - `tracing` subscriber (OTel OTLP exporter if `otel` feature + endpoint set)
+/// - `tracing` structured log emission (always)
+/// - OTLP gRPC span export (only when `otel` feature is enabled **and**
+///   `config.otlp_endpoint` is `Some`)
 ///
-/// Returns a `TelemetryHandle` that MUST be kept alive until process exit.
+/// Without the `otel` feature: installs an `EnvFilter` + fmt layer using
+/// [`tracing_subscriber::fmt::init`](https://docs.rs/tracing-subscriber) conventions
+/// so that `RUST_LOG` still controls verbosity.  This path never fails.
+///
+/// With the `otel` feature: installs `tracing-subscriber` registry with an
+/// `EnvFilter` layer, an `fmt` layer, and a `tracing-opentelemetry` layer that
+/// exports spans to `config.otlp_endpoint` (default: `http://localhost:4317`).
+///
+/// Returns a [`TelemetryHandle`] that MUST be kept alive until process exit.
 /// Dropping it early shuts down the OTel provider and loses buffered spans.
 ///
 /// # Errors
 ///
-/// Returns `Err` if the OTLP exporter fails to connect (when `otel` feature enabled
-/// and `config.otlp_endpoint` is `Some`). Plain metrics-only config always succeeds.
+/// Returns [`TelemetryInitError::Exporter`] if the OTLP exporter fails to build
+/// (only when `otel` feature is enabled and `config.otlp_endpoint` is `Some`).
+/// Returns [`TelemetryInitError::Subscriber`] if a global tracing subscriber is
+/// already installed (harmless in binaries that call this once; check your test harness).
+///
+/// # Example
+///
+/// ```no_run
+/// # use kremory::{TelemetryConfig, init_telemetry};
+/// let handle = init_telemetry(TelemetryConfig {
+///     otlp_endpoint: Some("http://localhost:4317".to_string()),
+///     ..Default::default()
+/// })?;
+/// // … run your application …
+/// handle.shutdown();
+/// # Ok::<(), kremory::TelemetryInitError>(())
+/// ```
+#[cfg(feature = "otel")]
+pub fn init_telemetry(
+    config: TelemetryConfig,
+) -> std::result::Result<TelemetryHandle, TelemetryInitError> {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_otlp::WithExportConfig as _;
+    use opentelemetry_sdk::Resource;
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+
+    // Build the OTLP gRPC span exporter.  Endpoint resolution order:
+    //   1. `config.otlp_endpoint` (explicit caller config)
+    //   2. `OTEL_EXPORTER_OTLP_ENDPOINT` env var (opentelemetry-otlp picks this up automatically)
+    //   3. Default: http://localhost:4317
+    let mut exporter_builder = opentelemetry_otlp::SpanExporter::builder().with_tonic();
+    if let Some(ref endpoint) = config.otlp_endpoint {
+        exporter_builder = exporter_builder.with_endpoint(endpoint.as_str());
+    }
+    let exporter = exporter_builder
+        .build()
+        .map_err(|e| TelemetryInitError::Exporter(e.to_string()))?;
+
+    // `service.name` resource attribute — identifies this process in the OTLP backend.
+    let service_name = config
+        .span_prefix
+        .as_deref()
+        .unwrap_or("kremory")
+        .to_string();
+    let resource = Resource::new(vec![opentelemetry::KeyValue::new(
+        "service.name",
+        service_name.clone(),
+    )]);
+
+    // Build the SDK tracer provider with a batch processor (async export via Tokio).
+    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_resource(resource)
+        .build();
+
+    let tracer = provider.tracer(service_name);
+    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,kremory=debug"));
+
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(true);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .with(otel_layer)
+        .try_init()
+        .map_err(|e| TelemetryInitError::Subscriber(e.to_string()))?;
+
+    Ok(TelemetryHandle {
+        provider: Some(provider),
+    })
+}
+
+/// Initialise kremory telemetry (no-op stub — enable the `otel` feature for OTLP export).
+///
+/// Without the `otel` feature kremory still emits structured `tracing` events and
+/// `metrics` counters. To forward spans to an OTLP backend, rebuild with
+/// `--features otel` and configure `TelemetryConfig::otlp_endpoint`.
+///
+/// # Errors
+///
+/// Always returns `Ok` in this configuration.
+#[cfg(not(feature = "otel"))]
 pub fn init_telemetry(
     _config: TelemetryConfig,
-) -> std::result::Result<TelemetryHandle, Box<dyn std::error::Error + Send + Sync>> {
-    // Library-safe: kremory does NOT install a global metrics recorder (ADR D2).
-    // The host binary is responsible for calling `metrics_exporter_prometheus::install()`
-    // or `metrics_util::debugging::DebuggingRecorder::install_as_global()` in tests.
-    //
-    // When the `otel` feature is enabled and `config.otlp_endpoint` is `Some`,
-    // a tracing-opentelemetry layer would be installed here. Left as a stub
-    // until the `otel` feature is stabilised — the `TelemetryHandle` type is
-    // reserved so the API shape is locked.
+) -> std::result::Result<TelemetryHandle, TelemetryInitError> {
+    // Library-safe: kremory does NOT install a global tracing subscriber or
+    // metrics recorder (ADR D2). The host binary owns subscriber installation.
     Ok(TelemetryHandle { _private: () })
 }
 
