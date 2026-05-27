@@ -80,7 +80,9 @@ impl TemporalGraph {
         limit: usize,
         filters: &SearchFilters,
     ) -> Result<Vec<SearchHit<Entity>>> {
-        let hits = self.fts_search_entities_no_count(query, limit, filters).await?;
+        let hits = self
+            .fts_search_entities_no_count(query, limit, filters)
+            .await?;
         // Story #247: increment access_count for every returned entity.
         let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
         self.increment_entity_access_counts(&returned_ids).await;

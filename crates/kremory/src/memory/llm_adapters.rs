@@ -45,9 +45,9 @@ where
                 .embed(vec![owned])
                 .await
                 .map_err(|e| crate::core::error::Error::Embedding(e.to_string()))?;
-            batch.pop().ok_or_else(|| {
-                crate::core::error::Error::Embedding("empty batch result".into())
-            })
+            batch
+                .pop()
+                .ok_or_else(|| crate::core::error::Error::Embedding("empty batch result".into()))
         }
     }
 }
@@ -64,10 +64,7 @@ mod tests {
     #[async_trait::async_trait]
     impl autoagents_llm::embedding::EmbeddingProvider for FixedBatchEmbedder {
         async fn embed(&self, input: Vec<String>) -> std::result::Result<Vec<Vec<f32>>, LLMError> {
-            Ok(input
-                .iter()
-                .map(|_| vec![0.5_f32; self.dim])
-                .collect())
+            Ok(input.iter().map(|_| vec![0.5_f32; self.dim]).collect())
         }
     }
 
@@ -75,7 +72,11 @@ mod tests {
     async fn adapter_returns_correct_dimension() {
         let adapter = AutoagentsEmbedderAdapter::new(FixedBatchEmbedder { dim: 16 });
         let result = adapter.embed("hello").await.expect("embed should succeed");
-        assert_eq!(result.len(), 16, "dimension must match the inner provider's output");
+        assert_eq!(
+            result.len(),
+            16,
+            "dimension must match the inner provider's output"
+        );
     }
 
     #[tokio::test]

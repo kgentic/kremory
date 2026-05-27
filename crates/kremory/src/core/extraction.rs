@@ -967,7 +967,10 @@ fn parse_nuextract_response(
                 e.label
             };
             let mut props = serde_json::Map::new();
-            props.insert("name".to_string(), serde_json::Value::String(e.name.clone()));
+            props.insert(
+                "name".to_string(),
+                serde_json::Value::String(e.name.clone()),
+            );
             ExtractedEntity {
                 name: e.name,
                 label,
@@ -1184,7 +1187,10 @@ fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>> {
         .filter(|e| !e.name.is_empty() && !e.label.is_empty())
         .map(|e| {
             let mut props = serde_json::Map::new();
-            props.insert("name".to_string(), serde_json::Value::String(e.name.clone()));
+            props.insert(
+                "name".to_string(),
+                serde_json::Value::String(e.name.clone()),
+            );
             ExtractedEntity {
                 name: e.name,
                 label: e.label,
@@ -1602,7 +1608,10 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .filter(|e| !e.name.is_empty())
             .map(|e| {
                 let mut props = serde_json::Map::new();
-                props.insert("name".to_string(), serde_json::Value::String(e.name.clone()));
+                props.insert(
+                    "name".to_string(),
+                    serde_json::Value::String(e.name.clone()),
+                );
                 ExtractedEntity {
                     name: e.name,
                     label: e.label,
@@ -2206,7 +2215,9 @@ mod tests {
         let fixed = fix_unclosed_string_before_brace(malformed);
         let parsed: serde_json::Value =
             serde_json::from_str(&fixed).expect("fixed output must be valid JSON");
-        let entities = parsed["entities"].as_array().expect("entities must be array");
+        let entities = parsed["entities"]
+            .as_array()
+            .expect("entities must be array");
         assert_eq!(entities.len(), 3, "all 3 entities must survive the fix");
         assert_eq!(entities[0]["name"], "Alice");
         assert_eq!(entities[1]["label"], "Person");

@@ -188,7 +188,13 @@ fn memory_error_not_implemented_variant_carries_fields() {
         adr_ref: "ADR-007",
     };
     let s = format!("{e}");
-    assert!(s.contains("test-feature"), "expected feature in display: {s}");
-    assert!(s.contains("v0.2.0"), "expected available_in in display: {s}");
+    assert!(
+        s.contains("test-feature"),
+        "expected feature in display: {s}"
+    );
+    assert!(
+        s.contains("v0.2.0"),
+        "expected available_in in display: {s}"
+    );
     assert!(s.contains("ADR-007"), "expected adr_ref in display: {s}");
 }

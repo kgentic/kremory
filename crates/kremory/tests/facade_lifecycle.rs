@@ -101,7 +101,10 @@ async fn status_of_with_run_id_reaches_engine_graph_handle() {
 async fn cancel_dream_reaches_engine_graph_handle() {
     let mem = open_with_ns().await;
     let result = mem.cancel_dream(&dream_handle()).await;
-    assert!(result.is_ok(), "cancel_dream with unknown run_id should be idempotent Ok, got: {result:?}");
+    assert!(
+        result.is_ok(),
+        "cancel_dream with unknown run_id should be idempotent Ok, got: {result:?}"
+    );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
