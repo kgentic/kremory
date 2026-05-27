@@ -132,6 +132,7 @@ impl GraphHandle for StubIngestingHandle {
             run_id: None,
             episode_entity_id: format!("stub:{}", source_ref.id),
             committed_at: Utc::now(),
+            stub_entities_inserted: 0,
         };
 
         // Phase 2 events only fire when enrich_per_episode = true.
@@ -422,6 +423,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
                 run_id: None,
                 episode_entity_id: format!("stub:{}", source_ref.id),
                 committed_at: Utc::now(),
+                stub_entities_inserted: 0,
             })
         }
 

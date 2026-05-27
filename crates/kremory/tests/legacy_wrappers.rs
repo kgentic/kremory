@@ -45,6 +45,7 @@ impl GraphHandle for LegacyStub {
             run_id: None,
             episode_entity_id: format!("legacy:{}", source_ref.id),
             committed_at: Utc::now(),
+            stub_entities_inserted: 0,
         })
     }
 
