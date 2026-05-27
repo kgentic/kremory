@@ -40,6 +40,7 @@
 
 pub mod arena;
 pub mod background;
+pub mod chat_tracking;
 pub mod config;
 pub mod context;
 pub mod contradiction;
@@ -58,6 +59,7 @@ pub mod migrations;
 #[cfg(feature = "ner")]
 pub mod ner;
 pub mod provider;
+pub mod rates;
 pub mod resolver;
 pub mod schema;
 pub mod search;
