@@ -1,6 +1,3 @@
-// backup_workspace and prune_old_backups are tested inline but not yet
-// called from the migration runner entry point. Suppress until wired up.
-#![allow(dead_code)]
 //! Migration framework for rqlc + the host application workspace databases.
 //!
 //! Per ADR-Phase-D.0 §"D.3 — Migration framework" + master plan
@@ -322,6 +319,10 @@ fn sanitize_column(col: &'static str) -> Result<&'static str> {
 /// Per master plan D.3 spec: backups ARE rollback because SQLite DDL is not
 /// transactional. Callers MUST take a backup before running any migration
 /// that could leave the database in a half-applied state.
+///
+/// Not yet wired into the migration runner entry point — integration is a
+/// follow-up story. Surgical exemption until the caller is wired.
+#[allow(dead_code)] // planned consumer: migration runner pre-migrate hook (D.3 spec)
 pub(crate) async fn backup_workspace(
     workspace_db_path: &Path,
     backup_root: &Path,
@@ -344,6 +345,10 @@ pub(crate) async fn backup_workspace(
 /// Delete any `*.db` file under `backup_root` whose mtime is older than
 /// `max_age_days`. Returns the count of files removed. Does NOT recurse
 /// into subdirectories.
+///
+/// Not yet wired into the migration runner entry point — integration is a
+/// follow-up story. Surgical exemption until the caller is wired.
+#[allow(dead_code)] // planned consumer: the host application startup cleanup (D.3 spec)
 pub(crate) async fn prune_old_backups(backup_root: &Path, max_age_days: u32) -> Result<usize> {
     if !tokio::fs::try_exists(backup_root).await? {
         return Ok(0);
