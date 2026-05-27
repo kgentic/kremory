@@ -1,0 +1,105 @@
+# kremory memory layer SLO definitions (ADR D11)
+#
+# Format: one [[slo]] block per SLO. Each SLO maps to a Prometheus alerting rule.
+# Canonical metric names match `kremory_core_*` and `rql.*` namespaces.
+#
+# `window`:   Evaluation window for the SLO (e.g. "5m", "1h", "24h").
+# `budget`:   Allowed error rate as a fraction (0.01 = 1% error budget).
+# `severity`: "page" (wake on-call) | "ticket" (queue for next working day)
+
+slos_version = "0.1.0"
+generated_at = "2026-05-21"
+
+# ── Ingest latency ────────────────────────────────────────────────────────────
+
+[[slo]]
+name        = "ingest_total_ms_p99"
+description = "End-to-end ingest (LLM + embed + graph write) p99 < 30s over 5m"
+metric      = "rql.ingest.total_ms"
+aggregation = "histogram_quantile(0.99, ...)"
+threshold   = 30_000  # ms
+window      = "5m"
+severity    = "page"
+
+[[slo]]
+name        = "ingest_total_ms_p50"
+description = "Ingest median < 8s over 5m"
+metric      = "rql.ingest.total_ms"
+aggregation = "histogram_quantile(0.50, ...)"
+threshold   = 8_000   # ms
+window      = "5m"
+severity    = "ticket"
+
+# ── Search latency ────────────────────────────────────────────────────────────
+
+[[slo]]
+name        = "search_hybrid_entities_ms_p99"
+description = "Hybrid entity search p99 < 500ms over 5m"
+metric      = "rql.search.hybrid_entities_ms"
+aggregation = "histogram_quantile(0.99, ...)"
+threshold   = 500     # ms
+window      = "5m"
+severity    = "page"
+
+[[slo]]
+name        = "search_vector_entities_ms_p99"
+description = "Vector entity search p99 < 300ms over 5m"
+metric      = "rql.search.vector_entities_ms"
+aggregation = "histogram_quantile(0.99, ...)"
+threshold   = 300     # ms
+window      = "5m"
+severity    = "ticket"
+
+# ── Embedding throughput ──────────────────────────────────────────────────────
+
+[[slo]]
+name        = "embed_request_duration_p99"
+description = "Embedding request duration p99 < 2s over 5m"
+metric      = "kremory_core_request_duration_seconds"
+labels      = { operation = "embed" }
+aggregation = "histogram_quantile(0.99, ...)"
+threshold   = 2.0     # seconds
+window      = "5m"
+severity    = "ticket"
+
+# ── Extraction quality ────────────────────────────────────────────────────────
+
+[[slo]]
+name        = "json_parse_fail_rate"
+description = "JSON parse failure rate < 5% over 15m (extraction quality gate)"
+metric      = "rql.extraction.json_parse_fail"
+denominator = "rql.extraction.json_parse_ok + rql.extraction.json_parse_fail"
+threshold   = 0.05    # fraction
+window      = "15m"
+severity    = "ticket"
+
+# ── DB write latency ──────────────────────────────────────────────────────────
+
+[[slo]]
+name        = "db_insert_entity_ms_p99"
+description = "DB entity insert p99 < 50ms over 5m"
+metric      = "rql.db.insert_entity_ms"
+aggregation = "histogram_quantile(0.99, ...)"
+threshold   = 50      # ms
+window      = "5m"
+severity    = "ticket"
+
+[[slo]]
+name        = "db_insert_fact_ms_p99"
+description = "DB fact insert p99 < 50ms over 5m"
+metric      = "rql.db.insert_fact_ms"
+aggregation = "histogram_quantile(0.99, ...)"
+threshold   = 50      # ms
+window      = "5m"
+severity    = "ticket"
+
+# ── Background ingest queue ───────────────────────────────────────────────────
+
+[[slo]]
+name        = "background_queue_depth"
+description = "Background ingest queue depth < 100 items at all times"
+metric      = "rql.background.queue_depth"
+aggregation = "max"
+threshold   = 100
+window      = "1m"
+severity    = "page"
