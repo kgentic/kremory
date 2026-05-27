@@ -68,6 +68,7 @@ use uuid::Uuid;
 ///
 /// `batch_id`: caller-set string grouping this episode with others.
 /// No `BatchRef` wrapper — plain `Option<String>` matching universal prior art.
+// Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_episode(
     graph: &dyn GraphHandle,

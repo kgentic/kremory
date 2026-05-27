@@ -181,6 +181,54 @@ let extractor = GLINER.get().ok_or(Error::Other("OnceLock empty".into()))?;
 
 ---
 
+## Facade errors (`kremory::Memory`)
+
+The `Memory` facade (`kremory::facade`) adds one additional named error variant to
+the set already defined in `kremory::core::error::Error`:
+
+### `Error::MissingNamespace`
+
+**Trigger**: a `RememberRequest`, `RecallRequest`, `ForgetRequest`, or `DreamRequest`
+reaches its `.await` terminal without a namespace, AND no `default_namespace` was set
+at `Memory` construction time.
+
+**Classification**: user-input failure. A correct caller could have provided
+`.in_namespace(ns)` or set `.default_namespace(ns)` at builder time — this is not a
+logic bug, it is missing required input.
+
+```rust
+// Returns Err(Error::MissingNamespace { request: "remember" })
+let mem = Memory::open("./agent.db").with_llm(l).with_embedder(e).await?;
+let _ = mem.remember("data").await;   // no default_namespace + no .in_namespace()
+
+// Correct caller pattern — provide namespace:
+mem.remember("data")
+    .in_namespace(Namespace::new("my-agent"))
+    .await?;
+
+// OR set default at construction:
+let mem = Memory::open("./agent.db")
+    .with_llm(l)
+    .with_embedder(e)
+    .default_namespace(Namespace::new("my-agent"))
+    .await?;
+mem.remember("data").await?;  // uses default
+```
+
+**Match pattern**:
+
+```rust
+match mem.remember("data").await {
+    Ok(_) => {}
+    Err(kremory::CoreError::MissingNamespace { request }) => {
+        eprintln!("missing namespace for {request}");
+    }
+    Err(e) => return Err(e),
+}
+```
+
+---
+
 ## Quick reference
 
 | Situation | Action |
@@ -189,6 +237,7 @@ let extractor = GLINER.get().ok_or(Error::Other("OnceLock empty".into()))?;
 | Missing file / IO error | `Err(Error::Database(...))` or `Err(Error::Other(...))` |
 | LLM/provider error | `Err(Error::Llm(...))` or `Err(Error::Embedding(...))` |
 | Parse failure on LLM output | `Err(Error::Parse(...))` or `Err(Error::ExtractionStage {...})` |
+| Facade call without namespace | `Err(Error::MissingNamespace { request: "..." })` |
 | OnceLock empty after set | `panic!("invariant: ...")` |
 | Mutex poisoned | `panic!("invariant: ... mutex poisoned")` |
 | OS thread spawn fails | `panic!("invariant: ...")` |
