@@ -64,12 +64,13 @@ pub struct ProviderRateEntry {
 }
 
 impl ProviderRates {
-    /// Load bundled rates from `monitoring/provider-rates.toml` (compile-time
-    /// `include_str!`). The path is relative to this source file's location:
-    /// `crates/kremory/src/core/rates.rs` → 4 levels up → project root →
-    /// `monitoring/provider-rates.toml`.
+    /// Load bundled rates from `crates/kremory/monitoring/provider-rates.toml`
+    /// (compile-time `include_str!`). The path is relative to this source file:
+    /// `crates/kremory/src/core/rates.rs` → 2 levels up → `crates/kremory/` →
+    /// `monitoring/provider-rates.toml`. The TOML lives INSIDE the published
+    /// crate so the bundled rates ship with `cargo publish`.
     pub fn from_bundled() -> Result<Self, RatesError> {
-        const BUNDLED: &str = include_str!("../../../../monitoring/provider-rates.toml");
+        const BUNDLED: &str = include_str!("../../monitoring/provider-rates.toml");
         toml::from_str(BUNDLED).map_err(RatesError::Parse)
     }
 
