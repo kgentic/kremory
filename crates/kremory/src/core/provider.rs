@@ -199,6 +199,7 @@ impl autoagents_llm::chat::ChatResponse for MockChatResponse {
 
 use crate::core::error::Result;
 use std::future::Future;
+use std::sync::Arc;
 
 pub trait EmbeddingProvider: Send + Sync {
     fn embed<'a>(&'a self, text: &'a str) -> impl Future<Output = Result<Vec<f32>>> + Send + 'a;
@@ -213,6 +214,59 @@ pub trait EmbeddingProvider: Send + Sync {
     /// Default: `None` (backend does not report token usage).
     fn last_usage_tokens(&self) -> Option<u64> {
         None
+    }
+
+    /// Return this provider wrapped in an `Arc<dyn DynEmbeddingProvider>`.
+    ///
+    /// Provided for facade consumers who need dynamic dispatch. The default
+    /// impl wraps `self` in `ArcEmbedder` automatically.
+    fn into_dyn(self) -> Arc<dyn DynEmbeddingProvider>
+    where
+        Self: Sized + 'static,
+    {
+        Arc::new(ArcEmbedder(Arc::new(self)))
+    }
+}
+
+/// Dyn-compatible embedding provider. Use `Arc<dyn DynEmbeddingProvider>` when
+/// you need type-erased embedding via trait objects (e.g. in the `Memory` facade).
+///
+/// `EmbeddingProvider` uses `impl Future` in its return type which is not
+/// dyn-compatible. `DynEmbeddingProvider` boxes the future, enabling `dyn`.
+pub trait DynEmbeddingProvider: Send + Sync {
+    /// Embed `text` into a vector, returning a boxed future.
+    fn embed_dyn<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f32>>> + Send + 'a>>;
+    /// Token count from the provider's last embed call.
+    fn last_usage_tokens_dyn(&self) -> Option<u64>;
+}
+
+/// Blanket impl: any `EmbeddingProvider` is also a `DynEmbeddingProvider`.
+impl<E: EmbeddingProvider> DynEmbeddingProvider for E {
+    fn embed_dyn<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f32>>> + Send + 'a>> {
+        Box::pin(self.embed(text))
+    }
+    fn last_usage_tokens_dyn(&self) -> Option<u64> {
+        self.last_usage_tokens()
+    }
+}
+
+/// Wrapper that implements `EmbeddingProvider` by delegating to
+/// `Arc<dyn DynEmbeddingProvider>`. Used by the facade to turn a
+/// `Arc<dyn DynEmbeddingProvider>` back into something generic code can use.
+pub struct ArcEmbedder(pub Arc<dyn DynEmbeddingProvider>);
+
+impl EmbeddingProvider for ArcEmbedder {
+    fn embed<'a>(&'a self, text: &'a str) -> impl Future<Output = Result<Vec<f32>>> + Send + 'a {
+        self.0.embed_dyn(text)
+    }
+    fn last_usage_tokens(&self) -> Option<u64> {
+        self.0.last_usage_tokens_dyn()
     }
 }
 

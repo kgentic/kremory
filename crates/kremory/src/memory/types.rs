@@ -332,6 +332,17 @@ pub enum MemoryError {
     Timeout,
     #[error("other: {0}")]
     Other(String),
+    // ── Facade errors (Story A.8a) ────────────────────────────────────────────
+    /// A namespace is required but none was provided via `.in_namespace()` and
+    /// no `default_namespace` was set on the builder. Named struct variant per
+    /// Story #155 precedent — callers can match precisely without string parsing.
+    #[error("namespace required: {request}")]
+    MissingNamespace { request: &'static str },
+    /// No provider was configured and env-detection found nothing.
+    /// Set OLLAMA_HOST, OPENAI_API_KEY, or ANTHROPIC_API_KEY, or use
+    /// `Memory::open()` builder to configure a provider explicitly.
+    #[error("no provider configured: {message}")]
+    NoProviderConfigured { message: &'static str },
 }
 
 pub type Result<T> = std::result::Result<T, MemoryError>;
