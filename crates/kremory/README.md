@@ -11,39 +11,73 @@ kremory = "0.1"
 
 ---
 
-## What it does
-
-kremory is an embeddable agent memory library — the SQLite of agent memory. Add it to your Rust project with one line. No server process. No container. No subscription required to ship.
-
-Two modules ship in a single crate:
-
-- **`kremory::core`** — bi-temporal knowledge graph engine over libSQL. Entity extraction, deduplication, hybrid retrieval (semantic + BM25 + graph), contradiction resolution with two-clock temporal model.
-- **`kremory::memory`** — orchestration layer. Multi-tenant workspace scoping, dream-phase batch consolidation, opinionated retrieval defaults, BYOM embedding hook.
-
----
-
 ## Quickstart
 
 ```rust
-use kremory::memory::{MemoryHandle, WorkspaceScope, SubmitOpts, EpisodeRef};
-use std::sync::Arc;
+use kremory::{Memory, Namespace};
 
-// Bring your own embedder — kremory never bundles a model
-let embedder: Arc<dyn kremory::core::EmbeddingProvider> = your_embedder();
+// Auto-detect provider from environment:
+//   OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err
+let mem = Memory::auto("./agent.db")
+    .default_namespace(Namespace::new("user-jim"))
+    .await?;
 
-// Open a local database (libSQL file, no server required)
-let handle = MemoryHandle::open("./agent.db", embedder).await?;
-let scope   = WorkspaceScope::new("my-agent");
+// Ingest — blocks until Phase 2 enrichment done (~500ms typical)
+mem.remember("User prefers concise replies").await?;
 
-// Ingest a fact
-handle.submit_episode(
-    EpisodeRef::new("Alice decided the team will use async channels over shared state"),
-    SubmitOpts::default(),
-).await?;
+// Recall — returns prompt-ready text
+let context: String = mem.recall("what does user prefer?").await?;
 
-// Retrieve relevant context for an LLM prompt
-let ctx = handle.context_block(&scope, "what architecture decisions were made?").await?;
-println!("{ctx}");  // ready to inject into your prompt
+// Dream (consolidation) — blocks until done
+let summary = mem.dream().await?;
+println!("communities updated: {}", summary.communities_updated);
+
+// Forget (GDPR-style delete)
+let deleted = mem.forget().execute().await?;
+
+// Close (flush WAL)
+mem.close().await?;
+```
+
+No model bundled. No server process. No API key required to ship.
+
+---
+
+## What it does
+
+kremory is an embeddable agent memory library — the SQLite of agent memory. Add it to your Rust project with one line.
+
+Three modules ship in a single crate:
+
+- **`kremory::facade`** — fluent `Memory` facade: the recommended public API for most consumers.
+- **`kremory::core`** — bi-temporal knowledge graph engine over libSQL. Entity extraction, deduplication, hybrid retrieval, contradiction resolution.
+- **`kremory::memory`** — orchestration layer. Multi-tenant namespace scoping, dream-phase batch consolidation, opinionated retrieval defaults, BYOM embedding hook.
+
+---
+
+## Three-tier API (React philosophy)
+
+```
+Tier 1 — Just works
+
+    let mem = Memory::auto("./agent.db").await?;
+
+Tier 1.5 — Named shortcuts
+
+    let mem = Memory::with_ollama("./agent.db").await?;
+    let mem = Memory::with_openai("./agent.db").await?;   // OPENAI_API_KEY required
+
+Tier 2 — Customizable builder
+
+    let mem = Memory::open("./agent.db")
+        .with_llm(Arc::new(my_llm))
+        .with_embedder(Arc::new(my_embedder))
+        .default_namespace(Namespace::new("acme-corp"))
+        .await?;
+
+Tier 3 — Substrate composition (advanced)
+
+    use kremory::memory::{submit_episode, search, context_block};
 ```
 
 ---
@@ -77,34 +111,60 @@ Every fact in kremory carries two independent time dimensions:
 | `valid_from` | Valid time | Mutable | When the fact became true in the world |
 | `valid_to` | Valid time | Mutable | When the fact stopped being true (NULL = currently valid) |
 
-This enables the canonical audit query: **"What did the agent know at time X if asked at time Y?"**
-
-```sql
-SELECT * FROM entities
-WHERE recorded_at <= :tx_time_Y
-  AND valid_from  <= :valid_time_X
-  AND (valid_to IS NULL OR valid_to > :valid_time_X)
-```
-
-Active contradiction resolver: when a new episode conflicts with an existing fact, the resolver sets `valid_to` on the old record (does not delete it) and records the resolution strategy: `Superseded`, `Merged`, `Forked`, or `Ignored`.
+This enables: **"What did the agent know at time X if asked at time Y?"**
 
 See [ADR-003](../../.ai-docs/adrs/rql/adr-003-bitemporal-audit-compliance-2026-05-22.md).
+
+---
+
+## Namespaces + multi-tenancy
+
+```rust
+// Single tenant
+let mem = Memory::auto("./agent.db")
+    .default_namespace(Namespace::new("my-agent"))
+    .await?;
+mem.remember("User prefers dark mode").await?;  // uses default namespace
+
+// Multi-tenant: per-call namespace override
+mem.remember("Tenant A data")
+    .in_namespace(Namespace::new("tenant-a"))
+    .await?;
+
+mem.remember("Q4 support ticket")
+    .in_namespace(Namespace::new("acme-corp").with_thread("support-q4"))
+    .await?;
+
+// Each namespace is fully isolated — no cross-tenant leakage
+let ctx = mem.recall("user preferences")
+    .in_namespace(Namespace::new("tenant-a"))
+    .await?;
+```
+
+---
+
+## Full API reference
+
+See [docs/api.md](../../docs/api.md) for the complete reference covering all 12 sections:
+
+1. Quickstart
+2. Customizing the LLM/embedder
+3. Namespaces + multi-tenancy
+4. Ingest (`remember`)
+5. Recall
+6. Dream phase + consolidation
+7. Forget (GDPR)
+8. Async patterns (handles + polling)
+9. Event sinks
+10. Advanced — substrate composition
+11. Bi-temporal model
+12. Migration guide
 
 ---
 
 ## Storage
 
 libSQL (Turso-compatible). Defaults to a local embedded file — no server process required. Switch to a remote Turso URL when your application needs it — the kremory API is the same either way.
-
----
-
-## What ships at v0.1.0
-
-- `kremory::core` — bi-temporal graph engine, libSQL storage, entity + edge schema, hybrid retrieval, contradiction resolver
-- `kremory::memory` — `MemoryHandle`, `WorkspaceScope`, `submit_episode`, `context_block`, dream-phase API, BYOM embedding hook
-- `EmbeddingProvider` trait — wire any provider
-
-Not in v0.1.0 (coming in v0.2.0+): Cypher query language, MCP server crate (`kremory-mcp`), CLI (`kremory-cli`), native IDE plugin.
 
 ---
 

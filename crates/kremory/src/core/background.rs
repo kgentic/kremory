@@ -133,7 +133,7 @@ pub struct IngestorConfig {
     /// Enable Phase 2 deferred LLM fact extraction.  Default: `true`.
     ///
     /// When `true`, after each successful Phase 1 NER ingest the worker enqueues
-    /// a [`DeferredRequest`] and processes it when the NER channel is idle.
+    /// a `DeferredRequest` and processes it when the NER channel is idle.
     /// NER always has priority — the deferred queue is only drained during
     /// `recv_timeout` idle periods.
     ///

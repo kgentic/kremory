@@ -14,26 +14,25 @@ kremory = "0.1"
 ## Quickstart
 
 ```rust
-use kremory::memory::{MemoryHandle, WorkspaceScope, SubmitOpts};
-use kremory::memory::EpisodeRef;
-use std::sync::Arc;
+use kremory::{Memory, Namespace};
 
-// Bring your own model — kremory never bundles one
-let embedder: Arc<dyn kremory::core::EmbeddingProvider> = your_embedder();
+// Auto-detect provider from environment:
+//   OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err
+let mem = Memory::auto("./agent.db")
+    .default_namespace(Namespace::new("user-jim"))
+    .await?;
 
-let handle = MemoryHandle::open("./agent.db", embedder).await?;
-let scope   = WorkspaceScope::new("my-agent");
+// Ingest — blocks until Phase 2 enrichment done
+mem.remember("User prefers concise replies").await?;
 
-// Store a fact
-handle.submit_episode(
-    EpisodeRef::new("Alice prefers async Rust over tokio channels"),
-    SubmitOpts::default(),
-).await?;
+// Recall — returns prompt-ready text
+let context: String = mem.recall("what does user prefer?").await?;
 
-// Retrieve relevant context
-let ctx = handle.context_block(&scope, "what does Alice prefer?").await?;
-println!("{}", ctx);
+// Close (flush WAL)
+mem.close().await?;
 ```
+
+No model bundled. No server process. No API key required to ship.
 
 ---
 
@@ -45,11 +44,25 @@ println!("{}", ctx);
 
 ---
 
+## Three-tier API
+
+```
+Tier 1 — Just works      Memory::auto("./agent.db").await?
+          ↓
+Tier 2 — Customizable    Memory::open(...).with_llm(...).with_embedder(...).await?
+          ↓
+Tier 3 — Substrate       kremory::memory::submit_episode(...)  (advanced)
+```
+
+See [docs/api.md](docs/api.md) for the full reference.
+
+---
+
 ## Roadmap
 
 | Version | Milestone |
 |---|---|
-| **v0.1.0** | Substrate + bi-temporal storage — two-clock columns, `as_of` queries, `published_at` precedence, BYOM via `Arc<dyn ChatProvider>` + `EmbeddingProvider`, libSQL, basic `add_episode`, single-process |
+| **v0.1.0** | Substrate + bi-temporal storage — two-clock columns, `as_of` queries, `published_at` precedence, BYOM via `Arc<dyn ChatProvider>` + `EmbeddingProvider`, libSQL, `Memory` facade, single-process |
 | **v0.1.1** | Moat + Phase trait — contradiction engine, multi-process dream lock, `otel` feature complete, Phase trait + DreamCycle replaces PASSES, distillation primitives |
 | **v0.1.2** | Show HN release — comparison matrix, CI badges, 3 runnable examples |
 | **v0.2.0** | Hybrid recall + `kremory-mcp` — basic RRF + tunable `SearchOpts`, MCP server crate first publishable release |
@@ -69,8 +82,9 @@ See [docs/comparison.md](docs/comparison.md) for a full matrix: kremory vs codem
 
 ```
 kremory (OSS, Apache-2.0) — single crate, crates.io
-  kremory::core   — bi-temporal graph engine, libSQL substrate
-  kremory::memory — orchestration: multi-tenant scoping, dream-phase consolidation
+  kremory::facade  — Memory facade (Tier 1 / Tier 2 consumer surface)
+  kremory::core    — bi-temporal graph engine, libSQL substrate
+  kremory::memory  — orchestration: multi-tenant scoping, dream-phase consolidation
 
 Reference consumers (OSS, kgentic-owned, deferred versions):
   kremory-mcp    — MCP server wrapping kremory::memory (v0.2.0)
@@ -85,12 +99,14 @@ Reference consumers (OSS, kgentic-owned, deferred versions):
 
 ```
 crates/
-  kremory/       single crate: kremory::core + kremory::memory (Apache-2.0)
+  kremory/       single crate: kremory::facade + kremory::core + kremory::memory (Apache-2.0)
     src/
+      facade/    Memory facade — Tier 1 / Tier 2 consumer surface
       core/      bi-temporal graph primitives
       memory/    orchestration layer
   kremory-mcp/   MCP bridge (excluded from workspace until v0.2.0)
 docs/
+  api.md         Full API reference (facade-first)
   comparison.md  kremory vs alternatives
 .ai-docs/
   adrs/          Architecture Decision Records
