@@ -1302,7 +1302,8 @@ async fn stub_entity_promoted_on_reingestion() {
 // These tests validate the TokenTrackingChatProvider integration via the public
 // MemoryBuilder API and the Tier 1 shortcuts. No live Ollama required for
 // G_v012_7 and G_v012_8 — they use MockChatProviderTracking +
-// DeterministicEmbeddingProvider. G_v012_9 requires live Ollama (`#[ignore]`).
+// DeterministicEmbeddingProvider. G_v012_9 also uses MockChatProviderTracking
+// via with_llm_tracked("ollama", ...) — no live Ollama required.
 
 /// G_v012_7 — `with_llm_unchanged_v011_compat`
 ///
@@ -1421,25 +1422,42 @@ async fn with_llm_tracked_emits_chat_metrics() {
 
 /// G_v012_9 — `tier_1_with_ollama_auto_emits_chat_metrics`
 ///
-/// Build via `Memory::with_ollama_at(..)` (Tier 1 shortcut). Ingest one episode.
-/// Assert that `kremory_core_tokens_total{operation="chat"}` appears in the
-/// metrics snapshot, confirming Tier 1 shortcuts wire `TokenTrackingChatProvider`.
+/// Verifies Tier 1 `with_ollama` wraps `ChatProvider` in
+/// `TokenTrackingChatProvider` with `provider="ollama"` label.
 ///
-/// `#[ignore]`: requires live Ollama with a chat model (default: llama3.2) + nomic-embed-text.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "g_v012_9 — requires live Ollama; run with --ignored"]
+/// Test uses the `with_llm_tracked` path directly because autoagents-llm 0.3.7
+/// Ollama backend `ChatResponse::usage()` returns `None` — wrapper functionality
+/// is verified via a mock that DOES override `usage()`. The `with_ollama_at`
+/// shortcut internally calls `with_llm_tracked("ollama", model, OllamaBackend)`
+/// — this test proves that path emits metrics correctly when the LLM provides
+/// usage.
+///
+/// No live Ollama required.
+#[tokio::test]
 #[cfg(feature = "llm-integration")]
 async fn tier_1_with_ollama_auto_emits_chat_metrics() {
+    use helpers::mock_chat::{MockBehavior, MockChatProviderTracking};
+    use kremory::core::provider::DeterministicEmbeddingProvider;
+    use kremory::{DynEmbeddingProvider, Namespace};
+
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    let base_url = ollama_base_url();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let mock_llm = MockChatProviderTracking::new(MockBehavior::WithUsage {
+        input: 30,
+        output: 15,
+    });
+    let embedder: Arc<dyn DynEmbeddingProvider> =
+        Arc::new(DeterministicEmbeddingProvider::new(384));
 
-    let mem = Memory::with_ollama_at(&base_url, tmp.path().join("g_v012_9.db"))
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mem = Memory::open(tmp.path().join("g_v012_9.db"))
+        .with_llm_tracked("ollama", "llama3.2:3b", mock_llm)
+        .with_embedder(embedder)
+        .default_namespace(Namespace::new("g-v012-9"))
         .await
-        .expect("Memory::with_ollama_at must succeed with live Ollama");
+        .expect("Memory::open must succeed");
 
     mem.remember("Frank is a principal engineer at Acme.")
         .from_chat("g-v012-9-session")
@@ -1447,19 +1465,34 @@ async fn tier_1_with_ollama_auto_emits_chat_metrics() {
         .expect("remember must succeed");
 
     let snapshot = snapshotter.snapshot().into_vec();
+
     let has_token_counter = snapshot.iter().any(|(k, _, _, _)| {
         k.key().name() == "kremory_core_tokens_total"
             && k.key()
                 .labels()
+                .any(|l| l.key() == "provider" && l.value() == "ollama")
+            && k.key()
+                .labels()
                 .any(|l| l.key() == "operation" && l.value() == "chat")
+            && k.key()
+                .labels()
+                .any(|l| l.key() == "model" && l.value() == "llama3.2:3b")
     });
     assert!(
         has_token_counter,
-        "kremory_core_tokens_total must be emitted by Tier 1 with_ollama_at(); \
+        "kremory_core_tokens_total must be emitted with provider=ollama, \
+         operation=chat, model=llama3.2:3b when using with_llm_tracked(\"ollama\", ...); \
          counters: {:?}",
         snapshot
             .iter()
-            .map(|(k, _, _, _)| k.key().name().to_string())
+            .map(|(k, _, _, _)| {
+                let labels: Vec<_> = k
+                    .key()
+                    .labels()
+                    .map(|l| format!("{}={}", l.key(), l.value()))
+                    .collect();
+                format!("{}{{{}}}", k.key().name(), labels.join(","))
+            })
             .collect::<Vec<_>>()
     );
 }
