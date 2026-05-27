@@ -68,3 +68,75 @@ provider = "local"
 model    = "nomic-embed-text-v1.5"
 cost_per_1k_tokens_usd = 0.0
 dimensions = 768
+
+# ── Chat (added 2026-05-27 for v0.1.2 observability) ─────────────────────────
+# Embedder rows above do not have `direction`. Chat rows DO.
+# Sources verified against provider pricing pages — see comments per row.
+
+# OpenAI chat — https://openai.com/pricing
+# Verified via Wikipedia (https://en.wikipedia.org/wiki/GPT-4o) citing OpenAI published rates
+# accessed 2026-05-27. gpt-4o-mini: $0.15/$0.60 per MTok. gpt-4o: $2.50/$10 per MTok.
+[[providers]]
+provider  = "openai"
+model     = "gpt-4o-mini"
+direction = "input"
+cost_per_1k_tokens_usd = 0.00015
+
+[[providers]]
+provider  = "openai"
+model     = "gpt-4o-mini"
+direction = "output"
+cost_per_1k_tokens_usd = 0.0006
+
+[[providers]]
+provider  = "openai"
+model     = "gpt-4o"
+direction = "input"
+cost_per_1k_tokens_usd = 0.0025
+
+[[providers]]
+provider  = "openai"
+model     = "gpt-4o"
+direction = "output"
+cost_per_1k_tokens_usd = 0.01
+
+# Anthropic chat — https://platform.claude.com/docs/en/docs/about-claude/models/overview
+# Verified from Anthropic's official model overview page, accessed 2026-05-27.
+# claude-haiku-4-5: $1/$5 per MTok input/output → $0.001/$0.005 per 1k.
+# claude-sonnet-4-6: $3/$15 per MTok input/output → $0.003/$0.015 per 1k.
+[[providers]]
+provider  = "anthropic"
+model     = "claude-haiku-4-5"
+direction = "input"
+cost_per_1k_tokens_usd = 0.001
+
+[[providers]]
+provider  = "anthropic"
+model     = "claude-haiku-4-5"
+direction = "output"
+cost_per_1k_tokens_usd = 0.005
+
+[[providers]]
+provider  = "anthropic"
+model     = "claude-sonnet-4-6"
+direction = "input"
+cost_per_1k_tokens_usd = 0.003
+
+[[providers]]
+provider  = "anthropic"
+model     = "claude-sonnet-4-6"
+direction = "output"
+cost_per_1k_tokens_usd = 0.015
+
+# Ollama / local — self-hosted, no provider cost
+[[providers]]
+provider  = "ollama"
+model     = "*"
+direction = "input"
+cost_per_1k_tokens_usd = 0.0
+
+[[providers]]
+provider  = "ollama"
+model     = "*"
+direction = "output"
+cost_per_1k_tokens_usd = 0.0
