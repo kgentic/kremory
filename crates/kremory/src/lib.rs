@@ -29,8 +29,8 @@ pub use memory::init_telemetry;
 pub use memory::ChatProvider;
 pub use memory::{
     ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, MemoryError, MemoryType,
-    Result as MemoryResult, RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact,
-    TelemetryConfig, TelemetryHandle, WorkspaceScope,
+    Namespace, Result as MemoryResult, RetrievedContext, SearchOpts, SourceKind, SourceRef,
+    StructuredFact, TelemetryConfig, TelemetryHandle,
 };
 
 // Convenience re-exports from core::config (ADR D15)

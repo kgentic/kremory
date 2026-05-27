@@ -1,3 +1,14 @@
+//! Core schema structs for kremory's SQLite storage layer.
+//!
+//! # Namespace / storage-column asymmetry (v0.1.0)
+//!
+//! The public API uses `Namespace` (struct in `memory::types`) with fields
+//! `namespace` and `thread`. Internally, storage maps these to `group_id`
+//! on `rql_entities` and `rql_facts`. The public-API → SQL-column rename
+//! (i.e. adding `namespace_id` / `thread_id` SQL columns) is deferred to
+//! v0.1.1 behind a migration file. Callers must NOT hardcode `group_id`
+//! column semantics — access only via `TemporalGraph` methods.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};

@@ -42,8 +42,8 @@ pub use stub::StubGraphHandle;
 pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
     DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, MemoryError, MemoryType,
-    Result, RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
-    WorkspaceScope,
+    Namespace, Result, RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact,
+    SubmitOpts,
 };
 // IngestStatus lives in core::error but is part of the memory API surface.
 pub use crate::core::error::IngestStatus;
@@ -75,14 +75,14 @@ pub async fn submit_episode(
     source_ref: SourceRef,
     structured_facts: Vec<StructuredFact>,
     provider: Arc<dyn ChatProvider>,
-    scope: WorkspaceScope,
+    namespace: Namespace,
     batch_id: Option<String>,
     opts: SubmitOpts,
     sink: Option<Arc<dyn events::EnrichmentEventSink>>,
 ) -> Result<EpisodeCommit> {
     graph
         .graph_ingest_episode(
-            &scope,
+            &namespace,
             &source_ref,
             content,
             &structured_facts,
@@ -100,14 +100,14 @@ pub async fn submit_episode(
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_dream_phase(
     graph: &dyn GraphHandle,
-    scope: WorkspaceScope,
+    namespace: Namespace,
     provider: Arc<dyn ChatProvider>,
     batch_id: Option<String>,
     opts: DreamOpts,
     sink: Option<Arc<dyn events::EnrichmentEventSink>>,
 ) -> Result<DreamHandle> {
     graph
-        .graph_submit_dream(&scope, provider, batch_id, opts, sink)
+        .graph_submit_dream(&namespace, provider, batch_id, opts, sink)
         .await
 }
 
@@ -214,7 +214,7 @@ pub async fn ingest_episode(
     source_ref: SourceRef,
     structured_facts: Vec<StructuredFact>,
     provider: Arc<dyn ChatProvider>,
-    scope: WorkspaceScope,
+    namespace: Namespace,
 ) -> Result<IngestResult> {
     let _commit = submit_episode(
         graph,
@@ -222,7 +222,7 @@ pub async fn ingest_episode(
         source_ref,
         structured_facts,
         provider,
-        scope,
+        namespace,
         None,
         SubmitOpts {
             enrich_per_episode: true,
@@ -248,10 +248,10 @@ pub async fn ingest_episode(
 )]
 pub async fn run_dream_phase(
     graph: &dyn GraphHandle,
-    scope: WorkspaceScope,
+    namespace: Namespace,
     provider: Arc<dyn ChatProvider>,
 ) -> Result<DreamPhaseResult> {
-    graph.graph_run_consolidation(&scope, provider).await
+    graph.graph_run_consolidation(&namespace, provider).await
 }
 
 /// Query the graph with memory's opinionated retrieval defaults. Thin
@@ -259,7 +259,7 @@ pub async fn run_dream_phase(
 pub async fn search(
     graph: &dyn GraphHandle,
     query: &str,
-    scope: WorkspaceScope,
+    namespace: Namespace,
     opts: SearchOpts,
 ) -> Result<Vec<RetrievedContext>> {
     // Story #318: `as_of` is reserved for bi-temporal point-in-time queries;
@@ -272,7 +272,7 @@ pub async fn search(
              field ignored — returning current-state results"
         );
     }
-    graph.graph_search(&scope, query, &opts).await
+    graph.graph_search(&namespace, query, &opts).await
 }
 
 /// Render `results` into the final string handed to the LLM, per the
@@ -453,14 +453,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_scope_constructors_round_trip() {
-        let s = WorkspaceScope::new("ws-1");
-        assert_eq!(s.workspace_id, "ws-1");
-        assert!(s.thread_id.is_none());
+    fn namespace_constructors_round_trip() {
+        let s = Namespace::new("ws-1");
+        assert_eq!(s.namespace, "ws-1");
+        assert!(s.thread.is_none());
 
-        let s = WorkspaceScope::with_thread("ws-2", "thread-a");
-        assert_eq!(s.workspace_id, "ws-2");
-        assert_eq!(s.thread_id.as_deref(), Some("thread-a"));
+        let s = Namespace::new("ws-2").with_thread("thread-a");
+        assert_eq!(s.namespace, "ws-2");
+        assert_eq!(s.thread.as_deref(), Some("thread-a"));
     }
 
     #[test]
@@ -489,21 +489,21 @@ mod tests {
     /// defaults on the trait — ADR §4.9).
     #[derive(Default)]
     struct StubGraphHandle {
-        last_ingest_scope: Mutex<Option<WorkspaceScope>>,
+        last_ingest_namespace: Mutex<Option<Namespace>>,
         last_ingest_content: Mutex<Option<String>>,
         last_ingest_source_id: Mutex<Option<String>>,
         last_ingest_facts_count: Mutex<Option<usize>>,
-        last_search_scope: Mutex<Option<WorkspaceScope>>,
+        last_search_namespace: Mutex<Option<Namespace>>,
         last_search_query: Mutex<Option<String>>,
         last_search_limit: Mutex<Option<usize>>,
-        last_consolidation_scope: Mutex<Option<WorkspaceScope>>,
+        last_consolidation_namespace: Mutex<Option<Namespace>>,
     }
 
     #[async_trait]
     impl GraphHandle for StubGraphHandle {
         async fn graph_ingest_episode(
             &self,
-            scope: &WorkspaceScope,
+            namespace: &Namespace,
             source_ref: &SourceRef,
             content: &str,
             structured_facts: &[StructuredFact],
@@ -512,7 +512,7 @@ mod tests {
             _opts: SubmitOpts,
             _sink: Option<Arc<dyn crate::memory::events::EnrichmentEventSink>>,
         ) -> Result<EpisodeCommit> {
-            *self.last_ingest_scope.lock().unwrap() = Some(scope.clone());
+            *self.last_ingest_namespace.lock().unwrap() = Some(namespace.clone());
             *self.last_ingest_content.lock().unwrap() = Some(content.to_string());
             *self.last_ingest_source_id.lock().unwrap() = Some(source_ref.id.clone());
             *self.last_ingest_facts_count.lock().unwrap() = Some(structured_facts.len());
@@ -540,7 +540,7 @@ mod tests {
 
         async fn graph_submit_dream(
             &self,
-            scope: &WorkspaceScope,
+            namespace: &Namespace,
             _provider: Arc<dyn ChatProvider>,
             batch_id: Option<String>,
             _opts: DreamOpts,
@@ -548,7 +548,7 @@ mod tests {
         ) -> Result<DreamHandle> {
             Ok(DreamHandle {
                 run_id: uuid::Uuid::new_v4(),
-                scope: scope.clone(),
+                namespace: namespace.clone(),
                 submitted_at: chrono::Utc::now(),
                 batch_id,
             })
@@ -569,26 +569,26 @@ mod tests {
 
         async fn graph_last_consolidated_at(
             &self,
-            _scope: &WorkspaceScope,
+            _namespace: &Namespace,
         ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
             Ok(None)
         }
 
-        async fn graph_episodes_since_last_dream(&self, _scope: &WorkspaceScope) -> Result<usize> {
+        async fn graph_episodes_since_last_dream(&self, _namespace: &Namespace) -> Result<usize> {
             Ok(0)
         }
 
-        async fn graph_is_consolidating(&self, _scope: &WorkspaceScope) -> Result<bool> {
+        async fn graph_is_consolidating(&self, _namespace: &Namespace) -> Result<bool> {
             Ok(false)
         }
 
         async fn graph_search(
             &self,
-            scope: &WorkspaceScope,
+            namespace: &Namespace,
             query: &str,
             opts: &SearchOpts,
         ) -> Result<Vec<RetrievedContext>> {
-            *self.last_search_scope.lock().unwrap() = Some(scope.clone());
+            *self.last_search_namespace.lock().unwrap() = Some(namespace.clone());
             *self.last_search_query.lock().unwrap() = Some(query.to_string());
             *self.last_search_limit.lock().unwrap() = opts.limit;
             Ok(vec![RetrievedContext {
@@ -602,10 +602,10 @@ mod tests {
 
         async fn graph_run_consolidation(
             &self,
-            scope: &WorkspaceScope,
+            namespace: &Namespace,
             _provider: Arc<dyn ChatProvider>,
         ) -> Result<DreamPhaseResult> {
-            *self.last_consolidation_scope.lock().unwrap() = Some(scope.clone());
+            *self.last_consolidation_namespace.lock().unwrap() = Some(namespace.clone());
             Ok(DreamPhaseResult {
                 communities_recomputed: 1,
                 cross_meeting_merges: 0,
@@ -628,7 +628,7 @@ mod tests {
     async fn submit_episode_delegates_to_graph_handle() {
         use chrono::Utc;
         let graph = StubGraphHandle::default();
-        let scope = WorkspaceScope::with_thread("ws-1", "thread-a");
+        let namespace = Namespace::new("ws-1").with_thread("thread-a");
         let source_ref = SourceRef {
             kind: SourceKind::Meeting,
             id: "mtg-42".into(),
@@ -650,7 +650,7 @@ mod tests {
             source_ref,
             facts,
             null_provider(),
-            scope.clone(),
+            namespace.clone(),
             None,
             SubmitOpts::default(),
             None,
@@ -660,8 +660,8 @@ mod tests {
 
         assert!(!commit.episode_entity_id.is_empty());
         assert_eq!(
-            graph.last_ingest_scope.lock().unwrap().as_ref(),
-            Some(&scope)
+            graph.last_ingest_namespace.lock().unwrap().as_ref(),
+            Some(&namespace)
         );
         assert_eq!(
             graph.last_ingest_content.lock().unwrap().as_deref(),
@@ -677,22 +677,22 @@ mod tests {
     #[tokio::test]
     async fn search_delegates_with_opts() {
         let graph = StubGraphHandle::default();
-        let scope = WorkspaceScope::new("ws-2");
+        let namespace = Namespace::new("ws-2");
         let opts = SearchOpts {
             limit: Some(25),
             as_of: None,
             source_kind: Some(SourceKind::Document),
         };
 
-        let hits = search(&graph, "go-live", scope.clone(), opts)
+        let hits = search(&graph, "go-live", namespace.clone(), opts)
             .await
             .expect("search delegates cleanly");
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entity_id, "ent-stub");
         assert_eq!(
-            graph.last_search_scope.lock().unwrap().as_ref(),
-            Some(&scope)
+            graph.last_search_namespace.lock().unwrap().as_ref(),
+            Some(&namespace)
         );
         assert_eq!(
             graph.last_search_query.lock().unwrap().as_deref(),
@@ -705,16 +705,16 @@ mod tests {
     #[allow(deprecated)]
     async fn run_dream_phase_delegates_to_consolidation() {
         let graph = StubGraphHandle::default();
-        let scope = WorkspaceScope::new("ws-3");
+        let namespace = Namespace::new("ws-3");
 
-        let result = run_dream_phase(&graph, scope.clone(), null_provider())
+        let result = run_dream_phase(&graph, namespace.clone(), null_provider())
             .await
             .expect("run_dream_phase delegates cleanly");
 
         assert_eq!(result.communities_recomputed, 1);
         assert_eq!(
-            graph.last_consolidation_scope.lock().unwrap().as_ref(),
-            Some(&scope)
+            graph.last_consolidation_namespace.lock().unwrap().as_ref(),
+            Some(&namespace)
         );
     }
 
@@ -771,14 +771,14 @@ mod tests {
     async fn as_of_emits_v010_warn() {
         use chrono::Utc;
         let graph = StubGraphHandle::default();
-        let scope = WorkspaceScope::new("ws-as-of");
+        let namespace = Namespace::new("ws-as-of");
         let opts = SearchOpts {
             limit: None,
             as_of: Some(Utc::now()),
             source_kind: None,
         };
         // Should not panic; warn is emitted internally, results still returned
-        let _hits = search(&graph, "test", scope, opts)
+        let _hits = search(&graph, "test", namespace, opts)
             .await
             .expect("as_of warn path must not fail");
     }

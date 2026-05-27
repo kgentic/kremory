@@ -28,8 +28,8 @@ use kremory::memory::{
     submit_episode,
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, RetrievedContext, SearchOpts, SourceRef, StructuredFact,
-        SubmitOpts, WorkspaceScope,
+        DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef,
+        StructuredFact, SubmitOpts,
     },
     ChatProvider, GraphHandle,
 };
@@ -118,7 +118,7 @@ struct StubIngestingHandle;
 impl GraphHandle for StubIngestingHandle {
     async fn graph_ingest_episode(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         source_ref: &SourceRef,
         _content: &str,
         _structured_facts: &[StructuredFact],
@@ -169,7 +169,7 @@ impl GraphHandle for StubIngestingHandle {
 
     async fn graph_submit_dream(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
         batch_id: Option<String>,
         _opts: DreamOpts,
@@ -177,7 +177,7 @@ impl GraphHandle for StubIngestingHandle {
     ) -> kremory::memory::types::Result<DreamHandle> {
         Ok(DreamHandle {
             run_id: Uuid::new_v4(),
-            scope: scope.clone(),
+            namespace: namespace.clone(),
             submitted_at: Utc::now(),
             batch_id,
         })
@@ -204,28 +204,28 @@ impl GraphHandle for StubIngestingHandle {
 
     async fn graph_last_consolidated_at(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<Option<chrono::DateTime<Utc>>> {
         Ok(None)
     }
 
     async fn graph_episodes_since_last_dream(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<usize> {
         Ok(0)
     }
 
     async fn graph_is_consolidating(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<bool> {
         Ok(false)
     }
 
     async fn graph_search(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _query: &str,
         _opts: &SearchOpts,
     ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
@@ -234,7 +234,7 @@ impl GraphHandle for StubIngestingHandle {
 
     async fn graph_run_consolidation(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
     ) -> kremory::memory::types::Result<DreamPhaseResult> {
         Ok(DreamPhaseResult::default())
@@ -261,7 +261,7 @@ async fn submit_episode_with_enrich_emits_events_in_order() {
 
     let sink = Arc::new(MockIngestSink::default());
     let handle = StubIngestingHandle;
-    let scope = WorkspaceScope::with_thread("ws-events", "thread-events");
+    let scope = Namespace::new("ws-events").with_thread("thread-events");
     let source_ref = SourceRef {
         kind: SourceKind::Meeting,
         id: "mtg-events".into(),
@@ -308,7 +308,7 @@ async fn submit_episode_without_enrich_emits_no_events() {
 
     let sink = Arc::new(MockIngestSink::default());
     let handle = StubIngestingHandle;
-    let scope = WorkspaceScope::new("ws-no-enrich");
+    let scope = Namespace::new("ws-no-enrich");
     let source_ref = SourceRef {
         kind: SourceKind::Document,
         id: "doc-no-enrich".into(),
@@ -345,7 +345,7 @@ async fn submit_episode_without_sink_completes() {
     use kremory::memory::types::SourceKind;
 
     let handle = StubIngestingHandle;
-    let scope = WorkspaceScope::new("ws-no-sink");
+    let scope = Namespace::new("ws-no-sink");
     let source_ref = SourceRef {
         kind: SourceKind::Chat,
         id: "chat-no-sink".into(),
@@ -385,7 +385,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
     impl GraphHandle for ContradictingHandle {
         async fn graph_ingest_episode(
             &self,
-            _scope: &WorkspaceScope,
+            _namespace: &Namespace,
             source_ref: &SourceRef,
             _content: &str,
             _structured_facts: &[StructuredFact],
@@ -443,7 +443,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
         }
         async fn graph_submit_dream(
             &self,
-            scope: &WorkspaceScope,
+            namespace: &Namespace,
             _p: Arc<dyn ChatProvider>,
             batch_id: Option<String>,
             _o: DreamOpts,
@@ -451,7 +451,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
         ) -> kremory::memory::types::Result<DreamHandle> {
             Ok(DreamHandle {
                 run_id: Uuid::new_v4(),
-                scope: scope.clone(),
+                namespace: namespace.clone(),
                 submitted_at: Utc::now(),
                 batch_id,
             })
@@ -475,25 +475,25 @@ async fn submit_episode_contradiction_events_reach_sink() {
         }
         async fn graph_last_consolidated_at(
             &self,
-            _scope: &WorkspaceScope,
+            _namespace: &Namespace,
         ) -> kremory::memory::types::Result<Option<chrono::DateTime<Utc>>> {
             Ok(None)
         }
         async fn graph_episodes_since_last_dream(
             &self,
-            _scope: &WorkspaceScope,
+            _namespace: &Namespace,
         ) -> kremory::memory::types::Result<usize> {
             Ok(0)
         }
         async fn graph_is_consolidating(
             &self,
-            _scope: &WorkspaceScope,
+            _namespace: &Namespace,
         ) -> kremory::memory::types::Result<bool> {
             Ok(false)
         }
         async fn graph_search(
             &self,
-            _scope: &WorkspaceScope,
+            _namespace: &Namespace,
             _query: &str,
             _opts: &SearchOpts,
         ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
@@ -501,7 +501,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
         }
         async fn graph_run_consolidation(
             &self,
-            _scope: &WorkspaceScope,
+            _namespace: &Namespace,
             _provider: Arc<dyn ChatProvider>,
         ) -> kremory::memory::types::Result<DreamPhaseResult> {
             Ok(DreamPhaseResult::default())
@@ -510,7 +510,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
 
     let sink = Arc::new(MockIngestSink::default());
     let handle = ContradictingHandle;
-    let scope = WorkspaceScope::new("ws-contradiction");
+    let scope = Namespace::new("ws-contradiction");
     let source_ref = SourceRef {
         kind: SourceKind::Document,
         id: "doc-contradiction".into(),

@@ -14,7 +14,7 @@
 //! ## API shape is rqlm-shaped, not rqlc-shaped
 //!
 //! The trait method signatures speak in rqlm vocabulary
-//! (`WorkspaceScope`, `IngestResult`, `RetrievedContext`) — NOT
+//! (`Namespace`, `IngestResult`, `RetrievedContext`) — NOT
 //! kremory::core's `Engine<L, Emb>::ingest_document(source, title, text)`
 //! signature. This is deliberate: each consumer translates its
 //! concrete-graph API into the trait, so a future backend swap (libsql
@@ -39,8 +39,8 @@ use super::{
     events::EnrichmentEventSink,
     types::{
         BatchStatus, CancelOutcome, DreamHandle, DreamOpts, DreamPhaseResult, DreamStatus,
-        EpisodeCommit, RetrievedContext, SearchOpts, SourceRef, StructuredFact, SubmitOpts,
-        WorkspaceScope,
+        EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef, StructuredFact,
+        SubmitOpts,
     },
     ChatProvider, Result,
 };
@@ -71,7 +71,7 @@ pub trait GraphHandle: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     async fn graph_ingest_episode(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         source_ref: &SourceRef,
         content: &str,
         structured_facts: &[StructuredFact],
@@ -92,14 +92,14 @@ pub trait GraphHandle: Send + Sync {
     /// Submit a dream-phase batch consolidation over the scope.
     /// Returns immediately with `DreamHandle`.
     ///
-    /// Idempotent: if a run is already active for `(workspace_id, thread_id, batch_id)`,
+    /// Idempotent: if a run is already active for `(namespace, thread, batch_id)`,
     /// returns the existing `DreamHandle` without starting a new run.
     /// Parameter mismatch on existing key → `tracing::warn!` (not error).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
     #[allow(clippy::too_many_arguments)]
     async fn graph_submit_dream(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         provider: Arc<dyn ChatProvider>,
         batch_id: Option<String>,
         opts: DreamOpts,
@@ -118,21 +118,21 @@ pub trait GraphHandle: Send + Sync {
     /// When did the last dream phase complete for this scope? `None` if never run.
     async fn graph_last_consolidated_at(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
     ) -> Result<Option<DateTime<Utc>>>;
 
     /// Count of episodes committed since the last dream phase completed.
-    async fn graph_episodes_since_last_dream(&self, scope: &WorkspaceScope) -> Result<usize>;
+    async fn graph_episodes_since_last_dream(&self, namespace: &Namespace) -> Result<usize>;
 
-    /// `true` if a dream phase is currently running for this scope.
-    async fn graph_is_consolidating(&self, scope: &WorkspaceScope) -> Result<bool>;
+    /// `true` if a dream phase is currently running for this namespace.
+    async fn graph_is_consolidating(&self, namespace: &Namespace) -> Result<bool>;
 
     // ── Search (from D.0a — signature unchanged) ─────────────────────────────
 
     /// Hybrid retrieval over the scoped graph.
     async fn graph_search(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         query: &str,
         opts: &SearchOpts,
     ) -> Result<Vec<RetrievedContext>>;
@@ -144,7 +144,7 @@ pub trait GraphHandle: Send + Sync {
     // the `run_dream_phase()` backwards-compat wrapper in mod.rs.
     async fn graph_run_consolidation(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         provider: Arc<dyn ChatProvider>,
     ) -> Result<DreamPhaseResult>;
 }
