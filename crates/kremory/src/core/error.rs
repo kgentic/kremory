@@ -111,9 +111,14 @@ pub enum Error {
     #[error("extraction stage '{stage}' failed: {detail}")]
     ExtractionStage { stage: String, detail: String },
 
-    /// BM25 and vector search weights must sum to 1.0.
-    /// Carries both values so callers see the actual misconfiguration without
-    /// parsing the message string.
+    /// BM25 and vector search weights no longer need to sum to 1.0; they are
+    /// independent RRF multipliers as of v0.1.1. This variant is retained for
+    /// backward compatibility with any downstream code that matches on it, but
+    /// it is never emitted by the library.
+    #[deprecated(
+        since = "0.1.1",
+        note = "RRF weights are independent multipliers; no sum constraint. Variant retained for backward compat; never emitted."
+    )]
     #[error("bm25_weight ({bm25}) + vector_weight ({vector}) must sum to 1.0")]
     WeightSumInvalid { bm25: f64, vector: f64 },
 

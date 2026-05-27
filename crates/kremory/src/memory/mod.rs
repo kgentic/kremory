@@ -242,6 +242,7 @@ pub async fn ingest_episode(
         edges_added: 0,
         facts_invalidated: 0,
         duration_ms: 0,
+        stub_entities_inserted: 0,
     })
 }
 
@@ -373,6 +374,7 @@ fn source_kind_label(k: SourceKind) -> &'static str {
         SourceKind::Meeting => "meeting",
         SourceKind::Document => "document",
         SourceKind::Chat => "chat",
+        SourceKind::Episode => "episode",
     }
 }
 
@@ -524,6 +526,7 @@ mod tests {
                 run_id: None,
                 episode_entity_id: format!("stub:{}", source_ref.id),
                 committed_at: chrono::Utc::now(),
+                stub_entities_inserted: 0,
             })
         }
 
@@ -601,6 +604,7 @@ mod tests {
                 summary: "from StubGraphHandle".into(),
                 score: 0.5,
                 source_refs: vec![],
+                incomplete: false,
             }])
         }
 

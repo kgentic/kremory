@@ -48,7 +48,7 @@ impl TemporalGraph {
     /// += 1` atomically via a single UPDATE statement. Empty `ids` is a
     /// no-op. Errors are swallowed with a warning — an access-count failure
     /// must never cause the search call to fail.
-    async fn increment_entity_access_counts(&self, ids: &[String]) {
+    pub(crate) async fn increment_entity_access_counts(&self, ids: &[String]) {
         if ids.is_empty() {
             return;
         }
@@ -75,6 +75,23 @@ impl TemporalGraph {
     /// Full-text search entities by label/properties.
     /// Returns entities ranked by BM25 relevance, scoped by `filters.group_ids`.
     pub async fn fts_search_entities(
+        &self,
+        query: &str,
+        limit: usize,
+        filters: &SearchFilters,
+    ) -> Result<Vec<SearchHit<Entity>>> {
+        let hits = self.fts_search_entities_no_count(query, limit, filters).await?;
+        // Story #247: increment access_count for every returned entity.
+        let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
+        self.increment_entity_access_counts(&returned_ids).await;
+        Ok(hits)
+    }
+
+    /// Like [`fts_search_entities`] but does NOT increment `access_count`.
+    /// Used by `contextualize()` which manages access-count increments itself
+    /// after RRF composition (RISK-002: avoid double-increment when both FTS
+    /// and vector paths surface the same entity).
+    pub(crate) async fn fts_search_entities_no_count(
         &self,
         query: &str,
         limit: usize,
@@ -123,9 +140,6 @@ impl TemporalGraph {
                 });
             }
         }
-        // Story #247: increment access_count for every returned entity.
-        let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
-        self.increment_entity_access_counts(&returned_ids).await;
         let hits_count = hits.len();
         let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.search.fts_entities_hits").record(hits_count as f64);
@@ -205,6 +219,25 @@ impl TemporalGraph {
         limit: usize,
         filters: &SearchFilters,
     ) -> Result<Vec<SearchHit<Entity>>> {
+        let hits = self
+            .vector_search_entities_no_count(query_embedding, limit, filters)
+            .await?;
+        // Story #247: increment access_count for every returned entity.
+        let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
+        self.increment_entity_access_counts(&returned_ids).await;
+        Ok(hits)
+    }
+
+    /// Like [`vector_search_entities`] but does NOT increment `access_count`.
+    /// Used by `contextualize()` which manages access-count increments itself
+    /// after RRF composition (RISK-002: avoid double-increment when both FTS
+    /// and vector paths surface the same entity).
+    pub(crate) async fn vector_search_entities_no_count(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+        filters: &SearchFilters,
+    ) -> Result<Vec<SearchHit<Entity>>> {
         let _search_start = Instant::now();
         let vec_str = format!(
             "[{}]",
@@ -228,9 +261,6 @@ impl TemporalGraph {
                     .await?
             }
         };
-        // Story #247: increment access_count for every returned entity.
-        let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
-        self.increment_entity_access_counts(&returned_ids).await;
         let hits_count = hits.len();
         let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.search.vector_entities_hits").record(hits_count as f64);

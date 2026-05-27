@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::core::error::Result;
 use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
@@ -11,11 +13,16 @@ pub struct ContextResult {
     pub entities: Vec<Entity>,
     /// The active (non-expired) facts connecting these entities.
     pub facts: Vec<Fact>,
+    /// RRF-derived relevance scores for seed entities, min-max normalised to [0.0, 1.0].
+    /// Keyed by entity ID. 1-hop neighbors not in the original seed set will be absent
+    /// (callers should default to 0.0 for missing keys).
+    pub scores: HashMap<String, f32>,
 }
 
 impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
-    /// Search for entities matching the query, then expand 1-hop to get context.
-    /// Returns entities and their connecting facts.
+    /// Search for entities matching the query via RRF of FTS + vector search,
+    /// then expand 1-hop to get context.
+    /// Returns entities, their connecting facts, and normalised relevance scores.
     pub async fn contextualize(
         &self,
         query: &str,
@@ -30,23 +37,79 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             None => SearchFilters::new(),
         };
 
-        // Step 1: Search for matching entities via FTS
-        let search_hits = self
+        // Step 1: Compute query embedding for vector search (Bug D)
+        let query_embedding = self.embedder.embed(query).await?;
+
+        // Step 2: Run FTS + vector search in parallel, suppressing per-call
+        // access_count increments (RISK-002 — we do one increment after RRF)
+        let fts_hits = self
             .graph
-            .fts_search_entities(query, limit, &filters)
+            .fts_search_entities_no_count(query, limit, &filters)
+            .await?;
+        let vector_hits = self
+            .graph
+            .vector_search_entities_no_count(&query_embedding, limit, &filters)
             .await?;
 
-        if search_hits.is_empty() {
+        // Step 3: Reciprocal Rank Fusion (RRF) with k=60 (Bug C + NEW-004)
+        const RRF_K: f32 = 60.0;
+        let bm25_weight = self.config.search.bm25_weight as f32;
+        let vector_weight = self.config.search.vector_weight as f32;
+
+        let mut rrf_scores: HashMap<String, f32> = HashMap::new();
+        for (rank, hit) in fts_hits.iter().enumerate() {
+            let id = hit.item.id.clone();
+            *rrf_scores.entry(id).or_insert(0.0) +=
+                bm25_weight * (1.0 / (RRF_K + rank as f32 + 1.0));
+        }
+        for (rank, hit) in vector_hits.iter().enumerate() {
+            let id = hit.item.id.clone();
+            *rrf_scores.entry(id).or_insert(0.0) +=
+                vector_weight * (1.0 / (RRF_K + rank as f32 + 1.0));
+        }
+
+        // If both FTS and vector returned nothing, return empty (NEW-004: FTS-only
+        // early-return deleted; this is now the single combined-empty guard)
+        if rrf_scores.is_empty() {
             return Ok(ContextResult {
                 entities: vec![],
                 facts: vec![],
+                scores: HashMap::new(),
             });
         }
 
-        // Step 2: Collect seed entity IDs
-        let seed_ids: Vec<String> = search_hits.iter().map(|h| h.item.id.clone()).collect();
+        // Step 4: Sort by RRF score descending and take top-K seed IDs
+        let mut ranked: Vec<(String, f32)> = rrf_scores.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let seed_ids: Vec<String> = ranked.iter().take(limit).map(|(id, _)| id.clone()).collect();
 
-        // Step 3: Expand 1-hop from each seed entity
+        // Step 5: Min-max normalise RRF scores to [0.0, 1.0]
+        // Restrict to seed_ids only (top-K; drop lower-ranked hits from scores map)
+        let seed_rrf: HashMap<String, f32> = seed_ids
+            .iter()
+            .filter_map(|id| rrf_scores.get(id).map(|s| (id.clone(), *s)))
+            .collect();
+
+        let (min_s, max_s) = (
+            seed_rrf.values().copied().fold(f32::MAX, f32::min),
+            seed_rrf.values().copied().fold(f32::MIN, f32::max),
+        );
+        let normalized: HashMap<String, f32> = if (max_s - min_s).abs() < 1e-9 {
+            // Degenerate (single result or all-equal): every result scores 1.0
+            seed_rrf.keys().map(|k| (k.clone(), 1.0_f32)).collect()
+        } else {
+            seed_rrf
+                .iter()
+                .map(|(k, v)| (k.clone(), (v - min_s) / (max_s - min_s)))
+                .collect()
+        };
+
+        // Step 6: Increment access_count ONCE per unique seed ID (RISK-002)
+        self.graph
+            .increment_entity_access_counts(&seed_ids)
+            .await;
+
+        // Step 7: Expand 1-hop from each seed entity
         let mut all_entities: Vec<Entity> = Vec::new();
         let mut all_facts: Vec<Fact> = Vec::new();
         let mut seen_entity_ids: std::collections::HashSet<String> =
@@ -78,6 +141,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         Ok(ContextResult {
             entities: all_entities,
             facts: all_facts,
+            scores: normalized,
         })
     }
 }
@@ -157,7 +221,7 @@ mod tests {
     async fn test_contextualize_empty_query_returns_empty() {
         let rql = setup_graph_with_data().await;
 
-        // A term that won't match anything in FTS
+        // A term that won't match anything in FTS or vector search
         let ctx = rql
             .contextualize("xyzzy_nonexistent_term_42", None, None)
             .await
@@ -165,11 +229,15 @@ mod tests {
 
         assert!(
             ctx.entities.is_empty(),
-            "no FTS match should yield empty entities"
+            "no search match should yield empty entities"
         );
         assert!(
             ctx.facts.is_empty(),
-            "no FTS match should yield empty facts"
+            "no search match should yield empty facts"
+        );
+        assert!(
+            ctx.scores.is_empty(),
+            "no search match should yield empty scores"
         );
     }
 
@@ -208,6 +276,27 @@ mod tests {
             assert_eq!(
                 fact.predicate, "works_at",
                 "only works_at facts should be present"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_context_result_has_scores_for_seed_entities() {
+        let rql = setup_graph_with_data().await;
+
+        let ctx = rql.contextualize("alice", None, None).await.unwrap();
+
+        // At least one seed entity should have a score entry
+        assert!(
+            !ctx.scores.is_empty(),
+            "scores map should be populated when results are found"
+        );
+
+        // All scores should be in [0.0, 1.0]
+        for (id, score) in &ctx.scores {
+            assert!(
+                *score >= 0.0 && *score <= 1.0,
+                "score for {id} out of [0,1]: {score}"
             );
         }
     }

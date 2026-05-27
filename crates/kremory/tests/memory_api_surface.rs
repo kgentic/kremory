@@ -27,6 +27,7 @@ fn sample_results() -> Vec<RetrievedContext> {
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 17, 14, 0, 0).unwrap(),
                 published_at: None,
             }],
+            incomplete: false,
         },
         RetrievedContext {
             entity_id: "ent-2".into(),
@@ -39,6 +40,7 @@ fn sample_results() -> Vec<RetrievedContext> {
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 18, 9, 30, 0).unwrap(),
                 published_at: None,
             }],
+            incomplete: false,
         },
     ]
 }

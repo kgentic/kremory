@@ -823,6 +823,56 @@ impl TemporalGraph {
         Ok(())
     }
 
+    /// Upserts an entity row. Behaves as INSERT on first call for this (id),
+    /// and as UPDATE-in-place on subsequent calls (preserves row identity).
+    /// The rql_entities_fts shadow table is updated to match via DELETE + INSERT.
+    ///
+    /// Used by the v0.1.1 stub-entity promotion path: a stub row inserted via
+    /// the pre-scan (forward reference) is upgraded to a real entity row when
+    /// the same name is later extracted as a proper entity.
+    pub async fn upsert_entity_with_group(
+        &self,
+        id: &str,
+        label: &str,
+        properties: serde_json::Value,
+        group_id: Option<&str>,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let props_str = properties.to_string();
+        let guard = self.begin_immediate_if_needed().await?;
+        let inner: Result<()> = async {
+            self.conn.execute(
+                "INSERT INTO rql_entities (id, label, properties, recorded_at, group_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                   label = excluded.label,
+                   properties = excluded.properties,
+                   recorded_at = excluded.recorded_at",
+                libsql::params![id, label, props_str.clone(), now, group_id],
+            ).await?;
+            // FTS shadow upsert via DELETE+INSERT (FTS5 idiomatic pattern)
+            self.conn.execute(
+                "DELETE FROM rql_entities_fts WHERE entity_id = ?1",
+                libsql::params![id],
+            ).await?;
+            self.conn.execute(
+                "INSERT INTO rql_entities_fts(entity_id, label, properties) VALUES (?1, ?2, ?3)",
+                libsql::params![id, label, props_str],
+            ).await?;
+            Ok(())
+        }.await;
+        match inner {
+            Ok(()) => {
+                guard.commit().await?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = guard.rollback().await;
+                Err(e)
+            }
+        }
+    }
+
     /// Insert a fact with an optional group_id.
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_fact_with_group(
@@ -2358,5 +2408,59 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let deleted = g.batch_forget(&[]).await.unwrap();
         assert_eq!(deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn upsert_entity_with_group_inserts_then_updates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = format!("{}/test.db", tmp.path().display());
+        let g = TemporalGraph::open(&db).await.expect("open");
+
+        // First call inserts
+        g.upsert_entity_with_group("alice", "Person", serde_json::json!({"context": "v1"}), None)
+            .await
+            .expect("first upsert");
+
+        let mut rows = g.conn.query(
+            "SELECT label, properties FROM rql_entities WHERE id = ?1",
+            libsql::params!["alice"]
+        ).await.expect("query");
+        let r1 = rows.next().await.expect("row").expect("some");
+        let label1: String = r1.get(0).expect("label");
+        let props1: String = r1.get(1).expect("props");
+        assert_eq!(label1, "Person");
+        assert!(props1.contains("v1"));
+
+        // Second call updates in place — same id, no duplicate row
+        g.upsert_entity_with_group("alice", "PersonV2", serde_json::json!({"context": "v2"}), None)
+            .await
+            .expect("second upsert");
+
+        let mut count_rows = g.conn.query(
+            "SELECT COUNT(*) FROM rql_entities WHERE id = ?1",
+            libsql::params!["alice"]
+        ).await.expect("count");
+        let cr = count_rows.next().await.expect("cnt").expect("some");
+        let count: i64 = cr.get(0).expect("count");
+        assert_eq!(count, 1, "upsert must not create duplicate");
+
+        let mut rows2 = g.conn.query(
+            "SELECT label, properties FROM rql_entities WHERE id = ?1",
+            libsql::params!["alice"]
+        ).await.expect("query2");
+        let r2 = rows2.next().await.expect("row").expect("some");
+        let label2: String = r2.get(0).expect("label");
+        let props2: String = r2.get(1).expect("props");
+        assert_eq!(label2, "PersonV2", "label must be updated");
+        assert!(props2.contains("v2"), "properties must be updated");
+
+        // FTS shadow row consistency — exactly 1 fts row, with new label
+        let mut fts_count = g.conn.query(
+            "SELECT COUNT(*) FROM rql_entities_fts WHERE entity_id = ?1",
+            libsql::params!["alice"]
+        ).await.expect("fts count");
+        let fc = fts_count.next().await.expect("row").expect("some");
+        let fts_n: i64 = fc.get(0).expect("n");
+        assert_eq!(fts_n, 1, "FTS shadow must have exactly 1 row after upsert");
     }
 }

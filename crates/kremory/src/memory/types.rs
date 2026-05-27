@@ -50,12 +50,22 @@ impl Namespace {
 /// Kind of source an episode came from. Domain-agnostic — the host application writes
 /// `Meeting`, a doc-ingestion consumer writes `Document`, a chatbot writes
 /// `Chat`. No the host application-specific names leak into the public surface.
+///
+/// `#[non_exhaustive]` allows adding new variants (e.g. `Episode` in v0.1.1)
+/// without a SemVer major bump. Consumers must use a wildcard arm when
+/// pattern-matching.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Meeting,
     Document,
     Chat,
+    /// Source reference that points directly to an episodic edge row
+    /// (i.e. the episode that introduced this entity). Added in v0.1.1
+    /// as part of the Bug A recall-side fix: `source_refs` are now derived
+    /// from `episodic_edges` rather than fact rows.
+    Episode,
 }
 
 /// Semantic memory classification for a `Fact`. Story #208.
@@ -125,6 +135,14 @@ pub struct IngestResult {
     pub edges_added: usize,
     pub facts_invalidated: usize,
     pub duration_ms: u64,
+    /// Number of stub entities inserted for forward references in this episode.
+    /// A stub entity has `label = "UNKNOWN"` and `properties.stub = true`;
+    /// it is promoted to a real entity on subsequent ingestion. Added in v0.1.1.
+    ///
+    /// `#[serde(default)]` ensures v0.1.0-serialised JSON (without this field)
+    /// still deserialises correctly (defaults to `0`).
+    #[serde(default)]
+    pub stub_entities_inserted: usize,
 }
 
 /// Outcome of a single `run_dream_phase` batch consolidation cycle.
@@ -160,6 +178,14 @@ pub struct RetrievedContext {
     pub summary: String,
     pub score: f32,
     pub source_refs: Vec<SourceRef>,
+    /// `true` when this entity is a stub (forward-reference placeholder inserted
+    /// before the entity was fully extracted). Stubs have `label = "UNKNOWN"` and
+    /// `properties.stub = true` in the graph. Added in v0.1.1.
+    ///
+    /// `#[serde(default)]` ensures v0.1.0-serialised JSON (without this field)
+    /// still deserialises correctly (defaults to `false`).
+    #[serde(default)]
+    pub incomplete: bool,
 }
 
 /// Template strategy for `context_block` — which dimension of the retrieved
@@ -205,6 +231,13 @@ pub struct EpisodeCommit {
     pub episode_entity_id: String,
     /// Timestamp at which Phase 1 committed.
     pub committed_at: DateTime<Utc>,
+    /// Number of stub entities inserted for forward references in this episode.
+    /// Mirrors `IngestResult.stub_entities_inserted`. Added in v0.1.1 (SCOPE-002).
+    ///
+    /// `#[serde(default)]` ensures v0.1.0-serialised JSON (without this field)
+    /// still deserialises correctly (defaults to `0`).
+    #[serde(default)]
+    pub stub_entities_inserted: usize,
 }
 
 /// Status of a Phase 3 (dream-phase batch consolidation) run.

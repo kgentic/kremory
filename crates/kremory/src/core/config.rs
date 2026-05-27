@@ -402,14 +402,6 @@ impl PipelineConfigBuilder {
             )));
         }
 
-        let weight_sum = c.search.bm25_weight + c.search.vector_weight;
-        if (weight_sum - 1.0_f64).abs() > 1e-9 {
-            return Err(Error::WeightSumInvalid {
-                bm25: c.search.bm25_weight,
-                vector: c.search.vector_weight,
-            });
-        }
-
         if c.embedding_dim.0 == 0 {
             return Err(Error::EmbeddingDimZero);
         }
@@ -472,17 +464,21 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_weights_rejected() {
+    fn test_weights_accept_any_positive_values() {
         let result = PipelineConfig::builder()
-            .bm25_weight(0.3)
+            .bm25_weight(0.7)
             .vector_weight(0.3)
             .build();
-        assert!(result.is_err(), "weights summing to 0.6 must be rejected");
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("bm25_weight") || msg.contains("vector_weight"),
-            "error should mention weight fields"
+            result.is_ok(),
+            "RRF weights are independent multipliers; sum-to-1.0 no longer required"
         );
+
+        let result2 = PipelineConfig::builder()
+            .bm25_weight(2.0)
+            .vector_weight(1.0)
+            .build();
+        assert!(result2.is_ok(), "any positive values accepted");
     }
 
     #[test]

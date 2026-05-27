@@ -7,6 +7,11 @@
 //! Story #155 — must pass before #156 (downstream Result<_, Error> signatures
 //! depend on final taxonomy).
 
+// WeightSumInvalid is tested here to verify the named struct variant shape —
+// it is intentionally marked #[deprecated] for backward compat but must keep
+// the correct field layout. Allow the deprecation warning in this file only.
+#![allow(deprecated)]
+
 use kremory::core::error::Error;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
