@@ -88,22 +88,18 @@ impl<E: EmbeddingProvider> EmbeddingProvider for TokenTrackingEmbedder<E> {
             .increment(tokens_input);
 
             // Cost emission via PROVIDER_RATES lookup (added v0.1.2 Gap B).
-            // Embedding models have a single rate per model (no input/output split),
-            // so direction is None.
+            // Embedding models use a single rate per model (no direction split).
             if let Some(rates) = PROVIDER_RATES.get() {
-                if let Some(rate) = rates.lookup_rate(self.provider, self.model, None) {
+                if let Some(rate) = rates.lookup_rate(self.provider, self.model) {
                     let cost_usd = rate * (tokens_input as f64) / 1000.0;
                     if cost_usd > 0.0 {
-                        // Store as micro-USD integer for counter precision.
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let micro_usd = (cost_usd * 1_000_000.0) as u64;
-                        metrics::counter!(
+                        metrics::gauge!(
                             "kremory_core_cost_usd_total",
                             "operation" => "embed",
                             "provider"  => self.provider,
                             "model"     => self.model,
                         )
-                        .increment(micro_usd);
+                        .increment(cost_usd);
                     }
                 }
                 // No rate entry = silent skip: custom embedder models not in provider-rates.toml

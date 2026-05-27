@@ -7,16 +7,19 @@
 //! - `kremory_core_tokens_total{operation="chat", provider, model, direction="input"|"output"}`
 //!   — cumulative token count (increments by 0 when provider returns no usage).
 //! - `kremory_core_cost_usd_total{operation="chat", provider, model}` — cumulative
-//!   micro-USD cost derived from `PROVIDER_RATES` (skip when rate table not
+//!   float USD cost derived from `PROVIDER_RATES` (skip when rate table not
 //!   initialized or model is unlisted).
-//! - `kremory_core_chat_duration_seconds{provider, model, outcome, [error_type]}`
-//!   — histogram per call; `outcome` is bounded to `"success"` or `"error"`.
+//! - `kremory_core_chat_duration_seconds{provider, model, status="ok"|"error"}`
+//!   — histogram per call; `status` is bounded to `"ok"` or `"error"`.
+//!   On error, `error.type` is recorded as a tracing span attribute (NOT a
+//!   histogram label) to keep histogram cardinality at 2.
 //!
 //! ## Cardinality discipline (ADR D7)
 //!
 //! `provider` and `model` are set at construction time — never derived from
-//! response content. `error_type` is bounded to the 11 known `LLMError`
-//! variants in `autoagents-llm 0.3.7` via `error_type_label`.
+//! response content. `error.type` is bounded to {"server_error", "client_error",
+//! "parse_error"} via `llm_error_type` — appears only as a span attribute, not
+//! a metric label.
 //!
 //! ## Usage
 //!
@@ -71,8 +74,8 @@ impl<L: ChatProvider + Send + Sync> TokenTrackingChatProvider<L> {
 /// first time we see this pair), so we warn on first occurrence.
 static USAGE_NONE_WARNED: OnceLock<DashSet<(String, String)>> = OnceLock::new();
 
-/// Emits an unknown-rate warning at most once per `(provider, model, direction)`.
-static UNKNOWN_RATE_WARNED: OnceLock<DashSet<(String, String, String)>> = OnceLock::new();
+/// Emits an unknown-rate warning at most once per `(provider, model)`.
+static UNKNOWN_RATE_WARNED: OnceLock<DashSet<(String, String)>> = OnceLock::new();
 
 /// Returns `true` on the first call for this `(provider, model)` pair.
 fn first_usage_warning(provider: &str, model: &str) -> bool {
@@ -80,42 +83,40 @@ fn first_usage_warning(provider: &str, model: &str) -> bool {
     set.insert((provider.to_string(), model.to_string()))
 }
 
-/// Returns `true` on the first call for this `(provider, model, direction)`.
-fn first_rate_warning(provider: &str, model: &str, direction: &str) -> bool {
+/// Returns `true` on the first call for this `(provider, model)` pair.
+fn first_rate_warning(provider: &str, model: &str) -> bool {
     let set = UNKNOWN_RATE_WARNED.get_or_init(DashSet::new);
-    set.insert((
-        provider.to_string(),
-        model.to_string(),
-        direction.to_string(),
-    ))
+    set.insert((provider.to_string(), model.to_string()))
 }
 
-// ── bounded error type label (Gap D) ───────────────────────────────────────
+// ── bounded error type label (ADR D7 / spec line 364, 366, 373-378) ───────────
 
-/// Map an [`LLMError`] variant to a short, cardinality-safe `error_type` label
-/// string.
+/// Map an [`LLMError`] variant to a bounded, cardinality-safe `error.type` span
+/// attribute value. Bucketed into 3 values per spec line 373-378.
+///
+/// This value is recorded as a **tracing span attribute** (`error.type`) — it is
+/// NOT used as a histogram label (histogram label cardinality is 2: `status="ok"`
+/// / `status="error"`).
 ///
 /// **Verified against `autoagents-llm 0.3.7` `src/error.rs`** (path:
 /// `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/autoagents-llm-0.3.7/src/error.rs`).
-/// All 11 variants are enumerated; the default arm is unreachable in practice
-/// unless a future version of the dependency adds a new variant.
-fn error_type_label(err: &LLMError) -> &'static str {
+/// All 11 variants are covered.
+pub fn llm_error_type(err: &LLMError) -> &'static str {
     use LLMError::{
         AuthError, Generic, GuardrailBlocked, GuardrailExecutionFailed, HttpError, InvalidRequest,
         JsonError, NoToolSupport, ProviderError, ResponseFormatError, ToolConfigError,
     };
     match err {
-        HttpError(_) => "http_error",
-        AuthError(_) => "auth_error",
-        InvalidRequest(_) => "invalid_request",
-        ProviderError(_) => "provider_error",
-        ResponseFormatError { .. } => "response_format_error",
-        Generic(_) => "generic_error",
-        JsonError(_) => "parse_error",
-        ToolConfigError(_) => "tool_config_error",
-        NoToolSupport(_) => "no_tool_support",
-        GuardrailBlocked { .. } => "guardrail_blocked",
-        GuardrailExecutionFailed { .. } => "guardrail_failed",
+        // Server-side / network / guardrail failures
+        HttpError(_)
+        | ProviderError(_)
+        | Generic(_)
+        | GuardrailBlocked { .. }
+        | GuardrailExecutionFailed { .. } => "server_error",
+        // Caller / configuration errors
+        AuthError(_) | InvalidRequest(_) | NoToolSupport(_) | ToolConfigError(_) => "client_error",
+        // Serialisation / format errors
+        JsonError(_) | ResponseFormatError { .. } => "parse_error",
     }
 }
 
@@ -126,8 +127,10 @@ impl<L: ChatProvider + Send + Sync> ChatProvider for TokenTrackingChatProvider<L
     /// Delegates to `inner.chat_with_tools` and emits metrics after the call.
     ///
     /// Token counters are emitted with `direction="input"` and `direction="output"`.
-    /// Cost counters are emitted in micro-USD (×1_000_000) for integer precision.
-    /// Duration histogram is emitted with `outcome="success"` or `outcome="error"`.
+    /// Cost gauge is incremented by float USD (direct, no micro-USD encoding).
+    /// Duration histogram is emitted with `status="ok"` or `status="error"`.
+    /// On error, `error.type` is recorded as a tracing span attribute only —
+    /// NOT as a histogram label — to keep cardinality at 2.
     async fn chat_with_tools(
         &self,
         messages: &[ChatMessage],
@@ -178,60 +181,54 @@ impl<L: ChatProvider + Send + Sync> ChatProvider for TokenTrackingChatProvider<L
 
                 // Cost emission — only when PROVIDER_RATES is initialized.
                 if let Some(rates) = PROVIDER_RATES.get() {
-                    let input_rate = rates.lookup_rate(&self.provider, &self.model, Some("input"));
-                    let output_rate =
-                        rates.lookup_rate(&self.provider, &self.model, Some("output"));
+                    let rate = rates.lookup_rate(&self.provider, &self.model);
 
-                    if input_rate.is_none()
-                        && first_rate_warning(&self.provider, &self.model, "input")
-                    {
+                    if rate.is_none() && first_rate_warning(&self.provider, &self.model) {
                         tracing::warn!(
                             provider  = %self.provider,
                             model     = %self.model,
-                            direction = "input",
-                            "no chat rate found in provider-rates.toml — cost counter will skip this call"
+                            "no chat rate found in provider-rates.toml — cost gauge will skip this call"
                         );
                     }
 
-                    let input_cost = input_rate.unwrap_or(0.0) * (input_tokens as f64) / 1000.0;
-                    let output_cost = output_rate.unwrap_or(0.0) * (output_tokens as f64) / 1000.0;
-                    let total_cost = input_cost + output_cost;
+                    let total_cost =
+                        rate.unwrap_or(0.0) * ((input_tokens + output_tokens) as f64) / 1000.0;
 
                     // Emit cost only when non-zero to avoid polluting zero-rate records.
                     if total_cost > 0.0 {
-                        // Store as micro-USD integer for counter precision.
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let micro_usd = (total_cost * 1_000_000.0) as u64;
-                        metrics::counter!(
+                        metrics::gauge!(
                             "kremory_core_cost_usd_total",
                             "operation" => "chat",
                             "provider"  => self.provider.clone(),
                             "model"     => self.model.clone(),
                         )
-                        .increment(micro_usd);
+                        .increment(total_cost);
                     }
                 }
 
-                // Duration histogram — success path.
+                // Duration histogram — ok path.
                 metrics::histogram!(
                     "kremory_core_chat_duration_seconds",
                     "provider" => self.provider.clone(),
                     "model"    => self.model.clone(),
-                    "outcome"  => "success",
+                    "status"   => "ok",
                 )
                 .record(duration_seconds);
             }
 
             Err(err) => {
-                let label = error_type_label(err);
+                let label = llm_error_type(err);
 
-                // Duration histogram — error path (includes error_type label).
+                // Record error.type as a span attribute — NOT a histogram label.
+                // Histogram cardinality stays at 2: status="ok" | status="error".
+                tracing::Span::current().record("error.type", label);
+
+                // Duration histogram — error path (status label only, no error_type label).
                 metrics::histogram!(
                     "kremory_core_chat_duration_seconds",
-                    "provider"   => self.provider.clone(),
-                    "model"      => self.model.clone(),
-                    "outcome"    => "error",
-                    "error_type" => label,
+                    "provider" => self.provider.clone(),
+                    "model"    => self.model.clone(),
+                    "status"   => "error",
                 )
                 .record(duration_seconds);
             }
@@ -257,7 +254,7 @@ mod tests {
     /// Behavior enum for `TrackingMockProvider`.
     enum MockBehavior {
         WithUsage { input: u32, output: u32 },
-        AlwaysFail { kind: u8 }, // u8 index into error_type_label test cases
+        AlwaysFail { kind: u8 }, // u8 index into llm_error_type test cases
     }
 
     /// Minimal mock ChatProvider used only inside this test module.
@@ -354,23 +351,6 @@ mod tests {
         }
     }
 
-    /// Expected label for each error index (mirrors `error_type_label`).
-    fn expected_label(kind: u8) -> &'static str {
-        match kind {
-            0 => "http_error",
-            1 => "auth_error",
-            2 => "invalid_request",
-            3 => "provider_error",
-            4 => "response_format_error",
-            5 => "generic_error",
-            6 => "parse_error",
-            7 => "tool_config_error",
-            8 => "no_tool_support",
-            9 => "guardrail_blocked",
-            _ => "guardrail_failed",
-        }
-    }
-
     // ── G_v012_1: token_tracking_chat_emits_metrics ──────────────────────────
 
     /// G_v012_1 — Wrap mock with WithUsage(100, 50); assert tokens_total(input)=100,
@@ -450,42 +430,41 @@ mod tests {
     // ── G_v012_2: chat_error_emits_bounded_error_type ────────────────────────
 
     /// G_v012_2 — Wrap mock(AlwaysFail). Assert duration histogram is emitted
-    /// with outcome="error". Loop all 11 LLMError variants and verify each maps
-    /// to the expected bounded label per §17.1 table.
+    /// with status="error". Verify all 11 LLMError variants map to one of the
+    /// 3 bounded bucket values {"server_error", "client_error", "parse_error"}
+    /// per spec lines 373-378.
     #[test]
     fn chat_error_emits_bounded_error_type() {
-        // Validate the error_type_label fn covers all 11 variants.
+        // Validate the llm_error_type fn bucketing covers all 11 variants.
         let cases: &[(u8, &'static str)] = &[
-            (0, "http_error"),
-            (1, "auth_error"),
-            (2, "invalid_request"),
-            (3, "provider_error"),
-            (4, "response_format_error"),
-            (5, "generic_error"),
-            (6, "parse_error"),
-            (7, "tool_config_error"),
-            (8, "no_tool_support"),
-            (9, "guardrail_blocked"),
-            (10, "guardrail_failed"),
+            (0, "server_error"),  // HttpError
+            (1, "client_error"),  // AuthError
+            (2, "client_error"),  // InvalidRequest
+            (3, "server_error"),  // ProviderError
+            (4, "parse_error"),   // ResponseFormatError
+            (5, "server_error"),  // Generic
+            (6, "parse_error"),   // JsonError
+            (7, "client_error"),  // ToolConfigError
+            (8, "client_error"),  // NoToolSupport
+            (9, "server_error"),  // GuardrailBlocked
+            (10, "server_error"), // GuardrailExecutionFailed
         ];
 
         for &(kind_index, expected) in cases {
             let err = make_err(kind_index);
-            let label = error_type_label(&err);
+            let label = llm_error_type(&err);
             assert_eq!(
-                label,
-                expected_label(kind_index),
-                "error_type_label({kind_index}) must map to '{}'",
-                expected
+                label, expected,
+                "llm_error_type({kind_index}) must map to '{expected}'; got '{label}'"
             );
         }
 
-        // Also verify that the histogram is emitted on error path.
+        // Also verify that the histogram is emitted on error path with status="error".
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
 
         let inner = TrackingMockProvider {
-            behavior: MockBehavior::AlwaysFail { kind: 0 }, // HttpError
+            behavior: MockBehavior::AlwaysFail { kind: 0 }, // HttpError → server_error
         };
         let tracked = TokenTrackingChatProvider::new(inner, "test-provider", "test-model");
 
@@ -519,17 +498,27 @@ mod tests {
             "kremory_core_chat_duration_seconds histogram must be emitted on error path; got: {histogram_names:?}"
         );
 
-        // Verify outcome="error" label is present on the duration histogram.
-        let has_error_outcome = snapshot.iter().any(|(key, _, _, _)| {
+        // Verify status="error" label is present on the duration histogram.
+        let has_error_status = snapshot.iter().any(|(key, _, _, _)| {
             key.key().name() == "kremory_core_chat_duration_seconds"
                 && key
                     .key()
                     .labels()
-                    .any(|l| l.key() == "outcome" && l.value() == "error")
+                    .any(|l| l.key() == "status" && l.value() == "error")
         });
         assert!(
-            has_error_outcome,
-            "duration histogram must carry outcome=error label on failure path"
+            has_error_status,
+            "duration histogram must carry status=error label on failure path"
+        );
+
+        // Verify NO error_type label appears on the histogram (span attribute only).
+        let has_no_error_type_label = !snapshot.iter().any(|(key, _, _, _)| {
+            key.key().name() == "kremory_core_chat_duration_seconds"
+                && key.key().labels().any(|l| l.key() == "error_type")
+        });
+        assert!(
+            has_no_error_type_label,
+            "duration histogram must NOT carry error_type as a label — it is a span attribute only"
         );
     }
 
@@ -590,8 +579,8 @@ mod tests {
     // ── G_v012_6: token_tracking_chat_cost_correct ───────────────────────────
 
     /// G_v012_6 — Wrap mock(200, 300) with provider="openai" model="gpt-4o-mini".
-    /// Initialize PROVIDER_RATES from bundled. Assert cost increment equals
-    /// (200 × 0.00015 + 300 × 0.0006) / 1000 × 1_000_000 micro-USD (±1 tolerance).
+    /// Initialize PROVIDER_RATES from bundled. Assert cost gauge increment equals
+    /// (200 + 300) * 0.0006 / 1000 USD (output rate as single rate per spec).
     #[test]
     fn token_tracking_chat_cost_correct() {
         // Initialize bundled rates (idempotent).
@@ -627,14 +616,12 @@ mod tests {
             });
         });
 
-        // Expected cost: (200 * 0.00015 + 300 * 0.0006) / 1000 * 1_000_000 micro-USD
-        // = (0.03 + 0.18) / 1000 * 1_000_000 = 0.21 * 1000 = 210 micro-USD
-        let expected_micro_usd: u64 =
-            ((200_f64 * 0.00015 + 300_f64 * 0.0006) / 1000.0 * 1_000_000.0) as u64;
+        // Expected cost: (200 + 300) * 0.0006 / 1000 = 500 * 0.0006 / 1000 = 0.0003 USD
+        let expected_usd: f64 = 500_f64 * 0.0006 / 1000.0;
 
         let snapshot = snapshotter.snapshot().into_vec();
 
-        let cost_counter = snapshot.iter().find(|(key, _, _, _)| {
+        let cost_gauge = snapshot.iter().find(|(key, _, _, _)| {
             key.key().name() == "kremory_core_cost_usd_total"
                 && key
                     .key()
@@ -642,22 +629,18 @@ mod tests {
                     .any(|l| l.key() == "provider" && l.value() == "openai")
         });
 
-        let actual = match cost_counter {
-            Some((_, _, _, metrics_util::debugging::DebugValue::Counter(n))) => *n,
-            Some(_) => panic!("kremory_core_cost_usd_total is not a counter"),
+        let actual = match cost_gauge {
+            Some((_, _, _, metrics_util::debugging::DebugValue::Gauge(f))) => *f,
+            Some(_) => panic!("kremory_core_cost_usd_total is not a gauge"),
             None => panic!(
-                "kremory_core_cost_usd_total was not emitted for openai/gpt-4o-mini; expected {expected_micro_usd} micro-USD"
+                "kremory_core_cost_usd_total was not emitted for openai/gpt-4o-mini; expected {expected_usd:.6} USD"
             ),
         };
 
-        let delta = if actual >= expected_micro_usd {
-            actual - expected_micro_usd
-        } else {
-            expected_micro_usd - actual
-        };
+        let delta = (actual - expected_usd).abs();
         assert!(
-            delta <= 1,
-            "cost counter {actual} micro-USD differs from expected {expected_micro_usd} by more than 1"
+            delta < 1e-9,
+            "cost gauge {actual:.9} USD differs from expected {expected_usd:.9} USD by {delta:.9}"
         );
     }
 }
