@@ -2,7 +2,7 @@
 //!
 //! Verifies that submit_dream_phase with a DashMap-backed StubIdempotentHandle
 //! correctly deduplicates 100 concurrent submits with the same
-//! (workspace_id, thread_id, batch_id) key, returning exactly one unique run_id.
+//! (namespace, thread, batch_id) key, returning exactly one unique run_id.
 //!
 //! This test exercises the CAS pattern documented in ADR §2.10:
 //! "DashMap::entry(key).or_insert_with(|| new_run_state)" — the closure only
@@ -18,8 +18,8 @@ use kremory::memory::{
     submit_dream_phase,
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, IngestStatus, RetrievedContext, SearchOpts, SourceRef,
-        StructuredFact, SubmitOpts, WorkspaceScope,
+        DreamStatus, EpisodeCommit, IngestStatus, Namespace, RetrievedContext, SearchOpts,
+        SourceRef, StructuredFact, SubmitOpts,
     },
     ChatProvider, GraphHandle,
 };
@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 #[derive(Default)]
 struct StubIdempotentHandle {
-    /// (workspace_id, thread_id_or_empty, batch_id_or_empty) → DreamHandle.
+    /// (namespace, thread_or_empty, batch_id_or_empty) → DreamHandle.
     active_runs: DashMap<(String, String, String), DreamHandle>,
 }
 
@@ -37,7 +37,7 @@ struct StubIdempotentHandle {
 impl GraphHandle for StubIdempotentHandle {
     async fn graph_ingest_episode(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         source_ref: &SourceRef,
         _content: &str,
         _structured_facts: &[StructuredFact],
@@ -70,15 +70,15 @@ impl GraphHandle for StubIdempotentHandle {
 
     async fn graph_submit_dream(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
         batch_id: Option<String>,
         _opts: DreamOpts,
         _sink: Option<Arc<dyn EnrichmentEventSink>>,
     ) -> kremory::memory::types::Result<DreamHandle> {
         let key = (
-            scope.workspace_id.clone(),
-            scope.thread_id.clone().unwrap_or_default(),
+            namespace.namespace.clone(),
+            namespace.thread.clone().unwrap_or_default(),
             batch_id.clone().unwrap_or_default(),
         );
 
@@ -86,7 +86,7 @@ impl GraphHandle for StubIdempotentHandle {
         // fires once even under 100 concurrent callers on the same key.
         let entry = self.active_runs.entry(key).or_insert_with(|| DreamHandle {
             run_id: Uuid::new_v4(),
-            scope: scope.clone(),
+            namespace: namespace.clone(),
             submitted_at: Utc::now(),
             batch_id,
         });
@@ -115,28 +115,28 @@ impl GraphHandle for StubIdempotentHandle {
 
     async fn graph_last_consolidated_at(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<Option<chrono::DateTime<Utc>>> {
         Ok(None)
     }
 
     async fn graph_episodes_since_last_dream(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<usize> {
         Ok(0)
     }
 
     async fn graph_is_consolidating(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<bool> {
         Ok(false)
     }
 
     async fn graph_search(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _query: &str,
         _opts: &SearchOpts,
     ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
@@ -145,7 +145,7 @@ impl GraphHandle for StubIdempotentHandle {
 
     async fn graph_run_consolidation(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
     ) -> kremory::memory::types::Result<DreamPhaseResult> {
         Ok(DreamPhaseResult::default())
@@ -156,7 +156,7 @@ fn null_provider() -> Arc<dyn ChatProvider> {
     Arc::new(kremory::core::provider::MockChatProvider::null())
 }
 
-/// 100 concurrent submit_dream_phase calls with same (workspace_id, thread_id,
+/// 100 concurrent submit_dream_phase calls with same (namespace, thread,
 /// batch_id) key MUST produce exactly 1 unique run_id.
 ///
 /// This test MUST pass 5 consecutive runs (no flakiness from race condition).
@@ -165,7 +165,7 @@ fn null_provider() -> Arc<dyn ChatProvider> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn submit_dream_phase_idempotency_under_concurrency() {
     let handle = Arc::new(StubIdempotentHandle::default());
-    let scope = WorkspaceScope::with_thread("ws-concurrent", "thread-concurrent");
+    let scope = Namespace::new("ws-concurrent").with_thread("thread-concurrent");
     let batch_id = Some("batch-concurrent-001".to_string());
 
     let futures: Vec<_> = (0..100)
@@ -197,7 +197,7 @@ async fn submit_dream_phase_idempotency_under_concurrency() {
         unique_run_ids.len(),
         1,
         "100 concurrent submits with same (workspace_id, thread_id, batch_id) key MUST \
-         produce exactly 1 unique run_id — CAS deduplication failed"
+         produce exactly 1 unique run_id — CAS deduplication failed (namespace key)"
     );
 }
 
@@ -206,7 +206,7 @@ async fn submit_dream_phase_idempotency_under_concurrency() {
 #[tokio::test]
 async fn submit_dream_phase_different_batch_ids_produce_different_runs() {
     let handle = StubIdempotentHandle::default();
-    let scope = WorkspaceScope::new("ws-distinct");
+    let scope = Namespace::new("ws-distinct");
 
     let h1 = submit_dream_phase(
         &handle,
@@ -240,7 +240,7 @@ async fn submit_dream_phase_different_batch_ids_produce_different_runs() {
 #[tokio::test]
 async fn submit_dream_phase_same_key_returns_existing_handle() {
     let handle = StubIdempotentHandle::default();
-    let scope = WorkspaceScope::with_thread("ws-reuse", "thread-reuse");
+    let scope = Namespace::new("ws-reuse").with_thread("thread-reuse");
     let batch_id = Some("batch-reuse".to_string());
 
     let h1 = submit_dream_phase(

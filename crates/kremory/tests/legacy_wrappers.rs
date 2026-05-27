@@ -17,8 +17,8 @@ use kremory::memory::{
     events::EnrichmentEventSink,
     types::{
         BatchStatus, CancelOutcome, DreamHandle, DreamOpts, DreamPhaseResult, DreamStatus,
-        EpisodeCommit, IngestResult, RetrievedContext, SearchOpts, SourceKind, SourceRef,
-        StructuredFact, SubmitOpts, WorkspaceScope,
+        EpisodeCommit, IngestResult, Namespace, RetrievedContext, SearchOpts, SourceKind,
+        SourceRef, StructuredFact, SubmitOpts,
     },
     ChatProvider, GraphHandle,
 };
@@ -32,7 +32,7 @@ struct LegacyStub;
 impl GraphHandle for LegacyStub {
     async fn graph_ingest_episode(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         source_ref: &SourceRef,
         _content: &str,
         _structured_facts: &[StructuredFact],
@@ -61,7 +61,7 @@ impl GraphHandle for LegacyStub {
 
     async fn graph_submit_dream(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
         batch_id: Option<String>,
         _opts: DreamOpts,
@@ -69,7 +69,7 @@ impl GraphHandle for LegacyStub {
     ) -> kremory::memory::types::Result<DreamHandle> {
         Ok(DreamHandle {
             run_id: Uuid::new_v4(),
-            scope: scope.clone(),
+            namespace: namespace.clone(),
             submitted_at: Utc::now(),
             batch_id,
         })
@@ -96,28 +96,28 @@ impl GraphHandle for LegacyStub {
 
     async fn graph_last_consolidated_at(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<Option<chrono::DateTime<Utc>>> {
         Ok(None)
     }
 
     async fn graph_episodes_since_last_dream(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<usize> {
         Ok(0)
     }
 
     async fn graph_is_consolidating(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<bool> {
         Ok(false)
     }
 
     async fn graph_search(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _query: &str,
         _opts: &SearchOpts,
     ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
@@ -126,7 +126,7 @@ impl GraphHandle for LegacyStub {
 
     async fn graph_run_consolidation(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
     ) -> kremory::memory::types::Result<DreamPhaseResult> {
         Ok(DreamPhaseResult::default())
@@ -148,7 +148,7 @@ async fn legacy_ingest_episode_compiles_and_returns_stub_counts() {
     use kremory::memory::ingest_episode;
 
     let handle = LegacyStub;
-    let scope = WorkspaceScope::new("ws-legacy");
+    let scope = Namespace::new("ws-legacy");
     let source_ref = SourceRef {
         kind: SourceKind::Meeting,
         id: "mtg-legacy".into(),
@@ -184,7 +184,7 @@ async fn legacy_run_dream_phase_compiles_and_delegates() {
     use kremory::memory::run_dream_phase;
 
     let handle = LegacyStub;
-    let scope = WorkspaceScope::new("ws-legacy-dream");
+    let scope = Namespace::new("ws-legacy-dream");
 
     let result = run_dream_phase(&handle, scope, null_provider())
         .await
@@ -216,7 +216,7 @@ async fn legacy_ingest_episode_is_deprecated_and_functional() {
     use kremory::memory::ingest_episode;
 
     let handle = LegacyStub;
-    let scope = WorkspaceScope::new("ws-deprecated");
+    let scope = Namespace::new("ws-deprecated");
     let source_ref = SourceRef {
         kind: SourceKind::Chat,
         id: "chat-deprecated".into(),

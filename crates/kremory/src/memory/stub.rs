@@ -45,8 +45,8 @@ use super::{
     graph::GraphHandle,
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, RetrievedContext, SearchOpts, SourceRef, StructuredFact,
-        SubmitOpts, WorkspaceScope,
+        DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef,
+        StructuredFact, SubmitOpts,
     },
     ChatProvider, Result,
 };
@@ -69,7 +69,7 @@ pub struct StubGraphHandle;
 impl GraphHandle for StubGraphHandle {
     async fn graph_ingest_episode(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _source_ref: &SourceRef,
         _content: &str,
         _structured_facts: &[StructuredFact],
@@ -91,7 +91,7 @@ impl GraphHandle for StubGraphHandle {
 
     async fn graph_submit_dream(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
         _batch_id: Option<String>,
         _opts: DreamOpts,
@@ -110,24 +110,24 @@ impl GraphHandle for StubGraphHandle {
 
     async fn graph_last_consolidated_at(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> Result<Option<DateTime<Utc>>> {
         unimplemented!("StubGraphHandle::graph_last_consolidated_at — provide a concrete stub");
     }
 
-    async fn graph_episodes_since_last_dream(&self, _scope: &WorkspaceScope) -> Result<usize> {
+    async fn graph_episodes_since_last_dream(&self, _namespace: &Namespace) -> Result<usize> {
         unimplemented!(
             "StubGraphHandle::graph_episodes_since_last_dream — provide a concrete stub"
         );
     }
 
-    async fn graph_is_consolidating(&self, _scope: &WorkspaceScope) -> Result<bool> {
+    async fn graph_is_consolidating(&self, _namespace: &Namespace) -> Result<bool> {
         unimplemented!("StubGraphHandle::graph_is_consolidating — provide a concrete stub");
     }
 
     async fn graph_search(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _query: &str,
         _opts: &SearchOpts,
     ) -> Result<Vec<RetrievedContext>> {
@@ -136,7 +136,7 @@ impl GraphHandle for StubGraphHandle {
 
     async fn graph_run_consolidation(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
     ) -> Result<DreamPhaseResult> {
         unimplemented!("StubGraphHandle::graph_run_consolidation — provide a concrete stub");

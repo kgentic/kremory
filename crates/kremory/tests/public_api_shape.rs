@@ -15,7 +15,7 @@ use kremory::memory::{
     events::EnrichmentEventSink,
     types::{
         AwaitOpts, BatchStatus, DreamHandle, DreamOpts, DreamStatus, EpisodeCommit, IngestStatus,
-        SubmitOpts, WorkspaceScope,
+        Namespace, SubmitOpts,
     },
     GraphHandle,
 };
@@ -38,7 +38,7 @@ struct StubHandle;
 impl GraphHandle for StubHandle {
     async fn graph_ingest_episode(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         source_ref: &SourceRef,
         _content: &str,
         _structured_facts: &[StructuredFact],
@@ -71,7 +71,7 @@ impl GraphHandle for StubHandle {
 
     async fn graph_submit_dream(
         &self,
-        scope: &WorkspaceScope,
+        namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
         batch_id: Option<String>,
         _opts: DreamOpts,
@@ -79,7 +79,7 @@ impl GraphHandle for StubHandle {
     ) -> kremory::memory::types::Result<DreamHandle> {
         Ok(DreamHandle {
             run_id: Uuid::new_v4(),
-            scope: scope.clone(),
+            namespace: namespace.clone(),
             submitted_at: Utc::now(),
             batch_id,
         })
@@ -106,28 +106,28 @@ impl GraphHandle for StubHandle {
 
     async fn graph_last_consolidated_at(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<Option<chrono::DateTime<Utc>>> {
         Ok(None)
     }
 
     async fn graph_episodes_since_last_dream(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<usize> {
         Ok(0)
     }
 
     async fn graph_is_consolidating(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
     ) -> kremory::memory::types::Result<bool> {
         Ok(false)
     }
 
     async fn graph_search(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _query: &str,
         _opts: &SearchOpts,
     ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
@@ -136,7 +136,7 @@ impl GraphHandle for StubHandle {
 
     async fn graph_run_consolidation(
         &self,
-        _scope: &WorkspaceScope,
+        _namespace: &Namespace,
         _provider: Arc<dyn ChatProvider>,
     ) -> kremory::memory::types::Result<DreamPhaseResult> {
         Ok(DreamPhaseResult::default())
@@ -156,7 +156,7 @@ async fn submit_episode_signature_compiles() {
     use kremory::memory::types::{SourceKind, SourceRef};
 
     let handle = StubHandle;
-    let scope = WorkspaceScope::with_thread("ws-a", "thread-a");
+    let scope = Namespace::new("ws-a").with_thread("thread-a");
     let source_ref = SourceRef {
         kind: SourceKind::Meeting,
         id: "mtg-1".into(),
@@ -184,7 +184,7 @@ async fn submit_episode_signature_compiles() {
 #[tokio::test]
 async fn submit_dream_phase_signature_compiles() {
     let handle = StubHandle;
-    let scope = WorkspaceScope::new("ws-b");
+    let scope = Namespace::new("ws-b");
 
     let dream = submit_dream_phase(
         &handle,
