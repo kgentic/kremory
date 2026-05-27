@@ -44,7 +44,7 @@ pub struct ExtractionWindowConfig {
     /// `rust-pipeline::PipelineConfig` (1500 chars).
     pub max_tokens: usize,
 
-    /// Number of words from the end of chunk[i] to prepend to chunk[i+1].
+    /// Number of words from the end of `chunk[i]` to prepend to `chunk[i+1]`.
     /// Default: 50 words.  Graphiti uses 200/3000 (6.7%); ours is 50/300
     /// (16.7%) — slightly higher overlap compensates for smaller chunks.
     pub overlap_tokens: usize,
