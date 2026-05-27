@@ -6,12 +6,6 @@ use tokio::sync::Mutex;
 
 use crate::core::error::Result;
 
-/// Dirty flag: set to `true` by write paths after a successful commit.
-/// `SpeculativeCache` reads and clears this flag to invalidate tier-2 cache
-/// entries. Process-global because there is one engine per process (ADR-007).
-/// Story #215.
-pub static DIRTY: AtomicBool = AtomicBool::new(false);
-
 /// Last TTL sweep timestamp as Unix milliseconds. Zero = never swept.
 /// CAS-protected — only one goroutine wins the sweep window. Story #235.
 pub static LAST_TTL_SWEEP: AtomicI64 = AtomicI64::new(0);
@@ -120,7 +114,10 @@ impl<'a> BeginGuard<'a> {
         self.dispatched = true;
         if self.opened {
             self.graph.conn.execute("COMMIT", ()).await?;
-            DIRTY.store(true, Ordering::Release);
+            // Per-handle dirty flag — only this graph handle's flag is set,
+            // not a process-global. FU.6: prevents one TG instance's writes
+            // from invalidating another's speculative cache.
+            self.graph.dirty.store(true, Ordering::Release);
             self.graph
                 .has_outer_transaction
                 .store(false, Ordering::Release);
@@ -167,6 +164,12 @@ pub struct TemporalGraph {
     /// `true` when a `BEGIN IMMEDIATE` is already active on this connection.
     /// Used by `begin_immediate_if_needed` to skip nested BEGIN. Story #246.
     pub(crate) has_outer_transaction: AtomicBool,
+    /// Per-handle dirty flag. Set to `true` by `BeginGuard::commit()` after a
+    /// successful write. `flush_if_dirty()` CAS-clears it and checkpoints.
+    /// `SpeculativeCache::check_dirty_and_invalidate()` takes `&Arc<AtomicBool>`
+    /// from this field so cache invalidation is scoped to the owning graph handle,
+    /// not the process. Story #215 / FU.6 (per-handle not global).
+    pub(crate) dirty: Arc<AtomicBool>,
 }
 
 impl TemporalGraph {
@@ -179,6 +182,7 @@ impl TemporalGraph {
             conn,
             write_lock: Arc::new(Mutex::new(())),
             has_outer_transaction: AtomicBool::new(false),
+            dirty: Arc::new(AtomicBool::new(false)),
         };
         graph.run_migrations().await?;
         Ok(graph)
@@ -192,6 +196,7 @@ impl TemporalGraph {
             conn,
             write_lock: Arc::new(Mutex::new(())),
             has_outer_transaction: AtomicBool::new(false),
+            dirty: Arc::new(AtomicBool::new(false)),
         };
         graph.run_migrations().await?;
         Ok(graph)
@@ -238,11 +243,13 @@ impl TemporalGraph {
     /// last flush), returns immediately without touching the connection.
     ///
     /// Called by background task and shutdown path — never on the hot write path.
-    /// Story #215.
+    /// Story #215. Returns `Result<()>` to propagate DB errors from the WAL
+    /// checkpoint step (rationale: `bool` would hide checkpoint failures).
     pub async fn flush_if_dirty(&self) -> Result<()> {
         // CAS old=true → new=false. Ok → we won the race and must flush.
         // Err → flag was already false; nothing to do.
-        if DIRTY
+        if self
+            .dirty
             .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
@@ -530,6 +537,15 @@ impl TemporalGraph {
     pub async fn run_migrations_again_for_test(&self) -> Result<()> {
         self.run_migrations().await
     }
+
+    /// Return a shared reference to the per-handle dirty flag.
+    ///
+    /// For use in tests that need to observe or arm the flag without going
+    /// through a full write cycle. Only available in test/test-utils context.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn dirty_flag(&self) -> &Arc<AtomicBool> {
+        &self.dirty
+    }
 }
 
 #[cfg(test)]
@@ -605,36 +621,35 @@ mod schema_tests {
         );
     }
 
-    /// Story #215: flush_if_dirty() called twice without intervening write only
-    /// checkpoints once — second call is a no-op (DIRTY already cleared).
+    /// Story #215 / FU.6: flush_if_dirty() called twice without intervening write
+    /// only checkpoints once — second call is a no-op (per-handle dirty cleared).
+    ///
+    /// Uses `graph.dirty_flag()` to observe the per-handle flag directly —
+    /// no global DIRTY needed (FU.6: static was removed in favour of per-handle).
     #[tokio::test]
     async fn flush_if_dirty_double_call_only_flushes_once() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let dirty = graph.dirty_flag();
 
-        // Simulate a write having set DIRTY.
-        DIRTY.store(true, Ordering::Release);
+        // Simulate a write having set the per-handle dirty flag.
+        dirty.store(true, Ordering::Release);
 
-        // First flush: DIRTY was true → checkpoints, clears flag.
+        // First flush: flag was true → checkpoints, clears flag.
         graph.flush_if_dirty().await.expect("first flush");
         assert!(
-            !DIRTY.load(Ordering::Acquire),
-            "DIRTY must be false after first flush"
+            !dirty.load(Ordering::Acquire),
+            "dirty must be false after first flush"
         );
 
-        // Second flush: DIRTY already false → no checkpoint, no-op.
-        // We can't observe the checkpoint skip directly, but we can verify
-        // the method succeeds and DIRTY stays false (not toggled).
+        // Second flush: flag already false → no checkpoint, no-op.
         graph.flush_if_dirty().await.expect("second flush");
         assert!(
-            !DIRTY.load(Ordering::Acquire),
-            "DIRTY must remain false after no-op second flush"
+            !dirty.load(Ordering::Acquire),
+            "dirty must remain false after no-op second flush"
         );
-
-        // Restore DIRTY to false for test isolation (it starts false but make explicit).
-        DIRTY.store(false, Ordering::Release);
+        // No cleanup needed — per-handle flag is isolated to this graph instance.
     }
 
     /// G3 gate: DDL must use `recorded_at` not `created_at`. Story #A1.

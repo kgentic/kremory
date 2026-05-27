@@ -34,12 +34,12 @@
 //! *Invalidation contract*: automatic (scope drop).
 
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::core::error::Result;
-use crate::core::schema::{Entity, TemporalGraph, DIRTY};
+use crate::core::schema::{Entity, TemporalGraph};
 use crate::core::search::SearchHit;
 
 /// A cached entity with its pre-computed PageRank score and expiry time.
@@ -89,23 +89,27 @@ impl SpeculativeCache {
         }
     }
 
-    /// Atomically check the global `DIRTY` flag and, if set, clear all cached
-    /// entries and reset the flag.
+    /// Atomically check the per-handle `dirty` flag and, if set, clear all
+    /// cached entries and reset the flag.
     ///
-    /// Returns `true` if the cache was invalidated (DIRTY was true), `false`
+    /// Returns `true` if the cache was invalidated (dirty was true), `false`
     /// if it was already clean (no-op).
     ///
     /// Uses `swap(false, AcqRel)` so the read and the reset are one atomic
     /// operation — no TOCTOU window between observing `true` and clearing it.
     ///
-    /// Called automatically at the entry of every read method (`get`,
-    /// `get_many`) so callers never need to check DIRTY themselves.
-    pub(crate) fn check_dirty_and_invalidate(&self) -> bool {
-        // Atomic swap: set DIRTY = false and get the previous value.
+    /// The `dirty` parameter is the per-handle `AtomicBool` from `TemporalGraph`.
+    /// Passing it explicitly (rather than reading a global) ensures cache
+    /// invalidation is scoped to the owning graph handle — FU.6 fix.
+    ///
+    /// Called automatically at the entry of every read method (`get`, `get_many`)
+    /// so callers never need to check the dirty flag themselves.
+    pub(crate) fn check_dirty_and_invalidate(&self, dirty: &AtomicBool) -> bool {
+        // Atomic swap: set dirty = false and get the previous value.
         // AcqRel: the Acquire half ensures all prior writes (the graph mutation
-        // that set DIRTY) are visible before we clear; the Release half ensures
+        // that set dirty) are visible before we clear; the Release half ensures
         // the cache.clear() below is visible to all subsequent reads.
-        let was_dirty = DIRTY.swap(false, Ordering::AcqRel);
+        let was_dirty = dirty.swap(false, Ordering::AcqRel);
         if was_dirty {
             self.entries
                 .lock()
@@ -119,10 +123,12 @@ impl SpeculativeCache {
 
     /// Check cache for an entity by ID. Returns Some if cached and not expired.
     ///
-    /// Calls `check_dirty_and_invalidate` at entry — if `DIRTY` was set by a
-    /// concurrent write, this returns `None` without exposing stale data.
-    pub fn get(&self, entity_id: &str) -> Option<(Entity, f64)> {
-        if self.check_dirty_and_invalidate() {
+    /// Calls `check_dirty_and_invalidate` at entry — if the per-handle dirty
+    /// flag was set by a concurrent write, returns `None` without exposing stale data.
+    ///
+    /// `dirty` is the per-handle flag from the owning `TemporalGraph::dirty` field.
+    pub fn get(&self, dirty: &AtomicBool, entity_id: &str) -> Option<(Entity, f64)> {
+        if self.check_dirty_and_invalidate(dirty) {
             return None;
         }
         let entries = self.entries.lock().unwrap_or_else(|poisoned| {
@@ -138,10 +144,12 @@ impl SpeculativeCache {
 
     /// Check cache for multiple entity IDs. Returns cached hits sorted by PageRank descending.
     ///
-    /// Calls `check_dirty_and_invalidate` at entry — if `DIRTY` was set by a
-    /// concurrent write, this returns an empty `Vec` without exposing stale data.
-    pub fn get_many(&self, entity_ids: &[&str]) -> Vec<SearchHit<Entity>> {
-        if self.check_dirty_and_invalidate() {
+    /// Calls `check_dirty_and_invalidate` at entry — if the per-handle dirty
+    /// flag was set by a concurrent write, returns empty `Vec` without stale data.
+    ///
+    /// `dirty` is the per-handle flag from the owning `TemporalGraph::dirty` field.
+    pub fn get_many(&self, dirty: &AtomicBool, entity_ids: &[&str]) -> Vec<SearchHit<Entity>> {
+        if self.check_dirty_and_invalidate(dirty) {
             return Vec::new();
         }
         let entries = self.entries.lock().unwrap_or_else(|poisoned| {
@@ -338,12 +346,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_prefetch_populates_cache() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        // Guard after setup: insert_entity/insert_fact commits set DIRTY=true.
-        DIRTY.store(false, Ordering::Release);
+        let dirty = g.dirty_flag();
+        // Reset: insert_entity/insert_fact commits set dirty=true.
+        dirty.store(false, Ordering::Release);
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
 
         let count = cache
@@ -353,26 +361,26 @@ mod tests {
         assert!(count > 0, "should prefetch neighbours of project_alpha");
         assert!(cache.len() > 0, "cache should have entries");
 
-        // Guard before reads: concurrent tests may set DIRTY during prefetch.
-        DIRTY.store(false, Ordering::Release);
+        // Reset before reads so prefetch entries survive.
+        dirty.store(false, Ordering::Release);
         // alice and bob are 1-hop neighbours of project_alpha
         assert!(
-            cache.get("alice").is_some(),
+            cache.get(dirty, "alice").is_some(),
             "alice should be cached (1-hop from project_alpha)"
         );
         assert!(
-            cache.get("bob").is_some(),
+            cache.get(dirty, "bob").is_some(),
             "bob should be cached (1-hop from project_alpha)"
         );
     }
 
     #[tokio::test]
     async fn test_prefetch_reaches_two_hops() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        DIRTY.store(false, Ordering::Release);
+        let dirty = g.dirty_flag();
+        dirty.store(false, Ordering::Release);
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
 
         cache
@@ -380,24 +388,22 @@ mod tests {
             .await
             .unwrap();
 
-        // Guard again immediately before read: prefetch is read-only but
-        // concurrent tests in other modules may have set DIRTY between our
-        // post-setup reset and this point.
-        DIRTY.store(false, Ordering::Release);
+        // Reset before read so prefetch entries survive.
+        dirty.store(false, Ordering::Release);
         // acme is 2 hops from project_alpha (project_alpha -> alice -> acme)
         assert!(
-            cache.get("acme").is_some(),
+            cache.get(dirty, "acme").is_some(),
             "acme should be cached (2-hop via alice)"
         );
     }
 
     #[tokio::test]
     async fn test_prefetch_excludes_seed_entities() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        DIRTY.store(false, Ordering::Release);
+        let dirty = g.dirty_flag();
+        dirty.store(false, Ordering::Release);
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
 
         cache
@@ -405,20 +411,21 @@ mod tests {
             .await
             .unwrap();
 
+        dirty.store(false, Ordering::Release);
         // project_alpha is the seed — should NOT be in cache (it's already in search results)
         assert!(
-            cache.get("project_alpha").is_none(),
+            cache.get(dirty, "project_alpha").is_none(),
             "seed entity should not be cached"
         );
     }
 
     #[tokio::test]
     async fn test_cache_ttl_expiry() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        DIRTY.store(false, Ordering::Release);
+        let dirty = g.dirty_flag();
+        dirty.store(false, Ordering::Release);
         // Very short TTL for testing
         let cache = SpeculativeCache::new(Duration::from_millis(1), 2, 50);
 
@@ -431,15 +438,14 @@ mod tests {
         // Wait for TTL to expire
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        // Reset DIRTY after sleep: concurrent test commits during the sleep
-        // window may have set DIRTY=true. We want the TTL path, not the dirty
-        // path — both return None for get(), but dirty clears before evict,
+        // Reset dirty after sleep — we want the TTL path, not the dirty path.
+        // Both return None for get(), but dirty clears before evict,
         // making evict_expired() return 0.
-        DIRTY.store(false, Ordering::Release);
+        dirty.store(false, Ordering::Release);
 
         // Individual gets should return None (TTL expired)
         assert!(
-            cache.get("alice").is_none(),
+            cache.get(dirty, "alice").is_none(),
             "expired entry should return None"
         );
 
@@ -451,11 +457,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_many_returns_sorted_by_pagerank() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        DIRTY.store(false, Ordering::Release);
+        let dirty = g.dirty_flag();
+        dirty.store(false, Ordering::Release);
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
 
         cache
@@ -463,9 +469,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Guard before read: concurrent tests may set DIRTY during prefetch.
-        DIRTY.store(false, Ordering::Release);
-        let hits = cache.get_many(&["alice", "bob", "acme"]);
+        // Reset before read so prefetch entries survive.
+        dirty.store(false, Ordering::Release);
+        let hits = cache.get_many(dirty, &["alice", "bob", "acme"]);
         assert!(!hits.is_empty());
         // Results should be sorted by pagerank descending
         for i in 1..hits.len() {
@@ -478,11 +484,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_prefetch_limits_cache_size() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        DIRTY.store(false, Ordering::Release);
+        let dirty = g.dirty_flag();
+        dirty.store(false, Ordering::Release);
         // Only allow 2 entries max
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 2);
 
@@ -508,13 +514,13 @@ mod tests {
     /// the FU.2 AC tests (below) verify the no-manual-clear path.
     #[tokio::test]
     async fn tier2_cache_stale_data_evicted_after_dirty_write() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        // Guard after setup: insert_entity/insert_fact commits set DIRTY=true;
+        let dirty = g.dirty_flag();
+        // Reset: insert_entity/insert_fact commits set dirty=true;
         // reset so the warm-check is not consumed before the deliberate write.
-        DIRTY.store(false, Ordering::Release);
+        dirty.store(false, Ordering::Release);
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
 
         // Step 1: warm the cache.
@@ -522,25 +528,25 @@ mod tests {
             .prefetch(&g, &["project_alpha".to_string()])
             .await
             .expect("prefetch");
-        // Guard before warm-check: concurrent tests may set DIRTY during prefetch.
-        DIRTY.store(false, Ordering::Release);
+        // Reset before warm-check.
+        dirty.store(false, Ordering::Release);
         assert!(
-            cache.get("alice").is_some(),
+            cache.get(dirty, "alice").is_some(),
             "cache should be warm with alice before write"
         );
 
-        // Step 2: simulate a write by setting DIRTY.
-        DIRTY.store(true, Ordering::Release);
+        // Step 2: simulate a write by setting the per-handle dirty flag.
+        dirty.store(true, Ordering::Release);
 
         // Step 3: manual eviction path (backward-compat — still valid).
         // FU.2 auto-wiring means the next get() would also do this; manual
         // clear() here exercises the explicit eviction branch.
         cache.clear();
-        DIRTY.store(false, Ordering::Release);
+        dirty.store(false, Ordering::Release);
 
         // Step 4: cache must return None — no stale tier-2 read.
         assert!(
-            cache.get("alice").is_none(),
+            cache.get(dirty, "alice").is_none(),
             "after write + eviction, cache must not return stale data"
         );
     }
@@ -549,52 +555,51 @@ mod tests {
     // FU.2 — Story #149 Steps 2+3: check_dirty_and_invalidate + auto-wiring
     // -------------------------------------------------------------------------
 
-    /// FU.2 AC1+AC2: setting DIRTY then calling get() returns None without any
+    /// FU.2 AC1+AC2: setting dirty then calling get() returns None without any
     /// manual clear() call — auto-invalidation fires inside get().
     #[tokio::test]
     async fn cache_get_returns_none_when_dirty_set() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        // Guard after setup: commits in setup_graph set DIRTY=true; reset so
-        // the warm-check is not auto-invalidated before the deliberate write.
-        DIRTY.store(false, Ordering::Release);
+        let dirty = g.dirty_flag();
+        // Reset: commits in setup_graph set dirty=true; reset so the
+        // warm-check is not auto-invalidated before the deliberate write.
+        dirty.store(false, Ordering::Release);
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
 
         cache
             .prefetch(&g, &["project_alpha".to_string()])
             .await
             .expect("prefetch");
-        // Guard again immediately before warm-check: concurrent tests may set
-        // DIRTY between our post-setup reset and this assertion.
-        DIRTY.store(false, Ordering::Release);
+        // Reset again before warm-check.
+        dirty.store(false, Ordering::Release);
         assert!(
-            cache.get("alice").is_some(),
+            cache.get(dirty, "alice").is_some(),
             "pre-condition: alice in cache before write"
         );
 
-        // Simulate a graph write — caller sets DIRTY, cache wires the rest.
-        DIRTY.store(true, Ordering::Release);
+        // Simulate a graph write — caller sets dirty, cache wires the rest.
+        dirty.store(true, Ordering::Release);
 
         // No manual clear(). get() must auto-invalidate and return None.
         assert!(
-            cache.get("alice").is_none(),
-            "get() must return None when DIRTY was true, without a manual clear()"
+            cache.get(dirty, "alice").is_none(),
+            "get() must return None when dirty was true, without a manual clear()"
         );
     }
 
-    /// FU.2 AC3 (atomic reset): after the first get() that observes DIRTY=true,
-    /// DIRTY must be reset to false — no second invalidation needed.
+    /// FU.2 AC3 (atomic reset): after the first get() that observes dirty=true,
+    /// the flag must be reset to false — no second invalidation needed.
     #[tokio::test]
     async fn cache_get_resets_dirty_atomically() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
-        // Guard after setup: commits in setup_graph set DIRTY=true; reset so
+        let dirty = g.dirty_flag();
+        // Reset: commits in setup_graph set dirty=true; reset so
         // prefetch's warm-up is not immediately invalidated.
-        DIRTY.store(false, Ordering::Release);
+        dirty.store(false, Ordering::Release);
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
 
         cache
@@ -602,33 +607,33 @@ mod tests {
             .await
             .expect("prefetch");
 
-        // Explicitly arm DIRTY immediately before the assertion sequence.
-        DIRTY.store(true, Ordering::Release);
+        // Arm dirty immediately before the assertion sequence.
+        dirty.store(true, Ordering::Release);
         // First get observes dirty and resets the flag.
-        let _ = cache.get("alice");
+        let _ = cache.get(dirty, "alice");
 
         assert!(
-            !DIRTY.load(Ordering::Acquire),
-            "DIRTY must be false after get() consumed the flag"
+            !dirty.load(Ordering::Acquire),
+            "dirty must be false after get() consumed the flag"
         );
     }
 
-    /// FU.2 AC3 (concurrent swap): N threads race to call get() while
-    /// DIRTY=true. Exactly one swap wins (sees `was_dirty=true`); all others
+    /// FU.2 AC3 (concurrent swap): N threads race to call check_dirty_and_invalidate()
+    /// while dirty=true. Exactly one swap wins (sees `was_dirty=true`); all others
     /// see `was_dirty=false`. The test verifies the cache ends up consistently
-    /// empty (no stale data) and DIRTY is false afterward.
+    /// empty (no stale data) and dirty is false afterward.
     #[tokio::test]
     async fn cache_get_concurrent_dirty_set_at_most_one_invalidation() {
-        use crate::core::schema::DIRTY;
         use std::sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
         };
 
         let g = setup_graph().await;
-        // Guard after setup: commits in setup_graph set DIRTY=true; reset so
+        let dirty = Arc::clone(g.dirty_flag());
+        // Reset: commits in setup_graph set dirty=true; reset so
         // prefetch entries survive into the concurrent phase.
-        DIRTY.store(false, Ordering::Release);
+        dirty.store(false, Ordering::Release);
         let cache = Arc::new(SpeculativeCache::new(Duration::from_secs(60), 2, 50));
 
         cache
@@ -637,7 +642,7 @@ mod tests {
             .expect("prefetch");
 
         // Arm the dirty flag before spawning threads.
-        DIRTY.store(true, Ordering::Release);
+        dirty.store(true, Ordering::Release);
 
         // Count how many threads observe `was_dirty=true` (i.e. win the swap).
         let winners = Arc::new(AtomicUsize::new(0));
@@ -646,9 +651,10 @@ mod tests {
         let mut handles = Vec::with_capacity(n_threads);
         for _ in 0..n_threads {
             let cache_clone = Arc::clone(&cache);
+            let dirty_clone = Arc::clone(&dirty);
             let winners_clone = Arc::clone(&winners);
             handles.push(tokio::spawn(async move {
-                let was_dirty = cache_clone.check_dirty_and_invalidate();
+                let was_dirty = cache_clone.check_dirty_and_invalidate(&dirty_clone);
                 if was_dirty {
                     winners_clone.fetch_add(1, Ordering::Relaxed);
                 }
@@ -664,10 +670,10 @@ mod tests {
             1,
             "exactly one concurrent caller should observe was_dirty=true"
         );
-        // DIRTY must have been reset.
+        // dirty must have been reset.
         assert!(
-            !DIRTY.load(Ordering::Acquire),
-            "DIRTY must be false after concurrent invalidation"
+            !dirty.load(Ordering::Acquire),
+            "dirty must be false after concurrent invalidation"
         );
         // Cache must be empty — the winning thread cleared it.
         assert_eq!(
@@ -679,10 +685,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_cold_vs_cached_latency_difference() {
-        use crate::core::schema::DIRTY;
         use std::sync::atomic::Ordering;
 
         let g = setup_graph().await;
+        let dirty = g.dirty_flag();
         // Set embeddings for vector search
         let emb = |seed: f32| -> Vec<f32> {
             (0..384)
@@ -693,9 +699,9 @@ mod tests {
         g.set_entity_embedding("bob", &emb(1.5)).await.unwrap();
         g.set_entity_embedding("acme", &emb(2.0)).await.unwrap();
         g.set_entity_embedding("carol", &emb(3.0)).await.unwrap();
-        // Guard after all writes: commits set DIRTY=true; reset so prefetch
+        // Reset after all writes: commits set dirty=true; reset so prefetch
         // entries survive into the cached-lookup phase.
-        DIRTY.store(false, Ordering::Release);
+        dirty.store(false, Ordering::Release);
 
         // Cold search
         let cold_start = Instant::now();
@@ -709,13 +715,12 @@ mod tests {
         let cache = SpeculativeCache::new(Duration::from_secs(60), 2, 50);
         cache.prefetch(&g, &["alice".to_string()]).await.unwrap();
 
-        // Guard before cached lookup: concurrent test commits during cold search
-        // or prefetch may have set DIRTY=true between our post-setup reset and here.
-        DIRTY.store(false, Ordering::Release);
+        // Reset before cached lookup.
+        dirty.store(false, Ordering::Release);
 
         // Cached lookup
         let cache_start = Instant::now();
-        let cached_hits = cache.get_many(&["bob", "acme", "carol"]);
+        let cached_hits = cache.get_many(dirty, &["bob", "acme", "carol"]);
         let cache_duration = cache_start.elapsed();
 
         // Cache lookup should be significantly faster than cold search
