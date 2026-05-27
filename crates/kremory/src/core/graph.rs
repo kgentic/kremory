@@ -1043,13 +1043,21 @@ impl TemporalGraph {
     /// be identified via this function and re-embedded by the caller. The reverse
     /// ordering (vector-first) has NO recovery path — this is the entire
     /// justification for the SQLite-first contract.
+    /// Return all non-expired facts that are missing a vector embedding.
+    ///
+    /// Tuple layout: `(fact_id, subject_id, predicate, object_value, object_id)`.
+    ///
+    /// Both `object_value` and `object_id` are included so callers can build the
+    /// text-to-embed with the best available object representation:
+    /// prefer `object_id` (entity reference) over `object_value` (literal string)
+    /// when constructing the embedding input. Story #214 (FU.8).
     pub async fn facts_missing_embeddings(
         &self,
-    ) -> Result<Vec<(i64, String, String, Option<String>)>> {
+    ) -> Result<Vec<(i64, String, String, Option<String>, Option<String>)>> {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, subject_id, predicate, object_value FROM facts WHERE embedding IS NULL AND expired_at IS NULL",
+                "SELECT id, subject_id, predicate, object_value, object_id FROM facts WHERE embedding IS NULL AND expired_at IS NULL",
                 (),
             )
             .await?;
@@ -1059,7 +1067,8 @@ impl TemporalGraph {
             let subject_id: String = row.get(1)?;
             let predicate: String = row.get(2)?;
             let object_value: Option<String> = row.get(3)?;
-            out.push((id, subject_id, predicate, object_value));
+            let object_id: Option<String> = row.get(4)?;
+            out.push((id, subject_id, predicate, object_value, object_id));
         }
         Ok(out)
     }
@@ -2030,6 +2039,9 @@ mod tests {
 
     // === SQLite-first vector ordering backfill (Story #214) ===
 
+    /// FU.8: facts_missing_embeddings returns (id, subject_id, predicate,
+    /// object_value, object_id) — the 5-tuple now includes object_id so callers
+    /// can prefer the entity reference over the literal string.
     #[tokio::test]
     async fn facts_missing_embeddings_returns_all_null_embedding_facts() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -2037,7 +2049,7 @@ mod tests {
             .await
             .unwrap();
         let t = Utc::now();
-        // Insert a fact without embedding (None) — simulates SQLite-committed, vector-not-written
+        // Insert a fact with object_value only — simulates SQLite-committed, vector-not-written
         let fact_id = g
             .insert_fact("alice", "works_at", None, Some("ACME"), t, 1.0, None, None)
             .await
@@ -2045,7 +2057,13 @@ mod tests {
 
         let missing = g.facts_missing_embeddings().await.unwrap();
         assert_eq!(missing.len(), 1, "one fact has no embedding");
-        assert_eq!(missing[0].0, fact_id);
+        let (id, _sub, _pred, object_value, object_id) = &missing[0];
+        assert_eq!(*id, fact_id);
+        assert_eq!(object_value.as_deref(), Some("ACME"));
+        assert!(
+            object_id.is_none(),
+            "object_id must be None for literal-value fact"
+        );
 
         // Backfill with a stub embedding
         let embedding: Vec<f32> = vec![0.1_f32; 384];
@@ -2058,6 +2076,42 @@ mod tests {
         assert!(
             still_missing.is_empty(),
             "backfill must clear the missing-embedding list"
+        );
+    }
+
+    /// FU.8: facts with object_id (entity reference) expose the object_id in the
+    /// 5-tuple so callers can build the embedding text from the entity name rather
+    /// than a missing literal.
+    #[tokio::test]
+    async fn facts_missing_embeddings_includes_object_id() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        g.insert_entity("alice", "Person", serde_json::json!({}))
+            .await
+            .unwrap();
+        g.insert_entity("acme", "Company", serde_json::json!({}))
+            .await
+            .unwrap();
+        let t = Utc::now();
+        // Insert a fact with object_id (entity reference) — no object_value.
+        let fact_id = g
+            .insert_fact("alice", "works_at", Some("acme"), None, t, 1.0, None, None)
+            .await
+            .unwrap();
+
+        let missing = g.facts_missing_embeddings().await.unwrap();
+        let entry = missing
+            .iter()
+            .find(|(id, _, _, _, _)| *id == fact_id)
+            .expect("fact must appear in missing list");
+        let (_id, _sub, _pred, object_value, object_id) = entry;
+        assert!(
+            object_value.is_none(),
+            "object_value must be None for entity-ref fact"
+        );
+        assert_eq!(
+            object_id.as_deref(),
+            Some("acme"),
+            "object_id must be returned so callers can build the embedding text"
         );
     }
 
