@@ -16,30 +16,34 @@ use uuid::Uuid;
 // Re-export here so consumers can import from kremory::memory::types only.
 pub use crate::core::error::IngestStatus;
 
-/// Multi-tenant scope for a single rqlm operation.
+/// Multi-tenant namespace for a single kremory operation.
 ///
-/// `workspace_id` isolates one customer's graph from another; `thread_id`
+/// `namespace` isolates one customer's graph from another; `thread`
 /// further isolates a conversational thread / meeting session within that
-/// workspace. Both are caller-supplied strings — rqlm does not mint IDs.
+/// namespace. Both are caller-supplied strings — kremory does not mint IDs.
+///
+/// Industry-standard name: "namespace" (Mem0, Zep, Graphiti prior art).
+/// The internal SQL storage column stays `group_id` for v0.1.0 SemVer
+/// stability; see `core/schema.rs` for the asymmetry note.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct WorkspaceScope {
-    pub workspace_id: String,
-    pub thread_id: Option<String>,
+pub struct Namespace {
+    pub namespace: String,
+    pub thread: Option<String>,
 }
 
-impl WorkspaceScope {
-    pub fn new(workspace_id: impl Into<String>) -> Self {
+impl Namespace {
+    /// Create a namespace with no thread.
+    pub fn new(namespace: impl Into<String>) -> Self {
         Self {
-            workspace_id: workspace_id.into(),
-            thread_id: None,
+            namespace: namespace.into(),
+            thread: None,
         }
     }
 
-    pub fn with_thread(workspace_id: impl Into<String>, thread_id: impl Into<String>) -> Self {
-        Self {
-            workspace_id: workspace_id.into(),
-            thread_id: Some(thread_id.into()),
-        }
+    /// Builder: attach a thread to this namespace.
+    pub fn with_thread(mut self, thread: impl Into<String>) -> Self {
+        self.thread = Some(thread.into());
+        self
     }
 }
 
@@ -250,7 +254,7 @@ impl BatchStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DreamHandle {
     pub run_id: Uuid,
-    pub scope: WorkspaceScope,
+    pub namespace: Namespace,
     pub submitted_at: DateTime<Utc>,
     /// The `batch_id` this dream run is scoped to, if any.
     pub batch_id: Option<String>,
