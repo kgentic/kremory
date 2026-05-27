@@ -42,26 +42,47 @@ fn build_noop_provider_and_layer() -> (
 
 /// G_v012_10 — `init_telemetry_installs_otel_layer`
 ///
-/// Build an OTel `TracerProvider` and wire it into a `tracing_subscriber::Registry`
-/// as a thread-local default (via `set_default`, not global).
-/// Assert that after installation, `tracing::Span::current().is_disabled()` is
-/// **false** when a span is entered — i.e. the OTel layer is capturing spans.
+/// Calls `kremory::init_telemetry(TelemetryConfig::default())` (F-08 spec) inside
+/// a Tokio runtime (required by the tonic gRPC exporter builder even when no
+/// endpoint is configured). Because `init_telemetry` attempts to install a global
+/// subscriber and a previously-installed subscriber may already exist (RISK-1 §17.4),
+/// we tolerate `TelemetryInitError::Subscriber` as a valid outcome.
+///
+/// After the init call, installs a thread-local noop OTel layer and verifies that
+/// `tracing::Span::current()` is not disabled inside an entered span — confirming
+/// the OTel layer wiring pattern works correctly.
 ///
 /// Uses `current_thread` runtime so the thread-local subscriber stays active
 /// for the entire `block_on` call.  No live OTel collector required.
 #[test]
 fn init_telemetry_installs_otel_layer() {
+    use kremory::{TelemetryConfig, TelemetryInitError};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+
+    // Call kremory::init_telemetry inside the runtime context (tonic gRPC exporter
+    // builder requires a Tokio reactor). Tolerate Subscriber error (RISK-1 §17.4).
+    let init_result = rt.block_on(async { kremory::init_telemetry(TelemetryConfig::default()) });
+    match init_result {
+        Ok(_handle) => {
+            // Handle is intentionally dropped — test verifies layer wiring, not span export.
+        }
+        Err(TelemetryInitError::Subscriber(_)) => {
+            // A global subscriber was already installed — expected in test harnesses.
+            // Continue: verify the thread-local OTel layer pattern still works.
+        }
+        Err(e) => panic!("init_telemetry returned unexpected error: {e:?}"),
+    }
+
     let (_provider, otel_layer) = build_noop_provider_and_layer();
 
     // Install subscriber as thread-local default — NOT global.
     // `set_default` returns a guard; dropping the guard uninstalls it.
     let subscriber = tracing_subscriber::registry().with(otel_layer);
     let _guard = tracing::subscriber::set_default(subscriber);
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime builds");
 
     rt.block_on(async {
         let span = tracing::info_span!("kremory.test.otel_layer_active");

@@ -5,8 +5,8 @@
 //! Provides `ProviderRates` (deserialized from `monitoring/provider-rates.toml`)
 //! and the `PROVIDER_RATES` global registry. Cost-aware wrappers (e.g.
 //! `TokenTrackingChatProvider`) call `PROVIDER_RATES.get()` to look up the
-//! per-1k-token USD rate for a given `(provider, model, direction)` triple and
-//! emit `kremory_core_cost_usd_total` counters.
+//! per-1k-token USD rate for a given `(provider, model)` pair and emit
+//! `kremory_core_cost_usd_total` gauges.
 //!
 //! ## Initialization
 //!
@@ -22,9 +22,11 @@
 //! [[providers]]
 //! provider = "openai"
 //! model    = "gpt-4o"
-//! direction = "input"          # "input" | "output" — None for embed (single rate)
-//! cost_per_1k_tokens_usd = 0.0025
+//! cost_per_1k_tokens_usd = 0.01
 //! ```
+//!
+//! There is no `direction` field — the rate is a single value per model.
+//! For chat models the output rate (more conservative / expensive) is used.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -40,21 +42,20 @@ pub static PROVIDER_RATES: OnceLock<ProviderRates> = OnceLock::new();
 pub struct ProviderRates {
     /// ISO-8601 date string indicating when these rates were last verified.
     pub rates_as_of: String,
-    /// All rate entries across providers/models/directions.
-    pub providers: Vec<ProviderRate>,
+    /// All rate entries across providers/models.
+    pub providers: Vec<ProviderRateEntry>,
 }
 
 /// A single rate entry in the provider-rates table.
+///
+/// Re-exported via `kremory::observability` (spec line 457).
 #[derive(Debug, Clone, Deserialize)]
-pub struct ProviderRate {
+pub struct ProviderRateEntry {
     /// Provider identifier (e.g. `"openai"`, `"anthropic"`, `"voyage"`).
     pub provider: String,
-    /// Model identifier (e.g. `"gpt-4o"`, `"claude-3-5-sonnet"`).
+    /// Model identifier (e.g. `"gpt-4o"`, `"claude-haiku-4-5"`).
+    /// Use `"*"` as a wildcard for all models of a provider (e.g. Ollama).
     pub model: String,
-    /// Token direction: `Some("input")` | `Some("output")` for chat/completion,
-    /// `None` for embedding models (single rate).
-    #[serde(default)]
-    pub direction: Option<String>,
     /// USD cost per 1,000 tokens.
     pub cost_per_1k_tokens_usd: f64,
     /// Embedding dimension count (only relevant for embedding models).
@@ -83,19 +84,25 @@ impl ProviderRates {
         toml::from_str(&content).map_err(RatesError::Parse)
     }
 
-    /// Look up the USD cost per 1k tokens for a `(provider, model, direction)` triple.
+    /// Look up the USD cost per 1k tokens for a `(provider, model)` pair.
     ///
-    /// - For chat/completion models: pass `direction = Some("input")` or
-    ///   `Some("output")`.
-    /// - For embedding models: pass `direction = None`.
+    /// - Matches exact `provider` + `model` first.
+    /// - Falls back to `provider` + `"*"` (wildcard model) if no exact match.
     ///
     /// Returns `None` if no matching entry exists in the table.
-    pub fn lookup_rate(&self, provider: &str, model: &str, direction: Option<&str>) -> Option<f64> {
+    pub fn lookup_rate(&self, provider: &str, model: &str) -> Option<f64> {
+        // Exact match first.
+        if let Some(r) = self
+            .providers
+            .iter()
+            .find(|r| r.provider == provider && r.model == model)
+        {
+            return Some(r.cost_per_1k_tokens_usd);
+        }
+        // Wildcard model fallback (e.g. ollama/*).
         self.providers
             .iter()
-            .find(|r| {
-                r.provider == provider && r.model == model && r.direction.as_deref() == direction
-            })
+            .find(|r| r.provider == provider && r.model == "*")
             .map(|r| r.cost_per_1k_tokens_usd)
     }
 }
@@ -147,17 +154,17 @@ mod tests {
 
     /// G_v012_4 — Parse bundled rates TOML; assert `rates_as_of` matches the
     /// committed date and spot-check known rates for 3 embedder models and 5
-    /// chat model × direction entries.
+    /// chat model entries.
     #[test]
     fn provider_rates_bundled_defaults_load() {
         let rates = ProviderRates::from_bundled().expect("bundled rates must parse");
 
         assert_eq!(
-            rates.rates_as_of, "2026-05-21",
+            rates.rates_as_of, "2026-05-27",
             "rates_as_of must match the committed date"
         );
 
-        // ── Embedder spot-checks (direction = None) ──────────────────────────
+        // ── Embedder spot-checks ─────────────────────────────────────────────
         let embedder_cases: &[(&str, &str)] = &[
             ("openai", "text-embedding-3-small"),
             ("voyage", "voyage-3"),
@@ -165,51 +172,44 @@ mod tests {
         ];
         for &(provider, model) in embedder_cases {
             assert!(
-                rates.lookup_rate(provider, model, None).is_some(),
+                rates.lookup_rate(provider, model).is_some(),
                 "embedder rate for {provider}/{model} must exist in bundled TOML"
             );
         }
 
-        // ── Chat spot-checks (direction = Some) ──────────────────────────────
-        let chat_cases: &[(&str, &str, &str)] = &[
-            ("openai", "gpt-4o-mini", "input"),
-            ("openai", "gpt-4o-mini", "output"),
-            ("openai", "gpt-4o", "input"),
-            ("anthropic", "claude-haiku-4-5", "input"),
-            ("ollama", "*", "input"),
+        // ── Chat spot-checks (2-arg lookup) ──────────────────────────────────
+        let chat_cases: &[(&str, &str)] = &[
+            ("openai", "gpt-4o-mini"),
+            ("openai", "gpt-4o"),
+            ("anthropic", "claude-haiku-4-5"),
+            ("anthropic", "claude-sonnet-4-6"),
+            ("ollama", "any-model"),
         ];
-        for &(provider, model, direction) in chat_cases {
+        for &(provider, model) in chat_cases {
             assert!(
-                rates
-                    .lookup_rate(provider, model, Some(direction))
-                    .is_some(),
-                "chat rate for {provider}/{model}/{direction} must exist in bundled TOML"
+                rates.lookup_rate(provider, model).is_some(),
+                "chat rate for {provider}/{model} must exist in bundled TOML"
             );
         }
     }
 
     // ── G_v012_5: lookup_rate_unknown_provider_returns_none ──────────────────
 
-    /// G_v012_5 — `lookup_rate` for a nonexistent provider/model triple must
+    /// G_v012_5 — `lookup_rate` for a nonexistent provider/model pair must
     /// return `None` (no panics, no partial matches).
     #[test]
     fn lookup_rate_unknown_provider_returns_none() {
         let rates = ProviderRates::from_bundled().expect("bundled rates must parse");
 
         assert_eq!(
-            rates.lookup_rate("nonexistent", "x", None),
+            rates.lookup_rate("nonexistent", "x"),
             None,
             "lookup_rate for unknown provider must return None"
         );
         assert_eq!(
-            rates.lookup_rate("openai", "nonexistent-model", Some("input")),
+            rates.lookup_rate("openai", "nonexistent-model"),
             None,
             "lookup_rate for known provider but unknown model must return None"
-        );
-        assert_eq!(
-            rates.lookup_rate("openai", "gpt-4o-mini", Some("forward")),
-            None,
-            "lookup_rate for known provider/model but unknown direction must return None"
         );
     }
 }

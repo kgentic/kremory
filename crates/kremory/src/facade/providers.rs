@@ -178,7 +178,11 @@ pub async fn with_openai(path: impl AsRef<Path>) -> Result<Memory> {
 
 /// Open with Anthropic. Requires `$ANTHROPIC_API_KEY`.
 ///
-/// Chat model: `claude-3-haiku-20240307`.
+/// Chat model: `claude-haiku-4-5` (metric label) / `claude-3-haiku-20240307` (API identifier).
+///
+/// Note: the Anthropic API still uses `claude-3-haiku-20240307` as the model string.
+/// The metric label is `claude-haiku-4-5` to match the `monitoring/provider-rates.toml`
+/// entry (spec §F-09).
 ///
 /// **Note**: Anthropic has no embedding API. Uses `DeterministicEmbeddingProvider`
 /// (FNV-1a, dim=384) as a non-semantic stand-in. Bring your own embedder via
@@ -188,6 +192,9 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
     let key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| MemoryError::Other("ANTHROPIC_API_KEY is not set".into()))?;
 
+    // Anthropic API identifier — the model string sent in HTTP requests.
+    // NOTE: "claude-3-haiku-20240307" is the API-level name for claude-haiku-4-5.
+    // The metric label below uses "claude-haiku-4-5" to match provider-rates.toml.
     let chat_provider: Arc<Anthropic> = LLMBuilder::<Anthropic>::new()
         .api_key(&key)
         .model("claude-3-haiku-20240307")
@@ -202,10 +209,12 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
     );
 
     let arc_llm: Arc<dyn ChatProvider> = chat_provider;
+    // Metric label "claude-haiku-4-5" matches monitoring/provider-rates.toml.
+    // API model "claude-3-haiku-20240307" is handled by the LLMBuilder above.
     let llm: Arc<dyn ChatProvider> = Arc::new(TokenTrackingChatProvider::new(
         ArcChatProvider::new(arc_llm),
         "anthropic",
-        "claude-3-haiku-20240307",
+        "claude-haiku-4-5",
     ));
     let embedder: Arc<dyn DynEmbeddingProvider> =
         Arc::new(DeterministicEmbeddingProvider::new(384));

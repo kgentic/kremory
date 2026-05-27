@@ -404,6 +404,10 @@ pub struct TelemetryConfig {
     /// OTLP endpoint for OTel span export (e.g. `"http://localhost:4317"`).
     /// Requires the `otel` feature flag. Ignored when `otel` feature is absent.
     pub otlp_endpoint: Option<String>,
+    /// Optional path to a custom provider-rates.toml file. When `Some`, overrides
+    /// the bundled rates. When `None`, the bundled rates are used (idempotent if
+    /// already initialized).
+    pub rates_path: Option<std::path::PathBuf>,
 }
 
 /// Handle returned by [`init_telemetry`]. Keeps the OTel provider alive.
@@ -494,6 +498,15 @@ pub fn init_telemetry(
     use tracing_subscriber::layer::SubscriberExt as _;
     use tracing_subscriber::util::SubscriberInitExt as _;
 
+    // Initialize provider rates: custom path takes precedence over bundled.
+    if let Some(ref path) = config.rates_path {
+        crate::core::rates::init_from_path(path)
+            .map_err(|e| TelemetryInitError::Exporter(format!("rates load failed: {e}")))?;
+    } else {
+        // Best-effort: ignore error if already initialized or TOML is missing.
+        let _ = crate::core::rates::init_bundled();
+    }
+
     // Build the OTLP gRPC span exporter.  Endpoint resolution order:
     //   1. `config.otlp_endpoint` (explicit caller config)
     //   2. `OTEL_EXPORTER_OTLP_ENDPOINT` env var (opentelemetry-otlp picks this up automatically)
@@ -554,8 +567,14 @@ pub fn init_telemetry(
 /// Always returns `Ok` in this configuration.
 #[cfg(not(feature = "otel"))]
 pub fn init_telemetry(
-    _config: TelemetryConfig,
+    config: TelemetryConfig,
 ) -> std::result::Result<TelemetryHandle, TelemetryInitError> {
+    // Initialize provider rates: custom path takes precedence over bundled.
+    if let Some(ref path) = config.rates_path {
+        let _ = crate::core::rates::init_from_path(path);
+    } else {
+        let _ = crate::core::rates::init_bundled();
+    }
     // Library-safe: kremory does NOT install a global tracing subscriber or
     // metrics recorder (ADR D2). The host binary owns subscriber installation.
     Ok(TelemetryHandle { _private: () })

@@ -73,3 +73,15 @@ pub use core::config::Config as CoreConfig;
 
 // Embedding observability wrapper (ADR D10)
 pub use core::embedding::TokenTrackingEmbedder;
+
+/// Observability primitives (v0.1.2): token tracking wrappers, provider rates, init.
+///
+/// Use these types to wire custom ChatProvider / EmbeddingProvider instances
+/// with full metric emission (tokens, cost, duration). The Tier 1 shortcuts
+/// (`with_ollama`, `with_openai`, `with_anthropic`) auto-wrap via these types.
+pub mod observability {
+    pub use crate::core::chat_tracking::{llm_error_type, TokenTrackingChatProvider};
+    pub use crate::core::embedding::TokenTrackingEmbedder;
+    pub use crate::core::rates::{ProviderRateEntry, ProviderRates, RatesError, PROVIDER_RATES};
+    pub use crate::memory::{init_telemetry, TelemetryConfig, TelemetryHandle, TelemetryInitError};
+}

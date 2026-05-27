@@ -1,19 +1,25 @@
-# kremory provider rates — canonical cost table (ADR D9)
+# kremory provider rates — canonical cost table (ADR D9 / v0.1.2)
 #
-# Used by `TokenTrackingEmbedder` to compute cost estimates from
-# `kremory_core_tokens_total{provider, model, direction}` counter data.
+# Used by `TokenTrackingChatProvider` and `TokenTrackingEmbedder` to compute
+# cost estimates from `kremory_core_tokens_total` counter data.
 #
-# `cost_per_1k_tokens_usd`: USD cost per 1000 input tokens as of `rates_as_of`.
+# `cost_per_1k_tokens_usd`: USD cost per 1000 tokens.
+# For chat models: the OUTPUT rate is used (more conservative / expensive estimate).
+#   v0.1.3 may add per-direction granularity if needed.
+# For embedding models: single rate (no input/output distinction).
+#
 # Update this file when providers publish new pricing. Include a reference link.
 #
 # ADR D7 cardinality discipline:
 #   `provider` and `model` label values in metrics MUST match the keys here.
 #   Unlisted provider/model combos will not produce cost estimates in dashboards.
+#
+# There is NO `direction` field — single rate per model per spec line 196 + 458.
 
-rates_as_of = "2026-05-21"
+rates_as_of = "2026-05-27"
 
-# ── OpenAI ────────────────────────────────────────────────────────────────────
-# Source: https://openai.com/pricing (accessed 2026-05-21)
+# ── OpenAI embeddings ─────────────────────────────────────────────────────────
+# Source: https://openai.com/pricing (accessed 2026-05-27)
 
 [[providers]]
 provider = "openai"
@@ -33,8 +39,8 @@ model    = "text-embedding-ada-002"
 cost_per_1k_tokens_usd = 0.00010
 dimensions = 1536
 
-# ── VoyageAI ──────────────────────────────────────────────────────────────────
-# Source: https://www.voyageai.com/pricing (accessed 2026-05-21)
+# ── VoyageAI embeddings ───────────────────────────────────────────────────────
+# Source: https://www.voyageai.com/pricing (accessed 2026-05-27)
 
 [[providers]]
 provider = "voyage"
@@ -54,7 +60,7 @@ model    = "voyage-code-3"
 cost_per_1k_tokens_usd = 0.00006
 dimensions = 1024
 
-# ── Local / self-hosted ───────────────────────────────────────────────────────
+# ── Local / self-hosted embeddings ────────────────────────────────────────────
 # Zero cost — CPU/GPU amortised separately via infra cost accounting.
 
 [[providers]]
@@ -69,74 +75,43 @@ model    = "nomic-embed-text-v1.5"
 cost_per_1k_tokens_usd = 0.0
 dimensions = 768
 
-# ── Chat (added 2026-05-27 for v0.1.2 observability) ─────────────────────────
-# Embedder rows above do not have `direction`. Chat rows DO.
-# Sources verified against provider pricing pages — see comments per row.
-
-# OpenAI chat — https://openai.com/pricing
-# Verified via Wikipedia (https://en.wikipedia.org/wiki/GPT-4o) citing OpenAI published rates
-# accessed 2026-05-27. gpt-4o-mini: $0.15/$0.60 per MTok. gpt-4o: $2.50/$10 per MTok.
-[[providers]]
-provider  = "openai"
-model     = "gpt-4o-mini"
-direction = "input"
-cost_per_1k_tokens_usd = 0.00015
+# ── OpenAI chat ───────────────────────────────────────────────────────────────
+# Source: https://openai.com/pricing (accessed 2026-05-27)
+# Using output rate (more conservative). v0.1.3 may add per-direction granularity.
+# gpt-4o-mini: $0.60 per MTok output → $0.0006 per 1k
+# gpt-4o: $10 per MTok output → $0.01 per 1k
 
 [[providers]]
-provider  = "openai"
-model     = "gpt-4o-mini"
-direction = "output"
+provider = "openai"
+model    = "gpt-4o-mini"
 cost_per_1k_tokens_usd = 0.0006
 
 [[providers]]
-provider  = "openai"
-model     = "gpt-4o"
-direction = "input"
-cost_per_1k_tokens_usd = 0.0025
-
-[[providers]]
-provider  = "openai"
-model     = "gpt-4o"
-direction = "output"
+provider = "openai"
+model    = "gpt-4o"
 cost_per_1k_tokens_usd = 0.01
 
-# Anthropic chat — https://platform.claude.com/docs/en/docs/about-claude/models/overview
-# Verified from Anthropic's official model overview page, accessed 2026-05-27.
-# claude-haiku-4-5: $1/$5 per MTok input/output → $0.001/$0.005 per 1k.
-# claude-sonnet-4-6: $3/$15 per MTok input/output → $0.003/$0.015 per 1k.
-[[providers]]
-provider  = "anthropic"
-model     = "claude-haiku-4-5"
-direction = "input"
-cost_per_1k_tokens_usd = 0.001
+# ── Anthropic chat ────────────────────────────────────────────────────────────
+# Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
+# (accessed 2026-05-27)
+# Using output rate (more conservative). v0.1.3 may add per-direction granularity.
+# claude-haiku-4-5: $5 per MTok output → $0.005 per 1k
+# claude-sonnet-4-6: $15 per MTok output → $0.015 per 1k
 
 [[providers]]
-provider  = "anthropic"
-model     = "claude-haiku-4-5"
-direction = "output"
+provider = "anthropic"
+model    = "claude-haiku-4-5"
 cost_per_1k_tokens_usd = 0.005
 
 [[providers]]
-provider  = "anthropic"
-model     = "claude-sonnet-4-6"
-direction = "input"
-cost_per_1k_tokens_usd = 0.003
-
-[[providers]]
-provider  = "anthropic"
-model     = "claude-sonnet-4-6"
-direction = "output"
+provider = "anthropic"
+model    = "claude-sonnet-4-6"
 cost_per_1k_tokens_usd = 0.015
 
-# Ollama / local — self-hosted, no provider cost
-[[providers]]
-provider  = "ollama"
-model     = "*"
-direction = "input"
-cost_per_1k_tokens_usd = 0.0
+# ── Ollama / local chat ───────────────────────────────────────────────────────
+# Self-hosted, no provider cost. Wildcard model matches any Ollama model.
 
 [[providers]]
-provider  = "ollama"
-model     = "*"
-direction = "output"
+provider = "ollama"
+model    = "*"
 cost_per_1k_tokens_usd = 0.0
