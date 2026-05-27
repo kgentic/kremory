@@ -125,7 +125,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         &self,
         text: &str,
         reference_time: Option<DateTime<Utc>>,
-        _group_id: Option<&str>,
+        group_id: Option<&str>,
         content_type: Option<ContentType>,
     ) -> Result<IngestionResult> {
         #[cfg(feature = "ner")]
@@ -141,13 +141,13 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 panic!("invariant: GLINER OnceLock empty immediately after set")
             });
             return self
-                .ingest_with(extractor, text, reference_time, _group_id, content_type)
+                .ingest_with(extractor, text, reference_time, group_id, content_type)
                 .await;
         }
         #[cfg(not(feature = "ner"))]
         {
             let extractor = NuExtractExtractor::new(Arc::clone(&self.llm));
-            self.ingest_with(&extractor, text, reference_time, _group_id, content_type)
+            self.ingest_with(&extractor, text, reference_time, group_id, content_type)
                 .await
         }
     }
@@ -161,7 +161,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         extractor: &E,
         text: &str,
         reference_time: Option<DateTime<Utc>>,
-        _group_id: Option<&str>,
+        group_id: Option<&str>,
         content_type: Option<ContentType>,
     ) -> Result<IngestionResult> {
         let ingest_start = Instant::now();
@@ -169,10 +169,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         let content_type = content_type.unwrap_or(ContentType::Text);
         let token_usage = TokenUsage::default();
 
-        // 1. Store episode
+        // 1. Store episode (namespace-scoped via group_id)
         let episode_id = self
             .graph
-            .insert_episode(text, ref_time, Some("ingest"), None)
+            .insert_episode_with_group(text, ref_time, Some("ingest"), None, group_id, None, None)
             .await?;
 
         // 2. Slice into LLM-extraction-prompt windows (no-op for normally-sized episodes;
@@ -231,8 +231,11 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         all_entities.sort_by_key(|e| normalize_name(&e.name));
         all_entities.dedup_by(|a, b| normalize_name(&a.name) == normalize_name(&b.name));
 
-        // 4. Resolve entities against existing graph
-        let existing_entities = self.graph.list_entities().await?;
+        // 4. Resolve entities against existing graph (namespace-scoped dedup)
+        let existing_entities = match group_id {
+            Some(gid) => self.graph.list_entities_in_group(gid).await?,
+            None => self.graph.list_entities().await?,
+        };
         let resolver = CascadeResolver::new(
             Arc::clone(&self.llm),
             self.config.minhash.clone(),
@@ -266,10 +269,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 merged_entities.push((existing_id.clone(), extracted.name.clone()));
                 existing_id
             } else {
-                // New entity — insert
+                // New entity — insert (namespace-scoped via group_id)
                 let entity_id = normalize_name(&extracted.name);
                 self.graph
-                    .insert_entity(&entity_id, &extracted.label, extracted.properties.clone())
+                    .insert_entity_with_group(&entity_id, &extracted.label, extracted.properties.clone(), group_id)
                     .await?;
 
                 // Embed and store embedding
@@ -440,7 +443,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         &self,
         text: &str,
         reference_time: Option<DateTime<Utc>>,
-        _group_id: Option<&str>,
+        group_id: Option<&str>,
         content_type: Option<ContentType>,
         episode_id: i64,
         ner_entity_names: &[String],
@@ -485,8 +488,11 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             return Ok(0);
         }
 
-        // Build a name → entity_id map by resolving against the existing graph.
-        let existing_entities = self.graph.list_entities().await?;
+        // Build a name → entity_id map by resolving against the existing graph (namespace-scoped).
+        let existing_entities = match group_id {
+            Some(gid) => self.graph.list_entities_in_group(gid).await?,
+            None => self.graph.list_entities().await?,
+        };
         let mut name_to_id: HashMap<String, String> = HashMap::new();
         for entity in &existing_entities {
             name_to_id.insert(normalize_name(&entity.label), entity.id.clone());

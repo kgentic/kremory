@@ -233,7 +233,7 @@ pub fn scan_proper_nouns(text: &str, existing: &[ExtractedEntity]) -> Vec<Extrac
         .filter(|c| seen.insert(normalize_name(c)))
         .map(|name| ExtractedEntity {
             label: "Entity".to_string(),
-            properties: serde_json::json!({"source": "proper_noun_scan"}),
+            properties: serde_json::json!({"name": name, "source": "proper_noun_scan"}),
             name,
         })
         .collect()
@@ -409,10 +409,11 @@ impl OovAuditor {
                 continue;
             }
             if seen.insert(normalized) {
+                let word_name = word.to_string();
                 candidates.push(ExtractedEntity {
-                    name: word.to_string(),
+                    name: word_name.clone(),
                     label: "Entity".to_string(),
-                    properties: serde_json::json!({"source": "oov_audit"}),
+                    properties: serde_json::json!({"name": word_name, "source": "oov_audit"}),
                 });
             }
         }
@@ -428,9 +429,9 @@ impl OovAuditor {
                     let normalized = normalize_name(&name);
                     if !known_normalized.contains(&normalized) && seen.insert(normalized) {
                         candidates.push(ExtractedEntity {
+                            properties: serde_json::json!({"name": name, "source": "oov_audit_run"}),
                             name,
                             label: "Entity".to_string(),
-                            properties: serde_json::json!({"source": "oov_audit_run"}),
                         });
                     }
                     run.clear();
@@ -441,9 +442,9 @@ impl OovAuditor {
                     let normalized = normalize_name(&name);
                     if !known_normalized.contains(&normalized) && seen.insert(normalized) {
                         candidates.push(ExtractedEntity {
+                            properties: serde_json::json!({"name": name, "source": "oov_audit_run"}),
                             name,
                             label: "Entity".to_string(),
-                            properties: serde_json::json!({"source": "oov_audit_run"}),
                         });
                     }
                 }
@@ -455,9 +456,9 @@ impl OovAuditor {
             let normalized = normalize_name(&name);
             if !known_normalized.contains(&normalized) && seen.insert(normalized) {
                 candidates.push(ExtractedEntity {
+                    properties: serde_json::json!({"name": name, "source": "oov_audit_run"}),
                     name,
                     label: "Entity".to_string(),
-                    properties: serde_json::json!({"source": "oov_audit_run"}),
                 });
             }
         }

@@ -6,7 +6,7 @@
 use kremory::{DynEmbeddingProvider, Memory, MemoryBuilder, Namespace, NoEmb, NoLlm, WithLlm};
 use std::sync::Arc;
 
-/// Helper: build a Memory in test mode (uses StubGraphHandle + null providers).
+/// Helper: build a Memory backed by Ollama defaults + real EngineGraphHandle.
 async fn open_test_memory() -> Memory {
     Memory::with_ollama("/tmp/kremory-test.db")
         .await

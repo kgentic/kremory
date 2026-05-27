@@ -7,7 +7,7 @@
 //! ## Greenfield contract
 //!
 //! D.1b ships scaffolding only. The 4 public functions return
-//! `MemoryError::Unimplemented(...)` until D.2's TDD lane lands the real
+//! `MemoryError::NotImplemented { .. }` until D.2's TDD lane lands the real
 //! implementations. This keeps the public surface visible to downstream
 //! consumers (the-host-application, kremory-mcp) while the implementation is built.
 //!
@@ -30,12 +30,15 @@
 //!   defaults over core's hybrid search + context-block templates.
 
 pub mod dream_phase;
+pub mod engine_handle;
 pub mod events;
 pub mod graph;
+pub mod llm_adapters;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod stub;
 pub mod types;
 
+pub use engine_handle::EngineGraphHandle;
 pub use graph::GraphHandle;
 #[cfg(any(test, feature = "test-utils"))]
 pub use stub::StubGraphHandle;

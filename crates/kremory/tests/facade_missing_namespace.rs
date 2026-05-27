@@ -41,8 +41,7 @@ async fn forget_with_explicit_namespace_succeeds() {
 
 /// `remember()` without namespace → MissingNamespace.
 ///
-/// The namespace check fires before any graph call, so the StubGraphHandle
-/// unimplemented! path is never reached.
+/// The namespace check fires before any graph call.
 #[tokio::test]
 async fn remember_without_namespace_errors_missing_namespace() {
     let mem = open_no_ns().await;

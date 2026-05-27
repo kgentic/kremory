@@ -1807,6 +1807,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "stop-words",
+ "tempfile",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
