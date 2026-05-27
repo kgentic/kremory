@@ -256,7 +256,8 @@ impl BackgroundIngestor {
         };
         match self.inner.work_tx.try_send(req) {
             Ok(()) => {
-                self.inner.queued.fetch_add(1, Ordering::Relaxed);
+                let depth = self.inner.queued.fetch_add(1, Ordering::Relaxed) + 1;
+                metrics::gauge!("rql.background.queue_depth").set(depth as f64);
                 Ok(())
             }
             Err(TrySendError::Full(_)) => Err(IngestSendError::Full(self.inner.channel_capacity)),
@@ -470,7 +471,9 @@ fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
 
             match work_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(req) => {
-                    queued.fetch_sub(1, Ordering::Relaxed);
+                    let ner_depth =
+                        queued.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+                    metrics::gauge!("rql.background.queue_depth").set(ner_depth as f64);
                     if let Some(deferred) =
                         process_item(&graph, req, &error_tx, deferred_enabled).await
                     {
