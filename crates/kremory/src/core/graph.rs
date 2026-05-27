@@ -1085,6 +1085,155 @@ impl TemporalGraph {
             .await?;
         Ok(())
     }
+
+    /// Delete an entity and ALL dependent rows atomically. Story #216.
+    ///
+    /// Deletes in dependency order within a single `BEGIN IMMEDIATE` transaction:
+    /// 1. `rql_entities_fts` — standalone FTS5 virtual table; no FK cascade.
+    /// 2. `episodic_edges` — FK → `rql_entities(id)` (no ON DELETE CASCADE).
+    /// 3. `facts` — FK → `rql_entities(id)` as subject/object (no ON DELETE CASCADE).
+    /// 4. `rql_entities` — parent row.
+    ///
+    /// If any step fails the transaction is rolled back and no rows are changed.
+    ///
+    /// Returns `true` when the entity existed and was deleted; `false` when the
+    /// entity was not found (idempotent — not an error).
+    pub async fn forget_entity(&self, entity_id: &str) -> Result<bool> {
+        let id = libsql::Value::Text(entity_id.to_owned());
+        let guard = self.begin_immediate_if_needed().await?;
+
+        // 1. FTS — standalone FTS5; no FK cascade, must delete first.
+        let fts_result = self
+            .conn
+            .execute(
+                "DELETE FROM rql_entities_fts WHERE entity_id = ?1",
+                libsql::params![id.clone()],
+            )
+            .await;
+
+        // 2. Episodic edges referencing this entity.
+        let edges_result = if fts_result.is_ok() {
+            self.conn
+                .execute(
+                    "DELETE FROM episodic_edges WHERE entity_id = ?1",
+                    libsql::params![id.clone()],
+                )
+                .await
+        } else {
+            fts_result
+        };
+
+        // 3. Facts where this entity is subject or object.
+        let facts_result = if edges_result.is_ok() {
+            self.conn
+                .execute(
+                    "DELETE FROM facts WHERE subject_id = ?1 OR object_id = ?1",
+                    libsql::params![id.clone()],
+                )
+                .await
+        } else {
+            edges_result
+        };
+
+        // 4. Entity row itself.
+        if let Err(e) = facts_result {
+            guard.rollback().await?;
+            return Err(e.into());
+        }
+
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM rql_entities WHERE id = ?1",
+                libsql::params![id],
+            )
+            .await;
+
+        match deleted {
+            Err(e) => {
+                guard.rollback().await?;
+                Err(e.into())
+            }
+            Ok(n) => {
+                let found = n > 0;
+                guard.commit().await?;
+                tracing::info!(entity_id, found, "kremory.db.forget_entity");
+                Ok(found)
+            }
+        }
+    }
+
+    /// Delete up to 250 entities in transactional 100-item chunks. Story #217.
+    ///
+    /// Each chunk of up to 100 IDs is wrapped in its own `BEGIN IMMEDIATE`
+    /// transaction. Deletion order per chunk: FTS → episodic_edges → facts →
+    /// rql_entities.
+    ///
+    /// Returns the total number of entity rows deleted across all chunks.
+    pub async fn batch_forget(&self, entity_ids: &[String]) -> Result<u64> {
+        const CHUNK_SIZE: usize = 100;
+        let mut total_deleted: u64 = 0;
+
+        for chunk in entity_ids.chunks(CHUNK_SIZE) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let params: Vec<libsql::Value> = chunk
+                .iter()
+                .map(|s| libsql::Value::Text(s.clone()))
+                .collect();
+
+            let guard = self.begin_immediate_if_needed().await?;
+
+            // Execute the four DELETE statements; collect the first error.
+            macro_rules! try_delete {
+                ($sql:expr, $p:expr) => {
+                    match self.conn.execute(&$sql, $p).await {
+                        Ok(n) => n,
+                        Err(e) => {
+                            guard.rollback().await?;
+                            return Err(e.into());
+                        }
+                    }
+                };
+            }
+
+            // 1. FTS.
+            try_delete!(
+                format!("DELETE FROM rql_entities_fts WHERE entity_id IN ({placeholders})"),
+                params.clone()
+            );
+
+            // 2. Episodic edges.
+            try_delete!(
+                format!("DELETE FROM episodic_edges WHERE entity_id IN ({placeholders})"),
+                params.clone()
+            );
+
+            // 3. Facts (subject or object).
+            //    Two IN clauses → params must be doubled.
+            let sql_facts = format!(
+                "DELETE FROM facts WHERE subject_id IN ({placeholders}) OR object_id IN ({placeholders})"
+            );
+            let mut doubled = params.clone();
+            doubled.extend_from_slice(&params);
+            try_delete!(sql_facts, doubled);
+
+            // 4. Entity rows.
+            let n = try_delete!(
+                format!("DELETE FROM rql_entities WHERE id IN ({placeholders})"),
+                params
+            );
+
+            guard.commit().await?;
+            total_deleted += n;
+        }
+
+        tracing::info!(
+            count = entity_ids.len(),
+            deleted = total_deleted,
+            "kremory.db.batch_forget"
+        );
+        Ok(total_deleted)
+    }
 }
 
 #[cfg(test)]
@@ -2007,5 +2156,93 @@ mod tests {
             count, 1,
             "exactly 1 row must exist in facts after concurrent inserts"
         );
+    }
+
+    // === forget_entity — cascade delete atomicity (Story #216) ===
+
+    #[tokio::test]
+    async fn forget_entity_removes_entity_facts_and_edges() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        // Insert entity + fact + episodic edge referencing it.
+        g.insert_entity("alice", "Person", serde_json::json!({}))
+            .await
+            .unwrap();
+        let now = chrono::Utc::now();
+        // insert_fact: (subject_id, predicate, object_id, object_value,
+        //               valid_from, confidence, source_episode_id, embedding)
+        // Use object_value (not object_id) to avoid FK on rql_entities for "bob".
+        g.insert_fact("alice", "knows", None, Some("bob"), now, 0.9, None, None)
+            .await
+            .unwrap();
+        // insert_episodic_edge: (episode_id: i64, entity_id, role)
+        // Must have a valid episode first (FK constraint).
+        let ep_id = g
+            .insert_episode("test episode", now, None, None)
+            .await
+            .unwrap();
+        g.insert_episodic_edge(ep_id, "alice", "subject")
+            .await
+            .unwrap();
+
+        // Verify setup.
+        assert!(g.get_entity("alice").await.unwrap().is_some());
+
+        // Forget should return true (entity was present).
+        let found = g.forget_entity("alice").await.unwrap();
+        assert!(found, "forget_entity must return true when entity existed");
+
+        // Entity gone.
+        assert!(g.get_entity("alice").await.unwrap().is_none());
+
+        // Facts with alice as subject should be gone.
+        let facts = g.entity_history("alice").await.unwrap();
+        assert!(facts.is_empty(), "facts referencing alice must be deleted");
+
+        // Episodic edges gone.
+        let edges = g.episodic_edges_for_entity("alice").await.unwrap();
+        assert!(edges.is_empty(), "episodic_edges for alice must be deleted");
+    }
+
+    #[tokio::test]
+    async fn forget_entity_returns_false_for_nonexistent() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        let found = g.forget_entity("ghost").await.unwrap();
+        assert!(!found, "forget_entity must return false when entity absent");
+    }
+
+    // === batch_forget — 100-item chunk deletion (Story #217) ===
+
+    #[tokio::test]
+    async fn batch_forget_250_entities_deleted_cleanly() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        // Insert 250 entities.
+        let ids: Vec<String> = (0..250).map(|i| format!("ent-{i:04}")).collect();
+        for id in &ids {
+            g.insert_entity(id, "Thing", serde_json::json!({}))
+                .await
+                .unwrap();
+        }
+
+        // Verify setup.
+        let before = g.list_entities().await.unwrap();
+        assert_eq!(before.len(), 250);
+
+        let deleted = g.batch_forget(&ids).await.unwrap();
+        assert_eq!(deleted, 250, "batch_forget must delete all 250 entities");
+
+        let after = g.list_entities().await.unwrap();
+        assert!(
+            after.is_empty(),
+            "no entities must remain after batch_forget"
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_forget_empty_slice_is_noop() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        let deleted = g.batch_forget(&[]).await.unwrap();
+        assert_eq!(deleted, 0);
     }
 }
