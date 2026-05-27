@@ -23,6 +23,7 @@ use std::time::Instant;
 
 use crate::core::error::Result;
 use crate::core::provider::EmbeddingProvider;
+use crate::core::rates::PROVIDER_RATES;
 
 /// Wraps any `EmbeddingProvider` with dual-emit observability per ADR D10.
 ///
@@ -85,6 +86,31 @@ impl<E: EmbeddingProvider> EmbeddingProvider for TokenTrackingEmbedder<E> {
                 "direction" => "input",
             )
             .increment(tokens_input);
+
+            // Cost emission via PROVIDER_RATES lookup (added v0.1.2 Gap B).
+            // Embedding models have a single rate per model (no input/output split),
+            // so direction is None.
+            if let Some(rates) = PROVIDER_RATES.get() {
+                if let Some(rate) = rates.lookup_rate(self.provider, self.model, None) {
+                    let cost_usd = rate * (tokens_input as f64) / 1000.0;
+                    if cost_usd > 0.0 {
+                        // Store as micro-USD integer for counter precision.
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let micro_usd = (cost_usd * 1_000_000.0) as u64;
+                        metrics::counter!(
+                            "kremory_core_cost_usd_total",
+                            "operation" => "embed",
+                            "provider"  => self.provider,
+                            "model"     => self.model,
+                        )
+                        .increment(micro_usd);
+                    }
+                }
+                // No rate entry = silent skip: custom embedder models not in provider-rates.toml
+                // are a known-valid case (user-supplied local models). No warning emitted here
+                // because embedder provider/model are &'static str bounded at construction time —
+                // a missing rate is not a runtime error.
+            }
 
             metrics::histogram!(
                 "kremory_core_request_duration_seconds",
