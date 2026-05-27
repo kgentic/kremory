@@ -1,0 +1,216 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-05-28",
+  "schema": {
+    "id": "stable identifier",
+    "category": "info-extraction | multi-session | temporal | knowledge-update | abstention",
+    "diversity_tags": ["non-english-name", "temporal", "contradiction", "abstention", "code-aware"],
+    "question": "the user's question",
+    "context": "context retrieved from memory (what kremory recall would return)",
+    "answer": "the model's answer derived from context",
+    "ground_truth_verdict": "correct | incorrect | partial",
+    "rationale": "why this verdict is correct (for fixture maintenance, not fed to judge)"
+  },
+  "pairs": [
+    {
+      "id": "qa-001-info-extraction-correct",
+      "category": "info-extraction",
+      "diversity_tags": [],
+      "question": "What does Dave do for work?",
+      "context": "Dave is a senior software engineer at Acme Corp. He joined in 2024.",
+      "answer": "Dave is a senior software engineer at Acme Corp.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer directly supported by context."
+    },
+    {
+      "id": "qa-002-info-extraction-incorrect",
+      "category": "info-extraction",
+      "diversity_tags": [],
+      "question": "What does Dave do for work?",
+      "context": "Dave is a senior software engineer at Acme Corp.",
+      "answer": "Dave is a marketing manager at Acme Corp.",
+      "ground_truth_verdict": "incorrect",
+      "rationale": "Answer contradicts context (engineer vs marketing manager)."
+    },
+    {
+      "id": "qa-003-info-extraction-partial",
+      "category": "info-extraction",
+      "diversity_tags": [],
+      "question": "What is Sarah's role and which team does she lead?",
+      "context": "Sarah is the VP of Product at NovaSoft. She leads the product strategy team, which includes eight direct reports.",
+      "answer": "Sarah is the VP of Product at NovaSoft.",
+      "ground_truth_verdict": "partial",
+      "rationale": "Answer is correct but omits the team leadership detail the context explicitly provides."
+    },
+    {
+      "id": "qa-004-multi-session-correct",
+      "category": "multi-session",
+      "diversity_tags": [],
+      "question": "What project was Marcus working on last week?",
+      "context": "Session 2026-05-21: Marcus mentioned he is building an internal dashboard for the finance team using React and Postgres. Session 2026-05-28: Marcus asked about charting libraries for the same dashboard.",
+      "answer": "Marcus was working on an internal dashboard for the finance team using React and Postgres.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer correctly synthesises cross-session memory; project detail matches context."
+    },
+    {
+      "id": "qa-005-multi-session-incorrect",
+      "category": "multi-session",
+      "diversity_tags": [],
+      "question": "What framework is Marcus using for the finance dashboard?",
+      "context": "Session 2026-05-21: Marcus mentioned he is building an internal dashboard for the finance team using React and Postgres.",
+      "answer": "Marcus is using Vue and MySQL for the finance dashboard.",
+      "ground_truth_verdict": "incorrect",
+      "rationale": "Answer invents Vue and MySQL; context clearly states React and Postgres."
+    },
+    {
+      "id": "qa-006-knowledge-update-correct",
+      "category": "knowledge-update",
+      "diversity_tags": [],
+      "question": "Where does Lisa work now?",
+      "context": "Lisa worked at BrightCo from 2021 to 2024. In January 2025 she joined HelixAI as a staff engineer.",
+      "answer": "Lisa now works at HelixAI as a staff engineer.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer correctly resolves the knowledge update and picks the most recent employer."
+    },
+    {
+      "id": "qa-007-non-english-name-correct",
+      "category": "info-extraction",
+      "diversity_tags": ["non-english-name"],
+      "question": "Where did Ziad live before Boston?",
+      "context": "Ziad grew up in Casablanca, Morocco. He moved to Boston in 2018 for a job at Amazon Robotics.",
+      "answer": "Ziad lived in Casablanca, Morocco before moving to Boston.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer cites the context directly; non-English entity name correctly preserved."
+    },
+    {
+      "id": "qa-008-non-english-name-incorrect",
+      "category": "info-extraction",
+      "diversity_tags": ["non-english-name"],
+      "question": "What does 王芳 do for work?",
+      "context": "王芳 is a data scientist at Tencent Research in Shenzhen. She specialises in recommendation systems.",
+      "answer": "王芳 is a software engineer at Alibaba.",
+      "ground_truth_verdict": "incorrect",
+      "rationale": "Answer contradicts context: wrong role (data scientist vs software engineer) and wrong company (Tencent vs Alibaba)."
+    },
+    {
+      "id": "qa-009-non-english-name-partial",
+      "category": "info-extraction",
+      "diversity_tags": ["non-english-name"],
+      "question": "What does Иван specialise in professionally?",
+      "context": "Иван Петров is a principal researcher at the Moscow Institute of Physics and Technology. His main research areas are quantum computing and cryptography.",
+      "answer": "Иван specialises in quantum computing.",
+      "ground_truth_verdict": "partial",
+      "rationale": "Answer is correct but omits the second research area (cryptography) that context provides."
+    },
+    {
+      "id": "qa-010-non-english-name-correct-2",
+      "category": "info-extraction",
+      "diversity_tags": ["non-english-name"],
+      "question": "What company does Łukasz work for?",
+      "context": "Łukasz Kowalski joined OVHcloud's Warsaw office as a cloud architect in 2023. He previously worked at Orange Polska.",
+      "answer": "Łukasz works for OVHcloud.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer correctly identifies the current employer from context; non-ASCII name preserved."
+    },
+    {
+      "id": "qa-011-temporal-partial",
+      "category": "temporal",
+      "diversity_tags": ["temporal"],
+      "question": "When did Eve join the security team?",
+      "context": "Eve joined the security team in Q3 2024 after transferring from the platform team.",
+      "answer": "Eve joined in 2024.",
+      "ground_truth_verdict": "partial",
+      "rationale": "Answer is correct but less specific than context allows; partial credit."
+    },
+    {
+      "id": "qa-012-temporal-correct",
+      "category": "temporal",
+      "diversity_tags": ["temporal"],
+      "question": "When did the team migrate from Jenkins to GitHub Actions?",
+      "context": "The engineering team completed their migration from Jenkins to GitHub Actions in March 2025 as part of the CI modernisation initiative.",
+      "answer": "The team migrated from Jenkins to GitHub Actions in March 2025.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer matches the date and migration direction stated in context exactly."
+    },
+    {
+      "id": "qa-013-temporal-incorrect",
+      "category": "temporal",
+      "diversity_tags": ["temporal"],
+      "question": "When was the v2 API released publicly?",
+      "context": "The v2 API entered beta in October 2024 and was released publicly in February 2025.",
+      "answer": "The v2 API was released publicly in October 2024.",
+      "ground_truth_verdict": "incorrect",
+      "rationale": "October 2024 was the beta date; the public release was February 2025. Answer conflates the two."
+    },
+    {
+      "id": "qa-014-contradiction-correct",
+      "category": "knowledge-update",
+      "diversity_tags": ["contradiction"],
+      "question": "Where does Frank work currently?",
+      "context": "Frank worked at TechCo from 2020 to 2023. He joined StartupX in early 2024 as VP of Engineering.",
+      "answer": "Frank currently works at StartupX as VP of Engineering.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer correctly handles the knowledge update (TechCo→StartupX) using temporal markers in context."
+    },
+    {
+      "id": "qa-015-contradiction-incorrect",
+      "category": "knowledge-update",
+      "diversity_tags": ["contradiction"],
+      "question": "What database does the payments service use now?",
+      "context": "The payments service originally used MySQL. After the Q2 2025 migration it now runs on CockroachDB.",
+      "answer": "The payments service uses MySQL.",
+      "ground_truth_verdict": "incorrect",
+      "rationale": "Answer ignores the knowledge update; context explicitly states the post-migration state is CockroachDB."
+    },
+    {
+      "id": "qa-016-abstention-correct",
+      "category": "abstention",
+      "diversity_tags": ["abstention"],
+      "question": "What is Alice's home address?",
+      "context": "Alice is a project manager at Globex. She prefers concise written communication.",
+      "answer": "I don't have information about Alice's home address.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Context contains no home address; abstention is the correct response."
+    },
+    {
+      "id": "qa-017-abstention-incorrect",
+      "category": "abstention",
+      "diversity_tags": ["abstention"],
+      "question": "What is the exact salary of the lead engineer?",
+      "context": "The lead engineer joined the team in 2023. He works remotely from Berlin.",
+      "answer": "The lead engineer earns $150,000 per year.",
+      "ground_truth_verdict": "incorrect",
+      "rationale": "Context contains no salary information; the answer fabricates a number not present in context."
+    },
+    {
+      "id": "qa-018-abstention-correct-2",
+      "category": "abstention",
+      "diversity_tags": ["abstention"],
+      "question": "Which cloud provider does Priya's team use for production?",
+      "context": "Priya is a DevOps lead who joined in late 2024. She has experience with containerisation and infrastructure-as-code.",
+      "answer": "I don't have enough information to determine which cloud provider Priya's team uses for production.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Context gives no cloud provider information; correct abstention."
+    },
+    {
+      "id": "qa-019-code-aware-correct",
+      "category": "info-extraction",
+      "diversity_tags": ["code-aware"],
+      "question": "What language is the kremory graph engine written in?",
+      "context": "The kremory graph engine is implemented in Rust. It uses the petgraph crate for the underlying graph data structure and exposes an async API via Tokio.",
+      "answer": "The kremory graph engine is written in Rust, using petgraph and Tokio.",
+      "ground_truth_verdict": "correct",
+      "rationale": "Answer correctly extracts language and key dependencies stated in context."
+    },
+    {
+      "id": "qa-020-code-aware-partial",
+      "category": "info-extraction",
+      "diversity_tags": ["code-aware"],
+      "question": "What crates does the kremory graph engine depend on?",
+      "context": "The kremory graph engine is implemented in Rust. It uses the petgraph crate for the underlying graph data structure and exposes an async API via Tokio. It also depends on serde and serde_json for serialisation.",
+      "answer": "The kremory graph engine depends on petgraph and Tokio.",
+      "ground_truth_verdict": "partial",
+      "rationale": "Answer names two correct dependencies but omits serde and serde_json which are explicitly listed in context."
+    }
+  ]
+}

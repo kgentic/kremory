@@ -2019,8 +2019,10 @@ dependencies = [
 name = "kremory-eval"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "autoagents-llamacpp",
  "autoagents-llm",
+ "chrono",
  "hf-hub 0.3.2",
  "kremory",
  "metrics-util",
