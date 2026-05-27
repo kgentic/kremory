@@ -40,7 +40,7 @@ use crate::memory::{
     graph::GraphHandle,
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, MemoryError, Namespace, RetrievedContext, Result, SearchOpts,
+        DreamStatus, EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
         SourceKind, SourceRef, StructuredFact, SubmitOpts,
     },
     ChatProvider,
@@ -197,8 +197,7 @@ impl GraphHandle for EngineGraphHandle {
                         }
                     }
                     Err(e) => {
-                        ingest_runs
-                            .insert(run_id, IngestStatus::Failed(e.to_string()));
+                        ingest_runs.insert(run_id, IngestStatus::Failed(e.to_string()));
                         if let Some(ref bid) = batch_id_owned {
                             batch_status.entry(bid.clone()).and_modify(|s| {
                                 s.failed += 1;
@@ -488,10 +487,7 @@ impl GraphHandle for EngineGraphHandle {
 // Batch status helpers (private)
 // ---------------------------------------------------------------------------
 
-fn batch_status_increment_completed(
-    map: &DashMap<String, BatchStatus>,
-    batch_id: &str,
-) {
+fn batch_status_increment_completed(map: &DashMap<String, BatchStatus>, batch_id: &str) {
     map.entry(batch_id.to_owned())
         .and_modify(|s| s.completed += 1)
         .or_insert(BatchStatus {
@@ -502,10 +498,7 @@ fn batch_status_increment_completed(
         });
 }
 
-fn batch_status_increment_skipped(
-    map: &DashMap<String, BatchStatus>,
-    batch_id: &str,
-) {
+fn batch_status_increment_skipped(map: &DashMap<String, BatchStatus>, batch_id: &str) {
     map.entry(batch_id.to_owned())
         .and_modify(|s| s.skipped += 1)
         .or_insert(BatchStatus {
@@ -535,8 +528,7 @@ mod tests {
                 .await
                 .expect("in-memory graph"),
         );
-        let chat: Arc<dyn ChatProvider + Send + Sync> =
-            Arc::new(MockChatProvider::null());
+        let chat: Arc<dyn ChatProvider + Send + Sync> = Arc::new(MockChatProvider::null());
         let embedder: Arc<dyn crate::core::provider::DynEmbeddingProvider> =
             Arc::new(NullEmbeddingProvider { dim: 384 });
 
@@ -560,7 +552,9 @@ mod tests {
         let provider: Arc<dyn ChatProvider> = Arc::new(MockChatProvider::null());
 
         // graph_run_consolidation
-        let result = handle.graph_run_consolidation(&ns, Arc::clone(&provider)).await;
+        let result = handle
+            .graph_run_consolidation(&ns, Arc::clone(&provider))
+            .await;
         match result {
             Err(MemoryError::NotImplemented {
                 feature,
@@ -579,13 +573,7 @@ mod tests {
 
         // graph_submit_dream
         let result = handle
-            .graph_submit_dream(
-                &ns,
-                Arc::clone(&provider),
-                None,
-                DreamOpts::default(),
-                None,
-            )
+            .graph_submit_dream(&ns, Arc::clone(&provider), None, DreamOpts::default(), None)
             .await;
         match result {
             Err(MemoryError::NotImplemented {
@@ -604,9 +592,7 @@ mod tests {
         }
 
         // graph_dream_status
-        let result = handle
-            .graph_dream_status(Uuid::new_v4())
-            .await;
+        let result = handle.graph_dream_status(Uuid::new_v4()).await;
         match result {
             Err(MemoryError::NotImplemented {
                 available_in,
@@ -700,10 +686,7 @@ mod tests {
     async fn cancel_unknown_run_id_is_idempotent() {
         let handle = make_handle().await;
         let unknown = Uuid::new_v4();
-        let outcome = handle
-            .graph_cancel(unknown)
-            .await
-            .expect("cancel ok");
+        let outcome = handle.graph_cancel(unknown).await.expect("cancel ok");
         assert!(!outcome.rolled_back);
         assert!(outcome.partial.is_empty());
     }

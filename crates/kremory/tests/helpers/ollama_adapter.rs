@@ -21,9 +21,7 @@ impl EmbeddingProvider for OllamaEmbedderAdapter {
             .map_err(|e| CoreError::Embedding(e.to_string()))?;
 
         vecs.pop().ok_or_else(|| {
-            CoreError::Embedding(
-                "OllamaEmbedderAdapter: embed returned empty vec".to_string(),
-            )
+            CoreError::Embedding("OllamaEmbedderAdapter: embed returned empty vec".to_string())
         })
     }
 }

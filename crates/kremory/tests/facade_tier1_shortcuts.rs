@@ -22,9 +22,12 @@ async fn with_ollama_succeeds_in_test_mode() {
 #[tokio::test]
 async fn with_ollama_at_accepts_custom_url() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let _mem = Memory::with_ollama_at("http://my-ollama:11434", tmp.path().join("kremory-tier1.db"))
-        .await
-        .expect("with_ollama_at should succeed");
+    let _mem = Memory::with_ollama_at(
+        "http://my-ollama:11434",
+        tmp.path().join("kremory-tier1.db"),
+    )
+    .await
+    .expect("with_ollama_at should succeed");
 }
 
 /// `Memory::with_openai` fails when `OPENAI_API_KEY` is not set.

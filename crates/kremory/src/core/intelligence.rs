@@ -216,7 +216,10 @@ impl EntityExtractor for MockExtractor {
                             if !stop_words.contains(&clean.as_str()) && !seen_names.contains(&key) {
                                 seen_names.insert(key);
                                 let mut props = serde_json::Map::new();
-                                props.insert("name".to_string(), serde_json::Value::String(clean.clone()));
+                                props.insert(
+                                    "name".to_string(),
+                                    serde_json::Value::String(clean.clone()),
+                                );
                                 entities.push(ExtractedEntity {
                                     label: "Person".to_string(),
                                     name: clean,
