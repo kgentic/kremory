@@ -23,6 +23,13 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Search for entities matching the query via RRF of FTS + vector search,
     /// then expand 1-hop to get context.
     /// Returns entities, their connecting facts, and normalised relevance scores.
+    #[tracing::instrument(
+        name = "kremory.contextualize",
+        skip(self, query),
+        fields(
+            kremory.operation = "contextualize",
+        )
+    )]
     pub async fn contextualize(
         &self,
         query: &str,
@@ -79,9 +86,14 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
 
         // Step 4: Sort by RRF score descending and take top-K seed IDs
-        let mut ranked: Vec<(String, f32)> = rrf_scores.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut ranked: Vec<(String, f32)> =
+            rrf_scores.iter().map(|(k, v)| (k.clone(), *v)).collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let seed_ids: Vec<String> = ranked.iter().take(limit).map(|(id, _)| id.clone()).collect();
+        let seed_ids: Vec<String> = ranked
+            .iter()
+            .take(limit)
+            .map(|(id, _)| id.clone())
+            .collect();
 
         // Step 5: Min-max normalise RRF scores to [0.0, 1.0]
         // Restrict to seed_ids only (top-K; drop lower-ranked hits from scores map)
@@ -105,9 +117,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         };
 
         // Step 6: Increment access_count ONCE per unique seed ID (RISK-002)
-        self.graph
-            .increment_entity_access_counts(&seed_ids)
-            .await;
+        self.graph.increment_entity_access_counts(&seed_ids).await;
 
         // Step 7: Expand 1-hop from each seed entity
         let mut all_entities: Vec<Entity> = Vec::new();

@@ -159,6 +159,13 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Any type implementing `EntityExtractor` can be used (DefaultExtractor, NuExtractExtractor, etc.).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        name = "kremory.ingest",
+        skip(self, extractor, text),
+        fields(
+            kremory.operation = "ingest",
+        )
+    )]
     pub async fn ingest_with<E: EntityExtractor>(
         &self,
         extractor: &E,
@@ -266,7 +273,6 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // rollback in one place.  We use a labelled block instead of an async
         // closure to avoid capture/lifetime complexity.
         let phase_result: Result<()> = 'phases: {
-
             // ── Bug E §1: pre-scan all_facts for forward-reference entity names ─────
             // Collect every entity name appearing as a subject or object in facts.
             // Any name NOT already mapped from the extraction list is a forward
@@ -298,8 +304,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                     //
                     // Strategy: attempt insert_entity_with_group; if the entity already exists
                     // (UNIQUE constraint error), that is fine — a real row is present.
-                    let stub_props = serde_json::json!({ "stub": true, "source": "forward_reference" });
-                    match self.graph
+                    let stub_props =
+                        serde_json::json!({ "stub": true, "source": "forward_reference" });
+                    match self
+                        .graph
                         .insert_entity_with_group(&norm_name, "UNKNOWN", stub_props, group_id)
                         .await
                     {
@@ -363,8 +371,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                         .unwrap_or(false);
 
                     if existing_is_stub {
-                        let context_snippet =
-                            extract_context_snippet(text, &extracted.name, 200);
+                        let context_snippet = extract_context_snippet(text, &extracted.name, 200);
                         let promoted_props = serde_json::json!({
                             "context": context_snippet,
                             "name": extracted.name.clone()
@@ -408,8 +415,14 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "name": extracted.name.clone(),
                     });
 
-                    if let Err(e) = self.graph
-                        .insert_entity_with_group(&entity_id, &extracted.label, props_with_context, group_id)
+                    if let Err(e) = self
+                        .graph
+                        .insert_entity_with_group(
+                            &entity_id,
+                            &extracted.label,
+                            props_with_context,
+                            group_id,
+                        )
                         .await
                     {
                         break 'phases Err(e);
@@ -420,7 +433,8 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                         Ok(v) => v,
                         Err(e) => break 'phases Err(e),
                     };
-                    if let Err(e) = self.graph
+                    if let Err(e) = self
+                        .graph
                         .set_entity_embedding(&entity_id, &embedding)
                         .await
                     {
@@ -490,14 +504,16 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                     pool_b_hits.into_iter().map(|h| h.item).collect();
 
                 // Run contradiction detection
-                let contradiction_result = match detector.detect(fact, &pool_a, &pool_b, &ref_time).await {
-                    Ok(r) => r,
-                    Err(e) => break 'phases Err(e),
-                };
+                let contradiction_result =
+                    match detector.detect(fact, &pool_a, &pool_b, &ref_time).await {
+                        Ok(r) => r,
+                        Err(e) => break 'phases Err(e),
+                    };
 
                 // Invalidate contradicted facts
                 for fact_id in &contradiction_result.contradictions {
-                    if let Err(e) = self.graph
+                    if let Err(e) = self
+                        .graph
                         .invalidate_fact_with_reason(*fact_id, Utc::now(), ref_time)
                         .await
                     {
@@ -525,7 +541,8 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(fact_id) => {
                         // Embed the fact triple as a single string (subject predicate object)
                         // and store it so vector_search_facts can find it semantically.
-                        let fact_text = format!("{} {} {}", fact.subject, fact.predicate, fact.object);
+                        let fact_text =
+                            format!("{} {} {}", fact.subject, fact.predicate, fact.object);
                         if let Ok(embedding) = self.embedder.embed(&fact_text).await {
                             self.graph
                                 .set_fact_embedding(fact_id, &embedding)
@@ -1202,13 +1219,19 @@ mod tests {
                 subject: "Alice".into(),
                 predicate: "works_with".into(),
                 object: "Bob".into(),
-                is_entity_ref: true,  // Bob is a forward reference
+                is_entity_ref: true, // Bob is a forward reference
                 confidence: 0.9,
             }],
         };
 
         let result = engine
-            .ingest_with(&extractor, "Alice works with Bob on research.", None, None, None)
+            .ingest_with(
+                &extractor,
+                "Alice works with Bob on research.",
+                None,
+                None,
+                None,
+            )
             .await
             .expect("ingest_with OK");
 
@@ -1270,8 +1293,15 @@ mod tests {
         assert_eq!(r1.stub_entities_inserted, 1, "ingest 1 must create 1 stub");
 
         // Confirm Bob is a stub before promotion.
-        let bob_pre = graph.get_entity("bob").await.expect("get OK").expect("Bob exists");
-        assert_eq!(bob_pre.label, "UNKNOWN", "Bob must be UNKNOWN before promotion");
+        let bob_pre = graph
+            .get_entity("bob")
+            .await
+            .expect("get OK")
+            .expect("Bob exists");
+        assert_eq!(
+            bob_pre.label, "UNKNOWN",
+            "Bob must be UNKNOWN before promotion"
+        );
         assert_eq!(
             bob_pre.properties.get("stub").and_then(|v| v.as_bool()),
             Some(true),
@@ -1288,19 +1318,36 @@ mod tests {
             facts: vec![],
         };
         engine
-            .ingest_with(&extractor_2, "Bob is a researcher at Stanford.", None, None, None)
+            .ingest_with(
+                &extractor_2,
+                "Bob is a researcher at Stanford.",
+                None,
+                None,
+                None,
+            )
             .await
             .expect("ingest 2 OK");
 
         // After promotion, Bob must have real label and no stub flag.
-        let bob_post = graph.get_entity("bob").await.expect("get OK").expect("Bob still exists");
+        let bob_post = graph
+            .get_entity("bob")
+            .await
+            .expect("get OK")
+            .expect("Bob still exists");
         assert_eq!(
             bob_post.label, "Person",
             "promoted Bob must have label=Person; got={}",
             bob_post.label
         );
-        let stub_flag = bob_post.properties.get("stub").and_then(|v| v.as_bool()).unwrap_or(false);
-        assert!(!stub_flag, "promoted Bob must not have stub=true in properties");
+        let stub_flag = bob_post
+            .properties
+            .get("stub")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(
+            !stub_flag,
+            "promoted Bob must not have stub=true in properties"
+        );
     }
 
     /// Story #150: after a batch rejection due to IntraBatchDuplicate, no entities
