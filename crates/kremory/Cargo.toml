@@ -25,7 +25,7 @@ test-utils = []
 trace = []
 # otel: wire tracing-opentelemetry + opentelemetry_sdk so spans export via OTLP
 # (ADR D3). Requires an OTLP collector endpoint at runtime.
-otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk"]
+otel = ["dep:tracing-subscriber", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
 # llm-integration: gate live Ollama integration tests.  All tests inside
 # tests/llm_integration.rs carry #[cfg(feature = "llm-integration")] + #[ignore]
 # so they never run in normal `cargo test` unless explicitly enabled with
@@ -59,10 +59,14 @@ async-trait = "0.1"
 llm_json = "1.0.3"
 metrics = "0.24"
 tracing = "0.1"
+# runtime parsing of provider-rates.toml override path
+toml = "0.8"
 # OTel optional deps — only pulled in with `otel` feature (ADR D3)
-tracing-opentelemetry = { version = "0.32", optional = true }
-opentelemetry = { version = "0.31", optional = true }
-opentelemetry_sdk = { version = "0.31", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
 # P4 arena allocator — per-episode bump allocation (B.1 / A.0 K7=PASS).
 bumpalo = "3.20.2"
 # SHA-256 content hash for insert-level dedup (Story #209)
