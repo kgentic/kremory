@@ -4,7 +4,9 @@
 //! `cancel_dream` signatures + error paths that fire before graph calls.
 
 use chrono::Utc;
-use kremory::{DreamHandle, DynEmbeddingProvider, EpisodeCommit, Memory, MemoryError, Namespace};
+use kremory::{
+    DreamHandle, DynEmbeddingProvider, EpisodeCommit, IngestStatus, Memory, MemoryError, Namespace,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -77,22 +79,27 @@ async fn cancel_no_run_id_errors() {
     assert!(matches!(err, MemoryError::Other(_)));
 }
 
-/// `status_of` with a `run_id` set reaches the graph stub (panics in StubGraphHandle).
-/// Verified via `#[should_panic]` — confirms run_id check passes before graph.
+/// `status_of` with a `run_id` set reaches the real `EngineGraphHandle`.
+/// Unknown run_id → `Ok(IngestStatus::Complete)` (idempotent — already done or never ran).
 #[tokio::test]
-#[should_panic(expected = "StubGraphHandle::graph_ingest_status")]
-async fn status_of_with_run_id_reaches_graph_stub() {
+async fn status_of_with_run_id_reaches_engine_graph_handle() {
     let mem = open_with_ns().await;
-    let _ = mem.status_of(&background_commit()).await;
+    let result = mem.status_of(&background_commit()).await;
+    // EngineGraphHandle returns Complete for unknown run_ids (idempotent).
+    assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    assert!(
+        matches!(result.unwrap(), IngestStatus::Complete),
+        "expected Complete for unknown run_id"
+    );
 }
 
-/// `cancel_dream` with a `DreamHandle` reaches the graph stub.
-/// Verified via `#[should_panic]` — confirms routing is wired.
+/// `cancel_dream` with a `DreamHandle` reaches the real `EngineGraphHandle`.
+/// Unknown run_id → idempotent Ok (no task to cancel, no panic).
 #[tokio::test]
-#[should_panic(expected = "StubGraphHandle::graph_cancel")]
-async fn cancel_dream_reaches_graph_stub() {
+async fn cancel_dream_reaches_engine_graph_handle() {
     let mem = open_with_ns().await;
-    let _ = mem.cancel_dream(&dream_handle()).await;
+    let result = mem.cancel_dream(&dream_handle()).await;
+    assert!(result.is_ok(), "cancel_dream with unknown run_id should be idempotent Ok, got: {result:?}");
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

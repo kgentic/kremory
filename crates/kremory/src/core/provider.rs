@@ -287,6 +287,78 @@ impl EmbeddingProvider for NullEmbeddingProvider {
 }
 
 // ---------------------------------------------------------------------------
+// DeterministicEmbeddingProvider — production Anthropic fallback
+//
+// Uses inline FNV-1a (matching MockEmbeddingProvider pattern; zero new dep).
+// NOT gated — available in production builds. Named `Deterministic` (not Mock)
+// per F-04 resolution: `MockEmbeddingProvider` remains test-utils gated.
+// ---------------------------------------------------------------------------
+
+/// Production-safe deterministic embedding provider.
+///
+/// Uses FNV-1a hashing to produce a fixed-dimension float vector from any string.
+/// Embeddings are deterministic (same input → same output) but NOT semantic
+/// (similar inputs produce unrelated vectors). Suitable only for structural recall
+/// (exact-match entity lookup) where no embedding model API is available.
+///
+/// Used by `Memory::with_anthropic` — Anthropic has no embedding API.
+///
+/// Default `dim` = 384 — matches `NullEmbeddingProvider` and `OnnxEmbeddingProvider`
+/// output dimension to preserve vector-column compatibility.
+///
+/// # Example
+///
+/// ```rust
+/// use kremory::core::provider::DeterministicEmbeddingProvider;
+/// let provider = DeterministicEmbeddingProvider::new(384);
+/// ```
+#[derive(Debug, Clone)]
+pub struct DeterministicEmbeddingProvider {
+    pub dim: usize,
+}
+
+impl DeterministicEmbeddingProvider {
+    /// Create a new provider with the given output dimension.
+    pub fn new(dim: usize) -> Self {
+        Self { dim }
+    }
+
+    fn hash_text(text: &str) -> u64 {
+        // FNV-1a 64-bit inline (matches MockEmbeddingProvider pattern; zero new dep)
+        const FNV_OFFSET: u64 = 14695981039346656037;
+        const FNV_PRIME: u64 = 1099511628211;
+        let mut hash = FNV_OFFSET;
+        for byte in text.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        hash
+    }
+}
+
+impl EmbeddingProvider for DeterministicEmbeddingProvider {
+    fn embed<'a>(&'a self, text: &'a str) -> impl Future<Output = Result<Vec<f32>>> + Send + 'a {
+        let dim = self.dim;
+        let base_hash = Self::hash_text(text);
+
+        async move {
+            const FNV_PRIME: u64 = 1099511628211;
+            let mut vec = Vec::with_capacity(dim);
+            for i in 0..dim {
+                let h = base_hash
+                    .wrapping_mul(FNV_PRIME)
+                    .wrapping_add(i as u64)
+                    .wrapping_mul(FNV_PRIME);
+                // Map to [-1.0, 1.0]
+                let val = (h as f32 / u64::MAX as f32) * 2.0 - 1.0;
+                vec.push(val);
+            }
+            Ok(vec)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MockEmbeddingProvider
 //
 // Gated: test-infra only — not part of the production public API.
@@ -484,6 +556,47 @@ impl EmbeddingProvider for OnnxEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         self.embed_sync(text)
             .map_err(crate::core::error::Error::from)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ArcChatProvider — newtype that lets `Arc<dyn ChatProvider>` satisfy the
+// `ChatProvider` trait bound required by generic code in the facade layer.
+//
+// Orphan rule prevents: `impl ChatProvider for Arc<dyn ChatProvider>` (both
+// `ChatProvider` and `Arc` are defined outside this crate). The newtype pattern
+// is the standard Rust solution.
+//
+// Used by `EngineGraphHandle` (Phase E.2) which holds `Arc<dyn ChatProvider>`
+// and needs to pass it into functions/structs requiring `T: ChatProvider`.
+// ---------------------------------------------------------------------------
+
+/// Newtype wrapper that lets an `Arc<dyn ChatProvider>` satisfy the
+/// `ChatProvider` trait bound in generic contexts.
+///
+/// Required because orphan rules forbid `impl ChatProvider for Arc<dyn ChatProvider>`.
+/// Construct via `ArcChatProvider::new(arc)` or `From<Arc<dyn ChatProvider>>`.
+pub struct ArcChatProvider(pub Arc<dyn ChatProvider + Send + Sync>);
+
+impl ArcChatProvider {
+    /// Wrap an `Arc<dyn ChatProvider + Send + Sync>`.
+    pub fn new(inner: Arc<dyn ChatProvider + Send + Sync>) -> Self {
+        Self(inner)
+    }
+}
+
+#[async_trait::async_trait]
+impl ChatProvider for ArcChatProvider {
+    async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[autoagents_llm::chat::Tool]>,
+        json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
+    ) -> std::result::Result<
+        Box<dyn autoagents_llm::chat::ChatResponse>,
+        autoagents_llm::error::LLMError,
+    > {
+        self.0.chat_with_tools(messages, tools, json_schema).await
     }
 }
 

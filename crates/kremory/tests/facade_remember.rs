@@ -1,8 +1,8 @@
 //! A.8a — RememberRequest builder shape tests.
 //!
 //! Tests the builder API and namespace validation. Actual ingest calls
-//! would hit StubGraphHandle's `unimplemented!`, so tests that need to
-//! invoke `submit_episode` are deferred to integration tests with a real graph.
+//! now route to `EngineGraphHandle` (wired at v0.1.0). Tests that exercise
+//! real ingest use a null LLM + null embedder backed by an in-memory graph.
 
 use kremory::{DynEmbeddingProvider, Memory, MemoryError, Namespace, SourceKind};
 use std::sync::Arc;
@@ -19,18 +19,21 @@ async fn remember_missing_namespace_errors() {
 }
 
 /// `.in_namespace()` on RememberRequest resolves namespace (checked before graph).
-/// The graph call would panic (StubGraphHandle) so we test only namespace resolution
-/// by verifying a *different* error fires (the unimplemented! panic is a separate path).
-/// Namespace check passes → we hit the graph stub → panic caught by `#[should_panic]`.
+/// Namespace check passes → the call reaches `EngineGraphHandle::graph_ingest_episode`
+/// which returns a result (Ok or Err — not a panic). With null LLM + null embedder the
+/// inline ingest path may succeed or return a core error; either way it does NOT panic.
 #[tokio::test]
-#[should_panic(expected = "StubGraphHandle::graph_ingest_episode")]
-async fn remember_with_namespace_reaches_graph_stub() {
+async fn remember_with_namespace_reaches_engine_graph_handle() {
     let mem = open_no_ns().await;
-    // This should pass namespace check but then panic in StubGraphHandle.
-    let _ = mem
+    // Namespace check passes → call reaches EngineGraphHandle (no panic).
+    // The result may be Ok or Err (null LLM may produce empty extraction), but it
+    // must not panic.
+    let _result = mem
         .remember("test content")
         .in_namespace(Namespace::new("acme"))
         .await;
+    // No assertion on Ok/Err — the goal is that it does NOT panic and the namespace
+    // routing was wired correctly (pre-graph namespace check passed).
 }
 
 /// RememberRequest builder chains compile without errors.

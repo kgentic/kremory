@@ -99,7 +99,7 @@ fn remember_with_event_sink_chain_compiles() {
         .expect("runtime")
         .block_on(async { open_no_sink().await });
 
-    // Just build the request — don't await (StubGraphHandle would panic).
+    // Just build the request — don't await (we only test builder chain shape here).
     let _req = mem
         .remember("test content")
         .with_event_sink(sink)
