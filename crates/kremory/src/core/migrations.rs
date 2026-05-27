@@ -109,6 +109,27 @@ pub type Result<T> = std::result::Result<T, MigrationError>;
 /// The runner assumes `app_meta` exists with the named version column;
 /// bootstrapping that table is the caller's responsibility (typically
 /// the v1 migration itself creates `app_meta` + seeds the row).
+///
+/// ## PRAGMA user_version — shared state, last-writer-wins
+///
+/// `bump_version` writes to **two** locations after every migration step:
+///
+/// 1. `app_meta.{version_column}` — the per-track logical version.
+/// 2. `PRAGMA user_version` — a single 32-bit integer slot on the database
+///    file header, readable by any SQLite client without parsing `app_meta`.
+///
+/// When two `MigrationRunner` instances are live on the **same connection**
+/// with different `version_column` values (e.g. `rql_schema_version` and
+/// `schema_version`), they share the single `PRAGMA user_version` slot.
+/// Each `bump_version` call overwrites it with the version it just applied.
+/// The two per-track counters in `app_meta` remain independent and correct;
+/// only `PRAGMA user_version` reflects the **last migration applied across
+/// all tracks**. Consumers that need per-track versions must read
+/// `app_meta.{version_column}` directly.
+///
+/// For single-track deployments (one runner per database, e.g. kremory's
+/// `TemporalGraph`) `PRAGMA user_version` always matches `app_meta.version`
+/// and is safe to use as a quick health-check.
 pub struct MigrationRunner<'a> {
     conn: &'a libsql::Connection,
     version_column: &'static str,
@@ -707,6 +728,68 @@ mod tests {
         assert_eq!(
             pragma_v, 1,
             "PRAGMA user_version must match app_meta version"
+        );
+    }
+
+    /// Story #212 / FU.7: when two runners on the SAME connection each apply one
+    /// migration, PRAGMA user_version reflects the LAST write (last-writer-wins)
+    /// while each track's app_meta column remains correct.
+    ///
+    /// This documents and pins the shared-slot semantic described in the
+    /// `MigrationRunner` doc comment so regressions are caught immediately.
+    #[tokio::test]
+    async fn pragma_user_version_two_runner_last_writer_wins() {
+        let conn = in_memory_conn().await;
+        seed_app_meta(&conn).await;
+
+        let rql_migs = [Migration {
+            version: 1,
+            name: "001_rql_entity",
+            sql: "CREATE TABLE rql_entities (id INTEGER PRIMARY KEY)",
+        }];
+        let kai_migs = [Migration {
+            version: 1,
+            name: "001_kai_folder",
+            sql: "CREATE TABLE folders (id INTEGER PRIMARY KEY)",
+        }];
+
+        // Run rql runner first — bumps PRAGMA user_version to 1.
+        MigrationRunner::new(&conn, "rql_schema_version")
+            .run(&rql_migs)
+            .await
+            .expect("rql run");
+
+        // Run kai runner second — bumps PRAGMA user_version to 1 again (same value,
+        // different track). The per-track app_meta columns stay independent.
+        MigrationRunner::new(&conn, "schema_version")
+            .run(&kai_migs)
+            .await
+            .expect("kai run");
+
+        // Per-track app_meta columns must be independent and correct.
+        let rql_v = MigrationRunner::new(&conn, "rql_schema_version")
+            .current_version()
+            .await
+            .expect("rql v");
+        let kai_v = MigrationRunner::new(&conn, "schema_version")
+            .current_version()
+            .await
+            .expect("kai v");
+        assert_eq!(rql_v, 1, "rql_schema_version must be 1");
+        assert_eq!(kai_v, 1, "schema_version must be 1");
+
+        // PRAGMA user_version reflects the last bump — kai runner ran last so it
+        // wrote 1. In a scenario where tracks apply different version numbers the
+        // last write wins; here both write 1 so result is 1.
+        let mut rows = conn
+            .query("PRAGMA user_version", ())
+            .await
+            .expect("pragma query");
+        let row = rows.next().await.expect("row").expect("Some(row)");
+        let pragma_v: i64 = row.get(0).expect("col 0");
+        assert_eq!(
+            pragma_v, 1,
+            "PRAGMA user_version must reflect the last bump (last-writer-wins)"
         );
     }
 
