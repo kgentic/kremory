@@ -71,12 +71,13 @@
 pub mod providers;
 
 use std::future::IntoFuture;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
+use crate::core::chat_tracking::TokenTrackingChatProvider;
 use crate::core::provider::DynEmbeddingProvider;
 use crate::memory::{
     self,
@@ -228,6 +229,7 @@ impl Memory {
             default_sink: None,
             default_namespace: None,
             embedding_dim: None,
+            provider_rates_path: None,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -475,6 +477,9 @@ pub struct MemoryBuilder<L, E> {
     default_sink: Option<Arc<dyn EnrichmentEventSink>>,
     default_namespace: Option<Namespace>,
     embedding_dim: Option<usize>,
+    /// Optional path to a custom `provider-rates.toml`. When `Some`, overrides
+    /// the bundled rates file at build time.
+    provider_rates_path: Option<PathBuf>,
     _llm_state: std::marker::PhantomData<L>,
     _emb_state: std::marker::PhantomData<E>,
 }
@@ -512,6 +517,9 @@ impl<L, E> MemoryBuilder<L, E> {
 
 impl MemoryBuilder<NoLlm, NoEmb> {
     /// Configure the LLM provider (required).
+    ///
+    /// The provider is used as-is, without token or cost instrumentation. For
+    /// automatic observability, prefer [`with_llm_tracked`](Self::with_llm_tracked).
     pub fn with_llm(self, llm: Arc<dyn ChatProvider>) -> MemoryBuilder<WithLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
@@ -520,6 +528,54 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
             embedding_dim: self.embedding_dim,
+            provider_rates_path: self.provider_rates_path,
+            _llm_state: std::marker::PhantomData,
+            _emb_state: std::marker::PhantomData,
+        }
+    }
+
+    /// Wrap a user-supplied `ChatProvider` in a [`TokenTrackingChatProvider`],
+    /// capturing `(provider, model)` labels for metrics emission.
+    ///
+    /// Preferred over [`with_llm`](Self::with_llm) when the caller wants automatic
+    /// token count, cost, and duration observability via the kremory metrics surface
+    /// (`kremory_core_tokens_total`, `kremory_core_cost_usd_total`,
+    /// `kremory_core_chat_duration_seconds`).
+    ///
+    /// The `provider` and `model` labels must match entries in
+    /// `monitoring/provider-rates.toml` (or a custom rates file via
+    /// `with_provider_rates_path`) for
+    /// cost counters to emit non-zero values.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use kremory::Memory;
+    /// # async fn ex() -> kremory::memory::Result<()> {
+    /// # let my_openai_client: impl kremory::memory::ChatProvider + Send + Sync + 'static = todo!();
+    /// # let my_embedder: std::sync::Arc<dyn kremory::DynEmbeddingProvider> = todo!();
+    /// let memory = Memory::open("./agent.db")
+    ///     .with_llm_tracked("openai", "gpt-4o-mini", my_openai_client)
+    ///     .with_embedder(my_embedder)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_llm_tracked<L: ChatProvider + Send + Sync + 'static>(
+        self,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        llm: L,
+    ) -> MemoryBuilder<WithLlm, NoEmb> {
+        let tracked = TokenTrackingChatProvider::new(llm, provider, model);
+        MemoryBuilder {
+            path: self.path,
+            llm: Some(Arc::new(tracked) as Arc<dyn ChatProvider>),
+            embedder: self.embedder,
+            default_sink: self.default_sink,
+            default_namespace: self.default_namespace,
+            embedding_dim: self.embedding_dim,
+            provider_rates_path: self.provider_rates_path,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -539,6 +595,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
             embedding_dim: self.embedding_dim,
+            provider_rates_path: self.provider_rates_path,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -551,6 +608,23 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
+            // Initialize provider rates (idempotent). Errors are logged but not
+            // fatal — cost counters will skip emission with a one-shot warn.
+            if let Some(ref custom_path) = self.provider_rates_path {
+                if let Err(e) = crate::core::rates::init_from_path(custom_path.as_path()) {
+                    tracing::warn!(
+                        error = %e,
+                        path  = %custom_path.display(),
+                        "failed to load custom provider-rates.toml — cost counters will not be emitted"
+                    );
+                }
+            } else if let Err(e) = crate::core::rates::init_bundled() {
+                tracing::warn!(
+                    error = %e,
+                    "failed to load bundled provider-rates.toml — cost counters will not be emitted"
+                );
+            }
+
             let llm = self
                 .llm
                 .ok_or_else(|| MemoryError::Other("llm missing".into()))?;
