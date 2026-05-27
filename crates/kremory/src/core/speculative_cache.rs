@@ -1,6 +1,3 @@
-// SpeculativeCache is implemented and tested inline but not yet wired into
-// the search hot-path. Suppress dead_code until integration point is ready.
-#![allow(dead_code)]
 //! # Three-Cache Separation (Story #149)
 //!
 //! kremory uses three distinct cache tiers with explicit invalidation contracts:
@@ -46,6 +43,7 @@ use crate::core::schema::{Entity, TemporalGraph, DIRTY};
 use crate::core::search::SearchHit;
 
 /// A cached entity with its pre-computed PageRank score and expiry time.
+#[allow(dead_code)] // planned consumer: SpeculativeCache (wired in search hot-path, Story #149)
 #[derive(Debug, Clone)]
 struct CachedEntry {
     entity: Entity,
@@ -65,6 +63,10 @@ struct CachedEntry {
 ///
 /// Invalidation: entries are TTL-bounded. Callers MUST call `evict_expired()`
 /// or `clear()` when `DIRTY` is observed (see three-cache separation above).
+///
+/// Not yet wired into the search hot-path — Story #149 integration pending.
+/// Surgical exemption for the struct and all its methods until that wiring is done.
+#[allow(dead_code)] // planned consumer: search hot-path integration (Story #149)
 pub(crate) struct SpeculativeCache {
     /// entity_id -> cached entry
     entries: Mutex<HashMap<String, CachedEntry>>,
@@ -76,6 +78,7 @@ pub(crate) struct SpeculativeCache {
     max_prefetch: usize,
 }
 
+#[allow(dead_code)] // planned consumer: search hot-path integration (Story #149)
 impl SpeculativeCache {
     pub fn new(ttl: Duration, prefetch_depth: u32, max_prefetch: usize) -> Self {
         Self {
