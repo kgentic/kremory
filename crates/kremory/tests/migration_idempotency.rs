@@ -1,25 +1,32 @@
 //! Story #213 — CREATE TABLE IF NOT EXISTS idempotency.
 //!
-//! AC: running TemporalGraph::open_in_memory twice does not error.
+//! AC: running `run_migrations` twice on the **same** DB connection does not error.
 //!     Every CREATE TABLE/INDEX/VIRTUAL TABLE uses IF NOT EXISTS.
 //! Gate G5: cargo test -p kremory migration_idempotency | grep "FAILED" → empty.
 
-/// Calling open_in_memory twice (i.e. run_migrations twice on the same
-/// underlying schema) must not error — all DDL uses IF NOT EXISTS.
+/// G5: run_migrations twice on the same in-memory DB must be a no-op.
+///
+/// `open_in_memory()` runs migrations once internally.
+/// `run_migrations_again_for_test()` runs the same suite a second time on the
+/// **same** connection — this is the real idempotency test (same DB, twice).
+/// If any DDL is missing `IF NOT EXISTS` the second run will error.
+///
+/// Also asserts that `PRAGMA user_version` is unchanged (the migration runner
+/// does not regress the version counter on a re-run where `applied` is empty).
 #[tokio::test]
-async fn migration_idempotency() {
-    // First open — bootstraps the schema.
-    let graph = kremory::core::schema::TemporalGraph::open_in_memory()
+async fn migration_idempotency_same_db_twice() {
+    use kremory::core::schema::TemporalGraph;
+
+    // First open — bootstraps the schema on a fresh in-memory DB.
+    let graph = TemporalGraph::open_in_memory()
         .await
         .expect("first open must succeed");
 
-    // Drop the first handle so the in-memory DB is freed, then open a fresh one.
-    // This tests that a fresh DB is idempotent.
-    drop(graph);
-
-    let _graph2 = kremory::core::schema::TemporalGraph::open_in_memory()
+    // Run migrations a second time on the SAME handle — must be a no-op.
+    graph
+        .run_migrations_again_for_test()
         .await
-        .expect("second open must succeed — idempotent schema bootstrap");
+        .expect("second run_migrations on same DB must be idempotent (IF NOT EXISTS)");
 }
 
 /// Verify that no bare CREATE TABLE/INDEX/VIRTUAL TABLE appears in

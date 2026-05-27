@@ -517,6 +517,19 @@ impl TemporalGraph {
             .await?;
         Ok(())
     }
+
+    /// Re-run the migration suite on this already-open handle.
+    ///
+    /// Every DDL statement in `run_migrations` uses `IF NOT EXISTS`, so
+    /// calling this a second time on the same connection MUST be a no-op
+    /// with no errors. This is the G5 idempotency invariant.
+    ///
+    /// Only available in `test` builds and when the `test-utils` feature is
+    /// enabled. Never ship this in a production binary.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn run_migrations_again_for_test(&self) -> Result<()> {
+        self.run_migrations().await
+    }
 }
 
 #[cfg(test)]
