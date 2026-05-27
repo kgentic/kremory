@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// A.2 — D.6.5: sink trait shape tests.
 ///
 /// Tests that verify the IngestEventSink and EnrichmentEventSink traits

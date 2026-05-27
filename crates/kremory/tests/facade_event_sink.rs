@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8c — Event sink integration tests.
 //!
 //! Verifies:

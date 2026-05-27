@@ -867,6 +867,7 @@ impl SimpleGraph {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::core::intelligence::{ExtractionContext, ExtractionResult};
     use crate::core::provider::{MockChatProvider, MockEmbeddingProvider};

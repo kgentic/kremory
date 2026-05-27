@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// A.2 — D.6.3: error envelopes serde roundtrip tests.
 ///
 /// RED phase tests — these will fail until the types are implemented.

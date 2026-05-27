@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8a — RecallRequest builder shape tests.
 //!
 //! Tests validate the builder API surface (compile-time + runtime) and

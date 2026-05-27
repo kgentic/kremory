@@ -399,6 +399,7 @@ pub(crate) async fn prune_old_backups(backup_root: &Path, max_age_days: u32) -> 
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use libsql::Builder;
 

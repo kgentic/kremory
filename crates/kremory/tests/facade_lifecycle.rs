@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8b — Memory async lifecycle tests: handles, polling, cancel.
 //!
 //! Verifies `status_of`, `await_enrichment`, `await_batch`, `cancel`,

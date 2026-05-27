@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.8a — Memory builder open/construction tests.
 //!
 //! Verifies the type-state builder pipeline compiles and returns `Memory`

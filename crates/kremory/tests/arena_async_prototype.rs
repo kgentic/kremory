@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 /// A.0 — K7 bumpalo + tokio borrow-checker prototype gate.
 ///
 /// Verifies that a `bumpalo::Bump` arena allocator survives an `.await`

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! `OllamaEmbedderAdapter` — bridges the `autoagents_llm::embedding::EmbeddingProvider`
 //! trait (batch `Vec<String>` → `Vec<Vec<f32>>`) to kremory's single-string
 //! `EmbeddingProvider` trait (`&str` → `Vec<f32>`).

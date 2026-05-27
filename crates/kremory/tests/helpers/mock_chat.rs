@@ -1,6 +1,6 @@
 //! `MockChatProviderTracking` — mock ChatProvider variants for v0.1.2 observability tests.
 // Test helpers: unused struct/enum variants are expected until consumed by integration tests.
-#![allow(dead_code)]
+#![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 //!
 //! Three behaviors:
 //!   - `WithUsage { input, output }` — returns a chat response with usage metadata.

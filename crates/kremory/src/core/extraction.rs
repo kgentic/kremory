@@ -1701,6 +1701,7 @@ fn parse_json_lenient<T: for<'de> serde::Deserialize<'de> + Default>(raw: &str) 
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::core::intelligence::ExtractionContext;
     use crate::core::provider::MockChatProvider;
@@ -2151,7 +2152,7 @@ mod tests {
             result.entities.iter().map(|e| &e.name).collect::<Vec<_>>()
         );
         assert!(
-            result.facts.len() >= 1,
+            !result.facts.is_empty(),
             "should have at least 1 relationship"
         );
         assert_eq!(result.facts[0].predicate, "works_at");

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Story #34 — Migration naming: NNN_descriptive format enforcement.
 //!
 //! AC: every Migration::name must match `^\d{3}_[a-z][a-z0-9_]*$`.

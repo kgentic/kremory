@@ -836,6 +836,7 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use chrono::{Duration, Utc};
 

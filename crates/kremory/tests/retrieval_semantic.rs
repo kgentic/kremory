@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::redundant_closure)]
 /// Semantic retrieval quality benchmark for the rql-core crate.
 ///
 /// Validates retrieval quality using REAL sentence embeddings from
@@ -8,7 +9,6 @@
 ///
 /// Run with:
 ///   cargo test --test retrieval_semantic --features embeddings -- --nocapture --ignored
-
 #[cfg(feature = "embeddings")]
 mod semantic_tests {
     use std::sync::Arc;

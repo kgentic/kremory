@@ -69,6 +69,7 @@ pub fn engine() -> Arc<TemporalGraph> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     // OnceLock is process-global and cannot be reset between tests.
     // Tests here use in-memory DBs where possible, or guard against
     // a pre-initialised ENGINE from a prior test in the same binary.

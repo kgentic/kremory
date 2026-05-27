@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Story #229 — Lock ordering documented.
 //!
 //! AC: module-level doc comment in `core/mod.rs` documents lock acquisition

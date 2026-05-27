@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Contract surface tests for rqlm's 4 public fns.
 //!
 //! - `context_block` (implemented in D.2a) — full coverage of all 3

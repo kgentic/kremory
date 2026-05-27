@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Story #213 — CREATE TABLE IF NOT EXISTS idempotency.
 //!
 //! AC: running `run_migrations` twice on the **same** DB connection does not error.

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.4 — D.6.6: async/event integration tests.
 //!
 //! Verifies that submit_episode with enrich_per_episode=true:

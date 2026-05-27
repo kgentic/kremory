@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Story #156 — RED phase acceptance tests
 //!
 //! Two tests:

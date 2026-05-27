@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Integration test: BackgroundIngestor → contradiction detection round-trip.
 //!
 //! Scenario:

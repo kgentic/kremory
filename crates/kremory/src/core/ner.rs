@@ -677,6 +677,7 @@ pub use inner::GlinerExtractor;
 
 #[cfg(all(test, feature = "ner"))]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::inner::{decode_logits, generate_spans, reconstruct_text, sigmoid};
     use super::GlinerExtractor;
     use crate::core::intelligence::{EntityExtractor, ExtractionContext};
@@ -802,7 +803,7 @@ mod tests {
         let num_classes = 1;
         let mut data = vec![-5.0_f32; num_spans * num_classes];
         // span 0, class 0 → high score
-        data[0 * num_classes + 0] = 5.0;
+        data[0] = 5.0;
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, num_spans, num_classes], data).unwrap();
 
@@ -828,7 +829,7 @@ mod tests {
             .iter()
             .position(|&s| s == (1, 2))
             .expect("span (1,2) must be present");
-        data[target_span_idx * num_classes + 0] = 5.0;
+        data[target_span_idx * num_classes] = 5.0;
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, num_spans, num_classes], data).unwrap();
 
@@ -857,11 +858,11 @@ mod tests {
         let idx_2_2 = spans_list.iter().position(|&s| s == (2, 2)).unwrap();
 
         // (0,0) class 0 → score ~0.99
-        data[idx_0_0 * num_classes + 0] = 5.0;
+        data[idx_0_0 * num_classes] = 5.0;
         // (0,1) class 1 → score ~0.73 (overlaps with (0,0))
         data[idx_0_1 * num_classes + 1] = 1.0;
         // (2,2) class 0 → score ~0.99 (non-overlapping)
-        data[idx_2_2 * num_classes + 0] = 5.0;
+        data[idx_2_2 * num_classes] = 5.0;
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, num_spans, num_classes], data).unwrap();
         let result = decode_logits(&arr.view(), 0, &spans_list, num_classes, 0.5);
@@ -890,9 +891,9 @@ mod tests {
         // Decoder must pick class 1 (best class per span), not class 0.
         let spans_list = vec![(0usize, 0usize)];
         let num_classes = 2;
-        let mut data = vec![-5.0_f32; 1 * num_classes];
-        data[0 * num_classes + 0] = 1.0; // class 0: sigmoid ~0.73
-        data[0 * num_classes + 1] = 5.0; // class 1: sigmoid ~0.99
+        let mut data = vec![-5.0_f32; num_classes];
+        data[0] = 1.0; // class 0: sigmoid ~0.73
+        data[1] = 5.0; // class 1: sigmoid ~0.99
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, 1, num_classes], data).unwrap();
         let result = decode_logits(&arr.view(), 0, &spans_list, num_classes, 0.5);

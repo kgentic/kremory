@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A.3 — D.6.4 idempotency CAS concurrency tests.
 //!
 //! Verifies that submit_dream_phase with a DashMap-backed StubIdempotentHandle
