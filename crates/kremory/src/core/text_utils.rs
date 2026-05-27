@@ -31,6 +31,10 @@ static SENTENCE_TERMINATORS: OnceLock<HashSet<char>> = OnceLock::new();
 /// Minimum token length (in characters) for an entity candidate to be considered.
 /// Filters single-char and two-char noise. Tier-1 cache: constant value,
 /// computed once.
+///
+/// Not used in production code after FU.5 reverted the silent `effective_min`
+/// clamp in `is_oov_candidate`. Retained for the OnceLock invariant test.
+#[cfg(test)]
 static MIN_ENTITY_TOKEN_LEN: OnceLock<usize> = OnceLock::new();
 
 /// Return a reference to the lazily initialised stop-word set (Tier-1 cache).
@@ -44,6 +48,10 @@ fn sentence_terminators() -> &'static HashSet<char> {
 }
 
 /// Return the minimum entity token length constant (Tier-1 cache).
+///
+/// Not used in production code after FU.5 reverted the silent `effective_min`
+/// clamp in `is_oov_candidate`. Retained for the OnceLock invariant test.
+#[cfg(test)]
 fn min_entity_token_len() -> usize {
     *MIN_ENTITY_TOKEN_LEN.get_or_init(|| 4)
 }
@@ -263,11 +271,15 @@ impl OovAuditor {
 
     /// Returns true if `word` is an OOV candidate: not in dictionary, not a stop word,
     /// not numeric, not a contraction, and at least `min_len` chars.
+    ///
+    /// `min_len` is honoured directly — callers are responsible for choosing
+    /// the appropriate floor. The global `min_entity_token_len()` constant
+    /// (Tier-1 OnceLock, Story #148) is available for callers that want it,
+    /// but `is_oov_candidate` does NOT silently clamp to it. Silently overriding
+    /// the caller's `min_len` with `max(min_len, 4)` was a scope-creep regression
+    /// introduced in #148 — reverted by FU.5.
     fn is_oov_candidate(&self, word: &str, min_len: usize) -> bool {
-        // Use the larger of the caller-supplied minimum and the global constant
-        // (Tier-1 OnceLock cache, Story #148).
-        let effective_min = min_len.max(min_entity_token_len());
-        if word.len() < effective_min {
+        if word.len() < min_len {
             return false;
         }
         if word.chars().all(|c| c.is_numeric() || c == '.' || c == ',') {
