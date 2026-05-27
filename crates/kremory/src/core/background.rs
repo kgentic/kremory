@@ -206,9 +206,11 @@ impl BackgroundIngestor {
 
         let deferred_enabled = config.deferred_extraction_enabled;
 
+        let parent_span = tracing::Span::current();
         let handle = thread::Builder::new()
             .name(config.thread_name.clone())
             .spawn(move || {
+                let _enter = parent_span.enter();
                 worker_loop(
                     graph,
                     work_rx,
