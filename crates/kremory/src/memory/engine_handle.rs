@@ -41,7 +41,7 @@ use crate::memory::{
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
         DreamStatus, EpisodeCommit, MemoryError, Namespace, RetrievedContext, Result, SearchOpts,
-        SourceRef, StructuredFact, SubmitOpts,
+        SourceKind, SourceRef, StructuredFact, SubmitOpts,
     },
     ChatProvider,
 };
@@ -223,6 +223,7 @@ impl GraphHandle for EngineGraphHandle {
                 run_id: Some(run_id),
                 episode_entity_id: run_id.to_string(),
                 committed_at: Utc::now(),
+                stub_entities_inserted: 0,
             });
         }
 
@@ -250,6 +251,7 @@ impl GraphHandle for EngineGraphHandle {
             run_id: None,
             episode_entity_id: ingest_result.episode_id.to_string(),
             committed_at: Utc::now(),
+            stub_entities_inserted: ingest_result.stub_entities_inserted,
         })
     }
 
@@ -398,58 +400,71 @@ impl GraphHandle for EngineGraphHandle {
             .map_err(MemoryError::Core)?;
 
         // Map ContextResult (Entity + Fact) → Vec<RetrievedContext>.
-        // Each entity becomes one RetrievedContext; source_refs are derived
-        // from the facts that mention this entity as subject or object.
-        let results = context
-            .entities
-            .into_iter()
-            .map(|entity| {
-                // Build source_refs from facts linked to this entity.
-                // We use the entity's label as summary (no per-entity summary field in v0.1.0).
-                // Score: access_count as a proxy for relevance (normalised 0.0–1.0 clamped).
-                let score = (entity.access_count as f32 / 100.0_f32).min(1.0);
+        // Each entity becomes one RetrievedContext. source_refs are derived
+        // from episodic_edges (Bug A fix: v0.1.1 authoritative path).
+        let mut results: Vec<RetrievedContext> = Vec::with_capacity(context.entities.len());
+        for entity in context.entities {
+            // Score: RRF-derived normalised score from ContextResult.scores.
+            // Seed entities have a score in [0.0, 1.0]; 1-hop expansion neighbours
+            // that were not in the original seed set default to 0.0 (v0.1.1 policy).
+            let score = context.scores.get(&entity.id).copied().unwrap_or(0.0);
 
-                // Derive source_refs: facts where this entity is subject or object.
-                let source_refs: Vec<SourceRef> = context
-                    .facts
-                    .iter()
-                    .filter(|f| {
-                        f.subject_id == entity.id || f.object_id.as_deref() == Some(&entity.id)
-                    })
-                    .map(|f| SourceRef {
-                        kind: crate::memory::types::SourceKind::Document,
-                        id: f.id.to_string(),
-                        occurred_at: f.valid_from,
-                        published_at: None,
-                    })
-                    .collect();
+            // Bug A fix: query episodic_edges directly — authoritative source for
+            // episode attribution. Fact-row IDs (v0.1.0 broken path) are replaced by
+            // episodic_edge.episode_id values with SourceKind::Episode.
+            let edges = self
+                .engine
+                .graph
+                .episodic_edges_for_entity(&entity.id)
+                .await
+                .map_err(MemoryError::Core)?;
+            let source_refs: Vec<SourceRef> = edges
+                .iter()
+                .map(|e| SourceRef {
+                    kind: SourceKind::Episode,
+                    id: e.episode_id.to_string(),
+                    occurred_at: e.recorded_at,
+                    published_at: None,
+                })
+                .collect();
 
-                let summary = entity
-                    .properties
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_owned())
-                    .unwrap_or_else(|| entity.label.clone());
+            // Bug B: read `properties["context"]` first (verbatim source snippet
+            // stored at extract time), fall back to `properties["text"]` (legacy
+            // episode-as-entity path), then fall back to entity.label (last resort).
+            let summary = entity
+                .properties
+                .get("context")
+                .or_else(|| entity.properties.get("text"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned())
+                .unwrap_or_else(|| entity.label.clone());
 
-                // Use properties["name"] if present (original case, e.g. "Alice"),
-                // fall back to entity.id (normalized, e.g. "alice").
-                // entity.label is the type label ("Person") — NOT the entity name.
-                let entity_name = entity
-                    .properties
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_owned())
-                    .unwrap_or_else(|| entity.id.clone());
+            // Use properties["name"] if present (original case, e.g. "Alice"),
+            // fall back to entity.id (normalized, e.g. "alice").
+            // entity.label is the type label ("Person") — NOT the entity name.
+            let entity_name = entity
+                .properties
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned())
+                .unwrap_or_else(|| entity.id.clone());
 
-                RetrievedContext {
-                    entity_id: entity.id,
-                    entity_name,
-                    summary,
-                    score,
-                    source_refs,
-                }
-            })
-            .collect();
+            // incomplete: true when this entity is a stub placeholder.
+            let incomplete = entity
+                .properties
+                .get("stub")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            results.push(RetrievedContext {
+                entity_id: entity.id,
+                entity_name,
+                summary,
+                score,
+                source_refs,
+                incomplete,
+            });
+        }
 
         Ok(results)
     }

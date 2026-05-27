@@ -25,6 +25,7 @@ fn inline_commit() -> EpisodeCommit {
         run_id: None,
         episode_entity_id: "entity-abc".into(),
         committed_at: Utc::now(),
+        stub_entities_inserted: 0,
     }
 }
 
@@ -33,6 +34,7 @@ fn background_commit() -> EpisodeCommit {
         run_id: Some(Uuid::new_v4()),
         episode_entity_id: "entity-xyz".into(),
         committed_at: Utc::now(),
+        stub_entities_inserted: 0,
     }
 }
 

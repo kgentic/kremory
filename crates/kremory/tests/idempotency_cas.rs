@@ -50,6 +50,7 @@ impl GraphHandle for StubIdempotentHandle {
             run_id: None,
             episode_entity_id: format!("stub:{}", source_ref.id),
             committed_at: Utc::now(),
+            stub_entities_inserted: 0,
         })
     }
 
