@@ -16,7 +16,7 @@
 //!
 //! `provider` and `model` are set at construction time — never derived from
 //! response content. `error_type` is bounded to the 11 known `LLMError`
-//! variants in `autoagents-llm 0.3.7` via [`error_type_label`].
+//! variants in `autoagents-llm 0.3.7` via `error_type_label`.
 //!
 //! ## Usage
 //!

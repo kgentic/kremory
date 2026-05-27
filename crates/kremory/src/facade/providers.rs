@@ -20,6 +20,7 @@ use autoagents_llm::{
     embedding::{model_provider::EmbeddingBuilder, EmbeddingProvider as AutoEmbeddingProvider},
 };
 
+use crate::core::chat_tracking::TokenTrackingChatProvider;
 use crate::core::config::PipelineConfig;
 use crate::core::ingest::Engine;
 use crate::core::provider::{
@@ -128,7 +129,12 @@ pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> R
         .build()
         .map_err(|e| MemoryError::Other(format!("Ollama embedding provider error: {e}")))?;
 
-    let llm: Arc<dyn ChatProvider> = chat_provider;
+    let arc_llm: Arc<dyn ChatProvider> = chat_provider;
+    let llm: Arc<dyn ChatProvider> = Arc::new(TokenTrackingChatProvider::new(
+        ArcChatProvider::new(arc_llm),
+        "ollama",
+        "llama3.2",
+    ));
     let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(AutoagentsEmbedderAdapter::new(
         EmbedderArc::<Ollama>::new(embed_provider),
     ));
@@ -156,7 +162,12 @@ pub async fn with_openai(path: impl AsRef<Path>) -> Result<Memory> {
         .build()
         .map_err(|e| MemoryError::Other(format!("OpenAI embedding provider error: {e}")))?;
 
-    let llm: Arc<dyn ChatProvider> = chat_provider;
+    let arc_llm: Arc<dyn ChatProvider> = chat_provider;
+    let llm: Arc<dyn ChatProvider> = Arc::new(TokenTrackingChatProvider::new(
+        ArcChatProvider::new(arc_llm),
+        "openai",
+        "gpt-4o-mini",
+    ));
     let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(AutoagentsEmbedderAdapter::new(
         EmbedderArc::<OpenAI>::new(embed_provider),
     ));
@@ -190,7 +201,12 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
          or wire a custom embedder via Memory::open().with_embedder(...)."
     );
 
-    let llm: Arc<dyn ChatProvider> = chat_provider;
+    let arc_llm: Arc<dyn ChatProvider> = chat_provider;
+    let llm: Arc<dyn ChatProvider> = Arc::new(TokenTrackingChatProvider::new(
+        ArcChatProvider::new(arc_llm),
+        "anthropic",
+        "claude-3-haiku-20240307",
+    ));
     let embedder: Arc<dyn DynEmbeddingProvider> =
         Arc::new(DeterministicEmbeddingProvider::new(384));
 
@@ -206,6 +222,16 @@ async fn build_memory(
     embedder: Arc<dyn DynEmbeddingProvider>,
     embedding_dim: Option<usize>,
 ) -> Result<Memory> {
+    // Initialize bundled provider rates (idempotent — second call is a no-op).
+    // Errors are logged but not fatal; cost counters will skip emission with a
+    // one-shot warn inside TokenTrackingChatProvider.
+    if let Err(e) = crate::core::rates::init_bundled() {
+        tracing::warn!(
+            error = %e,
+            "failed to load bundled provider-rates.toml — cost counters will not be emitted"
+        );
+    }
+
     let graph = open_graph(path.as_ref(), llm.clone(), embedder.clone(), embedding_dim).await?;
     Ok(Memory {
         graph,
