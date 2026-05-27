@@ -41,7 +41,7 @@ println!("{}", ctx);
 
 - **Embeddable, not a service.** One `cargo add`. No subprocess. No container. No API key required to ship. The SQLite of agent memory.
 - **BYOM — Bring Your Own Model.** kremory never bundles a 440MB embedding model. Wire your own `Arc<dyn EmbeddingProvider>` — OpenAI, Ollama, local GGUF, anything. Your costs, your keys, your data.
-- **Two-clock temporal model.** Every fact carries `recorded_at` (when the system learned it — immutable) and `valid_from`/`valid_to` (when it was true in the world — mutable). Active contradiction resolver. Audit-grade history with no data loss.
+- **Two-clock temporal model.** Every fact carries `recorded_at` (when the system learned it — immutable) and `valid_from`/`valid_to` (when it was true in the world — mutable). Audit-grade history with no data loss. Contradiction resolver lands in v0.1.1.
 
 ---
 
@@ -49,8 +49,10 @@ println!("{}", ctx);
 
 | Version | Milestone |
 |---|---|
-| **v0.1.0** | Engine crate — libSQL storage, bi-temporal graph, contradiction resolver, BYOM embedding, hybrid retrieval |
-| **v0.2.0** | `kremory-mcp` — MCP server crate; Cypher v1 read-only executor |
+| **v0.1.0** | Substrate + bi-temporal storage — two-clock columns, `as_of` queries, `published_at` precedence, BYOM via `Arc<dyn ChatProvider>` + `EmbeddingProvider`, libSQL, basic `add_episode`, single-process |
+| **v0.1.1** | Moat + Phase trait — contradiction engine, multi-process dream lock, `otel` feature complete, Phase trait + DreamCycle replaces PASSES, distillation primitives |
+| **v0.1.2** | Show HN release — comparison matrix, CI badges, 3 runnable examples |
+| **v0.2.0** | Hybrid recall + `kremory-mcp` — basic RRF + tunable `SearchOpts`, MCP server crate first publishable release |
 | **v0.2+** | `kremory-cli` — command-line interface |
 | **v0.3+** | `kremory-claude-plugin` — native Claude Code plugin |
 | **v0.4+** | `codebase-memgraph-kremory` — fork of codebase-memory-mcp replacing C storage with kremory |
@@ -102,6 +104,14 @@ docs/
 ## License
 
 `kremory` — Apache-2.0. See [crates/kremory/LICENSE](crates/kremory/LICENSE).
+
+---
+
+## Research foundations
+
+kremory's bi-temporal storage model and contradiction-resolution architecture draw from:
+
+- Helms et al., "Zep: A Temporal Knowledge Graph Architecture for Agent Memory" (2025) — arXiv:2501.13956
 
 ---
 
