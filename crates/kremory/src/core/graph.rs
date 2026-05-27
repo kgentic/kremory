@@ -142,7 +142,10 @@ impl TemporalGraph {
         // Transaction guards the invariant: row in `entities` ⟹ row in `entities_fts`.
         // Without a transaction, a crash or FTS error between the two INSERTs leaves an
         // entity permanently invisible to FTS search (HIGH-2 remediation, 2026-05-15).
-        self.conn.execute("BEGIN", ()).await?;
+        // Uses BeginGuard so nested calls (caller already holds an outer txn) are a no-op
+        // on BEGIN/COMMIT — required to avoid "transaction within a transaction" errors
+        // when this method is called from inside the ingest pipeline's outer txn.
+        let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
             self.conn
                 .execute(
@@ -161,11 +164,10 @@ impl TemporalGraph {
         .await;
         match inner {
             Ok(()) => {
-                self.conn.execute("COMMIT", ()).await?;
+                guard.commit().await?;
             }
             Err(e) => {
-                // Best-effort rollback; propagate the original error regardless.
-                let _ = self.conn.execute("ROLLBACK", ()).await;
+                let _ = guard.rollback().await;
                 return Err(e);
             }
         }
@@ -385,6 +387,36 @@ impl TemporalGraph {
         Ok(entities)
     }
 
+    /// List all entities belonging to a specific namespace group.
+    ///
+    /// Used by `Engine::ingest_with` at the dedup sites (`core/ingest.rs`)
+    /// to restrict entity matching to the caller's namespace, preventing
+    /// cross-namespace entity collisions.
+    ///
+    /// The `group_id` parameter maps directly to the storage column; callers
+    /// derive it from `Namespace` via `namespace_to_group_id(ns)`.
+    pub async fn list_entities_in_group(&self, group_id: &str) -> Result<Vec<Entity>> {
+        let _db_start = Instant::now();
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count \
+                 FROM rql_entities WHERE group_id = ?1",
+                libsql::params![group_id],
+            )
+            .await?;
+        let mut entities = Vec::new();
+        while let Some(row) = rows.next().await? {
+            entities.push(row_to_entity(&row)?);
+        }
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        let count = entities.len();
+        histogram!("rql.db.list_entities_in_group_count").record(count as f64);
+        histogram!("rql.db.list_entities_in_group_ms").record(_ms);
+        tracing::info!(_ms, count, group_id, "kremory.db.list_entities_in_group");
+        Ok(entities)
+    }
+
     // === Fact CRUD ===
 
     #[allow(clippy::too_many_arguments)]
@@ -407,66 +439,81 @@ impl TemporalGraph {
         // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
         // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
         let guard = self.begin_immediate_if_needed().await?;
-        // Check for existing non-expired fact with same content hash
-        let mut dup_check = self
-            .conn
-            .query(
-                "SELECT id FROM facts WHERE content_hash = ?1 AND expired_at IS NULL LIMIT 1",
-                libsql::params![hash.clone()],
-            )
-            .await?;
-        if dup_check.next().await?.is_some() {
-            guard.rollback().await?;
-            return Err(crate::core::error::Error::Duplicate { content_hash: hash });
-        }
-        let vec_str = embedding.map(|e| {
-            format!(
-                "[{}]",
-                e.iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        });
-        self.conn
-            .execute(
-                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, content_hash)
-                 VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10)",
-                libsql::params![
-                    subject_id,
-                    predicate,
-                    object_id,
-                    object_value,
-                    vec_str,
-                    valid_from_str,
-                    now,
-                    confidence,
-                    source_episode_id,
-                    hash,
-                ],
-            )
-            .await?;
-        let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
-        let row = rows
-            .next()
-            .await?
-            .ok_or(crate::core::error::Error::InsertReturnedNoRowId {
-                operation: "insert_fact",
-            })?;
-        let fact_id = row.get::<i64>(0)?;
-        if let Some(ov) = object_value {
-            self.conn
-                .execute(
-                    "INSERT INTO facts_fts(fact_id, predicate, object_value) VALUES (?1, ?2, ?3)",
-                    libsql::params![fact_id, predicate, ov],
+        // Inner ops wrapped so we can explicitly rollback on Err — without this,
+        // a raw `?` would drop the guard, leaking the BEGIN IMMEDIATE on the
+        // libsql connection and causing "transaction within a transaction" on
+        // the next call.
+        let result: Result<i64> = async {
+            let mut dup_check = self
+                .conn
+                .query(
+                    "SELECT id FROM facts WHERE content_hash = ?1 AND expired_at IS NULL LIMIT 1",
+                    libsql::params![hash.clone()],
                 )
                 .await?;
+            if dup_check.next().await?.is_some() {
+                return Err(crate::core::error::Error::Duplicate {
+                    content_hash: hash.clone(),
+                });
+            }
+            let vec_str = embedding.map(|e| {
+                format!(
+                    "[{}]",
+                    e.iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            });
+            self.conn
+                .execute(
+                    "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, content_hash)
+                     VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10)",
+                    libsql::params![
+                        subject_id,
+                        predicate,
+                        object_id,
+                        object_value,
+                        vec_str,
+                        valid_from_str,
+                        now,
+                        confidence,
+                        source_episode_id,
+                        hash.clone(),
+                    ],
+                )
+                .await?;
+            let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
+            let row = rows.next().await?.ok_or(
+                crate::core::error::Error::InsertReturnedNoRowId {
+                    operation: "insert_fact",
+                },
+            )?;
+            let fact_id = row.get::<i64>(0)?;
+            if let Some(ov) = object_value {
+                self.conn
+                    .execute(
+                        "INSERT INTO facts_fts(fact_id, predicate, object_value) VALUES (?1, ?2, ?3)",
+                        libsql::params![fact_id, predicate, ov],
+                    )
+                    .await?;
+            }
+            Ok(fact_id)
         }
-        guard.commit().await?;
-        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
-        histogram!("rql.db.insert_fact_ms").record(_ms);
-        tracing::info!(_ms, fact_id, "kremory.db.insert_fact");
-        Ok(fact_id)
+        .await;
+        match result {
+            Ok(fact_id) => {
+                guard.commit().await?;
+                let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+                histogram!("rql.db.insert_fact_ms").record(_ms);
+                tracing::info!(_ms, fact_id, "kremory.db.insert_fact");
+                Ok(fact_id)
+            }
+            Err(e) => {
+                let _ = guard.rollback().await;
+                Err(e)
+            }
+        }
     }
 
     pub async fn invalidate_fact(&self, fact_id: i64, at: DateTime<Utc>) -> Result<()> {
@@ -741,9 +788,10 @@ impl TemporalGraph {
         let props_str = serde_json::to_string(&properties)?;
         let now = Utc::now().to_rfc3339();
         // Transaction guards the invariant: row in `entities` ⟹ row in `entities_fts`.
-        // Without a transaction, a crash or FTS error between the two INSERTs leaves an
-        // entity permanently invisible to FTS search (HIGH-2 remediation, 2026-05-15).
-        self.conn.execute("BEGIN", ()).await?;
+        // Uses BeginGuard so nested calls (caller already holds an outer txn) skip the
+        // inner BEGIN — required to avoid "transaction within a transaction" errors when
+        // called from inside the ingest pipeline's outer txn.
+        let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
             self.conn
                 .execute(
@@ -762,11 +810,10 @@ impl TemporalGraph {
         .await;
         match inner {
             Ok(()) => {
-                self.conn.execute("COMMIT", ()).await?;
+                guard.commit().await?;
             }
             Err(e) => {
-                // Best-effort rollback; propagate the original error regardless.
-                let _ = self.conn.execute("ROLLBACK", ()).await;
+                let _ = guard.rollback().await;
                 return Err(e);
             }
         }
@@ -798,66 +845,79 @@ impl TemporalGraph {
         // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
         // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
         let guard = self.begin_immediate_if_needed().await?;
-        let mut dup_check = self
-            .conn
-            .query(
-                "SELECT id FROM facts WHERE content_hash = ?1 AND expired_at IS NULL LIMIT 1",
-                libsql::params![hash.clone()],
-            )
-            .await?;
-        if dup_check.next().await?.is_some() {
-            guard.rollback().await?;
-            return Err(crate::core::error::Error::Duplicate { content_hash: hash });
-        }
-        let vec_str = embedding.map(|e| {
-            format!(
-                "[{}]",
-                e.iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        });
-        self.conn
-            .execute(
-                "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, group_id, content_hash)
-                 VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10, ?11)",
-                libsql::params![
-                    subject_id,
-                    predicate,
-                    object_id,
-                    object_value,
-                    vec_str,
-                    valid_from_str,
-                    now,
-                    confidence,
-                    source_episode_id,
-                    group_id,
-                    hash,
-                ],
-            )
-            .await?;
-        let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
-        let row = rows
-            .next()
-            .await?
-            .ok_or(crate::core::error::Error::InsertReturnedNoRowId {
-                operation: "insert_fact_with_group",
-            })?;
-        let fact_id = row.get::<i64>(0)?;
-        if let Some(ov) = object_value {
-            self.conn
-                .execute(
-                    "INSERT INTO facts_fts(fact_id, predicate, object_value) VALUES (?1, ?2, ?3)",
-                    libsql::params![fact_id, predicate, ov],
+        // Inner ops wrapped so we can explicitly rollback on Err — see insert_fact rationale.
+        let result: Result<i64> = async {
+            let mut dup_check = self
+                .conn
+                .query(
+                    "SELECT id FROM facts WHERE content_hash = ?1 AND expired_at IS NULL LIMIT 1",
+                    libsql::params![hash.clone()],
                 )
                 .await?;
+            if dup_check.next().await?.is_some() {
+                return Err(crate::core::error::Error::Duplicate {
+                    content_hash: hash.clone(),
+                });
+            }
+            let vec_str = embedding.map(|e| {
+                format!(
+                    "[{}]",
+                    e.iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            });
+            self.conn
+                .execute(
+                    "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, group_id, content_hash)
+                     VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    libsql::params![
+                        subject_id,
+                        predicate,
+                        object_id,
+                        object_value,
+                        vec_str,
+                        valid_from_str,
+                        now,
+                        confidence,
+                        source_episode_id,
+                        group_id,
+                        hash.clone(),
+                    ],
+                )
+                .await?;
+            let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
+            let row = rows.next().await?.ok_or(
+                crate::core::error::Error::InsertReturnedNoRowId {
+                    operation: "insert_fact_with_group",
+                },
+            )?;
+            let fact_id = row.get::<i64>(0)?;
+            if let Some(ov) = object_value {
+                self.conn
+                    .execute(
+                        "INSERT INTO facts_fts(fact_id, predicate, object_value) VALUES (?1, ?2, ?3)",
+                        libsql::params![fact_id, predicate, ov],
+                    )
+                    .await?;
+            }
+            Ok(fact_id)
         }
-        guard.commit().await?;
-        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
-        histogram!("rql.db.insert_fact_with_group_ms").record(_ms);
-        tracing::info!(_ms, fact_id, "kremory.db.insert_fact_with_group");
-        Ok(fact_id)
+        .await;
+        match result {
+            Ok(fact_id) => {
+                guard.commit().await?;
+                let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+                histogram!("rql.db.insert_fact_with_group_ms").record(_ms);
+                tracing::info!(_ms, fact_id, "kremory.db.insert_fact_with_group");
+                Ok(fact_id)
+            }
+            Err(e) => {
+                let _ = guard.rollback().await;
+                Err(e)
+            }
+        }
     }
 
     /// Insert an episode with optional group_id, saga_id, and sequence_number.

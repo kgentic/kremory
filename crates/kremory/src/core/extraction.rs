@@ -7,6 +7,67 @@ use tracing;
 
 use crate::core::error::Result;
 
+// ─── Serde helper: accept string or array ───────────────────────────────────
+
+/// Deserialize a JSON string or array into a `String`.
+///
+/// Some LLMs (e.g. `llama3.2:3b`) emit arrays where the schema expects
+/// a scalar: `"object": ["Python", "Rust", "Julia"]`.  This helper joins
+/// array elements with `", "` so the extracted fact is still useful.
+fn deser_string_or_array<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct StringOrArray;
+
+    impl<'de> Visitor<'de> for StringOrArray {
+        type Value = String;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "a string or an array of strings")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<String, E> {
+            Ok(v.to_owned())
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<String, E> {
+            Ok(v)
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> std::result::Result<String, A::Error> {
+            let mut parts: Vec<String> = Vec::new();
+            while let Some(elem) = seq.next_element::<serde_json::Value>()? {
+                match elem {
+                    serde_json::Value::String(s) => parts.push(s),
+                    other => parts.push(other.to_string()),
+                }
+            }
+            Ok(parts.join(", "))
+        }
+
+        fn visit_unit<E: de::Error>(self) -> std::result::Result<String, E> {
+            Ok(String::new())
+        }
+
+        fn visit_none<E: de::Error>(self) -> std::result::Result<String, E> {
+            Ok(String::new())
+        }
+    }
+
+    deserializer.deserialize_any(StringOrArray)
+}
+
+/// Default empty string for `#[serde(default)]` + `deser_string_or_array` fields.
+fn default_string() -> String {
+    String::new()
+}
+
 use crate::core::config::ContentType;
 use crate::core::intelligence::{
     EntityExtractor, ExtractedEntity, ExtractedFact, ExtractionContext, ExtractionResult,
@@ -38,13 +99,16 @@ fn default_entity_label() -> String {
 }
 
 /// Relationship triplet as emitted by the LLM.
+///
+/// `subject`, `predicate`, `object` use `deser_string_or_array` to tolerate
+/// LLMs (e.g. llama3.2:3b) that emit arrays instead of scalar strings.
 #[derive(Debug, Deserialize)]
 struct RawRelationship {
-    #[serde(default)]
+    #[serde(default = "default_string", deserialize_with = "deser_string_or_array")]
     subject: String,
-    #[serde(default)]
+    #[serde(default = "default_string", deserialize_with = "deser_string_or_array")]
     predicate: String,
-    #[serde(default)]
+    #[serde(default = "default_string", deserialize_with = "deser_string_or_array")]
     object: String,
     #[serde(default)]
     is_entity_ref: bool,
@@ -662,6 +726,138 @@ fn build_nuextract_template(
     )
 }
 
+/// Pre-process NuExtract JSON to fix unclosed string values before `}`.
+///
+/// Some LLMs (e.g. `gemma4-e2b`) omit the closing `"` on string values when
+/// followed immediately by `}`, producing output like:
+///   `{"name": "Bob", "label": "Person}`
+/// instead of the correct:
+///   `{"name": "Bob", "label": "Person"}`
+///
+/// This pattern breaks `serde_json` parsing before `llm_json::repair_json` can
+/// help, because the `}` gets absorbed into the unclosed string, mangling the
+/// rest of the document structure.
+///
+/// Strategy: scan for `"}` where the `"` was intended as opening-quote-already-in-
+/// progress. More concretely, find any byte sequence that matches `"<word>}` where
+/// `<word>` contains no `"`, `\`, `{`, `}`, or newline — and insert the missing `"`.
+/// Extract the first balanced JSON object `{...}` from `s`.
+///
+/// Some LLMs (e.g. llama3.2) emit valid JSON followed by prose ("Note: ..."),
+/// or emit multiple JSON objects separated by whitespace. This function returns
+/// a slice covering only the first complete `{...}` block. If no balanced
+/// object is found, returns the original input unchanged.
+fn extract_first_json_object(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+
+    // Find the first `{`
+    let start = match bytes.iter().position(|&b| b == b'{') {
+        Some(pos) => pos,
+        None => return s,
+    };
+
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut i = start;
+
+    while i < len {
+        match bytes[i] {
+            b'"' if !in_string => {
+                in_string = true;
+                i += 1;
+            }
+            b'"' if in_string => {
+                in_string = false;
+                i += 1;
+            }
+            b'\\' if in_string => {
+                // skip escape sequence
+                i += 2;
+            }
+            b'{' if !in_string => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' if !in_string => {
+                depth -= 1;
+                i += 1;
+                if depth == 0 {
+                    return &s[start..i];
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    // No balanced object found — return original.
+    s
+}
+
+fn fix_unclosed_string_before_brace(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut out = Vec::with_capacity(len + 8);
+    let mut i = 0;
+
+    while i < len {
+        // Look for the pattern: `"` followed by 1+ safe chars followed by `}`
+        // where no closing `"` precedes the `}`.
+        if bytes[i] == b'"' {
+            // Scan forward to find the end of this potential string.
+            let start = i; // points at opening `"`
+            i += 1;
+            let mut found_close = false;
+            while i < len {
+                match bytes[i] {
+                    b'"' => {
+                        // Properly closed string — copy verbatim up to and including `"`.
+                        found_close = true;
+                        i += 1;
+                        break;
+                    }
+                    b'\\' => {
+                        // Escape sequence — skip both chars.
+                        i += 2;
+                    }
+                    b'}' if !found_close => {
+                        // `}` inside an unclosed string — insert missing `"` before `}`.
+                        out.extend_from_slice(&bytes[start..i]);
+                        out.push(b'"'); // close the string
+                        out.push(b'}'); // then the brace
+                        i += 1;
+                        found_close = true; // consumed this token
+                        break;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            if !found_close && i >= len {
+                // Ran off the end without closing — just copy remainder as-is.
+                out.extend_from_slice(&bytes[start..i]);
+            } else if found_close {
+                // Copy up to current position if we broke on a real close quote.
+                // (already pushed in the `}` branch above; for the `"` branch copy.)
+                // For the `"` branch we need to push the range start..i.
+                // Check: did we push via the `}` branch (already done)?
+                // We can tell because `bytes[i-1]` would be `}` (pushed above).
+                if i > 0 && bytes[i - 1] != b'}' {
+                    out.extend_from_slice(&bytes[start..i]);
+                }
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+
+    String::from_utf8(out).unwrap_or_else(|_| s.to_owned())
+}
+
 fn parse_nuextract_response(
     json: &str,
     ctx: &ExtractionContext<'_>,
@@ -675,6 +871,27 @@ fn parse_nuextract_response(
         );
         return Ok((vec![], vec![]));
     }
+
+    // Extract the first balanced `{...}` block. Some LLMs (e.g. llama3.2) emit
+    // valid JSON followed by prose ("Note: ...") or multiple JSON objects.
+    // Feeding multiple objects or trailing prose to serde/repair_json produces
+    // "invalid type: sequence, expected a string" errors.
+    let first_obj = extract_first_json_object(trimmed);
+
+    // If no JSON object found at all (pure prose response), return empty gracefully.
+    if !first_obj.trim_start().starts_with('{') {
+        counter!("rql.extraction.json_parse_fail").increment(1);
+        tracing::warn!(
+            parser = "nuextract",
+            "kremory.extraction.json_parse_fail no JSON object in response"
+        );
+        return Ok((vec![], vec![]));
+    }
+
+    // Pre-process: some LLMs omit closing `"` before `}` in string values.
+    // Fix this before attempting serde / llm_json repair.
+    let preprocessed = fix_unclosed_string_before_brace(first_obj);
+    let trimmed = preprocessed.as_ref();
 
     // Try direct parse, then llm_json repair if malformed.
     let output: NuExtractOutput = match serde_json::from_str(trimmed) {
@@ -735,18 +952,27 @@ fn parse_nuextract_response(
     };
 
     // Convert serde structs → domain types, filtering empty names.
+    // Store entity name in `properties["name"]` so the FTS index (which indexes
+    // the `properties` column) can match queries against the entity's original
+    // case name (e.g. "Alice"). Without this, FTS MATCH "Alice" returns nothing
+    // because entity_id is UNINDEXED and label is the type ("Person"), not the name.
     let mut entities: Vec<ExtractedEntity> = output
         .entities
         .into_iter()
         .filter(|e| !e.name.is_empty())
-        .map(|e| ExtractedEntity {
-            name: e.name,
-            label: if e.label.is_empty() {
+        .map(|e| {
+            let label = if e.label.is_empty() {
                 "Entity".to_string()
             } else {
                 e.label
-            },
-            properties: serde_json::Value::Object(serde_json::Map::new()),
+            };
+            let mut props = serde_json::Map::new();
+            props.insert("name".to_string(), serde_json::Value::String(e.name.clone()));
+            ExtractedEntity {
+                name: e.name,
+                label,
+                properties: serde_json::Value::Object(props),
+            }
         })
         .collect();
 
@@ -956,10 +1182,14 @@ fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>> {
     Ok(raw
         .into_iter()
         .filter(|e| !e.name.is_empty() && !e.label.is_empty())
-        .map(|e| ExtractedEntity {
-            name: e.name,
-            label: e.label,
-            properties: serde_json::Value::Object(serde_json::Map::new()),
+        .map(|e| {
+            let mut props = serde_json::Map::new();
+            props.insert("name".to_string(), serde_json::Value::String(e.name.clone()));
+            ExtractedEntity {
+                name: e.name,
+                label: e.label,
+                properties: serde_json::Value::Object(props),
+            }
         })
         .collect())
 }
@@ -1370,10 +1600,14 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             .entities
             .into_iter()
             .filter(|e| !e.name.is_empty())
-            .map(|e| ExtractedEntity {
-                name: e.name,
-                label: e.label,
-                properties: serde_json::json!({}),
+            .map(|e| {
+                let mut props = serde_json::Map::new();
+                props.insert("name".to_string(), serde_json::Value::String(e.name.clone()));
+                ExtractedEntity {
+                    name: e.name,
+                    label: e.label,
+                    properties: serde_json::Value::Object(props),
+                }
             })
             .collect();
 
@@ -1954,5 +2188,53 @@ mod tests {
     fn test_parse_json_lenient_empty() {
         let parsed: Option<EntityOnlyOutput> = parse_json_lenient("");
         assert!(parsed.is_none());
+    }
+
+    // ── fix_unclosed_string_before_brace ──────────────────────────────────────
+
+    #[test]
+    fn test_fix_unclosed_string_noop_on_valid_json() {
+        // Well-formed JSON must pass through unchanged.
+        let valid = r#"{"entities": [{"name": "Alice", "label": "Person"}]}"#;
+        assert_eq!(fix_unclosed_string_before_brace(valid), valid);
+    }
+
+    #[test]
+    fn test_fix_unclosed_string_repairs_gemma4_output() {
+        // Reproduce the exact gemma4-e2b failure: labels missing closing `"` before `}`.
+        let malformed = r#"{"entities": [{"name": "Alice", "label": "Person"}, {"name": "Bob", "label": "Person}, {"name": "Stanford", "label": "Place}], "relationships": []}"#;
+        let fixed = fix_unclosed_string_before_brace(malformed);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fixed).expect("fixed output must be valid JSON");
+        let entities = parsed["entities"].as_array().expect("entities must be array");
+        assert_eq!(entities.len(), 3, "all 3 entities must survive the fix");
+        assert_eq!(entities[0]["name"], "Alice");
+        assert_eq!(entities[1]["label"], "Person");
+        assert_eq!(entities[2]["name"], "Stanford");
+    }
+
+    #[test]
+    fn test_fix_unclosed_string_handles_empty() {
+        assert_eq!(fix_unclosed_string_before_brace(""), "");
+    }
+
+    #[test]
+    fn test_parse_nuextract_response_repairs_gemma4_unclosed_labels() {
+        // Integration: verify parse_nuextract_response recovers from gemma4-e2b output.
+        let malformed = r#"{"entities": [{"name": "Alice", "label": "Person"}, {"name": "Bob", "label": "Person}, {"name": "Stanford", "label": "Place}], "relationships": []}"#;
+        let ctx = ExtractionContext {
+            known_entities: &[],
+            allowed_entity_types: &[],
+            allowed_edge_types: &[],
+            excluded_entity_types: &[],
+            content_type: crate::core::config::ContentType::Text,
+        };
+        let (entities, _facts) =
+            parse_nuextract_response(malformed, &ctx).expect("must not return Err");
+        assert_eq!(entities.len(), 3, "all 3 entities must be extracted");
+        let names: Vec<&str> = entities.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Alice"), "Alice must be extracted");
+        assert!(names.contains(&"Bob"), "Bob must be extracted");
+        assert!(names.contains(&"Stanford"), "Stanford must be extracted");
     }
 }

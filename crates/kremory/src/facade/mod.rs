@@ -227,6 +227,7 @@ impl Memory {
             embedder: None,
             default_sink: None,
             default_namespace: None,
+            embedding_dim: None,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -243,7 +244,7 @@ impl Memory {
     }
 
     /// Open with Ollama running at `http://localhost:11434`.
-    /// Models: `llama3.1:8b` (chat) + `nomic-embed-text` (embeddings).
+    /// Models: `llama3.2` (chat) + `nomic-embed-text` (embeddings).
     pub async fn with_ollama(path: impl AsRef<Path>) -> Result<Self> {
         providers::with_ollama(path).await
     }
@@ -261,7 +262,7 @@ impl Memory {
 
     /// Open with Anthropic. Requires `$ANTHROPIC_API_KEY`.
     /// Note: Anthropic has no native embedding API; falls back to a deterministic
-    /// SHA-256-based embedder (not semantic — suitable for exact-match recall only).
+    /// FNV-1a embedder (dim=384, not semantic — suitable for exact-match recall only).
     /// A `tracing::warn!` is emitted at construction time.
     pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Self> {
         providers::with_anthropic(path).await
@@ -465,7 +466,7 @@ impl Memory {
 /// Type-state builder for `Memory`. Compile-time enforced: `.with_llm()` then
 /// `.with_embedder()` are both required before `.await`.
 ///
-/// Optional: `.with_event_sink()`, `.default_namespace()`.
+/// Optional: `.with_event_sink()`, `.default_namespace()`, `.embedding_dim()`.
 #[must_use = "MemoryBuilder must be configured with .with_llm() AND .with_embedder() before .await"]
 pub struct MemoryBuilder<L, E> {
     path: std::path::PathBuf,
@@ -473,6 +474,7 @@ pub struct MemoryBuilder<L, E> {
     embedder: Option<Arc<dyn DynEmbeddingProvider>>,
     default_sink: Option<Arc<dyn EnrichmentEventSink>>,
     default_namespace: Option<Namespace>,
+    embedding_dim: Option<usize>,
     _llm_state: std::marker::PhantomData<L>,
     _emb_state: std::marker::PhantomData<E>,
 }
@@ -490,6 +492,22 @@ impl<L, E> MemoryBuilder<L, E> {
         self.default_namespace = Some(ns);
         self
     }
+
+    /// Set the embedding vector dimensionality.
+    ///
+    /// **Must match your embedder's output dimension.** A mismatch causes a
+    /// SQLite vector index failure on the first `remember()` call:
+    /// `vector index(insert): dimensions are different: <actual> != <config>`.
+    ///
+    /// Common values:
+    /// - `384` — MiniLM-L6-v2 (default if not set)
+    /// - `768` — `nomic-embed-text` (Ollama), `all-mpnet-base-v2`
+    /// - `1536` — OpenAI `text-embedding-3-small`
+    /// - `3072` — OpenAI `text-embedding-3-large`
+    pub fn embedding_dim(mut self, dim: usize) -> Self {
+        self.embedding_dim = Some(dim);
+        self
+    }
 }
 
 impl MemoryBuilder<NoLlm, NoEmb> {
@@ -501,6 +519,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             embedder: self.embedder,
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
+            embedding_dim: self.embedding_dim,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -519,6 +538,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             embedder: Some(emb),
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
+            embedding_dim: self.embedding_dim,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -537,7 +557,13 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
             let embedder = self
                 .embedder
                 .ok_or_else(|| MemoryError::Other("embedder missing".into()))?;
-            let graph = providers::open_graph(self.path, embedder.clone()).await?;
+            let graph = providers::open_graph(
+                self.path.as_path(),
+                llm.clone(),
+                embedder.clone(),
+                self.embedding_dim,
+            )
+            .await?;
             Ok(Memory {
                 graph,
                 llm,

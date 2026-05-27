@@ -26,6 +26,11 @@ trace = []
 # otel: wire tracing-opentelemetry + opentelemetry_sdk so spans export via OTLP
 # (ADR D3). Requires an OTLP collector endpoint at runtime.
 otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk"]
+# llm-integration: gate live Ollama integration tests.  All tests inside
+# tests/llm_integration.rs carry #[cfg(feature = "llm-integration")] + #[ignore]
+# so they never run in normal `cargo test` unless explicitly enabled with
+# --features llm-integration and -q -- --ignored.
+llm-integration = []
 
 [lib]
 name = "kremory"
@@ -45,7 +50,10 @@ petgraph = "0.7"
 libsql = "0.9"
 # BYOM invariant: autoagents-llm trait only — never concrete impl.
 # Required (not optional) because kremory::memory::GraphHandle uses ChatProvider.
-autoagents-llm = "0.3"
+# Provider features: ollama / openai / anthropic enable the concrete backend builders
+# used by the Tier 1 shortcuts (Memory::with_ollama, etc.). Still autoagents-llm
+# only — no autoagents-llamacpp pulled in (BYOM gate G4 remains satisfied).
+autoagents-llm = { version = "0.3", features = ["ollama", "openai", "anthropic"] }
 futures = "0.3"
 async-trait = "0.1"
 llm_json = "1.0.3"
@@ -62,6 +70,8 @@ sha2 = "0.10"
 zspell = "0.5"
 stop-words = "0.8"
 unicode-segmentation = "1.11"
+# DashMap: concurrent in-memory registries for EngineGraphHandle (ingest_runs, batch_status, etc.)
+dashmap = "6"
 ort = { version = "=2.0.0-rc.12", features = ["ndarray"], optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.23", optional = true }
@@ -77,7 +87,8 @@ unicode-segmentation = "1.11"
 # BYOM invariant: kremory MUST NOT depend on `autoagents-llamacpp` as a dev-dep.
 # The trait surface (autoagents-llm) is the only LLM crate kremory touches;
 # downstream consumers wire the concrete impl.
-autoagents-llm = "0.3"
+# ollama feature: enables autoagents_llm::backends::ollama for LLM integration tests.
+autoagents-llm = { version = "0.3", features = ["ollama"] }
 anyhow = "1"
 dashmap = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -85,6 +96,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # visible to the tests/ directory (integration tests are separate binaries
 # and do NOT inherit #[cfg(test)] from the library — only feature flags work).
 kremory = { path = ".", features = ["test-utils"] }
+# tempfile: isolated SQLite per LLM integration test (avoids cross-test state).
+tempfile = "3"
 
 [lints.rust]
 warnings = "deny"

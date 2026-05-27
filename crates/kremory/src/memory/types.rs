@@ -326,8 +326,15 @@ pub enum MemoryError {
     Core(#[from] crate::core::error::Error),
     #[error("invalid scope: {0}")]
     InvalidScope(String),
-    #[error("unimplemented — landed in D.2: {0}")]
-    Unimplemented(&'static str),
+    #[error(
+        "feature \"{feature}\" is not available at this cadence point; \
+         ships in {available_in} (ref: {adr_ref})"
+    )]
+    NotImplemented {
+        feature: &'static str,
+        available_in: &'static str,
+        adr_ref: &'static str,
+    },
     #[error("await timed out")]
     Timeout,
     #[error("other: {0}")]

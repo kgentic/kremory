@@ -178,9 +178,15 @@ async fn search_contract_pin_returns_unimplemented() {
 }
 
 #[test]
-fn memory_error_unimplemented_variant_carries_static_str() {
-    // Verifies the error variant the stubs return is well-formed.
-    let e = MemoryError::Unimplemented("test marker");
+fn memory_error_not_implemented_variant_carries_fields() {
+    // Verifies the NotImplemented variant (replacing Unimplemented) is well-formed.
+    let e = MemoryError::NotImplemented {
+        feature: "test-feature",
+        available_in: "v0.2.0",
+        adr_ref: "ADR-007",
+    };
     let s = format!("{e}");
-    assert!(s.contains("test marker"), "expected marker in display: {s}");
+    assert!(s.contains("test-feature"), "expected feature in display: {s}");
+    assert!(s.contains("v0.2.0"), "expected available_in in display: {s}");
+    assert!(s.contains("ADR-007"), "expected adr_ref in display: {s}");
 }

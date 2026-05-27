@@ -181,10 +181,22 @@ pub struct TemporalGraph {
     /// from this field so cache invalidation is scoped to the owning graph handle,
     /// not the process. Story #215 / FU.6 (per-handle not global).
     pub(crate) dirty: Arc<AtomicBool>,
+    /// Embedding vector dimensionality used when creating the schema. Default 384.
+    /// Must match the `EmbeddingProvider` output dimension or the SQLite vector
+    /// index will reject inserts with a dimension mismatch error.
+    pub(crate) embedding_dim: usize,
 }
 
 impl TemporalGraph {
     pub async fn open(path: &str) -> Result<Self> {
+        Self::open_with_dim(path, 384).await
+    }
+
+    /// Open (or create) a database at `path` with an explicit embedding dimension.
+    ///
+    /// Use when your embedder outputs vectors wider than the default 384 dims
+    /// (e.g. `768` for `nomic-embed-text`, `1536` for OpenAI `text-embedding-3-small`).
+    pub async fn open_with_dim(path: &str, embedding_dim: usize) -> Result<Self> {
         let db = libsql::Builder::new_local(path).build().await?;
         let conn = db.connect()?;
         conn.execute_batch("PRAGMA busy_timeout = 5000;").await?;
@@ -194,6 +206,7 @@ impl TemporalGraph {
             write_lock: Arc::new(Mutex::new(())),
             has_outer_transaction: AtomicBool::new(false),
             dirty: Arc::new(AtomicBool::new(false)),
+            embedding_dim,
         };
         graph.run_migrations().await?;
         Ok(graph)
@@ -208,6 +221,7 @@ impl TemporalGraph {
             write_lock: Arc::new(Mutex::new(())),
             has_outer_transaction: AtomicBool::new(false),
             dirty: Arc::new(AtomicBool::new(false)),
+            embedding_dim: 384,
         };
         graph.run_migrations().await?;
         Ok(graph)
@@ -349,18 +363,21 @@ impl TemporalGraph {
         // a label-shaped legacy table exists AND the new name is free.
         Self::migrate_legacy_rql_entities_table(&self.conn).await?;
 
+        let dim = self.embedding_dim;
         self.conn
             .execute(
-                "CREATE TABLE IF NOT EXISTS rql_entities (
+                &format!(
+                    "CREATE TABLE IF NOT EXISTS rql_entities (
                     id TEXT PRIMARY KEY,
                     label TEXT NOT NULL,
                     properties TEXT,
-                    embedding F32_BLOB(384),
+                    embedding F32_BLOB({dim}),
                     recorded_at TEXT NOT NULL,
                     updated_at TEXT,
                     group_id TEXT,
                     access_count INTEGER NOT NULL DEFAULT 0
-                )",
+                )"
+                ),
                 (),
             )
             .await?;
@@ -412,14 +429,15 @@ impl TemporalGraph {
             .await;
         self.conn
             .execute(
-                "CREATE TABLE IF NOT EXISTS facts (
+                &format!(
+                    "CREATE TABLE IF NOT EXISTS facts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     subject_id TEXT NOT NULL,
                     predicate TEXT NOT NULL,
                     object_id TEXT,
                     object_value TEXT,
                     properties TEXT,
-                    embedding F32_BLOB(384),
+                    embedding F32_BLOB({dim}),
                     valid_from TEXT NOT NULL,
                     valid_to TEXT,
                     recorded_at TEXT NOT NULL,
@@ -434,7 +452,8 @@ impl TemporalGraph {
                     FOREIGN KEY (subject_id) REFERENCES rql_entities(id),
                     FOREIGN KEY (object_id) REFERENCES rql_entities(id),
                     FOREIGN KEY (source_episode_id) REFERENCES episodes(id)
-                )",
+                )"
+                ),
                 (),
             )
             .await?;
@@ -556,6 +575,33 @@ impl TemporalGraph {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn dirty_flag(&self) -> &Arc<AtomicBool> {
         &self.dirty
+    }
+
+    /// Count episodes recorded after `since` for a given namespace group.
+    ///
+    /// Used by `Engine::recall` to check episode-count thresholds for
+    /// automatic consolidation triggering. The `group_id` parameter maps
+    /// directly to the storage column (public API: `namespace_to_group_id(ns)`).
+    ///
+    /// Returns `Ok(0)` when the group has no episodes or none match the filter.
+    pub async fn count_episodes_since(
+        &self,
+        group_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<usize> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT COUNT(*) FROM episodes WHERE group_id = ?1 AND timestamp > ?2",
+                libsql::params![group_id, since.timestamp()],
+            )
+            .await?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("count_episodes_since: query returned no row"))?;
+        let count: i64 = row.get(0)?;
+        Ok(count as usize)
     }
 }
 

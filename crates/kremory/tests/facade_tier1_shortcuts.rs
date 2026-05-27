@@ -3,15 +3,17 @@
 //! Tests `Memory::auto`, `Memory::with_ollama`, `Memory::with_openai`,
 //! `Memory::with_anthropic`, and `Memory::with_ollama_at`.
 //!
-//! All Tier 1 constructors are stub-wired at v0.1.0 (no real network calls).
+//! Tier 1 constructors wire real provider builders at v0.1.0 (no network calls at
+//! construction time — network errors surface on first `.remember()`/`.recall()`).
 //! `Memory::with_openai` / `Memory::with_anthropic` require env vars set.
 
 use kremory::Memory;
 
-/// `Memory::with_ollama` succeeds in test-utils builds (returns StubGraphHandle).
+/// `Memory::with_ollama` succeeds — constructs real Ollama provider + EngineGraphHandle.
 #[tokio::test]
 async fn with_ollama_succeeds_in_test_mode() {
-    let _mem = Memory::with_ollama("/tmp/kremory-tier1.db")
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _mem = Memory::with_ollama(tmp.path().join("kremory-tier1.db"))
         .await
         .expect("with_ollama should succeed");
 }
@@ -19,7 +21,8 @@ async fn with_ollama_succeeds_in_test_mode() {
 /// `Memory::with_ollama_at` accepts a custom URL.
 #[tokio::test]
 async fn with_ollama_at_accepts_custom_url() {
-    let _mem = Memory::with_ollama_at("http://my-ollama:11434", "/tmp/kremory-tier1.db")
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _mem = Memory::with_ollama_at("http://my-ollama:11434", tmp.path().join("kremory-tier1.db"))
         .await
         .expect("with_ollama_at should succeed");
 }
