@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-020",
+      "query": "What year did Carol join DataFlow Inc.?",
+      "ingested_facts": [
+        "Carol Chen joined DataFlow Inc. in 2021.",
+        "Carol Chen joined DataFlow Inc. in 2022."
+      ],
+      "expected_answer": "There is a contradiction in the ingested facts: Carol Chen's start year at DataFlow Inc. is recorded as both 2021 and 2022.",
+      "expected_entities": ["Carol Chen", "DataFlow Inc."],
+      "expected_contexts": [
+        "Carol Chen joined DataFlow Inc. in 2021.",
+        "Carol Chen joined DataFlow Inc. in 2022."
+      ],
+      "diversity_tags": ["contradiction", "temporal", "employment"],
+      "provenance": "Synthetic",
+      "notes": "Contradiction + temporal: conflicting start years for same employer. Both dimensions active."
+    }
+  ]
+}

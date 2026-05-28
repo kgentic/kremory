@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-011",
+      "query": "Is Alice married?",
+      "ingested_facts": [
+        "Alice is married to Bob.",
+        "Alice is single."
+      ],
+      "expected_answer": "There is a contradiction in the ingested facts: Alice is recorded as both married to Bob and single.",
+      "expected_entities": ["Alice", "Bob"],
+      "expected_contexts": [
+        "Alice is married to Bob.",
+        "Alice is single."
+      ],
+      "diversity_tags": ["contradiction", "personal-status"],
+      "provenance": "Synthetic",
+      "notes": "Contradiction: mutually exclusive marital status. Verifies contradiction resolver on personal-status domain."
+    }
+  ]
+}

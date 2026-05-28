@@ -1,0 +1,23 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-017",
+      "query": "What was Alice's title in Q4 2022?",
+      "ingested_facts": [
+        "Alice joined Acme Corp. as a junior engineer in 2020.",
+        "Alice was promoted to mid-level engineer at Acme Corp. in Q3 2021.",
+        "Alice was promoted to senior engineer at Acme Corp. in Q1 2023.",
+        "Alice joined Globex Inc. as a staff engineer in 2024."
+      ],
+      "expected_answer": "Alice was a mid-level engineer at Acme Corp. in Q4 2022.",
+      "expected_entities": ["Alice", "Acme Corp."],
+      "expected_contexts": [
+        "Alice was promoted to mid-level engineer at Acme Corp. in Q3 2021.",
+        "Alice was promoted to senior engineer at Acme Corp. in Q1 2023."
+      ],
+      "diversity_tags": ["temporal", "career-progression", "interval-reasoning"],
+      "provenance": "Synthetic",
+      "notes": "Temporal interval reasoning: Q4 2022 is between the Q3 2021 and Q1 2023 promotions."
+    }
+  ]
+}

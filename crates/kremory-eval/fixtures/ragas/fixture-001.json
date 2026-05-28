@@ -1,0 +1,22 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-001",
+      "query": "Where does Alice work?",
+      "ingested_facts": [
+        "Alice works at Acme Corp.",
+        "Alice is a software engineer.",
+        "Acme Corp. is headquartered in New York."
+      ],
+      "expected_answer": "Alice works at Acme Corp.",
+      "expected_entities": ["Alice", "Acme Corp."],
+      "expected_contexts": [
+        "Alice works at Acme Corp.",
+        "Acme Corp. is headquartered in New York."
+      ],
+      "diversity_tags": ["english", "employment"],
+      "provenance": "Synthetic",
+      "notes": "Baseline: single-hop employment fact lookup."
+    }
+  ]
+}
