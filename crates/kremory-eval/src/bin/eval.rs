@@ -333,7 +333,7 @@ async fn run_layer_b_async(manifest_dir: &str, determinism: bool) -> Result<(), 
 // Layer A — LongMemEval runner
 // ---------------------------------------------------------------------------
 
-/// Synthetic 5-fixture dataset used for MockJudge smoke testing.
+/// Synthetic 6-fixture dataset used for MockJudge smoke testing.
 ///
 /// These fixtures exercise all 6 question_type values + abstention without
 /// requiring a HuggingFace download. The answers and questions are minimal
@@ -438,9 +438,31 @@ fn make_smoke_fixtures(n: usize) -> Vec<kremory_eval::layer_a::longmemeval::Long
             }]],
             answer_session_ids: vec![],
         },
+        LongMemEvalRecord {
+            question_id: "smoke_006".into(),
+            question_type: "knowledge-update".into(),
+            question: "What is the user's current job title?".into(),
+            answer: "The user is currently a Staff Engineer after being promoted from Senior Engineer.".into(),
+            question_date: "2024/02/01".into(),
+            haystack_session_ids: vec!["s7".into(), "s8".into()],
+            haystack_dates: vec!["2024/01/05".into(), "2024/01/25".into()],
+            haystack_sessions: vec![
+                vec![ConversationTurn {
+                    role: "user".into(),
+                    content: "I just got promoted from Senior Engineer to Staff Engineer!".into(),
+                    has_answer: true,
+                }],
+                vec![ConversationTurn {
+                    role: "user".into(),
+                    content: "Now that I'm a Staff Engineer I have more responsibilities.".into(),
+                    has_answer: true,
+                }],
+            ],
+            answer_session_ids: vec!["s7".into(), "s8".into()],
+        },
     ];
 
-    base.into_iter().take(n.min(5)).collect()
+    base.into_iter().take(n.min(6)).collect()
 }
 
 fn run_layer_a_longmemeval(
@@ -514,11 +536,24 @@ async fn run_layer_a_longmemeval_async(
             }
             let judge = GemmaJudge::from_env();
             let scorer = LongMemEvalScorer::new(judge);
+
+            // Build a per-run kremory Memory handle using env-detected providers
+            // (Memory::auto detects OLLAMA_HOST or OPENAI_API_KEY).
+            // Uses a temp-dir DB so each eval invocation gets fresh state with
+            // no cross-contamination from previous runs.
+            let tmp_db = std::env::temp_dir().join(format!(
+                "kremory_eval_gemma_{}.db",
+                Utc::now().timestamp_millis()
+            ));
+            let memory = kremory::Memory::auto(&tmp_db)
+                .await
+                .map_err(|e| format!("failed to open kremory Memory for eval: {}", e))?;
+
             for sample in &samples {
-                let output = LongMemEvalOutput {
-                    response: "gemma eval — kremory adapter not wired in gate run".into(),
-                    input_tokens_used: None,
-                };
+                let output =
+                    kremory_eval::adapters::longmemeval_adapter::run_sample(&memory, sample)
+                        .await
+                        .map_err(|e| format!("run_sample failed for {}: {}", sample.question_id, e))?;
                 let score = scorer.score(sample, &output).await?;
                 all_scores.push((sample.clone(), score));
             }
@@ -546,6 +581,28 @@ async fn run_layer_a_longmemeval_async(
         eprintln!("[layer-a longmemeval]   mean_input_tokens_per_recall = {:.1}", tokens);
     }
 
+    // Build per-sample result rows for the output JSON (FIX 3).
+    let per_sample_results: Vec<serde_json::Value> = all_scores.iter().map(|(sample, score)| {
+        let ability_category = score.metadata
+            .get("ability_category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let judge_reasoning = score.reasoning.clone();
+        let raw_judge_response = score.metadata
+            .get("judge_response_raw")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        json!({
+            "question_id": sample.question_id,
+            "question_type": sample.question_type,
+            "ability_category": ability_category,
+            "score": score.value,
+            "judge_reasoning": judge_reasoning,
+            "raw_judge_response": raw_judge_response,
+        })
+    }).collect();
+
     // Write JSON report.
     let out_path = output_path(manifest_dir, "layer-a-longmemeval");
     let report_json = json!({
@@ -560,6 +617,7 @@ async fn run_layer_a_longmemeval_async(
         "abstention_accuracy": report.abstention_accuracy,
         "mean_input_tokens_per_recall": report.mean_input_tokens_per_recall,
         "upstream_scorer_sha": "9e0b455f4ef0e2ab8f2e582289761153549043fc",
+        "samples": per_sample_results,
     });
 
     write_report(&out_path, &report_json)?;

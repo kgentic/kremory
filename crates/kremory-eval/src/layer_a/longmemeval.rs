@@ -125,6 +125,13 @@ pub struct LongMemEvalRecord {
 
 impl LongMemEvalRecord {
     /// True if this is an abstention question (no answer in haystack).
+    ///
+    /// LongMemEval upstream uses Python `'_abs' in question_id` (substring).
+    /// We use `ends_with("_abs")` because LongMemEval's published dataset uses `_abs`
+    /// exclusively as a trailing suffix on question_id (e.g., `m_q001_abs`). The
+    /// stricter suffix check avoids spurious matches on hypothetical IDs like
+    /// `abs_q001` or `q_abs_evidence`. Verified against upstream commit
+    /// `9e0b455f4ef0e2ab8f2e582289761153549043fc`.
     pub fn is_abstention(&self) -> bool {
         self.question_id.ends_with("_abs")
     }
