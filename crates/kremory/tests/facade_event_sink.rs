@@ -58,8 +58,19 @@ fn make_null_embedder() -> Arc<dyn DynEmbeddingProvider> {
     Arc::new(kremory::core::provider::NullEmbeddingProvider { dim: 384 })
 }
 
+fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "kremory_facade_event_sink_{}_{}.db",
+        tag,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
 async fn open_with_sink(sink: Arc<dyn EnrichmentEventSink>) -> Memory {
-    Memory::open("/tmp/test.db")
+    Memory::open(unique_db_path("open_with_sink"))
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .with_event_sink(sink)
@@ -69,7 +80,7 @@ async fn open_with_sink(sink: Arc<dyn EnrichmentEventSink>) -> Memory {
 }
 
 async fn open_no_sink() -> Memory {
-    Memory::open("/tmp/test.db")
+    Memory::open(unique_db_path("open_no_sink"))
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .default_namespace(Namespace::new("tests"))

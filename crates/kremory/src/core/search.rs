@@ -52,11 +52,11 @@ impl TemporalGraph {
         if ids.is_empty() {
             return;
         }
-        // Build `UPDATE rql_entities SET access_count = access_count + 1
+        // Build `UPDATE entities SET access_count = access_count + 1
         // WHERE id IN (?1, ?2, ...)`. Each id is bound positionally.
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "UPDATE rql_entities SET access_count = access_count + 1 WHERE id IN ({})",
+            "UPDATE entities SET access_count = access_count + 1 WHERE id IN ({})",
             placeholders.join(", ")
         );
         let params: Vec<libsql::Value> = ids
@@ -116,9 +116,9 @@ impl TemporalGraph {
 
         let sql = format!(
             "SELECT fts.entity_id, fts.rank \
-             FROM rql_entities_fts AS fts \
-             JOIN rql_entities AS e ON e.id = fts.entity_id \
-             WHERE rql_entities_fts MATCH ?1{} \
+             FROM entities_fts AS fts \
+             JOIN entities AS e ON e.id = fts.entity_id \
+             WHERE entities_fts MATCH ?1{} \
              ORDER BY fts.rank LIMIT ?2",
             group_clause
         );
@@ -284,8 +284,8 @@ impl TemporalGraph {
             "SELECT e.id, e.label, e.properties, e.recorded_at, e.updated_at, e.group_id,
                     e.access_count,
                     vector_distance_cos(e.embedding, vector(?1)) as distance
-             FROM vector_top_k('rql_entities_vec_idx', vector(?1), ?2) AS v
-             JOIN rql_entities AS e ON e.rowid = v.id
+             FROM vector_top_k('entities_vec_idx', vector(?1), ?2) AS v
+             JOIN entities AS e ON e.rowid = v.id
              WHERE 1=1{}
              ORDER BY distance ASC",
             group_clause
@@ -320,14 +320,13 @@ impl TemporalGraph {
         filters: &SearchFilters,
     ) -> anyhow::Result<Vec<SearchHit<Entity>>> {
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
-        let (group_clause, group_params) =
-            build_group_id_clause(&filters.group_ids, "rql_entities", 3);
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "entities", 3);
 
         let sql = format!(
             "SELECT id, label, properties, recorded_at, updated_at, group_id,
                     access_count,
                     vector_distance_cos(embedding, vector(?1)) as distance
-             FROM rql_entities
+             FROM entities
              WHERE embedding IS NOT NULL{}
              ORDER BY distance ASC
              LIMIT ?2",
@@ -831,6 +830,9 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
         memory_type,
         content_hash,
         access_count,
+        // ADR-029b: composite FK fields — absent on pre-migration-004 rows.
+        subject_group_id: None,
+        object_group_id: None,
     })
 }
 
@@ -1426,6 +1428,8 @@ mod tests {
 
     // ── group_id filtering tests ────────────────────────────────────────────
 
+    /// ADR-029b: group_id is NOT NULL post-migration-004. None → 'default'.
+    /// Scoped searches return only entities in the requested namespace.
     #[tokio::test]
     async fn test_fts_search_entities_filters_by_group_id() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -1455,6 +1459,7 @@ mod tests {
         )
         .await
         .unwrap();
+        // dave: None → 'default' post-ADR-029b (no longer NULL = workspace-wide).
         g.insert_entity_with_group(
             "dave",
             "Person",
@@ -1472,43 +1477,50 @@ mod tests {
             .unwrap();
         assert_eq!(all.len(), 4, "no filter should return all entities");
 
-        // Filter to group-a: alice + carol + dave (NULL = workspace-wide, visible in all scopes)
+        // Filter to group-a: alice + carol only (dave is in 'default', not 'group-a').
         let group_a = SearchFilters::for_group("group-a");
         let hits_a = g.fts_search_entities("Person", 10, &group_a).await.unwrap();
         assert_eq!(
             hits_a.len(),
-            3,
-            "group-a should have 2 scoped + 1 NULL (workspace-wide)"
+            2,
+            "group-a should have exactly 2 scoped entities (alice + carol)"
         );
         let ids: Vec<&str> = hits_a.iter().map(|h| h.item.id.as_str()).collect();
         assert!(ids.contains(&"alice"));
         assert!(ids.contains(&"carol"));
         assert!(
-            ids.contains(&"dave"),
-            "NULL group_id entities must be visible in all scopes"
+            !ids.contains(&"dave"),
+            "'default' namespace entity must NOT appear in group-a search"
         );
 
-        // Filter to group-b: bob + dave (NULL = workspace-wide)
+        // Filter to group-b: bob only.
         let group_b = SearchFilters::for_group("group-b");
         let hits_b = g.fts_search_entities("Person", 10, &group_b).await.unwrap();
         assert_eq!(
             hits_b.len(),
-            2,
-            "group-b should have 1 scoped + 1 NULL (workspace-wide)"
+            1,
+            "group-b should have exactly 1 scoped entity (bob)"
         );
         let ids_b: Vec<&str> = hits_b.iter().map(|h| h.item.id.as_str()).collect();
         assert!(ids_b.contains(&"bob"));
-        assert!(ids_b.contains(&"dave"));
 
-        // Filter to non-existent group: dave only (NULL = workspace-wide)
+        // Filter to 'default': dave only.
+        let group_default = SearchFilters::for_group("default");
+        let hits_default = g
+            .fts_search_entities("Person", 10, &group_default)
+            .await
+            .unwrap();
+        assert_eq!(hits_default.len(), 1, "'default' should return only dave");
+        assert_eq!(hits_default[0].item.id, "dave");
+
+        // Filter to non-existent group: empty (no workspace-wide entities post-ADR-029b).
         let group_x = SearchFilters::for_group("group-x");
         let hits_x = g.fts_search_entities("Person", 10, &group_x).await.unwrap();
         assert_eq!(
             hits_x.len(),
-            1,
-            "non-existent group should still return NULL entities"
+            0,
+            "non-existent group should return 0 entities post-ADR-029b"
         );
-        assert_eq!(hits_x[0].item.id, "dave");
     }
 
     #[tokio::test]
@@ -1680,14 +1692,15 @@ mod tests {
         );
     }
 
-    /// NULL group_id = workspace-wide visibility. Scoped searches must include
-    /// NULL entities alongside explicitly-scoped ones. Regression guard for the
-    /// KGT-288 chat grounding bug where NULL entities were invisible.
+    /// ADR-029b: Post-migration, entities.group_id is NOT NULL. The 'default' namespace
+    /// is the workspace-wide namespace (equivalent to pre-ADR-029b NULL group_id).
+    /// Scoped searches return only entities in the requested namespace;
+    /// 'default' namespace entities are only visible in searches scoped to 'default'.
     #[tokio::test]
     async fn test_null_group_id_included_when_scoped() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        // Insert entity WITHOUT group_id (NULL) — workspace-wide visibility.
+        // Insert entity WITHOUT group_id — maps to 'default' post-ADR-029b.
         g.insert_entity(
             "kb_doc",
             "Document",
@@ -1713,22 +1726,37 @@ mod tests {
             .unwrap();
         assert_eq!(all.len(), 2, "unscoped should return both entities");
 
-        // Scoped search → both returned (NULL = visible in all scopes).
-        let scoped = g
+        // Scoped search for 'default' → only kb_doc (it lives in 'default').
+        let default_scoped = g
+            .fts_search_entities("revenue", 10, &SearchFilters::for_group("default"))
+            .await
+            .unwrap();
+        assert_eq!(
+            default_scoped.len(),
+            1,
+            "scoped to 'default' must return only the default-namespace entity"
+        );
+        let default_ids: Vec<&str> = default_scoped.iter().map(|h| h.item.id.as_str()).collect();
+        assert!(
+            default_ids.contains(&"kb_doc"),
+            "'default' scoped search must include kb_doc"
+        );
+
+        // Scoped search for 'space-1' → only scoped_doc.
+        let space_scoped = g
             .fts_search_entities("revenue", 10, &SearchFilters::for_group("space-1"))
             .await
             .unwrap();
         assert_eq!(
-            scoped.len(),
-            2,
-            "scoped search must include NULL group_id (workspace-wide) entities"
+            space_scoped.len(),
+            1,
+            "scoped to 'space-1' must return only the space-1 entity"
         );
-        let ids: Vec<&str> = scoped.iter().map(|h| h.item.id.as_str()).collect();
+        let space_ids: Vec<&str> = space_scoped.iter().map(|h| h.item.id.as_str()).collect();
         assert!(
-            ids.contains(&"kb_doc"),
-            "NULL group_id entity must be visible"
+            space_ids.contains(&"scoped_doc"),
+            "space-1 scoped search must include scoped_doc"
         );
-        assert!(ids.contains(&"scoped_doc"), "scoped entity must be visible");
     }
 
     /// Story #247 gate: access_count increments on every entity-returning search.

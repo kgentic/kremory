@@ -86,7 +86,10 @@ async fn run_sample_abstention_completes() {
     sample.question = "What is the user's sister's name?".into();
     sample.answer = "The user never mentioned a sister.".into();
     let result = run_sample(&memory, &sample).await;
-    assert!(result.is_ok(), "run_sample should succeed for abstention sample");
+    assert!(
+        result.is_ok(),
+        "run_sample should succeed for abstention sample"
+    );
     let output = result.unwrap();
     // input_tokens_used is always None in v0.1.4 (O10 gap)
     assert!(output.input_tokens_used.is_none());

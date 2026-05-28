@@ -222,19 +222,44 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         let proper_noun_candidates = text_utils::scan_proper_nouns(text, &all_entities);
         all_entities.extend(proper_noun_candidates);
 
-        // 3b. Pre-mutation intra-batch duplicate scan (Tier-3 per-call HashSet, Story #150).
-        // Run BEFORE dedup so that a caller who submits two entities with the same
-        // normalized name gets a structured error rather than a silent drop. This
-        // guards the contract: no DB write occurs for a malformed batch.
+        // 3b. Pre-mutation intra-batch duplicate scan (Story #150 history).
+        //
+        // Original behaviour: FATAL `Err(IntraBatchDuplicate)` on duplicate names.
+        // The intent was to surface malformed batches submitted by human callers
+        // rather than silently dropping rows.
+        //
+        // Why we softened it in v0.1.4: kremory's pipeline ingests LLM-extracted
+        // entities, and noisy extractors (smaller local models — llama3.2:3b,
+        // gemma4-e2b — observed 2026-05-28 emitting `'car'` / `'VerbatimString'`
+        // multiple times in a single batch) cannot be expected to dedupe their
+        // own output. Treating that as fatal forced operators to pick a
+        // hardened-extractor model (qwen2.5:14b+) rather than letting the
+        // substrate accept noisy upstream input gracefully.
+        //
+        // New behaviour: emit a `tracing::warn!` with the duplicated names and
+        // continue — the dedup below removes the offenders, exactly one row
+        // per normalized name lands in the DB. Human callers who want strict
+        // dedup-rejection can layer that contract on top of `remember_batch`
+        // at the application layer.
         {
             let mut seen_this_call: HashSet<String> = HashSet::new();
+            let mut dup_names: Vec<String> = Vec::new();
             for extracted in &all_entities {
                 let id = normalize_name(&extracted.name);
                 if !seen_this_call.insert(id.clone()) {
-                    return Err(crate::core::error::Error::IntraBatchDuplicate { id });
+                    dup_names.push(id);
                 }
             }
-        } // seen_this_call dropped here — Tier-3 lifetime ends.
+            if !dup_names.is_empty() {
+                tracing::warn!(
+                    target: "kremory.ingest",
+                    dup_count = dup_names.len(),
+                    dup_names = ?dup_names,
+                    "extractor emitted duplicate entity names — deduplicating silently \
+                     (post-v0.1.4 behaviour; previously FATAL IntraBatchDuplicate)"
+                );
+            }
+        }
 
         // Deduplicate extracted entities by normalized name.
         // sort + dedup_by because dedup_by only removes consecutive duplicates.
@@ -297,10 +322,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // Already inserted as a stub in a previous fact iteration.
                         continue;
                     }
-                    // RISK-003: rql_entities.id is a sole TEXT PK (no composite (id, group_id) PK).
+                    // RISK-003: entities.id is a sole TEXT PK pre-migration-004.
+                    // Post-migration-004: composite PK (id, group_id) closes the bypass surface.
                     // Stub INSERT uses INSERT OR IGNORE — cross-namespace name collision silently
                     // skips stub creation. Single-namespace use only for v0.1.1.
-                    // Composite PK migration tracked for v0.2.0 schema audit.
                     //
                     // Strategy: attempt insert_entity_with_group; if the entity already exists
                     // (UNIQUE constraint error), that is fine — a real row is present.
@@ -1123,21 +1148,24 @@ mod tests {
         );
     }
 
-    /// Story #150: batch with two entities that normalise to the same ID returns
-    /// Err(IntraBatchDuplicate) before any DB write occurs.
+    /// v0.1.4 — soft-warn behaviour: extractor-emitted duplicate entity names
+    /// no longer FATAL the ingest. The substrate dedupes silently and emits a
+    /// `tracing::warn!` so noisy small-model extractors (llama3.2, gemma4-e2b)
+    /// can be used safely.
+    ///
+    /// Story #150 history: previously this returned
+    /// `Err(IntraBatchDuplicate)`. The variant is retained on the error enum
+    /// for forward-compat with a possible explicit-strict-batch API in v0.2.0+
+    /// but is not currently raised from `ingest_with`.
     #[tokio::test]
-    async fn ingest_intra_batch_duplicate_returns_error() {
-        use crate::core::error::Error;
-
+    async fn ingest_intra_batch_duplicate_dedupes_silently() {
         let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
         let config = PipelineConfig::builder().build().expect("config");
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
         let engine = Engine::new(graph, llm, embedder, config);
 
-        // FixedExtractor returns two entities that normalise to the same ID.
-        // normalize_name("Alice Corp") == normalize_name("alice corp") == "alice_corp"
-        // (or similar — what matters is two entries with same normalized name).
+        // Two entities with identical names — normalize to the same id.
         let extractor = FixedExtractor {
             entities: vec![
                 ExtractedEntity {
@@ -1146,7 +1174,7 @@ mod tests {
                     properties: serde_json::Value::Null,
                 },
                 ExtractedEntity {
-                    name: "Alice Corp".to_string(), // exact duplicate → same normalized id
+                    name: "Alice Corp".to_string(),
                     label: "Organization".to_string(),
                     properties: serde_json::Value::Null,
                 },
@@ -1155,20 +1183,20 @@ mod tests {
 
         let result = engine
             .ingest_with(&extractor, "Alice Corp is a company.", None, None, None)
-            .await;
+            .await
+            .expect("dup-name batch must succeed (soft-dedup post-v0.1.4)");
 
-        match result {
-            Err(Error::IntraBatchDuplicate { id }) => {
-                assert!(
-                    !id.is_empty(),
-                    "IntraBatchDuplicate must carry the offending id"
-                );
-            }
-            other => panic!(
-                "expected IntraBatchDuplicate, got: {:?}",
-                other.map(|_| "<ok>")
-            ),
-        }
+        // After dedup exactly one entity must land in the graph.
+        let alice_count = result
+            .upserted_entities
+            .iter()
+            .filter(|e| e.to_lowercase().contains("alice"))
+            .count();
+        assert_eq!(
+            alice_count, 1,
+            "exactly one Alice entity should be persisted after silent dedup; got: {:?}",
+            result.upserted_entities
+        );
     }
 
     /// A FixedExtractor that also returns a predetermined set of facts.
@@ -1351,16 +1379,17 @@ mod tests {
         );
     }
 
-    /// Story #150: after a batch rejection due to IntraBatchDuplicate, no entities
-    /// are written to the DB.
+    /// v0.1.4 — soft-dedup ingest writes exactly one row per duplicated name.
+    /// Previously (Story #150): after FATAL `IntraBatchDuplicate`, zero rows
+    /// were written. Post-v0.1.4: the substrate dedupes silently so one row
+    /// per normalized name lands, regardless of the extractor's noise.
     #[tokio::test]
-    async fn ingest_intra_batch_duplicate_no_partial_write() {
+    async fn ingest_intra_batch_duplicate_writes_one_per_name() {
         let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
         let config = PipelineConfig::builder().build().expect("config");
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
 
-        // Count entities before the failing batch.
         let before_count = graph.list_entities().await.expect("list").len();
 
         let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
@@ -1380,15 +1409,30 @@ mod tests {
             ],
         };
 
-        let _ = engine
-            .ingest_with(&extractor, "Dup Entity test.", None, None, None)
-            .await;
+        let result = engine
+            .ingest_with(
+                &extractor,
+                "two duplicates submitted in single batch.",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("dup-name batch must succeed (soft-dedup post-v0.1.4)");
 
-        // No entity rows should have been written — list count unchanged.
+        // Exactly one row per normalized name lands.
         let after_count = engine.graph.list_entities().await.expect("list").len();
         assert_eq!(
-            before_count, after_count,
-            "no entities must be written after IntraBatchDuplicate rejection"
+            after_count,
+            before_count + 1,
+            "exactly one entity row must be written after silent dedup; got delta={}",
+            after_count - before_count
+        );
+        assert_eq!(
+            result.upserted_entities.len(),
+            1,
+            "upserted_entities should report exactly one entity after dedup; got: {:?}",
+            result.upserted_entities
         );
     }
 }

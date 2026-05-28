@@ -22,9 +22,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Score, Scorer, TieBreakPolicy,
     judge::Judge,
     types::{EvalError, ScoreMetadata},
+    Score, Scorer, TieBreakPolicy,
 };
 
 // ---------------------------------------------------------------------------
@@ -104,11 +104,7 @@ impl<J: Judge> TemporalCorrectnessScorer<J> {
 impl<J: Judge + Send + Sync> Scorer<TemporalSample, TemporalOutput>
     for TemporalCorrectnessScorer<J>
 {
-    async fn score(
-        &self,
-        sample: &TemporalSample,
-        output: &TemporalOutput,
-    ) -> EvalError<Score> {
+    async fn score(&self, sample: &TemporalSample, output: &TemporalOutput) -> EvalError<Score> {
         // Build context: ground truth + all timestamped facts.
         let facts_context = sample
             .ingested_facts
@@ -118,7 +114,12 @@ impl<J: Judge + Send + Sync> Scorer<TemporalSample, TemporalOutput>
                     .valid_to
                     .map(|t| t.to_rfc3339())
                     .unwrap_or_else(|| "present".to_string());
-                format!("  - {} [valid {} → {}]", f.fact, f.valid_from.to_rfc3339(), to)
+                format!(
+                    "  - {} [valid {} → {}]",
+                    f.fact,
+                    f.valid_from.to_rfc3339(),
+                    to
+                )
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -181,7 +182,7 @@ impl<J: Judge + Send + Sync> Scorer<TemporalSample, TemporalOutput>
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::{Scorer, judge::MockJudge};
+    use crate::{judge::MockJudge, Scorer};
 
     fn as_of_date() -> DateTime<Utc> {
         "2024-01-15T00:00:00Z".parse().unwrap()

@@ -24,8 +24,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Score,
     types::{EvalErr, EvalLayer, EvalReport, ScoreMetadata},
+    Score,
 };
 
 // ---------------------------------------------------------------------------
@@ -158,9 +158,7 @@ fn fixture_catalogue() -> Vec<FixtureMeta> {
 // Ground-truth loading
 // ---------------------------------------------------------------------------
 
-fn load_ground_truth(
-    gt_path: &Path,
-) -> Result<HashMap<String, Vec<String>>, EvalErr> {
+fn load_ground_truth(gt_path: &Path) -> Result<HashMap<String, Vec<String>>, EvalErr> {
     let raw = std::fs::read_to_string(gt_path)?;
     let value: serde_json::Value = serde_json::from_str(&raw)?;
     let obj = value
@@ -217,21 +215,13 @@ fn compute_fuzzy_f1(
     // TP: expected entities that have at least one fuzzy match in extracted
     let tp = expected_names
         .iter()
-        .filter(|exp| {
-            extracted_names
-                .iter()
-                .any(|ext| fuzzy_match(ext, exp))
-        })
+        .filter(|exp| extracted_names.iter().any(|ext| fuzzy_match(ext, exp)))
         .count();
 
     // FP: extracted entities that do NOT fuzzy-match any expected entity
     let fp = extracted_names
         .iter()
-        .filter(|ext| {
-            !expected_names
-                .iter()
-                .any(|exp| fuzzy_match(ext, exp))
-        })
+        .filter(|ext| !expected_names.iter().any(|exp| fuzzy_match(ext, exp)))
         .count();
 
     // FN: expected entities that have NO fuzzy match in extracted
@@ -267,14 +257,9 @@ pub fn run(fixtures_dir: &Path) -> Result<EntityExtractionReport, EvalErr> {
             ))
         })?;
 
-        let expected = ground_truth
-            .get(meta.key)
-            .ok_or_else(|| {
-                EvalErr::MissingField(format!(
-                    "no ground truth for fixture key '{}'",
-                    meta.key
-                ))
-            })?;
+        let expected = ground_truth.get(meta.key).ok_or_else(|| {
+            EvalErr::MissingField(format!("no ground truth for fixture key '{}'", meta.key))
+        })?;
 
         // Run scan_proper_nouns (zero-LLM extraction)
         let extracted = kremory::core::text_utils::scan_proper_nouns(&text, &[]);
@@ -285,7 +270,11 @@ pub fn run(fixtures_dir: &Path) -> Result<EntityExtractionReport, EvalErr> {
         let (tp, fp, fn_) = compute_fuzzy_f1(&extracted_names, expected);
 
         let precision = if tp + fp == 0 {
-            if expected.is_empty() { 1.0 } else { 0.0 }
+            if expected.is_empty() {
+                1.0
+            } else {
+                0.0
+            }
         } else {
             tp as f64 / (tp + fp) as f64
         };
@@ -377,10 +366,7 @@ pub fn run(fixtures_dir: &Path) -> Result<EntityExtractionReport, EvalErr> {
 /// Write the report as a JSONL file (one JSON object per fixture, then summary).
 ///
 /// Creates `output_dir` if it does not exist.
-pub fn write_jsonl(
-    report: &EntityExtractionReport,
-    output_path: &Path,
-) -> Result<(), EvalErr> {
+pub fn write_jsonl(report: &EntityExtractionReport, output_path: &Path) -> Result<(), EvalErr> {
     use std::io::Write;
 
     if let Some(parent) = output_path.parent() {

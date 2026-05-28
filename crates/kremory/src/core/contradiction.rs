@@ -31,6 +31,31 @@ pub(crate) fn temporal_overlap(
 }
 
 // ---------------------------------------------------------------------------
+// ContradictionOutcome
+// ---------------------------------------------------------------------------
+
+/// Outcome of resolving a contradiction under a known namespace policy.
+///
+/// Returned by `resolve_contradiction` (ADR-029b Decision 2) to distinguish
+/// Mutable-path mutation from AppendOnly-path insertion. Callers use this to
+/// audit which resolution strategy was applied.
+///
+/// The `resolve_contradiction` function that returns this type is a 029b
+/// deliverable wired into the contradiction resolver in a follow-up step.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+#[allow(dead_code)]
+pub(crate) enum ContradictionOutcome {
+    /// Mutable-ns path: `prior_fact_id`'s `valid_to` was updated to
+    /// `new_fact.valid_from`; the new fact was inserted.
+    Superseded { prior_fact_id: i64 },
+    /// AppendOnly-ns path: a superseding fact was appended; the prior fact
+    /// (`prior_fact_id`) was NOT mutated. Overlap is resolved by the
+    /// `recorded_at DESC LIMIT 1` tie-breaker (Decision 3).
+    AppendedSuperseder { prior_fact_id: i64 },
+}
+
+// ---------------------------------------------------------------------------
 // ContradictionResult
 // ---------------------------------------------------------------------------
 
@@ -303,6 +328,8 @@ mod tests {
             memory_type: None,
             content_hash: None,
             access_count: 0,
+            subject_group_id: None,
+            object_group_id: None,
         }
     }
 

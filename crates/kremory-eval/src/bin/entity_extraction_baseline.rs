@@ -19,7 +19,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = PathBuf::from(manifest_dir).join("output");
     let baselines_dir = PathBuf::from(manifest_dir).join("baselines");
 
-    eprintln!("Running entity extraction eval against {}", fixtures_dir.display());
+    eprintln!(
+        "Running entity extraction eval against {}",
+        fixtures_dir.display()
+    );
 
     let report = entity_extraction::run(&fixtures_dir)?;
 
@@ -55,8 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Write baseline JSON
     std::fs::create_dir_all(&baselines_dir)?;
-    let baseline_path =
-        baselines_dir.join("v0.1.4-diagnostic-entity-extraction.json");
+    let baseline_path = baselines_dir.join("v0.1.4-diagnostic-entity-extraction.json");
 
     let baseline = serde_json::json!({
         "schema_version": "1",

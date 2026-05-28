@@ -263,7 +263,10 @@ async fn check_no_duplicate_edges(graph: &TemporalGraph) -> EvalError<InvariantR
     }
 
     if violations.is_empty() {
-        Ok(InvariantResult::pass("no_duplicate_edges", "no overlapping fact windows"))
+        Ok(InvariantResult::pass(
+            "no_duplicate_edges",
+            "no overlapping fact windows",
+        ))
     } else {
         Ok(InvariantResult::fail(
             "no_duplicate_edges",
@@ -285,7 +288,10 @@ async fn check_fts_index_in_sync(
     expected_count: Option<usize>,
 ) -> EvalError<InvariantResult> {
     let Some(expected) = expected_count else {
-        return Ok(InvariantResult::pass("fts_index_in_sync", "skipped (no expected_entity_count set)"));
+        return Ok(InvariantResult::pass(
+            "fts_index_in_sync",
+            "skipped (no expected_entity_count set)",
+        ));
     };
 
     let entities = graph
@@ -333,10 +339,8 @@ async fn check_all_namespaces_present(
         .await
         .map_err(|e| EvalErr::Other(format!("facts_at failed: {}", e)))?;
 
-    let present: std::collections::HashSet<String> = facts
-        .iter()
-        .filter_map(|f| f.group_id.clone())
-        .collect();
+    let present: std::collections::HashSet<String> =
+        facts.iter().filter_map(|f| f.group_id.clone()).collect();
 
     let missing: Vec<&str> = expected_namespaces
         .iter()
@@ -390,16 +394,17 @@ async fn check_episode_edge_presence(graph: &TemporalGraph) -> EvalError<Invaria
     if missing.is_empty() {
         Ok(InvariantResult::pass(
             "episode_edge_presence",
-            format!(
-                "all {} entities have ≥1 episodic edge",
-                entities.len()
-            ),
+            format!("all {} entities have ≥1 episodic edge", entities.len()),
         ))
     } else {
         Ok(InvariantResult::fail(
             "episode_edge_presence",
             "all entities have ≥1 episodic edge",
-            format!("{}/{} entities missing episodic edges", missing.len(), entities.len()),
+            format!(
+                "{}/{} entities missing episodic edges",
+                missing.len(),
+                entities.len()
+            ),
             format!("entities without episodic edges: {:?}", missing),
         ))
     }
@@ -419,16 +424,10 @@ pub async fn run_invariants(
 ) -> EvalError<IntegrityReport> {
     let mut results = Vec::with_capacity(5);
 
-    results.push(
-        check_no_orphan_nodes(graph, config.allow_isolated_entity_count).await?,
-    );
+    results.push(check_no_orphan_nodes(graph, config.allow_isolated_entity_count).await?);
     results.push(check_no_duplicate_edges(graph).await?);
-    results.push(
-        check_fts_index_in_sync(graph, config.expected_entity_count).await?,
-    );
-    results.push(
-        check_all_namespaces_present(graph, &config.expected_namespaces).await?,
-    );
+    results.push(check_fts_index_in_sync(graph, config.expected_entity_count).await?);
+    results.push(check_all_namespaces_present(graph, &config.expected_namespaces).await?);
     results.push(check_episode_edge_presence(graph).await?);
 
     Ok(IntegrityReport::new(results))
@@ -442,7 +441,9 @@ mod tests {
     use kremory::core::schema::TemporalGraph;
 
     async fn empty_graph() -> TemporalGraph {
-        TemporalGraph::open_in_memory().await.expect("open_in_memory")
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory")
     }
 
     #[tokio::test]
@@ -469,7 +470,16 @@ mod tests {
             .await
             .unwrap();
         graph
-            .insert_fact("e1", "works_at", None, Some("Acme"), Utc::now(), 1.0, None, None)
+            .insert_fact(
+                "e1",
+                "works_at",
+                None,
+                Some("Acme"),
+                Utc::now(),
+                1.0,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -522,7 +532,10 @@ mod tests {
             .iter()
             .find(|r| r.name == "no_orphan_nodes")
             .unwrap();
-        assert!(orphan_result.passed, "orphan check should pass with allow=1");
+        assert!(
+            orphan_result.passed,
+            "orphan check should pass with allow=1"
+        );
     }
 
     #[tokio::test]
@@ -547,7 +560,10 @@ mod tests {
             .iter()
             .find(|r| r.name == "fts_index_in_sync")
             .unwrap();
-        assert!(!fts_result.passed, "fts check should fail on count mismatch");
+        assert!(
+            !fts_result.passed,
+            "fts check should fail on count mismatch"
+        );
     }
 
     #[tokio::test]
@@ -581,7 +597,10 @@ mod tests {
             .iter()
             .find(|r| r.name == "all_namespaces_present")
             .unwrap();
-        assert!(!ns_result.passed, "namespace check should fail when namespace missing");
+        assert!(
+            !ns_result.passed,
+            "namespace check should fail when namespace missing"
+        );
     }
 
     #[tokio::test]

@@ -19,9 +19,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Score, Scorer, TieBreakPolicy,
     judge::Judge,
-    types::{EvalError, EvalErr, ScoreMetadata},
+    types::{EvalErr, EvalError, ScoreMetadata},
+    Score, Scorer, TieBreakPolicy,
 };
 
 /// Provenance tag — how the fixture was produced.
@@ -46,7 +46,14 @@ impl<'de> serde::Deserialize<'de> for Provenance {
             "CorpusExtracted" | "corpus-extracted" => Ok(Provenance::CorpusExtracted),
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["Synthetic", "synthetic", "RealUserCited", "real-user-cited", "CorpusExtracted", "corpus-extracted"],
+                &[
+                    "Synthetic",
+                    "synthetic",
+                    "RealUserCited",
+                    "real-user-cited",
+                    "CorpusExtracted",
+                    "corpus-extracted",
+                ],
             )),
         }
     }
@@ -128,7 +135,10 @@ impl<J: Judge + Send + Sync> Scorer<RagasFixture, RagasOutput> for FaithfulnessS
              ANSWER must not introduce information absent from CONTEXT.\nQuery: {}",
             sample.query
         );
-        let verdict = self.judge.evaluate(&question, &context, &output.answer).await?;
+        let verdict = self
+            .judge
+            .evaluate(&question, &context, &output.answer)
+            .await?;
         let value = verdict.to_score_value();
         let meta = ScoreMetadata {
             judge_latency_ms: Some(0.0),
@@ -177,7 +187,10 @@ impl<J: Judge + Send + Sync> Scorer<RagasFixture, RagasOutput> for AnswerRelevan
              Is the response relevant to what was asked?\nQuestion: {}",
             sample.query
         );
-        let verdict = self.judge.evaluate(&question, &context, &output.answer).await?;
+        let verdict = self
+            .judge
+            .evaluate(&question, &context, &output.answer)
+            .await?;
         let value = verdict.to_score_value();
         let meta = ScoreMetadata {
             judge_latency_ms: Some(0.0),
@@ -434,7 +447,10 @@ impl<J: Judge + Send + Sync> Scorer<RagasFixture, RagasOutput> for Hallucination
              If the answer abstains (\"I don't know\") when context lacks info, that is correct.\nQuery: {}",
             sample.query
         );
-        let verdict = self.judge.evaluate(&question, &context, &output.answer).await?;
+        let verdict = self
+            .judge
+            .evaluate(&question, &context, &output.answer)
+            .await?;
         let value = verdict.to_score_value();
         let meta = ScoreMetadata {
             judge_latency_ms: Some(0.0),
@@ -580,7 +596,7 @@ struct FixtureFile {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::{Scorer, judge::MockJudge};
+    use crate::{judge::MockJudge, Scorer};
 
     fn sample_fixture() -> RagasFixture {
         RagasFixture {
@@ -610,7 +626,10 @@ mod tests {
     #[tokio::test]
     async fn faithfulness_correct() {
         let scorer = FaithfulnessScorer::new(MockJudge::always_correct());
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert_eq!(score.value, 1.0);
         assert!(score.reasoning.contains("[faithfulness]"));
     }
@@ -618,14 +637,20 @@ mod tests {
     #[tokio::test]
     async fn faithfulness_incorrect() {
         let scorer = FaithfulnessScorer::new(MockJudge::always_incorrect());
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert_eq!(score.value, 0.0);
     }
 
     #[tokio::test]
     async fn answer_relevancy_correct() {
         let scorer = AnswerRelevancyScorer::new(MockJudge::always_correct());
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert_eq!(score.value, 1.0);
         assert!(score.reasoning.contains("[answer_relevancy]"));
     }
@@ -633,7 +658,10 @@ mod tests {
     #[tokio::test]
     async fn context_precision_all_relevant() {
         let scorer = ContextPrecisionScorer::new(MockJudge::always_correct());
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert_eq!(score.value, 1.0);
     }
 
@@ -649,7 +677,10 @@ mod tests {
     #[tokio::test]
     async fn context_recall_all_found() {
         let scorer = ContextRecallScorer::new(MockJudge::always_correct());
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert_eq!(score.value, 1.0);
     }
 
@@ -665,7 +696,10 @@ mod tests {
     #[tokio::test]
     async fn context_entities_recall_perfect() {
         let scorer = ContextEntitiesRecallScorer::new();
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert!((score.value - 1.0).abs() < 1e-9);
         assert!(score.reasoning.contains("[context_entities_recall]"));
     }
@@ -700,7 +734,10 @@ mod tests {
     #[tokio::test]
     async fn hallucination_clean() {
         let scorer = HallucinationScorer::new(MockJudge::always_correct());
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert_eq!(score.value, 1.0);
         assert!(score.reasoning.contains("[hallucination]"));
     }
@@ -708,7 +745,10 @@ mod tests {
     #[tokio::test]
     async fn hallucination_detected() {
         let scorer = HallucinationScorer::new(MockJudge::always_incorrect());
-        let score = scorer.score(&sample_fixture(), &sample_output()).await.unwrap();
+        let score = scorer
+            .score(&sample_fixture(), &sample_output())
+            .await
+            .unwrap();
         assert_eq!(score.value, 0.0);
     }
 
