@@ -1,0 +1,19 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-016",
+      "query": "Who founded Acme Corp.?",
+      "ingested_facts": [
+        "Alice works at Acme Corp.",
+        "Acme Corp. is headquartered in New York.",
+        "Acme Corp. was founded in 1985."
+      ],
+      "expected_answer": "I don't have information about who founded Acme Corp. in the available context.",
+      "expected_entities": [],
+      "expected_contexts": [],
+      "diversity_tags": ["abstention", "missing-attribute"],
+      "provenance": "Synthetic",
+      "notes": "Abstention: founding person not in corpus. Year is present but founder is not."
+    }
+  ]
+}

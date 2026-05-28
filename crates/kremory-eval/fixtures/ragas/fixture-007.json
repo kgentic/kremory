@@ -1,0 +1,19 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-007",
+      "query": "How old is Bob?",
+      "ingested_facts": [
+        "Alice works at Acme Corp.",
+        "Acme Corp. is a Fortune 500 company.",
+        "The Acme Corp. headquarters is in New York."
+      ],
+      "expected_answer": "I don't have information about Bob's age in the available context.",
+      "expected_entities": [],
+      "expected_contexts": [],
+      "diversity_tags": ["abstention", "out-of-context"],
+      "provenance": "Synthetic",
+      "notes": "Abstention: query asks about entity not present in ingested facts. System must abstain."
+    }
+  ]
+}

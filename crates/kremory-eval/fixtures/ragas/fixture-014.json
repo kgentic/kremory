@@ -1,0 +1,19 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-014",
+      "query": "What is Ziad's favourite programming language?",
+      "ingested_facts": [
+        "Ziad Al-Rashid is a software engineer at TechCorp.",
+        "Ziad Al-Rashid reports to Sarah Chen.",
+        "TechCorp uses Java and Kotlin for backend services."
+      ],
+      "expected_answer": "I don't have information about Ziad Al-Rashid's favourite programming language in the available context.",
+      "expected_entities": [],
+      "expected_contexts": [],
+      "diversity_tags": ["abstention", "non-english-name", "arabic", "out-of-context"],
+      "provenance": "Synthetic",
+      "notes": "Abstention + Arabic name. Preference not in corpus — system must not fabricate."
+    }
+  ]
+}

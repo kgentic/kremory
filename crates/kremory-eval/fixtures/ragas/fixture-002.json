@@ -1,0 +1,22 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-002",
+      "query": "Where did Alice work before Globex?",
+      "ingested_facts": [
+        "Alice worked at Acme Corp. from 2020 to 2023.",
+        "Alice joined Globex Inc. in 2023.",
+        "Alice is a senior engineer at Globex Inc."
+      ],
+      "expected_answer": "Alice worked at Acme Corp. from 2020 to 2023 before joining Globex Inc.",
+      "expected_entities": ["Alice", "Acme Corp.", "Globex Inc."],
+      "expected_contexts": [
+        "Alice worked at Acme Corp. from 2020 to 2023.",
+        "Alice joined Globex Inc. in 2023."
+      ],
+      "diversity_tags": ["temporal", "employment", "multi-hop"],
+      "provenance": "Synthetic",
+      "notes": "Temporal: requires reasoning about prior employment window."
+    }
+  ]
+}

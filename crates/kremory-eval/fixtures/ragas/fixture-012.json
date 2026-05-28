@@ -1,0 +1,24 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-012",
+      "query": "What programming languages does Carol know?",
+      "ingested_facts": [
+        "Carol Chen is a backend engineer.",
+        "Carol Chen is proficient in Rust and Python.",
+        "Carol Chen has experience with Go for microservices.",
+        "Carol Chen occasionally uses TypeScript for tooling."
+      ],
+      "expected_answer": "Carol Chen knows Rust, Python, Go, and TypeScript.",
+      "expected_entities": ["Carol Chen"],
+      "expected_contexts": [
+        "Carol Chen is proficient in Rust and Python.",
+        "Carol Chen has experience with Go for microservices.",
+        "Carol Chen occasionally uses TypeScript for tooling."
+      ],
+      "diversity_tags": ["english", "skills", "multi-fact"],
+      "provenance": "Synthetic",
+      "notes": "Multi-fact synthesis: skills spread across three separate facts."
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-010",
+      "query": "What team does Bob lead?",
+      "ingested_facts": [
+        "Bob Smith is the head of infrastructure at DataFlow Inc.",
+        "Bob Smith manages a team of eight site reliability engineers.",
+        "DataFlow Inc. operates cloud data pipelines.",
+        "Bob Smith joined DataFlow Inc. in 2019."
+      ],
+      "expected_answer": "Bob Smith leads the infrastructure team at DataFlow Inc., consisting of eight site reliability engineers.",
+      "expected_entities": ["Bob Smith", "DataFlow Inc."],
+      "expected_contexts": [
+        "Bob Smith is the head of infrastructure at DataFlow Inc.",
+        "Bob Smith manages a team of eight site reliability engineers."
+      ],
+      "diversity_tags": ["english", "org-hierarchy", "multi-fact"],
+      "provenance": "Synthetic",
+      "notes": "Multi-fact synthesis: role + team size from separate facts."
+    }
+  ]
+}

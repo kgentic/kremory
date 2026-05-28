@@ -1,0 +1,23 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-019",
+      "query": "What does 왕리 do professionally?",
+      "ingested_facts": [
+        "왕리 is a product manager at KakaoTech.",
+        "왕리 leads the payments product vertical at KakaoTech.",
+        "KakaoTech is a South Korean technology firm.",
+        "왕리 previously worked at Samsung Electronics from 2017 to 2021."
+      ],
+      "expected_answer": "왕리 is a product manager at KakaoTech, leading the payments product vertical.",
+      "expected_entities": ["왕리", "KakaoTech"],
+      "expected_contexts": [
+        "왕리 is a product manager at KakaoTech.",
+        "왕리 leads the payments product vertical at KakaoTech."
+      ],
+      "diversity_tags": ["non-english-name", "korean", "employment", "multi-fact"],
+      "provenance": "Synthetic",
+      "notes": "Diversity: Korean name (왕리). Multi-fact synthesis across role + scope."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-003",
+      "query": "Where does 王芳 work?",
+      "ingested_facts": [
+        "王芳 is a data scientist at Beijing AI Lab.",
+        "Beijing AI Lab specialises in computer vision research.",
+        "王芳 graduated from Peking University in 2018."
+      ],
+      "expected_answer": "王芳 works at Beijing AI Lab.",
+      "expected_entities": ["王芳", "Beijing AI Lab"],
+      "expected_contexts": [
+        "王芳 is a data scientist at Beijing AI Lab."
+      ],
+      "diversity_tags": ["non-english-name", "chinese", "employment"],
+      "provenance": "Synthetic",
+      "notes": "Diversity: non-English name (Mandarin). Single-hop employment lookup."
+    }
+  ]
+}

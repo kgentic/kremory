@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-015",
+      "query": "Where does Carol live?",
+      "ingested_facts": [
+        "Carol Chen is a backend engineer at DataFlow Inc.",
+        "Carol Chen is based in Singapore.",
+        "DataFlow Inc. has offices in Singapore, London, and San Francisco."
+      ],
+      "expected_answer": "Carol Chen lives in Singapore.",
+      "expected_entities": ["Carol Chen", "Singapore"],
+      "expected_contexts": [
+        "Carol Chen is based in Singapore."
+      ],
+      "diversity_tags": ["english", "location", "single-hop"],
+      "provenance": "Synthetic",
+      "notes": "Location single-hop. Verifies precision: office locations must not bleed into personal location."
+    }
+  ]
+}
