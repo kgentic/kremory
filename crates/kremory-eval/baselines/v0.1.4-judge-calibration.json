@@ -5,8 +5,8 @@
     {
       "agree_count": 19,
       "agreement_rate": 0.95,
-      "avg_inference_ms": 6114.8464354,
-      "model_load_ms": 1745.281416,
+      "avg_inference_ms": 5683.5658229499995,
+      "model_load_ms": 594.650208,
       "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
       "pair_count": 20,
       "pairs": [
@@ -18,7 +18,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5747.065458,
+          "latency_ms": 5145.8135,
           "qa_id": "qa-001-info-extraction-correct"
         },
         {
@@ -29,7 +29,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5243.999166,
+          "latency_ms": 4571.302874999999,
           "qa_id": "qa-002-info-extraction-incorrect"
         },
         {
@@ -40,7 +40,7 @@
           },
           "agrees": false,
           "expected": "partial",
-          "latency_ms": 6150.171584,
+          "latency_ms": 5631.781249999999,
           "qa_id": "qa-003-info-extraction-partial"
         },
         {
@@ -51,7 +51,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 7130.342041999999,
+          "latency_ms": 6975.950166,
           "qa_id": "qa-004-multi-session-correct"
         },
         {
@@ -62,7 +62,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5462.453125,
+          "latency_ms": 5595.575125,
           "qa_id": "qa-005-multi-session-incorrect"
         },
         {
@@ -73,7 +73,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 8475.329375,
+          "latency_ms": 6196.947583,
           "qa_id": "qa-006-knowledge-update-correct"
         },
         {
@@ -84,7 +84,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 6626.736041,
+          "latency_ms": 5689.922958,
           "qa_id": "qa-007-non-english-name-correct"
         },
         {
@@ -95,7 +95,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 6149.667541000001,
+          "latency_ms": 5208.816917,
           "qa_id": "qa-008-non-english-name-incorrect"
         },
         {
@@ -106,7 +106,7 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5928.489667,
+          "latency_ms": 5179.142167,
           "qa_id": "qa-009-non-english-name-partial"
         },
         {
@@ -117,7 +117,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 6559.121167,
+          "latency_ms": 5343.309875,
           "qa_id": "qa-010-non-english-name-correct-2"
         },
         {
@@ -128,7 +128,7 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 6258.153708,
+          "latency_ms": 6353.716458,
           "qa_id": "qa-011-temporal-partial"
         },
         {
@@ -139,7 +139,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5697.738791,
+          "latency_ms": 5542.967541999999,
           "qa_id": "qa-012-temporal-correct"
         },
         {
@@ -150,7 +150,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 6246.7457079999995,
+          "latency_ms": 5869.8255420000005,
           "qa_id": "qa-013-temporal-incorrect"
         },
         {
@@ -161,7 +161,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5203.329333,
+          "latency_ms": 5324.668292,
           "qa_id": "qa-014-contradiction-correct"
         },
         {
@@ -172,7 +172,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5646.261041,
+          "latency_ms": 5803.082458000001,
           "qa_id": "qa-015-contradiction-incorrect"
         },
         {
@@ -183,7 +183,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5243.483625,
+          "latency_ms": 5554.517,
           "qa_id": "qa-016-abstention-correct"
         },
         {
@@ -194,7 +194,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 7267.756541,
+          "latency_ms": 6940.871417,
           "qa_id": "qa-017-abstention-incorrect"
         },
         {
@@ -205,7 +205,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5994.563375000001,
+          "latency_ms": 5319.339916999999,
           "qa_id": "qa-018-abstention-correct-2"
         },
         {
@@ -216,7 +216,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5754.215,
+          "latency_ms": 5648.164917,
           "qa_id": "qa-019-code-aware-correct"
         },
         {
@@ -227,19 +227,19 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5511.082459,
+          "latency_ms": 5774.4027080000005,
           "qa_id": "qa-020-code-aware-partial"
         }
       ],
       "run_number": 1,
-      "timestamp": "2026-05-28T08:14:25.412609+00:00",
-      "total_inference_ms": 122296.92870799999
+      "timestamp": "2026-05-28T08:21:35.363026+00:00",
+      "total_inference_ms": 113671.316459
     },
     {
       "agree_count": 19,
       "agreement_rate": 0.95,
-      "avg_inference_ms": 5605.1302562500005,
-      "model_load_ms": 584.207166,
+      "avg_inference_ms": 5924.283122899999,
+      "model_load_ms": 589.569416,
       "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
       "pair_count": 20,
       "pairs": [
@@ -251,7 +251,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 4863.175499999999,
+          "latency_ms": 5349.179208,
           "qa_id": "qa-001-info-extraction-correct"
         },
         {
@@ -262,7 +262,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 4591.705416,
+          "latency_ms": 4627.782708,
           "qa_id": "qa-002-info-extraction-incorrect"
         },
         {
@@ -273,7 +273,7 @@
           },
           "agrees": false,
           "expected": "partial",
-          "latency_ms": 5748.284958,
+          "latency_ms": 5934.295999999999,
           "qa_id": "qa-003-info-extraction-partial"
         },
         {
@@ -284,7 +284,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 6673.7119170000005,
+          "latency_ms": 7264.559125,
           "qa_id": "qa-004-multi-session-correct"
         },
         {
@@ -295,7 +295,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5227.738875,
+          "latency_ms": 5669.704792,
           "qa_id": "qa-005-multi-session-incorrect"
         },
         {
@@ -306,7 +306,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 6046.24425,
+          "latency_ms": 6311.635041,
           "qa_id": "qa-006-knowledge-update-correct"
         },
         {
@@ -317,7 +317,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5526.4243750000005,
+          "latency_ms": 6622.096375,
           "qa_id": "qa-007-non-english-name-correct"
         },
         {
@@ -328,7 +328,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5299.226375,
+          "latency_ms": 5624.251083,
           "qa_id": "qa-008-non-english-name-incorrect"
         },
         {
@@ -339,7 +339,7 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5432.455334,
+          "latency_ms": 5351.019042,
           "qa_id": "qa-009-non-english-name-partial"
         },
         {
@@ -350,7 +350,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5232.561667,
+          "latency_ms": 5655.017459,
           "qa_id": "qa-010-non-english-name-correct-2"
         },
         {
@@ -361,7 +361,7 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5837.490792,
+          "latency_ms": 6356.631458,
           "qa_id": "qa-011-temporal-partial"
         },
         {
@@ -372,7 +372,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5371.185667,
+          "latency_ms": 5822.7775,
           "qa_id": "qa-012-temporal-correct"
         },
         {
@@ -383,7 +383,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5826.441208,
+          "latency_ms": 6091.694667,
           "qa_id": "qa-013-temporal-incorrect"
         },
         {
@@ -394,7 +394,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5465.894417,
+          "latency_ms": 5665.091208,
           "qa_id": "qa-014-contradiction-correct"
         },
         {
@@ -405,7 +405,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5222.019167,
+          "latency_ms": 5842.871125000001,
           "qa_id": "qa-015-contradiction-incorrect"
         },
         {
@@ -416,7 +416,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 4816.8870830000005,
+          "latency_ms": 5628.520333,
           "qa_id": "qa-016-abstention-correct"
         },
         {
@@ -427,7 +427,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 6873.392792,
+          "latency_ms": 7340.545583,
           "qa_id": "qa-017-abstention-incorrect"
         },
         {
@@ -438,7 +438,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5724.374416,
+          "latency_ms": 5631.949208,
           "qa_id": "qa-018-abstention-correct-2"
         },
         {
@@ -449,7 +449,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 6382.062666000001,
+          "latency_ms": 5977.870333,
           "qa_id": "qa-019-code-aware-correct"
         },
         {
@@ -460,19 +460,19 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5941.126833,
+          "latency_ms": 5717.9346669999995,
           "qa_id": "qa-020-code-aware-partial"
         }
       ],
       "run_number": 2,
-      "timestamp": "2026-05-28T08:16:18.171790+00:00",
-      "total_inference_ms": 112102.605125
+      "timestamp": "2026-05-28T08:23:34.499270+00:00",
+      "total_inference_ms": 118485.66245799999
     },
     {
       "agree_count": 19,
       "agreement_rate": 0.95,
-      "avg_inference_ms": 5615.14452085,
-      "model_load_ms": 541.076042,
+      "avg_inference_ms": 5807.6518125,
+      "model_load_ms": 617.731125,
       "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
       "pair_count": 20,
       "pairs": [
@@ -484,7 +484,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 4649.438916,
+          "latency_ms": 5011.7709159999995,
           "qa_id": "qa-001-info-extraction-correct"
         },
         {
@@ -495,7 +495,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 4302.184916,
+          "latency_ms": 4807.200500000001,
           "qa_id": "qa-002-info-extraction-incorrect"
         },
         {
@@ -506,7 +506,7 @@
           },
           "agrees": false,
           "expected": "partial",
-          "latency_ms": 5399.370709000001,
+          "latency_ms": 5654.697542,
           "qa_id": "qa-003-info-extraction-partial"
         },
         {
@@ -517,7 +517,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 7060.373709,
+          "latency_ms": 7378.239458,
           "qa_id": "qa-004-multi-session-correct"
         },
         {
@@ -528,7 +528,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5796.6677500000005,
+          "latency_ms": 5578.430125,
           "qa_id": "qa-005-multi-session-incorrect"
         },
         {
@@ -539,7 +539,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 6332.254583,
+          "latency_ms": 6532.110458,
           "qa_id": "qa-006-knowledge-update-correct"
         },
         {
@@ -550,7 +550,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5716.676125,
+          "latency_ms": 6166.130749999999,
           "qa_id": "qa-007-non-english-name-correct"
         },
         {
@@ -561,7 +561,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5359.2612500000005,
+          "latency_ms": 5439.274542,
           "qa_id": "qa-008-non-english-name-incorrect"
         },
         {
@@ -572,7 +572,7 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5627.046375,
+          "latency_ms": 5624.366916,
           "qa_id": "qa-009-non-english-name-partial"
         },
         {
@@ -583,7 +583,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5651.6404170000005,
+          "latency_ms": 5715.816458,
           "qa_id": "qa-010-non-english-name-correct-2"
         },
         {
@@ -594,7 +594,7 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5628.770042,
+          "latency_ms": 6009.197042000001,
           "qa_id": "qa-011-temporal-partial"
         },
         {
@@ -605,7 +605,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5321.210834,
+          "latency_ms": 5830.390333,
           "qa_id": "qa-012-temporal-correct"
         },
         {
@@ -616,7 +616,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5688.441667,
+          "latency_ms": 5678.512417,
           "qa_id": "qa-013-temporal-incorrect"
         },
         {
@@ -627,7 +627,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5026.371209,
+          "latency_ms": 5221.648499999999,
           "qa_id": "qa-014-contradiction-correct"
         },
         {
@@ -638,7 +638,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 5916.5437919999995,
+          "latency_ms": 5591.416375,
           "qa_id": "qa-015-contradiction-incorrect"
         },
         {
@@ -649,7 +649,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 4976.945,
+          "latency_ms": 5256.178125,
           "qa_id": "qa-016-abstention-correct"
         },
         {
@@ -660,7 +660,7 @@
           },
           "agrees": true,
           "expected": "incorrect",
-          "latency_ms": 6847.628333000001,
+          "latency_ms": 7663.727458,
           "qa_id": "qa-017-abstention-incorrect"
         },
         {
@@ -671,7 +671,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5544.530625,
+          "latency_ms": 5788.322666,
           "qa_id": "qa-018-abstention-correct-2"
         },
         {
@@ -682,7 +682,7 @@
           },
           "agrees": true,
           "expected": "correct",
-          "latency_ms": 5647.329208,
+          "latency_ms": 5733.721791,
           "qa_id": "qa-019-code-aware-correct"
         },
         {
@@ -693,13 +693,13 @@
           },
           "agrees": true,
           "expected": "partial",
-          "latency_ms": 5809.9996249999995,
+          "latency_ms": 5471.694041,
           "qa_id": "qa-020-code-aware-partial"
         }
       ],
       "run_number": 3,
-      "timestamp": "2026-05-28T08:18:11.066293+00:00",
-      "total_inference_ms": 112302.890417
+      "timestamp": "2026-05-28T08:25:31.390233+00:00",
+      "total_inference_ms": 116153.03625
     }
   ],
   "session": "kremory-v014-phase1-20260528-074901",
