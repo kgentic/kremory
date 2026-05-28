@@ -1,0 +1,42 @@
+{
+  "session": "kremory-v014-phase1-20260528-074901",
+  "status": "partial",
+  "ci_measurement": {
+    "status": "deferred",
+    "reason": "GitHub Actions billing constraint at v0.1.4 ship time. Workflow YAML written + committed (unpushed) at .github/workflows/eval-canary.yml. Trigger via workflow_dispatch when billing resolves.",
+    "deferred_at": "2026-05-28",
+    "workflow_commit": "6078262",
+    "rerun_target": "v0.1.5 Phase 1 re-validation"
+  },
+  "local_proxy": {
+    "runner": "Apple M4 Pro (macOS, Metal GPU available but spike used CPU path via Cargo release build)",
+    "model": "gemma-4-E2B-it-Q4_K_M",
+    "model_source": "unsloth/gemma-4-E2B-it-GGUF",
+    "measurement_tool": "/usr/bin/time -l (macOS BSD time)",
+    "peak_rss_bytes": 5707972608,
+    "peak_rss_mb": 5443,
+    "peak_memory_footprint_bytes": 2754106072,
+    "peak_memory_footprint_mb": 2627,
+    "run_count": 3,
+    "total_wall_time_seconds": 350.86,
+    "raw_log": ".ship/sessions/kremory-v014-phase1-20260528-074901/spike-output/local-ram-canary.log",
+    "measured_at": "2026-05-28T08:00:00Z"
+  },
+  "thresholds": {
+    "pass_max_mb": 5500,
+    "demote_max_mb": 6500,
+    "hitl_threshold_mb": 6500
+  },
+  "verdict": "DEMOTE_PROVISIONAL",
+  "verdict_rationale": [
+    "Local M4 Pro peak RSS = 5443 MB — within PASS threshold (5500 MB) by only ~57 MB margin",
+    "ubuntu-latest typically runs 10-15% heavier than Apple Silicon for the same workload (no Metal GPU, older x86 CPUs)",
+    "Realistic CI peak estimate: 5500-6200 MB (DEMOTE territory)",
+    "Conservative call: assume DEMOTE until actual CI measurement contradicts"
+  ],
+  "layer_b_cadence_decision": {
+    "default": "pre-merge to main only (DEMOTE)",
+    "reverts_to": "per-PR (PASS) if CI canary confirms peak RSS ≤ 5500 MB on ubuntu-latest",
+    "next_review": "v0.1.5 Phase 1 — trigger eval-canary.yml workflow when GA billing resolves"
+  }
+}
