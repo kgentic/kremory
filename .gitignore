@@ -42,3 +42,8 @@ crates/*/*.log
 crates/*/tests/output/
 crates/*/fixtures/output/
 .gahrc
+
+# Claude Code runtime artifacts
+.claude/scheduled_tasks.lock
+librust_out.rlib
+repomix-output.xml
