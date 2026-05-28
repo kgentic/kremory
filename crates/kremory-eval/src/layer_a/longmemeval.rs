@@ -95,6 +95,27 @@ pub struct ConversationTurn {
 /// One haystack session: a list of conversation turns.
 pub type HaystackSession = Vec<ConversationTurn>;
 
+/// Accept heterogeneous JSON types for the `answer` field. Upstream LongMemEval
+/// stores text answers as String and counting-question answers (e.g. multi-session
+/// "How many ..." questions) as Integer. Both collapse to String here so the
+/// downstream judge prompt template ("EXPECTED ANSWER: {answer}") sees a
+/// uniform format.
+fn deserialize_answer_as_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(s) => Ok(s),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        serde_json::Value::Bool(b) => Ok(b.to_string()),
+        other => Err(serde::de::Error::custom(format!(
+            "answer must be string, number, or bool; got {other:?}"
+        ))),
+    }
+}
+
 /// One LongMemEval evaluation instance (as stored in the JSON files).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LongMemEvalRecord {
@@ -105,6 +126,9 @@ pub struct LongMemEvalRecord {
     /// The question text posed to the memory system.
     pub question: String,
     /// Ground truth answer (or abstention explanation for `_abs` questions).
+    /// Heterogeneous in upstream dataset: text for most, integer for counting
+    /// questions ("How many ..."). Normalised to String on deserialise.
+    #[serde(deserialize_with = "deserialize_answer_as_string")]
     pub answer: String,
     /// Date the question was asked (YYYY/MM/DD format).
     #[serde(default)]
