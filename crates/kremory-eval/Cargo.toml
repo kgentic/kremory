@@ -36,6 +36,9 @@ path = "src/bin/eval.rs"
 # visible in integration tests (tests/ are separate binaries; cfg(test) does
 # not propagate — feature flag is the only mechanism).
 kremory = { path = "../kremory", features = ["test-utils"] }
+# Needed by bin/eval.rs cfg(test) tests that implement
+# autoagents_llm::embedding::EmbeddingProvider (async-fn-in-trait surface).
+async-trait = "0.1"
 
 [lints.clippy]
 unwrap_used = "deny"

@@ -157,8 +157,8 @@ async fn run_spike(
     run_number: u32,
 ) -> anyhow::Result<RunResult> {
     use autoagents_llamacpp::{LlamaCppConfigBuilder, LlamaCppProvider, LlamaCppReasoningFormat};
-    use autoagents_llm::chat::{ChatMessage, ChatProvider, MessageType};
     use autoagents_llm::chat::ChatRole;
+    use autoagents_llm::chat::{ChatMessage, ChatProvider, MessageType};
 
     // === Model load ===
     let load_start = Instant::now();
@@ -308,8 +308,13 @@ async fn main() -> anyhow::Result<()> {
 
     let fixtures_path =
         PathBuf::from("crates/kremory-eval/fixtures/calibration-spike/qa-pairs.json");
-    let fixtures_raw = std::fs::read_to_string(&fixtures_path)
-        .map_err(|e| anyhow::anyhow!("failed to read fixtures at {}: {}", fixtures_path.display(), e))?;
+    let fixtures_raw = std::fs::read_to_string(&fixtures_path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to read fixtures at {}: {}",
+            fixtures_path.display(),
+            e
+        )
+    })?;
     let fixtures: Fixtures = serde_json::from_str(&fixtures_raw)
         .map_err(|e| anyhow::anyhow!("failed to parse fixtures JSON: {}", e))?;
     println!(
@@ -318,9 +323,8 @@ async fn main() -> anyhow::Result<()> {
         fixtures_path.display()
     );
 
-    let output_dir = PathBuf::from(
-        ".ship/sessions/kremory-v014-phase1-20260528-074901/spike-output",
-    );
+    let output_dir =
+        PathBuf::from(".ship/sessions/kremory-v014-phase1-20260528-074901/spike-output");
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| anyhow::anyhow!("failed to create output dir: {}", e))?;
 

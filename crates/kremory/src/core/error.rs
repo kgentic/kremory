@@ -178,6 +178,42 @@ pub enum Error {
         stored: crate::memory::types::NamespacePolicy,
         attempted: crate::memory::types::NamespacePolicy,
     },
+
+    // ── ADR-029b AppendOnly enforcement (v0.1.5) ─────────────────────────────
+    /// A mutating operation (forget / dream / reassign) was attempted on a
+    /// namespace whose policy is `AppendOnly`. Added v0.1.5 (ADR-029b §3.1).
+    #[error(
+        "namespace '{namespace}' is AppendOnly — operation '{operation}' is not permitted \
+         (stored policy: {policy:?})"
+    )]
+    NamespacePolicyViolation {
+        namespace: String,
+        operation: String,
+        policy: crate::memory::types::NamespacePolicy,
+    },
+
+    /// An entity insert was blocked because the same entity name (`name`) is
+    /// already registered in a different namespace group (`existing_ns`) and
+    /// the `AppendOnly` policy prevents cross-namespace collision. Added v0.1.5
+    /// (ADR-029b §3.2 — closes bypass surface #2: swallowed UNIQUE error).
+    #[error(
+        "cross-namespace collision: entity '{name}' exists in namespace '{existing_ns}' \
+         but insert attempted in '{attempted_ns}'"
+    )]
+    CrossNamespaceCollision {
+        name: String,
+        existing_ns: String,
+        attempted_ns: String,
+    },
+
+    /// `as_of_all` returned more facts than the safety ceiling allows. Added
+    /// v0.1.5 (ADR-029b §4). `count` is the actual result count; `ceiling` is
+    /// the configured limit.
+    #[error(
+        "as_of_all result overflow: got {count} facts, ceiling is {ceiling}; \
+         narrow the query or raise the ceiling explicitly"
+    )]
+    ContradictionOverflow { count: usize, ceiling: usize },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

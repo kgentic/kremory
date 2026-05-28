@@ -9,8 +9,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Score, TieBreakPolicy,
     types::{EvalError, ScoreMetadata},
+    Score, TieBreakPolicy,
 };
 
 // ---------------------------------------------------------------------------
@@ -69,17 +69,10 @@ impl F1Scorer {
 
     /// Compute F1 synchronously.
     pub fn score_sync(&self, sample: &F1Sample, output: &F1Output) -> EvalError<Score> {
-        let expected: HashSet<String> = sample
-            .expected
-            .iter()
-            .map(|s| self.normalise(s))
-            .collect();
+        let expected: HashSet<String> = sample.expected.iter().map(|s| self.normalise(s)).collect();
 
-        let predicted: HashSet<String> = output
-            .predicted
-            .iter()
-            .map(|s| self.normalise(s))
-            .collect();
+        let predicted: HashSet<String> =
+            output.predicted.iter().map(|s| self.normalise(s)).collect();
 
         let tp = expected.intersection(&predicted).count();
         let fp = predicted.difference(&expected).count();
@@ -185,8 +178,7 @@ mod tests {
         let score = scorer.score_sync(&sample, &output).unwrap();
         assert!(score.value > 0.0 && score.value < 1.0);
 
-        let meta: ScoreMetadata =
-            serde_json::from_value(score.metadata).unwrap();
+        let meta: ScoreMetadata = serde_json::from_value(score.metadata).unwrap();
         assert_eq!(meta.true_positives, Some(2));
         assert_eq!(meta.false_positives, Some(0));
         assert_eq!(meta.false_negatives, Some(1));

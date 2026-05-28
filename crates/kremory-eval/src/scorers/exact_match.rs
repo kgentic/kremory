@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Score, TieBreakPolicy,
     types::{EvalError, ScoreMetadata},
+    Score, TieBreakPolicy,
 };
 
 // ---------------------------------------------------------------------------

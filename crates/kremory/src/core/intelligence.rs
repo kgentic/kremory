@@ -468,6 +468,10 @@ mod tests {
             memory_type: None,
             content_hash: None,
             access_count: 0,
+            // ADR-029b composite FK backfill: None on pre-migration synthetic
+            // rows (matches `subject_group_id` / `object_group_id` docstring).
+            subject_group_id: None,
+            object_group_id: None,
         }
     }
 

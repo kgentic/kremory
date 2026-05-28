@@ -70,8 +70,19 @@ fn recall_k_chain_compiles() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "kremory_facade_recall_{}_{}.db",
+        tag,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
 async fn open_no_ns() -> Memory {
-    Memory::open("/tmp/test.db")
+    Memory::open(unique_db_path("open_no_ns"))
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .await
@@ -99,7 +110,7 @@ mod kremory_test_utils {
             .build()
             .expect("runtime")
             .block_on(async {
-                Memory::open("/tmp/test.db")
+                Memory::open(super::unique_db_path("test_utils"))
                     .with_llm(Arc::new(kremory::core::provider::MockChatProvider::null()))
                     .with_embedder(Arc::new(kremory::core::provider::NullEmbeddingProvider {
                         dim: 384,

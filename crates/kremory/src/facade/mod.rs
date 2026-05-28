@@ -507,7 +507,10 @@ impl Memory {
         let is_non_default = policy != NamespacePolicy::default();
 
         // Atomic INSERT-or-compare via BEGIN IMMEDIATE.
-        let guard = tg.begin_immediate_if_needed().await.map_err(MemoryError::Core)?;
+        let guard = tg
+            .begin_immediate_if_needed()
+            .await
+            .map_err(MemoryError::Core)?;
         let stored = tg
             .get_namespace_policy(&group_id)
             .await
@@ -547,6 +550,97 @@ impl Memory {
             );
         }
 
+        outcome
+    }
+
+    /// Monotonically upgrade a namespace's immutability from `Mutable` to
+    /// `AppendOnly` (ADR-029b Decision 5).
+    ///
+    /// This is a **one-way ratchet**: `Mutable → AppendOnly` is the only
+    /// allowed direction. Attempting to downgrade (`AppendOnly → Mutable`)
+    /// returns `Err(MemoryError::Core(Error::NamespacePolicyImmutable))`.
+    /// Calling on an already-`AppendOnly` namespace is idempotent (`Ok(())`).
+    ///
+    /// # Atomicity
+    ///
+    /// The read-decide-write sequence is wrapped in a `BEGIN IMMEDIATE`
+    /// transaction to prevent races with concurrent `register_namespace` or
+    /// `upgrade_namespace_policy` calls.
+    ///
+    /// # Errors
+    ///
+    /// - `MemoryError::Other` — `Memory` not constructed via the builder path.
+    /// - `MemoryError::Core(Error::NamespacePolicyImmutable)` — downgrade
+    ///   attempted or policy mismatch.
+    /// - `MemoryError::Core(Error::Other)` — substrate failure.
+    pub async fn upgrade_namespace_policy(&self, namespace: Namespace) -> Result<()> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::upgrade_namespace_policy requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+
+        let group_id = namespace_to_group_id(&namespace);
+        let guard = tg
+            .begin_immediate_if_needed()
+            .await
+            .map_err(MemoryError::Core)?;
+
+        let stored = tg
+            .get_namespace_policy(&group_id)
+            .await
+            .map_err(MemoryError::Core)?;
+
+        let target_policy = crate::memory::types::NamespacePolicy::APPEND_ONLY;
+
+        let outcome: Result<()> = match stored {
+            Some(ref existing)
+                if existing.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly =>
+            {
+                // Already AppendOnly — idempotent.
+                Ok(())
+            }
+            Some(ref existing)
+                if existing.immutability == crate::memory::types::ImmutabilityLevel::Mutable =>
+            {
+                // Upgrade Mutable → AppendOnly.
+                tg.set_namespace_policy_with_upgraded_at(&group_id, &target_policy)
+                    .await
+                    .map_err(MemoryError::Core)
+            }
+            Some(existing) => {
+                // Unexpected policy state — treat as immutable conflict.
+                Err(MemoryError::Core(CoreError::NamespacePolicyImmutable {
+                    namespace: group_id.clone(),
+                    stored: existing,
+                    attempted: target_policy,
+                }))
+            }
+            None => {
+                // Namespace not yet registered — create directly as AppendOnly.
+                tg.set_namespace_policy_with_upgraded_at(&group_id, &target_policy)
+                    .await
+                    .map_err(MemoryError::Core)
+            }
+        };
+
+        match &outcome {
+            Ok(()) => {
+                guard.commit().await.map_err(MemoryError::Core)?;
+                // Invalidate cache so next read reflects the new AppendOnly policy.
+                tg.invalidate_policy_cache(&group_id);
+                tracing::info!(
+                    target: "kremory.namespace",
+                    group_id = %group_id,
+                    "kremory.namespace.policy_upgraded: namespace upgraded to AppendOnly"
+                );
+            }
+            Err(_) => {
+                guard.rollback().await.map_err(MemoryError::Core)?;
+            }
+        }
         outcome
     }
 
@@ -677,9 +771,13 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     ///
     /// ```no_run
     /// use kremory::Memory;
-    /// # async fn ex() -> kremory::memory::Result<()> {
-    /// # let my_openai_client: impl kremory::memory::ChatProvider + Send + Sync + 'static = todo!();
-    /// # let my_embedder: std::sync::Arc<dyn kremory::DynEmbeddingProvider> = todo!();
+    /// # async fn ex<L>(
+    /// #     my_openai_client: L,
+    /// #     my_embedder: std::sync::Arc<dyn kremory::DynEmbeddingProvider>,
+    /// # ) -> kremory::memory::Result<()>
+    /// # where
+    /// #     L: kremory::memory::ChatProvider + Send + Sync + 'static,
+    /// # {
     /// let memory = Memory::open("./agent.db")
     ///     .with_llm_tracked("openai", "gpt-4o-mini", my_openai_client)
     ///     .with_embedder(my_embedder)
@@ -1219,20 +1317,60 @@ impl<'a> ForgetRequest<'a> {
         self
     }
 
-    /// Execute the deletion. Returns the count of deleted episodes.
+    /// Execute the deletion. Returns the count of deleted entity rows.
     ///
     /// This is the only terminal for `ForgetRequest` — there is no implicit
     /// `.await` to prevent accidental destructive operations.
+    ///
+    /// # AppendOnly enforcement (ADR-029b §3.1)
+    ///
+    /// If the namespace has `AppendOnly` policy, returns
+    /// `Err(MemoryError::Core(CoreError::NamespacePolicyViolation))`.
     pub async fn execute(self) -> Result<u64> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
-        // ADR-029a lazy population: record the namespace observation even
-        // though the v0.1.0 substrate-side delete is a no-op at the facade.
+        // ADR-029a lazy population: ensure namespace row exists before read.
         self.memory.ensure_namespace_policy(&ns).await?;
-        // v0.1.0 stub: no substrate batch_forget fn exists yet.
-        // The namespace is validated above (MissingNamespace check fires correctly).
-        // Actual deletion deferred until substrate exposes batch_forget.
-        // Per plan Rule 1 (scope): NO substrate changes in this PR.
-        Ok(0)
+
+        // ADR-029b §3.1: AppendOnly enforcement — forget is a mutation.
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::forget requires a Memory constructed via the builder/providers path \
+                 (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        let group_id = namespace_to_group_id(&ns);
+        let policy = tg
+            .get_namespace_policy_cached(&group_id)
+            .await
+            .map_err(MemoryError::Core)?;
+        if let Some(p) = &policy {
+            if p.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly {
+                // ADR-029a contract: v0.1.4 emits an operational warning for
+                // AppendOnly violations but does NOT enforce — enforcement
+                // lands in v0.1.5 per ADR-029b. The shipped v0.1.3→v0.1.4
+                // CHANGELOG entry guarantees declare-but-don't-enforce semantics.
+                tracing::warn!(
+                    target: "kremory.namespace",
+                    namespace = %group_id,
+                    operation = "forget",
+                    ?p,
+                    "POLICY DECLARED BUT NOT ENFORCED: AppendOnly forget will proceed; \
+                     enforcement lands in v0.1.5 (ADR-029b)"
+                );
+            }
+        }
+
+        // Wire to substrate: list entities in group, then batch_forget.
+        let entities = tg
+            .list_entities_in_group(&group_id)
+            .await
+            .map_err(MemoryError::Core)?;
+        if entities.is_empty() {
+            return Ok(0);
+        }
+        let ids: Vec<String> = entities.into_iter().map(|e| e.id).collect();
+        tg.batch_forget(&ids).await.map_err(MemoryError::Core)
     }
 }
 
@@ -1300,6 +1438,30 @@ impl<'a> DreamRequest<'a> {
         let _opts = self.opts.unwrap_or_default();
         // ADR-029a lazy population.
         self.memory.ensure_namespace_policy(&ns).await?;
+
+        // ADR-029a contract: v0.1.4 warns on dream against AppendOnly but does
+        // NOT enforce. Enforcement lands in v0.1.5 per ADR-029b §3.1. The
+        // shipped CHANGELOG promise is declare-but-don't-enforce.
+        if let Some(tg) = self.memory.temporal_graph.as_ref() {
+            let group_id = namespace_to_group_id(&ns);
+            let policy = tg
+                .get_namespace_policy_cached(&group_id)
+                .await
+                .map_err(MemoryError::Core)?;
+            if let Some(p) = &policy {
+                if p.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly {
+                    tracing::warn!(
+                        target: "kremory.namespace",
+                        namespace = %group_id,
+                        operation = "dream",
+                        ?p,
+                        "POLICY DECLARED BUT NOT ENFORCED: AppendOnly dream will proceed; \
+                         enforcement lands in v0.1.5 (ADR-029b §3.1)"
+                    );
+                }
+            }
+        }
+
         // Use legacy synchronous path: run_dream_phase → DreamPhaseResult → DreamSummary
         // This is the correct substrate call for blocking dream at v0.1.0.
         #[allow(deprecated)]

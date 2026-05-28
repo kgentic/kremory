@@ -124,6 +124,11 @@ fn row_to_fact(row: &libsql::Row) -> anyhow::Result<Fact> {
         memory_type,
         content_hash,
         access_count,
+        // ADR-029b: composite FK fields — absent on pre-migration-004 rows;
+        // populated by the migration 004 backfill. None on fresh rows until
+        // the caller explicitly sets subject_group_id / object_group_id.
+        subject_group_id: None,
+        object_group_id: None,
     })
 }
 
@@ -149,13 +154,13 @@ impl TemporalGraph {
         let inner: Result<()> = async {
             self.conn
                 .execute(
-                    "INSERT INTO rql_entities (id, label, properties, recorded_at) VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO entities (id, label, properties, recorded_at) VALUES (?1, ?2, ?3, ?4)",
                     libsql::params![id, label, props_str.clone(), now],
                 )
                 .await?;
             self.conn
                 .execute(
-                    "INSERT INTO rql_entities_fts(entity_id, label, properties) VALUES (?1, ?2, ?3)",
+                    "INSERT INTO entities_fts(entity_id, label, properties) VALUES (?1, ?2, ?3)",
                     libsql::params![id, label, props_str],
                 )
                 .await?;
@@ -180,7 +185,7 @@ impl TemporalGraph {
     /// Store a pre-computed embedding vector for an entity.
     ///
     /// The embedding is stored in the `embedding` column (F32_BLOB(384)) and
-    /// indexed by the `rql_entities_vec_idx` for cosine-similarity search.
+    /// indexed by the `entities_vec_idx` for cosine-similarity search.
     pub async fn update_entity_embedding(&self, id: &str, embedding: &[f32]) -> Result<()> {
         let _db_start = Instant::now();
         let vec_str = format!(
@@ -193,10 +198,7 @@ impl TemporalGraph {
         );
         self.conn
             .execute(
-                &format!(
-                    "UPDATE rql_entities SET embedding = {} WHERE id = ?1",
-                    vec_str
-                ),
+                &format!("UPDATE entities SET embedding = {} WHERE id = ?1", vec_str),
                 libsql::params![id],
             )
             .await?;
@@ -211,7 +213,7 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count FROM rql_entities WHERE id = ?1",
+                "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count FROM entities WHERE id = ?1",
                 libsql::params![id],
             )
             .await?;
@@ -231,7 +233,7 @@ impl TemporalGraph {
         let now = Utc::now().to_rfc3339();
         self.conn
             .execute(
-                "UPDATE rql_entities SET properties = ?1, updated_at = ?2 WHERE id = ?3",
+                "UPDATE entities SET properties = ?1, updated_at = ?2 WHERE id = ?3",
                 libsql::params![props_str, now, id],
             )
             .await?;
@@ -252,10 +254,14 @@ impl TemporalGraph {
         let _db_start = Instant::now();
         let props_str = serde_json::to_string(&properties)?;
         let now = Utc::now().to_rfc3339();
+        // ADR-029b: entities.group_id is NOT NULL post-migration-004. COALESCE maps
+        // None → 'default' so callers using None-as-unscoped retain their semantics
+        // while the storage constraint is satisfied.
+        let effective_group_id = group_id.unwrap_or("default");
         self.conn
             .execute(
-                "UPDATE rql_entities SET group_id = ?1, properties = ?2, updated_at = ?3 WHERE id = ?4",
-                libsql::params![group_id, props_str, now, id],
+                "UPDATE entities SET group_id = ?1, properties = ?2, updated_at = ?3 WHERE id = ?4",
+                libsql::params![effective_group_id, props_str, now, id],
             )
             .await?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
@@ -264,30 +270,69 @@ impl TemporalGraph {
         Ok(())
     }
 
-    /// Set an entity's `group_id` WITHOUT touching `properties`.
+    /// Reassign an entity's `group_id` WITHOUT touching `properties`.
     ///
-    /// Used by the ADR-A dual-store coupling co-mutation path in
-    /// `the-host-application::repo::sqlite_entities::entity_move`. The entity_move
-    /// flow rewrites scope membership for every chunk of a moved entity
-    /// — properties (the chunk text + source metadata) must stay intact;
-    /// only the scope filter (`group_id`) changes.
+    /// **DANGEROUS** — callers MUST set `bypass_policy = false` in production.
+    /// Only migration tooling (`kremory-admin`, Decision 7) may pass `true`.
     ///
-    /// Returns the number of rows updated (`0` when `id` doesn't exist
-    /// in `rql_entities` — caller decides whether that is a legitimate
-    /// no-op or an integrity failure).
-    pub async fn set_entity_group_only(&self, id: &str, group_id: Option<&str>) -> Result<u64> {
+    /// Composite-PK semantics (ADR-029b Decision 1): the entity is identified
+    /// by `(id, old_group_id)`. The update is a single `UPDATE … WHERE id = ?
+    /// AND group_id = ?` — if the row is absent (wrong `old_group_id` or
+    /// entity not found), returns `Ok(0)`.
+    ///
+    /// Policy checks (ADR-029b Decision 5):
+    /// - Source namespace (`old_group_id`) must not be `AppendOnly`.
+    /// - Destination namespace (`new_group_id`) must not be `AppendOnly`.
+    /// - Both checks are skipped when `bypass_policy = true`.
+    ///
+    /// Returns the number of rows updated.
+    pub async fn reassign_entity_group_dangerous(
+        &self,
+        id: &str,
+        old_group_id: &str,
+        new_group_id: Option<&str>,
+        bypass_policy: bool,
+    ) -> Result<u64> {
+        if !bypass_policy {
+            // Check source policy.
+            let source_policy = self
+                .get_namespace_policy(old_group_id)
+                .await?
+                .unwrap_or_default();
+            if source_policy.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly {
+                return Err(crate::core::error::Error::NamespacePolicyViolation {
+                    namespace: old_group_id.to_string(),
+                    operation: "entity_move_source".to_string(),
+                    policy: source_policy,
+                });
+            }
+            // Check destination policy.
+            if let Some(new_gid) = new_group_id {
+                let dest_policy = self
+                    .get_namespace_policy(new_gid)
+                    .await?
+                    .unwrap_or_default();
+                if dest_policy.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly {
+                    return Err(crate::core::error::Error::NamespacePolicyViolation {
+                        namespace: new_gid.to_string(),
+                        operation: "entity_move_dest".to_string(),
+                        policy: dest_policy,
+                    });
+                }
+            }
+        }
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let n = self
             .conn
             .execute(
-                "UPDATE rql_entities SET group_id = ?1, updated_at = ?2 WHERE id = ?3",
-                libsql::params![group_id, now, id],
+                "UPDATE entities SET group_id = ?1, updated_at = ?2 WHERE id = ?3 AND group_id = ?4",
+                libsql::params![new_group_id, now, id, old_group_id],
             )
             .await?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
-        histogram!("rql.db.set_entity_group_only_ms").record(_ms);
-        tracing::info!(_ms, "kremory.db.set_entity_group_only");
+        histogram!("rql.db.reassign_entity_group_dangerous_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.reassign_entity_group_dangerous");
         Ok(n)
     }
 
@@ -320,14 +365,14 @@ impl TemporalGraph {
             // future trigger-based coupling from reversing the order unexpectedly.
             self.conn
                 .execute(
-                    &format!("DELETE FROM rql_entities_fts WHERE entity_id IN ({placeholders})"),
+                    &format!("DELETE FROM entities_fts WHERE entity_id IN ({placeholders})"),
                     params.clone(),
                 )
                 .await?;
             let n = self
                 .conn
                 .execute(
-                    &format!("DELETE FROM rql_entities WHERE id IN ({placeholders})"),
+                    &format!("DELETE FROM entities WHERE id IN ({placeholders})"),
                     params,
                 )
                 .await?;
@@ -347,7 +392,7 @@ impl TemporalGraph {
         // FTS first — references entity_id which must still exist for the join.
         self.conn
             .execute(
-                "DELETE FROM rql_entities_fts WHERE entity_id LIKE ?1",
+                "DELETE FROM entities_fts WHERE entity_id LIKE ?1",
                 libsql::params![pattern.clone()],
             )
             .await?;
@@ -355,7 +400,7 @@ impl TemporalGraph {
         let deleted = self
             .conn
             .execute(
-                "DELETE FROM rql_entities WHERE id LIKE ?1",
+                "DELETE FROM entities WHERE id LIKE ?1",
                 libsql::params![pattern],
             )
             .await?;
@@ -371,7 +416,7 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count FROM rql_entities",
+                "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count FROM entities",
                 (),
             )
             .await?;
@@ -401,7 +446,7 @@ impl TemporalGraph {
             .conn
             .query(
                 "SELECT id, label, properties, recorded_at, updated_at, group_id, access_count \
-                 FROM rql_entities WHERE group_id = ?1",
+                 FROM entities WHERE group_id = ?1",
                 libsql::params![group_id],
             )
             .await?;
@@ -707,7 +752,7 @@ impl TemporalGraph {
         );
         self.conn
             .execute(
-                "UPDATE rql_entities SET embedding = vector(?1) WHERE id = ?2",
+                "UPDATE entities SET embedding = vector(?1) WHERE id = ?2",
                 libsql::params![vec_str, id],
             )
             .await?;
@@ -777,6 +822,16 @@ impl TemporalGraph {
 
     /// Insert an entity with an optional group_id.
     /// Existing tests use `insert_entity`; this variant is for new code that needs group scoping.
+    ///
+    /// **Cross-namespace collision guard (ADR-029b §3.2 — bypass surface #2)**:
+    /// If `id` already exists under a DIFFERENT `group_id`, this method returns
+    /// `Err(CrossNamespaceCollision { … })` rather than silently collapsing
+    /// the namespaces via the old single-PK UNIQUE constraint.
+    ///
+    /// With the composite PK `(id, group_id)` (migration 004), the same name
+    /// CAN exist in two namespaces as independent rows. This pre-check guards
+    /// against unintentional cross-namespace name reuse where an explicit error
+    /// is safer than silently sharing a row.
     pub async fn insert_entity_with_group(
         &self,
         id: &str,
@@ -785,6 +840,50 @@ impl TemporalGraph {
         group_id: Option<&str>,
     ) -> Result<()> {
         let _db_start = Instant::now();
+        // ADR-029b: entities.group_id is NOT NULL post-migration-004. COALESCE maps
+        // None → 'default' so callers using None-as-unscoped retain their semantics
+        // while the storage constraint is satisfied.
+        let effective_group_id = group_id.unwrap_or("default");
+        // ADR-029b §3.2 — bypass surface #2 guard:
+        // Check if the same entity name already exists under a DIFFERENT group_id.
+        // With composite PK, the insert WOULD succeed, but we want an explicit error
+        // so callers know they are creating a cross-namespace name collision.
+        //
+        // Stubs (called from the forward-reference branch in ingest.rs) intentionally
+        // skip this check — stubs use INSERT OR IGNORE semantics via the match block
+        // in ingest.rs, so cross-namespace stub creation is allowed (the row is
+        // independent under the composite PK).
+        //
+        // Uses effective_group_id (not the raw Option) so that None → 'default' is
+        // resolved before comparison. Without this, `IS NOT NULL` would match ALL
+        // non-null rows — triggering a spurious CrossNamespaceCollision when the same
+        // name is written twice to 'default'.
+        {
+            let mut rows = self
+                .conn
+                .query(
+                    "SELECT group_id FROM entities WHERE id = ?1 AND group_id != ?2 LIMIT 1",
+                    libsql::params![id, effective_group_id],
+                )
+                .await?;
+            if let Some(row) = rows.next().await? {
+                let existing_ns: Option<String> = row.get(0).ok();
+                let existing_str = existing_ns.as_deref().unwrap_or("<null>").to_string();
+                let attempted_str = effective_group_id;
+                tracing::error!(
+                    target: "kremory.namespace.collision",
+                    entity_name = %id,
+                    existing_ns = %existing_str,
+                    attempted_ns = %attempted_str,
+                    "cross-namespace entity name collision detected (ADR-029b bypass surface #2)"
+                );
+                return Err(crate::core::error::Error::CrossNamespaceCollision {
+                    name: id.to_string(),
+                    existing_ns: existing_str,
+                    attempted_ns: attempted_str.to_string(),
+                });
+            }
+        }
         let props_str = serde_json::to_string(&properties)?;
         let now = Utc::now().to_rfc3339();
         // Transaction guards the invariant: row in `entities` ⟹ row in `entities_fts`.
@@ -795,13 +894,13 @@ impl TemporalGraph {
         let inner: Result<()> = async {
             self.conn
                 .execute(
-                    "INSERT INTO rql_entities (id, label, properties, recorded_at, group_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    libsql::params![id, label, props_str.clone(), now, group_id],
+                    "INSERT INTO entities (id, label, properties, recorded_at, group_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    libsql::params![id, label, props_str.clone(), now, effective_group_id],
                 )
                 .await?;
             self.conn
                 .execute(
-                    "INSERT INTO rql_entities_fts(entity_id, label, properties) VALUES (?1, ?2, ?3)",
+                    "INSERT INTO entities_fts(entity_id, label, properties) VALUES (?1, ?2, ?3)",
                     libsql::params![id, label, props_str],
                 )
                 .await?;
@@ -825,7 +924,7 @@ impl TemporalGraph {
 
     /// Upserts an entity row. Behaves as INSERT on first call for this (id),
     /// and as UPDATE-in-place on subsequent calls (preserves row identity).
-    /// The rql_entities_fts shadow table is updated to match via DELETE + INSERT.
+    /// The entities_fts shadow table is updated to match via DELETE + INSERT.
     ///
     /// Used by the v0.1.1 stub-entity promotion path: a stub row inserted via
     /// the pre-scan (forward reference) is upgraded to a real entity row when
@@ -839,33 +938,38 @@ impl TemporalGraph {
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         let props_str = properties.to_string();
+        // ADR-029b: entities.group_id is NOT NULL post-migration-004; composite PK is
+        // (id, group_id). ON CONFLICT must target the composite PK.
+        // None → 'default' so callers using None-as-unscoped retain their semantics.
+        let effective_group_id = group_id.unwrap_or("default");
         let guard = self.begin_immediate_if_needed().await?;
-        let inner: Result<()> = async {
-            self.conn
-                .execute(
-                    "INSERT INTO rql_entities (id, label, properties, recorded_at, group_id)
+        let inner: Result<()> =
+            async {
+                self.conn
+                    .execute(
+                        "INSERT INTO entities (id, label, properties, recorded_at, group_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(id) DO UPDATE SET
+                 ON CONFLICT(id, group_id) DO UPDATE SET
                    label = excluded.label,
                    properties = excluded.properties,
                    recorded_at = excluded.recorded_at",
-                    libsql::params![id, label, props_str.clone(), now, group_id],
-                )
-                .await?;
-            // FTS shadow upsert via DELETE+INSERT (FTS5 idiomatic pattern)
-            self.conn
-                .execute(
-                    "DELETE FROM rql_entities_fts WHERE entity_id = ?1",
-                    libsql::params![id],
-                )
-                .await?;
-            self.conn.execute(
-                "INSERT INTO rql_entities_fts(entity_id, label, properties) VALUES (?1, ?2, ?3)",
+                        libsql::params![id, label, props_str.clone(), now, effective_group_id],
+                    )
+                    .await?;
+                // FTS shadow upsert via DELETE+INSERT (FTS5 idiomatic pattern)
+                self.conn
+                    .execute(
+                        "DELETE FROM entities_fts WHERE entity_id = ?1",
+                        libsql::params![id],
+                    )
+                    .await?;
+                self.conn.execute(
+                "INSERT INTO entities_fts(entity_id, label, properties) VALUES (?1, ?2, ?3)",
                 libsql::params![id, label, props_str],
             ).await?;
-            Ok(())
-        }
-        .await;
+                Ok(())
+            }
+            .await;
         match inner {
             Ok(()) => {
                 guard.commit().await?;
@@ -1056,6 +1160,8 @@ impl TemporalGraph {
                 entity_id: eid,
                 role,
                 recorded_at,
+                // ADR-029b: composite FK field — absent on pre-migration-004 rows.
+                entity_group_id: None,
             });
         }
         Ok(edges)
@@ -1213,10 +1319,10 @@ impl TemporalGraph {
     /// Delete an entity and ALL dependent rows atomically. Story #216.
     ///
     /// Deletes in dependency order within a single `BEGIN IMMEDIATE` transaction:
-    /// 1. `rql_entities_fts` — standalone FTS5 virtual table; no FK cascade.
-    /// 2. `episodic_edges` — FK → `rql_entities(id)` (no ON DELETE CASCADE).
-    /// 3. `facts` — FK → `rql_entities(id)` as subject/object (no ON DELETE CASCADE).
-    /// 4. `rql_entities` — parent row.
+    /// 1. `entities_fts` — standalone FTS5 virtual table; no FK cascade.
+    /// 2. `episodic_edges` — FK → `entities(id)` (no ON DELETE CASCADE).
+    /// 3. `facts` — FK → `entities(id)` as subject/object (no ON DELETE CASCADE).
+    /// 4. `entities` — parent row.
     ///
     /// If any step fails the transaction is rolled back and no rows are changed.
     ///
@@ -1230,7 +1336,7 @@ impl TemporalGraph {
         let fts_result = self
             .conn
             .execute(
-                "DELETE FROM rql_entities_fts WHERE entity_id = ?1",
+                "DELETE FROM entities_fts WHERE entity_id = ?1",
                 libsql::params![id.clone()],
             )
             .await;
@@ -1267,10 +1373,7 @@ impl TemporalGraph {
 
         let deleted = self
             .conn
-            .execute(
-                "DELETE FROM rql_entities WHERE id = ?1",
-                libsql::params![id],
-            )
+            .execute("DELETE FROM entities WHERE id = ?1", libsql::params![id])
             .await;
 
         match deleted {
@@ -1291,7 +1394,7 @@ impl TemporalGraph {
     ///
     /// Each chunk of up to 100 IDs is wrapped in its own `BEGIN IMMEDIATE`
     /// transaction. Deletion order per chunk: FTS → episodic_edges → facts →
-    /// rql_entities.
+    /// entities.
     ///
     /// Returns the total number of entity rows deleted across all chunks.
     pub async fn batch_forget(&self, entity_ids: &[String]) -> Result<u64> {
@@ -1322,7 +1425,7 @@ impl TemporalGraph {
 
             // 1. FTS.
             try_delete!(
-                format!("DELETE FROM rql_entities_fts WHERE entity_id IN ({placeholders})"),
+                format!("DELETE FROM entities_fts WHERE entity_id IN ({placeholders})"),
                 params.clone()
             );
 
@@ -1343,7 +1446,7 @@ impl TemporalGraph {
 
             // 4. Entity rows.
             let n = try_delete!(
-                format!("DELETE FROM rql_entities WHERE id IN ({placeholders})"),
+                format!("DELETE FROM entities WHERE id IN ({placeholders})"),
                 params
             );
 
@@ -1421,6 +1524,37 @@ impl TemporalGraph {
         Ok(())
     }
 
+    /// Write an updated `NamespacePolicy` for an existing `group_id`, stamping
+    /// `upgraded_at = now()`. Used by `Memory::upgrade_namespace_policy` for
+    /// the monotonic Mutable → AppendOnly upgrade (ADR-029b Decision 5).
+    ///
+    /// Caller holds the `BEGIN IMMEDIATE` guard. This method does NOT open a
+    /// transaction — it is meant to be called inside the caller's atomic block.
+    ///
+    /// Sets `upgraded_at` to the current UTC time in RFC3339 format.
+    pub(crate) async fn set_namespace_policy_with_upgraded_at(
+        &self,
+        group_id: &str,
+        policy: &crate::memory::types::NamespacePolicy,
+    ) -> Result<()> {
+        let started = Instant::now();
+        let json = serde_json::to_string(policy)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT INTO namespaces (group_id, policy_json, upgraded_at, schema_version) \
+                 VALUES (?, ?, ?, 1) \
+                 ON CONFLICT(group_id) DO UPDATE SET \
+                   policy_json = excluded.policy_json, \
+                   upgraded_at = excluded.upgraded_at",
+                libsql::params![group_id.to_string(), json, now],
+            )
+            .await?;
+        histogram!("kremory_core_namespace_policy_upgrade_seconds")
+            .record(started.elapsed().as_secs_f64());
+        Ok(())
+    }
+
     /// Ensure a default-policy row exists for `group_id` on implicit
     /// observation. Called by `remember`/`recall`/`forget`/`dream` on first
     /// encounter with a previously-unregistered namespace.
@@ -1459,6 +1593,37 @@ impl TemporalGraph {
                 Err(e.into())
             }
         }
+    }
+
+    /// Read the namespace policy using the per-handle LRU cache (ADR-029b Decision 4).
+    ///
+    /// Cache hit: returns the cached policy immediately (no DB read).
+    /// Cache miss: reads from `namespaces` table, populates cache, returns result.
+    ///
+    /// The cache is a per-handle LRU (capacity 256) so different `TemporalGraph`
+    /// instances have independent caches — no cross-handle invalidation needed.
+    pub(crate) async fn get_namespace_policy_cached(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<crate::memory::types::NamespacePolicy>> {
+        // Cache hit — peek does not update LRU recency on a miss path.
+        if let Some(policy) = self.policy_cache.peek(group_id) {
+            return Ok(Some(policy));
+        }
+        // Cache miss — read from DB and populate.
+        let policy = self.get_namespace_policy(group_id).await?;
+        if let Some(ref p) = policy {
+            self.policy_cache.put(group_id, p.clone());
+        }
+        Ok(policy)
+    }
+
+    /// Evict the policy cache entry for `group_id`.
+    ///
+    /// Called by `upgrade_namespace_policy` after committing the upgrade so
+    /// subsequent reads reflect the new AppendOnly policy.
+    pub(crate) fn invalidate_policy_cache(&self, group_id: &str) {
+        self.policy_cache.invalidate(group_id);
     }
 }
 
@@ -2039,12 +2204,11 @@ mod tests {
         assert_eq!(entity.group_id.as_deref(), Some("group-abc"));
     }
 
-    /// Stream 3 A.4.5 contract test: Lane A indexer call sites pass
-    /// `group_id=None` (folder_id is always NULL pre-Lane-B). Resulting RQL
-    /// entity must surface NULL group_id — not an empty string, not a
-    /// "default" sentinel — so retrieval skips the group scope filter
-    /// entirely. The follow-up Lane B work re-introduces non-null group_id
-    /// when the create-folder UX populates entity.folder_id.
+    /// Stream 3 A.4.5 contract test — updated for ADR-029b:
+    /// Lane A indexer call sites pass `group_id=None` (folder_id absent pre-Lane-B).
+    /// Post-ADR-029b, None maps to 'default' (entities.group_id is NOT NULL).
+    /// The entity is stored in the default namespace and is visible under
+    /// unscoped queries or queries scoped to 'default'.
     #[tokio::test]
     async fn lane_a_indexer_writes_null_group_id_when_folder_id_absent() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -2064,9 +2228,11 @@ mod tests {
         .unwrap();
 
         let entity = g.get_entity("doc:welcome:chunk_0").await.unwrap().unwrap();
-        assert!(
-            entity.group_id.is_none(),
-            "Lane A indexer must persist NULL group_id (got {:?})",
+        // ADR-029b: None maps to 'default' — not NULL (NOT NULL constraint enforced).
+        assert_eq!(
+            entity.group_id.as_deref(),
+            Some("default"),
+            "Lane A indexer: None group_id must persist as 'default' post-ADR-029b (got {:?})",
             entity.group_id,
         );
     }
@@ -2106,6 +2272,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_entity_group_to_none() {
+        // ADR-029b: entities.group_id is NOT NULL post-migration-004.
+        // Passing None to update_entity_group maps to 'default' (not NULL).
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         g.insert_entity_with_group("e1", "Test", serde_json::json!({}), Some("scoped"))
@@ -2117,7 +2285,12 @@ mod tests {
             .unwrap();
 
         let entity = g.get_entity("e1").await.unwrap().unwrap();
-        assert!(entity.group_id.is_none());
+        // None maps to 'default' — entity is now in the default namespace.
+        assert_eq!(
+            entity.group_id.as_deref(),
+            Some("default"),
+            "None group_id must map to 'default' post-ADR-029b"
+        );
     }
 
     // === HIGH-2 RED→GREEN: insert_entity atomicity ===
@@ -2132,9 +2305,9 @@ mod tests {
 
         // Drop entities_fts to force the second INSERT inside insert_entity to fail.
         g.conn
-            .execute("DROP TABLE rql_entities_fts", ())
+            .execute("DROP TABLE entities_fts", ())
             .await
-            .expect("DROP TABLE rql_entities_fts must succeed on fresh in-memory DB");
+            .expect("DROP TABLE entities_fts must succeed on fresh in-memory DB");
 
         let result = g
             .insert_entity(
@@ -2152,11 +2325,11 @@ mod tests {
         let mut rows = g
             .conn
             .query(
-                "SELECT COUNT(*) FROM rql_entities WHERE id = 'test-atomic-1'",
+                "SELECT COUNT(*) FROM entities WHERE id = 'test-atomic-1'",
                 (),
             )
             .await
-            .expect("SELECT on rql_entities must succeed even after FTS drop");
+            .expect("SELECT on entities must succeed even after FTS drop");
         let row = rows.next().await.unwrap().unwrap();
         let count: i64 = row.get(0).unwrap();
         assert_eq!(
@@ -2171,9 +2344,9 @@ mod tests {
 
         // Drop entities_fts to force the second INSERT to fail.
         g.conn
-            .execute("DROP TABLE rql_entities_fts", ())
+            .execute("DROP TABLE entities_fts", ())
             .await
-            .expect("DROP TABLE rql_entities_fts must succeed on fresh in-memory DB");
+            .expect("DROP TABLE entities_fts must succeed on fresh in-memory DB");
 
         let result = g
             .insert_entity_with_group(
@@ -2191,11 +2364,11 @@ mod tests {
         let mut rows = g
             .conn
             .query(
-                "SELECT COUNT(*) FROM rql_entities WHERE id = 'test-atomic-grp-1'",
+                "SELECT COUNT(*) FROM entities WHERE id = 'test-atomic-grp-1'",
                 (),
             )
             .await
-            .expect("SELECT on rql_entities must succeed even after FTS drop");
+            .expect("SELECT on entities must succeed even after FTS drop");
         let row = rows.next().await.unwrap().unwrap();
         let count: i64 = row.get(0).unwrap();
         assert_eq!(
@@ -2443,7 +2616,7 @@ mod tests {
         let now = chrono::Utc::now();
         // insert_fact: (subject_id, predicate, object_id, object_value,
         //               valid_from, confidence, source_episode_id, embedding)
-        // Use object_value (not object_id) to avoid FK on rql_entities for "bob".
+        // Use object_value (not object_id) to avoid FK on entities for "bob".
         g.insert_fact("alice", "knows", None, Some("bob"), now, 0.9, None, None)
             .await
             .unwrap();
@@ -2537,7 +2710,7 @@ mod tests {
         let mut rows = g
             .conn
             .query(
-                "SELECT label, properties FROM rql_entities WHERE id = ?1",
+                "SELECT label, properties FROM entities WHERE id = ?1",
                 libsql::params!["alice"],
             )
             .await
@@ -2561,7 +2734,7 @@ mod tests {
         let mut count_rows = g
             .conn
             .query(
-                "SELECT COUNT(*) FROM rql_entities WHERE id = ?1",
+                "SELECT COUNT(*) FROM entities WHERE id = ?1",
                 libsql::params!["alice"],
             )
             .await
@@ -2573,7 +2746,7 @@ mod tests {
         let mut rows2 = g
             .conn
             .query(
-                "SELECT label, properties FROM rql_entities WHERE id = ?1",
+                "SELECT label, properties FROM entities WHERE id = ?1",
                 libsql::params!["alice"],
             )
             .await
@@ -2588,7 +2761,7 @@ mod tests {
         let mut fts_count = g
             .conn
             .query(
-                "SELECT COUNT(*) FROM rql_entities_fts WHERE entity_id = ?1",
+                "SELECT COUNT(*) FROM entities_fts WHERE entity_id = ?1",
                 libsql::params!["alice"],
             )
             .await

@@ -44,9 +44,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Dataset, Score, Scorer,
     judge::Judge,
     types::{EvalErr, EvalError},
+    Dataset, Score, Scorer,
 };
 
 // ---------------------------------------------------------------------------
@@ -196,8 +196,7 @@ impl LongMemEvalDataset {
     pub fn from_file(path: &std::path::Path, limit: Option<usize>) -> EvalError<Self> {
         let file = std::fs::File::open(path).map_err(EvalErr::Io)?;
         let reader = std::io::BufReader::new(file);
-        let all: Vec<LongMemEvalRecord> =
-            serde_json::from_reader(reader).map_err(EvalErr::Json)?;
+        let all: Vec<LongMemEvalRecord> = serde_json::from_reader(reader).map_err(EvalErr::Json)?;
         let records = match limit {
             Some(n) => all.into_iter().take(n).collect(),
             None => all,
@@ -214,7 +213,10 @@ impl LongMemEvalDataset {
         let repo = api.dataset(config.dataset_id.clone());
         let filename = config.variant.filename();
 
-        eprintln!("[longmemeval] Fetching {} from HuggingFace Hub...", filename);
+        eprintln!(
+            "[longmemeval] Fetching {} from HuggingFace Hub...",
+            filename
+        );
         eprintln!("[longmemeval] Dataset: {}", config.dataset_id);
         eprintln!("[longmemeval] This will use ~/.cache/huggingface/hub/ for caching.");
 
@@ -370,9 +372,7 @@ fn build_anscheck_prompt(
         PROMPT_ABSTENTION
     } else {
         match question_type {
-            "single-session-user" | "single-session-assistant" | "multi-session" => {
-                PROMPT_STANDARD
-            }
+            "single-session-user" | "single-session-assistant" | "multi-session" => PROMPT_STANDARD,
             "temporal-reasoning" => PROMPT_TEMPORAL,
             "knowledge-update" => PROMPT_KNOWLEDGE_UPDATE,
             "single-session-preference" => PROMPT_PREFERENCE,
@@ -416,9 +416,7 @@ impl<J: Judge> LongMemEvalScorer<J> {
     }
 }
 
-impl<J: Judge + Send + Sync> Scorer<LongMemEvalSample, LongMemEvalOutput>
-    for LongMemEvalScorer<J>
-{
+impl<J: Judge + Send + Sync> Scorer<LongMemEvalSample, LongMemEvalOutput> for LongMemEvalScorer<J> {
     async fn score(
         &self,
         sample: &LongMemEvalSample,
@@ -435,14 +433,21 @@ impl<J: Judge + Send + Sync> Scorer<LongMemEvalSample, LongMemEvalOutput>
         // Pass the full evaluate_qa.py-style prompt as the "question" field.
         // Context and answer are empty — the judge sees the complete prompt
         // and its yes/no is extracted from verdict.reasoning.
-        let verdict = self
-            .judge
-            .evaluate(&prompt, "", "")
-            .await?;
+        let verdict = self.judge.evaluate(&prompt, "", "").await?;
 
-        // Binary label: "yes" in reasoning (mirrors Python `'yes' in eval_response.lower()`)
+        // Binary label: prefer the structured `is_correct` bool from JudgeVerdict.
+        //
+        // Upstream evaluate_qa.py uses `'yes' in eval_response.lower()` because
+        // its judge returns free-form text. Our judge returns structured JSON
+        // (`is_correct: bool`) — using the bool directly is more reliable than
+        // substring-matching reasoning text, which fails when the judge model
+        // produces positive reasoning without an explicit "yes" prefix
+        // (observed: Gemma 4 E2B-IT, 2026-05-28 O13 smoke).
+        //
+        // Backward compat with MockJudge: all existing tests set
+        // `is_correct` to match their "yes"/"no" reasoning strings.
         let judge_response_raw = verdict.reasoning.clone();
-        let label = judge_response_raw.to_lowercase().contains("yes");
+        let label = verdict.is_correct;
         let score_value = if label { 1.0_f64 } else { 0.0_f64 };
 
         let metadata = serde_json::json!({
@@ -565,8 +570,8 @@ impl LongMemEvalReport {
 mod tests {
     use super::*;
     use crate::{
-        Scorer,
         judge::{JudgeVerdict, MockJudge},
+        Scorer,
     };
 
     fn make_sample(question_type: &str, is_abstention: bool) -> LongMemEvalSample {
@@ -617,6 +622,53 @@ mod tests {
         };
         let score = scorer.score(&sample, &output).await.unwrap();
         assert_eq!(score.value, 0.0);
+    }
+
+    /// Regression: scorer must use `verdict.is_correct` bool, not substring-match
+    /// "yes" in reasoning. Observed 2026-05-28 with Gemma 4 E2B-IT: positive
+    /// reasoning ("matching the correct answer") that lacked an explicit "yes"
+    /// prefix produced false 0.0 scores before the fix landed in this release.
+    #[tokio::test]
+    async fn scorer_uses_is_correct_bool_when_reasoning_lacks_yes_prefix() {
+        let judge = MockJudge::new(JudgeVerdict {
+            is_correct: true,
+            is_partial: false,
+            reasoning: "the model response matches the correct answer".into(),
+        });
+        let scorer = LongMemEvalScorer::new(judge);
+        let sample = make_sample("single-session-user", false);
+        let output = LongMemEvalOutput {
+            response: "The user prefers oat milk lattes.".into(),
+            input_tokens_used: None,
+        };
+        let score = scorer.score(&sample, &output).await.unwrap();
+        assert_eq!(
+            score.value, 1.0,
+            "scorer must respect verdict.is_correct=true even when reasoning lacks the substring 'yes'"
+        );
+    }
+
+    /// Regression: mirror of the above for false verdicts. Reasoning that
+    /// happens to contain "yes" (e.g. "no, the answer says yes but is wrong")
+    /// must NOT score 1.0 just because of the substring.
+    #[tokio::test]
+    async fn scorer_uses_is_correct_bool_when_reasoning_contains_yes_but_verdict_false() {
+        let judge = MockJudge::new(JudgeVerdict {
+            is_correct: false,
+            is_partial: false,
+            reasoning: "the response says yes but contradicts the ground truth".into(),
+        });
+        let scorer = LongMemEvalScorer::new(judge);
+        let sample = make_sample("single-session-user", false);
+        let output = LongMemEvalOutput {
+            response: "yes black coffee".into(),
+            input_tokens_used: None,
+        };
+        let score = scorer.score(&sample, &output).await.unwrap();
+        assert_eq!(
+            score.value, 0.0,
+            "scorer must respect verdict.is_correct=false even when reasoning contains 'yes'"
+        );
     }
 
     #[tokio::test]
