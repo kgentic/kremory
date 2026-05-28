@@ -552,6 +552,22 @@ impl TemporalGraph {
                 (),
             )
             .await?;
+        // ADR-029a (v0.1.4): namespaces table for per-namespace policy storage.
+        // CREATE-only, no backfill — populated lazily via register_namespace +
+        // first-encounter writes (see TemporalGraph::ensure_namespace_policy_row).
+        // The unprefixed name `namespaces` is deliberate (ADR-029a Decision 8);
+        // the rest of the `rql_*` rename lands in ADR-029b.
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS namespaces (
+                    group_id        TEXT PRIMARY KEY,
+                    policy_json     TEXT NOT NULL,
+                    recorded_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                    schema_version  INTEGER NOT NULL DEFAULT 1
+                )",
+                (),
+            )
+            .await?;
         Ok(())
     }
 

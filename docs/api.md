@@ -192,6 +192,51 @@ let ctx = mem.recall("onboarding status")
     .await?;
 ```
 
+### Namespace policies (v0.1.4+, ADR-029a)
+
+Per-namespace policy controls let callers DECLARE compliance intent (audit-grade,
+non-forgettable, non-dream-eligible). v0.1.4 **PERSISTS** the declaration and
+emits operational warnings, but does **NOT ENFORCE** the policy on
+`dream()` / `forget()` / mutation operations — enforcement lands in v0.1.5+
+per ADR-029b. Use the v0.1.4 window to capture intent + validate consumer
+ergonomics ahead of enforcement.
+
+```rust
+use kremory::{ImmutabilityLevel, Memory, Namespace, NamespacePolicy};
+
+let mem = Memory::open("./shared.db")
+    .with_llm(llm)
+    .with_embedder(emb)
+    .await?;
+
+// Canonical audit-grade preset: AppendOnly + non-forgettable + non-dream-eligible.
+let audit = Namespace::new("compliance-log")
+    .with_policy(NamespacePolicy::APPEND_ONLY)?;
+mem.register_namespace(audit).await?;
+
+// Or build a custom policy via fluent setters.
+let custom = NamespacePolicy::new()
+    .with_immutability(ImmutabilityLevel::Mutable)
+    .with_forgettable(false)
+    .with_dream_eligible(true);
+let ns = Namespace::new("never-forget").with_policy(custom)?;
+mem.register_namespace(ns).await?;
+```
+
+**Idempotency + immutability**: calling `register_namespace` with the SAME
+policy is `Ok(())` (safe for startup-code re-execution). Calling with a
+DIFFERENT policy on an existing namespace surfaces
+`Err(MemoryError::Core(Error::NamespacePolicyImmutable { stored, attempted }))`.
+
+**Lazy population**: namespaces observed via the first `remember()` / `recall()`
+/ `forget()` / `dream()` call get a default-policy row written automatically.
+Call `register_namespace` explicitly at startup for namespaces that need a
+non-default policy — there is no retroactive upgrade at v0.1.4.
+
+**Operational visibility**: every non-default policy registration emits
+`tracing::warn!` on target `kremory.namespace` with the marker
+`POLICY DECLARED BUT NOT ENFORCED`. Default-policy registrations are silent.
+
 ---
 
 ## §4 — Ingest

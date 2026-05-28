@@ -51,6 +51,26 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
+/// ADR-029a (v0.1.4): namespaces-table migration as a tooling-discoverable
+/// constant. The actual DDL is also embedded directly in
+/// [`crate::core::schema::TemporalGraph::run_migrations`] so the table exists
+/// on every fresh `TemporalGraph::open*` call without requiring the runtime
+/// to wire `MigrationRunner` through `TemporalGraph`. This constant captures
+/// the canonical migration record for audit scripts + downstream tooling.
+///
+/// CREATE-only, no backfill (Vera MED-1 — zero coupling with ADR-029b's
+/// `002_drop_rql_prefix`). Idempotent via `CREATE TABLE IF NOT EXISTS`.
+pub const MIGRATION_003_NAMESPACES_TABLE: Migration = Migration {
+    version: 3,
+    name: "003_namespaces_table",
+    sql: "CREATE TABLE IF NOT EXISTS namespaces (\
+              group_id        TEXT PRIMARY KEY,\
+              policy_json     TEXT NOT NULL,\
+              recorded_at     TEXT NOT NULL DEFAULT (datetime('now')),\
+              schema_version  INTEGER NOT NULL DEFAULT 1\
+          )",
+};
+
 /// A single migration definition. Migrations are static — they live in
 /// a slice in the consumer crate (`rql-core/migrations/*` or `tauri-app/
 /// src-tauri/src/migrations/*`).
