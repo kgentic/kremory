@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-006",
+      "query": "Where does Alice work now?",
+      "ingested_facts": [
+        "Alice works at Acme Corp.",
+        "Alice works at Globex Inc."
+      ],
+      "expected_answer": "There is a contradiction in the ingested facts: Alice is recorded as working at both Acme Corp. and Globex Inc.",
+      "expected_entities": ["Alice", "Acme Corp.", "Globex Inc."],
+      "expected_contexts": [
+        "Alice works at Acme Corp.",
+        "Alice works at Globex Inc."
+      ],
+      "diversity_tags": ["contradiction", "employment"],
+      "provenance": "Synthetic",
+      "notes": "Contradiction: two mutually exclusive employers. System should detect conflict."
+    }
+  ]
+}

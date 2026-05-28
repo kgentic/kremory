@@ -1,0 +1,20 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-018",
+      "query": "Does Bob have a PhD?",
+      "ingested_facts": [
+        "Bob Smith has a PhD in computer science.",
+        "Bob Smith holds a bachelor's degree in computer science."
+      ],
+      "expected_answer": "Yes, Bob Smith has a PhD in computer science.",
+      "expected_entities": ["Bob Smith"],
+      "expected_contexts": [
+        "Bob Smith has a PhD in computer science."
+      ],
+      "diversity_tags": ["english", "education", "consistent-facts"],
+      "provenance": "Synthetic",
+      "notes": "Consistent facts: bachelor + PhD are compatible. System must not flag as contradiction."
+    }
+  ]
+}

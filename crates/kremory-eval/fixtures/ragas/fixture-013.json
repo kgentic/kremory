@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-013",
+      "query": "What was Иван's company in 2020?",
+      "ingested_facts": [
+        "Иван Петров worked at Mail.ru Group from 2018 to 2021.",
+        "Иван Петров joined Yandex in September 2021.",
+        "Mail.ru Group rebranded to VK in 2021."
+      ],
+      "expected_answer": "Иван Петров worked at Mail.ru Group in 2020.",
+      "expected_entities": ["Иван Петров", "Mail.ru Group"],
+      "expected_contexts": [
+        "Иван Петров worked at Mail.ru Group from 2018 to 2021."
+      ],
+      "diversity_tags": ["temporal", "non-english-name", "cyrillic"],
+      "provenance": "Synthetic",
+      "notes": "Temporal + non-English name. Point-in-time query on employment window."
+    }
+  ]
+}

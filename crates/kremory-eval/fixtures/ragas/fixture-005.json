@@ -1,0 +1,22 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-005",
+      "query": "Who is Ziad's manager?",
+      "ingested_facts": [
+        "Ziad Al-Rashid is a software engineer at TechCorp.",
+        "Ziad Al-Rashid reports to Sarah Chen.",
+        "Sarah Chen is the engineering director at TechCorp."
+      ],
+      "expected_answer": "Ziad Al-Rashid's manager is Sarah Chen, the engineering director at TechCorp.",
+      "expected_entities": ["Ziad Al-Rashid", "Sarah Chen", "TechCorp"],
+      "expected_contexts": [
+        "Ziad Al-Rashid reports to Sarah Chen.",
+        "Sarah Chen is the engineering director at TechCorp."
+      ],
+      "diversity_tags": ["non-english-name", "arabic", "multi-hop", "org-hierarchy"],
+      "provenance": "Synthetic",
+      "notes": "Diversity: Arabic name. Multi-hop: engineer → manager → role."
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-008",
+      "query": "What is the capital of France?",
+      "ingested_facts": [
+        "Alice works at Acme Corp.",
+        "Bob is a data analyst.",
+        "Carol manages the marketing team."
+      ],
+      "expected_answer": "I don't have information about the capital of France in the available context.",
+      "expected_entities": [],
+      "expected_contexts": [],
+      "diversity_tags": ["abstention", "world-knowledge", "out-of-context"],
+      "provenance": "Synthetic",
+      "notes": "Abstention: world-knowledge query against a personal-fact corpus. System must not hallucinate."
+    }
+  ]
+}

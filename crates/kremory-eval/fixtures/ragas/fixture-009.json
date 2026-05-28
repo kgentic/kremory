@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-009",
+      "query": "What was 王芳's role in January 2022?",
+      "ingested_facts": [
+        "王芳 joined Beijing AI Lab as a research intern in June 2021.",
+        "王芳 was promoted to junior data scientist at Beijing AI Lab in January 2022.",
+        "王芳 became a senior data scientist at Beijing AI Lab in March 2024."
+      ],
+      "expected_answer": "王芳 was a junior data scientist at Beijing AI Lab in January 2022.",
+      "expected_entities": ["王芳", "Beijing AI Lab"],
+      "expected_contexts": [
+        "王芳 was promoted to junior data scientist at Beijing AI Lab in January 2022."
+      ],
+      "diversity_tags": ["temporal", "non-english-name", "chinese", "career-progression"],
+      "provenance": "Synthetic",
+      "notes": "Temporal + non-English name. Requires selecting correct point-in-time role from a progression."
+    }
+  ]
+}

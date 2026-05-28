@@ -1,0 +1,21 @@
+{
+  "fixtures": [
+    {
+      "id": "ragas-004",
+      "query": "What is Иван's current role?",
+      "ingested_facts": [
+        "Иван Петров works as a principal architect at Yandex.",
+        "Иван Петров previously worked at Mail.ru Group until 2021.",
+        "Yandex is a Russian technology company."
+      ],
+      "expected_answer": "Иван Петров is a principal architect at Yandex.",
+      "expected_entities": ["Иван Петров", "Yandex"],
+      "expected_contexts": [
+        "Иван Петров works as a principal architect at Yandex."
+      ],
+      "diversity_tags": ["non-english-name", "cyrillic", "employment"],
+      "provenance": "Synthetic",
+      "notes": "Diversity: non-English name (Cyrillic). Verifies kremory handles Unicode entity names."
+    }
+  ]
+}
