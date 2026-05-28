@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [Unreleased] — v0.1.4 in-progress
+
+### Breaking
+
+- **`RetrievedContext` is now `#[non_exhaustive]`** — construct via
+  `RetrievedContext::new(entity_id, entity_name, summary, score, source_refs)`
+  + `.with_*` fluent setters. Struct-literal construction from outside the
+  crate is no longer source-compatible. Forward-compat preparation for
+  ADR-029c multi-namespace recall (additive `namespace` field expected v0.1.5+).
+  No downstream consumers known to be affected at v0.1.3.
+
+### Added
+
+- Internal `kremory-eval` crate (`publish = false`) — two-layer quality eval
+  harness. Layer A: published-comparable benchmarks (LongMemEval). Layer B:
+  diagnostic metrics (entity P/R/F1, RAGAS 6 metrics, graph integrity
+  invariants, contradiction/temporal G-Eval). Judge: AA `LlamaCppProvider`
+  with Gemma 4 E2B Q4_K_M. BYOM invariant intact — AA dependency stays in
+  `kremory-eval` only.
+- Inspect-AI-style scorer traits (`Score`, `Scorer`, `Dataset`, `Solver`)
+  with `TieBreakPolicy::Pass` default and non-optional `reasoning: String`.
+
+### Architecture decisions (ADRs)
+
+- **ADR-029a** — `NamespacePolicy` struct + `register_namespace` (declare-
+  but-don't-enforce). Independently ratifiable, no enforcement claims. See
+  `.ai-docs/adrs/rql/adr-029-namespace-policy/adr-029a-namespace-policy-struct.md`.
+- **ADR-029b** + **ADR-029c** — append-only enforcement + multi-namespace recall.
+  Targeted v0.1.5+. See `.ai-docs/adrs/rql/adr-029-namespace-policy/`.
 
 Doc-vs-code parity backfill — see also tier-D items in `.ai-docs/planning/roadmap-post-v013-2026-05-28.md`.
 
