@@ -31,6 +31,12 @@ path = "src/bin/entity_extraction_baseline.rs"
 name = "eval"
 path = "src/bin/eval.rs"
 
+[dev-dependencies]
+# Enable test-utils feature so MockChatProvider + NullEmbeddingProvider are
+# visible in integration tests (tests/ are separate binaries; cfg(test) does
+# not propagate — feature flag is the only mechanism).
+kremory = { path = "../kremory", features = ["test-utils"] }
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
