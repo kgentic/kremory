@@ -27,6 +27,10 @@ path = "src/bin/calibration_spike.rs"
 name = "entity_extraction_baseline"
 path = "src/bin/entity_extraction_baseline.rs"
 
+[[bin]]
+name = "eval"
+path = "src/bin/eval.rs"
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

@@ -25,12 +25,31 @@ use crate::{
 };
 
 /// Provenance tag — how the fixture was produced.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Serialises as `kebab-case` on output; accepts both `PascalCase` and
+/// `kebab-case` on deserialisation so existing fixtures (`"Synthetic"`) load
+/// without conversion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Provenance {
     Synthetic,
     RealUserCited,
     CorpusExtracted,
+}
+
+impl<'de> serde::Deserialize<'de> for Provenance {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "Synthetic" | "synthetic" => Ok(Provenance::Synthetic),
+            "RealUserCited" | "real-user-cited" => Ok(Provenance::RealUserCited),
+            "CorpusExtracted" | "corpus-extracted" => Ok(Provenance::CorpusExtracted),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["Synthetic", "synthetic", "RealUserCited", "real-user-cited", "CorpusExtracted", "corpus-extracted"],
+            )),
+        }
+    }
 }
 
 /// A single RAGAS evaluation fixture.
@@ -529,6 +548,27 @@ pub fn load_fixtures(path: &std::path::Path) -> Result<Vec<RagasFixture>, EvalEr
     let raw = std::fs::read_to_string(path)?;
     let wrapper: FixtureFile = serde_json::from_str(&raw)?;
     Ok(wrapper.fixtures)
+}
+
+/// Load ALL RAGAS fixtures from every `*.json` file in `dir`.
+///
+/// Iterates lexicographically over `*.json` files in `dir`, loading each
+/// via [`load_fixtures`]. Returns the concatenated list.
+///
+/// This is the entry point used by the `eval layer-b` CLI runner.
+pub fn load_all_fixtures(dir: &std::path::Path) -> Result<Vec<RagasFixture>, EvalErr> {
+    let mut all = Vec::new();
+    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .map(|r| r.map(|e| e.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort();
+    for path in &entries {
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            let mut batch = load_fixtures(path)?;
+            all.append(&mut batch);
+        }
+    }
+    Ok(all)
 }
 
 #[derive(Deserialize)]

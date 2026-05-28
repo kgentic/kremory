@@ -32,6 +32,7 @@ Thumbs.db
 
 # kremory-eval runtime output (not committed)
 crates/kremory-eval/eval_results/
+crates/kremory-eval/output/
 crates/kremory-eval/.cache/
 
 # Logs from kremory dev runs
@@ -47,3 +48,4 @@ crates/*/fixtures/output/
 .claude/scheduled_tasks.lock
 librust_out.rlib
 repomix-output.xml
+repomix-eval-output.xml
