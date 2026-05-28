@@ -62,17 +62,24 @@ Tier 1 — Just works
 
     let mem = Memory::auto("./agent.db").await?;
 
-Tier 1.5 — Named shortcuts
+Tier 1.5 — Named shortcuts (auto-wrap providers with observability)
 
     let mem = Memory::with_ollama("./agent.db").await?;
     let mem = Memory::with_openai("./agent.db").await?;   // OPENAI_API_KEY required
+    let mem = Memory::with_anthropic("./agent.db").await?;
 
 Tier 2 — Customizable builder
 
     let mem = Memory::open("./agent.db")
-        .with_llm(Arc::new(my_llm))
+        .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))  // wraps with metric emission
         .with_embedder(Arc::new(my_embedder))
         .default_namespace(Namespace::new("acme-corp"))
+        .await?;
+
+    // Or without observability:
+    let mem = Memory::open("./agent.db")
+        .with_llm(Arc::new(my_llm))
+        .with_embedder(Arc::new(my_embedder))
         .await?;
 
 Tier 3 — Substrate composition (advanced)
@@ -159,6 +166,48 @@ See [docs/api.md](../../docs/api.md) for the complete reference covering all 12 
 10. Advanced — substrate composition
 11. Bi-temporal model
 12. Migration guide
+
+---
+
+## Observability (v0.1.2+)
+
+kremory emits structured metrics + tracing spans for every LLM and embedding call when you wire BYOM providers via Tier 1 shortcuts or `with_llm_tracked`. The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) auto-wrap providers in `TokenTrackingChatProvider` internally.
+
+**Emitted metrics** (via the [`metrics`](https://crates.io/crates/metrics) crate):
+
+| Metric | Type | Labels | Notes |
+|---|---|---|---|
+| `kremory_core_tokens_total` | Counter | `operation` (`chat`/`embed`), `provider`, `model`, `direction` (`input`/`output`) | Cumulative token counts |
+| `kremory_core_cost_usd_total` | Gauge (f64 USD) | `operation`, `provider`, `model` | Cumulative cost in USD. Computed from `kremory::core::rates::PROVIDER_RATES` lookup |
+| `kremory_core_chat_duration_seconds` | Histogram | `provider`, `model`, `status` (`ok`/`error`) | Per-call wall-clock duration |
+
+**`error.type` is a tracing span attribute** (not a histogram label) bounded to `{"server_error", "client_error", "parse_error"}` per ADR D7 cardinality discipline. Query via Langfuse / Phoenix / OTLP span explorers.
+
+**Optional OTLP export** — enable the `otel` cargo feature:
+
+```toml
+kremory = { version = "0.1", features = ["otel"] }
+```
+
+```rust
+use kremory::observability::{init_telemetry, TelemetryConfig};
+
+let handle = init_telemetry(TelemetryConfig::default())?;
+// `OTEL_EXPORTER_OTLP_ENDPOINT` env var (default http://localhost:4317) configures the OTLP endpoint
+// `handle` keeps the OTel TracerProvider alive — drop it at shutdown via `handle.shutdown()` to flush spans
+```
+
+**Override bundled rates** — supply your own `provider-rates.toml`:
+
+```rust
+let mem = Memory::open("./agent.db")
+    .with_provider_rates_path("./my-rates.toml")
+    .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))
+    .with_embedder(Arc::new(my_embedder))
+    .await?;
+```
+
+See [docs/observability.md](../../docs/observability.md) for full metric catalog, label schema, cardinality discipline, and dashboard examples.
 
 ---
 

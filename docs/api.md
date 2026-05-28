@@ -77,7 +77,7 @@ use kremory::{Memory, Namespace, DynEmbeddingProvider};
 use std::sync::Arc;
 
 let mem = Memory::open("./agent.db")
-    .with_llm(Arc::new(my_llm))           // Arc<dyn ChatProvider> — required
+    .with_llm(Arc::new(my_llm))           // Arc<dyn ChatProvider> — required (untracked)
     .with_embedder(Arc::new(my_embedder)) // Arc<dyn DynEmbeddingProvider> — required
     .with_event_sink(Arc::new(MySink))    // Arc<dyn EnrichmentEventSink> — optional
     .default_namespace(Namespace::new("acme-corp"))  // optional
@@ -85,12 +85,37 @@ let mem = Memory::open("./agent.db")
 ```
 
 The builder is type-state guarded: `.await` on a `MemoryBuilder` without calling both
-`.with_llm()` and `.with_embedder()` is a **compile error**, not a runtime error.
+`.with_llm()` (or `.with_llm_tracked()`) and `.with_embedder()` is a **compile error**, not a runtime error.
 
 ```rust
 // Compile error — missing .with_embedder()
 let mem = Memory::open("./agent.db").with_llm(llm).await?; // ERROR
 ```
+
+### Tier 2 — Builder with observability (v0.1.2+)
+
+For automatic token + cost + duration metric emission, use `with_llm_tracked` instead of `with_llm`:
+
+```rust
+let mem = Memory::open("./agent.db")
+    .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))  // explicit labels
+    .with_embedder(Arc::new(my_embedder))
+    .await?;
+```
+
+The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) internally upgrade to `with_llm_tracked` — no opt-in required.
+
+To override the bundled cost rates table:
+
+```rust
+let mem = Memory::open("./agent.db")
+    .with_provider_rates_path("./my-rates.toml")  // override bundled rates
+    .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))
+    .with_embedder(Arc::new(my_embedder))
+    .await?;
+```
+
+Full observability surface — emitted metrics, label schema, OTel/OTLP export, cardinality discipline, dashboard examples — documented in [observability.md](observability.md).
 
 ---
 
@@ -592,8 +617,8 @@ WHERE recorded_at <= :system_time_Y
   AND (valid_to IS NULL OR valid_to > :real_world_time_X)
 ```
 
-At v0.1.0, `.as_of()` on `RecallRequest` is accepted and emits `tracing::warn` — the
-filter wiring to SQL lands in v0.1.1. Caller code is forward-compatible: same API,
+Up through v0.1.3, `.as_of()` on `RecallRequest` is accepted and emits `tracing::warn` — the
+filter wiring to SQL lands in a later release. Caller code is forward-compatible: same API,
 no migration required.
 
 ### Memory types (7-type taxonomy)
@@ -631,19 +656,54 @@ If you used an internal snapshot (pre-tag), the changes are:
 The substrate free-functions (`kremory::memory::submit_episode`, etc.) remain public and
 unchanged — if you depend on them directly, no migration is needed.
 
-### v0.1.0 → v0.1.1 (expected)
+### v0.1.0 → v0.1.1 (shipped 2026-05-27)
+
+Recall pipeline redesign. No public API changes; substrate-level behavior fixes only.
+
+| Area | Change |
+|---|---|
+| RRF (Reciprocal Rank Fusion) | Constant `k = 60` now used for hybrid score blending |
+| Episodic edges | Now authoritative; deprecated fallback paths removed |
+| LightRAG stub-entity | Forward references insert stub entities at first mention; promoted on re-ingestion |
+| First-mention snippet | `source_ref` carries first-encountered snippet, not most recent |
+| `SourceKind::Episode` | Replaces deprecated `SourceKind::Document` |
+
+No migration required for facade-tier consumers.
+
+### v0.1.1 → v0.1.2 (shipped 2026-05-28)
+
+LLM observability parity. Additive only — no breaking changes.
 
 | API | Change |
 |---|---|
-| `.as_of(ts)` on `RecallRequest` | Promoted from warn-only to active filter. No API change. |
-| `DreamCycle` / `Phase` trait | New consolidation abstraction (extends dream phase API) |
-| Contradiction resolver | New — facts gain `valid_to` dates automatically |
-| Multi-process dream lock | New — safe concurrent dream from multiple processes |
+| `MemoryBuilder::with_llm_tracked(provider, model, llm)` | **NEW** — wraps in `TokenTrackingChatProvider` with explicit labels |
+| `MemoryBuilder::with_provider_rates_path(PathBuf)` | **NEW** — override bundled cost-rates table |
+| `MemoryBuilder::with_llm(llm)` | Unchanged — backward compatible (untracked path) |
+| Tier 1 shortcuts (`with_ollama` etc.) | Internally upgraded to `with_llm_tracked` — auto-emit metrics |
+| `kremory::observability` module | **NEW** — re-exports `TokenTrackingChatProvider`, `ProviderRates`, `TelemetryConfig`, `init_telemetry`, etc. |
+| `init_telemetry(TelemetryConfig)` | Real implementation (was stub). Returns `TelemetryHandle`. Behind `otel` cargo feature. |
+| `otel` cargo feature | Off by default. When enabled: installs `tracing-subscriber` + `tracing-opentelemetry` + OTLP gRPC exporter |
+| `error.type` span attribute | **NEW** — bounded to `{server_error, client_error, parse_error}`; tracking span attribute (not histogram label) |
+| `kremory_core_tokens_total` counter | Extended with `operation="chat"` emissions (embed emissions unchanged) |
+| `kremory_core_cost_usd_total` gauge | **NEW** — cumulative USD cost, f64 |
+| `kremory_core_chat_duration_seconds` histogram | **NEW** — per-call duration, `status` label bounded to `ok`/`error` |
 
-The facade API (`Memory`, `Namespace`, `remember`, `recall`, `forget`, `dream`) is
-stable across v0.1.x. Substrate free-functions are Tier 2 (advanced-unstable) per
-ADR-023 and may evolve between minor versions.
+See [observability.md](observability.md) for full surface.
+
+### v0.1.2 → v0.1.3 (shipped 2026-05-28)
+
+Hygiene only. No public API changes. `cargo clippy --all-targets --all-features` now passes clean.
+
+### Future — v0.1.x → v0.2.0 (planned)
+
+Will introduce cargo features for substrate-only consumers (per [ADR-028](../.ai-docs/adrs/rql/adr-028-defer-crate-split-cargo-features-2026-05-28.md)). Default-feature consumers continue working without changes. Substrate-only consumers will opt in via:
+
+```toml
+kremory = { version = "0.2", default-features = false, features = ["substrate"] }
+```
+
+Full migration guide will land alongside v0.2.0 ship.
 
 ---
 
-*API reference generated for kremory v0.1.0. Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002.*
+*API reference current as of kremory v0.1.3 (2026-05-28). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Crate topology: ADR-028 (supersedes ADR-007 + ADR-008).*
