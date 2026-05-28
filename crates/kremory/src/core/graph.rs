@@ -1358,6 +1358,108 @@ impl TemporalGraph {
         );
         Ok(total_deleted)
     }
+
+    // ── Namespace policy (ADR-029a, v0.1.4) ──────────────────────────────────
+    //
+    // All three methods are `pub(crate)` per Vera cycle-1 MED-6 — only the
+    // `facade` layer (kremory::Memory::register_namespace) and the lazy-population
+    // wiring should call them. External consumers go through the facade and get
+    // validation + idempotency + tracing + race-safety.
+
+    /// Read the persisted [`crate::memory::types::NamespacePolicy`] for a
+    /// `group_id`, or `None` if the namespace has not been observed.
+    ///
+    /// Used by `register_namespace` to detect idempotency vs immutable-conflict.
+    /// Substrate-only (ADR-029a Decision 8).
+    pub(crate) async fn get_namespace_policy(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<crate::memory::types::NamespacePolicy>> {
+        let started = Instant::now();
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT policy_json FROM namespaces WHERE group_id = ? LIMIT 1",
+                libsql::params![group_id.to_string()],
+            )
+            .await?;
+        let policy = if let Some(row) = rows.next().await? {
+            let json: String = row.get(0)?;
+            let parsed: crate::memory::types::NamespacePolicy = serde_json::from_str(&json)?;
+            Some(parsed)
+        } else {
+            None
+        };
+        histogram!("kremory_core_namespace_policy_get_seconds")
+            .record(started.elapsed().as_secs_f64());
+        Ok(policy)
+    }
+
+    /// Write a `NamespacePolicy` for a `group_id` if not already present.
+    ///
+    /// Substrate-only. Caller (`register_namespace`) holds the BEGIN IMMEDIATE
+    /// guard for race safety; this method does NOT manage its own transaction.
+    /// `ON CONFLICT DO NOTHING` keeps the operation idempotent at the SQL level
+    /// when called concurrently (ADR-029a Decision 8).
+    pub(crate) async fn set_namespace_policy(
+        &self,
+        group_id: &str,
+        policy: &crate::memory::types::NamespacePolicy,
+    ) -> Result<()> {
+        let started = Instant::now();
+        let json = serde_json::to_string(policy)?;
+        self.conn
+            .execute(
+                "INSERT INTO namespaces (group_id, policy_json, schema_version) \
+                 VALUES (?, ?, 1) \
+                 ON CONFLICT(group_id) DO NOTHING",
+                libsql::params![group_id.to_string(), json],
+            )
+            .await?;
+        histogram!("kremory_core_namespace_policy_set_seconds")
+            .record(started.elapsed().as_secs_f64());
+        Ok(())
+    }
+
+    /// Ensure a default-policy row exists for `group_id` on implicit
+    /// observation. Called by `remember`/`recall`/`forget`/`dream` on first
+    /// encounter with a previously-unregistered namespace.
+    ///
+    /// # Race safety (Vera cycle-2 ASMP-001)
+    ///
+    /// This method opens its own `BEGIN IMMEDIATE` guard via
+    /// `begin_immediate_if_needed`, which is a no-op when nested under an
+    /// existing outer transaction. The wrapping serializes against concurrent
+    /// `register_namespace` calls. `INSERT OR IGNORE` is itself idempotent —
+    /// the guard ensures the surrounding read-decide sequence in
+    /// `register_namespace` stays consistent.
+    pub(crate) async fn ensure_namespace_policy_row(&self, group_id: &str) -> Result<()> {
+        let started = Instant::now();
+        // Default policy serialized inline — matches NamespacePolicy::default().
+        const DEFAULT_POLICY_JSON: &str =
+            r#"{"immutability":"mutable","forgettable":true,"dream_eligible":true}"#;
+        let guard = self.begin_immediate_if_needed().await?;
+        let result = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO namespaces (group_id, policy_json, schema_version) \
+                 VALUES (?, ?, 1)",
+                libsql::params![group_id.to_string(), DEFAULT_POLICY_JSON.to_string()],
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                guard.commit().await?;
+                histogram!("kremory_core_namespace_policy_ensure_seconds")
+                    .record(started.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                guard.rollback().await?;
+                Err(e.into())
+            }
+        }
+    }
 }
 
 #[cfg(test)]

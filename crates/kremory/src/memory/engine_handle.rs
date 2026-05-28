@@ -58,7 +58,11 @@ use crate::memory::{
 /// Callers that want to filter by namespace only (ignoring thread) must use the
 /// namespace string directly; this helper returns the fully-qualified key used
 /// for isolation within a single thread.
-fn namespace_to_group_id(ns: &Namespace) -> String {
+///
+/// Visibility: `pub(crate)` (Vera cycle-1 MED-4 — promoted in v0.1.4 for the
+/// ADR-029a `register_namespace` facade method). External callers MUST NOT
+/// depend on the `namespace:thread` string layout — this is substrate detail.
+pub(crate) fn namespace_to_group_id(ns: &Namespace) -> String {
     match &ns.thread {
         Some(t) => format!("{}:{}", ns.namespace, t),
         None => ns.namespace.clone(),

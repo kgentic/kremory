@@ -17,8 +17,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crate is no longer source-compatible. Forward-compat preparation for
   ADR-029c multi-namespace recall (additive `namespace` field expected v0.1.5+).
   No downstream consumers known to be affected at v0.1.3.
+- **`Namespace` gained a `policy: Option<NamespacePolicy>` field** (ADR-029a).
+  Exhaustive struct expressions (`Namespace { namespace, thread }`) no longer
+  compile from outside the crate. Migrate to
+  `Namespace::new(namespace).with_thread(thread)` — already idiomatic, no
+  caller using the constructor is affected. `#[serde(default)]` keeps v0.1.3-
+  serialized JSON forward-compatible (the field deserializes to `None`).
+
+> **⚠️ DECLARATION vs ENFORCEMENT** (ADR-029a): `NamespacePolicy` lets callers
+> DECLARE per-namespace policy intent (e.g. `AppendOnly`, non-forgettable,
+> non-dream-eligible). v0.1.4 **PERSISTS** the declaration and emits
+> operational warnings, but does **NOT ENFORCE** the policy on `dream()` /
+> `forget()` / mutation operations. Enforcement lands in v0.1.5+ per ADR-029b.
+> **Do not rely on `AppendOnly` for compliance contracts until v0.1.5+.** Use
+> the v0.1.4 declaration window to capture intent + validate napi-rs binding
+> ergonomics with aidocs vNext.
 
 ### Added
+
+- **`NamespacePolicy` struct + `Memory::register_namespace` facade method**
+  (ADR-029a). Per-namespace policy primitive with three v0.1.4 fields:
+  `immutability` (`Mutable` | `AppendOnly`), `forgettable`, `dream_eligible`.
+  `#[non_exhaustive]` + fluent setters (`with_immutability`, `with_forgettable`,
+  `with_dream_eligible`) + canonical `APPEND_ONLY` preset const + `validate()`
+  cross-field coherence check. New `InvalidPolicyError` enum surfaces validation
+  failures; new `Error::InvalidPolicy` + `Error::NamespacePolicyImmutable`
+  variants on the core `Error` enum. `Memory::register_namespace(ns)` is
+  idempotent on identical re-registration and atomic via `BEGIN IMMEDIATE`
+  against concurrent `remember(...)` first-touch implicit creation. Every
+  non-default policy declaration emits `tracing::warn!` on target
+  `kremory.namespace` with the marker `POLICY DECLARED BUT NOT ENFORCED` —
+  closes the declare-but-don't-enforce footgun (Vera cycle-1 HIGH-1
+  mitigation #1). New `namespaces` SQLite table (unprefixed per ADR-029a
+  Decision 8; the `rql_*` rename of existing tables lands in ADR-029b).
+  Population is lazy: `remember`/`recall`/`forget`/`dream` write a
+  default-policy row on first observation of a previously-unseen namespace.
+  See ADR-029a §6 for the full backward-compat walkthrough and `docs/api.md`
+  §3 for usage examples.
 
 - Internal `kremory-eval` crate (`publish = false`) — two-layer quality eval
   harness. Layer A: published-comparable benchmarks (LongMemEval). Layer B:
@@ -28,6 +63,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kremory-eval` only.
 - Inspect-AI-style scorer traits (`Score`, `Scorer`, `Dataset`, `Solver`)
   with `TieBreakPolicy::Pass` default and non-optional `reasoning: String`.
+- LongMemEval harness now wires `Memory` via the Tier-2 builder
+  (`Memory::open(path).with_llm(...).with_embedder(...)`) with explicit
+  Ollama providers. Models are env-configurable via standard `OLLAMA_HOST`,
+  `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL` (defaults: `qwen2.5:14b`
+  chat + `nomic-embed-text` 768-dim embed). Resolves O13 — `Memory::with_ollama`
+  hardcoded `llama3.2` 3B which produced duplicate `VerbatimString` entity
+  names on LongMemEval transcripts, tripping intra-batch dedup.
+- `eval layer-a longmemeval --smoke` flag: runs against local synthetic
+  fixtures with either judge, skipping the HuggingFace download. Smoke
+  validates pipeline wiring before committing to a full Oracle baseline.
+- `docs/eval.md` runbook + `docs/eval-fixtures.md` inventory.
+
+### Changed
+
+- `LongMemEvalScorer` now reads the structured `is_correct: bool` field from
+  `JudgeVerdict` instead of substring-matching `"yes"` in `verdict.reasoning`.
+  Upstream `evaluate_qa.py` substring-matches because its judge returns
+  free-form text; `GemmaJudge` returns structured JSON, so the bool is more
+  reliable across model families. Observed 2026-05-28 with Gemma 4 E2B-IT:
+  positive reasoning ("matching the correct answer") without an explicit
+  "yes" prefix caused false 0.0 scores. Existing MockJudge tests are
+  unaffected — they already set both `is_correct` and `reasoning` consistently.
 
 ### Architecture decisions (ADRs)
 

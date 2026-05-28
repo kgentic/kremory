@@ -44,9 +44,9 @@ pub use graph::GraphHandle;
 pub use stub::StubGraphHandle;
 pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
-    DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, IngestResult, MemoryError, MemoryType,
-    Namespace, Result, RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact,
-    SubmitOpts,
+    DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, ImmutabilityLevel, IngestResult,
+    InvalidPolicyError, MemoryError, MemoryType, Namespace, NamespacePolicy, Result,
+    RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
 };
 // IngestStatus lives in core::error but is part of the memory API surface.
 pub use crate::core::error::IngestStatus;

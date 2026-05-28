@@ -156,6 +156,28 @@ pub enum Error {
     /// duplicate episode identifier detected during the pre-mutation scan.
     #[error("intra-batch duplicate episode id '{id}'")]
     IntraBatchDuplicate { id: String },
+
+    // ── Namespace policy (ADR-029a, v0.1.4) ───────────────────────────────────
+    /// A [`crate::memory::types::NamespacePolicy`] construction or validation
+    /// failed. Triggered by
+    /// [`crate::memory::types::NamespacePolicy::validate`],
+    /// [`crate::memory::types::Namespace::with_policy`], and
+    /// [`crate::Memory::register_namespace`].
+    #[error(transparent)]
+    InvalidPolicy(#[from] crate::memory::types::InvalidPolicyError),
+
+    /// `register_namespace` attempted to overwrite an existing namespace's
+    /// policy with a different value. Policies are immutable once stored.
+    /// Added v0.1.4 (ADR-029a Decision 7).
+    #[error(
+        "namespace policy is immutable once set: namespace '{namespace}' \
+         has stored policy {stored:?}, attempted to re-register with {attempted:?}"
+    )]
+    NamespacePolicyImmutable {
+        namespace: String,
+        stored: crate::memory::types::NamespacePolicy,
+        attempted: crate::memory::types::NamespacePolicy,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
