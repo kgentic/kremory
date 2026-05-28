@@ -68,7 +68,10 @@ impl Namespace {
     /// `register_namespace` time with
     /// [`crate::core::error::Error::NamespacePolicyImmutable`]. Added v0.1.4
     /// (ADR-029a Decision 5).
-    pub fn with_policy(mut self, policy: NamespacePolicy) -> std::result::Result<Self, InvalidPolicyError> {
+    pub fn with_policy(
+        mut self,
+        policy: NamespacePolicy,
+    ) -> std::result::Result<Self, InvalidPolicyError> {
         policy.validate()?;
         self.policy = Some(policy);
         Ok(self)

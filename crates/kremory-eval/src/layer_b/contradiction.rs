@@ -22,9 +22,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Score, Scorer, TieBreakPolicy,
     judge::Judge,
     types::{EvalError, ScoreMetadata},
+    Score, Scorer, TieBreakPolicy,
 };
 
 // ---------------------------------------------------------------------------
@@ -99,8 +99,7 @@ impl<J: Judge + Send + Sync> Scorer<ContradictionSample, ContradictionOutput>
             "Original fact: {}\nConflicting fact: {}",
             sample.original_fact, sample.conflicting_fact
         );
-        let question =
-            "Are the ORIGINAL FACT and CONFLICTING FACT genuinely contradictory? \
+        let question = "Are the ORIGINAL FACT and CONFLICTING FACT genuinely contradictory? \
              That is, can both facts be true at the same time? If they cannot both \
              be simultaneously true, then they are contradictory.";
 
@@ -158,7 +157,7 @@ impl<J: Judge + Send + Sync> Scorer<ContradictionSample, ContradictionOutput>
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::{Scorer, judge::MockJudge};
+    use crate::{judge::MockJudge, Scorer};
 
     fn sample_pair() -> ContradictionSample {
         ContradictionSample {

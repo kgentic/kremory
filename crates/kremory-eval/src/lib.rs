@@ -90,10 +90,7 @@ pub trait Dataset {
 /// In practice this wraps kremory `Memory::open` + a query.
 pub trait Solver<Sample, Output>: Send + Sync {
     /// Solve one sample, returning an output to be scored.
-    fn solve(
-        &self,
-        sample: &Sample,
-    ) -> impl std::future::Future<Output = Output> + Send;
+    fn solve(&self, sample: &Sample) -> impl std::future::Future<Output = Output> + Send;
 }
 
 /// Compares a `Solver` output against ground truth and returns a `Score`.

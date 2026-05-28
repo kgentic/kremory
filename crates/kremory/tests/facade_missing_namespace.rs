@@ -7,8 +7,19 @@
 use kremory::{DynEmbeddingProvider, Memory, MemoryError};
 use std::sync::Arc;
 
+fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "kremory_facade_missing_ns_{}_{}.db",
+        tag,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
 async fn open_no_ns() -> Memory {
-    Memory::open("/tmp/test.db")
+    Memory::open(unique_db_path("open_no_ns"))
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .await

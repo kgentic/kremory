@@ -95,10 +95,7 @@ fn f1_perfect_match_is_one() {
         predicted: vec!["Alice".into(), "Bob".into()],
     };
     let score = scorer.score_sync(&sample, &output).unwrap();
-    assert!(
-        (score.value - 1.0).abs() < 1e-9,
-        "perfect match F1 = 1.0"
-    );
+    assert!((score.value - 1.0).abs() < 1e-9, "perfect match F1 = 1.0");
 }
 
 #[test]
@@ -263,7 +260,9 @@ async fn model_graded_fact_metadata_latency_present() {
         fact: "X".into(),
         context: "X is here.".into(),
     };
-    let output = ModelGradedFactOutput { produced: "X".into() };
+    let output = ModelGradedFactOutput {
+        produced: "X".into(),
+    };
     let score = scorer.score(&sample, &output).await.unwrap();
     let meta: ScoreMetadata = serde_json::from_value(score.metadata).unwrap();
     assert!(

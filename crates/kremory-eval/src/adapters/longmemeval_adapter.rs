@@ -97,10 +97,12 @@ pub async fn run_sample(
             req = req.published_at(ts);
         }
 
-        req.await.map_err(|e| EvalErr::Other(format!(
-            "remember failed for question_id={} session={}: {}",
-            sample.question_id, session_idx, e
-        )))?;
+        req.await.map_err(|e| {
+            EvalErr::Other(format!(
+                "remember failed for question_id={} session={}: {}",
+                sample.question_id, session_idx, e
+            ))
+        })?;
     }
 
     // Recall: query the memory with the question text.
@@ -108,10 +110,12 @@ pub async fn run_sample(
         .recall(sample.question.clone())
         .in_namespace(namespace)
         .await
-        .map_err(|e| EvalErr::Other(format!(
-            "recall failed for question_id={}: {}",
-            sample.question_id, e
-        )))?;
+        .map_err(|e| {
+            EvalErr::Other(format!(
+                "recall failed for question_id={}: {}",
+                sample.question_id, e
+            ))
+        })?;
 
     // Token usage not available from kremory v0.1.0 public API (O10).
     Ok(LongMemEvalOutput {

@@ -161,9 +161,11 @@ impl Judge for GemmaJudge {
         context: &str,
         answer: &str,
     ) -> EvalError<JudgeVerdict> {
-        use autoagents_llamacpp::{LlamaCppConfigBuilder, LlamaCppProvider, LlamaCppReasoningFormat};
-        use autoagents_llm::chat::{ChatMessage, ChatProvider, MessageType};
+        use autoagents_llamacpp::{
+            LlamaCppConfigBuilder, LlamaCppProvider, LlamaCppReasoningFormat,
+        };
         use autoagents_llm::chat::ChatRole;
+        use autoagents_llm::chat::{ChatMessage, ChatProvider, MessageType};
 
         let model_path_str = self
             .model_path

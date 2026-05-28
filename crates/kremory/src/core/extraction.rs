@@ -1283,11 +1283,22 @@ pub enum PromptVersion {
     /// Validated in spike at 76-80% recall on Qwen 3B.
     V1Rules,
     /// V2: schema-first, minimal rules, no worked example (~150 prompt tokens).
-    /// Saves ~100 tokens of prefill budget. Needs benchmarking.
-    #[default]
+    /// Saves ~100 tokens of prefill budget vs V1. Omits the "no duplicates"
+    /// instruction — viable for larger models (qwen2.5:14b+) that dedupe
+    /// without being told, but causes intra-batch duplicate emissions on
+    /// smaller models (observed 2026-05-28 with llama3.2:3b emitting
+    /// `'VerbatimString'` and gemma4-e2b emitting `'car'` multiple times in
+    /// a single extraction). Use explicitly when targeting large models with
+    /// tight prefill budgets.
     V2SchemaLight,
     /// V3: schema-first + format hint + dedup line (~170 prompt tokens).
-    /// Combines V2's schema-first structure with V1's content-type awareness.
+    /// Combines V2's schema-first structure (GoLLIE +13 F1 signal) with the
+    /// explicit "No duplicates." instruction. Smaller cost than V1 (~80 tok
+    /// saved) but reliably dedupes across the supported provider matrix.
+    /// **Default since v0.1.4** — preferred for any model class because the
+    /// ~20 token cost over V2 is dwarfed by avoided substrate dedup warnings
+    /// and lost extraction information.
+    #[default]
     V3SchemaHybrid,
 }
 

@@ -1,0 +1,27 @@
+[package]
+name = "kremory-admin"
+version = "0.1.5"
+edition = "2021"
+license = "Apache-2.0"
+description = "Migration + admin tooling for kremory databases"
+repository = "https://github.com/kgentic/kremory"
+
+[[bin]]
+name = "kremory-admin"
+path = "src/main.rs"
+
+[dependencies]
+kremory = { path = "../kremory" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

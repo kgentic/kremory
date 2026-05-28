@@ -67,7 +67,9 @@ async fn g_v014a_2_register_namespace_idempotent_same_policy() {
     let ns = Namespace::new("tenant-idempotent")
         .with_policy(policy.clone())
         .expect("coherent");
-    mem.register_namespace(ns.clone()).await.expect("first call");
+    mem.register_namespace(ns.clone())
+        .await
+        .expect("first call");
     mem.register_namespace(ns)
         .await
         .expect("second call with same policy must return Ok(())");
@@ -272,12 +274,16 @@ async fn g_v014a_14_concurrent_register_namespace_race() {
         let policy = policy.clone();
         let ns_name = ns_name.to_string();
         handles.push(tokio::spawn(async move {
-            let ns = Namespace::new(ns_name).with_policy(policy).expect("coherent");
+            let ns = Namespace::new(ns_name)
+                .with_policy(policy)
+                .expect("coherent");
             mem.register_namespace(ns).await
         }));
     }
     for h in handles {
-        h.await.expect("join").expect("same-policy concurrent calls must all return Ok");
+        h.await
+            .expect("join")
+            .expect("same-policy concurrent calls must all return Ok");
     }
 
     // Phase 2: divergent-policy race — exactly one stored, the rest get
@@ -461,10 +467,7 @@ async fn g_v014a_19_lazy_population_on_first_remember() {
     let ns = Namespace::new("lazy-from-remember");
     // Best-effort: ignore the remember outcome (the null LLM may fail) but the
     // lazy-population call inside RememberRequest::execute fires regardless.
-    let _ = mem
-        .remember("seed content")
-        .in_namespace(ns.clone())
-        .await;
+    let _ = mem.remember("seed content").in_namespace(ns.clone()).await;
     // The default-policy row should now exist — registering default explicitly
     // is idempotent (Ok). If lazy population had NOT fired, this would still
     // succeed by the on-demand path, but in either case the post-condition

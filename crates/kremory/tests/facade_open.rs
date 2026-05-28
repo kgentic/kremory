@@ -7,9 +7,22 @@
 use kremory::{DynEmbeddingProvider, Memory, MemoryBuilder, Namespace, NoEmb, NoLlm, WithLlm};
 use std::sync::Arc;
 
+/// Unique per-call DB path. Tests run in parallel; sharing a single path
+/// caused intermittent `database is locked` flakes.
+fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "kremory_facade_open_{}_{}.db",
+        tag,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
 /// Helper: build a Memory backed by Ollama defaults + real EngineGraphHandle.
-async fn open_test_memory() -> Memory {
-    Memory::with_ollama("/tmp/kremory-test.db")
+async fn open_test_memory(tag: &str) -> Memory {
+    Memory::with_ollama(unique_db_path(tag))
         .await
         .expect("Memory::with_ollama should succeed in test-utils builds")
 }
@@ -32,7 +45,7 @@ fn builder_after_with_llm_is_withlm_noemb() {
 /// Full builder pipeline: NoLlm → WithLlm → WithEmb → Memory.
 #[tokio::test]
 async fn builder_full_pipeline_returns_memory() {
-    let _mem: Memory = Memory::open("/tmp/test.db")
+    let _mem: Memory = Memory::open(unique_db_path("full_pipeline"))
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .await
@@ -42,13 +55,13 @@ async fn builder_full_pipeline_returns_memory() {
 /// `Memory::with_ollama` Tier 1 shortcut compiles and succeeds in test mode.
 #[tokio::test]
 async fn tier1_with_ollama_succeeds_in_test_mode() {
-    let _mem = open_test_memory().await;
+    let _mem = open_test_memory("tier1").await;
 }
 
 /// `Memory` is Clone (cheap Arc clone).
 #[tokio::test]
 async fn memory_is_clone() {
-    let mem = open_test_memory().await;
+    let mem = open_test_memory("is_clone").await;
     let _clone = mem.clone();
 }
 
@@ -57,7 +70,7 @@ async fn memory_is_clone() {
 /// return `MissingNamespace`.
 #[tokio::test]
 async fn builder_default_namespace_flows_to_forget() {
-    let mem = Memory::open("/tmp/test.db")
+    let mem = Memory::open(unique_db_path("default_ns_forget"))
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .default_namespace(Namespace::new("acme"))

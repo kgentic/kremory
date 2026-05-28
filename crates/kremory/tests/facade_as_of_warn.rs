@@ -57,8 +57,21 @@ fn as_of_k_namespace_chain_compiles() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Unique per-call DB path to avoid SQLite "database is locked" flakes
+/// when integration tests run in parallel.
+fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "kremory_facade_as_of_warn_{}_{}.db",
+        tag,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
 async fn open_no_ns() -> Memory {
-    Memory::open("/tmp/test.db")
+    Memory::open(unique_db_path("open_no_ns"))
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .await

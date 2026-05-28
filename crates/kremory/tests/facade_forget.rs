@@ -7,19 +7,30 @@
 use kremory::{DynEmbeddingProvider, Memory, Namespace};
 use std::sync::Arc;
 
-async fn open_with_ns() -> Memory {
-    Memory::open("/tmp/test.db")
-        .with_llm(make_null_llm())
-        .with_embedder(make_null_embedder())
-        .default_namespace(Namespace::new("tests"))
-        .await
-        .expect("builder should succeed")
+// Unique-per-test DB paths: tests run concurrently by default and
+// previously all shared `/tmp/test.db`, causing intermittent
+// `SqliteFailure(5, "database is locked")`. Each test now owns its file.
+fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "kremory_facade_forget_{}_{}.db",
+        tag,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
 }
 
 /// Stub `forget().execute()` returns `Ok(0)` when namespace is present.
 #[tokio::test]
 async fn forget_stub_returns_zero() {
-    let mem = open_with_ns().await;
+    let db = unique_db_path("stub_returns_zero");
+    let mem = Memory::open(&db)
+        .with_llm(make_null_llm())
+        .with_embedder(make_null_embedder())
+        .default_namespace(Namespace::new("tests"))
+        .await
+        .expect("builder should succeed");
     let deleted = mem.forget().execute().await.expect("forget should succeed");
     assert_eq!(deleted, 0, "v0.1.0 stub always returns 0 deleted");
 }
@@ -27,7 +38,8 @@ async fn forget_stub_returns_zero() {
 /// `.in_namespace()` override: no default on Memory but explicit on request → ok.
 #[tokio::test]
 async fn forget_in_namespace_override_succeeds() {
-    let mem = Memory::open("/tmp/test.db")
+    let db = unique_db_path("in_namespace_override");
+    let mem = Memory::open(&db)
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .await
@@ -45,7 +57,8 @@ async fn forget_in_namespace_override_succeeds() {
 /// Default namespace on Memory flows into `forget()`.
 #[tokio::test]
 async fn forget_uses_memory_default_namespace() {
-    let mem = Memory::open("/tmp/test.db")
+    let db = unique_db_path("uses_default_namespace");
+    let mem = Memory::open(&db)
         .with_llm(make_null_llm())
         .with_embedder(make_null_embedder())
         .default_namespace(Namespace::new("default-ns"))

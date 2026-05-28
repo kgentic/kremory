@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — v0.1.4 in-progress
+## [0.1.4] — 2026-05-28
 
 ### Breaking
 
@@ -85,6 +85,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positive reasoning ("matching the correct answer") without an explicit
   "yes" prefix caused false 0.0 scores. Existing MockJudge tests are
   unaffected — they already set both `is_correct` and `reasoning` consistently.
+- **`SingleCallExtractor` default prompt switched from `V2SchemaLight` to
+  `V3SchemaHybrid`** (`core::extraction::PromptVersion`). V2 omitted the
+  "No duplicates." instruction to save ~100 prefill tokens — the savings
+  was real but the cost was hidden: smaller models (`llama3.2:3b`,
+  `gemma4-e2b`) emitted duplicate entity names that tripped kremory's
+  intra-batch dedup invariant. V3 keeps V2's schema-first structure
+  (GoLLIE +13 F1 signal) plus the explicit "No duplicates." line — adds
+  ~20 prompt tokens, unlocks the smaller-model extraction matrix.
+- **Intra-batch duplicate entity emission no longer FATAL** — kremory's
+  ingest pipeline now emits a `tracing::warn!` and silently dedupes when
+  the extractor produces duplicate normalized entity names, instead of
+  returning `Err(IntraBatchDuplicate)`. The dedup logic at
+  `core::ingest::ingest_with` runs immediately after the previously-fatal
+  guard, so behaviour-equivalent rows land in the DB. Story #150's
+  human-API-caller intent is preserved on the error enum (variant kept
+  for forward-compat with a possible explicit strict-batch API) but the
+  ingest hot path is now robust to noisy LLM extractors. Required because
+  smaller local models emit duplicates by design — see the V3 prompt
+  change above for the upstream root cause fix.
+- **ADR-029a contract restoration in facade `forget()` + `dream()`** —
+  parallel ADR-029b work-in-progress had wired AppendOnly enforcement
+  directly into the facade, breaking the shipped `v0.1.4 declare-but-
+  don't-enforce` promise. The enforcement is now a `tracing::warn!` with
+  marker `POLICY DECLARED BUT NOT ENFORCED` matching the contract; the
+  same operations remain functional. Enforcement lands in v0.1.5 per
+  ADR-029b.
+
+### Migration robustness
+
+The v0.1.4 substrate migrations underwent a ship-architect + Vera
+adversarial review (see `.ai-docs/architecture-review/v014-vera-adr-029b-
+composite-fk-review-2026-05-28.md`). Three HIGH findings addressed:
+
+- **Idempotency gates are SHAPE-based, not backup-table-presence based.**
+  Previously a crash between `CREATE TABLE ..._bak_NNN` and the rename
+  step would leave the backup-table sentinel present, causing the next
+  startup to silently skip the migration and the DB to be permanently
+  missing tables. Gates now inspect `PRAGMA foreign_key_list` (composite
+  FK presence) and `PRAGMA table_info` (composite PK columns) — recovery-
+  safe regardless of crash timing.
+- **`PRAGMA foreign_keys = ON` is now guaranteed-restored on any error
+  path** via an inner async block that lets the outer fn always issue the
+  restore PRAGMA, regardless of whether the body succeeded or returned
+  Err. Previously a `?`-early-exit between FK toggles left the connection
+  with FK enforcement silently OFF for all subsequent application writes.
+- **`facts_fts` virtual table is now DROP+CREATE+repopulated** after
+  `facts` is restructured. Previously `DROP TABLE facts` did not cascade
+  to the standalone fts5 table, leaving zombie rowids that returned
+  phantom results on FTS queries.
+
+Plus: per-step error context (each `?` site annotates which step failed),
+`PRAGMA foreign_key_check` validation at the end of every restructure,
+and convention-compliant `CREATE TABLE IF NOT EXISTS` on all migration-
+local backup and `_new` tables (passes the `no_bare_create_table_in_schema_source`
+hygiene gate).
+
+### Test pyramid foundation
+
+- 8 facade integration test files migrated from a shared `/tmp/test.db`
+  path to per-test unique paths via a `unique_db_path` helper. Eliminates
+  intermittent `SqliteFailure(5, "database is locked")` flakes under
+  parallel `cargo test --workspace` execution.
+- `LongMemEvalScorer` gained 2 regression tests that lock in the
+  `is_correct` bool fix: positive reasoning without a `"yes"` prefix
+  must score 1.0; reasoning containing `"yes"` with `is_correct=false`
+  must score 0.0.
+- `OllamaEmbedAdapter` (the eval-side BYOM bridge) gained 3 unit tests
+  exercising the batch → single-text contract with fake `AutoEmbeddingProvider`
+  impls. Includes an empty-batch error case + determinism check.
+- `eval` bin CLI parser gained 9 unit tests covering all flag
+  combinations (`--smoke`, `--judge`, `--sample`, unknown subcommands,
+  invalid `--sample` values).
+- One pre-existing doctest bug fixed: `MemoryBuilder::with_llm_tracked`
+  rustdoc used `let x: impl Trait = todo!()` which is illegal Rust
+  (E0562); rewritten as a generic on the enclosing example fn signature.
 
 ### Architecture decisions (ADRs)
 

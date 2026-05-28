@@ -112,9 +112,12 @@ crates/
       core/      bi-temporal graph primitives
       memory/    orchestration layer
   kremory-mcp/   MCP bridge (excluded from workspace until v0.2.0)
+  kremory-eval/  internal quality evaluation harness (publish = false) — see docs/eval.md
 docs/
-  api.md         Full API reference (facade-first)
-  comparison.md  kremory vs alternatives
+  api.md            Full API reference (facade-first)
+  comparison.md     kremory vs alternatives
+  eval.md           Quality evaluation harness (LongMemEval + RAGAS + graph integrity)
+  eval-fixtures.md  Eval fixture inventory
 .ai-docs/
   adrs/          Architecture Decision Records
   architecture/  Architecture spec

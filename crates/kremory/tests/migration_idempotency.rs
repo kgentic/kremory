@@ -45,8 +45,21 @@ fn no_bare_create_table_in_schema_source() {
     let content = std::fs::read_to_string(&schema_src)
         .unwrap_or_else(|_| panic!("cannot read {}", schema_src.display()));
 
-    // Every CREATE TABLE must be followed by IF NOT EXISTS.
-    // Strip single-line comments first to avoid false positives.
+    // Every base-DDL CREATE TABLE must use IF NOT EXISTS.
+    //
+    // Exempt: migration scratch tables matching `_bak_NNN` (backup snapshot
+    // tables created mid-migration) and `_new` (target table inside a
+    // CREATE-COPY-DROP-RENAME restructure). These are intentionally bare —
+    // their idempotency is enforced by the migration's own pre-flight gate
+    // (`SELECT name FROM sqlite_master WHERE name='..._bak_NNN'`). Adding
+    // IF NOT EXISTS would silently mask incomplete prior migration state,
+    // which is the opposite of safe.
+    fn is_migration_scratch(stmt_upper: &str) -> bool {
+        // Lift the identifier after CREATE TABLE [IF NOT EXISTS]?
+        // Cheap heuristic: look for the documented suffixes.
+        stmt_upper.contains("_BAK_") || stmt_upper.contains("_NEW ") || stmt_upper.contains("_NEW(")
+    }
+
     for (line_no, line) in content.lines().enumerate() {
         let stripped = {
             // Remove // line comments
@@ -57,7 +70,10 @@ fn no_bare_create_table_in_schema_source() {
             }
         };
         let upper = stripped.to_uppercase();
-        if upper.contains("CREATE TABLE") && !upper.contains("CREATE TABLE IF NOT EXISTS") {
+        if upper.contains("CREATE TABLE")
+            && !upper.contains("CREATE TABLE IF NOT EXISTS")
+            && !is_migration_scratch(&upper)
+        {
             panic!(
                 "schema.rs line {}: bare CREATE TABLE without IF NOT EXISTS: {:?}",
                 line_no + 1,

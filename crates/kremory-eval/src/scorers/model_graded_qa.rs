@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::{
-    Score, TieBreakPolicy,
     judge::Judge,
     types::{EvalError, ScoreMetadata},
+    Score, TieBreakPolicy,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,8 +95,8 @@ impl<J: Judge + Send + Sync> crate::Scorer<ModelGradedQaSample, ModelGradedQaOut
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::Scorer;
     use crate::judge::{JudgeVerdict, MockJudge};
+    use crate::Scorer;
 
     #[tokio::test]
     async fn model_graded_qa_correct() {
