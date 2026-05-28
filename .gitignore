@@ -37,3 +37,4 @@ crates/*/*.log
 # Test artefacts
 crates/*/tests/output/
 crates/*/fixtures/output/
+.gahrc
