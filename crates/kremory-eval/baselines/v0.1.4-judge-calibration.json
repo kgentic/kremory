@@ -1,0 +1,715 @@
+{
+  "model": "gemma-4-E2B-it-Q4_K_M",
+  "model_source": "unsloth/gemma-4-E2B-it-GGUF",
+  "runs": [
+    {
+      "agree_count": 19,
+      "agreement_rate": 0.95,
+      "avg_inference_ms": 6114.8464354,
+      "model_load_ms": 1745.281416,
+      "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
+      "pair_count": 20,
+      "pairs": [
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately states Dave's job title and company as provided in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5747.065458,
+          "qa_id": "qa-001-info-extraction-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer contradicts the context, which states that Dave is a senior software engineer."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5243.999166,
+          "qa_id": "qa-002-info-extraction-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": true,
+            "reasoning": "The answer correctly identifies Sarah's role but fails to mention the team she leads."
+          },
+          "agrees": false,
+          "expected": "partial",
+          "latency_ms": 6150.171584,
+          "qa_id": "qa-003-info-extraction-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately identifies the internal dashboard project mentioned in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 7130.342041999999,
+          "qa_id": "qa-004-multi-session-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The context states Marcus is using React and Postgres, but the answer incorrectly states Vue and MySQL."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5462.453125,
+          "qa_id": "qa-005-multi-session-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Lisa joined HelixAI as a staff engineer."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 8475.329375,
+          "qa_id": "qa-006-knowledge-update-correct"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Ziad grew up in Casablanca, Morocco."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 6626.736041,
+          "qa_id": "qa-007-non-english-name-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer contradicts the context, which states that 王芳 is a data scientist at Tencent Research."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 6149.667541000001,
+          "qa_id": "qa-008-non-english-name-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer is correct as quantum computing is one of his specializations, but it is partial because the context also mentions cryptography."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5928.489667,
+          "qa_id": "qa-009-non-english-name-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Łukasz joined OVHcloud."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 6559.121167,
+          "qa_id": "qa-010-non-english-name-correct-2"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer is factually correct but is less specific than the context, which states the joining occurred in Q3 2024."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 6258.153708,
+          "qa_id": "qa-011-temporal-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately states the migration date as found directly in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5697.738791,
+          "qa_id": "qa-012-temporal-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer provides the incorrect release date; the context states the v2 API was released publicly in February 2025."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 6246.7457079999995,
+          "qa_id": "qa-013-temporal-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Frank joined StartupX in early 2024 as VP of Engineering."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5203.329333,
+          "qa_id": "qa-014-contradiction-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer incorrectly states MySQL; the context clearly indicates the payments service now runs on CockroachDB."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5646.261041,
+          "qa_id": "qa-015-contradiction-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information about Alice's home address, so stating that the information is unavailable is correct."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5243.483625,
+          "qa_id": "qa-016-abstention-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information regarding the lead engineer's salary."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 7267.756541,
+          "qa_id": "qa-017-abstention-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information about the cloud provider Priya's team uses for production."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5994.563375000001,
+          "qa_id": "qa-018-abstention-correct-2"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that the kremory graph engine is implemented in Rust."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5754.215,
+          "qa_id": "qa-019-code-aware-correct"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer correctly identifies two dependencies mentioned in the context but omits the dependencies on serde and serde_json."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5511.082459,
+          "qa_id": "qa-020-code-aware-partial"
+        }
+      ],
+      "run_number": 1,
+      "timestamp": "2026-05-28T08:14:25.412609+00:00",
+      "total_inference_ms": 122296.92870799999
+    },
+    {
+      "agree_count": 19,
+      "agreement_rate": 0.95,
+      "avg_inference_ms": 5605.1302562500005,
+      "model_load_ms": 584.207166,
+      "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
+      "pair_count": 20,
+      "pairs": [
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately states Dave's job title and company as provided in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 4863.175499999999,
+          "qa_id": "qa-001-info-extraction-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer contradicts the context, which states that Dave is a senior software engineer."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 4591.705416,
+          "qa_id": "qa-002-info-extraction-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": true,
+            "reasoning": "The answer correctly identifies Sarah's role but fails to mention the team she leads."
+          },
+          "agrees": false,
+          "expected": "partial",
+          "latency_ms": 5748.284958,
+          "qa_id": "qa-003-info-extraction-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately identifies the internal dashboard project mentioned in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 6673.7119170000005,
+          "qa_id": "qa-004-multi-session-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The context states Marcus is using React and Postgres, but the answer incorrectly states Vue and MySQL."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5227.738875,
+          "qa_id": "qa-005-multi-session-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Lisa joined HelixAI as a staff engineer."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 6046.24425,
+          "qa_id": "qa-006-knowledge-update-correct"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Ziad grew up in Casablanca, Morocco."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5526.4243750000005,
+          "qa_id": "qa-007-non-english-name-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer contradicts the context, which states that 王芳 is a data scientist at Tencent Research."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5299.226375,
+          "qa_id": "qa-008-non-english-name-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer is correct as quantum computing is one of his specializations, but it is partial because the context also mentions cryptography."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5432.455334,
+          "qa_id": "qa-009-non-english-name-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Łukasz joined OVHcloud."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5232.561667,
+          "qa_id": "qa-010-non-english-name-correct-2"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer is factually correct but is less specific than the context, which states the joining occurred in Q3 2024."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5837.490792,
+          "qa_id": "qa-011-temporal-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately states the migration date as found directly in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5371.185667,
+          "qa_id": "qa-012-temporal-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer provides the incorrect release date; the context states the v2 API was released publicly in February 2025."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5826.441208,
+          "qa_id": "qa-013-temporal-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Frank joined StartupX in early 2024 as VP of Engineering."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5465.894417,
+          "qa_id": "qa-014-contradiction-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer incorrectly states MySQL; the context clearly indicates the payments service now runs on CockroachDB."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5222.019167,
+          "qa_id": "qa-015-contradiction-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information about Alice's home address, so stating that the information is unavailable is correct."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 4816.8870830000005,
+          "qa_id": "qa-016-abstention-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information regarding the lead engineer's salary."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 6873.392792,
+          "qa_id": "qa-017-abstention-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information about the cloud provider Priya's team uses for production."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5724.374416,
+          "qa_id": "qa-018-abstention-correct-2"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that the kremory graph engine is implemented in Rust."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 6382.062666000001,
+          "qa_id": "qa-019-code-aware-correct"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer correctly identifies two dependencies mentioned in the context but omits the dependencies on serde and serde_json."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5941.126833,
+          "qa_id": "qa-020-code-aware-partial"
+        }
+      ],
+      "run_number": 2,
+      "timestamp": "2026-05-28T08:16:18.171790+00:00",
+      "total_inference_ms": 112102.605125
+    },
+    {
+      "agree_count": 19,
+      "agreement_rate": 0.95,
+      "avg_inference_ms": 5615.14452085,
+      "model_load_ms": 541.076042,
+      "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
+      "pair_count": 20,
+      "pairs": [
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately states Dave's job title and company as provided in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 4649.438916,
+          "qa_id": "qa-001-info-extraction-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer contradicts the context, which states that Dave is a senior software engineer."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 4302.184916,
+          "qa_id": "qa-002-info-extraction-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": true,
+            "reasoning": "The answer correctly identifies Sarah's role but fails to mention the team she leads."
+          },
+          "agrees": false,
+          "expected": "partial",
+          "latency_ms": 5399.370709000001,
+          "qa_id": "qa-003-info-extraction-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately identifies the internal dashboard project mentioned in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 7060.373709,
+          "qa_id": "qa-004-multi-session-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The context states Marcus is using React and Postgres, but the answer incorrectly states Vue and MySQL."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5796.6677500000005,
+          "qa_id": "qa-005-multi-session-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Lisa joined HelixAI as a staff engineer."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 6332.254583,
+          "qa_id": "qa-006-knowledge-update-correct"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Ziad grew up in Casablanca, Morocco."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5716.676125,
+          "qa_id": "qa-007-non-english-name-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer contradicts the context, which states that 王芳 is a data scientist at Tencent Research."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5359.2612500000005,
+          "qa_id": "qa-008-non-english-name-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer is correct as quantum computing is one of his specializations, but it is partial because the context also mentions cryptography."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5627.046375,
+          "qa_id": "qa-009-non-english-name-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Łukasz joined OVHcloud."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5651.6404170000005,
+          "qa_id": "qa-010-non-english-name-correct-2"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer is factually correct but is less specific than the context, which states the joining occurred in Q3 2024."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5628.770042,
+          "qa_id": "qa-011-temporal-partial"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The answer accurately states the migration date as found directly in the context."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5321.210834,
+          "qa_id": "qa-012-temporal-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer provides the incorrect release date; the context states the v2 API was released publicly in February 2025."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5688.441667,
+          "qa_id": "qa-013-temporal-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that Frank joined StartupX in early 2024 as VP of Engineering."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5026.371209,
+          "qa_id": "qa-014-contradiction-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The answer incorrectly states MySQL; the context clearly indicates the payments service now runs on CockroachDB."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 5916.5437919999995,
+          "qa_id": "qa-015-contradiction-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information about Alice's home address, so stating that the information is unavailable is correct."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 4976.945,
+          "qa_id": "qa-016-abstention-correct"
+        },
+        {
+          "actual": {
+            "is_correct": false,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information regarding the lead engineer's salary."
+          },
+          "agrees": true,
+          "expected": "incorrect",
+          "latency_ms": 6847.628333000001,
+          "qa_id": "qa-017-abstention-incorrect"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context does not contain any information about the cloud provider Priya's team uses for production."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5544.530625,
+          "qa_id": "qa-018-abstention-correct-2"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": false,
+            "reasoning": "The context explicitly states that the kremory graph engine is implemented in Rust."
+          },
+          "agrees": true,
+          "expected": "correct",
+          "latency_ms": 5647.329208,
+          "qa_id": "qa-019-code-aware-correct"
+        },
+        {
+          "actual": {
+            "is_correct": true,
+            "is_partial": true,
+            "reasoning": "The answer correctly identifies two dependencies mentioned in the context but omits the dependencies on serde and serde_json."
+          },
+          "agrees": true,
+          "expected": "partial",
+          "latency_ms": 5809.9996249999995,
+          "qa_id": "qa-020-code-aware-partial"
+        }
+      ],
+      "run_number": 3,
+      "timestamp": "2026-05-28T08:18:11.066293+00:00",
+      "total_inference_ms": 112302.890417
+    }
+  ],
+  "session": "kremory-v014-phase1-20260528-074901",
+  "summary": {
+    "gate_verdict": "PASS",
+    "pass_threshold": 0.8,
+    "run_1_agreement_rate": 0.95,
+    "run_2_agreement_rate": 0.95,
+    "run_3_agreement_rate": 0.95,
+    "variance_threshold": 0.02,
+    "warm_variance": 0.0
+  }
+}

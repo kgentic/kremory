@@ -50,6 +50,12 @@ struct PairResult {
     actual: JudgeVerdict,
     agrees: bool,
     latency_ms: f64,
+    /// Raw `content` captured only when parse fails — omitted on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_content: Option<String>,
+    /// Raw `thinking` captured only when parse fails — omitted on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_thinking: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,6 +92,10 @@ Evaluate the answer using these criteria:
 - is_partial=true: the answer is correct but less specific than the context allows (e.g., "2024" when context says "Q3 2024")
 
 For abstention cases: if the context does NOT contain information to answer the question, then "I don't know" is a CORRECT answer (is_correct=true).
+
+IMPORTANT: After your reasoning, output the JSON object ON ITS OWN LINE.
+The JSON must be valid and contain exactly the keys: is_correct, is_partial, reasoning.
+Do not wrap it in markdown code fences. Do not add commentary after the JSON.
 
 Respond ONLY with a JSON object matching this schema:
 {
@@ -146,7 +156,7 @@ async fn run_spike(
     model_path: &Path,
     run_number: u32,
 ) -> anyhow::Result<RunResult> {
-    use autoagents_llamacpp::{LlamaCppConfigBuilder, LlamaCppProvider};
+    use autoagents_llamacpp::{LlamaCppConfigBuilder, LlamaCppProvider, LlamaCppReasoningFormat};
     use autoagents_llm::chat::{ChatMessage, ChatProvider, MessageType};
     use autoagents_llm::chat::ChatRole;
 
@@ -157,11 +167,22 @@ async fn run_spike(
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("model path is not valid UTF-8"))?;
 
+    // reasoning_format::Auto routes Gemma 4's <|channel>thought tokens to the
+    // separate `thinking` field instead of mangling the `content` output.
+    // max_tokens bumped to 1024 to accommodate CoT before the JSON.
+    // extra_body sets chat_template_kwargs.enable_thinking=true for the
+    // llama.cpp OpenAI template API (Gemma 4 needs this flag to emit structured thinking).
     let config = LlamaCppConfigBuilder::new()
         .model_path(model_path_str)
-        .max_tokens(256)
+        .max_tokens(1024)
         .temperature(0.0)
         .seed(42)
+        .reasoning_format(LlamaCppReasoningFormat::Auto)
+        .extra_body(serde_json::json!({
+            "chat_template_kwargs": {
+                "enable_thinking": true
+            }
+        }))
         .build();
 
     let provider = LlamaCppProvider::from_config(config)
@@ -193,19 +214,46 @@ async fn run_spike(
             .map_err(|e| anyhow::anyhow!("inference error for {}: {}", qa.id, e))?;
         let latency_ms = inference_start.elapsed().as_secs_f64() * 1000.0;
 
-        let raw_output = response.text().unwrap_or_default();
-        let actual = match parse_judge_output(&raw_output) {
-            Ok(v) => v,
+        // Try content first; if it has no JSON, fall through to thinking.
+        // With reasoning_format::Auto, Gemma 4's CoT goes to `thinking` and
+        // the JSON response should be in `content` — but check both defensively.
+        let raw_content = response.text().unwrap_or_default();
+        let raw_thinking = response.thinking().unwrap_or_default();
+
+        let parse_result = if raw_content.contains('{') {
+            parse_judge_output(&raw_content)
+        } else if raw_thinking.contains('{') {
+            parse_judge_output(&raw_thinking)
+        } else {
+            Err(anyhow::anyhow!("no JSON object in content or thinking"))
+        };
+
+        let (actual, captured_content, captured_thinking) = match parse_result {
+            Ok(v) => (v, None, None),
             Err(e) => {
                 eprintln!(
-                    "Failed to parse judge output for {}: {} (raw: {})",
-                    qa.id, e, raw_output
+                    "PARSE_ERROR for {}: {} | content: {:?} | thinking_prefix: {:?}",
+                    qa.id,
+                    e,
+                    &raw_content.chars().take(200).collect::<String>(),
+                    &raw_thinking.chars().take(200).collect::<String>(),
                 );
-                JudgeVerdict {
+                let verdict = JudgeVerdict {
                     is_correct: false,
                     is_partial: false,
                     reasoning: format!("PARSE_ERROR: {}", e),
-                }
+                };
+                let cap_c = if raw_content.is_empty() {
+                    None
+                } else {
+                    Some(raw_content.chars().take(500).collect::<String>())
+                };
+                let cap_t = if raw_thinking.is_empty() {
+                    None
+                } else {
+                    Some(raw_thinking.chars().take(500).collect::<String>())
+                };
+                (verdict, cap_c, cap_t)
             }
         };
 
@@ -218,6 +266,8 @@ async fn run_spike(
             actual,
             agrees,
             latency_ms,
+            raw_content: captured_content,
+            raw_thinking: captured_thinking,
         });
     }
 
