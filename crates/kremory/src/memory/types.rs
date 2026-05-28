@@ -171,7 +171,13 @@ pub struct SearchOpts {
 
 /// A single retrieved result composed of an entity, the edges anchoring
 /// it, and the temporal facts that produced it.
+///
+/// `#[non_exhaustive]` — construction from outside this crate must go through
+/// `RetrievedContext::new()` + the `with_*` fluent setters. This keeps future
+/// field additions (e.g. `namespace` per ADR-029c) source-compatible across
+/// minor versions. Added v0.1.4 as prereq for ADR-029c multi-namespace recall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RetrievedContext {
     pub entity_id: String,
     pub entity_name: String,
@@ -186,6 +192,34 @@ pub struct RetrievedContext {
     /// still deserialises correctly (defaults to `false`).
     #[serde(default)]
     pub incomplete: bool,
+}
+
+impl RetrievedContext {
+    /// Construct a `RetrievedContext` with the required fields. Optional fields
+    /// (`incomplete`, future additions) default to their sensible defaults; use
+    /// the `with_*` fluent setters to override.
+    pub fn new(
+        entity_id: impl Into<String>,
+        entity_name: impl Into<String>,
+        summary: impl Into<String>,
+        score: f32,
+        source_refs: Vec<SourceRef>,
+    ) -> Self {
+        Self {
+            entity_id: entity_id.into(),
+            entity_name: entity_name.into(),
+            summary: summary.into(),
+            score,
+            source_refs,
+            incomplete: false,
+        }
+    }
+
+    /// Mark this result as incomplete (stub forward-reference). Default `false`.
+    pub fn with_incomplete(mut self, incomplete: bool) -> Self {
+        self.incomplete = incomplete;
+        self
+    }
 }
 
 /// Template strategy for `context_block` — which dimension of the retrieved
