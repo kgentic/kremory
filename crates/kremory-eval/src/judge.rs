@@ -222,6 +222,7 @@ impl Judge for GemmaJudge {
 ///
 /// Returns a fixed [`JudgeVerdict`] regardless of input.  Tests can call
 /// [`MockJudge::new`] with the verdict they want to observe.
+#[derive(Clone)]
 pub struct MockJudge {
     verdict: JudgeVerdict,
 }

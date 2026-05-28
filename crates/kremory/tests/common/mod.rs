@@ -47,84 +47,123 @@ pub fn fixtures() -> Vec<Fixture> {
         Fixture {
             name: "Mock Interview",
             key: "mock_interview",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/mock_interview.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/mock_interview.txt"
+            ),
         },
         Fixture {
             name: "Medical Consult",
             key: "medical_consultation",
             path: concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/fixtures/medical_consultation.txt"
+                "/../kremory-eval/fixtures/medical_consultation.txt"
             ),
         },
         Fixture {
             name: "Legal Deposition",
             key: "legal_deposition",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/legal_deposition.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/legal_deposition.txt"
+            ),
         },
         Fixture {
             name: "Tech Standup",
             key: "tech_standup",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/tech_standup.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/tech_standup.txt"
+            ),
         },
         Fixture {
             name: "Sales Call",
             key: "sales_call",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sales_call.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/sales_call.txt"
+            ),
         },
         Fixture {
             name: "Podcast",
             key: "podcast_interview",
             path: concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/fixtures/podcast_interview.txt"
+                "/../kremory-eval/fixtures/podcast_interview.txt"
             ),
         },
         Fixture {
             name: "Board Meeting",
             key: "board_meeting",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/board_meeting.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/board_meeting.txt"
+            ),
         },
         Fixture {
             name: "News Article",
             key: "news_article",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/news_article.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/news_article.txt"
+            ),
         },
         Fixture {
             name: "Academic Lecture",
             key: "academic_lecture",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/academic_lecture.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/academic_lecture.txt"
+            ),
         },
         Fixture {
             name: "Customer Support",
             key: "customer_support",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/customer_support.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/customer_support.txt"
+            ),
         },
         Fixture {
             name: "Slack Thread",
             key: "slack_thread",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/slack_thread.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/slack_thread.txt"
+            ),
         },
         Fixture {
             name: "Product Review",
             key: "product_review",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/product_review.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/product_review.txt"
+            ),
         },
         Fixture {
             name: "Short Snippet",
             key: "short_snippet",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/short_snippet.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/short_snippet.txt"
+            ),
         },
         Fixture {
             name: "Long Report",
             key: "long_report",
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/long_report.txt"),
+            path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../kremory-eval/fixtures/long_report.txt"
+            ),
         },
     ]
 }
 
 pub fn load_ground_truth() -> HashMap<String, Vec<String>> {
-    let gt_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/ground_truth.json");
+    let gt_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../kremory-eval/fixtures/ground_truth.json"
+    );
     let gt_raw = std::fs::read_to_string(gt_path).expect("ground_truth.json");
     let gt: serde_json::Value = serde_json::from_str(&gt_raw).expect("parse ground truth");
     gt.as_object()
@@ -162,12 +201,12 @@ pub fn recall(extracted: &[String], expected: &[String]) -> f64 {
 pub fn load_auditor() -> OovAuditor {
     let aff = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/fixtures/dictionaries/en_US.aff"
+        "/../kremory-eval/fixtures/dictionaries/en_US.aff"
     ))
     .expect("en_US.aff");
     let dic = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/fixtures/dictionaries/en_US.dic"
+        "/../kremory-eval/fixtures/dictionaries/en_US.dic"
     ))
     .expect("en_US.dic");
     let dict = zspell::builder()
