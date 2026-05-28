@@ -1,0 +1,100 @@
+name: eval-canary
+# Transient: measures peak RSS for calibration_spike on ubuntu-latest free-tier.
+# Triggered manually via workflow_dispatch (does NOT auto-run on push).
+# Delete this workflow file after the v0.1.4 Phase 1 CI RAM gate clears.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ram-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-eval-canary-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache gguf model
+        id: cache-gguf
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf
+          key: gguf-gemma-4-E2B-Q4_K_M-unsloth
+
+      - name: Download gguf if not cached
+        if: steps.cache-gguf.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.cache/huggingface/hub
+          curl -L -o ~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf \
+            "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf"
+
+      - name: Build calibration_spike (release)
+        run: cargo build --release -p kremory-eval --bin calibration_spike
+
+      - name: Run with peak RSS measurement
+        env:
+          KREMORY_EVAL_JUDGE_MODEL_PATH: ~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf
+        run: |
+          # /usr/bin/time on ubuntu-latest = GNU time; flags differ from BSD/macOS
+          /usr/bin/time -v env KREMORY_EVAL_JUDGE_MODEL_PATH="$KREMORY_EVAL_JUDGE_MODEL_PATH" \
+            ./target/release/calibration_spike 2>&1 | tee canary-run.log
+
+      - name: Extract peak RSS
+        id: rss
+        run: |
+          # GNU time outputs "Maximum resident set size (kbytes): N"
+          PEAK_KB=$(grep "Maximum resident set size" canary-run.log | awk '{print $NF}')
+          PEAK_MB=$(echo "scale=1; $PEAK_KB / 1024" | bc)
+          echo "peak_rss_kb=$PEAK_KB" >> $GITHUB_OUTPUT
+          echo "peak_rss_mb=$PEAK_MB" >> $GITHUB_OUTPUT
+          echo "Peak RSS: ${PEAK_MB} MB"
+
+      - name: Write canary result JSON
+        run: |
+          PEAK_KB=${{ steps.rss.outputs.peak_rss_kb }}
+          if [ "$PEAK_KB" -le 5632000 ]; then
+            VERDICT="PASS"
+          elif [ "$PEAK_KB" -le 6656000 ]; then
+            VERDICT="DEMOTE"
+          else
+            VERDICT="HITL"
+          fi
+          cat > canary-result.json <<EOF
+          {
+            "session": "kremory-v014-phase1-20260528-074901",
+            "runner": "ubuntu-latest",
+            "runner_arch": "x86_64",
+            "model": "gemma-4-E2B-it-Q4_K_M",
+            "peak_rss_kb": $PEAK_KB,
+            "peak_rss_mb": ${{ steps.rss.outputs.peak_rss_mb }},
+            "free_tier_limit_mb": 7000,
+            "kremory_threshold_mb": 5500,
+            "demote_threshold_mb": 6500,
+            "gate_verdict": "$VERDICT",
+            "measured_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "github_run_id": "${{ github.run_id }}"
+          }
+          EOF
+          cat canary-result.json
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-ram-canary-${{ github.run_id }}
+          path: |
+            canary-run.log
+            canary-result.json
+          retention-days: 30
