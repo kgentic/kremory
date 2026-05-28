@@ -78,14 +78,17 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::core::chat_tracking::TokenTrackingChatProvider;
+use crate::core::error::Error as CoreError;
 use crate::core::provider::DynEmbeddingProvider;
+use crate::core::schema::TemporalGraph;
+use crate::memory::engine_handle::namespace_to_group_id;
 use crate::memory::{
     self,
     events::EnrichmentEventSink,
     types::{
         AwaitOpts, BatchStatus, CancelOutcome, ContextTemplate, DreamHandle, DreamOpts,
-        DreamPhaseResult, DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts,
-        SourceKind, SourceRef, StructuredFact, SubmitOpts,
+        DreamPhaseResult, DreamStatus, EpisodeCommit, Namespace, NamespacePolicy, RetrievedContext,
+        SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
     },
     ChatProvider, GraphHandle, MemoryError, Result,
 };
@@ -192,13 +195,19 @@ impl From<RecallTemplate> for ContextTemplate {
 /// free functions directly — they remain public and unchanged.
 #[derive(Clone)]
 pub struct Memory {
-    graph: Arc<dyn GraphHandle>,
-    llm: Arc<dyn ChatProvider>,
+    pub(crate) graph: Arc<dyn GraphHandle>,
+    pub(crate) llm: Arc<dyn ChatProvider>,
     /// Stored for forward-compat (v0.1.1 will wire to real TemporalGraph::open).
     #[allow(dead_code)]
-    embedder: Arc<dyn DynEmbeddingProvider>,
-    default_sink: Option<Arc<dyn EnrichmentEventSink>>,
-    default_namespace: Option<Namespace>,
+    pub(crate) embedder: Arc<dyn DynEmbeddingProvider>,
+    pub(crate) default_sink: Option<Arc<dyn EnrichmentEventSink>>,
+    pub(crate) default_namespace: Option<Namespace>,
+    /// Direct handle to the underlying `TemporalGraph` for namespace-policy
+    /// substrate calls (ADR-029a `register_namespace` + lazy population).
+    /// `None` only when `Memory` is constructed by a test path that bypasses
+    /// `providers::open_graph` (e.g. with a stub `GraphHandle`). In that case
+    /// `register_namespace` returns `MemoryError::Other("…")`.
+    pub(crate) temporal_graph: Option<Arc<TemporalGraph>>,
 }
 
 impl Memory {
@@ -443,6 +452,123 @@ impl Memory {
         Ok(())
     }
 
+    // ── Namespace policy (ADR-029a, v0.1.4) ───────────────────────────────────
+
+    /// Register a namespace + its policy explicitly, ahead of any writes.
+    ///
+    /// # Idempotency
+    ///
+    /// Calling `register_namespace` with the SAME `(group_id, policy)` pair
+    /// returns `Ok(())`. Calling with a DIFFERENT policy on an existing
+    /// `group_id` returns
+    /// `Err(MemoryError::Core(Error::NamespacePolicyImmutable { ... }))`.
+    /// This makes startup code safe to re-execute (idempotent against
+    /// persisted state).
+    ///
+    /// # Validation
+    ///
+    /// The policy attached to `namespace` is validated via
+    /// [`NamespacePolicy::validate`] before persistence. Incoherent policies
+    /// surface as `Err(MemoryError::Core(Error::InvalidPolicy(...)))`.
+    ///
+    /// # No enforcement at v0.1.4
+    ///
+    /// The policy is PERSISTED but not yet enforced on
+    /// `dream()` / `forget()` / mutation operations. Enforcement lands in
+    /// v0.1.5+ per ADR-029b. Every non-default policy registration emits
+    /// a `tracing::warn!` on target `kremory.namespace` to make the
+    /// declaration vs enforcement gap visible.
+    ///
+    /// # Race semantics — atomic via `BEGIN IMMEDIATE`
+    ///
+    /// `register_namespace` wraps the SELECT + INSERT pair in a
+    /// `BEGIN IMMEDIATE` transaction (per ADR-022 write_lock invariant). This
+    /// acquires SQLite's RESERVED write lock before reading, serializing
+    /// against concurrent `remember(...)` calls that would implicitly create
+    /// the namespace with default policy.
+    ///
+    /// The recommended pattern is `register_namespace` AT STARTUP before any
+    /// `remember(...)`. See ADR-029a Decision 6 for the three race outcomes.
+    pub async fn register_namespace(&self, namespace: Namespace) -> Result<()> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::register_namespace requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+
+        let policy = namespace.policy.clone().unwrap_or_default();
+        policy
+            .validate()
+            .map_err(|e| MemoryError::Core(CoreError::InvalidPolicy(e)))?;
+
+        let group_id = namespace_to_group_id(&namespace);
+        let is_non_default = policy != NamespacePolicy::default();
+
+        // Atomic INSERT-or-compare via BEGIN IMMEDIATE.
+        let guard = tg.begin_immediate_if_needed().await.map_err(MemoryError::Core)?;
+        let stored = tg
+            .get_namespace_policy(&group_id)
+            .await
+            .map_err(MemoryError::Core)?;
+        let outcome: Result<()> = match stored {
+            Some(existing) if existing == policy => Ok(()),
+            Some(existing) => Err(MemoryError::Core(CoreError::NamespacePolicyImmutable {
+                namespace: group_id.clone(),
+                stored: existing,
+                attempted: policy.clone(),
+            })),
+            None => tg
+                .set_namespace_policy(&group_id, &policy)
+                .await
+                .map_err(MemoryError::Core),
+        };
+        match &outcome {
+            Ok(()) => {
+                guard.commit().await.map_err(MemoryError::Core)?;
+            }
+            Err(_) => {
+                guard.rollback().await.map_err(MemoryError::Core)?;
+            }
+        }
+
+        // Operational visibility: every non-default policy DECLARATION emits
+        // warn (NOT info) — closes Vera cycle-1 HIGH-1 footgun. Default
+        // policies are silent (they would be the existing behaviour).
+        if outcome.is_ok() && is_non_default {
+            tracing::warn!(
+                target: "kremory.namespace",
+                group_id = %group_id,
+                policy = ?policy,
+                "kremory.namespace.policy_declared: POLICY DECLARED BUT NOT \
+                 ENFORCED at v0.1.4 — enforcement lands v0.1.5+ per ADR-029b. \
+                 See https://docs.rs/kremory/0.1.4/kremory/#adr-029a"
+            );
+        }
+
+        outcome
+    }
+
+    /// Lazy-population helper: ensure a default-policy row exists for the
+    /// `namespace` if it has not been observed yet. Invoked from the first-
+    /// encounter paths (`remember`, `recall`, `forget`, `dream`) per ADR-029a
+    /// Decision 8.
+    ///
+    /// Best-effort: when `Memory` is constructed without a direct
+    /// `Arc<TemporalGraph>` (e.g. test-only stub-handle path) this is a no-op.
+    /// Errors from the substrate are converted to `MemoryError::Core` and
+    /// returned so the call site can decide whether to fail the user request.
+    pub(crate) async fn ensure_namespace_policy(&self, namespace: &Namespace) -> Result<()> {
+        let Some(tg) = self.temporal_graph.as_ref() else {
+            return Ok(());
+        };
+        let group_id = namespace_to_group_id(namespace);
+        tg.ensure_namespace_policy_row(&group_id)
+            .await
+            .map_err(MemoryError::Core)
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     fn resolve_namespace(&self, override_ns: Option<Namespace>) -> Result<Namespace> {
@@ -631,7 +757,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
             let embedder = self
                 .embedder
                 .ok_or_else(|| MemoryError::Other("embedder missing".into()))?;
-            let graph = providers::open_graph(
+            let (graph, temporal_graph) = providers::open_graph(
                 self.path.as_path(),
                 llm.clone(),
                 embedder.clone(),
@@ -644,6 +770,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 embedder,
                 default_sink: self.default_sink,
                 default_namespace: self.default_namespace,
+                temporal_graph: Some(temporal_graph),
             })
         })
     }
@@ -783,6 +910,10 @@ impl<'a> RememberRequest<'a> {
             run_in_background: self.no_wait,
         });
 
+        // ADR-029a lazy population: ensure a default-policy row exists for
+        // the namespace before the first write.
+        self.memory.ensure_namespace_policy(&ns).await?;
+
         memory::submit_episode(
             self.memory.graph.as_ref(),
             &self.content,
@@ -864,6 +995,8 @@ impl<'a> RememberBatchBuilder<'a> {
                 occurred_at: Utc::now(),
                 published_at: ep.published_at,
             });
+            // ADR-029a lazy population.
+            self.memory.ensure_namespace_policy(&ns).await?;
             let commit = memory::submit_episode(
                 self.memory.graph.as_ref(),
                 &ep.content,
@@ -1020,6 +1153,8 @@ impl<'a> RecallRequest<'a> {
             as_of: self.as_of,
             source_kind: None,
         });
+        // ADR-029a lazy population.
+        self.memory.ensure_namespace_policy(&ns).await?;
         let results = memory::search(self.memory.graph.as_ref(), &self.query, ns, opts).await?;
         let template = self.template.unwrap_or(RecallTemplate::TemporalFacts);
         Ok(memory::context_block(&results, template.into()))
@@ -1054,6 +1189,8 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
                 as_of: self.inner.as_of,
                 source_kind: None,
             });
+            // ADR-029a lazy population.
+            self.inner.memory.ensure_namespace_policy(&ns).await?;
             memory::search(
                 self.inner.memory.graph.as_ref(),
                 &self.inner.query,
@@ -1087,7 +1224,10 @@ impl<'a> ForgetRequest<'a> {
     /// This is the only terminal for `ForgetRequest` — there is no implicit
     /// `.await` to prevent accidental destructive operations.
     pub async fn execute(self) -> Result<u64> {
-        let _ns = self.memory.resolve_namespace(self.namespace)?;
+        let ns = self.memory.resolve_namespace(self.namespace)?;
+        // ADR-029a lazy population: record the namespace observation even
+        // though the v0.1.0 substrate-side delete is a no-op at the facade.
+        self.memory.ensure_namespace_policy(&ns).await?;
         // v0.1.0 stub: no substrate batch_forget fn exists yet.
         // The namespace is validated above (MissingNamespace check fires correctly).
         // Actual deletion deferred until substrate exposes batch_forget.
@@ -1158,6 +1298,8 @@ impl<'a> DreamRequest<'a> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
         let sink = self.memory.resolve_sink(self.sink);
         let _opts = self.opts.unwrap_or_default();
+        // ADR-029a lazy population.
+        self.memory.ensure_namespace_policy(&ns).await?;
         // Use legacy synchronous path: run_dream_phase → DreamPhaseResult → DreamSummary
         // This is the correct substrate call for blocking dream at v0.1.0.
         #[allow(deprecated)]
@@ -1196,6 +1338,8 @@ impl<'a> IntoFuture for DreamFireAndForget<'a> {
             let ns = self.inner.memory.resolve_namespace(self.inner.namespace)?;
             let sink = self.inner.memory.resolve_sink(self.inner.sink);
             let opts = self.inner.opts.unwrap_or_default();
+            // ADR-029a lazy population.
+            self.inner.memory.ensure_namespace_policy(&ns).await?;
             memory::submit_dream_phase(
                 self.inner.memory.graph.as_ref(),
                 ns,

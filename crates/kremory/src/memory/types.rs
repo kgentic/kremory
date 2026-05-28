@@ -29,6 +29,14 @@ pub use crate::core::error::IngestStatus;
 pub struct Namespace {
     pub namespace: String,
     pub thread: Option<String>,
+    /// Policy attached at construction time. `None` defers to whatever policy
+    /// is already stored for this namespace; on first write, `None` resolves
+    /// to `NamespacePolicy::default()`. Added v0.1.4 (ADR-029a).
+    ///
+    /// `#[serde(default)]` preserves backward-compat deserialization for
+    /// `Namespace` JSON written before v0.1.4 (no `policy` field).
+    #[serde(default)]
+    pub policy: Option<NamespacePolicy>,
 }
 
 impl Namespace {
@@ -37,6 +45,7 @@ impl Namespace {
         Self {
             namespace: namespace.into(),
             thread: None,
+            policy: None,
         }
     }
 
@@ -45,6 +54,199 @@ impl Namespace {
         self.thread = Some(thread.into());
         self
     }
+
+    /// Attach a policy to this namespace. The policy is validated at
+    /// attachment time; incoherent policies (see [`NamespacePolicy::validate`])
+    /// are rejected up-front.
+    ///
+    /// # Stability
+    ///
+    /// The POLICY is set at namespace CREATION time — the first time
+    /// kremory observes the namespace through a write or explicit
+    /// [`crate::Memory::register_namespace`] call. Subsequent calls with a
+    /// different policy on an EXISTING namespace are rejected at
+    /// `register_namespace` time with
+    /// [`crate::core::error::Error::NamespacePolicyImmutable`]. Added v0.1.4
+    /// (ADR-029a Decision 5).
+    pub fn with_policy(mut self, policy: NamespacePolicy) -> std::result::Result<Self, InvalidPolicyError> {
+        policy.validate()?;
+        self.policy = Some(policy);
+        Ok(self)
+    }
+}
+
+// ── NamespacePolicy + ImmutabilityLevel (ADR-029a) ───────────────────────────
+
+/// Per-namespace policy controls.
+///
+/// Defaults are equivalent to v0.1.3 behaviour (no constraints). Set fields
+/// explicitly to opt into stricter semantics for audit-grade, compliance-shape,
+/// or other policy-bounded workloads.
+///
+/// # Enforcement at v0.1.4
+///
+/// **Policy values are PERSISTED but NOT ENFORCED at v0.1.4.** Setting
+/// `immutability: AppendOnly` records the intent; subsequent `dream()` /
+/// `forget()` calls still proceed normally. Enforcement lands in v0.1.5+
+/// per ADR-029b, which adds the composite-PK storage migration required to
+/// make AppendOnly actually safe.
+///
+/// # Construction
+///
+/// External callers cannot use struct-expression construction due to
+/// `#[non_exhaustive]` — use the fluent setter pattern:
+///
+/// ```
+/// use kremory::{NamespacePolicy, ImmutabilityLevel};
+///
+/// let policy = NamespacePolicy::new()
+///     .with_immutability(ImmutabilityLevel::AppendOnly)
+///     .with_forgettable(false)
+///     .with_dream_eligible(false);
+/// ```
+///
+/// Or use the [`NamespacePolicy::APPEND_ONLY`] const for the canonical
+/// audit-grade preset:
+///
+/// ```
+/// use kremory::NamespacePolicy;
+/// let policy = NamespacePolicy::APPEND_ONLY;
+/// ```
+///
+/// # Extensibility
+///
+/// Future fields land via fluent setters (`with_retention_class(...)`,
+/// `with_legal_hold(...)`, etc.). Each future field follows the same shape:
+/// `#[non_exhaustive]` struct + `with_<field>` setter + `validate()` rule
+/// if it has cross-field constraints + `#[serde(default)]` for backward-compat.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct NamespacePolicy {
+    /// Mutation policy on the underlying graph rows. v0.1.4: persisted only.
+    pub immutability: ImmutabilityLevel,
+
+    /// Whether `forget().in_namespace(ns).execute()` is permitted. v0.1.4:
+    /// persisted only. Default `true` matches v0.1.3 behaviour.
+    pub forgettable: bool,
+
+    /// Whether `dream().in_namespace(ns)` is permitted. v0.1.4: persisted
+    /// only. Default `true` matches v0.1.3 behaviour.
+    pub dream_eligible: bool,
+}
+
+/// Mutation policy values for [`NamespacePolicy::immutability`].
+///
+/// Values are persisted as `snake_case` strings in the policy JSON column,
+/// matching the existing serde convention for kremory public enums.
+///
+/// `#[non_exhaustive]` allows adding new variants (e.g. `Eventual`,
+/// `Strict`) without a SemVer-major bump. Match arms must include a
+/// wildcard `_` when destructuring. Added v0.1.4 (ADR-029a Decision 2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ImmutabilityLevel {
+    /// Default behaviour — dream, forget, entity-move, contradiction-resolver
+    /// supersession all permitted. Matches v0.1.3 semantics exactly.
+    #[default]
+    Mutable,
+
+    /// Append-only intent. v0.1.4: persisted but not enforced. v0.1.5+
+    /// (ADR-029b): existing rows are never mutated, archived, superseded,
+    /// or moved. Writes that ADD new rows still proceed; writes that would
+    /// mutate existing rows return an error.
+    AppendOnly,
+}
+
+impl NamespacePolicy {
+    /// Construct a default policy (Mutable, forgettable, dream_eligible).
+    /// Use the `with_*` fluent setters to override fields.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the immutability level. Default `Mutable`.
+    pub fn with_immutability(mut self, level: ImmutabilityLevel) -> Self {
+        self.immutability = level;
+        self
+    }
+
+    /// Set whether `forget()` is permitted. Default `true`.
+    pub fn with_forgettable(mut self, forgettable: bool) -> Self {
+        self.forgettable = forgettable;
+        self
+    }
+
+    /// Set whether `dream()` is permitted. Default `true`.
+    pub fn with_dream_eligible(mut self, dream_eligible: bool) -> Self {
+        self.dream_eligible = dream_eligible;
+        self
+    }
+
+    /// Canonical audit-grade preset. Equivalent to:
+    ///
+    /// ```text
+    /// NamespacePolicy::new()
+    ///     .with_immutability(ImmutabilityLevel::AppendOnly)
+    ///     .with_forgettable(false)
+    ///     .with_dream_eligible(false)
+    /// ```
+    pub const APPEND_ONLY: Self = Self {
+        immutability: ImmutabilityLevel::AppendOnly,
+        forgettable: false,
+        dream_eligible: false,
+    };
+
+    /// Validate that the policy fields form a coherent combination.
+    /// Called automatically by [`crate::Memory::register_namespace`] and
+    /// [`Namespace::with_policy`]; callers can also invoke explicitly.
+    ///
+    /// # Current rules
+    ///
+    /// - `immutability == AppendOnly` implies `!forgettable && !dream_eligible`
+    ///   (forget and dream are both mutations; an AppendOnly namespace cannot
+    ///   permit them).
+    ///
+    /// Future fields may add rules; this method is `#[non_exhaustive]` in
+    /// spirit (more rules can land additively).
+    pub fn validate(&self) -> std::result::Result<(), InvalidPolicyError> {
+        if self.immutability == ImmutabilityLevel::AppendOnly
+            && (self.forgettable || self.dream_eligible)
+        {
+            return Err(InvalidPolicyError::IncoherentAppendOnly {
+                policy: self.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Default for NamespacePolicy {
+    fn default() -> Self {
+        Self {
+            immutability: ImmutabilityLevel::Mutable,
+            forgettable: true,
+            dream_eligible: true,
+        }
+    }
+}
+
+/// Validation errors for [`NamespacePolicy`]. Returned by
+/// [`NamespacePolicy::validate`] and surfaced via
+/// [`crate::core::error::Error::InvalidPolicy`].
+///
+/// `#[non_exhaustive]` — future validation rules add variants without
+/// SemVer-major bumps. Added v0.1.4 (ADR-029a Decision 4).
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum InvalidPolicyError {
+    /// `immutability: AppendOnly` requires `forgettable=false` and
+    /// `dream_eligible=false`. Forget and dream are both mutations.
+    #[error(
+        "namespace policy is incoherent: AppendOnly requires \
+         forgettable=false and dream_eligible=false; got {policy:?}"
+    )]
+    IncoherentAppendOnly { policy: NamespacePolicy },
 }
 
 /// Kind of source an episode came from. Domain-agnostic — the host application writes

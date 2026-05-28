@@ -54,7 +54,7 @@ pub(crate) async fn open_graph(
     llm: Arc<dyn ChatProvider>,
     embedder: Arc<dyn DynEmbeddingProvider>,
     embedding_dim: Option<usize>,
-) -> Result<Arc<dyn GraphHandle>> {
+) -> Result<(Arc<dyn GraphHandle>, Arc<TemporalGraph>)> {
     let path_str = path
         .as_ref()
         .to_str()
@@ -66,6 +66,7 @@ pub(crate) async fn open_graph(
             .await
             .map_err(MemoryError::Core)?,
     );
+    let graph_for_facade = Arc::clone(&graph);
 
     let config = PipelineConfig::builder()
         .embedding_dim(resolved_dim)
@@ -79,7 +80,8 @@ pub(crate) async fn open_graph(
         config,
     );
 
-    Ok(Arc::new(EngineGraphHandle::new(engine)) as Arc<dyn GraphHandle>)
+    let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
+    Ok((handle, graph_for_facade))
 }
 
 // ── Tier 1 shortcuts ──────────────────────────────────────────────────────────
@@ -241,13 +243,15 @@ async fn build_memory(
         );
     }
 
-    let graph = open_graph(path.as_ref(), llm.clone(), embedder.clone(), embedding_dim).await?;
+    let (graph, temporal_graph) =
+        open_graph(path.as_ref(), llm.clone(), embedder.clone(), embedding_dim).await?;
     Ok(Memory {
         graph,
         llm,
         embedder,
         default_sink: None,
         default_namespace: None,
+        temporal_graph: Some(temporal_graph),
     })
 }
 

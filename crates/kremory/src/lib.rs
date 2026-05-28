@@ -55,6 +55,8 @@ pub use memory::{
     Namespace, Result as MemoryResult, RetrievedContext, SearchOpts, SourceKind, SourceRef,
     StructuredFact, TelemetryConfig, TelemetryHandle, TelemetryInitError,
 };
+// ADR-029a (v0.1.4): namespace policy primitives.
+pub use memory::types::{ImmutabilityLevel, InvalidPolicyError, NamespacePolicy};
 // Handle / lifecycle types (facade + substrate consumers)
 pub use memory::types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamMode, DreamOpts,
