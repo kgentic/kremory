@@ -13,7 +13,9 @@
 //! Scorer   → async fn score(&self, sample: &Sample, output: &Output) -> Score
 //! ```
 
+pub mod adapters;
 pub mod judge;
+pub mod layer_a;
 pub mod layer_b;
 pub mod scorers;
 pub mod types;
