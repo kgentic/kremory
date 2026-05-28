@@ -1,4 +1,5 @@
 //! Unit tests for all kremory-eval scorers (Tessa M7).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //!
 //! Each scorer has at least one PASS case and one FAIL case.
 //! Model-graded scorers use [`MockJudge`] — no real LLM required.

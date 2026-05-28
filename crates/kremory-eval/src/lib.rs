@@ -85,7 +85,7 @@ pub trait Dataset {
 /// Produces a model output for a given sample.
 ///
 /// In practice this wraps kremory `Memory::open` + a query.
-pub trait Solver<Sample, Output> {
+pub trait Solver<Sample, Output>: Send + Sync {
     /// Solve one sample, returning an output to be scored.
     fn solve(
         &self,
