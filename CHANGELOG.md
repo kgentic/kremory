@@ -9,6 +9,168 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Doc-vs-code parity backfill — see also tier-D items in `.ai-docs/planning/roadmap-post-v013-2026-05-28.md`.
+
+## [0.1.3] — 2026-05-28
+
+Hygiene release. `cargo clippy --all-targets --all-features -- -D warnings` now passes
+clean across the workspace.
+
+### Changed
+
+- **Test-scope `clippy::unwrap_used` + `clippy::expect_used` exemption** — added
+  `#![allow(...)]` attributes to `#[cfg(test)] mod tests` blocks across 21 src/ files
+  and 54 integration-test files in `tests/`. Production-code clippy strictness
+  unchanged (still `-D warnings` with no allows in impl code).
+- **Structural lint fixes (no `#[allow]`)** — `ner.rs` identity-op simplifications;
+  `extraction.rs` + `speculative_cache.rs` `len() > 0` → `!is_empty()`;
+  `contradiction.rs` targeted `#[allow(too_many_arguments)]` on test helper.
+
+### Architecture decisions (ADRs)
+
+- **ADR-028** — Defer kremory-core / kremory-ingest crate split — use cargo
+  features instead (supersedes ADR-007 + ADR-008). See
+  `.ai-docs/adrs/rql/adr-028-defer-crate-split-cargo-features-2026-05-28.md`.
+
+## [0.1.2] — 2026-05-28
+
+LLM observability parity. Brings chat-layer telemetry to the same standard the
+embedder layer shipped with in v0.1.0. Closes Gaps A–E identified in the
+v0.1.2 architecture spec.
+
+### Added
+
+- **`TokenTrackingChatProvider<L>` wrapper** (`kremory::core::chat_tracking`) —
+  newtype that wraps any `ChatProvider` and emits token counters + cost gauge +
+  duration histogram per `chat_with_tools` call. Spec Gap A.
+- **`ProviderRates` loader** (`kremory::core::rates`) — bundled `include_str!`
+  load of `crates/kremory/monitoring/provider-rates.toml`. 13 model entries:
+  3 OpenAI embedders + 3 VoyageAI embedders + 2 local embedders + 2 OpenAI chat
+  + 2 Anthropic chat + 1 Ollama wildcard. Runtime override via
+  `MemoryBuilder::with_provider_rates_path(PathBuf)`. Spec Gap B.
+- **`MemoryBuilder::with_llm_tracked<L>(provider, model, llm)`** — explicit
+  builder method that wraps a custom `ChatProvider` in `TokenTrackingChatProvider`
+  with provider+model labels. Tier 1 shortcuts (`with_ollama`, `with_openai`,
+  `with_anthropic`) internally upgrade to call this. `with_llm` retained
+  unchanged for backward compatibility. Spec Gap E.
+- **`#[tracing::instrument]` on Engine spans** — `Engine::ingest_with` named
+  `kremory.ingest`, `Engine::contextualize` named `kremory.contextualize`. GenAI
+  OpenTelemetry SemConv parent spans. Spec Gap C.
+- **Background-thread span context propagation** — `core/background.rs` captures
+  `tracing::Span::current()` before `std::thread::spawn` and re-enters inside the
+  spawned thread via `_enter` guard. Spec Gap C.
+- **`otel` feature gate** — opt-in. When enabled, installs `tracing-subscriber`
+  registry with `EnvFilter` + `fmt` + `tracing-opentelemetry` layer that exports
+  to OTLP gRPC (configured via `OTEL_EXPORTER_OTLP_ENDPOINT`, default
+  `http://localhost:4317`). When disabled, telemetry stays as standard `metrics`
+  + `tracing` emission with no exporter. Spec Gap C.
+- **`init_telemetry(TelemetryConfig)` real implementation** — replaces v0.1.0
+  stub. Returns `TelemetryHandle` that owns the OTel `TracerProvider`. Caller
+  retains handle for lifetime; `handle.shutdown()` flushes spans on graceful
+  termination. Behind `otel` feature flag; remains a no-op stub when feature off.
+- **`kremory::observability` module** — public re-export module that surfaces
+  `TokenTrackingChatProvider`, `TokenTrackingEmbedder`, `ProviderRates`,
+  `ProviderRateEntry`, `RatesError`, `PROVIDER_RATES`, `init_telemetry`,
+  `TelemetryConfig`, `TelemetryHandle`, `TelemetryInitError`, `llm_error_type`.
+- **`llm_error_type(LLMError) -> &'static str`** — maps all 11 verified
+  `autoagents-llm 0.3.7` `LLMError` variants to 3 bounded values:
+  `"server_error"` (Http / Provider / Generic / GuardrailBlocked /
+  GuardrailExecutionFailed), `"client_error"` (Auth / InvalidRequest /
+  NoToolSupport / ToolConfigError), `"parse_error"` (Json / ResponseFormatError).
+  Emitted as `error.type` SPAN ATTRIBUTE (not histogram label) to keep
+  cardinality discipline. Spec Gap D + ADR D7.
+- **`kremory_core_tokens_total{operation, provider, model, direction}`
+  counter** — chat operations now emit alongside the existing embed emissions.
+  `operation = "chat" | "embed"`; `direction = "input" | "output"`.
+- **`kremory_core_cost_usd_total{operation, provider, model}` gauge** — f64 USD
+  cumulative cost. Emitted by both chat and embed paths. Gauge (not counter) per
+  spec ADR D9 supersession on cost unit.
+- **`kremory_core_chat_duration_seconds{provider, model, status}` histogram** —
+  per-call wall-clock duration. `status = "ok" | "error"` (bounded 2 values).
+- **11 new G_v012_* tests** — 6 unit tests in `core/chat_tracking.rs` +
+  `core/rates.rs`, 3 facade integration tests in `tests/llm_integration.rs`,
+  2 OTel integration tests in `tests/otel_integration.rs` (gated
+  `#[cfg(feature = "otel")]`). No `#[ignore]` on any G_v012_*. Per spec §17.
+- **`MockChatProviderTracking`** — test helpers crate `tests/helpers/mock_chat.rs`
+  with `WithUsage(input, output)` / `AlwaysFail(error)` / `RespondThenFail`
+  behavior variants. Backs G_v012_2/3/6/7/8/9 + future retry tests.
+
+### Changed
+
+- **`provider-rates.toml` relocated** — moved from `monitoring/provider-rates.toml`
+  to `crates/kremory/monitoring/provider-rates.toml` so the bundled rates ship
+  inside the published crate tarball. `include_str!` path adjusted accordingly
+  (4 `..` → 2 `..`). Project-root `monitoring/` retains SLO + dual-emit-allowlist
+  files; only rates moved.
+- **`TokenTrackingEmbedder` cost emission** — now reads from `PROVIDER_RATES`
+  global and emits `kremory_core_cost_usd_total{operation="embed"}` alongside
+  the existing `kremory_core_tokens_total{operation="embed"}` counter.
+- **Per-test clippy + recorder pattern** — G_v012_* unit tests use
+  `metrics_util::debugging::DebuggingRecorder` + `metrics::with_local_recorder`
+  for isolated metric capture, matching the existing `TokenTrackingEmbedder`
+  test pattern.
+
+### Known limitations (documented but unblocking)
+
+- **`with_ollama` Tier 1 emits 0 token counters** — `autoagents-llm 0.3.7`
+  Ollama backend's `ChatResponse::usage()` returns `None`. The wrapper still
+  emits duration histogram + one-shot warning per `(provider, model)` pair.
+  Token + cost flow lights up automatically when upstream ships
+  `autoagents-llm 0.3.8+` with the Ollama backend's `usage()` override.
+- **`rate_limited` and `timeout` error.type labels** — not producible from
+  `autoagents-llm 0.3.7` (no structured variants for these conditions). Both
+  route through `HttpError(_)` / `ProviderError(_)` → `"server_error"` per
+  spec §17.6.
+- **Prompt cache token tracking (Anthropic)** — `autoagents-llm`'s anthropic
+  backend already parses `cache_creation_input_tokens` +
+  `cache_read_input_tokens`; kremory wiring to emit these is deferred to v0.1.4
+  (queued in `.ai-docs/planning/roadmap-post-v013-2026-05-28.md` item B.1).
+
+### Architecture decisions (ADRs)
+
+- **kremory-v012-architecture spec** — locked via Vera 3-cycle adversarial
+  review (74/100 CONCERNS + 4 inline patches). Path:
+  `.ai-docs/architecture/kremory-v012--llm-observability-parity-architecture.md`.
+- **ADR D7 cardinality discipline** — `provider` + `model` labels bounded at
+  builder construction; `error.type` bounded to 3 values via `llm_error_type`.
+- **ADR D9 supersession on cost unit** — cost counter stores float USD directly
+  (via `metrics::gauge!`), NOT integer micro-USD. ADR-028 documents the
+  supersession.
+- **Quinn adversarial review applied** — 10 of 11 spec-drift findings fixed
+  in commit `af30e2d`. F-07 disputed (sync `_enter` guard sufficient for
+  sync `worker_loop`). Full audit:
+  `.ship/sessions/kremory-v012-impl-20260527-192208/swarm-memory/quinn-fixes-impl.md`.
+
+## [0.1.1] — 2026-05-27
+
+Recall pipeline redesign. Fixes 5 substrate bugs surfaced during integration
+testing. No public API changes.
+
+### Fixed
+
+- **RRF (Reciprocal Rank Fusion) constant** — `k = 60` now used for hybrid
+  retrieval score blending. Aligned with Zep/Graphiti production defaults.
+- **`episodic_edges` authoritative** — episodic edges are the canonical record
+  of entity-mention-in-episode; deprecated fallback paths removed.
+- **LightRAG stub-entity insertion** — forward references in entity extraction
+  insert stub entities at first mention; promoted to full entities when
+  re-ingested with body.
+- **First-mention snippet** — `source_ref` carries the first-encountered text
+  snippet for the entity, not the most recent.
+- **`SourceKind::Episode`** — replaces deprecated `SourceKind::Document` for
+  ingestion sources; aligns with Graphiti semantic.
+
+### Added
+
+- **5 new G_v011_* integration tests** — `source_refs_carries_episode_kind`,
+  `rrf_single_result_scores_one`, `standalone_entity_has_episodic_edge`,
+  `stub_entity_inserted_on_forward_reference`, `stub_entity_promoted_on_reingestion`.
+
+### Architecture decisions (ADRs)
+
+- **kremory-v011-architecture spec** — recall pipeline redesign locked.
+  Path: `.ai-docs/architecture/kremory-v011--recall-pipeline-redesign-architecture.md`.
+
 ## [0.1.0] — 2026-05-27
 
 First substantive release. Establishes the bi-temporal substrate, BYOM
@@ -94,5 +256,8 @@ architecture, and `kremory::memory` orchestration layer.
 
 ---
 
-[Unreleased]: https://github.com/kgentic-dev/kremory/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/kgentic-dev/kremory/releases/tag/v0.1.0
+[Unreleased]: https://github.com/kgentic/kremory/compare/kremory-v0.1.3...HEAD
+[0.1.3]: https://github.com/kgentic/kremory/compare/kremory-v0.1.2...kremory-v0.1.3
+[0.1.2]: https://github.com/kgentic/kremory/compare/kremory-v0.1.1...kremory-v0.1.2
+[0.1.1]: https://github.com/kgentic/kremory/compare/kremory-v0.1.0...kremory-v0.1.1
+[0.1.0]: https://github.com/kgentic/kremory/releases/tag/kremory-v0.1.0

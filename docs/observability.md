@@ -1,0 +1,342 @@
+# kremory Observability Guide
+
+Shipped in v0.1.2 (LLM observability parity). Embedder observability shipped earlier in v0.1.0. This doc is the canonical reference for both surfaces.
+
+---
+
+## Table of contents
+
+1. [What kremory emits](#what-kremory-emits)
+2. [Metric catalog](#metric-catalog)
+3. [Tracing spans](#tracing-spans)
+4. [Wiring observability into your app](#wiring-observability-into-your-app)
+5. [Provider rates (cost emission)](#provider-rates-cost-emission)
+6. [OTel / OTLP export](#otel--otlp-export)
+7. [Cardinality discipline](#cardinality-discipline)
+8. [Known limitations](#known-limitations)
+9. [Dashboards + queries](#dashboards--queries)
+10. [Cross-references](#cross-references)
+
+---
+
+## What kremory emits
+
+For every LLM call (chat) and embedding call (embed), kremory emits:
+
+- **Token counter** — cumulative input + output tokens per `(provider, model, direction)`
+- **Cost gauge** — cumulative USD cost per `(provider, model)`, computed from a bundled rates table
+- **Duration histogram** — wall-clock latency per call, labelled by outcome
+- **Tracing span** — GenAI OpenTelemetry SemConv-aligned, with `error.type` attribute on failures
+
+Emission is **automatic** when you use:
+- Tier 1 shortcuts (`Memory::with_ollama`, `with_openai`, `with_anthropic`) — auto-wrap providers
+- `MemoryBuilder::with_llm_tracked(provider, model, llm)` — explicit tracked wrap
+
+Emission is **not** automatic for `MemoryBuilder::with_llm(llm)` — that path is intentionally untracked for users who don't want metric emission overhead.
+
+---
+
+## Metric catalog
+
+All metrics use the [`metrics`](https://crates.io/crates/metrics) crate. Backend-agnostic — wire to Prometheus, StatsD, Datadog, OpenTelemetry, in-memory recorder for tests, etc.
+
+### Counters
+
+| Name | Labels | Increment unit | Emitted by |
+|---|---|---|---|
+| `kremory_core_tokens_total` | `operation`, `provider`, `model`, `direction` | u64 token count | `TokenTrackingChatProvider`, `TokenTrackingEmbedder` |
+
+Label values:
+- `operation`: `"chat"` or `"embed"`
+- `provider`: bounded by `monitoring/provider-rates.toml` keys (`"openai"`, `"anthropic"`, `"ollama"`, `"voyage"`, `"local"`)
+- `model`: model name string supplied at builder construction (BYOM = runtime value)
+- `direction`: `"input"` or `"output"` (chat); embedder uses `"input"` only
+
+### Gauges
+
+| Name | Labels | Unit | Emitted by |
+|---|---|---|---|
+| `kremory_core_cost_usd_total` | `operation`, `provider`, `model` | f64 USD (cumulative) | `TokenTrackingChatProvider`, `TokenTrackingEmbedder` |
+
+Notes:
+- Cost is **cumulative** — increments on each call by `(input_tokens + output_tokens) × rate_per_1k / 1000.0`
+- Rate looked up from bundled `provider-rates.toml` or runtime override
+- If no rate is found for the `(provider, model)` pair: cost emission is **skipped** (no zero noise) and a one-shot `tracing::warn!` fires per unique pair
+
+### Histograms
+
+| Name | Labels | Unit | Emitted by |
+|---|---|---|---|
+| `kremory_core_chat_duration_seconds` | `provider`, `model`, `status` | seconds (f64) | `TokenTrackingChatProvider` |
+| `kremory_core_embed_duration_seconds` | `provider`, `model`, `status` | seconds (f64) | `TokenTrackingEmbedder` |
+
+Label values:
+- `status`: `"ok"` or `"error"` (bounded 2 values per ADR D7)
+
+`error.type` is **not** a histogram label — it's a tracing span attribute (see next section). This keeps histogram cardinality at 2 status values.
+
+---
+
+## Tracing spans
+
+Every chat + embed call creates a span with [GenAI OpenTelemetry SemConv](https://opentelemetry.io/docs/specs/semconv/gen-ai/)-aligned attributes. Top-level kremory ops (`Engine::ingest_with`, `Engine::contextualize`) carry parent spans:
+
+| Span name | Origin | Notes |
+|---|---|---|
+| `kremory.ingest` | `Engine::ingest_with` | Parent span for ingestion; child spans = chat + embed calls |
+| `kremory.contextualize` | `Engine::contextualize` | Parent span for recall; child spans = chat + embed calls |
+| `kremory.chat` | `TokenTrackingChatProvider::chat_with_tools` | Per-call chat span; carries `error.type` attribute on failure |
+| `kremory.embed` | `TokenTrackingEmbedder::embed_batch` | Per-call embed span |
+
+**`error.type` attribute** (set on error path):
+
+Maps all 11 `autoagents-llm 0.3.7` `LLMError` variants to 3 bounded values:
+
+| Bucket | `LLMError` variants |
+|---|---|
+| `"server_error"` | `HttpError`, `ProviderError`, `Generic`, `GuardrailBlocked`, `GuardrailExecutionFailed` |
+| `"client_error"` | `AuthError`, `InvalidRequest`, `NoToolSupport`, `ToolConfigError` |
+| `"parse_error"` | `JsonError`, `ResponseFormatError` |
+
+For error-type breakdown in dashboards, query the span attribute (Langfuse / Phoenix / Tempo / Jaeger all expose this).
+
+---
+
+## Wiring observability into your app
+
+### Recommended pattern (Tier 1 shortcut — zero config)
+
+```rust
+use kremory::Memory;
+
+let mem = Memory::with_ollama("./agent.db").await?;
+// Token + cost + duration metrics auto-emit on every chat call
+// Span tree auto-wires with kremory.ingest / kremory.contextualize parents
+```
+
+### Custom provider (Tier 2 — explicit labels)
+
+```rust
+use kremory::Memory;
+use std::sync::Arc;
+
+let my_llm = Arc::new(MyCustomChatProvider::new());
+let my_embedder = Arc::new(MyCustomEmbeddingProvider::new());
+
+let mem = Memory::open("./agent.db")
+    .with_llm_tracked("my-provider", "my-model-v2", my_llm)
+    .with_embedder(my_embedder)
+    .await?;
+// Provider="my-provider", model="my-model-v2" on all emitted metrics
+```
+
+If `("my-provider", "my-model-v2")` is not in the rates table, cost emission silently skips + a one-shot warn fires. To suppress the warn for known-zero-cost providers (self-hosted models), add a row to your custom rates file with cost = 0.0.
+
+### Opt out of tracking
+
+```rust
+// `with_llm` (plain) does NOT wrap — no token/cost/duration metrics
+let mem = Memory::open("./agent.db")
+    .with_llm(Arc::new(my_llm))
+    .with_embedder(Arc::new(my_embedder))
+    .await?;
+```
+
+Use this for benchmark setups or environments where metric emission overhead is unwanted.
+
+### Reading metrics in your app
+
+kremory does NOT install a metric recorder — that's your app's responsibility. Standard patterns:
+
+```rust
+// Prometheus exporter (via metrics-exporter-prometheus crate)
+metrics_exporter_prometheus::PrometheusBuilder::new().install()?;
+
+// In-memory recorder (for tests)
+let recorder = metrics_util::debugging::DebuggingRecorder::new();
+let snapshotter = recorder.snapshotter();
+metrics::set_global_recorder(recorder)?;
+// ... do work ...
+let snapshot = snapshotter.snapshot();
+
+// OpenTelemetry exporter — see "OTel / OTLP export" section
+```
+
+---
+
+## Provider rates (cost emission)
+
+Rates live in `crates/kremory/monitoring/provider-rates.toml` and are bundled into the published crate via `include_str!`. Schema:
+
+```toml
+rates_as_of = "2026-05-27"
+
+[[providers]]
+provider = "openai"
+model    = "text-embedding-3-small"
+cost_per_1k_tokens_usd = 0.00002
+dimensions = 1536
+
+[[providers]]
+provider = "openai"
+model    = "gpt-4o-mini"
+cost_per_1k_tokens_usd = 0.0006   # output rate; v0.1.3 may add per-direction granularity
+```
+
+Fields:
+- `provider`, `model` — label match keys
+- `cost_per_1k_tokens_usd` — rate; cost = `tokens × rate / 1000.0`
+- `dimensions` — optional, embedder only
+- No `direction` field — single rate per chat model (output rate used as conservative estimate per v0.1.2 scope)
+
+### Override at runtime
+
+```rust
+let mem = Memory::open("./agent.db")
+    .with_provider_rates_path("./my-rates.toml")
+    .with_llm_tracked("openai", "gpt-4o-mini", my_llm)
+    .with_embedder(my_embedder)
+    .await?;
+```
+
+Format identical to the bundled file. Useful for:
+- Custom enterprise pricing (negotiated rates)
+- Internal proxy / OpenRouter-style routing
+- Testing without modifying the published crate
+
+### Pre-loaded rates
+
+```rust
+use kremory::observability::ProviderRates;
+
+let rates = ProviderRates::from_path("./my-rates.toml")?;
+let cost = rates.lookup_rate("openai", "gpt-4o-mini").unwrap_or(0.0);
+```
+
+---
+
+## OTel / OTLP export
+
+Enable the `otel` cargo feature:
+
+```toml
+[dependencies]
+kremory = { version = "0.1", features = ["otel"] }
+```
+
+In your app:
+
+```rust
+use kremory::observability::{init_telemetry, TelemetryConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Install tracing-subscriber + tracing-opentelemetry + OTLP gRPC exporter
+    let telemetry = init_telemetry(TelemetryConfig::default())?;
+
+    // Configure OTLP endpoint via env var:
+    //   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   (default)
+
+    // ... your app ...
+    let mem = kremory::Memory::with_openai("./agent.db").await?;
+    mem.remember("Hello world").await?;
+
+    // Flush spans on shutdown
+    telemetry.shutdown();
+    Ok(())
+}
+```
+
+What this installs:
+- `tracing_subscriber::EnvFilter` (respects `RUST_LOG` env var; default `info,kremory=debug`)
+- `tracing_subscriber::fmt` layer (stdout-formatted logs)
+- `tracing_opentelemetry` layer (exports spans to OTLP)
+- `opentelemetry_sdk::trace::TracerProvider` (batched span processor with Tokio runtime)
+
+What it does NOT install:
+- Metric exporter — wire that separately with your preferred backend (Prometheus, OTLP metrics, etc)
+
+**Without the `otel` feature**: `init_telemetry` is a no-op stub that returns `Ok(...)`. Metrics + tracing still emit via the `metrics` + `tracing` crates; no OTLP exporter is configured. Use this for tests + non-OTel environments.
+
+---
+
+## Cardinality discipline
+
+Per [ADR-rql-core-memory-observability-first-class-2026-05-20](../.ai-docs/adrs/rql/adr-rql-core-memory-observability-first-class-2026-05-20.md), label values are bounded:
+
+| Label | Cardinality source | Bound |
+|---|---|---|
+| `operation` | code-enumerated | 2 values: `chat`, `embed` |
+| `provider` | `provider-rates.toml` keys | ~5 today (openai, anthropic, ollama, voyage, local) |
+| `model` | BYOM runtime value | bounded by user — one per `Memory` instance |
+| `direction` | code-enumerated | 2 values: `input`, `output` |
+| `status` | code-enumerated | 2 values: `ok`, `error` |
+| `error.type` (span attribute) | code-enumerated via `llm_error_type()` | 3 values: `server_error`, `client_error`, `parse_error` |
+
+**Do not add label values dynamically**. If you have a custom chat provider, choose a stable provider+model identifier at construction time. Per-request label values would explode cardinality and break metric backends.
+
+---
+
+## Known limitations
+
+| Limitation | Cause | Workaround | Resolution path |
+|---|---|---|---|
+| `with_ollama` Tier 1 emits 0 token counts | `autoagents-llm 0.3.7` Ollama backend's `usage()` returns `None` | Use `with_llm_tracked("ollama", model, custom_provider)` with a custom `ChatProvider` that overrides `usage()` by parsing Ollama's `prompt_eval_count` + `eval_count` fields | Awaiting `autoagents-llm 0.3.8` upstream PR (Ollama backend `usage()` override). Tracked in [.ai-docs/planning/roadmap-post-v013-2026-05-28.md](../.ai-docs/planning/roadmap-post-v013-2026-05-28.md) item B.2 |
+| Google Gemini backend emits 0 token counts | Same — AA's `google.rs` doesn't override `usage()` | Same workaround | Awaiting `autoagents-llm 0.3.8`. Tracked roadmap item B.3 |
+| Anthropic prompt-cache tokens not surfaced separately | v0.1.2 scope deferred; AA already parses the fields | Read `cache_creation_input_tokens` + `cache_read_input_tokens` from your own logs in the interim | v0.1.4 — kremory-side wiring; tracked roadmap item B.1 |
+| `rate_limited` / `timeout` error.type labels not producible | `autoagents-llm 0.3.7` `LLMError` has no structured variants for these | Both route through `HttpError`/`ProviderError` → `"server_error"` bucket. Query span attributes for raw error message detail | Awaiting `autoagents-llm 0.3.8`+ |
+| `with_provider_rates_path` runtime override is path-only, not in-memory | Simplicity tradeoff | Construct `ProviderRates::from_path(...)` directly + use lower-level APIs | Consider in-memory override option for v0.2.0 if requested |
+
+---
+
+## Dashboards + queries
+
+### Prometheus / Grafana
+
+Cost per provider per hour:
+```promql
+rate(kremory_core_cost_usd_total[1h])
+```
+
+Token throughput by direction:
+```promql
+sum by (direction) (rate(kremory_core_tokens_total{operation="chat"}[5m]))
+```
+
+Chat error rate:
+```promql
+sum(rate(kremory_core_chat_duration_seconds_count{status="error"}[5m]))
+  /
+sum(rate(kremory_core_chat_duration_seconds_count[5m]))
+```
+
+p99 chat latency:
+```promql
+histogram_quantile(0.99, rate(kremory_core_chat_duration_seconds_bucket[5m]))
+```
+
+### Langfuse / Phoenix (via OTel spans)
+
+Error breakdown by `error.type`:
+- Filter spans where `name = "kremory.chat"` and `status = error`
+- Group by attribute `error.type`
+- Buckets: `server_error`, `client_error`, `parse_error`
+
+Slow ingest sessions:
+- Filter spans where `name = "kremory.ingest"`
+- Sort by `duration` descending
+- Drill into child `kremory.chat` + `kremory.embed` spans to identify hot path
+
+---
+
+## Cross-references
+
+- ADR-rql-core-memory-observability-first-class-2026-05-20 — observability as first-class concern + dual-emit policy
+- ADR D7 — cardinality discipline
+- ADR D9 — cost emission ADR (superseded on cost-unit by v0.1.2 spec: gauge f64 USD, not micro-USD counter)
+- `.ai-docs/architecture/kremory-v012--llm-observability-parity-architecture.md` — v0.1.2 architecture spec
+- `.ai-docs/specs/test-strategy-kremory-v010-llm-integration-byom.md` §17 — v0.1.2 test contract (11 new G_v012_* tests)
+- `crates/kremory/monitoring/provider-rates.toml` — bundled rates source of truth
+
+---
+_Authored 2026-05-28 alongside v0.1.3 doc-vs-code parity backfill._
