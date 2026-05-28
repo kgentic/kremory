@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Score,
-    scorers::f1::{F1Output, F1Sample, F1Scorer},
     types::{EvalErr, EvalLayer, EvalReport, ScoreMetadata},
 };
 
@@ -256,7 +255,6 @@ pub fn run(fixtures_dir: &Path) -> Result<EntityExtractionReport, EvalErr> {
     let gt_path = fixtures_dir.join("ground_truth.json");
     let ground_truth = load_ground_truth(&gt_path)?;
 
-    let scorer = F1Scorer::new();
     let catalogue = fixture_catalogue();
     let mut fixture_scores: Vec<FixtureScore> = Vec::with_capacity(catalogue.len());
 
@@ -304,18 +302,6 @@ pub fn run(fixtures_dir: &Path) -> Result<EntityExtractionReport, EvalErr> {
             2.0 * precision * recall / (precision + recall)
         };
 
-        // Also run through F1Scorer for normalised Score object consistency
-        let f1_sample = F1Sample {
-            id: meta.key.to_string(),
-            expected: expected.clone(),
-        };
-        let f1_output = F1Output {
-            predicted: extracted_names.clone(),
-        };
-        // score_sync uses exact (case-insensitive) matching; we override value
-        // with our fuzzy F1 but keep the Score structure.
-        let base_score = scorer.score_sync(&f1_sample, &f1_output)?;
-
         let metadata = ScoreMetadata {
             precision: Some(precision),
             recall: Some(recall),
@@ -336,9 +322,6 @@ pub fn run(fixtures_dir: &Path) -> Result<EntityExtractionReport, EvalErr> {
             reasoning,
             metadata: metadata.into(),
         };
-
-        // Suppress unused variable warning from exact-match scorer result
-        let _ = base_score;
 
         fixture_scores.push(FixtureScore {
             fixture_key: meta.key.to_string(),

@@ -108,6 +108,7 @@ Respond ONLY with a JSON object matching this schema:
 }"#;
 
 /// Live judge backed by a local Gemma 4 E2B GGUF via `LlamaCppProvider`.
+#[derive(Clone)]
 pub struct GemmaJudge {
     model_path: PathBuf,
 }
@@ -292,6 +293,17 @@ mod tests {
         let raw = "No JSON here at all.";
         let result = GemmaJudge::parse_verdict(raw);
         assert!(result.is_err());
+    }
+
+    /// Compile-only test: GemmaJudge must implement Clone (FIX MNT-005).
+    /// `score_all_metrics<J: Clone>` fails to compile with GemmaJudge without this.
+    /// We verify the bound holds by calling `clone()` on a GemmaJudge value.
+    #[test]
+    fn gemma_judge_implements_clone() {
+        fn assert_clone<T: Clone>(_: &T) {}
+        let judge = GemmaJudge::new(PathBuf::from("/tmp/model.gguf"));
+        assert_clone(&judge);
+        let _cloned = judge.clone();
     }
 
     #[test]
