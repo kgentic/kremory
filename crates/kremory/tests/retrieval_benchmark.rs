@@ -38,7 +38,10 @@ struct DomainGroundTruth {
 }
 
 fn load_ground_truth() -> std::collections::HashMap<String, DomainGroundTruth> {
-    let gt_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/ground_truth.json");
+    let gt_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../kremory-eval/fixtures/ground_truth.json"
+    );
     let raw = std::fs::read_to_string(gt_path)
         .unwrap_or_else(|e| panic!("failed to read ground_truth.json: {e}"));
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("failed to parse ground_truth.json: {e}"))

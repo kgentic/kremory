@@ -40,7 +40,10 @@ mod ner_benchmark_tests {
     }
 
     fn load_ground_truth() -> HashMap<String, DomainGroundTruth> {
-        let gt_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/ground_truth.json");
+        let gt_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../kremory-eval/fixtures/ground_truth.json"
+        );
         let raw = std::fs::read_to_string(gt_path)
             .unwrap_or_else(|e| panic!("failed to read ground_truth.json: {e}"));
         serde_json::from_str(&raw)
@@ -91,6 +94,7 @@ mod ner_benchmark_tests {
         );
 
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let eval_fixtures_dir = format!("{manifest_dir}/../kremory-eval/fixtures");
 
         let mut total_expected = 0usize;
         let mut total_found = 0usize;
@@ -106,7 +110,7 @@ mod ner_benchmark_tests {
                 .get(domain_key)
                 .expect("domain not in ground truth");
 
-            let fixture_path = format!("{manifest_dir}/fixtures/{domain_key}.txt");
+            let fixture_path = format!("{eval_fixtures_dir}/{domain_key}.txt");
             let text = std::fs::read_to_string(&fixture_path)
                 .unwrap_or_else(|e| panic!("failed to read fixture {fixture_path}: {e}"));
 

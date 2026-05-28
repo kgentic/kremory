@@ -23,6 +23,10 @@ chrono = { version = "0.4", features = ["serde"] }
 name = "calibration_spike"
 path = "src/bin/calibration_spike.rs"
 
+[[bin]]
+name = "entity_extraction_baseline"
+path = "src/bin/entity_extraction_baseline.rs"
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

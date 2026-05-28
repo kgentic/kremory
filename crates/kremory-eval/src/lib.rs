@@ -14,6 +14,7 @@
 //! ```
 
 pub mod judge;
+pub mod layer_b;
 pub mod scorers;
 pub mod types;
 
