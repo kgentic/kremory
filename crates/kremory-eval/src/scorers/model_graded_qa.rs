@@ -92,6 +92,7 @@ impl<J: Judge + Send + Sync> crate::Scorer<ModelGradedQaSample, ModelGradedQaOut
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::Scorer;
