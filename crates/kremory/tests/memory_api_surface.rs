@@ -17,32 +17,30 @@ use kremory::memory::{
 
 fn sample_results() -> Vec<RetrievedContext> {
     vec![
-        RetrievedContext {
-            entity_id: "ent-1".into(),
-            entity_name: "Roadmap Decision".into(),
-            summary: "Q3 priorities locked: extraction quality first.".into(),
-            score: 0.92,
-            source_refs: vec![SourceRef {
+        RetrievedContext::new(
+            "ent-1",
+            "Roadmap Decision",
+            "Q3 priorities locked: extraction quality first.",
+            0.92,
+            vec![SourceRef {
                 kind: SourceKind::Meeting,
                 id: "mtg-001".into(),
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 17, 14, 0, 0).unwrap(),
                 published_at: None,
             }],
-            incomplete: false,
-        },
-        RetrievedContext {
-            entity_id: "ent-2".into(),
-            entity_name: "Migration framework spec".into(),
-            summary: "Backup-before-migrate; rollback via restore.".into(),
-            score: 0.81,
-            source_refs: vec![SourceRef {
+        ),
+        RetrievedContext::new(
+            "ent-2",
+            "Migration framework spec",
+            "Backup-before-migrate; rollback via restore.",
+            0.81,
+            vec![SourceRef {
                 kind: SourceKind::Document,
                 id: "doc-007".into(),
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 18, 9, 30, 0).unwrap(),
                 published_at: None,
             }],
-            incomplete: false,
-        },
+        ),
     ]
 }
 
