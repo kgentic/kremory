@@ -30,6 +30,10 @@ Thumbs.db
 # policy MCP local cache
 .policy/
 
+# kremory-eval runtime output (not committed)
+crates/kremory-eval/eval_results/
+crates/kremory-eval/.cache/
+
 # Logs from kremory dev runs
 crates/*/logs/
 crates/*/*.log
