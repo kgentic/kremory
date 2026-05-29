@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kremory", "crates/kremory-eval", "crates/kremory-admin"]
+members = ["crates/kremory", "crates/kremory-eval", "crates/kremory-admin", "crates/kremory-napi"]
 
 # kremory-mcp excluded until D.4b handler bodies land.
 # Per ADR-Phase-D.0 §"rqlm-mcp tool surface": D.4 ships scaffold only with
