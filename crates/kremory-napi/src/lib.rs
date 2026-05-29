@@ -24,7 +24,7 @@ mod convert;
 
 use napi_derive::napi;
 
-use kremory::Memory;
+use kremory::{Memory, Namespace};
 
 pub use convert::{
     JsIngestOptions, JsIngestResult, JsOpenOptions, JsRecallOptions, JsRetrievedContext,
@@ -40,6 +40,10 @@ pub use convert::{
 #[napi]
 pub struct JsMemory {
     inner: Memory,
+    /// Handle-level default namespace captured from `JsOpenOptions.defaultNamespace`
+    /// at `open` time. Applied to ingest/recall calls that don't pass an explicit
+    /// per-call namespace. Set-once, never mutated — safe for concurrent reads.
+    default_namespace: Option<Namespace>,
 }
 
 #[napi]
@@ -47,21 +51,36 @@ impl JsMemory {
     /// Open a kremory Memory at `path`, using env-detected providers
     /// (`OLLAMA_HOST` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`).
     ///
-    /// If `opts.defaultNamespace` is set it becomes the handle-level default.
-    /// If `opts.embeddingDim` is set, it must match the active provider's
-    /// embedding dimension exactly.
+    /// If `opts.defaultNamespace` is set it becomes the handle-level default
+    /// applied to subsequent ingest/recall calls that omit per-call namespace.
+    ///
+    /// `opts.embeddingDim` is reserved for Tier-2 builder wiring (deferred per
+    /// ADR-030 Form B); setting it currently emits a `tracing::warn!` and is
+    /// otherwise ignored. The active provider's native dimension is used.
     #[napi(factory)]
-    pub async fn open(path: String, _opts: Option<JsOpenOptions>) -> napi::Result<JsMemory> {
+    pub async fn open(path: String, opts: Option<JsOpenOptions>) -> napi::Result<JsMemory> {
         // Tier 1: env-auto provider detection.
-        // `opts.embeddingDim` and `opts.defaultNamespace` inform the builder
-        // at v0.1.5+; for now the `auto` shortcut is used for the minimum
-        // viable binding. Callers requiring fine-grained control should use
-        // the Tier 2 builder path (not yet exposed via this binding).
         let mem = Memory::auto(&path)
             .await
             .map_err(|e| napi::Error::from_reason(format!("kremory open failed: {e}")))?;
 
-        Ok(JsMemory { inner: mem })
+        let default_namespace = opts
+            .as_ref()
+            .and_then(|o| o.default_namespace.as_deref())
+            .map(Namespace::new);
+
+        if let Some(dim) = opts.as_ref().and_then(|o| o.embedding_dim) {
+            tracing::warn!(
+                requested_dim = dim,
+                "JsOpenOptions.embeddingDim is currently ignored — Tier-2 builder \
+                 wiring deferred per ADR-030 Form B. Provider's native dim is used."
+            );
+        }
+
+        Ok(JsMemory {
+            inner: mem,
+            default_namespace,
+        })
     }
 
     /// Ingest a text episode into memory.
@@ -74,7 +93,8 @@ impl JsMemory {
         text: String,
         opts: Option<JsIngestOptions>,
     ) -> napi::Result<JsIngestResult> {
-        let namespace = convert::resolve_ingest_namespace(&opts);
+        let namespace =
+            convert::resolve_ingest_namespace(&opts).or_else(|| self.default_namespace.clone());
 
         let commit = if let Some(ns) = namespace {
             self.inner
@@ -104,7 +124,22 @@ impl JsMemory {
         query: String,
         opts: Option<JsRecallOptions>,
     ) -> napi::Result<Vec<JsRetrievedContext>> {
-        let namespace = convert::resolve_recall_namespace(&opts);
+        let namespaces = convert::resolve_recall_namespaces(&opts);
+        // Apply handle-level default ONLY when neither per-call selector is set.
+        // If `in_namespaces` is set, we must NOT also inject a default — that
+        // would trip `ConflictingNamespaceSelectors`.
+        let namespace = convert::resolve_recall_namespace(&opts).or_else(|| {
+            if namespaces.is_none() {
+                self.default_namespace.clone()
+            } else {
+                None
+            }
+        });
+        let best_effort = opts.as_ref().and_then(|o| o.best_effort);
+        let per_namespace_top_k = opts
+            .as_ref()
+            .and_then(|o| o.per_namespace_top_k)
+            .map(|n| usize::try_from(n).unwrap_or(10));
         let k = opts
             .as_ref()
             .and_then(|o| o.k)
@@ -117,8 +152,20 @@ impl JsMemory {
         let results = {
             let mut builder = self.inner.recall(query);
 
+            // Mutual exclusion is enforced at `.await` time by kremory's
+            // `check_selectors`; surface both if caller sets both so the
+            // ConflictingNamespaceSelectors error propagates naturally.
             if let Some(ns) = namespace {
                 builder = builder.in_namespace(ns);
+            }
+            if let Some(ref nss) = namespaces {
+                builder = builder.in_namespaces(nss);
+            }
+            if let Some(b) = best_effort {
+                builder = builder.best_effort(b);
+            }
+            if let Some(n) = per_namespace_top_k {
+                builder = builder.per_namespace_top_k(n);
             }
             if let Some(k_val) = k {
                 builder = builder.k(k_val);

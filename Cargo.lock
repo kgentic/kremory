@@ -2113,6 +2113,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
