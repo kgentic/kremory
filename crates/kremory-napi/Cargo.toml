@@ -1,0 +1,28 @@
+[package]
+name = "kremory-napi"
+version = "0.1.5-alpha.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Node.js (napi-rs) binding for kremory agent memory"
+repository = "https://github.com/kgentic/kremory"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kremory = { path = "../kremory" }
+napi = { version = "2", features = ["async", "napi4", "tokio_rt"] }
+napi-derive = "2"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+napi-build = "2"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
