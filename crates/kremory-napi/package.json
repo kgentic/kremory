@@ -18,14 +18,18 @@
   },
   "license": "Apache-2.0",
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.0"
+    "@napi-rs/cli": "^2.18.0",
+    "typescript": "^5.6.0"
   },
   "scripts": {
     "artifacts": "napi artifacts",
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
     "prepublishOnly": "napi prepublish -t npm",
-    "version": "napi version"
+    "version": "napi version",
+    "test": "node --test __test__/*.test.mjs",
+    "test:types": "tsc --noEmit --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck __test__/types.check.ts",
+    "test:all": "pnpm build:debug && pnpm test:types && pnpm test"
   },
   "repository": {
     "type": "git",
