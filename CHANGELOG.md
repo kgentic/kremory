@@ -80,6 +80,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recall builder misuse (calling both `in_namespace(ns)` and
   `in_namespaces(&[..])` on the same request).
 
+- **`kremory-napi` multi-namespace surface parity.** The Node.js binding
+  gains the ADR-029c recall surface: `JsRecallOptions.inNamespaces`,
+  `.bestEffort`, `.perNamespaceTopK`, and per-row `JsRetrievedContext.namespace`
+  attribution. The previously silent-no-op `JsOpenOptions.defaultNamespace`
+  is now plumbed — set at `JsMemory.open(path, opts)` and applied as a
+  fallback to subsequent `ingest()` / `recall()` calls that omit per-call
+  namespace. `embeddingDim` remains deferred per ADR-030 Form B and emits
+  a `tracing::warn!` when set.
+
+- **`kremory-napi` TypeScript smoke suite.** Nine-case `node:test`-driven
+  suite (`__test__/smoke.test.mjs`) covering happy path, defaultNamespace
+  fallback, namespace-required rejection, error mapping, multi-namespace
+  recall, concurrent ingest, close idempotency, and conflicting-selector
+  rejection. Companion `types.check.ts` typechecks the generated
+  `index.d.ts` shape so a Rust-side rename breaks compile before runtime.
+
+- **ADR-031 — kremory-napi surface parity policy.** Three-layer drift
+  defense: (1) policy ADR encoding the contract, (2) pmcp PreToolUse
+  advisory hook firing on edits to `crates/kremory/src/facade/**` and
+  `memory/types.rs`, (3) mechanical `syn`-based parity test deferred to
+  next session. Motivated by the ADR-029c surface drift caught only by
+  manual cross-read while authoring the TS smoke suite.
+
 ### Changed
 
 - **RRF fusion now keys on composite `(id, group_id)`.** Previously, recall
