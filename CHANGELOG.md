@@ -7,6 +7,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — targeting v0.1.5
+
+### Breaking
+
+- **`AppendOnly` enforcement is now ACTIVE** (ADR-029b §3.1). v0.1.4 shipped
+  the `NamespacePolicy` declaration window with operational warnings but no
+  enforcement; v0.1.5 closes the loop. `Memory::forget()` and `Memory::dream()`
+  against a namespace with `immutability = AppendOnly` now return
+  `Err(Error::NamespacePolicyViolation { namespace, operation, policy })`
+  instead of succeeding with a `tracing::warn!`. Callers relying on the
+  v0.1.4 warn-then-proceed behaviour must update to handle the new error
+  variant. `AppendOnly` is now safe to use as a compliance contract.
+
+- **Storage migration to composite primary keys.** `entities` table gains
+  composite PK `(id, group_id)`; `facts` and `episodic_edges` gain composite
+  foreign keys referencing it. Three sequential SQLite migrations
+  (`migrate_004`, `migrate_005`, `migrate_006`) run on first open of a v0.1.4
+  database; backup tables (`entities_bak_004`, `facts_bak_006`,
+  `episodic_edges_bak_006`) are retained as rollback artifacts. Idempotent +
+  partial-recovery aware. Direct-SQL consumers reading these tables must
+  account for the new column shape and FK semantics. Operators are advised
+  to run `kremory-admin backup` before first v0.1.5 open. See ADR-029b §5
+  for the migration runbook and §6 for the rollback procedure.
+
+### Added
+
+- **Multi-namespace recall** (ADR-029c). `Memory::recall(query).in_namespaces(&[ns_a, ns_b, ns_c]).await`
+  fans out across namespaces concurrently and returns a single result list
+  with per-result attribution. New `RetrievedContext.namespace: Option<Namespace>`
+  field (`#[serde(default)]` for v0.1.4 forward-compat) records the source
+  namespace for each result. Mutual exclusion with `in_namespace(ns)` —
+  setting both on the same request returns
+  `Err(Error::ConflictingNamespaceSelectors)`. New `best_effort(bool)` builder
+  setter for partial-failure-tolerant recall (default: fail-all). Auto-generated
+  `recall_id: Uuid` propagated to every tracing span for cross-namespace query
+  correlation; override via `with_recall_id(uuid)`.
+
+- **`context_block` namespace attribution.** When recall results span multiple
+  namespaces, `context_block` prepends `[ns:{group_id}]` to each rendered
+  entry. Single-namespace results render without the prefix (no behavioural
+  change for existing consumers).
+
+- **`Memory::upgrade_namespace_policy(ns)`** — atomic policy transition
+  (currently supports `Mutable → AppendOnly` upgrade direction). Wraps the
+  policy update in a `BEGIN IMMEDIATE` transaction, drains the
+  `NamespacePolicyCache` to prevent stale-read race, and stamps
+  `namespaces.upgraded_at`. Grandfather policy for rows written under the
+  prior policy is preserved. See ADR-029b §4 for upgrade semantics.
+
+- **`kremory-admin` CLI** — new internal crate for operator workflows.
+  Subcommands: `migrate` (run pending migrations on a database file),
+  `upgrade-namespace` (offline policy transition), `backup` (file-level
+  backup with metadata snapshot), `verify` (`PRAGMA foreign_key_check` +
+  composite-PK integrity sweep). Distributed as a standalone binary.
+
+- **`kremory-napi` crate** — Node.js / TypeScript binding via `napi-rs`
+  (ADR-030 Decision 2 Form B). In-process async API surface:
+  `JsMemory.open(path, opts?)`, `.ingest(text, opts?)`, `.recall(query, opts?)`,
+  `.close()`. Plain-data option types match the Rust facade.
+  Rust `Result<T, MemoryError>` maps to Promise rejection with the original
+  error message preserved. Distributed as a prebuilt `.node` native module
+  under `@kgentic/kremory-node`. Enables in-process kremory access for
+  TypeScript hook scripts and aidocs-style tooling without HTTP/IPC overhead.
+
+- **`Error::NamespacePolicyViolation { namespace, operation, policy }`** —
+  typed error for `AppendOnly` mutation attempts. Pattern-matchable; carries
+  the violating operation name (`"forget"`, `"dream"`, `"reassign"`) and the
+  stored policy so callers can present meaningful diagnostics.
+
+- **`Error::ConflictingNamespaceSelectors { request }`** — typed error for
+  recall builder misuse (calling both `in_namespace(ns)` and
+  `in_namespaces(&[..])` on the same request).
+
+### Changed
+
+- **RRF fusion now keys on composite `(id, group_id)`.** Previously, recall
+  with multiple namespaces could collapse same-name entities across
+  namespaces into a single result. The fusion stage now treats
+  `(id, namespace)` tuples as distinct keys, preserving namespace identity
+  through the recall pipeline. Single-namespace recall unaffected.
+
+- **`NamespacePolicyCache` capacity API.** Internal constructor now accepts
+  `NonZeroUsize` directly rather than `usize` with a runtime fallback;
+  guarantees a valid capacity at compile time. Default capacity unchanged
+  (256 entries). No effect on public API.
+
+### Fixed
+
+- **`vector_distance_cos` NULL handling.** Vector cosine search previously
+  panicked when SQLite returned `NULL` for zero-magnitude embedding vectors
+  ("Null value" SqliteFailure). Recall now skips NULL-distance rows
+  gracefully and continues. Surfaces silently as a one-result-fewer
+  outcome rather than an error.
+
+- **`NamespacePolicy` JSON backward compatibility.** Doc comment promised
+  `#[serde(default)]` on `immutability`, `forgettable`, and `dream_eligible`
+  fields, but the attribute was missing — meaning v0.1.3-era serialized
+  policies (without those fields) would fail to deserialize. The attribute
+  is now applied; old payloads load with default values.
+
+- **`with_llm_tracked` doctest.** The hidden setup line used `impl Trait`
+  in a let-binding position (Rust error E0562); replaced with an inline
+  stub struct so the doctest compiles and runs.
+
+### Deprecated
+
+- None.
+
+### Notes
+
+- Test coverage expanded to the full kremory test pyramid: property tests
+  (`proptest`) for RRF dedup + contradiction overflow + serde round-trip,
+  concurrency tests (`tokio` multi-thread + `Barrier`) for recall fan-out +
+  cache thundering herd + partial-migration recovery + policy upgrade
+  atomicity, and `#[ignore]`-gated E2E tests against a real Ollama instance
+  covering multi-namespace recall + `AppendOnly`/`Mutable` coexistence +
+  `kremory-admin` CLI smoke. Canonical CI invocation:
+  `cargo test --workspace -- --test-threads=1`.
+
+- BYOM invariant intact. `autoagents-llm` remains a `kremory-eval`-only dev
+  dependency; `kremory`, `kremory-napi`, `kremory-admin`, and `kremory-mcp`
+  carry no LLM-provider dependency in their dependency graph.
+
+---
+
 ## [0.1.4] — 2026-05-28
 
 ### Breaking
