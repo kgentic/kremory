@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — targeting v0.1.5
+## [0.1.5] — 2026-05-29
 
 ### Breaking
 
@@ -116,6 +116,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guarantees a valid capacity at compile time. Default capacity unchanged
   (256 entries). No effect on public API.
 
+- **Migrations extracted to `core/migrations.rs`.** The five per-migration
+  async fns (`migrate_legacy_rql_entities_table`, `migrate_002_drop_rql_prefix`,
+  `migrate_004_composite_pk_entities`, `migrate_005_policy_upgraded_at`,
+  `migrate_006_composite_fk_facts_episodic_edges`) moved out of `core/schema.rs`
+  (1620 → 1287 LOC) into `core/migrations.rs` (841 → 1607 LOC). Pure refactor —
+  zero behaviour change. `run_migrations` orchestrator stays in `schema.rs`.
+  Co-locates per-migration logic with the `MigrationRunner` framework + makes
+  the schema.rs source surface easier to scan. 9 named `migrate_006` tests
+  added per architect spec (fresh-DB FK/indexes/FTS, idempotency × 2,
+  pre-condition gate, FK enforcement × 2, partial recovery).
+
 ### Fixed
 
 - **`vector_distance_cos` NULL handling.** Vector cosine search previously
@@ -133,6 +144,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`with_llm_tracked` doctest.** The hidden setup line used `impl Trait`
   in a let-binding position (Rust error E0562); replaced with an inline
   stub struct so the doctest compiles and runs.
+
+- **`migrate_004` Vera retroactive mitigations.** Applied the same hardening
+  pattern `migrate_006` already had (per Vera FAIL review 2026-05-28):
+  always-restore `PRAGMA foreign_keys` wrapper via RAII guard ensures FK
+  enforcement is re-enabled on ANY exit path (success OR error) — closes the
+  v0.1.4 bug where a mid-migration failure left `foreign_keys = OFF` on the
+  connection for all subsequent writes. The post-migration
+  `PRAGMA foreign_key_check` assertion that initially shipped with this fix
+  was REMOVED — it fires before `migrate_006` rebuilds `facts` FK shape, so
+  on a fresh-DB run the check would always trip on the structurally-broken
+  intermediate state. The integrity check correctly lives at the end of
+  `migrate_006` where the schema is fully consistent.
+
+- **`migrate_006_partial_recovery_resumes_from_facts_new` test.** Previously
+  panicked under `cargo test --workspace` with `database table is locked`.
+  Root cause: the test's pre-condition `let mut rows = conn.query(...)`
+  iterator held a libsql cursor lock on the connection past the subsequent
+  `migrate_006` call's `DROP TABLE facts`. Fix scoped the cursor check in
+  its own block so the iterator drops before the migration runs.
 
 ### Deprecated
 

@@ -417,6 +417,766 @@ pub(crate) async fn prune_old_backups(backup_root: &Path, max_age_days: u32) -> 
     Ok(count)
 }
 
+// ─── Per-migration fns (extracted from schema.rs v0.1.4.1) ─────────────────
+//
+// These are free `pub(crate)` async fns rather than `impl TemporalGraph` methods
+// so that (a) migrations.rs is the single home for all migration logic and
+// (b) they can be called and tested independently of `TemporalGraph`.
+//
+// Call sites: `crate::core::schema::TemporalGraph::run_migrations` (schema.rs)
+// calls each fn by its free-fn path.
+//
+// The `crate::core::error::Result` import at the top of this file covers the
+// return type; `anyhow::anyhow!` is used for the `Error::Other` wrapper
+// (same as the original impl in schema.rs).
+
+// ─── Migration LEGACY ──────────────────────────────────────────────────────
+
+/// Pre-002 backward migration: rename legacy `entities` (rql shape, has `label`)
+/// to `rql_entities` so that the workspace P1 `entities` table can coexist.
+///
+/// Idempotent: only renames when a `label`-shaped legacy table exists AND the
+/// new name is free.
+pub(crate) async fn migrate_legacy_rql_entities_table(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    // Detect legacy rql shape: `entities` table with a `label` column.
+    let mut rows = conn.query("PRAGMA table_info(entities)", ()).await?;
+    let mut has_label = false;
+    let mut has_any = false;
+    while let Some(row) = rows.next().await? {
+        has_any = true;
+        let name: String = row.get(1)?;
+        if name == "label" {
+            has_label = true;
+            break;
+        }
+    }
+    if !has_any || !has_label {
+        return Ok(());
+    }
+
+    // Don't clobber an existing rql_entities — if both are present the
+    // rename happened previously and the bare `entities` is some other
+    // table (e.g. workspace shape co-resident). Bail without touching.
+    let mut rows = conn
+        .query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='rql_entities'",
+            (),
+        )
+        .await?;
+    if rows.next().await?.is_some() {
+        return Ok(());
+    }
+
+    // Rename data table + FTS5 sibling + indexes.
+    conn.execute("ALTER TABLE entities RENAME TO rql_entities", ())
+        .await?;
+    let _ = conn
+        .execute("ALTER TABLE entities_fts RENAME TO rql_entities_fts", ())
+        .await;
+    let _ = conn
+        .execute("DROP INDEX IF EXISTS entities_vec_idx", ())
+        .await;
+    let _ = conn
+        .execute("DROP INDEX IF EXISTS idx_entities_group", ())
+        .await;
+    Ok(())
+}
+
+// ─── Migration 002 ─────────────────────────────────────────────────────────
+
+/// Migration 002: rename `rql_entities` → `entities` (ADR-029b Decision 2).
+///
+/// Idempotent: exits immediately when `rql_entities` does not exist.
+/// Called from `run_migrations()` BEFORE the base DDL block.
+pub(crate) async fn migrate_002_drop_rql_prefix(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    // Check if rql_entities still exists — if not, migration already applied.
+    let mut rows = conn
+        .query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='rql_entities'",
+            (),
+        )
+        .await?;
+    if rows.next().await?.is_none() {
+        return Ok(());
+    }
+
+    // Also check that `entities` does not exist yet (prevents double-rename collision).
+    let mut check = conn
+        .query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='entities'",
+            (),
+        )
+        .await?;
+    if check.next().await?.is_some() {
+        tracing::warn!(
+            target: "kremory::migrations",
+            "migrate_002: both rql_entities and entities exist — skipping rename; \
+             manual inspection recommended"
+        );
+        return Ok(());
+    }
+
+    conn.execute("ALTER TABLE rql_entities RENAME TO entities", ())
+        .await?;
+    let _ = conn
+        .execute("ALTER TABLE rql_entities_fts RENAME TO entities_fts", ())
+        .await;
+    let _ = conn
+        .execute("DROP INDEX IF EXISTS rql_entities_vec_idx", ())
+        .await;
+    let _ = conn
+        .execute("DROP INDEX IF EXISTS idx_rql_entities_group", ())
+        .await;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_002: rql_entities renamed to entities"
+    );
+    Ok(())
+}
+
+// ─── Migration 004 ─────────────────────────────────────────────────────────
+
+/// Migration 004: composite PK on `entities` (ADR-029b Decision 1).
+///
+/// Uses CREATE-COPY-DROP-RENAME to restructure the table to
+/// `PRIMARY KEY (id, group_id)`.
+///
+/// Idempotency gate (Vera 2026-05-28 BUG-1 fix):
+///   Uses `PRAGMA table_info('entities')` to check whether `group_id` is already
+///   in the PK — this is the SHAPE-based sentinel. The old `entities_bak_004`
+///   backup-table sentinel was a false gate: if the process crashed after creating
+///   the backup but before creating `entities_new`, the next startup would see
+///   the backup, return Ok(()), and silently leave the migration incomplete.
+///
+/// FK restore on ALL exit paths (Vera 2026-05-28 BUG-2 fix):
+///   `PRAGMA foreign_keys = ON` is guaranteed via the `body_result` wrapping
+///   pattern — same approach used by migrate_006. An error in any restructure
+///   step still restores FK enforcement before propagating the error.
+///
+/// Post-migration `PRAGMA foreign_key_check` (Vera 2026-05-28 BUG-2 companion):
+///   After the body completes successfully the migration asserts that no FK
+///   violations were introduced.
+pub(crate) async fn migrate_004_composite_pk_entities(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_004 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // Vera BUG-1 fix: SHAPE-based idempotency gate.
+    // If `group_id` is already part of the entities PK (pk > 0), the migration
+    // has completed — return immediately without touching anything.
+    let mut pragma_rows = conn
+        .query("PRAGMA table_info('entities')", ())
+        .await
+        .map_err(step("g1_table_info"))?;
+    while let Some(r) = pragma_rows
+        .next()
+        .await
+        .map_err(step("g1_table_info_next"))?
+    {
+        let col_name: String = r.get(1).unwrap_or_default();
+        let pk: i64 = r.get(5).unwrap_or(0);
+        if col_name == "group_id" && pk > 0 {
+            // Already migrated.
+            return Ok(());
+        }
+    }
+
+    // Check whether entities_new exists — signals a partial migration in progress
+    // (crashed between CREATE entities_new and the DROP+RENAME).
+    let mut rows2 = conn
+        .query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='entities_new'",
+            (),
+        )
+        .await
+        .map_err(step("check_entities_new"))?;
+    let partial_migration_in_progress = rows2
+        .next()
+        .await
+        .map_err(step("check_entities_new_next"))?
+        .is_some();
+
+    if partial_migration_in_progress {
+        tracing::warn!(
+            target: "kremory::migrations",
+            "migrate_004: entities_new already exists — attempting to complete partial migration"
+        );
+    }
+
+    // Vera BUG-2 fix: PRAGMA foreign_keys = OFF is set once here; `PRAGMA
+    // foreign_keys = ON` is guaranteed via the `body_result` pattern below
+    // regardless of whether the body succeeds or returns Err. This mirrors the
+    // pattern used by migrate_006 (Vera 2026-05-28 #2).
+    conn.execute("PRAGMA foreign_keys = OFF", ())
+        .await
+        .map_err(step("fk_off"))?;
+
+    let body_result: crate::core::error::Result<()> = async {
+        if !partial_migration_in_progress {
+            // Step 1: backup. Left in place as a rollback artifact.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS entities_bak_004 AS SELECT * FROM entities",
+                (),
+            )
+            .await
+            .map_err(step("create_bak"))?;
+
+            // Step 2: create new table with composite PK.
+            // Note: `embedding` uses generic `BLOB` here (rather than `F32_BLOB(dim)`)
+            // because `dim` is not in scope inside this migration helper; the vector
+            // index (recreated below via `libsql_vector_idx`) works with raw BLOB columns.
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS entities_new (
+                    id           TEXT NOT NULL,
+                    label        TEXT NOT NULL,
+                    properties   TEXT,
+                    embedding    BLOB,
+                    recorded_at  TEXT NOT NULL,
+                    updated_at   TEXT,
+                    group_id     TEXT NOT NULL DEFAULT 'default',
+                    access_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id, group_id)
+                );",
+            )
+            .await
+            .map_err(step("create_entities_new"))?;
+
+            // Step 3: copy + backfill group_id.
+            conn.execute(
+                "INSERT INTO entities_new (id, label, properties, embedding, recorded_at, updated_at, group_id, access_count)
+                 SELECT id, label, properties, embedding, recorded_at, updated_at,
+                        COALESCE(group_id, 'default') AS group_id,
+                        COALESCE(access_count, 0)     AS access_count
+                 FROM entities",
+                (),
+            )
+            .await
+            .map_err(step("copy_rows"))?;
+        }
+
+        // Step 4 + 5: drop old, rename new.
+        conn.execute("DROP TABLE entities", ())
+            .await
+            .map_err(step("drop_old_entities"))?;
+        conn.execute("ALTER TABLE entities_new RENAME TO entities", ())
+            .await
+            .map_err(step("rename_new_to_entities"))?;
+
+        // Step 6: re-create indexes (vector index is best-effort on in-memory DBs).
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS entities_vec_idx \
+                 ON entities(libsql_vector_idx(embedding, 'metric=cosine'))",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_entities_group ON entities(group_id)",
+                (),
+            )
+            .await;
+
+        // Step 7+8: facts + episodic_edges composite FK restructure — PENDING
+        // ship-architect design review (2026-05-28). Current best-effort ALTER+
+        // UPDATE pattern is kept temporarily so the compile + downstream tests
+        // continue to surface the issue rather than papering over it. See
+        // `.ai-docs/planning/v014-adr-029b-composite-fk-design-2026-05-28.md`.
+        let _ = conn
+            .execute("ALTER TABLE facts ADD COLUMN subject_group_id TEXT", ())
+            .await;
+        let _ = conn
+            .execute("ALTER TABLE facts ADD COLUMN object_group_id TEXT", ())
+            .await;
+        let _ = conn
+            .execute(
+                "UPDATE facts SET subject_group_id = (
+                     SELECT COALESCE(e.group_id, 'default')
+                     FROM entities e WHERE e.id = facts.subject_id
+                     LIMIT 1
+                 ) WHERE subject_group_id IS NULL",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "UPDATE facts SET object_group_id = (
+                     SELECT COALESCE(e.group_id, 'default')
+                     FROM entities e WHERE e.id = facts.object_id
+                     LIMIT 1
+                 ) WHERE object_group_id IS NULL AND object_id IS NOT NULL",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE episodic_edges ADD COLUMN entity_group_id TEXT",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "UPDATE episodic_edges SET entity_group_id = (
+                     SELECT COALESCE(e.group_id, 'default')
+                     FROM entities e WHERE e.id = episodic_edges.entity_id
+                     LIMIT 1
+                 ) WHERE entity_group_id IS NULL",
+                (),
+            )
+            .await;
+
+        Ok(())
+    }
+    .await;
+
+    // Vera BUG-2 fix: always restore PRAGMA foreign_keys = ON, regardless of
+    // whether the body succeeded or returned Err.  A failed migration that leaves
+    // FK enforcement OFF on the connection is a silent data-integrity bug for all
+    // subsequent application writes on that connection.
+    if let Err(restore_err) = conn.execute("PRAGMA foreign_keys = ON", ()).await {
+        tracing::error!(
+            target: "kremory::migrations",
+            error = %restore_err,
+            "migrate_004: failed to re-enable PRAGMA foreign_keys after migration body — \
+             connection FK state is now inconsistent (still OFF); operator must reconnect"
+        );
+    }
+
+    // Propagate the body's result.
+    body_result?;
+
+    // NOTE: `PRAGMA foreign_key_check` is deliberately NOT run here. After
+    // migrate_004 swaps entities to composite PK (id, group_id), the existing
+    // `facts.subject_id REFERENCES entities(id)` constraint references a
+    // non-unique column set — SQLite reports this as a violation until
+    // migrate_006 rebuilds facts with the composite FK shape. The fk-integrity
+    // check therefore belongs at the END of the migrate_006 step (already
+    // present there, see line ~1163), not after migrate_004 alone — the schema
+    // is intentionally in a mixed state between these two migrations.
+    //
+    // The always-restore `PRAGMA foreign_keys` wrapper above (Vera BUG-2 fix)
+    // ensures the connection's FK enforcement is correctly re-enabled on any
+    // exit path. The post-condition gate is migrate_006's fk_check.
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_004: composite PK (id, group_id) applied to entities"
+    );
+    Ok(())
+}
+
+// ─── Migration 005 ─────────────────────────────────────────────────────────
+
+/// Migration 005: add `upgraded_at` column to `namespaces` (ADR-029b Decision 5).
+///
+/// Idempotent: `ALTER TABLE ADD COLUMN` errors are swallowed when the column
+/// already exists.
+pub(crate) async fn migrate_005_policy_upgraded_at(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    let _ = conn
+        .execute("ALTER TABLE namespaces ADD COLUMN upgraded_at TEXT", ())
+        .await;
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_005: upgraded_at column ensured on namespaces"
+    );
+    Ok(())
+}
+
+// ─── Migration 006 ─────────────────────────────────────────────────────────
+
+/// Migration 006: install composite FK constraints on `facts` and `episodic_edges`
+/// (ADR-029b Decision 1).
+///
+/// Uses CREATE-COPY-DROP-RENAME to replace the placeholder ADD COLUMN stubs
+/// that migration 004 installed. After this migration both tables reference
+/// `entities(id, group_id)` rather than the now-invalid single-column `entities(id)`.
+///
+/// Idempotency gates:
+///   G1 — facts already has composite FK shape → already ran, return Ok(()).
+///   G2 — entities does NOT have composite PK → migration 004 not yet applied, return Err.
+///   G3 — `facts_new` exists → partial migration, resume from drop+rename.
+///   G4 — `episodic_edges_new` exists → same for episodic_edges half.
+///
+/// The `dim` parameter is required because `facts` contains an `F32_BLOB(dim)`
+/// vector column; the new table DDL must embed the same dimension value.
+pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
+    conn: &libsql::Connection,
+    dim: usize,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_006 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // Helper: check whether a table exists.
+    async fn table_exists(
+        conn: &libsql::Connection,
+        name: &str,
+    ) -> std::result::Result<bool, libsql::Error> {
+        let mut rows = conn
+            .query(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?1",
+                libsql::params![name],
+            )
+            .await?;
+        let found = rows.next().await?.is_some();
+        Ok(found)
+    }
+
+    // Helper: does `facts` already have a composite FK column?
+    async fn facts_has_composite_fk(
+        conn: &libsql::Connection,
+    ) -> std::result::Result<bool, libsql::Error> {
+        let mut rows = conn.query("PRAGMA foreign_key_list('facts')", ()).await?;
+        while let Some(r) = rows.next().await? {
+            let from: String = r.get(3).unwrap_or_default();
+            if from == "subject_group_id" || from == "object_group_id" {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    // Helper: does `entities` carry the composite PK from migrate_004?
+    async fn entities_has_composite_pk(
+        conn: &libsql::Connection,
+    ) -> std::result::Result<bool, libsql::Error> {
+        let mut rows = conn.query("PRAGMA table_info('entities')", ()).await?;
+        while let Some(r) = rows.next().await? {
+            let name: String = r.get(1).unwrap_or_default();
+            let pk: i64 = r.get(5).unwrap_or(0);
+            if name == "group_id" && pk > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    // G1 — primary idempotency gate (SHAPE-based):
+    if facts_has_composite_fk(conn)
+        .await
+        .map_err(step("g1_facts_fk_shape"))?
+    {
+        return Ok(());
+    }
+
+    // G2 — pre-condition gate (SHAPE-based): entities must carry the
+    // composite PK installed by migrate_004.
+    if !entities_has_composite_pk(conn)
+        .await
+        .map_err(step("g2_entities_pk_shape"))?
+    {
+        return Err(crate::core::error::Error::Other(anyhow::anyhow!(
+            "migrate_006: entities table does not have composite PK (id, group_id) — \
+             run migrate_004_composite_pk_entities first"
+        )));
+    }
+
+    // G3 — partial migration recovery: facts_new exists.
+    let facts_partial = table_exists(conn, "facts_new")
+        .await
+        .map_err(step("g3_check_facts_new"))?;
+
+    // G4 — partial migration recovery: episodic_edges_new exists.
+    let edges_partial = table_exists(conn, "episodic_edges_new")
+        .await
+        .map_err(step("g4_check_episodic_edges_new"))?;
+
+    // PRAGMA foreign_keys = OFF for the duration of the restructure.
+    conn.execute("PRAGMA foreign_keys = OFF", ())
+        .await
+        .map_err(step("fk_off"))?;
+    let body_result: crate::core::error::Result<()> = async {
+
+    // ── facts half ───────────────────────────────────────────────────────────
+
+    if facts_partial {
+        tracing::warn!(
+            target: "kremory::migrations",
+            "migrate_006: facts_new already exists — attempting to complete partial migration"
+        );
+    } else {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS facts_bak_006 AS SELECT * FROM facts",
+            (),
+        )
+        .await
+        .map_err(step("create_facts_bak_006"))?;
+
+        conn.execute(
+            &format!(
+                "CREATE TABLE IF NOT EXISTS facts_new (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject_id       TEXT NOT NULL,
+                    subject_group_id TEXT NOT NULL DEFAULT 'default',
+                    predicate        TEXT NOT NULL,
+                    object_id        TEXT,
+                    object_group_id  TEXT,
+                    object_value     TEXT,
+                    properties       TEXT,
+                    embedding        F32_BLOB({dim}),
+                    valid_from       TEXT NOT NULL,
+                    valid_to         TEXT,
+                    recorded_at      TEXT NOT NULL,
+                    expired_at       TEXT,
+                    invalid_at       TEXT,
+                    group_id         TEXT NOT NULL DEFAULT 'default',
+                    confidence       REAL DEFAULT 1.0,
+                    source_episode_id INTEGER,
+                    memory_type      TEXT,
+                    content_hash     TEXT,
+                    access_count     INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (subject_id, subject_group_id) REFERENCES entities(id, group_id),
+                    FOREIGN KEY (object_id,  object_group_id)  REFERENCES entities(id, group_id),
+                    FOREIGN KEY (source_episode_id)            REFERENCES episodes(id)
+                )"
+            ),
+            (),
+        )
+        .await
+        .map_err(step("create_facts_new"))?;
+
+        conn.execute(
+            "INSERT INTO facts_new (
+                 id, subject_id, subject_group_id, predicate,
+                 object_id, object_group_id, object_value, properties, embedding,
+                 valid_from, valid_to, recorded_at, expired_at, invalid_at,
+                 group_id, confidence, source_episode_id, memory_type, content_hash, access_count
+             )
+             SELECT
+                 id,
+                 subject_id,
+                 COALESCE(subject_group_id, group_id, 'default'),
+                 predicate,
+                 object_id,
+                 CASE WHEN object_id IS NULL THEN NULL
+                      ELSE COALESCE(object_group_id, group_id, 'default') END,
+                 object_value, properties, embedding,
+                 valid_from, valid_to, recorded_at, expired_at, invalid_at,
+                 COALESCE(group_id, 'default'),
+                 confidence, source_episode_id, memory_type, content_hash, access_count
+             FROM facts",
+            (),
+        )
+        .await
+        .map_err(step("copy_facts"))?;
+    }
+
+    conn.execute("DROP TABLE facts", ())
+        .await
+        .map_err(step("drop_facts"))?;
+    conn.execute("ALTER TABLE facts_new RENAME TO facts", ())
+        .await
+        .map_err(step("rename_facts_new"))?;
+
+    // Rebuild facts_fts (Vera 2026-05-28 #3): standalone FTS5 table; DROP TABLE facts
+    // does NOT cascade. Rebuild from live data to prevent phantom FTS results.
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS facts_fts", ())
+        .await;
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+            fact_id UNINDEXED,
+            predicate,
+            object_value
+        )",
+        (),
+    )
+    .await
+    .map_err(step("create_facts_fts"))?;
+    let _ = conn
+        .execute(
+            "INSERT INTO facts_fts (fact_id, predicate, object_value) \
+             SELECT id, predicate, object_value FROM facts \
+             WHERE object_value IS NOT NULL",
+            (),
+        )
+        .await;
+
+    // Re-create facts indexes.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_facts_temporal \
+         ON facts(subject_id, valid_from, expired_at)",
+        (),
+    )
+    .await
+    .map_err(step("idx_facts_temporal"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_facts_predicate ON facts(predicate, expired_at)",
+        (),
+    )
+    .await
+    .map_err(step("idx_facts_predicate"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_facts_object ON facts(object_id, expired_at)",
+        (),
+    )
+    .await
+    .map_err(step("idx_facts_object"))?;
+    let _ = conn
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_facts_group ON facts(group_id)",
+            (),
+        )
+        .await;
+    let _ = conn
+        .execute(
+            "CREATE INDEX IF NOT EXISTS facts_vec_idx \
+             ON facts(libsql_vector_idx(embedding, 'metric=cosine'))",
+            (),
+        )
+        .await;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_content_hash_unique \
+         ON facts(content_hash) WHERE content_hash IS NOT NULL",
+        (),
+    )
+    .await
+    .map_err(step("idx_facts_content_hash_unique"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_facts_content_hash ON facts(content_hash)",
+        (),
+    )
+    .await
+    .map_err(step("idx_facts_content_hash"))?;
+    let _ = conn
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_facts_subject_group \
+             ON facts(subject_id, subject_group_id)",
+            (),
+        )
+        .await;
+    let _ = conn
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_facts_object_group \
+             ON facts(object_id, object_group_id) WHERE object_id IS NOT NULL",
+            (),
+        )
+        .await;
+
+    // ── episodic_edges half ──────────────────────────────────────────────────
+
+    if edges_partial {
+        tracing::warn!(
+            target: "kremory::migrations",
+            "migrate_006: episodic_edges_new already exists — resuming partial migration"
+        );
+    } else {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS episodic_edges_bak_006 AS SELECT * FROM episodic_edges",
+            (),
+        )
+        .await
+        .map_err(step("create_episodic_edges_bak_006"))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS episodic_edges_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id      INTEGER NOT NULL,
+                entity_id       TEXT NOT NULL,
+                entity_group_id TEXT NOT NULL DEFAULT 'default',
+                role            TEXT NOT NULL DEFAULT 'mentioned',
+                recorded_at     TEXT NOT NULL,
+                FOREIGN KEY (episode_id) REFERENCES episodes(id),
+                FOREIGN KEY (entity_id, entity_group_id) REFERENCES entities(id, group_id)
+            )",
+            (),
+        )
+        .await
+        .map_err(step("create_episodic_edges_new"))?;
+
+        conn.execute(
+            "INSERT INTO episodic_edges_new (id, episode_id, entity_id, entity_group_id, role, recorded_at)
+             SELECT id, episode_id, entity_id,
+                    COALESCE(entity_group_id, 'default'),
+                    role, recorded_at
+             FROM episodic_edges",
+            (),
+        )
+        .await
+        .map_err(step("copy_episodic_edges"))?;
+    }
+
+    conn.execute("DROP TABLE episodic_edges", ())
+        .await
+        .map_err(step("drop_episodic_edges"))?;
+    conn.execute("ALTER TABLE episodic_edges_new RENAME TO episodic_edges", ())
+        .await
+        .map_err(step("rename_episodic_edges_new"))?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_episodic_edges_entity \
+         ON episodic_edges(entity_id, entity_group_id)",
+        (),
+    )
+    .await
+    .map_err(step("idx_episodic_edges_entity"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_episodic_edges_episode \
+         ON episodic_edges(episode_id)",
+        (),
+    )
+    .await
+    .map_err(step("idx_episodic_edges_episode"))?;
+
+        Ok(())
+    }
+    .await;
+
+    // Always restore PRAGMA foreign_keys = ON, regardless of body success/failure.
+    if let Err(restore_err) = conn.execute("PRAGMA foreign_keys = ON", ()).await {
+        tracing::error!(
+            target: "kremory::migrations",
+            error = %restore_err,
+            "migrate_006: failed to re-enable PRAGMA foreign_keys after migration body — \
+             connection FK state is now inconsistent (still OFF); operator must reconnect"
+        );
+    }
+
+    body_result?;
+
+    // Boy-scout integrity check: any FK violation introduced by the restructure
+    // surfaces here BEFORE the next application write hits it.
+    let mut violations = conn
+        .query("PRAGMA foreign_key_check", ())
+        .await
+        .map_err(step("fk_check_post"))?;
+    if violations
+        .next()
+        .await
+        .map_err(step("fk_check_post_next"))?
+        .is_some()
+    {
+        return Err(crate::core::error::Error::Other(anyhow::anyhow!(
+            "migrate_006: PRAGMA foreign_key_check reported violations after restructure — \
+             refusing to proceed; inspect entities_bak_004 / facts_bak_006 / \
+             episodic_edges_bak_006 for recovery"
+        )));
+    }
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_006: composite FK applied to facts + episodic_edges (foreign_key_check clean)"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
