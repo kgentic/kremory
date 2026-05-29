@@ -39,7 +39,22 @@ pub struct JsRecallOptions {
     /// Maximum number of results to return. Default: 10.
     pub k: Option<i64>,
     /// Namespace to scope this recall. Overrides the Memory handle's default.
+    /// Mutually exclusive with `in_namespaces` — setting both rejects at
+    /// `.await` time with `ConflictingNamespaceSelectors`.
     pub namespace: Option<String>,
+    /// Multi-namespace recall (ADR-029c). Set instead of `namespace` to query
+    /// across many namespaces and receive RRF-blended results with per-row
+    /// `namespace` attribution on each `JsRetrievedContext`.
+    pub in_namespaces: Option<Vec<String>>,
+    /// When `true`, sub-query failures emit `warn!` and the failing namespace
+    /// is skipped rather than failing the whole call. Default: `false`.
+    /// No-op unless `in_namespaces` is set.
+    pub best_effort: Option<bool>,
+    /// Cap on results fetched per namespace BEFORE cross-namespace RRF blending.
+    /// Default: `k` (or `Memory::default_k`). Raises recall diversity at the
+    /// cost of extra per-namespace sub-query work. No-op unless `in_namespaces`
+    /// is set.
+    pub per_namespace_top_k: Option<i64>,
     /// ISO 8601 point-in-time filter. Returns facts that were valid at this
     /// timestamp. e.g. `"2024-03-15T10:00:00Z"`.
     pub as_of: Option<String>,
@@ -74,6 +89,13 @@ pub struct JsRetrievedContext {
     pub source_refs: Vec<String>,
     /// `true` when the entity is a stub placeholder awaiting full extraction.
     pub incomplete: bool,
+    /// The namespace this result was retrieved from. Set for both single-namespace
+    /// (`namespace`) and multi-namespace (`in_namespaces`) recall. `None` for
+    /// raw substrate-level queries that bypass the facade.
+    ///
+    /// Note: only the namespace string is surfaced. `thread` and `policy` fields
+    /// on `kremory::Namespace` are not yet exposed via this binding.
+    pub namespace: Option<String>,
 }
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
@@ -86,6 +108,8 @@ pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
         .map(|sr| sr.id.clone())
         .collect::<Vec<_>>();
 
+    let namespace = ctx.namespace.map(|ns| ns.namespace);
+
     JsRetrievedContext {
         entity_id: ctx.entity_id,
         entity_name: ctx.entity_name,
@@ -93,6 +117,7 @@ pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
         score: f64::from(ctx.score),
         source_refs,
         incomplete: ctx.incomplete,
+        namespace,
     }
 }
 
@@ -111,4 +136,13 @@ pub fn resolve_recall_namespace(opts: &Option<JsRecallOptions>) -> Option<Namesp
     opts.as_ref()
         .and_then(|o| o.namespace.as_deref())
         .map(Namespace::new)
+}
+
+/// Resolve the multi-namespace selector from `JsRecallOptions` (ADR-029c).
+/// Returns `None` if `in_namespaces` is unset or empty.
+pub fn resolve_recall_namespaces(opts: &Option<JsRecallOptions>) -> Option<Vec<Namespace>> {
+    opts.as_ref()
+        .and_then(|o| o.in_namespaces.as_ref())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.iter().map(|s| Namespace::new(s.as_str())).collect())
 }
