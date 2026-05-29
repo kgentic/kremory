@@ -219,28 +219,35 @@ async fn g_v014a_11_backfill_creates_default_policies_for_existing_namespaces() 
         .expect("re-register with default policy is idempotent");
 }
 
-/// G_v014a_12: v0.1.4 declare-but-don't-enforce — registering AppendOnly does
-/// NOT cause `forget()` to return an error. Positive control for the contract.
-/// (Dream is also exercised but the v0.1.0 dream substrate returns
-/// NotImplemented, so we restrict the assertion to forget which is wired to a
-/// substrate no-op.)
+/// G_v014a_12: contract-evolution marker — pins the v0.1.4 → v0.1.5
+/// AppendOnly contract transition. v0.1.4 shipped declare-but-don't-enforce
+/// (warn only); v0.1.5 lands enforcement per ADR-029b §3.1 and the contract
+/// inverts. This test asserts the v0.1.5 contract: `forget()` against an
+/// AppendOnly namespace MUST return `Err(NamespacePolicyViolation)`.
+/// Canonical coverage of both call sites (forget + dream) lives in
+/// `g_v015b_30_appendonly_wiring_dream_and_forget_reject`.
 #[tokio::test]
-async fn g_v014a_12_no_enforcement_at_v014() {
+async fn g_v014a_12_v015_enforcement_lands_for_appendonly_forget() {
     let (mem, _tmp) = fresh_memory().await;
-    let ns = Namespace::new("declare-not-enforce")
+    let ns = Namespace::new("declare-and-enforce")
         .with_policy(NamespacePolicy::APPEND_ONLY)
         .expect("coherent");
     mem.register_namespace(ns.clone())
         .await
         .expect("register AppendOnly");
-    // Forget on an AppendOnly ns MUST succeed at v0.1.4 (no enforcement yet).
-    let deleted = mem
+    let err = mem
         .forget()
         .in_namespace(ns)
         .execute()
         .await
-        .expect("v0.1.4 forget on AppendOnly must succeed (declare-not-enforce)");
-    assert_eq!(deleted, 0, "v0.1.0 substrate stub returns 0");
+        .expect_err("v0.1.5 forget on AppendOnly MUST return Err (enforcement landed)");
+    assert!(
+        matches!(
+            err,
+            MemoryError::Core(CoreError::NamespacePolicyViolation { .. })
+        ),
+        "expected NamespacePolicyViolation; got {err:?}"
+    );
 }
 
 /// G_v014a_13: old-shape `Namespace` JSON deserializes with `policy: None` via
@@ -475,4 +482,99 @@ async fn g_v014a_19_lazy_population_on_first_remember() {
     mem.register_namespace(ns)
         .await
         .expect("default-policy re-register must succeed");
+}
+
+// ── ADR-029b §3.1 AppendOnly enforcement tests (v0.1.5) ──────────────────────
+
+/// G_v015b_30: AppendOnly wiring — both `forget()` and `dream()` reject mutations
+/// on AppendOnly namespaces with `Error::NamespacePolicyViolation`.
+///
+/// ADR-029b §3.1 closure: v0.1.4 shipped declare-but-don't-enforce semantics
+/// (tracing::warn! only). v0.1.5 lands enforcement — mutations against
+/// AppendOnly namespaces must surface a typed error so callers can
+/// pattern-match on the policy violation. Two terminal call sites:
+/// `ForgetRequest::execute` and `DreamRequest::execute_blocking`.
+#[tokio::test]
+async fn g_v015b_30_appendonly_wiring_dream_and_forget_reject() {
+    let (mem, _tmp) = fresh_memory().await;
+    let ns = Namespace::new("audit-locked")
+        .with_policy(NamespacePolicy::APPEND_ONLY)
+        .expect("APPEND_ONLY constant is coherent");
+    mem.register_namespace(ns.clone())
+        .await
+        .expect("register AppendOnly namespace");
+
+    // ── Forget half ─────────────────────────────────────────────────────────
+    let forget_err = mem
+        .forget()
+        .in_namespace(ns.clone())
+        .execute()
+        .await
+        .expect_err("ForgetRequest on AppendOnly namespace MUST return Err");
+    match forget_err {
+        MemoryError::Core(CoreError::NamespacePolicyViolation {
+            ref operation,
+            ref namespace,
+            ..
+        }) => {
+            assert_eq!(operation, "forget", "operation field must be 'forget'");
+            assert_eq!(
+                namespace, "audit-locked",
+                "namespace field must carry the group_id"
+            );
+        }
+        other => panic!("ForgetRequest must return Core(NamespacePolicyViolation); got: {other:?}"),
+    }
+
+    // ── Dream half ──────────────────────────────────────────────────────────
+    let dream_err = mem
+        .dream()
+        .in_namespace(ns.clone())
+        .await
+        .expect_err("DreamRequest on AppendOnly namespace MUST return Err");
+    match dream_err {
+        MemoryError::Core(CoreError::NamespacePolicyViolation {
+            ref operation,
+            ref namespace,
+            ..
+        }) => {
+            assert_eq!(operation, "dream", "operation field must be 'dream'");
+            assert_eq!(
+                namespace, "audit-locked",
+                "namespace field must carry the group_id"
+            );
+        }
+        other => panic!("DreamRequest must return Core(NamespacePolicyViolation); got: {other:?}"),
+    }
+}
+
+/// G_v015b_30b: Mutable namespaces are NOT affected by AppendOnly enforcement.
+/// Same surface (`forget` + `dream`) succeeds on Mutable.
+#[tokio::test]
+async fn g_v015b_30b_mutable_namespace_forget_and_dream_succeed() {
+    let (mem, _tmp) = fresh_memory().await;
+    let ns = Namespace::new("scratch-mutable");
+    mem.register_namespace(ns.clone())
+        .await
+        .expect("register default (Mutable) namespace");
+
+    // Forget on empty Mutable namespace returns Ok(0).
+    let forget_count = mem
+        .forget()
+        .in_namespace(ns.clone())
+        .execute()
+        .await
+        .expect("ForgetRequest on Mutable namespace must succeed");
+    assert_eq!(forget_count, 0, "empty namespace yields zero deletions");
+
+    // Dream on Mutable namespace must NOT return NamespacePolicyViolation.
+    // The substrate may fail dream for other reasons (empty episodes, etc.)
+    // — we explicitly check that the failure mode is NOT the policy variant.
+    match mem.dream().in_namespace(ns).await {
+        Ok(_) => {}
+        Err(MemoryError::Core(CoreError::NamespacePolicyViolation { .. })) => {
+            panic!("DreamRequest on Mutable namespace must NEVER return NamespacePolicyViolation");
+        }
+        Err(_) => {}
+    }
 }

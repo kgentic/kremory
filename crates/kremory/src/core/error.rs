@@ -214,6 +214,16 @@ pub enum Error {
          narrow the query or raise the ceiling explicitly"
     )]
     ContradictionOverflow { count: usize, ceiling: usize },
+
+    // ── ADR-029c multi-namespace recall (v0.1.5) ─────────────────────────────
+    /// Both `in_namespace` and `in_namespaces` were set on the same
+    /// `RecallRequest`. These selectors are mutually exclusive — use one or
+    /// the other. Added v0.1.5 (ADR-029c Decision 6).
+    ///
+    /// `request` uses `String` (not `&'static str`) so the error message can
+    /// carry dynamic context and the variant remains `Send + Sync + 'static`.
+    #[error("conflicting namespace selectors: {request}")]
+    ConflictingNamespaceSelectors { request: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

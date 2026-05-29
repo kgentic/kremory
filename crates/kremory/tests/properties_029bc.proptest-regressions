@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3584eecf006f500e6f35c24381ece711844a40f5a430e4c544b1f4d928b8ea1d # shrinks to immutability = Mutable

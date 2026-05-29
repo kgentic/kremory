@@ -108,6 +108,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 kremory = { path = ".", features = ["test-utils"] }
 # tempfile: isolated SQLite per LLM integration test (avoids cross-test state).
 tempfile = "3"
+# proptest: property-based testing for RRF dedup invariants, serde round-trips,
+# and overflow protection (ADR-029b + ADR-029c 5-tier pyramid, Phase A).
+proptest = "1"
 
 [lints.rust]
 warnings = "deny"
