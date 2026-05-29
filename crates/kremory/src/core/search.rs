@@ -303,7 +303,11 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let entity = row_to_entity_from_row(&row)?;
-            let distance = row.get::<f64>(7)?;
+            // vector_distance_cos returns NULL when either vector has zero magnitude;
+            // skip those rows rather than propagating a "Null value" error.
+            let Some(distance) = row.get::<Option<f64>>(7)? else {
+                continue;
+            };
             // Convert cosine distance to a score (negative distance so lower = closer, matching FTS convention)
             hits.push(SearchHit {
                 item: entity,
@@ -344,7 +348,11 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let entity = row_to_entity_from_row(&row)?;
-            let distance = row.get::<f64>(7)?;
+            // vector_distance_cos returns NULL when either vector has zero magnitude;
+            // skip those rows rather than propagating a "Null value" error.
+            let Some(distance) = row.get::<Option<f64>>(7)? else {
+                continue;
+            };
             hits.push(SearchHit {
                 item: entity,
                 score: -distance,
@@ -465,7 +473,11 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let fact = row_to_fact_from_row(&row)?;
-            let distance = row.get::<f64>(17)?;
+            // vector_distance_cos returns NULL when either vector has zero magnitude;
+            // skip those rows rather than propagating a "Null value" error.
+            let Some(distance) = row.get::<Option<f64>>(17)? else {
+                continue;
+            };
             hits.push(SearchHit {
                 item: fact,
                 score: -distance,
@@ -508,7 +520,11 @@ impl TemporalGraph {
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
             let fact = row_to_fact_from_row(&row)?;
-            let distance = row.get::<f64>(17)?;
+            // vector_distance_cos returns NULL when either vector has zero magnitude;
+            // skip those rows rather than propagating a "Null value" error.
+            let Some(distance) = row.get::<Option<f64>>(17)? else {
+                continue;
+            };
             hits.push(SearchHit {
                 item: fact,
                 score: -distance,
@@ -628,6 +644,16 @@ fn build_group_id_clause(
 /// Reciprocal Rank Fusion: merge two ranked entity lists into one.
 /// k = 60 is the standard constant (controls how much rank position matters).
 /// Higher RRF score means more relevant.
+///
+/// # Composite key (ADR-029c Decision 1)
+///
+/// The accumulator keys on `(entity_id, group_id)` rather than bare `entity_id`.
+/// After ADR-029b's composite-PK migration, entities in different namespaces share
+/// no rows, so same-name entities from namespace-A and namespace-B map to distinct
+/// keys and are correctly preserved as separate results.
+///
+/// `group_id: None` = legacy unkeyed entities that predate ADR-029b. They share
+/// the `(entity_id, None)` bucket — correct deduplication within that bucket.
 fn rrf_fuse_entities(
     vector_hits: Vec<SearchHit<Entity>>,
     fts_hits: Vec<SearchHit<Entity>>,
@@ -635,14 +661,16 @@ fn rrf_fuse_entities(
 ) -> Vec<SearchHit<Entity>> {
     use std::collections::HashMap;
 
-    // Build a map of entity_id -> (rrf_score, Entity)
-    let mut scores: HashMap<String, (f64, Entity)> = HashMap::new();
+    // Key: (entity_id, group_id) — composite, matching the post-029b PK shape.
+    // group_id is Option<String>; None arm = legacy unkeyed entities.
+    let mut scores: HashMap<(String, Option<String>), (f64, Entity)> = HashMap::new();
 
     // Score vector results by rank position
     for (rank, hit) in vector_hits.into_iter().enumerate() {
         let rrf_score = 1.0 / (k + rank as f64 + 1.0);
+        let key = (hit.item.id.clone(), hit.item.group_id.clone());
         scores
-            .entry(hit.item.id.clone())
+            .entry(key)
             .and_modify(|(s, _)| *s += rrf_score)
             .or_insert((rrf_score, hit.item));
     }
@@ -650,8 +678,9 @@ fn rrf_fuse_entities(
     // Score FTS results by rank position
     for (rank, hit) in fts_hits.into_iter().enumerate() {
         let rrf_score = 1.0 / (k + rank as f64 + 1.0);
+        let key = (hit.item.id.clone(), hit.item.group_id.clone());
         scores
-            .entry(hit.item.id.clone())
+            .entry(key)
             .and_modify(|(s, _)| *s += rrf_score)
             .or_insert((rrf_score, hit.item));
     }
@@ -674,7 +703,18 @@ fn rrf_fuse_entities(
 
 /// Reciprocal Rank Fusion: merge two ranked fact lists into one.
 /// k = 60 is the standard constant (controls how much rank position matters).
-/// Higher RRF score means more relevant. Deduplicates by fact id.
+/// Higher RRF score means more relevant.
+///
+/// # Composite key (ADR-029c Decision 1)
+///
+/// The accumulator keys on `(fact_id, group_id)`. Fact ids are
+/// `INTEGER PRIMARY KEY AUTOINCREMENT` and are globally unique by construction,
+/// so the `group_id` component is redundant for deduplication today. Keying
+/// consistently on `(id, group_id)` makes the multi-namespace fusion
+/// correct-by-construction for any future change to fact id semantics.
+///
+/// `group_id: None` = legacy unkeyed facts. Same None-bucket semantics as
+/// `rrf_fuse_entities`.
 fn rrf_fuse_facts(
     vector_hits: Vec<SearchHit<Fact>>,
     fts_hits: Vec<SearchHit<Fact>>,
@@ -682,14 +722,16 @@ fn rrf_fuse_facts(
 ) -> Vec<SearchHit<Fact>> {
     use std::collections::HashMap;
 
-    // Build a map of fact_id -> (rrf_score, Fact)
-    let mut scores: HashMap<i64, (f64, Fact)> = HashMap::new();
+    // Key: (fact_id, group_id) — globally-unique INTEGER PK, but keyed
+    // consistently for multi-namespace correctness.
+    let mut scores: HashMap<(i64, Option<String>), (f64, Fact)> = HashMap::new();
 
     // Score vector results by rank position
     for (rank, hit) in vector_hits.into_iter().enumerate() {
         let rrf_score = 1.0 / (k + rank as f64 + 1.0);
+        let key = (hit.item.id, hit.item.group_id.clone());
         scores
-            .entry(hit.item.id)
+            .entry(key)
             .and_modify(|(s, _)| *s += rrf_score)
             .or_insert((rrf_score, hit.item));
     }
@@ -697,8 +739,9 @@ fn rrf_fuse_facts(
     // Score FTS results by rank position
     for (rank, hit) in fts_hits.into_iter().enumerate() {
         let rrf_score = 1.0 / (k + rank as f64 + 1.0);
+        let key = (hit.item.id, hit.item.group_id.clone());
         scores
-            .entry(hit.item.id)
+            .entry(key)
             .and_modify(|(s, _)| *s += rrf_score)
             .or_insert((rrf_score, hit.item));
     }
@@ -714,6 +757,30 @@ fn rrf_fuse_facts(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     results
+}
+
+// ── test-utils re-exports (ADR-029c 5-tier pyramid, Phase A) ─────────────────
+//
+// Property tests in `tests/properties_029bc.rs` call these private functions
+// directly so they can assert composite-key dedup invariants without going
+// through the full SQL round-trip. Gated behind `test-utils` feature + `test`
+// cfg so they never appear in production builds.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn rrf_fuse_entities_for_test(
+    vector_hits: Vec<SearchHit<Entity>>,
+    fts_hits: Vec<SearchHit<Entity>>,
+    k: f64,
+) -> Vec<SearchHit<Entity>> {
+    rrf_fuse_entities(vector_hits, fts_hits, k)
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub fn rrf_fuse_facts_for_test(
+    vector_hits: Vec<SearchHit<Fact>>,
+    fts_hits: Vec<SearchHit<Fact>>,
+    k: f64,
+) -> Vec<SearchHit<Fact>> {
+    rrf_fuse_facts(vector_hits, fts_hits, k)
 }
 
 /// Clamp a requested top-K to the actual number of available results.

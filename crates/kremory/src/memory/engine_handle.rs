@@ -466,6 +466,7 @@ impl GraphHandle for EngineGraphHandle {
                 score,
                 source_refs,
                 incomplete,
+                namespace: Some(namespace.clone()),
             });
         }
 

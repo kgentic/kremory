@@ -1551,3 +1551,356 @@ fn token_tracking_embedder_counter_increments() {
         capture.counter_names()
     );
 }
+
+// ── E2E-C1 — Multi-namespace recall with real embeddings (ADR-029c) ───────────
+
+/// C1: Multi-namespace recall E2E with real Ollama embeddings.
+///
+/// ADR-029c Decisions 4 + 7: recall `in_namespaces(&[A, B])` must fan-out
+/// correctly with real vector embeddings and attribute results to their origin
+/// namespace.
+///
+/// Steps:
+///   1. Ingest one episode into ns-A and one into ns-B.
+///   2. Recall with `in_namespaces(&[ns_a, ns_b])`.
+///   3. Assert all returned `RetrievedContext.namespace` values are `Some`.
+///   4. Assert no result carries a namespace other than ns-A or ns-B.
+///   5. Recall with `in_namespace(ns_a)` only — assert no ns-B result leaks.
+///
+/// `#[ignore]`: requires live Ollama (OLLAMA_BASE_URL + nomic-embed-text +
+/// JSON-capable chat model).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+#[cfg(feature = "llm-integration")]
+async fn c1_multi_namespace_recall_e2e_real_embeddings() {
+    let dir_a = tempfile::tempdir().expect("tempdir-a");
+    let dir_b = tempfile::tempdir().expect("tempdir-b");
+
+    // Use separate Memory instances sharing the same DB file (one db, two ns).
+    let db_path = dir_a.path().join("kremory-c1.db");
+    let base_url = ollama_base_url();
+
+    let llm_a: Arc<Ollama> = LLMBuilder::<Ollama>::new()
+        .base_url(&base_url)
+        .model(ollama_chat_model())
+        .timeout_seconds(60)
+        .build()
+        .expect("LLMBuilder");
+    let emb_a: Arc<dyn DynEmbeddingProvider> = {
+        let raw: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
+            .base_url(&base_url)
+            .model("nomic-embed-text")
+            .build()
+            .expect("EmbeddingBuilder");
+        Arc::new(OllamaEmbedderAdapter(raw))
+    };
+
+    let mem = Memory::open(&db_path)
+        .with_llm(llm_a as Arc<dyn ChatProvider>)
+        .with_embedder(emb_a)
+        .embedding_dim(768)
+        .await
+        .expect("Memory::open C1");
+
+    let ns_a = Namespace::new("c1-ns-alpha");
+    let ns_b = Namespace::new("c1-ns-beta");
+
+    // Ingest into ns-A.
+    mem.remember("Alice is a researcher at the Institute.")
+        .in_namespace(ns_a.clone())
+        .await
+        .expect("remember into ns-A");
+
+    // Ingest into ns-B.
+    mem.remember("Bob manages the logistics division at Omega Corp.")
+        .in_namespace(ns_b.clone())
+        .await
+        .expect("remember into ns-B");
+
+    // Multi-namespace recall.
+    let results = mem
+        .recall("who are the people involved?")
+        .in_namespaces(&[ns_a.clone(), ns_b.clone()])
+        .await
+        .expect("in_namespaces recall must succeed");
+
+    // All results must carry namespace attribution.
+    for rc in &results {
+        assert!(
+            rc.namespace.is_some(),
+            "multi-namespace recall result must carry namespace attribution; got: {rc:?}"
+        );
+        let ns_val = rc.namespace.as_ref().expect("just checked Some");
+        assert!(
+            ns_val.namespace == "c1-ns-alpha" || ns_val.namespace == "c1-ns-beta",
+            "result namespace must be c1-ns-alpha or c1-ns-beta, got '{}'",
+            ns_val.namespace
+        );
+    }
+
+    // ns-A only recall must not include ns-B results.
+    let ns_a_results = mem
+        .recall("who are the people involved?")
+        .in_namespace(ns_a.clone())
+        .await
+        .expect("in_namespace(ns_a) recall must succeed");
+
+    for rc in &ns_a_results {
+        if let Some(ref ns) = rc.namespace {
+            assert_ne!(
+                ns.namespace, "c1-ns-beta",
+                "ns-A-only recall must not return ns-B results; got: {rc:?}"
+            );
+        }
+    }
+
+    drop(dir_b); // silence unused warning
+}
+
+// ── E2E-C2 — AppendOnly + Mutable namespaces co-exist in same Memory ─────────
+
+/// C2: AppendOnly and Mutable namespaces in the same `Memory` instance.
+///
+/// ADR-029b Decision 2: an AppendOnly namespace blocks `forget()` and `dream()`;
+/// a Mutable namespace in the same DB must still permit them.
+///
+/// Steps:
+///   1. Register ns-append as AppendOnly, ns-mutable as Mutable.
+///   2. Ingest an episode into each namespace.
+///   3. Recall from ns-append succeeds.
+///   4. Recall from ns-mutable succeeds.
+///   5. `forget()` against ns-append returns a policy-violation error.
+///   6. `forget()` against ns-mutable succeeds (or returns NotFound — not a policy error).
+///
+/// `#[ignore]`: requires live Ollama.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+#[cfg(feature = "llm-integration")]
+async fn c2_append_only_and_mutable_namespaces_coexist() {
+    use kremory::{ImmutabilityLevel, NamespacePolicy};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let base_url = ollama_base_url();
+
+    let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
+        .base_url(&base_url)
+        .model(ollama_chat_model())
+        .timeout_seconds(60)
+        .build()
+        .expect("LLMBuilder");
+    let emb: Arc<dyn DynEmbeddingProvider> = {
+        let raw: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
+            .base_url(&base_url)
+            .model("nomic-embed-text")
+            .build()
+            .expect("EmbeddingBuilder");
+        Arc::new(OllamaEmbedderAdapter(raw))
+    };
+
+    let mem = Memory::open(dir.path().join("kremory-c2.db"))
+        .with_llm(llm as Arc<dyn ChatProvider>)
+        .with_embedder(emb)
+        .embedding_dim(768)
+        .await
+        .expect("Memory::open C2");
+
+    let ns_append = Namespace::new("c2-append-only")
+        .with_policy(NamespacePolicy::APPEND_ONLY)
+        .expect("APPEND_ONLY coherent");
+    let ns_mutable = Namespace::new("c2-mutable")
+        .with_policy(NamespacePolicy::new().with_immutability(ImmutabilityLevel::Mutable))
+        .expect("Mutable coherent");
+
+    mem.register_namespace(ns_append.clone())
+        .await
+        .expect("register AppendOnly namespace");
+    mem.register_namespace(ns_mutable.clone())
+        .await
+        .expect("register Mutable namespace");
+
+    // Ingest into both.
+    mem.remember("Alice is the lead engineer at SafeVault Corp.")
+        .in_namespace(ns_append.clone())
+        .await
+        .expect("remember into AppendOnly ns");
+
+    mem.remember("Charlie manages operations at FlexGroup Inc.")
+        .in_namespace(ns_mutable.clone())
+        .await
+        .expect("remember into Mutable ns");
+
+    // Recall from both must succeed.
+    mem.recall("who is the lead engineer?")
+        .in_namespace(Namespace::new("c2-append-only"))
+        .await
+        .expect("recall from AppendOnly ns must succeed");
+
+    mem.recall("who manages operations?")
+        .in_namespace(Namespace::new("c2-mutable"))
+        .await
+        .expect("recall from Mutable ns must succeed");
+
+    // Forget in AppendOnly ns must return a policy-violation error.
+    let forget_append = mem
+        .forget("Alice")
+        .in_namespace(Namespace::new("c2-append-only"))
+        .await;
+
+    assert!(
+        forget_append.is_err(),
+        "forget() in AppendOnly namespace must return Err; got Ok"
+    );
+    let err_msg = forget_append
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    // Error must mention the policy violation (not a generic I/O error).
+    assert!(
+        err_msg.contains("AppendOnly") || err_msg.contains("policy"),
+        "forget() error in AppendOnly ns must mention policy; got: {err_msg}"
+    );
+
+    // Forget in Mutable ns must NOT produce a policy-violation error.
+    // (It may return NotFound if the entity was never extracted — that is fine.)
+    let forget_mutable = mem
+        .forget("Charlie")
+        .in_namespace(Namespace::new("c2-mutable"))
+        .await;
+
+    if let Err(ref e) = forget_mutable {
+        let msg = e.to_string();
+        assert!(
+            !msg.contains("AppendOnly"),
+            "forget() in Mutable ns must NOT produce AppendOnly error; got: {msg}"
+        );
+    }
+}
+
+// ── E2E-C3 — kremory-admin CLI smoke test (ADR-029b Decision 7) ──────────────
+
+/// C3: kremory-admin CLI smoke test.
+///
+/// ADR-029b Decision 7: the `kremory-admin` binary must be buildable and its
+/// top-level subcommands (`migrate --dry-run`, `verify`, `upgrade-namespace`)
+/// must exit 0 against a valid database path without performing destructive
+/// operations.
+///
+/// This test does NOT require live Ollama (no embedding / LLM calls).
+/// It uses `std::process::Command` to shell out to `cargo run -p kremory-admin`.
+///
+/// `#[ignore]`: requires a full workspace build (`cargo build -p kremory-admin`
+/// succeeds). This is gated here to avoid blocking CI that cannot build the
+/// workspace. Remove `#[ignore]` once kremory-admin ships as a pre-built binary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+#[cfg(feature = "llm-integration")]
+async fn c3_kremory_admin_cli_smoke_test() {
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("kremory-admin-smoke.db");
+
+    // Step 1: Create a real DB via Memory::open (runs auto-migrations).
+    {
+        let base_url = ollama_base_url();
+        let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
+            .base_url(&base_url)
+            .model(ollama_chat_model())
+            .timeout_seconds(30)
+            .build()
+            .expect("LLMBuilder");
+        let emb: Arc<dyn DynEmbeddingProvider> = {
+            let raw: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
+                .base_url(&base_url)
+                .model("nomic-embed-text")
+                .build()
+                .expect("EmbeddingBuilder");
+            Arc::new(OllamaEmbedderAdapter(raw))
+        };
+        Memory::open(&db_path)
+            .with_llm(llm as Arc<dyn ChatProvider>)
+            .with_embedder(emb)
+            .embedding_dim(768)
+            .await
+            .expect("Memory::open for admin smoke test");
+        // Memory drops here — DB file persists.
+    }
+
+    let db_str = db_path.to_str().expect("db path is valid UTF-8");
+
+    // Step 2: `kremory-admin verify` — exits 0, prints file size.
+    let verify_out = Command::new("cargo")
+        .args([
+            "run",
+            "-q",
+            "-p",
+            "kremory-admin",
+            "--",
+            "verify",
+            "--db",
+            db_str,
+        ])
+        .output()
+        .expect("cargo run kremory-admin verify must not fail to spawn");
+
+    assert!(
+        verify_out.status.success(),
+        "kremory-admin verify must exit 0; stderr: {}",
+        String::from_utf8_lossy(&verify_out.stderr)
+    );
+    let verify_stdout = String::from_utf8_lossy(&verify_out.stdout);
+    assert!(
+        verify_stdout.contains("bytes") || verify_stdout.contains("Verifying"),
+        "kremory-admin verify output must contain 'bytes' or 'Verifying'; got: {verify_stdout}"
+    );
+
+    // Step 3: `kremory-admin migrate --dry-run` — exits 0, prints dry-run marker.
+    let migrate_out = Command::new("cargo")
+        .args([
+            "run",
+            "-q",
+            "-p",
+            "kremory-admin",
+            "--",
+            "migrate",
+            "--db",
+            db_str,
+            "--dry-run",
+        ])
+        .output()
+        .expect("cargo run kremory-admin migrate --dry-run must not fail to spawn");
+
+    assert!(
+        migrate_out.status.success(),
+        "kremory-admin migrate --dry-run must exit 0; stderr: {}",
+        String::from_utf8_lossy(&migrate_out.stderr)
+    );
+    let migrate_stdout = String::from_utf8_lossy(&migrate_out.stdout);
+    assert!(
+        migrate_stdout.contains("dry-run"),
+        "kremory-admin migrate --dry-run output must contain 'dry-run'; got: {migrate_stdout}"
+    );
+
+    // Step 4: `kremory-admin upgrade-namespace --group-id test-ns` — exits 0.
+    let upgrade_out = Command::new("cargo")
+        .args([
+            "run",
+            "-q",
+            "-p",
+            "kremory-admin",
+            "--",
+            "upgrade-namespace",
+            "--db",
+            db_str,
+            "--group-id",
+            "c3-smoke-ns",
+        ])
+        .output()
+        .expect("cargo run kremory-admin upgrade-namespace must not fail to spawn");
+
+    assert!(
+        upgrade_out.status.success(),
+        "kremory-admin upgrade-namespace must exit 0; stderr: {}",
+        String::from_utf8_lossy(&upgrade_out.stderr)
+    );
+}

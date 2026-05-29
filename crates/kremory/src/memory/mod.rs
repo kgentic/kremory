@@ -309,10 +309,20 @@ pub fn context_block(results: &[RetrievedContext], template: ContextTemplate) ->
 }
 
 fn render_entities(results: &[RetrievedContext]) -> String {
+    // Detect multi-namespace context: emit [ns:{group_id}] prefix when results
+    // span more than one distinct group_id (ADR-029c Decision 7).
+    let multi_ns = is_multi_namespace(results);
     let mut out = String::new();
     for (i, r) in results.iter().enumerate() {
         if i > 0 {
             out.push_str("\n\n");
+        }
+        if multi_ns {
+            if let Some(group_id) = namespace_group_id(r) {
+                out.push_str("[ns:");
+                out.push_str(&group_id);
+                out.push_str("] ");
+            }
         }
         out.push_str("## ");
         out.push_str(&r.entity_name);
@@ -352,12 +362,22 @@ fn render_edge_summary(results: &[RetrievedContext]) -> String {
 }
 
 fn render_temporal_facts(results: &[RetrievedContext]) -> String {
+    // Detect multi-namespace context: emit [ns:{group_id}] prefix per result
+    // when results span more than one distinct group_id (ADR-029c Decision 7).
+    let multi_ns = is_multi_namespace(results);
     let mut out = String::new();
     for (i, r) in results.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
         for sr in &r.source_refs {
+            if multi_ns {
+                if let Some(group_id) = namespace_group_id(r) {
+                    out.push_str("[ns:");
+                    out.push_str(&group_id);
+                    out.push_str("] ");
+                }
+            }
             out.push_str(&r.entity_name);
             out.push_str(" (valid_at=");
             out.push_str(&sr.occurred_at.to_rfc3339());
@@ -367,6 +387,35 @@ fn render_temporal_facts(results: &[RetrievedContext]) -> String {
         }
     }
     out.trim_end_matches('\n').to_string()
+}
+
+/// Determine whether `results` span more than one distinct namespace group_id.
+/// Used by `render_entities` and `render_temporal_facts` to decide whether to
+/// emit `[ns:{group_id}]` attribution markers (ADR-029c Decision 7).
+///
+/// Returns `true` only when at least two distinct, non-`None` group_ids appear
+/// in the result set. Single-namespace results and results without namespace
+/// attribution always return `false` (no prefix emitted).
+fn is_multi_namespace(results: &[RetrievedContext]) -> bool {
+    let mut seen: Option<&str> = None;
+    for r in results {
+        if let Some(ns) = r.namespace.as_ref() {
+            let gid = ns.namespace.as_str();
+            match seen {
+                None => seen = Some(gid),
+                Some(prev) if prev != gid => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// Extract the namespace group_id string from a result for use in the
+/// `[ns:{group_id}]` attribution marker. Returns `None` when `namespace` is
+/// unset (pre-v0.1.5 results / substrate bypass).
+fn namespace_group_id(r: &RetrievedContext) -> Option<String> {
+    r.namespace.as_ref().map(|ns| ns.namespace.clone())
 }
 
 fn source_kind_label(k: SourceKind) -> &'static str {
@@ -732,6 +781,7 @@ mod tests {
                 score: 0.5,
                 source_refs: vec![],
                 incomplete: false,
+                namespace: None,
             }])
         }
 

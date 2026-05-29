@@ -12,6 +12,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+/// Serde default helper — returns `true`. Used by `#[serde(default = "default_true")]`
+/// on `NamespacePolicy::forgettable` and `NamespacePolicy::dream_eligible` so that
+/// older serialised JSON (missing those fields) deserializes with the v0.1.3 defaults.
+fn default_true() -> bool {
+    true
+}
+
 // IngestStatus belongs to core::error but is part of the rqlm API surface.
 // Re-export here so consumers can import from kremory::memory::types only.
 pub use crate::core::error::IngestStatus;
@@ -126,14 +133,17 @@ impl Namespace {
 #[non_exhaustive]
 pub struct NamespacePolicy {
     /// Mutation policy on the underlying graph rows. v0.1.4: persisted only.
+    #[serde(default)]
     pub immutability: ImmutabilityLevel,
 
     /// Whether `forget().in_namespace(ns).execute()` is permitted. v0.1.4:
     /// persisted only. Default `true` matches v0.1.3 behaviour.
+    #[serde(default = "default_true")]
     pub forgettable: bool,
 
     /// Whether `dream().in_namespace(ns)` is permitted. v0.1.4: persisted
     /// only. Default `true` matches v0.1.3 behaviour.
+    #[serde(default = "default_true")]
     pub dream_eligible: bool,
 }
 
@@ -379,8 +389,8 @@ pub struct SearchOpts {
 ///
 /// `#[non_exhaustive]` — construction from outside this crate must go through
 /// `RetrievedContext::new()` + the `with_*` fluent setters. This keeps future
-/// field additions (e.g. `namespace` per ADR-029c) source-compatible across
-/// minor versions. Added v0.1.4 as prereq for ADR-029c multi-namespace recall.
+/// field additions source-compatible across minor versions. Added v0.1.4 as
+/// prereq for ADR-029c multi-namespace recall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct RetrievedContext {
@@ -397,12 +407,35 @@ pub struct RetrievedContext {
     /// still deserialises correctly (defaults to `false`).
     #[serde(default)]
     pub incomplete: bool,
+
+    /// The namespace this result was retrieved from. Set by both single-namespace
+    /// recall (`in_namespace`) and multi-namespace recall (`in_namespaces`).
+    ///
+    /// `None` in two cases:
+    /// - Results returned by callers that pre-date v0.1.5 and construct
+    ///   `RetrievedContext` directly (test fixtures, deserialized pre-v0.1.5
+    ///   JSON). `#[serde(default)]` ensures backward-compatible deserialization.
+    /// - Raw SQL / substrate-level queries that bypass the facade recall path.
+    ///
+    /// # Attribution cardinality
+    ///
+    /// One result = one namespace. When `in_namespaces(&[A, B])` is called and
+    /// the same surface name "Acme Corp" exists in both namespaces, the recall
+    /// returns TWO result rows — one attributed to A, one attributed to B —
+    /// each with independent facts, scores, and summaries.
+    ///
+    /// # Policy
+    ///
+    /// `namespace.policy` is always `None` regardless of the registered policy
+    /// (ADR-029c Decision 3). Policy is not fetched per-result.
+    #[serde(default)]
+    pub namespace: Option<Namespace>,
 }
 
 impl RetrievedContext {
     /// Construct a `RetrievedContext` with the required fields. Optional fields
-    /// (`incomplete`, future additions) default to their sensible defaults; use
-    /// the `with_*` fluent setters to override.
+    /// (`incomplete`, `namespace`, future additions) default to their sensible
+    /// defaults; use the `with_*` fluent setters to override.
     pub fn new(
         entity_id: impl Into<String>,
         entity_name: impl Into<String>,
@@ -417,12 +450,22 @@ impl RetrievedContext {
             score,
             source_refs,
             incomplete: false,
+            namespace: None,
         }
     }
 
     /// Mark this result as incomplete (stub forward-reference). Default `false`.
     pub fn with_incomplete(mut self, incomplete: bool) -> Self {
         self.incomplete = incomplete;
+        self
+    }
+
+    /// Set the namespace attribution for this result. Called by both the
+    /// single-namespace (`in_namespace`) and multi-namespace (`in_namespaces`)
+    /// recall execution paths. Callers constructing results directly may omit
+    /// (defaults to `None`). Added v0.1.5 (ADR-029c Decision 2).
+    pub fn with_namespace(mut self, ns: Namespace) -> Self {
+        self.namespace = Some(ns);
         self
     }
 }

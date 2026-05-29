@@ -76,6 +76,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use uuid::Uuid;
 
 use crate::core::chat_tracking::TokenTrackingChatProvider;
 use crate::core::error::Error as CoreError;
@@ -326,6 +327,10 @@ impl Memory {
             memory: self,
             query: query.into(),
             namespace: None,
+            namespaces: None,
+            per_namespace_top_k: None,
+            best_effort: false,
+            recall_id: Uuid::new_v4(),
             k: None,
             as_of: None,
             template: Some(RecallTemplate::TemporalFacts),
@@ -1189,7 +1194,24 @@ impl<'a> EpisodeEntryBuilder<'a> {
 pub struct RecallRequest<'a> {
     memory: &'a Memory,
     query: String,
+    /// Single-namespace selector. Mutually exclusive with `namespaces`.
     namespace: Option<Namespace>,
+    /// Multi-namespace selector (ADR-029c Decision 6). Mutually exclusive with
+    /// `namespace`. When set, fan-out via `tokio::join_all` executes one
+    /// sub-query per namespace and blends results via cross-namespace RRF.
+    namespaces: Option<Vec<Namespace>>,
+    /// Per-namespace top-K cap before cross-namespace RRF blend (ADR-029c
+    /// Decision 4). Default: effective `k`. Raising this value improves recall
+    /// diversity for low-coverage namespaces at the cost of extra sub-query work.
+    per_namespace_top_k: Option<usize>,
+    /// When `true`, sub-query errors emit `tracing::warn!` and the failing
+    /// namespace is skipped rather than propagating `Err` to the caller
+    /// (ADR-029c Decision 4 sub-decision M1). Default `false` (fail-all).
+    best_effort: bool,
+    /// Stable id for correlating tracing spans across multi-namespace fan-out.
+    /// Auto-generated at `RecallRequest` construction; override via
+    /// `with_recall_id`. (ADR-029c Decision 5).
+    recall_id: Uuid,
     k: Option<usize>,
     as_of: Option<DateTime<Utc>>,
     template: Option<RecallTemplate>,
@@ -1199,8 +1221,70 @@ pub struct RecallRequest<'a> {
 
 impl<'a> RecallRequest<'a> {
     /// Set the namespace for this operation (overrides Memory default).
+    /// Mutually exclusive with `in_namespaces` — setting both returns
+    /// `Err(Error::ConflictingNamespaceSelectors)` at `.await` time.
     pub fn in_namespace(mut self, ns: Namespace) -> Self {
         self.namespace = Some(ns);
+        self
+    }
+
+    /// Recall across multiple namespaces concurrently, blending results via
+    /// per-namespace top-K RRF. Each result in the returned `Vec` carries
+    /// `namespace: Some(ns)` identifying its source namespace.
+    ///
+    /// # Empty slice
+    ///
+    /// `in_namespaces(&[])` returns `Err(MemoryError::MissingNamespace { ... })`.
+    ///
+    /// # Single-element equivalence
+    ///
+    /// `in_namespaces(&[ns])` is equivalent to `in_namespace(ns)` — same query
+    /// plan, same result semantics, same `namespace: Some(ns)` attribution.
+    ///
+    /// # Mutual exclusion with `in_namespace`
+    ///
+    /// Calling both `in_namespace` and `in_namespaces` on the same request is a
+    /// programming error and returns `Err(MemoryError::Core(Error::ConflictingNamespaceSelectors))`
+    /// at `.await` time (checked by `check_selectors`).
+    ///
+    /// # Cold-cache startup latency
+    ///
+    /// Each namespace may trigger a DB policy lookup on first call if the
+    /// `NamespacePolicyCache` is cold. For N > 4 namespaces at server startup,
+    /// consider pre-warming via `register_namespace` on each namespace before
+    /// the first `in_namespaces` call to avoid the cold-cache thundering-herd
+    /// (see ADR-029c Decision 4 for details).
+    pub fn in_namespaces(mut self, namespaces: &[Namespace]) -> Self {
+        self.namespaces = Some(namespaces.to_vec());
+        self
+    }
+
+    /// Cap the number of results fetched from each individual namespace before
+    /// cross-namespace RRF blending. Default: `k` (or `Memory::default_k` if
+    /// `k` is unset). Raising this value improves recall diversity for
+    /// low-coverage namespaces at the cost of extra per-namespace sub-query work.
+    pub fn per_namespace_top_k(mut self, n: usize) -> Self {
+        self.per_namespace_top_k = Some(n);
+        self
+    }
+
+    /// When `true`, sub-query errors emit `tracing::warn!` and the failing
+    /// namespace is skipped rather than returning `Err` to the caller. The
+    /// returned `Vec<RetrievedContext>` contains results from all namespaces
+    /// that succeeded. Default: `false` (fail-all — appropriate for audit
+    /// consumers where partial results are worse than no results).
+    ///
+    /// If ALL sub-queries fail, `best_effort(true)` still returns `Err`
+    /// (returning an empty result set silently is worse than surfacing the error).
+    pub fn best_effort(mut self, enabled: bool) -> Self {
+        self.best_effort = enabled;
+        self
+    }
+
+    /// Override the auto-generated `recall_id`. Use when correlating kremory
+    /// tracing spans with an application-level request id.
+    pub fn with_recall_id(mut self, id: Uuid) -> Self {
+        self.recall_id = id;
         self
     }
 
@@ -1244,18 +1328,162 @@ impl<'a> RecallRequest<'a> {
         self
     }
 
+    /// Check that `in_namespace` and `in_namespaces` were not both set on this
+    /// request. Called from both `execute()` and `RecallRawRequest::into_future`
+    /// (ADR-029c Decision 6, closes M3).
+    fn check_selectors(&self) -> Result<()> {
+        if self.namespace.is_some() && self.namespaces.is_some() {
+            return Err(MemoryError::Core(
+                crate::core::error::Error::ConflictingNamespaceSelectors {
+                    request: "in_namespace and in_namespaces both set on the same RecallRequest; \
+                              use one or the other"
+                        .to_string(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
     async fn execute(self) -> Result<String> {
-        let ns = self.memory.resolve_namespace(self.namespace)?;
-        let opts = self.opts.unwrap_or(SearchOpts {
+        self.check_selectors()?;
+
+        let template = self.template.unwrap_or(RecallTemplate::TemporalFacts);
+
+        // Multi-namespace fan-out path (ADR-029c Decision 4 + 6).
+        if self.namespaces.is_some() {
+            if self.namespaces.as_ref().is_none_or(|v| v.is_empty()) {
+                return Err(MemoryError::MissingNamespace {
+                    request:
+                        "in_namespaces called with empty slice; provide at least one namespace",
+                });
+            }
+            let results = self.execute_multi_namespace().await?;
+            return Ok(memory::context_block(&results, template.into()));
+        }
+
+        // Single-namespace path (original behaviour).
+        let ns = self.memory.resolve_namespace(self.namespace.clone())?;
+        let opts = self.opts.clone().unwrap_or(SearchOpts {
             limit: self.k,
             as_of: self.as_of,
             source_kind: None,
         });
         // ADR-029a lazy population.
         self.memory.ensure_namespace_policy(&ns).await?;
-        let results = memory::search(self.memory.graph.as_ref(), &self.query, ns, opts).await?;
-        let template = self.template.unwrap_or(RecallTemplate::TemporalFacts);
+        let recall_id = self.recall_id;
+        let span = tracing::info_span!(
+            "kremory.recall.single_ns",
+            recall_id = %recall_id,
+            namespace = %ns.namespace,
+        );
+        let _enter = span.enter();
+        let results = memory::search(self.memory.graph.as_ref(), &self.query, ns.clone(), opts)
+            .await?
+            .into_iter()
+            .map(|r| r.with_namespace(ns.clone()))
+            .collect::<Vec<_>>();
         Ok(memory::context_block(&results, template.into()))
+    }
+
+    /// Fan-out recall across all namespaces in `self.namespaces`, blend via RRF,
+    /// trim to `self.k`, and return results with `namespace: Some(ns)` attribution.
+    ///
+    /// Precondition: `self.namespaces` is `Some` and non-empty (caller checks).
+    async fn execute_multi_namespace(self) -> Result<Vec<RetrievedContext>> {
+        // Extract all fields upfront before consuming `self`.
+        let memory = self.memory;
+        let query = self.query;
+        let namespaces = self
+            .namespaces
+            .ok_or_else(|| MemoryError::MissingNamespace {
+                request:
+                    "execute_multi_namespace called without namespaces (internal precondition)",
+            })?;
+        let opts_template = self.opts;
+        let per_ns_k = self.per_namespace_top_k.or(self.k);
+        let final_k = self.k;
+        let as_of = self.as_of;
+        let best_effort = self.best_effort;
+        let recall_id = self.recall_id;
+
+        let outer_span = tracing::info_span!(
+            "kremory.recall.multi_ns",
+            recall_id = %recall_id,
+            namespace_count = %namespaces.len(),
+        );
+        let _outer = outer_span.enter();
+
+        // Collect sub-query futures — one per namespace.
+        let mut sub_futures = Vec::with_capacity(namespaces.len());
+        for ns in namespaces {
+            let query = query.clone();
+            let opts = opts_template.clone().unwrap_or(SearchOpts {
+                limit: per_ns_k,
+                as_of,
+                source_kind: None,
+            });
+            sub_futures.push(async move {
+                let span = tracing::info_span!(
+                    "kremory.recall.sub_query",
+                    recall_id = %recall_id,
+                    namespace = %ns.namespace,
+                    per_namespace_top_k = per_ns_k,
+                );
+                let _enter = span.enter();
+                memory.ensure_namespace_policy(&ns).await?;
+                let hits = memory::search(memory.graph.as_ref(), &query, ns.clone(), opts).await?;
+                let attributed: Vec<RetrievedContext> = hits
+                    .into_iter()
+                    .map(|r| r.with_namespace(ns.clone()))
+                    .collect();
+                Ok::<Vec<RetrievedContext>, MemoryError>(attributed)
+            });
+        }
+
+        let sub_results = futures::future::join_all(sub_futures).await;
+
+        // Collect results, honouring best_effort semantics.
+        let mut all_results: Vec<RetrievedContext> = Vec::new();
+        let mut last_err: Option<MemoryError> = None;
+        for outcome in sub_results {
+            match outcome {
+                Ok(hits) => all_results.extend(hits),
+                Err(e) => {
+                    if best_effort {
+                        tracing::warn!(
+                            target: "kremory.recall",
+                            recall_id = %recall_id,
+                            error = %e,
+                            "best_effort: namespace sub-query failed, skipping"
+                        );
+                        last_err = Some(e);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        // If best_effort and ALL sub-queries failed, surface the last error.
+        if best_effort && all_results.is_empty() {
+            if let Some(e) = last_err {
+                return Err(e);
+            }
+        }
+
+        // Sort blended results by score descending (RRF scores from sub-queries).
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Trim to final_k if set.
+        if let Some(k) = final_k {
+            all_results.truncate(k);
+        }
+
+        Ok(all_results)
     }
 }
 
@@ -1281,7 +1509,24 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            let ns = self.inner.memory.resolve_namespace(self.inner.namespace)?;
+            // ADR-029c Decision 6 / M3: check_selectors fires on the raw path too.
+            self.inner.check_selectors()?;
+
+            // Multi-namespace fan-out path.
+            if self.inner.namespaces.is_some() {
+                if self.inner.namespaces.as_ref().is_none_or(|v| v.is_empty()) {
+                    return Err(MemoryError::MissingNamespace {
+                        request:
+                            "in_namespaces called with empty slice; provide at least one namespace",
+                    });
+                }
+                return self.inner.execute_multi_namespace().await;
+            }
+
+            let ns = self
+                .inner
+                .memory
+                .resolve_namespace(self.inner.namespace.clone())?;
             let opts = self.inner.opts.unwrap_or(SearchOpts {
                 limit: self.inner.k,
                 as_of: self.inner.as_of,
@@ -1289,13 +1534,24 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             });
             // ADR-029a lazy population.
             self.inner.memory.ensure_namespace_policy(&ns).await?;
-            memory::search(
+            let recall_id = self.inner.recall_id;
+            let span = tracing::info_span!(
+                "kremory.recall.single_ns",
+                recall_id = %recall_id,
+                namespace = %ns.namespace,
+            );
+            let _enter = span.enter();
+            let results = memory::search(
                 self.inner.memory.graph.as_ref(),
                 &self.inner.query,
-                ns,
+                ns.clone(),
                 opts,
             )
-            .await
+            .await?
+            .into_iter()
+            .map(|r| r.with_namespace(ns.clone()))
+            .collect();
+            Ok(results)
         })
     }
 }
@@ -1346,18 +1602,18 @@ impl<'a> ForgetRequest<'a> {
             .map_err(MemoryError::Core)?;
         if let Some(p) = &policy {
             if p.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly {
-                // ADR-029a contract: v0.1.4 emits an operational warning for
-                // AppendOnly violations but does NOT enforce — enforcement
-                // lands in v0.1.5 per ADR-029b. The shipped v0.1.3→v0.1.4
-                // CHANGELOG entry guarantees declare-but-don't-enforce semantics.
-                tracing::warn!(
-                    target: "kremory.namespace",
-                    namespace = %group_id,
-                    operation = "forget",
-                    ?p,
-                    "POLICY DECLARED BUT NOT ENFORCED: AppendOnly forget will proceed; \
-                     enforcement lands in v0.1.5 (ADR-029b)"
-                );
+                // ADR-029b §3.1 enforcement — v0.1.5 closure of the v0.1.4
+                // declare-but-don't-enforce contract. ForgetRequest is a
+                // mutating operation and is prohibited on AppendOnly
+                // namespaces. Returns the canonical CoreError variant so
+                // callers can pattern-match on the policy violation.
+                return Err(MemoryError::Core(
+                    crate::core::error::Error::NamespacePolicyViolation {
+                        namespace: group_id.clone(),
+                        operation: "forget".to_string(),
+                        policy: p.clone(),
+                    },
+                ));
             }
         }
 
@@ -1439,9 +1695,11 @@ impl<'a> DreamRequest<'a> {
         // ADR-029a lazy population.
         self.memory.ensure_namespace_policy(&ns).await?;
 
-        // ADR-029a contract: v0.1.4 warns on dream against AppendOnly but does
-        // NOT enforce. Enforcement lands in v0.1.5 per ADR-029b §3.1. The
-        // shipped CHANGELOG promise is declare-but-don't-enforce.
+        // ADR-029b §3.1 enforcement — v0.1.5 closure of the v0.1.4
+        // declare-but-don't-enforce contract. DreamRequest mutates the
+        // graph (consolidation rewrites facts) and is prohibited on
+        // AppendOnly namespaces. Returns the canonical CoreError variant
+        // so callers can pattern-match on the policy violation.
         if let Some(tg) = self.memory.temporal_graph.as_ref() {
             let group_id = namespace_to_group_id(&ns);
             let policy = tg
@@ -1450,14 +1708,13 @@ impl<'a> DreamRequest<'a> {
                 .map_err(MemoryError::Core)?;
             if let Some(p) = &policy {
                 if p.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly {
-                    tracing::warn!(
-                        target: "kremory.namespace",
-                        namespace = %group_id,
-                        operation = "dream",
-                        ?p,
-                        "POLICY DECLARED BUT NOT ENFORCED: AppendOnly dream will proceed; \
-                         enforcement lands in v0.1.5 (ADR-029b §3.1)"
-                    );
+                    return Err(MemoryError::Core(
+                        crate::core::error::Error::NamespacePolicyViolation {
+                            namespace: group_id.clone(),
+                            operation: "dream".to_string(),
+                            policy: p.clone(),
+                        },
+                    ));
                 }
             }
         }
