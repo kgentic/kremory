@@ -298,6 +298,7 @@ mod domain_tests {
                 None,
                 None,
                 Some(fixture.content_type.clone()),
+                kremory::core::ingest::SourceParams::default(),
             )
             .await
             .expect("ingest_with() failed");

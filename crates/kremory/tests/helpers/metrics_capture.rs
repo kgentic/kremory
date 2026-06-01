@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
 //! `MetricsCapture` — thin wrapper around `DebuggingRecorder` + `Snapshotter`
 //! that makes the pattern used in `b1_observability.rs` re-usable across
 //! LLM integration tests.

@@ -20,3 +20,14 @@ panic = "abort"
 # `--release` regardless; dev profile optimisations don't affect crates.io.
 opt-level = 0
 debug = 1
+
+# Redirect all autoagents-llm 0.3.x deps (including transitive via
+# autoagents-llamacpp) to the kgentic fork branch that carries:
+#   - Anthropic output_config wire-up
+#   - ChatProvider::model() accessor (PR #237 upstream, pending merge)
+#
+# Git source (not local path) so CI containers resolve without filesystem
+# dependency. Remove once upstream merges + releases a pinned version.
+# Blocks cargo publish.
+[patch.crates-io]
+autoagents-llm = { git = "https://github.com/kgentic/AutoAgents.git", branch = "feat/chat-provider-model-accessor" }

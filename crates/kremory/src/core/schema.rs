@@ -147,6 +147,13 @@ pub struct Episode {
     pub sequence_number: Option<i64>,
     /// SHA-256 content hash for insert-level dedup (Story #209).
     pub content_hash: Option<String>,
+    /// When this row was recorded in the database (audit timestamp).
+    /// Matches the `recorded_at` column on episodes table (SQL DEFAULT
+    /// `datetime('now')`). `Option` because pre-G2 episode rows pre-date
+    /// the column existing. Added v0.1.6 per Quinn cycle-1 G2 review —
+    /// makes the Rust model consistent with the schema (mirrors
+    /// `EpisodicEdge.recorded_at` pattern).
+    pub recorded_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,7 +247,10 @@ impl Drop for BeginGuard<'_> {
 
 pub struct TemporalGraph {
     pub(crate) _db: libsql::Database,
-    pub(crate) conn: libsql::Connection,
+    /// Raw libsql connection. `pub` so integration tests compiled with
+    /// `features = ["test-utils"]` can issue PRAGMA queries directly.
+    /// Not part of the stable public API — use the typed methods instead.
+    pub conn: libsql::Connection,
     /// Write-serialiser mutex (ADR-022). Acquired first on every write path.
     /// Prevents concurrent `BEGIN IMMEDIATE` races on a single libsql connection.
     /// Uses `AsyncMutex` (tokio) so the lock can be held across `.await` points.
@@ -429,6 +439,7 @@ impl TemporalGraph {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     content TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
                     source_type TEXT,
                     metadata TEXT,
                     group_id TEXT,
@@ -606,6 +617,11 @@ impl TemporalGraph {
         )
         .await?;
 
+        // v0.1.6 G1 Migration 007: source_id + source_uri columns on episodes.
+        // Additive ALTER TABLE — no restructure, no FK changes.
+        // Idempotent: PRAGMA table_info gate skips when both columns already present.
+        crate::core::migrations::migrate_007_source_id_source_uri(&self.conn).await?;
+
         Ok(())
     }
 
@@ -629,6 +645,16 @@ impl TemporalGraph {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn dirty_flag(&self) -> &Arc<AtomicBool> {
         &self.dirty
+    }
+
+    /// Return a shared reference to the underlying libsql connection.
+    ///
+    /// For use in integration tests that need direct PRAGMA / DDL access
+    /// without going through the facade builders. Only available in
+    /// test/test-utils context. Never ship this in a production binary.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn conn_for_test(&self) -> &libsql::Connection {
+        &self.conn
     }
 
     /// Count episodes recorded after `since` for a given namespace group.

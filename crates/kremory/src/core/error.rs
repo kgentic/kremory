@@ -224,6 +224,25 @@ pub enum Error {
     /// carry dynamic context and the variant remains `Send + Sync + 'static`.
     #[error("conflicting namespace selectors: {request}")]
     ConflictingNamespaceSelectors { request: String },
+
+    // ── StructuredCallBuilder (TD-012, Phase 4) ───────────────────────────────
+    /// A schema-constrained LLM call received syntactically valid JSON that
+    /// failed schema validation. `schema_name` identifies which schema was
+    /// violated; `detail` carries the field path / reason.
+    #[error("schema violation in '{schema_name}': {detail}")]
+    SchemaViolation { schema_name: String, detail: String },
+
+    /// All fallback arms in `StructuredCallBuilder` were exhausted without
+    /// producing parseable structured output. `raw_response` carries the last
+    /// raw LLM response for diagnostics.
+    #[error(
+        "structured-output fallback exhausted for schema '{schema_name}'; \
+         last response: {raw_response}"
+    )]
+    FallbackExhausted {
+        schema_name: String,
+        raw_response: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -1,6 +1,6 @@
 [package]
 name = "kremory-napi"
-version = "0.1.5-alpha.0"
+version = "0.1.6-alpha.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Node.js (napi-rs) binding for kremory agent memory"
@@ -9,14 +9,42 @@ repository = "https://github.com/kgentic/kremory"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# NEW-003 cycle-2 fix: explicit `default` prevents `--all-features` CI builds
+# from silently enabling unstable surfaces. Empty default = consumer must opt-in.
+default = []
+
+# unstable-graph: passes through to substrate. Gates B11 (JsMemory.getRelated).
+# Mirrors substrate `kremory/unstable-graph` per Vera cycle-2 IRREV-002 mitigation.
+# See .ai-docs/specs/kremory-napi-v016-surface-expansion-2026-05-29.md §10.
+unstable-graph = ["kremory/unstable-graph"]
+
+# unstable-tags: split from unstable-graph per Vera cycle-2 NEW-001. Gates
+# B1.b (JsEpisodeDraft.tags + JsRecallOptions.filterTagAny/All). Consumers can
+# adopt indexed tag filtering without opting into the higher-risk CTE graph
+# surface. Mirrors substrate `kremory/unstable-tags`.
+unstable-tags = ["kremory/unstable-tags"]
+
 [dependencies]
 kremory = { path = "../kremory" }
-napi = { version = "2", features = ["async", "napi4", "tokio_rt"] }
+# napi-rs v3 migration spike output saved at .ai-docs/research/... — recipe ready
+# when napi work resumes post-substrate-v0.1.6. v2 pins held for now so the
+# v0.1.5 binding (currently shipped + working) doesn't regress. Substrate work
+# precedes binding parity (per feedback_substrate_first_then_binding_parity).
+napi = { version = "2", features = ["async", "napi4", "tokio_rt", "serde-json"] }
 napi-derive = "2"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
+serde_json = "1"
+
+[dev-dependencies]
+# ADR-031 Layer 3 parity test — syn parses substrate + napi source files.
+syn = { version = "2", features = ["full", "parsing"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+quote = "1"
 
 [build-dependencies]
 napi-build = "2"

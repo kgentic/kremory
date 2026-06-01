@@ -378,6 +378,7 @@ mod model_comparison_tests {
                 None,
                 None,
                 Some(fixture.content_type.clone()),
+                kremory::core::ingest::SourceParams::default(),
             )
             .await
             .expect("ingest_with() failed");
@@ -427,6 +428,7 @@ mod model_comparison_tests {
                 None,
                 None,
                 Some(fixture.content_type.clone()),
+                kremory::core::ingest::SourceParams::default(),
             )
             .await
             .expect("ingest_with() failed");
@@ -476,6 +478,7 @@ mod model_comparison_tests {
                 None,
                 None,
                 Some(fixture.content_type.clone()),
+                kremory::core::ingest::SourceParams::default(),
             )
             .await
             .expect("ingest_with() failed");
@@ -525,6 +528,7 @@ mod model_comparison_tests {
                 None,
                 None,
                 Some(fixture.content_type.clone()),
+                kremory::core::ingest::SourceParams::default(),
             )
             .await
             .expect("ingest_with() failed");

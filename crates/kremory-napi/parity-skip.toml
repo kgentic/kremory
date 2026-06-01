@@ -1,0 +1,482 @@
+# parity-skip.toml — symbols intentionally not surfaced in napi.
+# Every entry MUST include a `reason` and ideally a target version when it
+# will be re-evaluated. ADR-031 §Skip-list governance.
+#
+# symbol format: "Type::method" or "Type::method_name" for fns,
+#                "Type::field" for struct pub fields.
+
+# ── Memory constructors (Tier 1 convenience shortcuts) ───────────────────────
+
+[[skip]]
+symbol = "Memory::with_ollama"
+reason = "Convenience constructor; napi consumers use auto() via JsMemory.open which performs env-detected provider selection"
+revisit = "never"
+
+[[skip]]
+symbol = "Memory::with_ollama_at"
+reason = "Convenience constructor variant with custom URL; same rationale as with_ollama"
+revisit = "never"
+
+[[skip]]
+symbol = "Memory::with_ollama_at_model"
+reason = "Internal env-auto plumbing for Memory::auto path; consumers go through JsMemory.open which already honors OLLAMA_HOST + OLLAMA_CHAT_MODEL via auto()"
+revisit = "never"
+
+[[skip]]
+symbol = "Memory::with_openai"
+reason = "Convenience constructor; consumer constructs LLM via Memory::auto provider detection"
+revisit = "never"
+
+[[skip]]
+symbol = "Memory::with_anthropic"
+reason = "Convenience constructor; consumer constructs LLM via Memory::auto provider detection"
+revisit = "never"
+
+# ── Memory::open builder (MemoryBuilder type-state) ──────────────────────────
+
+[[skip]]
+symbol = "Memory::open"
+reason = "Tier-2 builder entry point; napi exposes JsMemory.open (factory) which calls Memory::auto — Tier-2 builder wiring deferred per ADR-030 Form B"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::auto"
+reason = "Env-detected provider constructor called internally by JsMemory.open; not directly callable from napi — JsMemory.open IS the auto() entry point for JS consumers"
+revisit = "never"
+
+# ── Memory write surface ──────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::remember"
+reason = "Semantic rename: napi surface exposes this as JsMemory.ingest (simpler name for JS consumers); has napi mirror under the name 'ingest'"
+revisit = "never"
+
+# ── Internal / lifecycle helpers ─────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::status_of"
+reason = "Internal observability surface; not on B1-B10 napi surface"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::await_enrichment"
+reason = "Internal sync helper; napi ingest blocks inline and does not expose EpisodeCommit run_id"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::await_dream"
+reason = "Internal sync helper; napi dream() returns when complete (DreamHandle not on JS surface)"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::await_batch"
+reason = "Internal batch-enrichment sync helper; napi awaits inline"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::cancel"
+reason = "Lifecycle-control for in-flight Phase 2; EpisodeCommit not on JS surface in v0.1.6"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::cancel_dream"
+reason = "Lifecycle-control for dream phases; DreamHandle not on JS surface in v0.1.6"
+revisit = "v0.2.0"
+
+# ── Namespace policy (ADR-029a/b) ─────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::register_namespace"
+reason = "Will be mirrored via JsMemory.registerNamespace after B10 lands; deferred to next loop"
+revisit = "v0.1.6"
+
+[[skip]]
+symbol = "Memory::upgrade_namespace_policy"
+reason = "Mirrors with registerNamespace; deferred to next loop"
+revisit = "v0.1.6"
+
+# ── RememberRequest builder methods ──────────────────────────────────────────
+
+[[skip]]
+symbol = "RememberRequest::from_chat"
+reason = "Source-kind tagging; napi ingest sets source_ref internally via auto-UUID — source kind not on JsIngestOptions in v0.1.6"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RememberRequest::from_note"
+reason = "Source-kind tagging; same rationale as from_chat"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RememberRequest::from_document"
+reason = "Source-kind tagging; same rationale as from_chat"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RememberRequest::from_source"
+reason = "Source-kind escape hatch; napi does not expose SourceKind enum in v0.1.6"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RememberRequest::published_at"
+reason = "Bi-temporal anchor; JsIngestOptions.reference_time exists but routes via a different code path — direct published_at builder deferred"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RememberRequest::with_facts"
+reason = "Pre-extracted StructuredFact injection; StructuredFact type not on JS surface in v0.1.6"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "RememberRequest::with_event_sink"
+reason = "Per-call event sink; EnrichmentEventSink trait binding not on JS surface"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "RememberRequest::no_wait"
+reason = "No-wait Phase 1 return; EpisodeCommit.run_id not surfaced in JsIngestResult — napi always blocks inline"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RememberRequest::await_enrichment"
+reason = "Explicit block variant; symmetric with no_wait — both deferred"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RememberRequest::opts"
+reason = "SubmitOpts escape hatch; not on JS surface"
+revisit = "never"
+
+[[skip]]
+symbol = "RememberRequest::in_namespace"
+reason = "Already mirrored via JsIngestOptions.namespace (resolved by convert::resolve_ingest_namespace)"
+revisit = "never"
+
+# ── RememberBatchBuilder ──────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::remember_batch"
+reason = "Batch ingest not on B1-B10 napi surface; single-episode ingest via JsMemory.ingest covers the consumer ingestion path"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "RememberBatchBuilder::entry"
+reason = "Batch builder — parent builder not surfaced; see Memory::remember_batch"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "RememberBatchBuilder::with_batch_id"
+reason = "Batch builder — parent builder not surfaced"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "RememberBatchBuilder::with_event_sink"
+reason = "Batch builder — parent builder not surfaced"
+revisit = "v0.2.0"
+
+# ── EpisodeEntryBuilder (child of RememberBatchBuilder) ──────────────────────
+
+[[skip]]
+symbol = "EpisodeEntryBuilder::from_chat"
+reason = "Batch entry builder — parent batch not surfaced"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "EpisodeEntryBuilder::from_document"
+reason = "Batch entry builder — parent batch not surfaced"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "EpisodeEntryBuilder::in_namespace"
+reason = "Batch entry builder — parent batch not surfaced"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "EpisodeEntryBuilder::published_at"
+reason = "Batch entry builder — parent batch not surfaced"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "EpisodeEntryBuilder::with_facts"
+reason = "Batch entry builder — parent batch not surfaced"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "EpisodeEntryBuilder::done"
+reason = "Batch entry builder — parent batch not surfaced"
+revisit = "v0.2.0"
+
+# ── RecallRequest builder methods ─────────────────────────────────────────────
+
+[[skip]]
+symbol = "RecallRequest::with_recall_id"
+reason = "Uuid round-trip via JS string adds complexity; deferred to v0.1.7"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RecallRequest::as_prompt_text"
+reason = "Template rendering; napi recall returns Vec<JsRetrievedContext> (raw), not rendered strings"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "RecallRequest::as_template"
+reason = "Template selection; same rationale as as_prompt_text — napi always returns raw contexts"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "RecallRequest::raw"
+reason = "Internal raw-mode switcher; napi recall always calls .raw() internally — this builder is implementation detail"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::opts"
+reason = "SearchOpts escape hatch; not on JS surface"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::filter_metadata"
+reason = "Already mirrored via JsRecallOptions.filterMetadata (B9 implemented); individual filter_metadata calls are an implementation detail"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::filter_metadata_in"
+reason = "Multi-value variant not yet on JsRecallOptions; filterMetadata covers single-value AND semantics. filter_metadata_in deferred to v0.1.7"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RecallRequest::in_namespace"
+reason = "Already mirrored via JsRecallOptions.namespace (resolved by convert::resolve_recall_namespace)"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::in_namespaces"
+reason = "Already mirrored via JsRecallOptions.in_namespaces (resolved by convert::resolve_recall_namespaces)"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::per_namespace_top_k"
+reason = "Already mirrored via JsRecallOptions.per_namespace_top_k"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::best_effort"
+reason = "Already mirrored via JsRecallOptions.best_effort"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::k"
+reason = "Already mirrored via JsRecallOptions.k"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallRequest::as_of"
+reason = "Already mirrored via JsRecallOptions.as_of"
+revisit = "never"
+
+# ── ForgetRequest ─────────────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::forget"
+reason = "Already mirrored as JsMemory.forget(sourceId, namespace?) — B7 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "ForgetRequest::in_namespace"
+reason = "Implementation detail of JsMemory.forget; JsMemory.forget accepts namespace as arg and routes internally"
+revisit = "never"
+
+[[skip]]
+symbol = "ForgetRequest::by_source_id"
+reason = "Implementation detail of JsMemory.forget; JsMemory.forget accepts sourceId as required arg and routes internally"
+revisit = "never"
+
+[[skip]]
+symbol = "ForgetRequest::execute"
+reason = "Implementation detail of JsMemory.forget; execute() is called internally by the napi binding"
+revisit = "never"
+
+# ── DreamRequest ──────────────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::dream"
+reason = "Already mirrored as JsMemory.dream(opts?) — B6 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "DreamRequest::in_namespace"
+reason = "Implementation detail of JsMemory.dream; namespace routed via JsDreamOpts.namespace"
+revisit = "never"
+
+[[skip]]
+symbol = "DreamRequest::for_batch"
+reason = "Batch-specific dream targeting; not on JsDreamOpts in v0.1.6"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "DreamRequest::with_batch_size"
+reason = "Batch-size tuning; not on JsDreamOpts in v0.1.6"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "DreamRequest::with_event_sink"
+reason = "Per-call event sink; EnrichmentEventSink binding not yet on JS surface (B10 blocked)"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "DreamRequest::fire_and_forget"
+reason = "Async fire-and-forget dream; JsMemory.dream always blocks inline in v0.1.6"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "DreamRequest::await_completion"
+reason = "Explicit block variant; symmetric with fire_and_forget — both deferred"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "DreamRequest::opts"
+reason = "DreamOpts escape hatch; not on JS surface"
+revisit = "never"
+
+# ── UpdateSourceUriRequest ────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::update_source_uri"
+reason = "Already mirrored as JsMemory.updateUri(sourceId, newUri) — B3 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "UpdateSourceUriRequest::to"
+reason = "Implementation detail of JsMemory.updateUri; new_uri is passed as the second arg and routed internally"
+revisit = "never"
+
+# ── UpdateEpisodeMetadataRequest ──────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::update_episode_metadata"
+reason = "Already mirrored as JsMemory.updateMetadata(sourceId, patch) — B2 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "UpdateEpisodeMetadataRequest::patch"
+reason = "Implementation detail of JsMemory.updateMetadata; patch is passed as the second arg and routed internally"
+revisit = "never"
+
+# ── Memory::recall_by_source_id ───────────────────────────────────────────────
+
+[[skip]]
+symbol = "Memory::recall_by_source_id"
+reason = "Already mirrored as JsMemory.getBySourceId(sourceId, namespace?) — B5 implemented. Note: JsEpisode.sourceUri is always null (substrate query gap)"
+revisit = "never"
+
+# ── RecallTemplate ────────────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "RecallTemplate::parse_str"
+reason = "Template enum helper; RecallTemplate not on JS surface — napi always returns raw Vec<JsRetrievedContext>"
+revisit = "never"
+
+[[skip]]
+symbol = "RecallTemplate::as_str"
+reason = "Template enum helper; same rationale as parse_str"
+revisit = "never"
+
+# ── DreamSummary fields ───────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "DreamSummary::communities_updated"
+reason = "Already mirrored as JsDreamSummary.communitiesUpdated — B6 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "DreamSummary::cross_episode_merges"
+reason = "Already mirrored as JsDreamSummary.crossEpisodeMerges — B6 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "DreamSummary::supersessions_recorded"
+reason = "Already mirrored as JsDreamSummary.supersessionsRecorded — B6 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "DreamSummary::facts_archived"
+reason = "Already mirrored as JsDreamSummary.factsArchived — B6 implemented"
+revisit = "never"
+
+[[skip]]
+symbol = "DreamSummary::duration_ms"
+reason = "Already mirrored as JsDreamSummary.durationMs — B6 implemented"
+revisit = "never"
+
+# ── MemoryBuilder methods ─────────────────────────────────────────────────────
+
+[[skip]]
+symbol = "MemoryBuilder::with_event_sink"
+reason = "B10 substrate gap: Memory::auto() has no way to inject an event sink post-construction, and the provider builder types (LLMBuilder, EmbeddingBuilder) are not exported from kremory's pub API. Wiring requires substrate to either (a) export a Memory::auto_with_sink() convenience constructor, or (b) add a pub set_event_sink() method on Memory. Deferred pending substrate extension."
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "MemoryBuilder::default_namespace"
+reason = "Builder method; mirrored via JsOpenOptions.defaultNamespace at JsMemory.open level"
+revisit = "never"
+
+[[skip]]
+symbol = "MemoryBuilder::embedding_dim"
+reason = "Builder method; JsOpenOptions.embeddingDim exists but is currently ignored per ADR-030 Form B"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::episode_content_warn_threshold"
+reason = "Builder tuning not on JS surface in v0.1.6"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_llm"
+reason = "Builder method; Tier-2 builder wiring deferred per ADR-030 Form B"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_llm_tracked"
+reason = "Builder method variant; same rationale as with_llm"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_embedder"
+reason = "Builder method; Tier-2 builder wiring deferred per ADR-030 Form B"
+revisit = "v0.2.0"
+
+# ── B9 substrate gaps ─────────────────────────────────────────────────────────
+#
+# JsRecallOptions.sourceIdIn / sourceIdPrefix are specified in the B9 spec but
+# have NO corresponding RecallRequest builder methods in the substrate
+# (RecallRequest has no source_id_in() or source_id_prefix() methods).
+# These would require raw SQL post-filter in the binding (violates AC.13
+# thin-wrapper constraint) or a substrate extension. Deferred to v0.1.7.
+
+[[skip]]
+symbol = "RecallRequest::source_id_in"
+reason = "B9 substrate gap: RecallRequest has no source_id_in() method. JsRecallOptions.sourceIdIn is intentionally omitted. Requires substrate extension at v0.1.7."
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "RecallRequest::source_id_prefix"
+reason = "B9 substrate gap: RecallRequest has no source_id_prefix() method. JsRecallOptions.sourceIdPrefix is intentionally omitted. Requires substrate extension at v0.1.7."
+revisit = "v0.1.7"
+
+# ── B10 substrate gap — EnrichmentEventSink binding ──────────────────────────
+#
+# JsOpenOptions.sink is specified in B10 but cannot be wired because:
+# 1. Memory::auto() does not accept an event sink (no post-construction setter)
+# 2. Provider builder types (LLMBuilder, EmbeddingBuilder) are not in kremory's
+#    public API — the binding cannot replicate auto()'s env-detection logic.
+# Resolution: substrate needs Memory::auto_with_sink() or pub set_event_sink().
+# Tracked in MemoryBuilder::with_event_sink skip entry above.
+
+[[skip]]
+symbol = "EnrichmentEventSink"
+reason = "B10 substrate gap: EnrichmentEventSink trait binding deferred — see MemoryBuilder::with_event_sink entry for root cause"
+revisit = "v0.1.7"
+
+[[skip]]
+symbol = "IngestEventSink"
+reason = "B10 substrate gap: IngestEventSink trait binding deferred — see MemoryBuilder::with_event_sink entry for root cause"
+revisit = "v0.1.7"

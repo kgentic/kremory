@@ -5,13 +5,13 @@ use super::super::error::Result;
 use super::super::intelligence::ExtractedEntity;
 use super::super::resolver::normalize_name;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub(crate) struct EntityListOutput {
     #[serde(default)]
     pub(crate) entities: Vec<HybridRawEntity>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub(crate) struct HybridRawEntity {
     #[serde(default)]
     pub(crate) name: String,

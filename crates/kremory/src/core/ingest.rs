@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use crate::core::config::{ContentType, PipelineConfig};
 use crate::core::contradiction::TwoPoolDetector;
 use crate::core::error::Result;
-use crate::core::extraction::NuExtractExtractor;
+use crate::core::extraction::{is_canonical_entity_type, NuExtractExtractor};
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
@@ -22,6 +22,22 @@ use crate::core::resolver::{normalize_name, CascadeResolver, UnionFind};
 use crate::core::schema::TemporalGraph;
 use crate::core::search::SearchFilters;
 use crate::core::text_utils;
+
+/// Optional source provenance fields forwarded to the `episodes` table
+/// (Migration 007 columns: source_id, source_uri, recorded_at).
+///
+/// All fields are `None` by default — callers that don't have source
+/// provenance pass `SourceParams::default()` and the columns stay NULL.
+#[derive(Debug, Default, Clone)]
+pub struct SourceParams {
+    /// Stable identifier for the originating source document or event.
+    /// Caller-defined; substrate treats it as an opaque key for round-trip lookup.
+    pub source_id: Option<String>,
+    /// URI of the originating source, if known.
+    pub source_uri: Option<String>,
+    /// Wall-clock time the episode was recorded (defaults to ingest time when None).
+    pub recorded_at: Option<DateTime<Utc>>,
+}
 
 /// Result of a single ingest() call.
 #[derive(Debug)]
@@ -53,6 +69,9 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     /// Optional OOV auditor for language-agnostic entity safety net.
     /// When set, runs after each chunk extraction to catch domain terms the LLM missed.
     pub(crate) oov_auditor: Option<text_utils::OovAuditor>,
+    /// Model identifier read from `llm.model()` at construction.
+    /// None when llm.model() returns empty string.
+    pub(crate) model: Option<String>,
 }
 
 impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
@@ -66,12 +85,15 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         embedder: Arc<Emb>,
         config: PipelineConfig,
     ) -> Self {
+        let m = llm.model().trim().to_string();
+        let model = if m.is_empty() { None } else { Some(m) };
         Self {
             graph,
             llm,
             embedder,
             config,
             oov_auditor: None,
+            model,
         }
     }
 
@@ -87,6 +109,15 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// without borrowing the `Engine`.
     pub fn graph(&self) -> Arc<TemporalGraph> {
         Arc::clone(&self.graph)
+    }
+
+    /// Model identifier captured from `llm.model()` at construction.
+    ///
+    /// Returns `None` when the LLM provider reported an empty or whitespace-only
+    /// model string (semantically "no model configured"). Pub-scoped pending a
+    /// facade `Memory::model()` caller.
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
     }
 
     /// Unified document ingestion: store document as a searchable entity with
@@ -117,19 +148,30 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         // 3. Run the intelligence pipeline on the document content.
         let doc_text = format!("# {title}\n\n{text}");
-        self.ingest(&doc_text, None, None, Some(ContentType::Document))
-            .await
+        self.ingest(
+            &doc_text,
+            None,
+            None,
+            Some(ContentType::Document),
+            SourceParams::default(),
+        )
+        .await
     }
 
     /// Full pipeline: text → chunk → extract → resolve → contradict → store.
     /// Uses `NuExtractExtractor` (unified extraction template). For alternative extractors,
     /// use `ingest_with()`.
+    // 7 args (threshold 5): text + reference_time + group_id + content_type + source_params
+    // + sink + episode_content_warn_threshold are all orthogonal call-context parameters
+    // that cannot be merged into a single typed struct without an opaque builder layer.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ingest(
         &self,
         text: &str,
         reference_time: Option<DateTime<Utc>>,
         group_id: Option<&str>,
         content_type: Option<ContentType>,
+        source_params: SourceParams,
     ) -> Result<IngestionResult> {
         #[cfg(feature = "ner")]
         {
@@ -144,14 +186,28 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 panic!("invariant: GLINER OnceLock empty immediately after set")
             });
             return self
-                .ingest_with(extractor, text, reference_time, group_id, content_type)
+                .ingest_with(
+                    extractor,
+                    text,
+                    reference_time,
+                    group_id,
+                    content_type,
+                    source_params,
+                )
                 .await;
         }
         #[cfg(not(feature = "ner"))]
         {
             let extractor = NuExtractExtractor::new(Arc::clone(&self.llm));
-            self.ingest_with(&extractor, text, reference_time, group_id, content_type)
-                .await
+            self.ingest_with(
+                &extractor,
+                text,
+                reference_time,
+                group_id,
+                content_type,
+                source_params,
+            )
+            .await
         }
     }
 
@@ -173,16 +229,30 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         reference_time: Option<DateTime<Utc>>,
         group_id: Option<&str>,
         content_type: Option<ContentType>,
+        source_params: SourceParams,
     ) -> Result<IngestionResult> {
         let ingest_start = Instant::now();
         let ref_time = reference_time.unwrap_or_else(Utc::now);
         let content_type = content_type.unwrap_or(ContentType::Text);
         let token_usage = TokenUsage::default();
 
-        // 1. Store episode (namespace-scoped via group_id)
+        // 1. Store episode (namespace-scoped via group_id).
+        //    source_id / source_uri / recorded_at from SourceParams are written to the
+        //    Migration 007 columns so that recall_by_source_id can find this episode.
         let episode_id = self
             .graph
-            .insert_episode_with_group(text, ref_time, Some("ingest"), None, group_id, None, None)
+            .insert_episode_with_group(
+                text,
+                ref_time,
+                Some("ingest"),
+                None,
+                group_id,
+                None,
+                None,
+                source_params.source_id.as_deref(),
+                source_params.source_uri.as_deref(),
+                source_params.recorded_at,
+            )
             .await?;
 
         // 2. Slice into LLM-extraction-prompt windows (no-op for normally-sized episodes;
@@ -357,6 +427,36 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
             // ── Phase 1: entity loop (Bug B snippet + Bug A episodic_edge) ──────────
             for extracted in &all_entities {
+                // ── TD-012 guard (L2: placeholder rejection + runtime accept) ────────
+                // Reject placeholder labels ("Entity", "UNKNOWN", empty). Otherwise
+                // accept the label if it matches either:
+                //   (a) the compile-time ENTITY_TYPE_ALLOWLIST (default canonical set), OR
+                //   (b) PipelineConfig.allowed_entity_types (runtime-configured types
+                //       the LLM was prompted to emit — must persist or caller sees
+                //       silent data loss).
+                // Without (b), domain-specific runtime types ("project", "Concept" etc.)
+                // are silently dropped despite being what the caller asked for.
+                let canonical = is_canonical_entity_type(&extracted.label);
+                let runtime_allowed = self
+                    .config
+                    .allowed_entity_types
+                    .iter()
+                    .any(|t| t == &extracted.label);
+                if !canonical && !runtime_allowed {
+                    metrics::counter!(
+                        "rql.entity.label_rejected_total",
+                        "rejected_label" => extracted.label.clone()
+                    )
+                    .increment(1);
+                    tracing::warn!(
+                        target: "kremory.ingest",
+                        entity_name = %extracted.name,
+                        rejected_label = %extracted.label,
+                        "TD-012 guard: rejecting entity with non-canonical, non-runtime-allowed label — not persisted"
+                    );
+                    continue;
+                }
+
                 let mut resolved_to: Option<String> = None;
 
                 for existing in &existing_entities {
@@ -970,8 +1070,8 @@ mod tests {
         let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
         let config = PipelineConfig::builder()
             .allowed_entity_types(vec![
-                "person".to_string(),
-                "organization".to_string(),
+                "Person".to_string(),
+                "Organisation".to_string(),
                 "project".to_string(),
                 "technology".to_string(),
                 "metric".to_string(),
@@ -979,7 +1079,7 @@ mod tests {
             .build()
             .unwrap();
         let llm = Arc::new(build_mock_llm(
-            r#"[{"name":"Alice","label":"Person"},{"name":"Acme","label":"Organization"}]"#,
+            r#"[{"name":"Alice","label":"Person"},{"name":"Acme","label":"Organisation"}]"#,
             r#"["works_at"]"#,
             r#"[{"subject":"Alice","predicate":"works_at","object":"Acme","is_entity_ref":true,"confidence":0.95}]"#,
             "different",
@@ -1002,7 +1102,13 @@ mod tests {
     async fn test_ingest_creates_episode() {
         let rql = make_engine_with_mock().await;
         let result = rql
-            .ingest("Alice works at Acme", None, None, None)
+            .ingest(
+                "Alice works at Acme",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
             .await
             .unwrap();
         assert!(
@@ -1016,7 +1122,14 @@ mod tests {
         let rql = make_engine_with_mock().await;
         let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
-            .ingest_with(&extractor, "Alice works at Acme", None, None, None)
+            .ingest_with(
+                &extractor,
+                "Alice works at Acme",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
             .await
             .unwrap();
 
@@ -1046,7 +1159,14 @@ mod tests {
         let rql = make_engine_with_mock().await;
         let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
-            .ingest_with(&extractor, "Alice works at Acme", None, None, None)
+            .ingest_with(
+                &extractor,
+                "Alice works at Acme",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
             .await
             .unwrap();
 
@@ -1075,7 +1195,14 @@ mod tests {
         let rql = make_engine_with_mock().await;
         let extractor = crate::core::extraction::NuExtractExtractor::new(Arc::clone(&rql.llm));
         let result = rql
-            .ingest_with(&extractor, "Alice works at Acme", None, None, None)
+            .ingest_with(
+                &extractor,
+                "Alice works at Acme",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
             .await
             .unwrap();
 
@@ -1090,9 +1217,15 @@ mod tests {
     #[tokio::test]
     async fn test_ingest_entities_stored_in_graph() {
         let rql = make_engine_with_mock().await;
-        rql.ingest("Alice works at Acme", None, None, None)
-            .await
-            .unwrap();
+        rql.ingest(
+            "Alice works at Acme",
+            None,
+            None,
+            None,
+            SourceParams::default(),
+        )
+        .await
+        .unwrap();
 
         // Alice and Acme should now be in the graph
         let alice = rql.graph.get_entity("alice").await.unwrap();
@@ -1106,8 +1239,16 @@ mod tests {
     /// and catches proper nouns the extractor deliberately omitted.
     ///
     /// The FixedExtractor returns only "Alice"; "Zenith Dynamics" appears in the
-    /// text mid-sentence (not sentence-initial, multi-word) and must be caught by
-    /// the proper noun scan that runs inside ingest_with().
+    /// The proper noun scanner catches Title-Case tokens the LLM extractor missed.
+    /// It assigns label="Entity" (a placeholder) because it cannot classify the type.
+    ///
+    /// Post-TD-012 fix: the L2 guard at the persistence boundary rejects label="Entity".
+    /// This means proper-noun-scanned entities with placeholder labels are correctly
+    /// filtered out — we accept fewer entities with correct labels over many with garbage
+    /// labels.  The canonical-label entities ("Alice" / "Person") still persist.
+    ///
+    /// If the caller needs untyped proper nouns persisted, the scanner should be updated
+    /// to assign a domain-appropriate canonical label via an LLM call.
     #[tokio::test]
     async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
         let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
@@ -1115,9 +1256,10 @@ mod tests {
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
         let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
-            Engine::new(graph, llm, embedder, config);
+            Engine::new(Arc::clone(&graph), llm, embedder, config);
 
-        // Extractor deliberately omits "Zenith Dynamics"
+        // Extractor provides "Alice" (canonical label). Proper noun scanner will
+        // detect "Zenith Dynamics" but assign label="Entity" (placeholder).
         let extractor = FixedExtractor {
             entities: vec![ExtractedEntity {
                 name: "Alice".into(),
@@ -1133,19 +1275,38 @@ mod tests {
                 None,
                 None,
                 None,
+                SourceParams::default(),
             )
             .await
             .unwrap();
 
-        // "Zenith Dynamics" should appear in upserted_entities (normalized)
+        // "Alice" (Person — canonical) must persist.
         assert!(
-            result
+            result.upserted_entities.iter().any(|e| e.contains("alice")),
+            "canonical-label entity 'Alice' must persist; got: {:?}",
+            result.upserted_entities
+        );
+
+        // "Zenith Dynamics" was scanned as a proper noun but labelled "Entity" (placeholder).
+        // The TD-012 L2 guard filters it at the persistence boundary — it must NOT persist.
+        assert!(
+            !result
                 .upserted_entities
                 .iter()
                 .any(|e| e.contains("zenith")),
-            "proper noun scan should have caught 'Zenith Dynamics'; got: {:?}",
+            "placeholder-labelled proper noun 'Zenith Dynamics' must be filtered by L2 guard; \
+             got: {:?}",
             result.upserted_entities
         );
+
+        // Verify graph state: only "alice" row must exist.
+        let entities = graph.list_entities().await.expect("list");
+        assert_eq!(
+            entities.len(),
+            1,
+            "only the canonical-label entity must be in the graph; got: {entities:?}"
+        );
+        assert_eq!(entities[0].id, "alice");
     }
 
     /// v0.1.4 — soft-warn behaviour: extractor-emitted duplicate entity names
@@ -1170,19 +1331,26 @@ mod tests {
             entities: vec![
                 ExtractedEntity {
                     name: "Alice Corp".to_string(),
-                    label: "Organization".to_string(),
+                    label: "Organisation".to_string(),
                     properties: serde_json::Value::Null,
                 },
                 ExtractedEntity {
                     name: "Alice Corp".to_string(),
-                    label: "Organization".to_string(),
+                    label: "Organisation".to_string(),
                     properties: serde_json::Value::Null,
                 },
             ],
         };
 
         let result = engine
-            .ingest_with(&extractor, "Alice Corp is a company.", None, None, None)
+            .ingest_with(
+                &extractor,
+                "Alice Corp is a company.",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
             .await
             .expect("dup-name batch must succeed (soft-dedup post-v0.1.4)");
 
@@ -1260,6 +1428,7 @@ mod tests {
                 None,
                 None,
                 None,
+                SourceParams::default(),
             )
             .await
             .expect("ingest_with OK");
@@ -1316,7 +1485,14 @@ mod tests {
             }],
         };
         let r1 = engine
-            .ingest_with(&extractor_1, "Alice works with Bob.", None, None, None)
+            .ingest_with(
+                &extractor_1,
+                "Alice works with Bob.",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
             .await
             .expect("ingest 1 OK");
         assert_eq!(r1.stub_entities_inserted, 1, "ingest 1 must create 1 stub");
@@ -1353,6 +1529,7 @@ mod tests {
                 None,
                 None,
                 None,
+                SourceParams::default(),
             )
             .await
             .expect("ingest 2 OK");
@@ -1394,16 +1571,19 @@ mod tests {
 
         let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
+        // Use a canonical label ("Person") so the TD-012 guard does not filter
+        // these out before the dedup logic runs.  The test invariant is dedup,
+        // not label validation — use a label that passes the L2 allowlist check.
         let extractor = FixedExtractor {
             entities: vec![
                 ExtractedEntity {
                     name: "Dup Entity".to_string(),
-                    label: "Entity".to_string(),
+                    label: "Person".to_string(),
                     properties: serde_json::Value::Null,
                 },
                 ExtractedEntity {
                     name: "Dup Entity".to_string(),
-                    label: "Entity".to_string(),
+                    label: "Person".to_string(),
                     properties: serde_json::Value::Null,
                 },
             ],
@@ -1416,6 +1596,7 @@ mod tests {
                 None,
                 None,
                 None,
+                SourceParams::default(),
             )
             .await
             .expect("dup-name batch must succeed (soft-dedup post-v0.1.4)");
@@ -1432,6 +1613,272 @@ mod tests {
             result.upserted_entities.len(),
             1,
             "upserted_entities should report exactly one entity after dedup; got: {:?}",
+            result.upserted_entities
+        );
+    }
+
+    // ── P7b Red: Engine model field threading tests ──────────────────────────
+    //
+    // These tests target AC6-AC8: Engine must store the model string supplied
+    // by the LLM provider at construction time via llm.model().
+    //
+    // All three tests FAIL until Green phase adds `model: Option<String>` to
+    // the Engine struct and derives it in Engine::new().
+
+    /// AC6+AC8: Engine stores the model string from the LLM provider at construction.
+    ///
+    /// When llm.model() returns a non-empty string the Engine must store
+    /// `Some(model_str)` in its `model` field.
+    ///
+    /// FAILS (Red) until Engine gains `pub(crate) model: Option<String>` field.
+    #[tokio::test]
+    async fn engine_stores_model_string_from_llm() {
+        struct ModelledMock {
+            model_str: &'static str,
+        }
+
+        #[async_trait::async_trait]
+        impl ChatProvider for ModelledMock {
+            async fn chat_with_tools(
+                &self,
+                _messages: &[crate::core::provider::ChatMessage],
+                _tools: Option<&[autoagents_llm::chat::Tool]>,
+                _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
+            ) -> std::result::Result<
+                Box<dyn autoagents_llm::chat::ChatResponse>,
+                autoagents_llm::error::LLMError,
+            > {
+                Err(autoagents_llm::error::LLMError::Generic(
+                    "not needed in this test".to_string(),
+                ))
+            }
+
+            fn model(&self) -> &str {
+                self.model_str
+            }
+        }
+
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
+        let config = PipelineConfig::builder().build().unwrap();
+        let llm = Arc::new(ModelledMock {
+            model_str: "qwen2.5:14b",
+        });
+        let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+        let engine = Engine::new(graph, llm, embedder, config);
+
+        // AC8: model field must hold Some("qwen2.5:14b") — the value returned by llm.model().
+        assert_eq!(
+            engine.model.as_deref(),
+            Some("qwen2.5:14b"),
+            "Engine::new must capture llm.model() into engine.model; \
+             got: {:?}",
+            engine.model
+        );
+    }
+
+    /// AC8 (empty-string branch): when llm.model() returns "" the Engine must
+    /// store `None` — the empty string is semantically "unknown model" and should
+    /// not propagate as a model identifier.
+    ///
+    /// FAILS (Red) until Engine gains `pub(crate) model: Option<String>` field.
+    #[tokio::test]
+    async fn engine_model_is_none_when_llm_model_empty() {
+        // MockChatProvider::null() uses the default ChatProvider::model() impl
+        // which returns "" — exactly the "no model configured" case.
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
+        let config = PipelineConfig::builder().build().unwrap();
+        let llm = Arc::new(MockChatProvider::null());
+        let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+        let engine = Engine::new(graph, llm, embedder, config);
+
+        // AC8: empty model string must map to None, not Some("").
+        assert_eq!(
+            engine.model, None,
+            "Engine::new must store None when llm.model() returns empty string; \
+             got: {:?}",
+            engine.model
+        );
+    }
+
+    /// AC7: Engine::new signature must remain (graph, llm, embedder, config) —
+    /// no new parameters. The model is derived from llm.model() internally.
+    ///
+    /// This test verifies AC7 by constructing Engine::new with the existing
+    /// 4-argument signature and asserting the model is populated from the
+    /// provider's model() method — not from a separate argument.
+    ///
+    /// FAILS (Red) until Engine gains `pub(crate) model: Option<String>` field.
+    #[tokio::test]
+    async fn engine_new_signature_unchanged_model_derived_from_llm() {
+        struct NamedMock;
+
+        #[async_trait::async_trait]
+        impl ChatProvider for NamedMock {
+            async fn chat_with_tools(
+                &self,
+                _messages: &[crate::core::provider::ChatMessage],
+                _tools: Option<&[autoagents_llm::chat::Tool]>,
+                _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
+            ) -> std::result::Result<
+                Box<dyn autoagents_llm::chat::ChatResponse>,
+                autoagents_llm::error::LLMError,
+            > {
+                Err(autoagents_llm::error::LLMError::Generic(
+                    "not needed".to_string(),
+                ))
+            }
+
+            fn model(&self) -> &str {
+                "llama3.2:3b-instruct"
+            }
+        }
+
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
+        let config = PipelineConfig::builder().build().unwrap();
+        // Exactly 4 arguments to Engine::new — signature unchanged per AC7.
+        let engine = Engine::new(
+            graph,
+            Arc::new(NamedMock),
+            Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
+            config,
+        );
+
+        assert_eq!(
+            engine.model.as_deref(),
+            Some("llama3.2:3b-instruct"),
+            "model must be derived from llm.model() without adding new Engine::new params"
+        );
+    }
+
+    // ── End P7b Red tests ─────────────────────────────────────────────────────
+
+    /// TD-012 L2 guard: entities with placeholder labels ("Entity", "UNKNOWN", etc.)
+    /// must NOT be persisted at the ingest boundary.
+    ///
+    /// This test closes the blind spot documented in TD-012: previously the L2 guard
+    /// was defined in extraction/mod.rs but had zero production call-sites in ingest.rs.
+    /// Entities with non-canonical labels were persisted verbatim, defeating the entire
+    /// label validation layer.
+    ///
+    /// Invariant: a FixedExtractor that returns a placeholder-labelled entity MUST
+    /// produce zero rows in the DB and zero upserted_entities in the result.
+    #[tokio::test]
+    async fn ingest_rejects_placeholder_entity_label() {
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
+        let config = PipelineConfig::builder().build().expect("config");
+        let llm = Arc::new(MockChatProvider::null());
+        let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+
+        let before_count = graph.list_entities().await.expect("list").len();
+
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+
+        // Inject placeholder-labelled entities — exactly what TD-012 was seeing in prod.
+        let extractor = FixedExtractor {
+            entities: vec![
+                ExtractedEntity {
+                    name: "Some Person".to_string(),
+                    label: "Entity".to_string(), // placeholder — must be rejected
+                    properties: serde_json::Value::Null,
+                },
+                ExtractedEntity {
+                    name: "Unknown Thing".to_string(),
+                    label: "UNKNOWN".to_string(), // placeholder — must be rejected
+                    properties: serde_json::Value::Null,
+                },
+                ExtractedEntity {
+                    name: "".to_string(),
+                    label: "".to_string(), // empty label — must be rejected
+                    properties: serde_json::Value::Null,
+                },
+            ],
+        };
+
+        let result = engine
+            .ingest_with(
+                &extractor,
+                "some test text for td-012 guard.",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
+            .await
+            .expect("ingest must succeed even when all entities are filtered");
+
+        // No entities must be persisted — the TD-012 guard must have filtered them all.
+        let after_count = engine.graph.list_entities().await.expect("list").len();
+        assert_eq!(
+            after_count, before_count,
+            "TD-012 guard: zero entity rows must be written for all-placeholder batch; \
+             before={before_count} after={after_count}"
+        );
+        assert!(
+            result.upserted_entities.is_empty(),
+            "TD-012 guard: upserted_entities must be empty for all-placeholder batch; \
+             got: {:?}",
+            result.upserted_entities
+        );
+    }
+
+    /// M5 fix (PR #1 review finding): runtime-configured `allowed_entity_types`
+    /// must be honored by the L2 guard at persistence boundary.
+    ///
+    /// Pre-fix: caller configures `allowed_entity_types: ["project"]`, LLM
+    /// emits an entity labelled `"project"` → silently dropped because
+    /// `ENTITY_TYPE_ALLOWLIST` did not include lowercase `"project"`.
+    ///
+    /// Invariant: entities labelled with a runtime-allowed type MUST be
+    /// persisted even when the label is absent from the compile-time allowlist.
+    #[tokio::test]
+    async fn ingest_persists_runtime_allowed_entity_label() {
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
+        // Runtime configures a domain-specific lowercase label not in the
+        // compile-time ENTITY_TYPE_ALLOWLIST.
+        let config = PipelineConfig::builder()
+            .allowed_entity_types(vec!["project".to_string()])
+            .build()
+            .expect("config");
+        let llm = Arc::new(MockChatProvider::null());
+        let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+
+        // Inject an entity whose label matches the runtime config but NOT the
+        // compile-time allowlist. Without the M5 fix this is silently rejected.
+        let extractor = FixedExtractor {
+            entities: vec![ExtractedEntity {
+                name: "Apollo Mission".to_string(),
+                label: "project".to_string(),
+                properties: serde_json::Value::Null,
+            }],
+        };
+
+        let result = engine
+            .ingest_with(
+                &extractor,
+                "some text mentioning a runtime-allowed entity type.",
+                None,
+                None,
+                None,
+                SourceParams::default(),
+            )
+            .await
+            .expect("ingest must succeed");
+
+        let after_entities = engine.graph.list_entities().await.expect("list");
+        assert_eq!(
+            after_entities.len(),
+            1,
+            "M5: runtime-allowed entity label must be persisted; \
+             got {} entities",
+            after_entities.len()
+        );
+        assert_eq!(
+            result.upserted_entities.len(),
+            1,
+            "M5: upserted_entities must contain the runtime-allowed entity; \
+             got: {:?}",
             result.upserted_entities
         );
     }

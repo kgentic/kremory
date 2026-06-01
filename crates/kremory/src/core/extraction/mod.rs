@@ -1,3 +1,6 @@
+pub(crate) mod schemas;
+pub(crate) mod structured;
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -77,83 +80,155 @@ use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
 // ─── Serde models for LLM JSON output coercion ──────────────────────────────
 
 /// Top-level NuExtract output. Both fields are optional — LLMs may omit one.
-#[derive(Debug, Deserialize)]
-struct NuExtractOutput {
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct NuExtractOutput {
     #[serde(default)]
-    entities: Vec<RawEntity>,
+    pub(crate) entities: Vec<RawEntity>,
     #[serde(default)]
-    relationships: Vec<RawRelationship>,
+    pub(crate) relationships: Vec<RawRelationship>,
 }
 
 /// Entity as emitted by the LLM. `label` defaults to "Entity" when missing.
-#[derive(Debug, Deserialize)]
-struct RawEntity {
+///
+/// `label` uses `deser_string_or_array` to tolerate LLMs (e.g. qwen2.5:14b) that
+/// emit `"label": ["Person"]` instead of `"label": "Person"`.
+/// Excluded from schema: uses `deser_string_or_array` (string|array) — routes to llm_json fallback.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct RawEntity {
     #[serde(default)]
-    name: String,
-    #[serde(default = "default_entity_label")]
-    label: String,
+    pub(crate) name: String,
+    /// Excluded from schema: uses `deser_string_or_array` (string|array) — routes to llm_json fallback.
+    #[serde(
+        default = "default_entity_label",
+        deserialize_with = "deser_string_or_array"
+    )]
+    #[schemars(skip)]
+    pub(crate) label: String,
 }
 
 fn default_entity_label() -> String {
     "Entity".to_string()
 }
 
+// ─── L2: Runtime label allowlist ────────────────────────────────────────────
+
+/// Canonical entity types that kremory's extraction pipeline considers valid.
+///
+/// "Entity" and "UNKNOWN" are intentionally excluded: they are placeholder labels
+/// produced when the LLM fails to classify (TD-012).  Any entity arriving with a
+/// label not in this list should be treated as suspicious at ingest time.
+///
+/// This allowlist is checked by `is_canonical_entity_type` and
+/// `validate_entity_types`.  It covers all types referenced in the extraction
+/// prompts (DEFAULT_ENTITY_TYPES, PROG_ENTITY_TYPES, SINGLE_CALL_ENTITY_TYPES),
+/// plus domain-specific types that appear in the kremory-eval ground truth.
+pub const ENTITY_TYPE_ALLOWLIST: &[&str] = &[
+    // Core NER types (present in all extractor prompts)
+    "Person",
+    "Organisation",
+    "Location",
+    "Technology",
+    "Product",
+    "Event",
+    "Date",
+    // Extended types from programmatic-first and single-call prompts
+    "Time",
+    "Money",
+    "Quantity",
+    "Percent",
+    // Semantic / graph types used internally
+    "Document",
+    "Chunk",
+    "Episode",
+    "Fact",
+    "Relation",
+    // Domain types that appear in kremory-eval ground_truth.json
+    "Tool",
+    "Drug",
+    "Place",
+    "Concept",
+    "Law",
+    "Award",
+    "Work",
+    "Role",
+];
+
+/// Returns `true` when `label` is a known-canonical entity type.
+///
+/// "Entity", "UNKNOWN", and empty strings always return `false` — they are
+/// placeholder labels produced by an LLM that failed to classify.
+pub fn is_canonical_entity_type(label: &str) -> bool {
+    if label.is_empty()
+        || label.eq_ignore_ascii_case("entity")
+        || label.eq_ignore_ascii_case("unknown")
+    {
+        return false;
+    }
+    ENTITY_TYPE_ALLOWLIST.contains(&label)
+}
+
 /// Relationship triplet as emitted by the LLM.
 ///
 /// `subject`, `predicate`, `object` use `deser_string_or_array` to tolerate
 /// LLMs (e.g. llama3.2:3b) that emit arrays instead of scalar strings.
-#[derive(Debug, Deserialize)]
-struct RawRelationship {
+///
+/// Schema note: `subject`/`predicate`/`object` are excluded from the derived
+/// JSON Schema (`#[schemars(skip)]`) because `deser_string_or_array` accepts
+/// both `String` and `array` inputs, which is incompatible with schemars's
+/// field-level schema inference. Any structured-output path using this struct
+/// must route through `llm_json` fallback parsing rather than schema enforcement.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct RawRelationship {
+    /// Excluded from schema: uses `deser_string_or_array` (string|array) — routes to llm_json fallback.
     #[serde(default = "default_string", deserialize_with = "deser_string_or_array")]
-    subject: String,
+    #[schemars(skip)]
+    pub(crate) subject: String,
+    /// Excluded from schema: uses `deser_string_or_array` (string|array) — routes to llm_json fallback.
     #[serde(default = "default_string", deserialize_with = "deser_string_or_array")]
-    predicate: String,
+    #[schemars(skip)]
+    pub(crate) predicate: String,
+    /// Excluded from schema: uses `deser_string_or_array` (string|array) — routes to llm_json fallback.
     #[serde(default = "default_string", deserialize_with = "deser_string_or_array")]
-    object: String,
+    #[schemars(skip)]
+    pub(crate) object: String,
     #[serde(default)]
-    is_entity_ref: bool,
+    pub(crate) is_entity_ref: bool,
     #[serde(default = "default_confidence")]
-    confidence: f64,
+    pub(crate) confidence: f64,
 }
 
-fn default_confidence() -> f64 {
+pub(crate) fn default_confidence() -> f64 {
     1.0
 }
 
 /// Entity array as emitted by the DefaultExtractor (stage 1).
-#[derive(Debug, Deserialize)]
-struct RawEntitySimple {
+///
+/// `label` uses `deser_string_or_array` to tolerate LLMs (e.g. qwen2.5:14b) that
+/// emit `"label": ["Person"]` instead of `"label": "Person"`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct RawEntitySimple {
     #[serde(default)]
-    name: String,
-    #[serde(default)]
-    label: String,
+    pub(crate) name: String,
+    /// Excluded from schema: uses `deser_string_or_array` (string|array) — routes to llm_json fallback.
+    #[serde(default, deserialize_with = "deser_string_or_array")]
+    #[schemars(skip)]
+    pub(crate) label: String,
 }
 
 /// Fact triplet as emitted by the DefaultExtractor (stage 3).
-#[derive(Debug, Deserialize)]
-struct RawFact {
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct RawFact {
     #[serde(default)]
-    subject: String,
+    pub(crate) subject: String,
     #[serde(default)]
-    predicate: String,
+    pub(crate) predicate: String,
     #[serde(default)]
-    object: String,
+    pub(crate) object: String,
     #[serde(default)]
-    is_entity_ref: bool,
+    pub(crate) is_entity_ref: bool,
     #[serde(default = "default_confidence")]
-    confidence: f64,
+    pub(crate) confidence: f64,
 }
-
-// ─── JSON Schema Constants (for llguidance constrained decoding) ─────────────
-
-/// Stage 1: Extract entity nodes — array of {name, label}.
-pub const SCHEMA_ENTITY_LIST: &str = r#"{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"label":{"type":"string"}},"required":["name","label"],"additionalProperties":false}}"#;
-
-/// Stage 2: Extract relationship names — array of strings.
-pub const SCHEMA_RELATION_NAMES: &str = r#"{"type":"array","items":{"type":"string"}}"#;
-
-/// Stage 3: Extract full triplets — array of {subject, predicate, object, is_entity_ref, confidence}.
-pub const SCHEMA_TRIPLET_LIST: &str = r#"{"type":"array","items":{"type":"object","properties":{"subject":{"type":"string"},"predicate":{"type":"string"},"object":{"type":"string"},"is_entity_ref":{"type":"boolean"},"confidence":{"type":"number"}},"required":["subject","predicate","object","is_entity_ref","confidence"],"additionalProperties":false}}"#;
 
 // ─── DefaultExtractor ─────────────────────────────────────────────────────────
 
@@ -193,18 +268,23 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             chat_msg_system("You are an entity extraction system. Extract named entities from text. Each entity must appear ONCE — no duplicates. Output valid JSON only."),
             chat_msg_user(stage1_prompt),
         ];
-        let stage1_resp = self
-            .llm
-            .chat_with_tools(&stage1_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::ExtractionStage {
-                stage: "entities".to_string(),
-                detail: e.to_string(),
-            })?;
+        let stage1_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_ENTITY_LIST,
+            "EntityList",
+        )
+        .messages(stage1_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::ExtractionStage {
+            stage: "entities".to_string(),
+            detail: e.to_string(),
+        })?;
         let _ms = stage1_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "entities").record(_ms);
         tracing::info!(_ms, stage = "entities", "kremory.extraction.stage_ms");
-        let stage1_text = stage1_resp.text().unwrap_or_default();
+        let stage1_text = serde_json::to_string(&stage1_value).unwrap_or_default();
         let mut entities: Vec<ExtractedEntity> = parse_entities(&stage1_text)?;
 
         // Apply exclusion filter.
@@ -219,18 +299,23 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             chat_msg_system("You are a relationship extraction system. Given entities found in text, identify relationship type names. Output valid JSON only."),
             chat_msg_user(stage2_prompt),
         ];
-        let stage2_resp = self
-            .llm
-            .chat_with_tools(&stage2_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::ExtractionStage {
-                stage: "relations".to_string(),
-                detail: e.to_string(),
-            })?;
+        let stage2_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_REL_TYPE_LIST,
+            "RelTypeList",
+        )
+        .messages(stage2_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::ExtractionStage {
+            stage: "relations".to_string(),
+            detail: e.to_string(),
+        })?;
         let _ms = stage2_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "relations").record(_ms);
         tracing::info!(_ms, stage = "relations", "kremory.extraction.stage_ms");
-        let stage2_text = stage2_resp.text().unwrap_or_default();
+        let stage2_text = serde_json::to_string(&stage2_value).unwrap_or_default();
         let relation_names: Vec<String> = parse_relation_names(&stage2_text)?;
 
         // Stage 3: Extract full triplets (with stage 1 + 2 context).
@@ -240,15 +325,20 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
             chat_msg_system("You are a knowledge graph extraction system. Extract (subject, predicate, object) triplets. Output valid JSON only."),
             chat_msg_user(stage3_prompt),
         ];
-        let stage3_resp = self
-            .llm
-            .chat_with_tools(&stage3_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let stage3_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_TRIPLET_LIST,
+            "TripletList",
+        )
+        .messages(stage3_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = stage3_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "triplets").record(_ms);
         tracing::info!(_ms, stage = "triplets", "kremory.extraction.stage_ms");
-        let stage3_text = stage3_resp.text().unwrap_or_default();
+        let stage3_text = serde_json::to_string(&stage3_value).unwrap_or_default();
         let facts: Vec<ExtractedFact> = parse_facts(&stage3_text)?;
 
         let entity_count = entities.len();
@@ -312,15 +402,20 @@ impl<L: ChatProvider> EntityExtractor for NuExtractExtractor<L> {
 
         let start = Instant::now();
         let nuextract_msgs = vec![chat_msg_user(prompt)];
-        let resp = self
-            .llm
-            .chat_with_tools(&nuextract_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let nuextract_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_NUEXTRACT_BOTH,
+            "NuExtractBoth",
+        )
+        .messages(nuextract_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "nuextract").record(_ms);
         tracing::info!(_ms, stage = "nuextract", "kremory.extraction.stage_ms");
-        let resp_text = resp.text().unwrap_or_default();
+        let resp_text = serde_json::to_string(&nuextract_value).unwrap_or_default();
 
         let (entities, facts) = parse_nuextract_response(&resp_text, ctx)?;
 
@@ -377,11 +472,16 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
 
         let start = Instant::now();
         let pass1_msgs = vec![chat_msg_user(pass1_prompt)];
-        let pass1_resp = self
-            .llm
-            .chat_with_tools(&pass1_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let pass1_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_NUEXTRACT_ENTITIES_ONLY,
+            "NuExtractEntitiesOnly",
+        )
+        .messages(pass1_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "grounded_entities").record(_ms);
         tracing::info!(
@@ -389,7 +489,7 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             stage = "grounded_entities",
             "kremory.extraction.stage_ms"
         );
-        let pass1_text = pass1_resp.text().unwrap_or_default();
+        let pass1_text = serde_json::to_string(&pass1_value).unwrap_or_default();
 
         let (entities, _) = parse_nuextract_response(&pass1_text, ctx)?;
 
@@ -410,9 +510,18 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
 
         let start2 = Instant::now();
         let pass2_msgs = vec![chat_msg_user(pass2_prompt)];
-        let pass2_resp = self
-            .llm
-            .chat_with_tools(&pass2_msgs, None, None)
+        let mut pass2_builder = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_NUEXTRACT_RELATIONS_ONLY,
+            "NuExtractRelationsOnly",
+        )
+        .messages(pass2_msgs)
+        .model(self.llm.model());
+        if let Some(arm) = schemas::SCHEMA_NUEXTRACT_RELATIONS_ONLY_FORCE_ARM {
+            pass2_builder = pass2_builder.force_arm(arm);
+        }
+        let pass2_value = pass2_builder
+            .call()
             .await
             .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start2.elapsed().as_secs_f64() * 1000.0;
@@ -422,7 +531,7 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             stage = "grounded_relationships",
             "kremory.extraction.stage_ms"
         );
-        let pass2_text = pass2_resp.text().unwrap_or_default();
+        let pass2_text = serde_json::to_string(&pass2_value).unwrap_or_default();
 
         let (_, mut facts) = parse_nuextract_response(&pass2_text, ctx)?;
 
@@ -495,11 +604,16 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             chat_msg_system(GRAPHITI_ENTITY_SYSTEM),
             chat_msg_user(stage1_prompt),
         ];
-        let stage1_resp = self
-            .llm
-            .chat_with_tools(&graphiti_s1_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let graphiti_s1_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_ENTITY_LIST,
+            "EntityList",
+        )
+        .messages(graphiti_s1_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = stage1_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "graphiti_entities").record(_ms);
         tracing::info!(
@@ -507,7 +621,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             stage = "graphiti_entities",
             "kremory.extraction.stage_ms"
         );
-        let stage1_text = stage1_resp.text().unwrap_or_default();
+        let stage1_text = serde_json::to_string(&graphiti_s1_value).unwrap_or_default();
         let mut entities: Vec<ExtractedEntity> = parse_entities(&stage1_text)?;
 
         if !ctx.excluded_entity_types.is_empty() {
@@ -528,11 +642,16 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             chat_msg_system(GRAPHITI_RELATIONSHIP_SYSTEM),
             chat_msg_user(stage2_prompt),
         ];
-        let stage2_resp = self
-            .llm
-            .chat_with_tools(&graphiti_s2_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let graphiti_s2_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_TRIPLET_LIST,
+            "TripletList",
+        )
+        .messages(graphiti_s2_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = stage2_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "graphiti_relationships").record(_ms);
         tracing::info!(
@@ -540,7 +659,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             stage = "graphiti_relationships",
             "kremory.extraction.stage_ms"
         );
-        let stage2_text = stage2_resp.text().unwrap_or_default();
+        let stage2_text = serde_json::to_string(&graphiti_s2_value).unwrap_or_default();
         let mut facts: Vec<ExtractedFact> = parse_facts(&stage2_text)?;
 
         // Fix is_entity_ref using Stage 1 entity set.
@@ -1429,15 +1548,20 @@ impl<L: ChatProvider> EntityExtractor for SingleCallExtractor<L> {
             chat_msg_system("You are a knowledge graph extraction system. Output valid JSON only."),
             chat_msg_user(prompt),
         ];
-        let resp = self
-            .llm
-            .chat_with_tools(&sc_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let sc_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_NUEXTRACT_BOTH,
+            "NuExtractBoth",
+        )
+        .messages(sc_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "single_call").record(_ms);
         tracing::info!(_ms, stage = "single_call", "kremory.extraction.stage_ms");
-        let resp_text = resp.text().unwrap_or_default();
+        let resp_text = serde_json::to_string(&sc_value).unwrap_or_default();
 
         // Reuse the NuExtract parser — same JSON shape {"entities": [...], "relationships": [...]}
         let (entities, facts) = parse_nuextract_response(&resp_text, ctx)?;
@@ -1602,15 +1726,20 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             chat_msg_system("You are a knowledge graph extraction system. Output valid JSON only."),
             chat_msg_user(typing_prompt),
         ];
-        let typing_resp = self
-            .llm
-            .chat_with_tools(&typing_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let typing_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_ENTITY_TYPING,
+            "EntityTyping",
+        )
+        .messages(typing_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = typing_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "entity_typing").record(_ms);
         tracing::info!(_ms, stage = "entity_typing", "kremory.extraction.stage_ms");
-        let typing_text = typing_resp.text().unwrap_or_default();
+        let typing_text = serde_json::to_string(&typing_value).unwrap_or_default();
 
         let entity_output: EntityOnlyOutput = parse_json_lenient(&typing_text).unwrap_or_default();
         let mut entities: Vec<ExtractedEntity> = entity_output
@@ -1643,15 +1772,24 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             chat_msg_system("You are a knowledge graph extraction system. Output valid JSON only."),
             chat_msg_user(rel_prompt),
         ];
-        let rel_resp = self
-            .llm
-            .chat_with_tools(&rel_msgs, None, None)
+        let mut rel_builder = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_REL_ONLY_FORCE_FALLBACK,
+            "RelOnlyForceFallback",
+        )
+        .messages(rel_msgs)
+        .model(self.llm.model());
+        if let Some(arm) = schemas::SCHEMA_REL_ONLY_FORCE_FALLBACK_FORCE_ARM {
+            rel_builder = rel_builder.force_arm(arm);
+        }
+        let rel_value = rel_builder
+            .call()
             .await
             .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = rel_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "relationships").record(_ms);
         tracing::info!(_ms, stage = "relationships", "kremory.extraction.stage_ms");
-        let rel_text = rel_resp.text().unwrap_or_default();
+        let rel_text = serde_json::to_string(&rel_value).unwrap_or_default();
 
         let rel_output: RelOnlyOutput = parse_json_lenient(&rel_text).unwrap_or_default();
         let facts: Vec<ExtractedFact> = rel_output
@@ -1721,6 +1859,7 @@ mod tests {
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
+            .enable_all()
             .build()
             .unwrap()
             .block_on(f)
@@ -1889,19 +2028,6 @@ mod tests {
             prompt.contains("Only extract entities of these types"),
             "stage1 prompt must include the type-constraint hint"
         );
-    }
-
-    #[test]
-    fn test_json_schemas_are_valid() {
-        for (name, schema) in [
-            ("SCHEMA_ENTITY_LIST", SCHEMA_ENTITY_LIST),
-            ("SCHEMA_RELATION_NAMES", SCHEMA_RELATION_NAMES),
-            ("SCHEMA_TRIPLET_LIST", SCHEMA_TRIPLET_LIST),
-        ] {
-            let parsed: serde_json::Value = serde_json::from_str(schema)
-                .unwrap_or_else(|e| panic!("{name} is not valid JSON: {e}"));
-            assert_eq!(parsed["type"], "array", "{name} must be an array schema");
-        }
     }
 
     #[test]
@@ -2259,5 +2385,287 @@ mod tests {
         assert!(names.contains(&"Alice"), "Alice must be extracted");
         assert!(names.contains(&"Bob"), "Bob must be extracted");
         assert!(names.contains(&"Stanford"), "Stanford must be extracted");
+    }
+
+    // ── L1: Adversarial parse_json_lenient — placeholder-label inputs ────────
+    //
+    // These tests catch the exact TD-012 failure mode: valid JSON that parses
+    // successfully but carries placeholder labels ("Entity", "UNKNOWN", "").
+    // The parser itself accepts such inputs (it only checks syntax), so these
+    // tests document and pin the parser's behaviour and drive the L2 validator
+    // to be the correct rejection layer.
+
+    #[test]
+    fn parse_json_lenient_placeholder_entity_label_parses_but_is_flagged() {
+        // TD-012 exact shape: valid JSON with label="Entity" (placeholder).
+        // parse_json_lenient MUST parse it — the syntax is correct.
+        // is_canonical_entity_type MUST reject it — it's a placeholder.
+        let json = r#"{"entities":[{"name":"Alice","label":"Entity"}]}"#;
+        let parsed: Option<EntityOnlyOutput> = parse_json_lenient(json);
+        assert!(
+            parsed.is_some(),
+            "parse_json_lenient must accept syntactically valid JSON even with placeholder label"
+        );
+        let entities = &parsed.unwrap().entities;
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].label, "Entity");
+        // L2 validator must reject this label — it's the placeholder, not a type
+        assert!(
+            !is_canonical_entity_type(&entities[0].label),
+            "is_canonical_entity_type must reject 'Entity' (TD-012 placeholder) — got: {}",
+            entities[0].label
+        );
+    }
+
+    #[test]
+    fn parse_json_lenient_unknown_label_parses_but_is_flagged() {
+        // "UNKNOWN" is another common placeholder emitted by poorly-constrained models.
+        let json = r#"{"entities":[{"name":"OpenAI","label":"UNKNOWN"}]}"#;
+        let parsed: Option<EntityOnlyOutput> = parse_json_lenient(json);
+        assert!(parsed.is_some(), "must parse syntactically valid JSON");
+        let entities = &parsed.unwrap().entities;
+        assert_eq!(entities[0].label, "UNKNOWN");
+        assert!(
+            !is_canonical_entity_type(&entities[0].label),
+            "is_canonical_entity_type must reject 'UNKNOWN'"
+        );
+    }
+
+    #[test]
+    fn parse_json_lenient_empty_label_uses_default_and_is_flagged() {
+        // When label field is absent the default is "Entity" — also a placeholder.
+        let json = r#"{"entities":[{"name":"Alice"}]}"#;
+        let parsed: Option<EntityOnlyOutput> = parse_json_lenient(json);
+        assert!(parsed.is_some(), "must parse JSON with missing label field");
+        let entities = &parsed.unwrap().entities;
+        // Default serde fills in "Entity"
+        assert_eq!(
+            entities[0].label, "Entity",
+            "missing label must default to 'Entity'"
+        );
+        assert!(
+            !is_canonical_entity_type(&entities[0].label),
+            "default 'Entity' label must be rejected by is_canonical_entity_type"
+        );
+    }
+
+    #[test]
+    fn parse_json_lenient_mixed_canonical_and_placeholder_labels() {
+        // When a batch has some canonical and some placeholder labels, the parser
+        // accepts the whole batch and the validator rejects only the bad ones.
+        let json =
+            r#"{"entities":[{"name":"Alice","label":"Person"},{"name":"blob","label":"Entity"}]}"#;
+        let parsed: Option<EntityOnlyOutput> = parse_json_lenient(json);
+        assert!(parsed.is_some(), "must parse mixed-label JSON");
+        let entities = &parsed.unwrap().entities;
+        assert_eq!(entities.len(), 2);
+        assert!(
+            is_canonical_entity_type(&entities[0].label),
+            "Person must be canonical"
+        );
+        assert!(
+            !is_canonical_entity_type(&entities[1].label),
+            "'Entity' placeholder must be rejected"
+        );
+    }
+
+    #[test]
+    fn parse_json_lenient_malformed_braces_triggers_repair() {
+        // Unbalanced braces — parser should attempt llm_json repair and succeed.
+        let json = r#"{"entities":[{"name":"Alice","label":"Person""#;
+        // The parser may or may not recover from this — document the behaviour.
+        // If repair succeeds, the result must be Some with at least name "Alice".
+        // If repair fails, None is returned — that is also acceptable.
+        let parsed: Option<EntityOnlyOutput> = parse_json_lenient(json);
+        if let Some(out) = parsed {
+            // Repair succeeded: verify the entity is intact
+            if !out.entities.is_empty() {
+                assert_eq!(out.entities[0].name, "Alice");
+            }
+        }
+        // None is also acceptable — parser did not fabricate data
+    }
+
+    #[test]
+    fn parse_json_lenient_array_root_falls_back_to_default() {
+        // Array at root doesn't match EntityOnlyOutput directly, but the JSON repair + brace
+        // extraction path produces an empty-entities result (because EntityOnlyOutput's
+        // `entities` field has `#[serde(default)]`).
+        //
+        // The important invariant: NO entities are returned from an array-root response.
+        // This prevents an LLM that emits a raw array (instead of {"entities":[...]}) from
+        // injecting untyped entries — the caller sees zero entities and retries / falls back.
+        let json = r#"[{"name":"Alice","label":"Person"}]"#;
+        let parsed: Option<EntityOnlyOutput> = parse_json_lenient(json);
+        let entity_count = parsed.map(|o| o.entities.len()).unwrap_or(0);
+        assert_eq!(
+            entity_count, 0,
+            "array-root response must yield zero entities from EntityOnlyOutput — \
+             the shape mismatch should suppress extraction, not smuggle in unlabelled entities"
+        );
+    }
+
+    // ── L2: ENTITY_TYPE_ALLOWLIST + is_canonical_entity_type tests ───────────
+
+    #[test]
+    fn is_canonical_entity_type_accepts_person() {
+        assert!(
+            is_canonical_entity_type("Person"),
+            "Person must be in the canonical entity type allowlist"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_accepts_organisation() {
+        assert!(
+            is_canonical_entity_type("Organisation"),
+            "Organisation must be in the canonical entity type allowlist"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_accepts_location() {
+        assert!(
+            is_canonical_entity_type("Location"),
+            "Location must be in the canonical entity type allowlist"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_rejects_entity_placeholder() {
+        assert!(
+            !is_canonical_entity_type("Entity"),
+            "'Entity' is a placeholder label (TD-012) — must be rejected by the allowlist"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_rejects_unknown_placeholder() {
+        assert!(
+            !is_canonical_entity_type("UNKNOWN"),
+            "'UNKNOWN' is a placeholder label — must be rejected by the allowlist"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_rejects_empty_string() {
+        assert!(
+            !is_canonical_entity_type(""),
+            "empty string is not a valid entity type — must be rejected"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_rejects_arbitrary_string() {
+        assert!(
+            !is_canonical_entity_type("SomeRandomType"),
+            "unlisted types must be rejected"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_case_sensitive() {
+        // The allowlist is case-sensitive for canonical types to avoid "entity" ≠ "Entity" confusion.
+        // "person" (lowercase) is NOT in the allowlist — only "Person" is.
+        // This is intentional: LLM outputs are expected to match case exactly.
+        assert!(
+            !is_canonical_entity_type("person"),
+            "'person' (lowercase) is not in the allowlist — canonical form is 'Person'"
+        );
+    }
+
+    // ── MNT-001: Reject mixed-case variants of canonical types ───────────────
+    //
+    // Some LLMs emit canonical types with wrong casing (e.g. "PERSON", "person").
+    // These must be rejected by is_canonical_entity_type — only the exact casing
+    // in ENTITY_TYPE_ALLOWLIST (e.g. "Person") is accepted.  This pins the
+    // case-sensitivity contract explicitly for common mixed-case variants.
+
+    #[test]
+    fn is_canonical_entity_type_rejects_all_caps_person() {
+        assert!(
+            !is_canonical_entity_type("PERSON"),
+            "'PERSON' (all-caps) must be rejected — canonical form is 'Person'"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_rejects_all_caps_organisation() {
+        assert!(
+            !is_canonical_entity_type("ORGANISATION"),
+            "'ORGANISATION' (all-caps) must be rejected — canonical form is 'Organisation'"
+        );
+    }
+
+    #[test]
+    fn is_canonical_entity_type_rejects_lowercased_canonical() {
+        // Lowercasing any canonical type must produce a rejected label.
+        for canonical in super::ENTITY_TYPE_ALLOWLIST {
+            let lowercased = canonical.to_lowercase();
+            // Skip "Date" — "date" lowercased == "date" which is not in the allowlist.
+            // All canonical types have at least one uppercase letter, so the lowercased
+            // form will never match the allowlist entry.
+            assert!(
+                !is_canonical_entity_type(&lowercased),
+                "lowercased '{}' must be rejected (canonical is '{}')",
+                lowercased,
+                canonical
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_covers_core_extraction_types() {
+        // All types emitted by the extraction prompts must be in the allowlist.
+        // This is a structural test: if a type is added to a prompt but not to
+        // ENTITY_TYPE_ALLOWLIST, this test fails, prompting a deliberate update.
+        let prompt_types = [
+            // DEFAULT_ENTITY_TYPES
+            "Person",
+            "Organisation",
+            "Location",
+            "Technology",
+            "Product",
+            "Event",
+            "Date",
+        ];
+        for t in &prompt_types {
+            assert!(
+                is_canonical_entity_type(t),
+                "type '{t}' from DEFAULT_ENTITY_TYPES must be in ENTITY_TYPE_ALLOWLIST"
+            );
+        }
+    }
+
+    // ─── L5: RawEntitySimple label array-coercion (qwen2.5:14b compat) ──────
+
+    #[test]
+    fn raw_entity_simple_label_coerces_array_to_string() {
+        // qwen2.5:14b sometimes emits {"name": "Alice", "label": ["Person"]} —
+        // deser_string_or_array coerces to RawEntitySimple { label: "Person", ... }
+        let json = r#"{"name": "Alice", "label": ["Person"]}"#;
+        let parsed: RawEntitySimple = serde_json::from_str(json)
+            .expect("array-shaped label should coerce via deser_string_or_array");
+        assert_eq!(parsed.name, "Alice");
+        assert_eq!(parsed.label, "Person");
+    }
+
+    #[test]
+    fn raw_entity_simple_label_accepts_string_unchanged() {
+        let json = r#"{"name": "Bob", "label": "Person"}"#;
+        let parsed: RawEntitySimple = serde_json::from_str(json).expect("string label");
+        assert_eq!(parsed.name, "Bob");
+        assert_eq!(parsed.label, "Person");
+    }
+
+    #[test]
+    fn raw_entity_simple_label_joins_multiple_elements() {
+        // deser_string_or_array joins array elements with ", " — matches
+        // the same convention used for RawRelationship.subject/predicate/object.
+        let json = r#"{"name": "Carol", "label": ["Person", "Politician"]}"#;
+        let parsed: RawEntitySimple = serde_json::from_str(json)
+            .expect("multi-element array should join via deser_string_or_array");
+        assert_eq!(parsed.name, "Carol");
+        assert_eq!(parsed.label, "Person, Politician");
     }
 }

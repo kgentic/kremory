@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 
 use crate::core::config::ContentType;
 use crate::core::error::Error;
-use crate::core::ingest::Engine;
+use crate::core::ingest::{Engine, SourceParams};
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 
 // ---------------------------------------------------------------------------
@@ -340,6 +340,7 @@ async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
             req.reference_time,
             req.group_id.as_deref(),
             req.content_type.clone(),
+            SourceParams::default(),
         )
         .await
     {

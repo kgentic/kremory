@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use crate::core::config::PipelineConfig;
 use crate::core::error::IngestStatus;
-use crate::core::ingest::Engine;
+use crate::core::ingest::{Engine, SourceParams};
 use crate::core::provider::{ArcChatProvider, ArcEmbedder};
 use crate::core::schema::TemporalGraph;
 use crate::memory::{
@@ -169,6 +169,12 @@ impl GraphHandle for EngineGraphHandle {
             let content_owned = content.to_owned();
             let group_id_owned = group_id.clone();
             let batch_id_owned = batch_id.clone();
+            // Clone source provenance for the spawned task (source_ref is borrowed from caller).
+            let source_id_owned = source_ref.id.clone();
+            // SourceRef does not carry source_uri; consumers set it post-ingest
+            // via Memory::update_source_uri() builder (facade/mod.rs G2).
+            let source_uri_owned: Option<String> = None;
+            let recorded_at_owned = Some(source_ref.occurred_at);
 
             // Record pending status before spawning so callers can poll immediately.
             ingest_runs.insert(run_id, IngestStatus::Pending);
@@ -188,8 +194,19 @@ impl GraphHandle for EngineGraphHandle {
 
             let task = tokio::task::spawn(async move {
                 ingest_runs.insert(run_id, IngestStatus::Extracting);
+                let sp = SourceParams {
+                    source_id: Some(source_id_owned),
+                    source_uri: source_uri_owned,
+                    recorded_at: recorded_at_owned,
+                };
                 match engine
-                    .ingest(&content_owned, reference_time, Some(&group_id_owned), None)
+                    .ingest(
+                        &content_owned,
+                        reference_time,
+                        Some(&group_id_owned),
+                        None,
+                        sp,
+                    )
                     .await
                 {
                     Ok(_) => {
@@ -237,7 +254,17 @@ impl GraphHandle for EngineGraphHandle {
         //     substrate level; skipped enrichment is tracked via batch_status as "skipped").
         let ingest_result = self
             .engine
-            .ingest(content, reference_time, Some(&group_id), None)
+            .ingest(
+                content,
+                reference_time,
+                Some(&group_id),
+                None,
+                SourceParams {
+                    source_id: Some(source_ref.id.clone()),
+                    source_uri: None,
+                    recorded_at: Some(source_ref.occurred_at),
+                },
+            )
             .await
             .map_err(MemoryError::Core)?;
 

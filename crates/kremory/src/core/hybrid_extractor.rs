@@ -23,6 +23,8 @@ mod prompts;
 
 use helpers::{filter_new_entities, merge_entities_with_grounding};
 use parsing::{parse_entity_list_response, parse_typed_orphans_response};
+
+use crate::core::extraction::{schemas, structured};
 use prompts::{build_gleaning_prompt, build_typing_prompt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,11 +143,16 @@ impl<L: ChatProvider> HybridExtractor<L> {
                 ),
                 chat_msg_user(prompt),
             ];
-            let response = self
-                .llm
-                .chat_with_tools(&gleaning_msgs, None, None)
-                .await
-                .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+            let gleaning_value = structured::StructuredCallBuilder::new(
+                self.llm.as_ref(),
+                &schemas::SCHEMA_ENTITY_LIST,
+                "EntityList",
+            )
+            .messages(gleaning_msgs)
+            .model(self.llm.model())
+            .call()
+            .await
+            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
             let _ms = start.elapsed().as_secs_f64() * 1000.0;
             histogram!("rql.extraction.stage_ms", "stage" => "hybrid_gleaning").record(_ms);
             tracing::info!(
@@ -153,7 +160,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
                 stage = "hybrid_gleaning",
                 "kremory.extraction.stage_ms"
             );
-            let response_text = response.text().unwrap_or_default();
+            let response_text = serde_json::to_string(&gleaning_value).unwrap_or_default();
 
             let gleaned = parse_entity_list_response(&response_text)?;
             let new_entities = filter_new_entities(gleaned, &discovered);
@@ -212,15 +219,20 @@ impl<L: ChatProvider> HybridExtractor<L> {
             chat_msg_system("You are a knowledge graph extraction system. Output valid JSON only."),
             chat_msg_user(prompt),
         ];
-        let response = self
-            .llm
-            .chat_with_tools(&typing_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let typing_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &schemas::SCHEMA_ENTITY_TYPING,
+            "EntityTyping",
+        )
+        .messages(typing_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
         let _ms = start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.extraction.stage_ms", "stage" => "hybrid_typing").record(_ms);
         tracing::info!(_ms, stage = "hybrid_typing", "kremory.extraction.stage_ms");
-        let response_text = response.text().unwrap_or_default();
+        let response_text = serde_json::to_string(&typing_value).unwrap_or_default();
 
         let typed = parse_typed_orphans_response(&response_text, orphans)?;
         let oov_typed_adds = typed.len() as u64;
@@ -282,6 +294,7 @@ mod tests {
 
     fn block_on<F: std::future::Future>(future: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
+            .enable_all()
             .build()
             .unwrap()
             .block_on(future)

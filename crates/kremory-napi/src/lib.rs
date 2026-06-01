@@ -24,10 +24,11 @@ mod convert;
 
 use napi_derive::napi;
 
-use kremory::{Memory, Namespace};
+use kremory::{Memory, Namespace, SourceKind};
 
 pub use convert::{
-    JsIngestOptions, JsIngestResult, JsOpenOptions, JsRecallOptions, JsRetrievedContext,
+    JsDreamOpts, JsDreamSummary, JsEpisode, JsEpisodeDraft, JsIngestOptions, JsIngestResult,
+    JsMetadataFilter, JsOpenOptions, JsRecallOptions, JsRetrievedContext,
 };
 
 // ── JsMemory ──────────────────────────────────────────────────────────────────
@@ -112,7 +113,244 @@ impl JsMemory {
         Ok(JsIngestResult {
             episode_entity_id: commit.episode_entity_id,
             committed_at: commit.committed_at.to_rfc3339(),
+            warnings: vec![],
         })
+    }
+
+    /// Ingest an episode with full source provenance (B1).
+    ///
+    /// Parallel method to `ingest(text, opts)`. Accepts a `JsEpisodeDraft` which
+    /// carries optional `source_id`, `source_uri`, `metadata`, and `namespace`.
+    ///
+    /// When `source_id` is provided, the episode is tagged with that identifier
+    /// (queryable via `getBySourceId`). `source_uri` and `metadata` are written
+    /// via post-ingest updates (not atomic with the Phase 1 commit — the episode
+    /// row exists even if the secondary writes fail).
+    ///
+    /// # Namespace resolution
+    ///
+    /// `draft.namespace` > handle-level default > rejection.
+    #[napi]
+    pub async fn ingest_episode(&self, draft: JsEpisodeDraft) -> napi::Result<JsIngestResult> {
+        let namespace = draft
+            .namespace
+            .as_deref()
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone());
+
+        // Build the remember request. Use from_source with Document kind when
+        // source_id is provided; otherwise let RememberRequest generate a UUID.
+        let req = if let Some(ref sid) = draft.source_id {
+            self.inner
+                .remember(draft.content.clone())
+                .from_source(sid.clone(), SourceKind::Document)
+        } else {
+            self.inner.remember(draft.content.clone())
+        };
+
+        let req = if let Some(ns) = namespace {
+            req.in_namespace(ns)
+        } else {
+            req
+        };
+
+        let commit = req
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory ingest_episode failed: {e}")))?;
+
+        let mut warnings: Vec<String> = Vec::new();
+
+        // Post-ingest: set source_uri if provided. Non-fatal — warn on failure.
+        if let Some(ref uri) = draft.source_uri {
+            if let Some(ref sid) = draft.source_id {
+                match self
+                    .inner
+                    .update_source_uri(sid.clone())
+                    .to(uri.clone())
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        warnings.push(format!("source_uri update failed: {e}"));
+                    }
+                }
+            } else {
+                warnings.push("source_uri supplied without source_id — uri not stored".to_string());
+            }
+        }
+
+        // Post-ingest: set metadata if provided. Non-fatal — warn on failure.
+        if let Some(meta) = draft.metadata {
+            if let Some(ref sid) = draft.source_id {
+                match self
+                    .inner
+                    .update_episode_metadata(sid.clone())
+                    .patch(meta)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        warnings.push(format!("metadata update failed: {e}"));
+                    }
+                }
+            } else {
+                warnings
+                    .push("metadata supplied without source_id — metadata not stored".to_string());
+            }
+        }
+
+        Ok(JsIngestResult {
+            episode_entity_id: commit.episode_entity_id,
+            committed_at: commit.committed_at.to_rfc3339(),
+            warnings,
+        })
+    }
+
+    /// Update an episode's metadata by source_id (B2).
+    ///
+    /// Performs a shallow merge: existing metadata keys are preserved; the
+    /// `patch` keys overwrite. Wraps `Memory::update_episode_metadata`.
+    ///
+    /// Returns the count of episode rows updated.
+    #[napi]
+    pub async fn update_metadata(
+        &self,
+        source_id: String,
+        patch: serde_json::Value,
+    ) -> napi::Result<f64> {
+        let updated = self
+            .inner
+            .update_episode_metadata(source_id)
+            .patch(patch)
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory updateMetadata failed: {e}")))?;
+
+        // usize → f64: safe up to 2^53; episode counts never approach that limit.
+        #[allow(clippy::cast_precision_loss)]
+        Ok(updated as f64)
+    }
+
+    /// Update an episode's source URI by source_id (B3).
+    ///
+    /// Wraps `Memory::update_source_uri`. Rejects if no episode matches
+    /// `source_id`. Returns the count of rows updated.
+    #[napi]
+    pub async fn update_uri(&self, source_id: String, new_uri: String) -> napi::Result<f64> {
+        let updated = self
+            .inner
+            .update_source_uri(source_id)
+            .to(new_uri)
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory updateUri failed: {e}")))?;
+
+        // u64 → f64: safe up to 2^53; episode update counts never approach that limit.
+        #[allow(clippy::cast_precision_loss)]
+        Ok(updated as f64)
+    }
+
+    /// Direct slug/source_id lookup — returns episodes matching `source_id` (B5).
+    ///
+    /// Results are ordered newest-first. When `namespace` is omitted, the
+    /// Memory handle's default namespace is used; when the handle has no default,
+    /// results span all namespaces.
+    ///
+    /// # Known gap
+    ///
+    /// The `sourceUri` field on each returned `JsEpisode` is always `null` —
+    /// the substrate `recall_by_source_id` query does not select that column.
+    /// Use `updateUri` to write and the value is persisted in the DB.
+    #[napi]
+    pub async fn get_by_source_id(
+        &self,
+        source_id: String,
+        namespace: Option<String>,
+    ) -> napi::Result<Vec<JsEpisode>> {
+        let ns = namespace
+            .as_deref()
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone());
+
+        let episodes = self
+            .inner
+            .recall_by_source_id(source_id.clone(), ns)
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory getBySourceId failed: {e}")))?;
+
+        Ok(episodes
+            .into_iter()
+            .map(|ep| convert::episode_to_js(ep, &source_id))
+            .collect())
+    }
+
+    /// Trigger the dream-phase batch consolidation (B6).
+    ///
+    /// Blocks until the dream completes. Returns a `JsDreamSummary` with
+    /// per-phase accounting. Wraps `Memory::dream()`.
+    #[napi]
+    pub async fn dream(&self, opts: Option<JsDreamOpts>) -> napi::Result<JsDreamSummary> {
+        let ns = opts
+            .as_ref()
+            .and_then(|o| o.namespace.as_deref())
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone());
+
+        let req = if let Some(ns) = ns {
+            self.inner.dream().in_namespace(ns)
+        } else {
+            self.inner.dream()
+        };
+
+        let summary = req
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory dream failed: {e}")))?;
+
+        Ok(convert::dream_summary_to_js(summary))
+    }
+
+    /// Forget (hard-delete) all episodes matching `source_id` in `namespace` (B7).
+    ///
+    /// Wraps `Memory::forget().by_source_id(source_id).in_namespace(namespace)`.
+    /// AppendOnly namespaces reject with `NamespacePolicyViolation`. When `namespace`
+    /// is omitted, the Memory handle's default namespace is used. If neither is set
+    /// (no per-call namespace AND no default registered on the handle), the call
+    /// rejects with a namespace-required error.
+    ///
+    /// Returns the count of episode rows deleted.
+    #[napi]
+    pub async fn forget(&self, source_id: String, namespace: Option<String>) -> napi::Result<f64> {
+        let ns = namespace
+            .as_deref()
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone())
+            .ok_or_else(|| {
+                napi::Error::from_reason(
+                    "kremory forget failed: namespace required — set per-call or open with defaultNamespace"
+                )
+            })?;
+
+        let deleted = self
+            .inner
+            .forget()
+            .by_source_id(source_id)
+            .in_namespace(ns)
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory forget failed: {e}")))?;
+
+        // u64 → f64: safe up to 2^53; delete counts never approach that limit.
+        #[allow(clippy::cast_precision_loss)]
+        Ok(deleted as f64)
+    }
+
+    /// Reindex the memory store (B8 — stub, deferred to v0.1.7).
+    ///
+    /// Always rejects with a "deferred" error. Reserved for future vector index
+    /// rebuild capability. Consumers should not call this in v0.1.6.
+    #[napi]
+    pub async fn reindex(&self) -> napi::Result<()> {
+        Err(napi::Error::from_reason(
+            "kremory reindex: not yet implemented — deferred to v0.1.7",
+        ))
     }
 
     /// Search memory for context matching `query`.
@@ -172,6 +410,16 @@ impl JsMemory {
             }
             if let Some(as_of_ts) = as_of {
                 builder = builder.as_of(as_of_ts);
+            }
+
+            // B9: wire filterMetadata entries. Each entry maps to one
+            // RecallRequest::filter_metadata(key, value) call. Validation
+            // (key length, JSON-path metachars) is enforced by the substrate
+            // at await time, surfacing as an Err from builder.raw().await.
+            if let Some(filters) = opts.as_ref().and_then(|o| o.filter_metadata.as_ref()) {
+                for f in filters {
+                    builder = builder.filter_metadata(&f.key, f.value.clone());
+                }
             }
 
             builder

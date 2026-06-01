@@ -99,7 +99,13 @@ three business days after the API merge to run the full regression suite.";
         let rql = Engine::new(graph, Arc::new(llm), Arc::new(embedder), config);
 
         let result = rql
-            .ingest(MEETING_TRANSCRIPT, None, None, None)
+            .ingest(
+                MEETING_TRANSCRIPT,
+                None,
+                None,
+                None,
+                kremory::core::ingest::SourceParams::default(),
+            )
             .await
             .expect("ingest() returned an error");
 
@@ -384,7 +390,14 @@ three business days after the API merge to run the full regression suite.";
 
         let extractor = NuExtractExtractor::new(llm);
         let result = rql
-            .ingest_with(&extractor, MEETING_TRANSCRIPT, None, None, None)
+            .ingest_with(
+                &extractor,
+                MEETING_TRANSCRIPT,
+                None,
+                None,
+                None,
+                kremory::core::ingest::SourceParams::default(),
+            )
             .await
             .expect("ingest_with(NuExtract) returned an error");
 
