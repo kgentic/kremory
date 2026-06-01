@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.6] — 2026-05-30
+
+### Fixed
+
+- **`insert_episode` source provenance gap** (Phase 5 patch). `Memory::remember().from_source(ref)` correctly
+  persists `source_id`, `source_uri`, and `recorded_at` on the episodes row. Prior to this fix the
+  three columns introduced by Migration 007 (v0.1.5) were always written as NULL / SQLite default
+  because `source_ref` fields were never propagated through `engine_handle → Engine::ingest →
+  ingest_with → insert_episode_with_group`. The round-trip `recall_by_source_id` regression test
+  (`tests/source_id_round_trip.rs`) would have caught this failure had it existed before.
+
+- **`recorded_at` NOT NULL constraint respected on ingest.** SQLite's `DEFAULT (datetime('now'))`
+  only activates when the column is **omitted** from the INSERT column list. Explicitly binding NULL
+  bypasses the DEFAULT and fires the NOT NULL constraint. `insert_episode_with_group` now supplies
+  `recorded_at.unwrap_or_else(Utc::now).to_rfc3339()` so every ingest path writes a valid RFC3339
+  timestamp.
+
+### Added
+
+- **`SourceParams` struct** (`crate::core::ingest::SourceParams`). Bundles `source_id`,
+  `source_uri`, and `recorded_at` as a single argument on `Engine::ingest` / `Engine::ingest_with`,
+  keeping both methods within the project's five-argument clippy threshold. Public — consumers
+  building custom ingest pipelines can construct `SourceParams` directly.
+
+- **Regression test: `source_id_round_trip`** (`tests/source_id_round_trip.rs`). Two cases:
+  (1) `remember_from_source_then_recall_by_source_id_returns_episode` — verifies the full
+  facade→SQL round-trip; (2) `recall_by_source_id_is_namespace_scoped` — verifies isolation
+  across namespaces. Both use the `MockChatProvider::null()` + `NullEmbeddingProvider` fixture
+  pattern (no LLM calls required).
+
 ## [0.1.5] — 2026-05-29
 
 ### Breaking

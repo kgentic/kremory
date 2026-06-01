@@ -42,6 +42,39 @@ pub struct BatchPhase2Complete {
 ///
 /// Supertrait ordering: `IngestEventSink` MUST be declared in kremory::core
 /// before this trait can compile (ADR C2 constraint).
+///
+/// # Sink callback contract (G7 — v0.1.6)
+///
+/// All `EnrichmentEventSink` methods (including those inherited from
+/// `IngestEventSink`) are called **sync inline** on the Phase 2 enrichment
+/// pipeline thread. **Slow callbacks stall ingest.**
+///
+/// Consumers MUST keep callbacks fast — sub-millisecond ideal,
+/// sub-100ms absolute ceiling. Typical pattern:
+///
+/// 1. Append the event to a consumer-owned in-memory buffer
+/// 2. Return immediately from the sink method
+/// 3. Drain the buffer asynchronously on the consumer's own task / thread
+///
+/// For consumers using napi-rs `ThreadsafeFunction` callbacks, the TSF's
+/// internal queue provides natural backpressure for JS-side delivery, but
+/// the *Rust-side enrichment pipeline* is still blocked until `tsf.call()`
+/// returns. Configure `max_queue_size` on the TSF if needed.
+///
+/// # Panic policy
+///
+/// A panic inside a sink callback propagates up the enrichment pipeline and
+/// will abort the Phase 2 run for the affected episode. Callbacks SHOULD
+/// catch their own panics if they call into FFI or other panic-on-failure
+/// code (e.g. wrap in `std::panic::catch_unwind`).
+///
+/// # Future: substrate-owned backpressure (deferred)
+///
+/// If sink saturation under burst becomes a real consumer-pain pattern,
+/// substrate-owned backpressure (queue + drop policy + ordering guarantees)
+/// will be added — see the deferred backpressure design candidate parked at
+/// `kremory-v016-api-gaps-aidocs-consumer-2026-05-29.md` (G7/G8 deferred
+/// block, lines 407–468). Until then, sync-inline is the contract.
 pub trait EnrichmentEventSink: IngestEventSink {
     /// A community in the graph was recomputed during Phase 3 consolidation.
     fn on_community_updated(&self, community_id: &str, member_count: usize);

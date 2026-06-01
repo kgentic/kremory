@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use crate::core::config::{EntropyConfig, MinHashConfig};
 use crate::core::error::Result;
+use crate::core::extraction::schemas::{ResolutionVerdictWrapper, SCHEMA_RESOLUTION_VERDICT};
+use crate::core::extraction::structured::StructuredCallBuilder;
 use crate::core::intelligence::{EntityResolver, ExtractedEntity, ResolutionResult};
 use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
 use crate::core::schema::Entity;
@@ -251,7 +253,7 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
 
         // Tier 3: LLM escalation
         let prompt = format!(
-            "Are these two entities the same real-world thing?\n\nEntity A: \"{}\" (type: {})\nEntity B: \"{}\" (type: {})\n\nEntities are duplicates only if they refer to the same real-world object or concept. Semantically equivalent descriptive labels to named entities are treated as duplicates. Distinct but related entities are NOT duplicates.\n\nRespond with exactly one word: \"same\", \"different\", or \"uncertain\".",
+            "Are these two entities the same real-world thing?\n\nEntity A: \"{}\" (type: {})\nEntity B: \"{}\" (type: {})\n\nEntities are duplicates only if they refer to the same real-world object or concept. Semantically equivalent descriptive labels to named entities are treated as duplicates. Distinct but related entities are NOT duplicates.\n\nRespond with a JSON object with a single field \"verdict\" whose value is exactly one of: \"same\", \"different\", or \"uncertain\".",
             candidate.name,
             candidate.label,
             entity_name(existing),
@@ -260,18 +262,29 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
 
         let resolution_msgs = vec![
             chat_msg_system(
-                "You are an entity resolution system. Determine if two entity mentions refer to the same real-world thing.",
+                "You are an entity resolution system. Determine if two entity mentions refer to the same real-world thing. Output valid JSON only.",
             ),
             chat_msg_user(prompt.as_str()),
         ];
-        let response = self
-            .llm
-            .chat_with_tools(&resolution_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
-        let response_text = response.text().unwrap_or_default();
+        let verdict_value = StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &SCHEMA_RESOLUTION_VERDICT,
+            "ResolutionVerdict",
+        )
+        .messages(resolution_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
 
-        match response_text.trim().trim_matches('"') {
+        let wrapper: ResolutionVerdictWrapper =
+            serde_json::from_value(verdict_value).map_err(|e| {
+                crate::core::error::Error::Llm(format!(
+                    "resolution verdict deserialisation failed: {e}"
+                ))
+            })?;
+
+        match wrapper.verdict.trim().trim_matches('"') {
             "same" => Ok(ResolutionResult::Same),
             "different" => Ok(ResolutionResult::Different),
             _ => Ok(ResolutionResult::Different), // Uncertain treated as Different (conservative)
@@ -295,6 +308,7 @@ mod tests {
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
+            .enable_all()
             .build()
             .unwrap()
             .block_on(f)
@@ -522,10 +536,11 @@ mod tests {
 
     #[test]
     fn test_cascade_tier3_llm_called_for_ambiguous() {
-        // "AI" is short/low-entropy → fails entropy gate → skips MinHash → calls LLM
+        // "AI" is short/low-entropy → fails entropy gate → skips MinHash → calls LLM.
+        // The mock returns the structured verdict JSON that StructuredCallBuilder now requires.
         let mut responses = HashMap::new();
-        // The LLM prompt will contain "AI" — respond with "different"
-        responses.insert("AI".to_string(), "\"different\"".to_string());
+        // The LLM prompt will contain "AI" — respond with wrapped verdict JSON.
+        responses.insert("AI".to_string(), r#"{"verdict":"different"}"#.to_string());
         let llm = Arc::new(MockChatProvider::new(responses));
 
         let entropy_config = EntropyConfig {
@@ -545,5 +560,35 @@ mod tests {
         let result = block_on(resolver.resolve(&candidate, &existing)).unwrap();
         // LLM responds "different" so result should be Different
         assert_eq!(result, ResolutionResult::Different);
+    }
+
+    // ── T5.3 / Tier 3 "same" verdict ─────────────────────────────────────────
+
+    #[test]
+    fn test_cascade_tier3_llm_returns_same_verdict() {
+        // Mirror of test_cascade_tier3_llm_called_for_ambiguous but with mock
+        // returning "same" — verifies ResolutionResult::Same from LLM path.
+        let mut responses = HashMap::new();
+        // The LLM prompt will contain "AI" — respond with wrapped verdict JSON.
+        responses.insert("AI".to_string(), r#"{"verdict":"same"}"#.to_string());
+        let llm = Arc::new(MockChatProvider::new(responses));
+
+        let entropy_config = EntropyConfig {
+            min_name_length: 6,
+            min_token_count: 2,
+            entropy_threshold: 1.5,
+        };
+        let resolver = CascadeResolver::new(llm, MinHashConfig::default(), entropy_config);
+
+        let candidate = make_extracted("Technology", "AI");
+        let existing = make_entity(
+            "artificial-intelligence",
+            "Technology",
+            "Artificial Intelligence",
+        );
+
+        let result = block_on(resolver.resolve(&candidate, &existing)).unwrap();
+        // LLM responds "same" so result should be Same
+        assert_eq!(result, ResolutionResult::Same);
     }
 }

@@ -795,6 +795,145 @@ pub(crate) async fn migrate_005_policy_upgraded_at(
     Ok(())
 }
 
+// ─── Migration 007 ─────────────────────────────────────────────────────────
+
+/// Migration 007: add `source_id` and `source_uri` columns to the `episodes`
+/// table (v0.1.6 substrate, G1).
+///
+/// Both columns are TEXT NULL — no NOT NULL constraint, no backfill required.
+/// An index on `source_id` is created for efficient source-scoped recall.
+///
+/// # Idempotency
+///
+/// Primary gate: `PRAGMA table_info('episodes')` — if both `source_id` and
+/// `source_uri` are already present the function returns `Ok(())` immediately.
+/// Each `ALTER TABLE ADD COLUMN` is additionally guarded by the individual
+/// column-presence flags so a partial prior run (one column added, then crash)
+/// is correctly completed on the next startup.
+///
+/// `CREATE INDEX IF NOT EXISTS` is natively idempotent in SQLite.
+///
+/// # Backup
+///
+/// `episodes_bak_007` is created via `CREATE TABLE IF NOT EXISTS … AS SELECT`
+/// before any `ALTER TABLE` statement, giving a row-level snapshot for
+/// recovery. The `IF NOT EXISTS` makes this step idempotent on resume.
+pub(crate) async fn migrate_007_source_id_source_uri(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    // Idempotency gate: scan PRAGMA table_info('episodes') for both columns.
+    let mut info = conn
+        .query("PRAGMA table_info('episodes')", ())
+        .await
+        .map_err(|e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_007 step `pragma_table_info` failed: {e}"
+            ))
+        })?;
+    let mut has_source_id = false;
+    let mut has_source_uri = false;
+    let mut has_recorded_at = false;
+    while let Some(row) = info.next().await.map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!(
+            "migrate_007 step `pragma_table_info_next` failed: {e}"
+        ))
+    })? {
+        // Per Quinn cycle-1 LOW: propagate row.get errors rather than silently
+        // mapping to empty string — surface malformed PRAGMA rows to the runner.
+        let col_name: String = row.get(1).map_err(|e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_007 step `pragma_table_info_row_get` failed: {e}"
+            ))
+        })?;
+        if col_name == "source_id" {
+            has_source_id = true;
+        }
+        if col_name == "source_uri" {
+            has_source_uri = true;
+        }
+        if col_name == "recorded_at" {
+            has_recorded_at = true;
+        }
+    }
+
+    if has_source_id && has_source_uri && has_recorded_at {
+        // All columns already present — migration already applied.
+        return Ok(());
+    }
+
+    // Pre-ALTER backup: row-level snapshot of episodes in its current shape.
+    // CREATE TABLE IF NOT EXISTS makes this step safe on resume-from-partial.
+    // Per Quinn cycle-1 MED: propagate via `?` rather than silent discard so
+    // disk-full / permission errors surface to the migration runner.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS episodes_bak_007 AS SELECT * FROM episodes",
+        (),
+    )
+    .await
+    .map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!(
+            "migrate_007 step `backup_episodes` failed: {e}"
+        ))
+    })?;
+
+    // ADD COLUMN source_id TEXT (NULL) if not yet present.
+    if !has_source_id {
+        conn.execute("ALTER TABLE episodes ADD COLUMN source_id TEXT", ())
+            .await
+            .map_err(|e| {
+                crate::core::error::Error::Other(anyhow::anyhow!(
+                    "migrate_007 step `add_column_source_id` failed: {e}"
+                ))
+            })?;
+    }
+
+    // ADD COLUMN source_uri TEXT (NULL) if not yet present.
+    if !has_source_uri {
+        conn.execute("ALTER TABLE episodes ADD COLUMN source_uri TEXT", ())
+            .await
+            .map_err(|e| {
+                crate::core::error::Error::Other(anyhow::anyhow!(
+                    "migrate_007 step `add_column_source_uri` failed: {e}"
+                ))
+            })?;
+    }
+
+    // ADD COLUMN recorded_at TEXT with default if not yet present.
+    // `NOT NULL DEFAULT (datetime('now'))` is valid in SQLite ALTER TABLE when
+    // a DEFAULT is supplied — existing rows get the default value backfilled.
+    if !has_recorded_at {
+        conn.execute(
+            "ALTER TABLE episodes ADD COLUMN recorded_at TEXT NOT NULL DEFAULT (datetime('now'))",
+            (),
+        )
+        .await
+        .map_err(|e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_007 step `add_column_recorded_at` failed: {e}"
+            ))
+        })?;
+    }
+
+    // Index on source_id for source-scoped recall queries.
+    // CREATE INDEX IF NOT EXISTS is natively idempotent.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_episodes_source_id ON episodes(source_id)",
+        (),
+    )
+    .await
+    .map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!(
+            "migrate_007 step `create_index_source_id` failed: {e}"
+        ))
+    })?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_007: source_id + source_uri columns added to episodes; idx_episodes_source_id created"
+    );
+    Ok(())
+}
+
 // ─── Migration 006 ─────────────────────────────────────────────────────────
 
 /// Migration 006: install composite FK constraints on `facts` and `episodic_edges`

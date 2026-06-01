@@ -1,6 +1,6 @@
 [package]
 name = "kremory"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "Apache-2.0"
 description = "Bi-temporal knowledge graph engine + agent memory orchestration in pure Rust"
@@ -10,6 +10,9 @@ keywords = ["agent", "memory", "knowledge-graph", "bi-temporal", "embedding"]
 categories = ["database", "data-structures"]
 
 [features]
+# Explicit empty default — prevents `--all-features` CI builds from silently
+# enabling unstable surfaces. Consumers must opt-in to unstable-graph / unstable-tags.
+default = []
 ner = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]
 # BYOM invariant: kremory consumes the trait crate (autoagents-llm) ONLY —
 # never the concrete `autoagents-llamacpp` impl, neither in [dependencies] nor
@@ -31,6 +34,20 @@ otel = ["dep:tracing-subscriber", "dep:opentelemetry", "dep:opentelemetry_sdk", 
 # so they never run in normal `cargo test` unless explicitly enabled with
 # --features llm-integration and -q -- --ignored.
 llm-integration = []
+# unstable-graph: gates v0.1.6 novel semantic surface — G3.b (episode_tags
+# junction table + with_tags + filter_tag_any/all) and G9 (Memory::get_related
+# graph traversal). Ships at v0.1.6 behind this flag per Vera cycle-2 IRREV-002
+# mitigation (62% prob of v2.0 break within 1yr if 6 unvalidated surfaces lock
+# simultaneously). Promotes to stable at v0.2.0 after aidocs validation.
+# See .ai-docs/specs/kremory-v016-api-gaps-aidocs-consumer-2026-05-29.md §3.5.
+unstable-graph = []
+# unstable-tags: split from unstable-graph per Vera cycle-2 NEW-001 — G3.b
+# junction-table tag storage is a standard relational pattern with bounded risk
+# (B-tree index on TEXT works). Coupling it under the same flag as G9 recursive
+# CTE traversal forces consumers wanting indexed tags to also opt into the
+# higher-risk graph surface. Split allows tag adoption without CTE preview.
+# Both promote to stable independently at v0.2.0.
+unstable-tags = []
 
 [lib]
 name = "kremory"
@@ -38,6 +55,9 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+# schemars 1.2.1: JSON Schema generation from #[derive(JsonSchema)] for structured-output enforcement.
+# Used by extraction parse-target structs + schemas module (Phase 2–3 of TD-012).
+schemars = "1.2.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 serde_json = "1"
 # tokio: use full feature set (superset of rqlm's macros + rt-multi-thread)
@@ -47,7 +67,11 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 petgraph = "0.7"
 # libSQL: native vectors (F32_BLOB + DiskANN) + FTS5 + SQL. Replaces rusqlite + sqlite-vec.
-libsql = "0.9"
+# PIN per Vera cycle-2 RISK-002 (2026-05-29): 0.10.0-pre.2 shipped 2026-05-27;
+# Turso migrating effort to from-scratch `tursodatabase/turso` crate; libsql-server
+# stalled since Feb 2025. Pin = avoids resolver instability. Revisit at v0.2.0
+# when backend ADR (libsql vs CozoDB vs Turso new crate) is evaluated.
+libsql = "=0.9.30"
 # BYOM invariant: autoagents-llm trait only — never concrete impl.
 # Required (not optional) because kremory::memory::GraphHandle uses ChatProvider.
 # Provider features: ollama / openai / anthropic enable the concrete backend builders

@@ -1079,7 +1079,8 @@ impl TemporalGraph {
         }
     }
 
-    /// Insert an episode with optional group_id, saga_id, and sequence_number.
+    /// Insert an episode with optional group_id, saga_id, sequence_number,
+    /// source_id, source_uri, and recorded_at (Migration 007 columns).
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_episode_with_group(
         &self,
@@ -1090,15 +1091,35 @@ impl TemporalGraph {
         group_id: Option<&str>,
         saga_id: Option<&str>,
         sequence_number: Option<i64>,
+        source_id: Option<&str>,
+        source_uri: Option<&str>,
+        recorded_at: Option<DateTime<Utc>>,
     ) -> Result<i64> {
         let _db_start = Instant::now();
         let ts_str = timestamp.to_rfc3339();
         let meta_str = metadata.as_ref().map(serde_json::to_string).transpose()?;
+        // `recorded_at` is NOT NULL DEFAULT (datetime('now')) in the schema.
+        // When the caller does not supply a value we default to Utc::now() so the
+        // explicit column reference never sends NULL and bypasses the SQL DEFAULT.
+        let recorded_at_str = recorded_at.unwrap_or_else(Utc::now).to_rfc3339();
         self.conn
             .execute(
-                "INSERT INTO episodes (content, timestamp, source_type, metadata, group_id, saga_id, sequence_number)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                libsql::params![content, ts_str, source_type, meta_str, group_id, saga_id, sequence_number],
+                "INSERT INTO episodes \
+                 (content, timestamp, source_type, metadata, group_id, saga_id, sequence_number, \
+                  source_id, source_uri, recorded_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                libsql::params![
+                    content,
+                    ts_str,
+                    source_type,
+                    meta_str,
+                    group_id,
+                    saga_id,
+                    sequence_number,
+                    source_id,
+                    source_uri,
+                    recorded_at_str
+                ],
             )
             .await?;
         let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;

@@ -261,3 +261,299 @@ test('conflicting selectors: namespace + inNamespaces rejects', async () => {
     cleanup(dbPath);
   }
 });
+
+// ── 9. B1: ingestEpisode with source_id ─────────────────────────────────────
+
+test('B1: ingestEpisode with source_id stores episode and returns result', async () => {
+  const dbPath = tmpDbPath('b1-ingest-episode');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b1' });
+
+    const result = await mem.ingestEpisode({
+      content: 'first episode about water and rivers.',
+      sourceId: 'doc-001',
+      namespace: 'b1',
+    });
+
+    assert.equal(typeof result.episodeEntityId, 'string', 'episodeEntityId must be string');
+    assert.ok(result.episodeEntityId.length > 0, 'episodeEntityId must not be empty');
+    assert.ok(!Number.isNaN(Date.parse(result.committedAt)), 'committedAt must be rfc3339');
+    assert.ok(Array.isArray(result.warnings), 'warnings must be an array');
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 10. B1: ingestEpisode without source_id ──────────────────────────────────
+
+test('B1: ingestEpisode without source_id works like plain ingest', async () => {
+  const dbPath = tmpDbPath('b1-no-source');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b1ns' });
+
+    const result = await mem.ingestEpisode({
+      content: 'bare episode without source identity.',
+      namespace: 'b1ns',
+    });
+
+    assert.equal(typeof result.episodeEntityId, 'string');
+    assert.ok(Array.isArray(result.warnings));
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 11. B2/B3: updateMetadata + updateUri ───────────────────────────────────
+
+test('B2/B3: updateMetadata and updateUri succeed after ingestEpisode', async () => {
+  const dbPath = tmpDbPath('b2-b3-update');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'upd' });
+
+    await mem.ingestEpisode({
+      content: 'episode about bridges and spans.',
+      sourceId: 'adr-031-binding',
+      namespace: 'upd',
+    });
+
+    // B3: updateUri
+    const uriCount = await mem.updateUri('adr-031-binding', 'docs/adr/031-binding.md');
+    assert.ok(uriCount >= 1, `updateUri must update ≥1 rows, got ${uriCount}`);
+
+    // B2: updateMetadata
+    const metaCount = await mem.updateMetadata('adr-031-binding', { status: 'active', version: 2 });
+    assert.ok(metaCount >= 1, `updateMetadata must update ≥1 rows, got ${metaCount}`);
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 12. B3: updateUri rejects for unknown source_id ─────────────────────────
+
+test('B3: updateUri rejects when source_id not found', async () => {
+  const dbPath = tmpDbPath('b3-unknown');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath);
+
+    await assert.rejects(
+      async () => {
+        await mem.updateUri('does-not-exist-xyz-9999', 'path/irrelevant.md');
+      },
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /kremory updateUri failed/i);
+        return true;
+      },
+    );
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 13. B5: getBySourceId returns episodes ───────────────────────────────────
+
+test('B5: getBySourceId returns episodes matching source_id', async () => {
+  const dbPath = tmpDbPath('b5-get');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b5' });
+
+    await mem.ingestEpisode({
+      content: 'memo about alpine lakes and glacier melt.',
+      sourceId: 'memo-b5-001',
+      namespace: 'b5',
+    });
+
+    const episodes = await mem.getBySourceId('memo-b5-001', 'b5');
+    assert.ok(Array.isArray(episodes), 'getBySourceId must return an array');
+    assert.ok(episodes.length >= 1, 'must find at least one episode');
+
+    const ep = episodes[0];
+    assert.equal(typeof ep.id, 'number', 'episode.id must be a number');
+    assert.equal(ep.sourceId, 'memo-b5-001', 'episode.sourceId must match query arg');
+    assert.equal(ep.sourceUri, null, 'episode.sourceUri is always null (known substrate gap)');
+    assert.equal(typeof ep.content, 'string', 'episode.content must be string');
+    assert.ok(!Number.isNaN(Date.parse(ep.timestamp)), 'episode.timestamp must be rfc3339');
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 14. B5: getBySourceId returns empty array for unknown source_id ──────────
+
+test('B5: getBySourceId returns empty array when source_id not found', async () => {
+  const dbPath = tmpDbPath('b5-empty');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b5e' });
+
+    const episodes = await mem.getBySourceId('no-such-source-xyz', 'b5e');
+    assert.ok(Array.isArray(episodes));
+    assert.equal(episodes.length, 0, 'must return empty array for unknown source_id');
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 15. B6: dream returns JsDreamSummary ─────────────────────────────────────
+
+test('B6: dream returns summary with correct numeric fields', async () => {
+  const dbPath = tmpDbPath('b6-dream');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b6' });
+
+    await mem.ingest('dream test: info about wind patterns.', { namespace: 'b6' });
+
+    const summary = await mem.dream({ namespace: 'b6' });
+
+    assert.equal(typeof summary.communitiesUpdated, 'number');
+    assert.equal(typeof summary.crossEpisodeMerges, 'number');
+    assert.equal(typeof summary.supersessionsRecorded, 'number');
+    assert.equal(typeof summary.factsArchived, 'number');
+    assert.equal(typeof summary.durationMs, 'number');
+    assert.ok(summary.durationMs >= 0, 'durationMs must be non-negative');
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 16. B7: forget removes episode by source_id ──────────────────────────────
+
+test('B7: forget removes episodes by source_id', async () => {
+  const dbPath = tmpDbPath('b7-forget');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b7' });
+
+    await mem.ingestEpisode({
+      content: 'deletable record about ocean tides.',
+      sourceId: 'doc-to-delete-001',
+      namespace: 'b7',
+    });
+
+    // Verify episode exists.
+    const before = await mem.getBySourceId('doc-to-delete-001', 'b7');
+    assert.ok(before.length >= 1, 'episode must exist before forget');
+
+    // Forget.
+    const deleted = await mem.forget('doc-to-delete-001', 'b7');
+    assert.ok(deleted >= 0, 'forget must return a non-negative count');
+
+    // Verify episode gone.
+    const after = await mem.getBySourceId('doc-to-delete-001', 'b7');
+    assert.equal(after.length, 0, 'episode must be gone after forget');
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 17. B8: reindex always rejects with deferred error ───────────────────────
+
+test('B8: reindex rejects with deferred error', async () => {
+  const dbPath = tmpDbPath('b8-reindex');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath);
+
+    await assert.rejects(
+      async () => {
+        await mem.reindex();
+      },
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /deferred|not yet implemented/i);
+        return true;
+      },
+    );
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 18. B9: recall with filterMetadata ──────────────────────────────────────
+
+test('B9: recall with filterMetadata wires to substrate filter_metadata', async () => {
+  const dbPath = tmpDbPath('b9-filter');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b9' });
+
+    // Ingest an episode with metadata.
+    await mem.ingestEpisode({
+      content: 'design notes about search indexing strategies.',
+      sourceId: 'design-b9-001',
+      metadata: { docType: 'design', status: 'active' },
+      namespace: 'b9',
+    });
+
+    // Recall with filterMetadata: substrate validates the key and applies
+    // post-filter. Empty results are acceptable (LLM extraction is non-deterministic);
+    // we only assert the call succeeds (does not reject).
+    const results = await mem.recall('search indexing', {
+      namespace: 'b9',
+      k: 5,
+      filterMetadata: [{ key: 'docType', value: 'design' }],
+    });
+
+    assert.ok(Array.isArray(results), 'filtered recall must return array');
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+// ── 19. B9: recall with invalid filterMetadata key rejects ───────────────────
+
+test('B9: recall with invalid filterMetadata key rejects at await', async () => {
+  const dbPath = tmpDbPath('b9-invalid-key');
+  let mem;
+  try {
+    mem = await JsMemory.open(dbPath, { defaultNamespace: 'b9k' });
+
+    // Substrate validates keys at .await time. An empty key must be rejected.
+    await mem.ingest('filler episode to have a valid namespace.', { namespace: 'b9k' });
+
+    await assert.rejects(
+      async () => {
+        await mem.recall('query', {
+          namespace: 'b9k',
+          filterMetadata: [{ key: '', value: 'x' }],
+        });
+      },
+      (err) => {
+        assert.ok(err instanceof Error);
+        // kremory surfaces "filter_metadata: key must not be empty"
+        assert.match(err.message, /kremory recall failed/i);
+        return true;
+      },
+    );
+
+    await mem.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});

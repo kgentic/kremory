@@ -22,6 +22,154 @@ pub use autoagents_llm::chat::{
 pub use autoagents_llm::error::LLMError;
 
 // ---------------------------------------------------------------------------
+// ProviderCaps — per-provider structured-output capability detection.
+//
+// Used by StructuredCallBuilder to select the appropriate fallback ladder:
+// NativeStructuredOutput → FormatSchema → PromptOnly.
+//
+// Conservative: unknown model strings degrade to PromptOnly.
+// NEVER promote an unknown model to NativeStructuredOutput.
+// ---------------------------------------------------------------------------
+
+/// Per-provider structured-output capability detection.
+///
+/// Conservative: unknown model strings degrade to `PromptOnly`
+/// (NEVER `NativeStructuredOutput`).
+///
+/// `pub` (not `pub(crate)`) because kremory-napi exposes capability detection
+/// to consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderCaps {
+    /// Native grammar-constrained structured output available.
+    ///
+    /// Includes Anthropic `output_config.format` (GA 2026-01-29) and
+    /// OpenAI strict mode (`gpt-4o-2024-08-06+`, `o1`, `o3`, `o4` series).
+    NativeStructuredOutput,
+    /// JSON format-schema enforcement (Ollama llama.cpp grammar).
+    ///
+    /// Detected by the `name:tag` colon pattern used in Ollama model references
+    /// (e.g. `qwen2.5:14b`, `llama3.2:3b-instruct`).
+    FormatSchema,
+    /// Prompt-only; no provider-side enforcement.
+    ///
+    /// Used for Bedrock model strings, unknown proxies, and any model string
+    /// that does not match a known-capable pattern.
+    PromptOnly,
+}
+
+/// Detect structured-output capability from the provider's self-reported model string.
+///
+/// ## Classification rules (spec §5.2)
+///
+/// 1. **Anthropic GA models** (`claude-opus-4-*`, `claude-sonnet-4-*`, `claude-haiku-4-5-*`,
+///    `claude-mythos-preview`)
+///    → `NativeStructuredOutput`
+/// 2. **OpenAI strict** (`gpt-4o-2024-08-06+`, `gpt-4.*`, `o1-*`, `o3-*`, `o4-*`)
+///    → `NativeStructuredOutput`
+/// 3. **Ollama** (model string contains `:` — the `name:tag` pattern; or bare family names
+///    `llama`, `qwen`, `phi`, `nuextract`, `mistral` without a dot — Anthropic/OpenAI models
+///    never contain `:`)
+///    → `FormatSchema`
+/// 4. **Everything else** (Bedrock ARNs, unknown proxies, unrecognised strings)
+///    → `PromptOnly` (conservative — unknown does NOT get NativeStructuredOutput)
+///
+/// Note: Bedrock cross-region inference ARNs (`us.`/`eu.`/`ap.` prefixes, e.g.
+/// `us.anthropic.claude-opus-4-7-v1:0`) are explicitly guarded in the Bedrock block.
+/// They cannot rely on fallthrough because the `:0` version suffix would otherwise
+/// be matched by the Ollama `contains(':')` check, incorrectly returning `FormatSchema`.
+pub fn capability_of(model: &str) -> ProviderCaps {
+    // --- Bedrock / proxy ARN prefixes ----------------------------------------
+    // Bedrock does not translate output_config.format; proxy routes these to
+    // the upstream model without the native structured-output parameter.
+    // Must be checked BEFORE the claude- / gpt- / ollama patterns below.
+    //
+    // Note: `mistral.` (with dot) catches Bedrock Mistral ARNs like
+    // `mistral.mistral-large-2407-v1:0` BEFORE the bare `mistral` Ollama check below.
+    //
+    // Cross-region inference ARNs (`us.`/`eu.`/`ap.` prefixes, e.g.
+    // `us.anthropic.claude-opus-4-7-v1:0`) MUST be explicitly guarded here because
+    // they contain a colon in the version suffix (`:0`), which would otherwise be
+    // caught by the Ollama `model.contains(':')` check and incorrectly classified
+    // as FormatSchema. Bedrock cross-region docs:
+    // https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html
+    if model.starts_with("anthropic.claude-")
+        || model.starts_with("amazon.")
+        || model.starts_with("meta.")
+        || model.starts_with("mistral.")
+        || model.starts_with("us.")
+        || model.starts_with("eu.")
+        || model.starts_with("ap.")
+    {
+        return ProviderCaps::PromptOnly;
+    }
+
+    // --- Anthropic GA models ------------------------------------------------
+    // GA families with native output_config.format support (spec §5.2):
+    //   claude-opus-4-*, claude-sonnet-4-*, claude-haiku-4-5-*, claude-mythos-preview
+    if model.starts_with("claude-opus-4-")
+        || model.starts_with("claude-sonnet-4-")
+        || model.starts_with("claude-haiku-4-5")
+        || model == "claude-mythos-preview"
+    {
+        return ProviderCaps::NativeStructuredOutput;
+    }
+
+    // --- OpenAI o-series (o1, o3, o4) ---------------------------------------
+    // o1-*, o3-*, o4-* all support strict structured output.
+    // Must be checked before the gpt- branch.
+    if model.starts_with("o1-") || model.starts_with("o3-") || model.starts_with("o4-") {
+        return ProviderCaps::NativeStructuredOutput;
+    }
+
+    // --- OpenAI gpt-4. numbered series (4.1, 4.5-preview, etc.) ------------
+    // New OpenAI numbered models use the `gpt-4.` prefix (with dot).
+    // Distinct from `gpt-4-turbo` (hyphen, no dot) which does not support strict mode.
+    if model.starts_with("gpt-4.") {
+        return ProviderCaps::NativeStructuredOutput;
+    }
+
+    // --- OpenAI gpt-4o strict (date >= 2024-08-06) --------------------------
+    // Only gpt-4o-YYYY-MM-DD variants with date >= 2024-08-06 support strict mode.
+    // gpt-4o alone (no date suffix) is ambiguous → conservative fall-through.
+    // Lexicographic comparison of YYYY-MM-DD strings is correct.
+    const GPT4O_STRICT_PREFIX: &str = "gpt-4o-";
+    const GPT4O_STRICT_MIN_DATE: &str = "2024-08-06";
+    if let Some(rest) = model.strip_prefix(GPT4O_STRICT_PREFIX) {
+        // rest is e.g. "2024-08-06", "2024-12-17", "mini", or "preview".
+        // Treat as NativeStructuredOutput only when rest is a YYYY-MM-DD date >= threshold.
+        let date_candidate = if rest.len() >= 10 { &rest[..10] } else { "" };
+        let looks_like_date = date_candidate.len() == 10
+            && date_candidate.as_bytes()[4] == b'-'
+            && date_candidate.as_bytes()[7] == b'-';
+        if looks_like_date && date_candidate >= GPT4O_STRICT_MIN_DATE {
+            return ProviderCaps::NativeStructuredOutput;
+        }
+        // gpt-4o-mini, gpt-4o-preview, gpt-4o-YYYY-MM-DD (< threshold) → fall through
+    }
+
+    // --- Ollama (name:tag colon pattern, plus known Ollama model families) ---
+    // Anthropic and OpenAI model identifiers never contain ':'.
+    // Ollama model references use the 'name:tag' form (qwen2.5:14b, llama3.2:3b).
+    // Also catch bare family names commonly served via Ollama without a tag.
+    // `mistral` (no dot) matches bare Ollama Mistral instances (mistral-7b, mistral-nemo).
+    // `mistral.` (with dot) is caught by the Bedrock block above, so no overlap.
+    if model.contains(':')
+        || model.starts_with("llama")
+        || model.starts_with("mistral")
+        || model.starts_with("qwen")
+        || model.starts_with("phi")
+        || model.starts_with("nuextract")
+    {
+        return ProviderCaps::FormatSchema;
+    }
+
+    // --- Everything else → PromptOnly (conservative) -----------------------
+    // Includes: Bedrock cross-region inference ARNs (us./eu./ap. prefixes),
+    // unknown proxy routes, and any unrecognised model string.
+    ProviderCaps::PromptOnly
+}
+
+// ---------------------------------------------------------------------------
 // TokenUsage — kept because IngestionResult.token_usage carries it across
 // the entire pipeline.  Not part of the LLM client abstraction per se.
 // ---------------------------------------------------------------------------
@@ -739,6 +887,132 @@ mod tests {
     // of rql-core's dev-dependencies is required for the strict BYOM
     // invariant (`cargo tree -p rql-core | grep autoagents-llamacpp`
     // must print empty).
+
+    // -----------------------------------------------------------------------
+    // ProviderCaps + capability_of — Phase 1 structured-output ladder (§5.2)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn capability_of_anthropic_native() {
+        assert_eq!(
+            capability_of("claude-opus-4-7"),
+            ProviderCaps::NativeStructuredOutput
+        );
+        assert_eq!(
+            capability_of("claude-sonnet-4-6"),
+            ProviderCaps::NativeStructuredOutput
+        );
+        assert_eq!(
+            capability_of("claude-haiku-4-5-20251001"),
+            ProviderCaps::NativeStructuredOutput
+        );
+    }
+
+    #[test]
+    fn capability_of_openai_strict() {
+        assert_eq!(
+            capability_of("gpt-4o-2024-08-06"),
+            ProviderCaps::NativeStructuredOutput
+        );
+        assert_eq!(
+            capability_of("o1-preview"),
+            ProviderCaps::NativeStructuredOutput
+        );
+        assert_eq!(
+            capability_of("o3-mini"),
+            ProviderCaps::NativeStructuredOutput
+        );
+    }
+
+    #[test]
+    fn capability_of_openai_strict_later_dates() {
+        // Dates strictly after 2024-08-06 must also be NativeStructuredOutput.
+        assert_eq!(
+            capability_of("gpt-4o-2024-12-17"),
+            ProviderCaps::NativeStructuredOutput
+        );
+        assert_eq!(
+            capability_of("gpt-4o-2025-01-01"),
+            ProviderCaps::NativeStructuredOutput
+        );
+    }
+
+    #[test]
+    fn capability_of_old_openai_not_strict() {
+        // Pre-2024-08-06 OpenAI GPT models lack strict mode → PromptOnly.
+        assert_eq!(capability_of("gpt-4-turbo"), ProviderCaps::PromptOnly);
+        assert_eq!(capability_of("gpt-3.5-turbo"), ProviderCaps::PromptOnly);
+        // gpt-4o with an older date → PromptOnly.
+        assert_eq!(capability_of("gpt-4o-2024-05-13"), ProviderCaps::PromptOnly);
+        // gpt-4o alone (no date) → PromptOnly (ambiguous, conservative).
+        assert_eq!(capability_of("gpt-4o"), ProviderCaps::PromptOnly);
+    }
+
+    #[test]
+    fn capability_of_ollama_format_schema() {
+        assert_eq!(capability_of("qwen2.5:14b"), ProviderCaps::FormatSchema);
+        assert_eq!(
+            capability_of("llama3.2:3b-instruct"),
+            ProviderCaps::FormatSchema
+        );
+        // A hypothetical model name that looks like it could be OpenAI but uses Ollama tag syntax.
+        assert_eq!(capability_of("gpt-oss:20b"), ProviderCaps::FormatSchema);
+    }
+
+    #[test]
+    fn capability_of_unknown_defaults_to_prompt_only() {
+        // Bedrock ARNs / proxies / unrecognized strings.
+        assert_eq!(
+            capability_of("anthropic.claude-3-opus-bedrock"),
+            ProviderCaps::PromptOnly
+        );
+        assert_eq!(capability_of("random-model-xyz"), ProviderCaps::PromptOnly);
+        // Bedrock cross-region inference ARNs (us./eu./ap. prefixes) fall through
+        // to PromptOnly via the default case — implicit conservative routing.
+        assert_eq!(
+            capability_of("us.anthropic.claude-opus-4-7-v1:0"),
+            ProviderCaps::PromptOnly
+        );
+        assert_eq!(
+            capability_of("eu.meta.llama3-70b-instruct-v1:0"),
+            ProviderCaps::PromptOnly
+        );
+    }
+
+    #[test]
+    fn capability_of_mistral_bare_ollama() {
+        // Bare Mistral model names served via Ollama → FormatSchema.
+        assert_eq!(capability_of("mistral-7b"), ProviderCaps::FormatSchema);
+        assert_eq!(capability_of("mistral-nemo"), ProviderCaps::FormatSchema);
+        // Bedrock Mistral ARNs (mistral. with dot) must remain PromptOnly.
+        assert_eq!(
+            capability_of("mistral.mistral-large-2407-v1:0"),
+            ProviderCaps::PromptOnly
+        );
+    }
+
+    #[test]
+    fn capability_of_gpt_4_dot_native() {
+        // OpenAI gpt-4. numbered series → NativeStructuredOutput.
+        assert_eq!(
+            capability_of("gpt-4.1"),
+            ProviderCaps::NativeStructuredOutput
+        );
+        assert_eq!(
+            capability_of("gpt-4.5-preview"),
+            ProviderCaps::NativeStructuredOutput
+        );
+        // gpt-4-turbo (hyphen, no dot) has no strict mode → PromptOnly.
+        assert_eq!(capability_of("gpt-4-turbo"), ProviderCaps::PromptOnly);
+    }
+
+    #[test]
+    fn capability_of_claude_mythos_preview() {
+        assert_eq!(
+            capability_of("claude-mythos-preview"),
+            ProviderCaps::NativeStructuredOutput
+        );
+    }
 
     // -----------------------------------------------------------------------
     // Step 1 — AA adoption: mock_provider_basic

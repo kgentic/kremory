@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
 use crate::core::error::Result;
+use crate::core::extraction::schemas::{ContradictionVerdictWrapper, SCHEMA_CONTRADICTION_VERDICT};
+use crate::core::extraction::structured;
 use crate::core::intelligence::ExtractedFact;
 use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
 use crate::core::schema::Fact;
@@ -153,7 +155,7 @@ pub(crate) fn build_dual_list_prompt(
         idx += 1;
     }
 
-    prompt.push_str("\nFor each existing fact that the new fact CONTRADICTS (makes false or outdated), return its index number.\nIf the new fact is an UPDATE (same relationship but newer value), return that index too.\nIf no contradictions, return an empty array [].\n\nOutput a JSON array of index numbers.");
+    prompt.push_str("\nFor each existing fact that the new fact CONTRADICTS (makes false or outdated), return its index number.\nIf the new fact is an UPDATE (same relationship but newer value), return that index too.\nIf no contradictions, use an empty indices list.\n\nOutput JSON in this exact format: {\"indices\": [n, n, ...]} where each n is the 1-based index number of a contradicted fact. Example: {\"indices\": [1, 3]}. If no contradictions: {\"indices\": []}.");
 
     (prompt, index_map)
 }
@@ -162,10 +164,18 @@ pub(crate) fn build_dual_list_prompt(
 // Index Parser
 // ---------------------------------------------------------------------------
 
-/// Parse LLM response containing a JSON array of index numbers.
-/// Handles: "[1, 3]", "[]", "[1]", and malformed responses (returns empty).
+/// Parse LLM response containing a wrapped JSON index list.
+///
+/// Expects `{"indices": [1, 3]}` (the `ContradictionVerdictWrapper` shape).
+/// Malformed or bare-array responses return an empty list — the caller
+/// treats an empty list as "no contradictions detected".
+///
+/// The `u32` values from the wrapper are converted to `usize` for use as
+/// 1-based indices into the caller's `index_map` slice.
 pub(crate) fn parse_index_list(json: &str) -> Vec<usize> {
-    serde_json::from_str::<Vec<usize>>(json.trim()).unwrap_or_default()
+    serde_json::from_str::<ContradictionVerdictWrapper>(json.trim())
+        .map(|w| w.indices.into_iter().map(|i| i as usize).collect())
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -254,12 +264,17 @@ impl<L: ChatProvider> TwoPoolDetector<L> {
             chat_msg_system("You are a fact consistency checker. Identify which existing facts are contradicted by a new fact."),
             chat_msg_user(prompt),
         ];
-        let response = self
-            .llm
-            .chat_with_tools(&contradiction_msgs, None, None)
-            .await
-            .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
-        let response_text = response.text().unwrap_or_default();
+        let contradiction_value = structured::StructuredCallBuilder::new(
+            self.llm.as_ref(),
+            &SCHEMA_CONTRADICTION_VERDICT,
+            "ContradictionVerdict",
+        )
+        .messages(contradiction_msgs)
+        .model(self.llm.model())
+        .call()
+        .await
+        .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
+        let response_text = serde_json::to_string(&contradiction_value).unwrap_or_default();
 
         let indices = parse_index_list(&response_text);
         let contradictions: Vec<i64> = indices
@@ -464,18 +479,108 @@ mod tests {
     // ── Index Parser ──────────────────────────────────────────────────────────
 
     #[test]
-    fn test_parse_index_list_valid() {
-        assert_eq!(parse_index_list("[1, 3]"), vec![1usize, 3]);
+    fn test_parse_index_list_wrapped_valid() {
+        // New contract: LLM must return wrapped form {"indices": [1, 3]}.
+        assert_eq!(parse_index_list(r#"{"indices": [1, 3]}"#), vec![1usize, 3]);
     }
 
     #[test]
-    fn test_parse_index_list_empty() {
-        assert_eq!(parse_index_list("[]"), Vec::<usize>::new());
+    fn test_parse_index_list_wrapped_empty() {
+        assert_eq!(parse_index_list(r#"{"indices": []}"#), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_parse_index_list_bare_array_returns_empty() {
+        // Old bare-array form "[1, 3]" is no longer valid — the LLM contract
+        // changed to wrapped form. Bare arrays return empty (safe fallback).
+        assert_eq!(parse_index_list("[1, 3]"), Vec::<usize>::new());
     }
 
     #[test]
     fn test_parse_index_list_malformed() {
         assert_eq!(parse_index_list("garbage"), Vec::<usize>::new());
+    }
+
+    // ── L1: Adversarial parse_index_list — "valid but useless" inputs ─────────
+    //
+    // These tests mirror the L1 philosophy for parse_json_lenient: the parser
+    // must handle adversarial LLM outputs gracefully.  parse_index_list is used
+    // in the contradiction-detection path; a bad parse here silently drops
+    // contradiction signals.  The adversarial cases below pin the safe-fallback
+    // contract (return empty on anything unexpected).
+
+    #[test]
+    fn parse_index_list_wrapped_null_indices_returns_empty() {
+        // LLM returns {"indices": null} — null is not an array, must return empty.
+        let result = parse_index_list(r#"{"indices": null}"#);
+        assert!(
+            result.is_empty(),
+            "null indices must produce empty list — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_index_list_empty_json_object_returns_empty() {
+        // LLM returns {} with no indices field.
+        let result = parse_index_list("{}");
+        assert!(
+            result.is_empty(),
+            "missing indices field must produce empty list — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_index_list_value_zero_in_array_is_preserved() {
+        // Index value 0 is not a valid 1-based contradiction index, but the parser
+        // must NOT discard it — the caller ignores out-of-range indices when it
+        // walks index_map, so the parser's job is faithful extraction only.
+        // {"indices": [0]} → vec![0]
+        let result = parse_index_list(r#"{"indices": [0]}"#);
+        assert_eq!(
+            result,
+            vec![0usize],
+            "zero index value must be preserved as-is"
+        );
+    }
+
+    #[test]
+    fn parse_index_list_empty_array_returns_empty() {
+        // {"indices": []} is a valid wrapped form but contains no indices.
+        // Parser must return empty vec — not panic, not error.
+        let result = parse_index_list(r#"{"indices": []}"#);
+        assert!(
+            result.is_empty(),
+            "empty indices array must return empty vec — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_index_list_large_index_is_preserved() {
+        // A very large index (9999) is out of range for any real index_map,
+        // but the parser must not truncate or reject it — the caller handles bounds.
+        let result = parse_index_list(r#"{"indices": [1, 9999]}"#);
+        assert_eq!(result, vec![1usize, 9999]);
+    }
+
+    #[test]
+    fn parse_index_list_nested_object_returns_empty() {
+        // "valid but useless" — structurally valid JSON but wrong schema.
+        // parse_index_list must return empty (safe fallback), not panic.
+        let result = parse_index_list(r#"{"result":{"contradictions":[1,2]}}"#);
+        assert!(
+            result.is_empty(),
+            "wrong schema must produce empty list — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_index_list_prose_wrapped_in_json_returns_empty() {
+        // LLM wraps a text answer instead of returning indices.
+        let result = parse_index_list(r#"{"indices": "no contradictions found"}"#);
+        assert!(
+            result.is_empty(),
+            "string value for indices must produce empty list — got {result:?}"
+        );
     }
 
     // ── TwoPoolDetector ───────────────────────────────────────────────────────
@@ -529,7 +634,8 @@ mod tests {
     #[test]
     fn test_contradiction_via_mock_llm() {
         // Pool A has one fact that overlaps temporally and has a different object.
-        // MockChatProvider returns "[1]" for any prompt containing "works_at".
+        // MockChatProvider returns the wrapped form {"indices":[1]} for prompts
+        // containing "works_at". Bare-array form "[1]" is no longer accepted.
         let t_start = dt(-10);
         let reference = dt(0);
 
@@ -537,7 +643,7 @@ mod tests {
         let new_fact = make_extracted("alice", "works_at", "newco");
 
         let mut responses = HashMap::new();
-        responses.insert("works_at".to_string(), "[1]".to_string());
+        responses.insert("works_at".to_string(), r#"{"indices":[1]}"#.to_string());
         let client = Arc::new(MockChatProvider::new(responses));
         let detector = TwoPoolDetector::new(client);
 

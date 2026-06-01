@@ -113,7 +113,7 @@ impl EmbeddingProvider for ScriptedEmbeddingProvider {
 // Call sequence (3 total LLM calls):
 //   Call 0: Utterance-1 extraction  → {"entities": ["app"], "relationships": [go_live=friday]}
 //   Call 1: Utterance-2 extraction  → {"entities": ["app"], "relationships": [go_live=monday]}
-//   Call 2: Contradiction check     → "[1]" → Fact#1 (friday) is superseded
+//   Call 2: Contradiction check     → {"indices":[1]} → Fact#1 (friday) is superseded
 //
 // Extra entries in the script fall back to "[]" — safe no-op for both extraction
 // and contradiction prompts.
@@ -127,7 +127,7 @@ fn build_scripted_llm() -> ScriptedLlmClient {
     // Call sequence:
     //   Call 0: Utterance-1 extraction  → entity "app" + relationship go_live=friday
     //   Call 1: Utterance-2 extraction  → entity "app" + relationship go_live=monday
-    //   Call 2: Contradiction check     → "[1]" supersedes Fact#1 (friday)
+    //   Call 2: Contradiction check     → {"indices":[1]} supersedes Fact#1 (friday)
     //   (extra entries fall back to "[]" — safe no-op)
 
     let u1_extraction = serde_json::json!({
@@ -154,8 +154,9 @@ fn build_scripted_llm() -> ScriptedLlmClient {
     })
     .to_string();
 
-    // Contradiction check for utterance 2: Fact#1 (friday) is at index 1 → "[1]" supersedes it
-    let u2_contradiction = "[1]".to_owned();
+    // Contradiction check for utterance 2: Fact#1 (friday) is at index 1.
+    // Wrapped form required — bare array "[1]" is no longer accepted by parse_index_list.
+    let u2_contradiction = r#"{"indices":[1]}"#.to_owned();
 
     ScriptedLlmClient::new(vec![
         u1_extraction.as_str(),
@@ -279,6 +280,7 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
             Some(Utc::now()),
             None,
             None,
+            kremory::core::ingest::SourceParams::default(),
         )
         .await
         .expect("ingest utterance 1 failed");
@@ -303,6 +305,7 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
             Some(Utc::now()),
             None,
             None,
+            kremory::core::ingest::SourceParams::default(),
         )
         .await
         .expect("ingest utterance 2 failed");
