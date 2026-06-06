@@ -8,7 +8,7 @@
 // BYOM invariant (ADR-Phase-D.0, 2026-05-18 §7): kremory exposes ONLY the
 // `autoagents-llm` TRAIT surface here. The concrete `LlamaCppProvider`
 // (`autoagents-llamacpp` crate) lives in `rust-pipeline/src/rql_llamacpp.rs`
-// — the host application binary, not kremory. DoD: `cargo tree -p kremory --edges normal
+// — the consumer binary, not the substrate crate. DoD: `cargo tree -p kremory --edges normal
 // | grep autoagents-llamacpp` MUST print 0.
 //
 // autoagents-llm is a required dep (not optional) — kremory::memory's
@@ -745,6 +745,15 @@ impl ChatProvider for ArcChatProvider {
         autoagents_llm::error::LLMError,
     > {
         self.0.chat_with_tools(messages, tools, json_schema).await
+    }
+
+    /// TD-013 F1: delegate model() to inner provider so the model string
+    /// reaches StructuredCallBuilder.capability_of() at the production
+    /// wrapper-chain boundary. Without this delegation, capability_of("")
+    /// returns PromptOnly and FormatSchema arm never fires for Ollama models.
+    /// See ADR adr-td-013-graph-quality-remediation-2026-06-03.
+    fn model(&self) -> &str {
+        self.0.model()
     }
 }
 

@@ -231,6 +231,17 @@ pub struct PipelineConfig {
     /// Default: 1000. Rationale: caps resident memory for the speculative cache;
     /// at ~1.5 KB per entry this is ~1.5 MB, acceptable on constrained hardware.
     pub cache_max_entries: usize,
+    /// Per-arm wall-clock cap for structured-output extraction (ms).
+    ///
+    /// Default: 30_000 (30s — production fail-fast). The HTTP layer bounds
+    /// individual requests (~10s via LLMBuilder); this caps an arm even if
+    /// HTTP succeeds-then-hangs.
+    ///
+    /// Override for slow local LLMs (qwen2.5:14b ~80-130s per call on Apple
+    /// M4 Max 36GB with 32k context) by setting 180_000-300_000 via
+    /// `.extraction_arm_budget_ms(value)` on the builder. The benchmark
+    /// suite sets this to 300_000 to accommodate qwen2.5:14b warm-up latency.
+    pub extraction_arm_budget_ms: u64,
 }
 
 impl PipelineConfig {
@@ -248,6 +259,7 @@ impl PipelineConfig {
                 excluded_entity_types: Vec::new(),
                 cache_ttl: Duration::from_secs(300),
                 cache_max_entries: 1000,
+                extraction_arm_budget_ms: 30_000,
             },
         }
     }
@@ -375,6 +387,18 @@ impl PipelineConfigBuilder {
 
     pub fn cache_max_entries(mut self, v: usize) -> Self {
         self.inner.cache_max_entries = v;
+        self
+    }
+
+    // ── Extraction budget ────────────────────────────────────────────────────
+
+    /// Set the per-arm wall-clock budget for structured-output extraction (ms).
+    ///
+    /// Default: 30_000 (30s — production fail-fast).
+    /// Override for slow local LLMs: e.g. `300_000` for qwen2.5:14b on Apple
+    /// silicon (~80-130s per call at 32k context).
+    pub fn extraction_arm_budget_ms(mut self, ms: u64) -> Self {
+        self.inner.extraction_arm_budget_ms = ms;
         self
     }
 
@@ -606,6 +630,29 @@ mod tests {
         // appear in excluded without being in allowed.
         assert!(!cfg.allowed_entity_types.contains(&"StopWord".to_string()));
         assert!(cfg.excluded_entity_types.contains(&"StopWord".to_string()));
+    }
+
+    #[test]
+    fn test_extraction_arm_budget_ms_default() {
+        let cfg = PipelineConfig::builder()
+            .build()
+            .expect("default config should build");
+        assert_eq!(
+            cfg.extraction_arm_budget_ms, 30_000,
+            "default extraction_arm_budget_ms must be 30_000 (production fail-fast)"
+        );
+    }
+
+    #[test]
+    fn test_extraction_arm_budget_ms_custom() {
+        let cfg = PipelineConfig::builder()
+            .extraction_arm_budget_ms(180_000)
+            .build()
+            .expect("custom extraction_arm_budget_ms should build");
+        assert_eq!(
+            cfg.extraction_arm_budget_ms, 180_000,
+            "extraction_arm_budget_ms builder method must propagate the custom value"
+        );
     }
 }
 

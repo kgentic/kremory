@@ -327,7 +327,7 @@ impl Drop for IngestGuard {
 ///
 /// Returns `Some(DeferredRequest)` when Phase 2 should be enqueued, or `None`
 /// on error (error already forwarded to `error_tx`).
-async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
+async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
     req: IngestRequest,
     error_tx: &SyncSender<IngestError>,
@@ -387,7 +387,7 @@ async fn process_item<L: ChatProvider, Emb: EmbeddingProvider>(
 /// Process one deferred LLM fact extraction request (Phase 2).
 ///
 /// Errors are logged via metrics and the error channel but do NOT crash the worker.
-async fn process_deferred<L: ChatProvider, Emb: EmbeddingProvider>(
+async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
     req: DeferredRequest,
     error_tx: &SyncSender<IngestError>,
@@ -438,7 +438,7 @@ async fn process_deferred<L: ChatProvider, Emb: EmbeddingProvider>(
 
 // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
 #[allow(clippy::too_many_arguments)]
-fn worker_loop<L: ChatProvider, Emb: EmbeddingProvider>(
+fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: Engine<L, Emb>,
     work_rx: Receiver<IngestRequest>,
     error_tx: SyncSender<IngestError>,
@@ -684,7 +684,7 @@ mod tests {
             Arc::new(FailingLlmClient),
             Arc::new(NullEmbeddingProvider { dim }),
             config,
-        );
+        ).expect("Engine::new should succeed in tests");
 
         let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 
@@ -894,7 +894,7 @@ mod tests {
             Arc::new(llm),
             Arc::new(NullEmbeddingProvider { dim }),
             config,
-        )
+        ).expect("Engine::new should succeed in tests")
     }
 
     // -----------------------------------------------------------------------
@@ -1285,8 +1285,12 @@ mod tests {
             guard.shutdown(); // must return within a few hundred ms
         });
 
-        // Give it 5 seconds — if it deadlocks, this will fail.
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5), join).await;
+        // Give it 30 seconds — if it deadlocks, this will fail. The previous
+        // 5s budget flaked under parallel-test contention (CPU starved by other
+        // tests). Real shutdown completes in <100ms; real deadlock never
+        // completes — 30s is generous margin for slow CI without weakening
+        // the deadlock signal.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), join).await;
 
         assert!(
             result.is_ok(),

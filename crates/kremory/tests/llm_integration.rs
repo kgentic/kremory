@@ -4,9 +4,44 @@
 //! http://localhost:11434) with `nomic-embed-text` (embedding) and a JSON-capable
 //! chat model pulled.
 //!
-//! Chat model selection: set `OLLAMA_CHAT_MODEL` env var (default: `llama3.2:3b`).
-//! `gemma4-e2b` is NOT supported — it does not follow structured JSON prompts.
-//! Recommended: `llama3.2:3b`, `llama3.1:8b`, or `qwen2.5:14b`.
+//! # Chat model selection
+//!
+//! Set `OLLAMA_CHAT_MODEL` env var (default: `llama3.2:3b`).
+//!
+//! ## Empirical ladder (label_precision_benchmark, mock_interview.txt, 2026-06-04
+//! post TD-013 parser fixes — strip serde defaults + name shape validator):
+//!
+//! | Model                       | Tag form (required) | Precision | Wall-clock | Phase fit          |
+//! |-----------------------------|---------------------|-----------|------------|---------------------|
+//! | `gemma4:e4b`                | `gemma4:e4b`        | 90%       | ~378s      | Phase 2 (deferred)  |
+//! | `gemma4-e2b`                | `gemma4-e2b:latest` | 80%       | ~37-54s    | Phase 1 / fast UX   |
+//! | `gemma4:26b`                | `gemma4:26b`        | 90%       | ~1728s     | NOT recommended     |
+//! | `qwen2.5:14b`               | `qwen2.5:14b`       | retest    | ~268s      | legacy fallback     |
+//! | `llama3.2:3b` / `llama3.1:8b` | various           | retest    | TBD        | bring-your-own      |
+//!
+//! ## Rationale (model choice is QUALITY knob, not latency knob)
+//!
+//! kremory ingest is two-phase: Phase 1 (sync) embeds + saves + runs NER;
+//! Phase 2 (`ingest_deferred`) runs LLM relationship extraction via background
+//! worker. The wall-clock numbers above are total combined-phase costs from
+//! the benchmark, which uses the inline `ingest_with` path. Production usage
+//! routes the heavy LLM cost through the deferred queue — so a 378s/doc model
+//! does NOT mean the user waits 378s; the user sees instant ack from Phase 1.
+//!
+//! ## Tag-form footgun
+//!
+//! `crates/kremory/src/core/provider.rs:156` `capability_of()` routes by `:` colon
+//! detection OR known prefix list (llama, qwen, phi, mistral, nuextract). Bare
+//! `gemma4-e2b` falls through to PromptOnly (no FormatSchema arm) → LLM emits
+//! `null` / `{}`. Use the full `gemma4-e2b:latest` tag form to ensure the
+//! FormatSchema arm fires. The `gemma` family prefix should be added to the
+//! known list in a follow-up.
+//!
+//! ## `gemma4:26b` quarantine
+//!
+//! Same 90% precision as e4b but 4.5x slower AND extracts ~5 junk strings the
+//! shape-validator cannot reject (`:`, `: 15 different developers...`, etc).
+//! No precision win, more noise. Skip for now.
 //!
 //! Gate: all tests carry `#[ignore]`.  Invoke manually before publish:
 //!   cargo test -p kremory --features llm-integration --test llm_integration -- --ignored
@@ -43,7 +78,10 @@ fn ollama_base_url() -> String {
 
 /// Returns chat model from OLLAMA_CHAT_MODEL env var, or "llama3.2:3b".
 ///
-/// gemma4-e2b is NOT supported — it does not follow structured JSON prompts.
+/// See module-level docstring for the empirical model ladder.
+/// Note: `gemma4-e2b` REQUIRES the full `gemma4-e2b:latest` tag form so
+/// `capability_of()` routes to the FormatSchema arm. Bare names without
+/// `:tag` fall through to PromptOnly and produce empty / null output.
 fn ollama_chat_model() -> String {
     std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "llama3.2:3b".to_string())
 }
@@ -1621,6 +1659,7 @@ async fn c1_multi_namespace_recall_e2e_real_embeddings() {
     let results = mem
         .recall("who are the people involved?")
         .in_namespaces(&[ns_a.clone(), ns_b.clone()])
+        .raw()
         .await
         .expect("in_namespaces recall must succeed");
 
@@ -1642,6 +1681,7 @@ async fn c1_multi_namespace_recall_e2e_real_embeddings() {
     let ns_a_results = mem
         .recall("who are the people involved?")
         .in_namespace(ns_a.clone())
+        .raw()
         .await
         .expect("in_namespace(ns_a) recall must succeed");
 
@@ -1741,9 +1781,11 @@ async fn c2_append_only_and_mutable_namespaces_coexist() {
         .expect("recall from Mutable ns must succeed");
 
     // Forget in AppendOnly ns must return a policy-violation error.
+    // (ForgetRequest scopes by namespace, not entity name.)
     let forget_append = mem
-        .forget("Alice")
+        .forget()
         .in_namespace(Namespace::new("c2-append-only"))
+        .execute()
         .await;
 
     assert!(
@@ -1761,10 +1803,11 @@ async fn c2_append_only_and_mutable_namespaces_coexist() {
     );
 
     // Forget in Mutable ns must NOT produce a policy-violation error.
-    // (It may return NotFound if the entity was never extracted — that is fine.)
+    // (It may return 0 deleted rows if no entity was extracted — that is fine.)
     let forget_mutable = mem
-        .forget("Charlie")
+        .forget()
         .in_namespace(Namespace::new("c2-mutable"))
+        .execute()
         .await;
 
     if let Err(ref e) = forget_mutable {

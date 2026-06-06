@@ -4,8 +4,8 @@
 //!
 //! Per ADR-Phase-D.0 §"rqlm public API surface" + the canonical Zep
 //! pattern (verified context7 2026-05-13): rqlm orchestrates over an
-//! opaque graph handle that consumers (the host application, paying SDK customers,
-//! aidocs) implement against their own concrete graph. Generics on the
+//! opaque graph handle that downstream SDK consumers implement against
+//! their own concrete graph. Generics on the
 //! public fns would propagate `<L: ChatProvider, Emb: EmbeddingProvider>`
 //! through every consumer signature — that's a stability hazard for the
 //! SDK contract. A trait-object behind `&dyn GraphHandle` erases both
@@ -23,8 +23,8 @@
 //! ## D.6.4 extension — canonical definition (supersedes D.0a)
 //!
 //! Per ADR rqlm-async-event-handle-api-design-2026-05-19 §4.9:
-//! all methods are required — NO defaults. Every impl (the host applicationGraphHandle,
-//! StubGraphHandle in tests) must explicitly implement all methods.
+//! all methods are required — NO defaults. Every impl (e.g. StubGraphHandle
+//! in tests, or a consumer-supplied concrete handle) must explicitly implement all methods.
 //! Compile failure is the enforcement mechanism.
 
 use std::sync::Arc;

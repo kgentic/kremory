@@ -160,6 +160,7 @@ mod spike {
             known_entities: &[],
             excluded_entity_types: &[],
             content_type: fixture.content_type.clone(),
+            registry_specs: &[],
         };
 
         let start = Instant::now();

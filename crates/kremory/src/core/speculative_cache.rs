@@ -311,17 +311,17 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let t0 = Utc::now() - ChronoDuration::hours(1);
 
-        for (id, label) in &[
-            ("project_alpha", "Project"),
-            ("alice", "Person"),
-            ("bob", "Person"),
-            ("carol", "Person"),
-            ("dave", "Person"),
-            ("acme", "Company"),
-            ("startup_x", "Company"),
-            ("budget_q1", "Document"),
+        for id in &[
+            "project_alpha",
+            "alice",
+            "bob",
+            "carol",
+            "dave",
+            "acme",
+            "startup_x",
+            "budget_q1",
         ] {
-            g.insert_entity(id, label, serde_json::json!({"name": id}))
+            g.insert_entity(id, 0, serde_json::json!({"name": id}))
                 .await
                 .unwrap();
         }

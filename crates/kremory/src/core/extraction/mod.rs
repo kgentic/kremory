@@ -1,5 +1,12 @@
+pub(crate) mod delimited_tuple;
+pub mod factory;
+#[cfg(feature = "ner")]
+pub mod hybrid_typer;
+pub mod prompts;
 pub(crate) mod schemas;
 pub(crate) mod structured;
+
+pub use factory::{ExtractorSource, ProductionExtractor};
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -112,18 +119,21 @@ fn default_entity_label() -> String {
 
 // ─── L2: Runtime label allowlist ────────────────────────────────────────────
 
-/// Canonical entity types that kremory's extraction pipeline considers valid.
+/// Canonical-form examples for common entity types. NOT an exhaustive list —
+/// the system accepts any structurally-valid label (see `is_canonical_entity_type`).
+/// This array exists only for prompt interpolation + test fixtures + alias-map
+/// canonical-form reference.
 ///
-/// "Entity" and "UNKNOWN" are intentionally excluded: they are placeholder labels
-/// produced when the LLM fails to classify (TD-012).  Any entity arriving with a
-/// label not in this list should be treated as suspicious at ingest time.
-///
-/// This allowlist is checked by `is_canonical_entity_type` and
-/// `validate_entity_types`.  It covers all types referenced in the extraction
-/// prompts (DEFAULT_ENTITY_TYPES, PROG_ENTITY_TYPES, SINGLE_CALL_ENTITY_TYPES),
-/// plus domain-specific types that appear in the kremory-eval ground truth.
-pub const ENTITY_TYPE_ALLOWLIST: &[&str] = &[
-    // Core NER types (present in all extractor prompts)
+/// TD-013 PR1-corrected (2026-06-03): the ENTITY_TYPE_ALLOWLIST positive
+/// hard-reject mechanism was DELETED. It was an ecosystem outlier — no peer
+/// agentic-memory system (Graphiti, Mem0, LightRAG, Cognee, LlamaIndex)
+/// uses a positive allowlist. Graphiti uses regex-only Cypher-safety
+/// validation; Cognee uses unconstrained `type: str`. kremory now follows
+/// Graphiti's pattern: structural-validity check + placeholder-reject only.
+/// See ADR adr-td-013-graph-quality-remediation-2026-06-03 (PR1-corrected
+/// amendment) and `feedback_vera_challenges_contents_user_challenges_mechanism`.
+pub const ENTITY_TYPE_CANONICAL_FORMS: &[&str] = &[
+    // Core NER types (referenced in extraction prompts as guidance, not constraint)
     "Person",
     "Organisation",
     "Location",
@@ -131,40 +141,99 @@ pub const ENTITY_TYPE_ALLOWLIST: &[&str] = &[
     "Product",
     "Event",
     "Date",
-    // Extended types from programmatic-first and single-call prompts
     "Time",
     "Money",
     "Quantity",
     "Percent",
-    // Semantic / graph types used internally
-    "Document",
-    "Chunk",
-    "Episode",
-    "Fact",
-    "Relation",
-    // Domain types that appear in kremory-eval ground_truth.json
-    "Tool",
-    "Drug",
-    "Place",
-    "Concept",
-    "Law",
-    "Award",
-    "Work",
-    "Role",
 ];
 
-/// Returns `true` when `label` is a known-canonical entity type.
+/// Cypher-safe identifier regex (Graphiti pattern from
+/// `graphiti_core/helpers.py:35`): `^[A-Za-z_][A-Za-z0-9_]*$`.
 ///
-/// "Entity", "UNKNOWN", and empty strings always return `false` — they are
-/// placeholder labels produced by an LLM that failed to classify.
+/// kremory's libsql backend doesn't have Cypher injection risk, but this
+/// pattern serves as a structural-validity check: rejects whitespace, leading
+/// digits, special chars, all-punctuation strings, and overly-long labels.
+pub(crate) fn label_is_structurally_valid(label: &str) -> bool {
+    let trimmed = label.trim();
+    if trimmed.len() < 2 || trimmed.len() > 64 {
+        return false;
+    }
+    let mut chars = trimmed.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ' ')
+        && trimmed.chars().any(|c| c.is_ascii_alphabetic())
+}
+
+/// Normalize an LLM-emitted label to canonical form via alias map + case fix.
+///
+/// Examples: "ORGANIZATION"/"organisation"/"Org"/"Company" → "Organisation".
+/// Returns the input trimmed if no alias matches (preserves novel labels).
+pub fn normalize_label(raw: &str) -> String {
+    let trimmed = raw.trim();
+    match trimmed.to_ascii_lowercase().as_str() {
+        "person" | "people" | "human" | "individual" | "per" => "Person".to_string(),
+        "organisation" | "organization" | "org" | "company" | "corporation" | "corp" => {
+            "Organisation".to_string()
+        }
+        "location" | "place" | "loc" | "gpe" => "Location".to_string(),
+        "technology" | "tech" => "Technology".to_string(),
+        "product" => "Product".to_string(),
+        "event" => "Event".to_string(),
+        "date" => "Date".to_string(),
+        "time" => "Time".to_string(),
+        "money" | "amount" | "currency" => "Money".to_string(),
+        "quantity" | "number" => "Quantity".to_string(),
+        "percent" | "percentage" => "Percent".to_string(),
+        _ => {
+            // Title-case any single ASCII-alphabetic word so "court" → "Court",
+            // "software" → "Software" without needing an explicit alias entry.
+            // Multi-word and non-alphabetic labels pass through trimmed.
+            if trimmed
+                .chars()
+                .all(|c| c.is_ascii_alphabetic() || c == '_')
+                && !trimmed.is_empty()
+            {
+                let mut chars = trimmed.chars();
+                let Some(first_char) = chars.next() else {
+                    return trimmed.to_string();
+                };
+                let first = first_char.to_ascii_uppercase();
+                let rest: String = chars.map(|c| c.to_ascii_lowercase()).collect();
+                format!("{first}{rest}")
+            } else {
+                trimmed.to_string()
+            }
+        }
+    }
+}
+
+/// Returns `true` when `label` passes structural validity + placeholder-reject.
+///
+/// TD-013 PR1-corrected (2026-06-03): this function's semantics CHANGED from
+/// "positive allowlist match" to "structural validity + placeholder reject".
+/// Now accepts ANY label that is (a) not empty / "Entity" / "UNKNOWN", and
+/// (b) matches a Cypher-safe identifier pattern. Aligns with Graphiti's
+/// `validate_node_labels` (graphiti_core/helpers.py:174-186) and ecosystem
+/// consensus. The function name preserves API compatibility with existing
+/// call sites; the BEHAVIOR is now ecosystem-aligned.
+///
+/// Placeholder labels ("Entity", "UNKNOWN", empty) ALWAYS return `false` —
+/// they indicate LLM classification failure (TD-012 protection preserved).
 pub fn is_canonical_entity_type(label: &str) -> bool {
-    if label.is_empty()
-        || label.eq_ignore_ascii_case("entity")
-        || label.eq_ignore_ascii_case("unknown")
+    let trimmed = label.trim();
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("entity")
+        || trimmed.eq_ignore_ascii_case("unknown")
     {
         return false;
     }
-    ENTITY_TYPE_ALLOWLIST.contains(&label)
+    label_is_structurally_valid(trimmed)
 }
 
 /// Relationship triplet as emitted by the LLM.
@@ -205,6 +274,12 @@ pub(crate) fn default_confidence() -> f64 {
 ///
 /// `label` uses `deser_string_or_array` to tolerate LLMs (e.g. qwen2.5:14b) that
 /// emit `"label": ["Person"]` instead of `"label": "Person"`.
+///
+/// Used by schemars reflection in `schemas.rs` (`EntityListWrapper`, `EntityOnlyOutput`)
+/// and by `parse_entities` (legacy string-label test fixture).  Rustc dead-code
+/// analysis cannot see schemars reflection or `#[cfg(test)]` callers from a
+/// production-code vantage point, so the item-level allow is correct here.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct RawEntitySimple {
     #[serde(default)]
@@ -213,6 +288,68 @@ pub(crate) struct RawEntitySimple {
     #[serde(default, deserialize_with = "deser_string_or_array")]
     #[schemars(skip)]
     pub(crate) label: String,
+}
+
+// ─── L1: Integer-ID classification structs (TD-013) ─────────────────────────
+
+/// Entity as emitted by the LLM in the integer-ID path (TD-013 L1).
+///
+/// The LLM emits `entity_type_id` — an integer constrained at decode time via
+/// JSON schema `enum` to the registered type IDs for this namespace.  Grammar
+/// enforcement (Ollama FormatSchema / Anthropic NativeSchema) prevents any
+/// out-of-range value from reaching the application; `validate_or_fallback`
+/// provides a second safety net for the PromptOnly fallback arm.
+///
+/// Spike 1c/1d (2026-06-03) confirmed: qwen2.5:14b emits id=0 (catch-all)
+/// even when prompted to bypass — grammar physically prevents out-of-range.
+// NOTE: `#[serde(default)]` is intentionally REMOVED from both fields (2026-06-04).
+// Previously defaults swallowed truncated LLM output: a fragmented post-repair JSON
+// like `[{"name":"Boston\", \"entity_type_id\":3}, {"}]` deserialized as a single
+// entity with name=<garbage> and entity_type_id=0 (the default), collapsing all
+// extractions to label="Entity". Without defaults, missing fields fail loudly so
+// the fallback ladder (LlmJsonRepair → DelimitedTuple → PromptOnly) can retry.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct RawEntityIntegerId {
+    pub(crate) name: String,
+    /// Integer entity type id constrained to the active namespace registry.
+    /// id=0 = "Entity" catch-all; id ≥ 1 = user-defined types.
+    pub(crate) entity_type_id: u32,
+}
+
+/// Wrapper for the integer-ID entity list (TD-013 L1).
+///
+/// Root key `entities` matches the spike 1c grammar shape and aligns with
+/// Graphiti's extraction output format.  Distinct from `EntityListWrapper`
+/// (which uses `items`) so the two paths are independent.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub(crate) struct EntityListIntegerWrapper {
+    #[serde(default)]
+    pub(crate) entities: Vec<RawEntityIntegerId>,
+}
+
+// ─── TD-023 Hybrid typing schema (index-based) ───────────────────────────────
+//
+// Per [[load-bearing-invariants-at-emit-not-prompt]] the candidate-to-typing
+// link is enforced STRUCTURALLY via a bounded integer index, NOT via name
+// preservation. Avoids fuzzy-match band-aids in the parser.
+//
+// Required fields, NO #[serde(default)] per [[llm-output-parse-loudly]] —
+// missing field = parse error so the fallback ladder can retry.
+
+#[cfg_attr(not(feature = "ner"), allow(dead_code))]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct RawHybridTyping {
+    /// 0-based candidate index from the input list, bounded by schema enum.
+    pub(crate) idx: u32,
+    /// Integer entity type id, bounded by the active namespace registry.
+    pub(crate) entity_type_id: u32,
+}
+
+#[cfg_attr(not(feature = "ner"), allow(dead_code))]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub(crate) struct HybridTypingWrapper {
+    #[serde(default)]
+    pub(crate) typings: Vec<RawHybridTyping>,
 }
 
 /// Fact triplet as emitted by the DefaultExtractor (stage 3).
@@ -261,20 +398,26 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
         };
         let stage1_prompt = format!(
             "{}{known_hint}",
-            build_entity_prompt(text, ctx.allowed_entity_types)
+            build_entity_prompt(text, ctx.allowed_entity_types, ctx.registry_specs)
         );
         let stage1_start = Instant::now();
         let stage1_msgs = vec![
             chat_msg_system("You are an entity extraction system. Extract named entities from text. Each entity must appear ONCE — no duplicates. Output valid JSON only."),
             chat_msg_user(stage1_prompt),
         ];
+        // Build per-call schema with entity_type_id constrained to registered integer IDs.
+        // Decode-time enforcement (TD-013 L1 / CLAUDE.md Rule 15): structural
+        // grammar prevents LLM from emitting ids outside the registry enum.
+        // Spike 1c/1d (2026-06-03): confirmed qwen2.5:14b emits id=0 on adversarial bypass.
+        let stage1_schema = schemas::entity_list_schema_with_id_bounds(ctx.registry_specs);
         let stage1_value = structured::StructuredCallBuilder::new(
             self.llm.as_ref(),
-            &schemas::SCHEMA_ENTITY_LIST,
-            "EntityList",
+            &stage1_schema,
+            "EntityListIntegerId",
         )
         .messages(stage1_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::ExtractionStage {
@@ -285,7 +428,13 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
         histogram!("rql.extraction.stage_ms", "stage" => "entities").record(_ms);
         tracing::info!(_ms, stage = "entities", "kremory.extraction.stage_ms");
         let stage1_text = serde_json::to_string(&stage1_value).unwrap_or_default();
-        let mut entities: Vec<ExtractedEntity> = parse_entities(&stage1_text)?;
+        // L1: resolve integer ids → label strings via registry.
+        // Build a temporary registry from the per-call specs; no DB round-trip needed here
+        // since ingest_with already loaded and passed registry_specs into ExtractionContext.
+        let stage1_registry =
+            crate::core::entity_types::EntityTypeRegistry::from_specs(ctx.registry_specs.to_vec());
+        let mut entities: Vec<ExtractedEntity> =
+            parse_entities_integer(&stage1_text, &stage1_registry)?;
 
         // Apply exclusion filter.
         if !ctx.excluded_entity_types.is_empty() {
@@ -306,6 +455,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
         )
         .messages(stage2_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::ExtractionStage {
@@ -332,6 +482,7 @@ impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
         )
         .messages(stage3_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -409,6 +560,7 @@ impl<L: ChatProvider> EntityExtractor for NuExtractExtractor<L> {
         )
         .messages(nuextract_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -479,6 +631,7 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
         )
         .messages(pass1_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -516,7 +669,8 @@ impl<L: ChatProvider> EntityExtractor for GroundedNuExtractExtractor<L> {
             "NuExtractRelationsOnly",
         )
         .messages(pass2_msgs)
-        .model(self.llm.model());
+        .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms);
         if let Some(arm) = schemas::SCHEMA_NUEXTRACT_RELATIONS_ONLY_FORCE_ARM {
             pass2_builder = pass2_builder.force_arm(arm);
         }
@@ -595,22 +749,27 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
                 names.join(", ")
             )
         };
+        let existing_block =
+            prompts::render_existing_entities_block(ctx.existing_graph_entities);
         let stage1_prompt = format!(
-            "{}{known_hint}",
-            build_graphiti_entity_prompt(text, ctx.allowed_entity_types)
+            "{existing_block}{}{known_hint}",
+            build_graphiti_entity_prompt(text, ctx.allowed_entity_types, ctx.registry_specs)
         );
         let stage1_start = Instant::now();
         let graphiti_s1_msgs = vec![
             chat_msg_system(GRAPHITI_ENTITY_SYSTEM),
             chat_msg_user(stage1_prompt),
         ];
+        // L1: integer-ID schema — grammar constrains entity_type_id to registered enum at decode time.
+        let graphiti_s1_schema = schemas::entity_list_schema_with_id_bounds(ctx.registry_specs);
         let graphiti_s1_value = structured::StructuredCallBuilder::new(
             self.llm.as_ref(),
-            &schemas::SCHEMA_ENTITY_LIST,
-            "EntityList",
+            &graphiti_s1_schema,
+            "EntityListIntegerId",
         )
         .messages(graphiti_s1_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -622,7 +781,11 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
             "kremory.extraction.stage_ms"
         );
         let stage1_text = serde_json::to_string(&graphiti_s1_value).unwrap_or_default();
-        let mut entities: Vec<ExtractedEntity> = parse_entities(&stage1_text)?;
+        // L1: resolve integer ids → label strings via registry.
+        let graphiti_s1_registry =
+            crate::core::entity_types::EntityTypeRegistry::from_specs(ctx.registry_specs.to_vec());
+        let mut entities: Vec<ExtractedEntity> =
+            parse_entities_integer(&stage1_text, &graphiti_s1_registry)?;
 
         if !ctx.excluded_entity_types.is_empty() {
             entities.retain(|e| !ctx.excluded_entity_types.contains(&e.label));
@@ -649,6 +812,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
         )
         .messages(graphiti_s2_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -713,7 +877,11 @@ const DEFAULT_ENTITY_TYPES: &[&str] = &[
     "Date",
 ];
 
-fn build_graphiti_entity_prompt(text: &str, allowed_types: &[String]) -> String {
+fn build_graphiti_entity_prompt(
+    text: &str,
+    allowed_types: &[String],
+    registry_specs: &[crate::core::entity_types::EntityTypeSpec],
+) -> String {
     let types = if allowed_types.is_empty() {
         let defaults = DEFAULT_ENTITY_TYPES
             .iter()
@@ -724,23 +892,24 @@ fn build_graphiti_entity_prompt(text: &str, allowed_types: &[String]) -> String 
     } else {
         format!("Classify each entity using one of these types: {}. If an entity doesn't fit any type, use \"Entity\".", allowed_types.join(", "))
     };
+    let l2_guidance = prompts::build_l2_guidance(registry_specs);
 
     format!("\
 {types}
 
+{l2_guidance}
 <TEXT>
 {text}
 </TEXT>
 
-Extract all named entities from the TEXT above. Output a JSON array of objects with \"name\" and \"label\" fields.
+Extract all named entities from the TEXT above. Output a JSON object: {{\"entities\": [{{\"name\": \"<literal name>\", \"entity_type_id\": <integer from registry>}}, ...]}}. Use the integer entity_type_id from the registry table above. Never include type information in the name field.
 
-Examples:
-- Speaker line \"Dr. Patel: The test results...\" → {{\"name\": \"Dr. Patel\", \"label\": \"Person\"}}
-- Self-introduction \"Hi, I'm Ria\" → {{\"name\": \"Ria\", \"label\": \"Person\"}}
-- \"studied at Northeastern University\" → {{\"name\": \"Northeastern University\", \"label\": \"Organisation\"}}
-- \"prescribed Metformin 500mg\" → {{\"name\": \"Metformin\", \"label\": \"Drug\"}}
-- \"works at Acme Corp\" → {{\"name\": \"Acme Corp\", \"label\": \"Organisation\"}}
-- \"originally from Morocco\" → {{\"name\": \"Morocco\", \"label\": \"Location\"}}
+Examples (assuming registry has Person=1, Organisation=2, Location=3):
+- Speaker line \"Dr. Patel: The test results...\" → {{\"name\": \"Dr. Patel\", \"entity_type_id\": 1}}
+- Self-introduction \"Hi, I'm Ria\" → {{\"name\": \"Ria\", \"entity_type_id\": 1}}
+- \"studied at Northeastern University\" → {{\"name\": \"Northeastern University\", \"entity_type_id\": 2}}
+- \"works at Acme Corp\" → {{\"name\": \"Acme Corp\", \"entity_type_id\": 2}}
+- \"originally from Morocco\" → {{\"name\": \"Morocco\", \"entity_type_id\": 3}}
 - Do NOT extract \"the test results\" (generic noun phrase)
 - Do NOT extract \"a few different internships\" (vague reference)")
 }
@@ -1129,7 +1298,11 @@ fn parse_nuextract_response(
 
 // ─── Prompt Builders ─────────────────────────────────────────────────────────
 
-fn build_entity_prompt(text: &str, allowed_types: &[String]) -> String {
+fn build_entity_prompt(
+    text: &str,
+    allowed_types: &[String],
+    registry_specs: &[crate::core::entity_types::EntityTypeSpec],
+) -> String {
     let type_hint = if allowed_types.is_empty() {
         String::new()
     } else {
@@ -1138,8 +1311,9 @@ fn build_entity_prompt(text: &str, allowed_types: &[String]) -> String {
             allowed_types.join(", ")
         )
     };
+    let l2_guidance = prompts::build_l2_guidance(registry_specs);
     format!(
-        "Extract all unique named entities from the following text. Each entity must appear exactly once.{type_hint}\n\nText: {text}\n\nOutput a JSON array of objects with \"name\" and \"label\" fields. No duplicates."
+        "Extract all unique named entities from the following text. Each entity must appear exactly once.{type_hint}\n\n{l2_guidance}\nText: {text}\n\nOutput a JSON object: {{\"entities\": [{{\"name\": \"<literal entity name>\", \"entity_type_id\": <integer from the entity_type_id list shown above>}}, ...]}}. The entity_type_id MUST be a specific integer from the registry — never include type information in the name field. No duplicates."
     )
 }
 
@@ -1273,6 +1447,13 @@ fn parse_relation_names(json: &str) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
+/// Legacy string-label entity parser (pre-TD-013 L1 path).
+///
+/// Production extractors now use `parse_entities_integer`.  This function is
+/// retained as a test fixture for the string-label parse path (used by
+/// `test_parse_entities_*` tests).  Rustc dead-code analysis doesn't count
+/// `#[cfg(test)]` callers from the production-code vantage point.
+#[allow(dead_code)]
 fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>> {
     let trimmed = json.trim();
     if trimmed == "[]" || trimmed.is_empty() {
@@ -1317,6 +1498,123 @@ fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>> {
             }
         })
         .collect())
+}
+
+/// Parse the integer-ID entity JSON emitted by the L1 extraction path (TD-013).
+///
+/// Accepts two input shapes:
+/// 1. Wrapped: `{"entities": [{"name": "Alice", "entity_type_id": 1}, ...]}` — primary.
+/// 2. Bare array: `[{"name": "Alice", "entity_type_id": 1}, ...]` — repair fallback.
+/// 3. Single object: `{"name": "Alice", "entity_type_id": 1}` — wrapped via repair_to_array.
+///
+/// For each `RawEntityIntegerId`:
+/// - Skips entries with empty `name`.
+/// - Validates `entity_type_id` via `EntityTypeRegistry::validate_or_fallback`
+///   (out-of-range or unknown ids → id=0 catch-all "Entity").
+/// - Resolves the integer id to a label string via `EntityTypeRegistry::id_to_name`.
+/// - Builds `ExtractedEntity { name, label, properties }` — downstream contract preserved.
+fn parse_entities_integer(
+    json: &str,
+    registry: &crate::core::entity_types::EntityTypeRegistry,
+) -> anyhow::Result<Vec<ExtractedEntity>> {
+    let trimmed = json.trim();
+    if trimmed == "[]" || trimmed.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // KREMORY_DEBUG=1: emit raw stage1 LLM output to stderr for diagnosis (Rule 19).
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        eprintln!(
+            "[KREMORY_DEBUG] parse_entities_integer raw input (len={}):\n{trimmed}\n[KREMORY_DEBUG end]",
+            trimmed.len()
+        );
+    }
+
+    // Try wrapped form first: {"entities": [...]}
+    let raw: Vec<RawEntityIntegerId> = if let Ok(w) =
+        serde_json::from_str::<EntityListIntegerWrapper>(trimmed)
+    {
+        counter!("rql.extraction.json_parse_ok", "path" => "wrapped").increment(1);
+        w.entities
+    } else {
+        // Try bare array.
+        match serde_json::from_str::<Vec<RawEntityIntegerId>>(trimmed) {
+            Ok(v) => {
+                counter!("rql.extraction.json_parse_ok", "path" => "bare_array").increment(1);
+                v
+            }
+            Err(_) => {
+                // repair_to_array handles: markdown fences, single-object, trailing commas.
+                let repaired = repair_to_array(trimmed);
+                match serde_json::from_str::<Vec<RawEntityIntegerId>>(&repaired) {
+                    Ok(v) => {
+                        // Per Rule 20: repair-path success is suspicious. Track separately
+                        // so qwen-vs-haiku divergence and post-repair garbage are visible.
+                        counter!("rql.extraction.json_parse_ok", "path" => "post_repair").increment(1);
+                        v
+                    }
+                    Err(e) => {
+                        counter!("rql.extraction.json_parse_fail").increment(1);
+                        tracing::warn!(
+                            error = %e,
+                            parser = "entities_integer",
+                            "kremory.extraction.json_parse_fail"
+                        );
+                        eprintln!(
+                            "warn: failed to parse integer-id entity JSON after repair: {e}"
+                        );
+                        return Ok(vec![]);
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(raw
+        .into_iter()
+        .filter_map(|e| {
+            if e.name.is_empty() {
+                counter!("rql.extraction.entity_rejected", "reason" => "empty_name").increment(1);
+                return None;
+            }
+            // Shape-validate the name. Repair paths can splice JSON fragments
+            // into the name field; reject any name containing JSON syntax chars
+            // so garbage entities never reach persistence.
+            if name_looks_like_json_fragment(&e.name) {
+                counter!("rql.extraction.entity_rejected", "reason" => "name_json_fragment").increment(1);
+                tracing::warn!(
+                    raw_name = %e.name,
+                    "kremory.extraction.entity_rejected.name_json_fragment"
+                );
+                return None;
+            }
+            let validated_id = registry.validate_or_fallback(e.entity_type_id);
+            let label = registry.id_to_name(validated_id).to_string();
+            let mut props = serde_json::Map::new();
+            props.insert(
+                "name".to_string(),
+                serde_json::Value::String(e.name.clone()),
+            );
+            Some(ExtractedEntity {
+                name: e.name,
+                label,
+                properties: serde_json::Value::Object(props),
+            })
+        })
+        .collect())
+}
+
+/// Returns true if `name` contains characters that suggest it is a spliced JSON
+/// fragment rather than a real entity name. Repair paths (`repair_to_array` +
+/// `llm_json::repair_json`) can produce parseable output where a truncated
+/// object's tail bleeds into the next entity's `name`. A real entity name will
+/// never legitimately contain unescaped JSON structural characters.
+fn name_looks_like_json_fragment(name: &str) -> bool {
+    name.contains('"')
+        || name.contains('\\')
+        || name.contains('{')
+        || name.contains('}')
+        || name.contains("entity_type_id")
 }
 
 fn parse_facts(json: &str) -> anyhow::Result<Vec<ExtractedFact>> {
@@ -1450,6 +1748,8 @@ fn build_known_hint(ctx: &ExtractionContext<'_>) -> String {
 /// ~250 prompt tokens. Validated at 76-80% recall (Qwen 3B, 8 fixtures).
 fn build_single_call_prompt_v1(text: &str, ctx: &ExtractionContext<'_>) -> String {
     let known_hint = build_known_hint(ctx);
+    let l2_guidance = prompts::build_l2_guidance(ctx.registry_specs);
+    let existing_block = prompts::render_existing_entities_block(ctx.existing_graph_entities);
 
     let format_hint = match ctx.content_type {
         ContentType::Message => "Format: Conversational transcript with speaker labels.\n",
@@ -1460,6 +1760,8 @@ fn build_single_call_prompt_v1(text: &str, ctx: &ExtractionContext<'_>) -> Strin
     format!(
         "Extract all unique entities and relationships from the text below.\n\n\
 {format_hint}\
+{existing_block}\
+{l2_guidance}\n\
 Rules:\n\
 - Each entity must appear ONCE (no duplicates)\n\
 - Classify entities as: {SINGLE_CALL_ENTITY_TYPES}, or Entity\n\
@@ -1485,9 +1787,13 @@ Output a single JSON object with \"entities\" and \"relationships\" arrays. No d
 /// +13 F1 — the schema is the key signal, not the rules.
 fn build_single_call_prompt_v2(text: &str, ctx: &ExtractionContext<'_>) -> String {
     let known_hint = build_known_hint(ctx);
+    let l2_guidance = prompts::build_l2_guidance(ctx.registry_specs);
+    let existing_block = prompts::render_existing_entities_block(ctx.existing_graph_entities);
 
     format!(
         "Extract all entities and relationships from the text.\n\n\
+{existing_block}\
+{l2_guidance}\n\
 Output schema:\n\
 {{\"entities\":[{{\"name\":\"<string>\",\"label\":\"<{SINGLE_CALL_ENTITY_TYPES}|Entity>\"}}],\
 \"relationships\":[{{\"subject\":\"<entity name>\",\"predicate\":\"<verb>\",\"object\":\"<entity name or value>\"}}]}}\n\
@@ -1502,6 +1808,8 @@ JSON:"
 /// adds back V1's content-type hint and a single dedup instruction.
 fn build_single_call_prompt_v3(text: &str, ctx: &ExtractionContext<'_>) -> String {
     let known_hint = build_known_hint(ctx);
+    let l2_guidance = prompts::build_l2_guidance(ctx.registry_specs);
+    let existing_block = prompts::render_existing_entities_block(ctx.existing_graph_entities);
 
     let format_hint = match ctx.content_type {
         ContentType::Message => "Format: conversational transcript.\n",
@@ -1512,6 +1820,8 @@ fn build_single_call_prompt_v3(text: &str, ctx: &ExtractionContext<'_>) -> Strin
     format!(
         "Extract all entities and relationships from the text.\n\
 {format_hint}\n\
+{existing_block}\
+{l2_guidance}\n\
 Output schema:\n\
 {{\"entities\":[{{\"name\":\"<string>\",\"label\":\"<{SINGLE_CALL_ENTITY_TYPES}|Entity>\"}}],\
 \"relationships\":[{{\"subject\":\"<entity name>\",\"predicate\":\"<verb>\",\"object\":\"<entity name or value>\"}}]}}\n\
@@ -1555,6 +1865,7 @@ impl<L: ChatProvider> EntityExtractor for SingleCallExtractor<L> {
         )
         .messages(sc_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -1661,9 +1972,12 @@ fn build_entity_typing_prompt(
         ContentType::Text | ContentType::Document => "",
     };
 
+    let l2_guidance = prompts::build_l2_guidance(ctx.registry_specs);
+
     format!(
         "Extract all unique entities from the text below.\n\n\
 {format_hint}\
+{l2_guidance}\n\
 Some candidate entities detected automatically: [{cand_list}]\n\
 Confirm which are real entities, correct any errors, and add any the system missed.\n\n\
 Rules:\n\
@@ -1733,6 +2047,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
         )
         .messages(typing_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -1778,7 +2093,8 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             "RelOnlyForceFallback",
         )
         .messages(rel_msgs)
-        .model(self.llm.model());
+        .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms);
         if let Some(arm) = schemas::SCHEMA_REL_ONLY_FORCE_FALLBACK_FORCE_ARM {
             rel_builder = rel_builder.force_arm(arm);
         }
@@ -1888,14 +2204,22 @@ mod tests {
 
     #[test]
     fn test_default_extractor_with_mock_llm() {
-        let stage1 =
-            r#"[{"name":"Alice","label":"Person"},{"name":"Acme Corp","label":"Organisation"}]"#;
+        // TD-013 L1: mock LLM emits integer-ID format; registry resolves ids to labels.
+        let stage1 = r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme Corp","entity_type_id":2}]}"#;
         let stage2 = r#"["works_at"]"#;
         let stage3 = r#"[{"subject":"Alice","predicate":"works_at","object":"Acme Corp","is_entity_ref":true,"confidence":0.9}]"#;
 
+        let specs = vec![
+            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
+            crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
+            crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+        ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
         let extractor = DefaultExtractor::new(mock);
-        let ctx = ExtractionContext::default();
+        let ctx = ExtractionContext {
+            registry_specs: &specs,
+            ..ExtractionContext::default()
+        };
         let result = block_on(extractor.extract("Alice works at Acme Corp", &ctx)).unwrap();
 
         assert_eq!(result.entities.len(), 2, "should extract 2 entities");
@@ -1914,10 +2238,8 @@ mod tests {
 
     #[test]
     fn test_cascade_stage2_receives_stage1_entities() {
-        // Use a mock that records prompts via a capturing approach.
-        // Since MockChatProvider matches by substring, we verify by checking that
-        // a stage2 prompt is built containing the entity name from stage1.
-        let stage1 = r#"[{"name":"GlobalCorp","label":"Organisation"}]"#;
+        // TD-013 L1: stage1 mock emits integer-ID format; registry resolves id=2 → "Organisation".
+        let stage1 = r#"{"entities":[{"name":"GlobalCorp","entity_type_id":2}]}"#;
         let stage2 = r#"["founded_by"]"#;
         let stage3 = r#"[]"#;
 
@@ -1939,26 +2261,40 @@ mod tests {
         );
 
         // Also verify the full extractor runs without error.
+        let specs = vec![
+            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
+            crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+        ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
         let extractor = DefaultExtractor::new(mock);
-        let ctx = ExtractionContext::default();
+        let ctx = ExtractionContext {
+            registry_specs: &specs,
+            ..ExtractionContext::default()
+        };
         let result = block_on(extractor.extract("GlobalCorp was founded.", &ctx)).unwrap();
         assert_eq!(result.entities.len(), 1);
     }
 
     #[test]
     fn test_excluded_entities_filtered() {
-        let stage1 =
-            r#"[{"name":"Alice","label":"Person"},{"name":"StopWordInc","label":"StopWord"}]"#;
+        // TD-013 L1: mock LLM emits integer-ID format; StopWord is id=3 and should
+        // be filtered out by excluded_entity_types matching on the resolved label.
+        let stage1 = r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"StopWordInc","entity_type_id":3}]}"#;
         let stage2 = r#"[]"#;
         let stage3 = r#"[]"#;
 
+        let specs = vec![
+            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
+            crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
+            crate::core::entity_types::EntityTypeSpec { id: 3, name: "StopWord".to_string(), description: "A stop-word entity.".to_string() },
+        ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
         let extractor = DefaultExtractor::new(mock);
 
         let excluded = vec!["StopWord".to_string()];
         let ctx = ExtractionContext {
             excluded_entity_types: &excluded,
+            registry_specs: &specs,
             ..ExtractionContext::default()
         };
         let result = block_on(extractor.extract("Alice and StopWordInc", &ctx)).unwrap();
@@ -2015,7 +2351,7 @@ mod tests {
     #[test]
     fn test_ontology_constraint_in_prompt() {
         let allowed = vec!["Person".to_string(), "Organisation".to_string()];
-        let prompt = build_entity_prompt("Alice works at Acme.", &allowed);
+        let prompt = build_entity_prompt("Alice works at Acme.", &allowed, &[]);
         assert!(
             prompt.contains("Person"),
             "stage1 prompt must contain allowed entity type Person"
@@ -2123,6 +2459,81 @@ mod tests {
         assert_eq!(entities.len(), 1, "should handle Python-style booleans");
     }
 
+    // ─── Integer-ID parse path tests (TD-013 L1) ──────────────────────────────
+
+    fn make_test_registry() -> crate::core::entity_types::EntityTypeRegistry {
+        crate::core::entity_types::EntityTypeRegistry::from_specs(vec![
+            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
+            crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
+            crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+        ])
+    }
+
+    #[test]
+    fn parse_entities_integer_resolves_id_to_label() {
+        let registry = make_test_registry();
+        let json = r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme Corp","entity_type_id":2}]}"#;
+        let entities = parse_entities_integer(json, &registry).unwrap();
+        assert_eq!(entities.len(), 2);
+        let alice = entities.iter().find(|e| e.name == "Alice").unwrap();
+        assert_eq!(alice.label, "Person", "id=1 must resolve to Person");
+        let acme = entities.iter().find(|e| e.name == "Acme Corp").unwrap();
+        assert_eq!(acme.label, "Organisation", "id=2 must resolve to Organisation");
+    }
+
+    #[test]
+    fn parse_entities_integer_falls_back_to_zero_on_out_of_range() {
+        let registry = make_test_registry();
+        // id=99 is out of range for this registry (max=2); must fall back to id=0 → "Entity"
+        let json = r#"{"entities":[{"name":"Unknown Thing","entity_type_id":99}]}"#;
+        let entities = parse_entities_integer(json, &registry).unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].label, "Entity", "out-of-range id must fall back to Entity");
+    }
+
+    #[test]
+    fn parse_entities_integer_rejects_json_fragment_in_name() {
+        // Lock the fix for the 2026-06-04 qwen2.5:14b benchmark failure: post-repair
+        // garbage where a truncated entity's tail bleeds into the next entity's
+        // `name` field (e.g. `Boston", "entity_type_id": 3}, {`). Without the
+        // shape-validator these used to silently collapse to label="Entity".
+        let registry = make_test_registry();
+        let garbage = r#"{"entities":[{"name":"Boston\", \"entity_type_id\": 3}, {","entity_type_id":0}]}"#;
+        let entities = parse_entities_integer(garbage, &registry).unwrap();
+        assert!(
+            entities.is_empty(),
+            "names containing JSON syntax must be filtered, got: {entities:?}"
+        );
+    }
+
+    #[test]
+    fn parse_entities_integer_rejects_missing_entity_type_id() {
+        // After stripping `#[serde(default)]` from RawEntityIntegerId, an entity
+        // missing `entity_type_id` must fail deserialize loudly — not collapse
+        // to id=0 → "Entity" via serde default. The fn returns `Ok(vec![])` on
+        // total parse failure so the fallback ladder can attempt next arm.
+        let registry = make_test_registry();
+        let no_id = r#"{"entities":[{"name":"Alice"}]}"#;
+        let entities = parse_entities_integer(no_id, &registry).unwrap();
+        assert!(
+            entities.is_empty(),
+            "missing entity_type_id must NOT default to 0; got: {entities:?}"
+        );
+    }
+
+    #[test]
+    fn parse_entities_integer_rejects_missing_name() {
+        // Symmetric to the above: missing `name` must also fail deserialize
+        // rather than default to empty string + silently drop.
+        let registry = make_test_registry();
+        let no_name = r#"{"entities":[{"entity_type_id":1}]}"#;
+        let entities = parse_entities_integer(no_name, &registry).unwrap();
+        assert!(
+            entities.is_empty(),
+            "missing name must NOT default to empty; got: {entities:?}"
+        );
+    }
+
     // ─── Metrics assertion tests ─────────────────────────────────────────────
 
     type Snapshot = Vec<(
@@ -2132,15 +2543,23 @@ mod tests {
         DebugValue,
     )>;
 
+    /// Sum across all counter rows matching `name`, regardless of labels.
+    ///
+    /// Per [[observability-first-class]] cardinal failure mode #9, post-TD-013
+    /// the extractor emits `rql.extraction.json_parse_ok` with `path=wrapped|
+    /// bare_array|post_repair` labels alongside legacy unlabeled emission sites.
+    /// Each path is its own counter row in the registry, so `find()` (returning
+    /// the first match) would under-report. Tests asking "did N parses succeed?"
+    /// want the aggregate, so sum.
     fn find_counter(snapshot: &Snapshot, name: &str) -> u64 {
         snapshot
             .iter()
-            .find(|(k, ..)| k.key().name() == name)
+            .filter(|(k, ..)| k.key().name() == name)
             .map(|(.., v)| match v {
                 DebugValue::Counter(n) => *n,
                 _ => 0,
             })
-            .unwrap_or(0)
+            .sum()
     }
 
     fn find_histogram(snapshot: &Snapshot, name: &str) -> Vec<f64> {
@@ -2162,12 +2581,21 @@ mod tests {
         let snapshotter = recorder.snapshotter();
 
         metrics::with_local_recorder(&recorder, || {
-            let stage1 = r#"[{"name":"Alice","label":"Person"},{"name":"Acme Corp","label":"Organisation"}]"#;
+            // TD-013 L1: integer-ID format; registry resolves id=1→Person, id=2→Organisation.
+            let stage1 = r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme Corp","entity_type_id":2}]}"#;
             let stage2 = r#"["works_at"]"#;
             let stage3 = r#"[{"subject":"Alice","predicate":"works_at","object":"Acme Corp","is_entity_ref":true,"confidence":0.9}]"#;
+            let specs = vec![
+                crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
+                crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
+                crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+            ];
             let mock = Arc::new(staged_mock(stage1, stage2, stage3));
             let extractor = DefaultExtractor::new(mock);
-            let ctx = ExtractionContext::default();
+            let ctx = ExtractionContext {
+                registry_specs: &specs,
+                ..ExtractionContext::default()
+            };
             let _result = block_on(extractor.extract("Alice works at Acme Corp", &ctx)).unwrap();
 
             let snapshot = snapshotter.snapshot().into_vec();
@@ -2377,6 +2805,9 @@ mod tests {
             allowed_edge_types: &[],
             excluded_entity_types: &[],
             content_type: crate::core::config::ContentType::Text,
+            registry_specs: &[],
+            existing_graph_entities: &[],
+            arm_budget_ms: 30_000,
         };
         let (entities, _facts) =
             parse_nuextract_response(malformed, &ctx).expect("must not return Err");
@@ -2555,84 +2986,98 @@ mod tests {
         );
     }
 
-    #[test]
-    fn is_canonical_entity_type_rejects_arbitrary_string() {
-        assert!(
-            !is_canonical_entity_type("SomeRandomType"),
-            "unlisted types must be rejected"
-        );
-    }
-
-    #[test]
-    fn is_canonical_entity_type_case_sensitive() {
-        // The allowlist is case-sensitive for canonical types to avoid "entity" ≠ "Entity" confusion.
-        // "person" (lowercase) is NOT in the allowlist — only "Person" is.
-        // This is intentional: LLM outputs are expected to match case exactly.
-        assert!(
-            !is_canonical_entity_type("person"),
-            "'person' (lowercase) is not in the allowlist — canonical form is 'Person'"
-        );
-    }
-
-    // ── MNT-001: Reject mixed-case variants of canonical types ───────────────
+    // ─── TD-013 PR1-corrected: mechanism semantics changed (2026-06-03) ──────
     //
-    // Some LLMs emit canonical types with wrong casing (e.g. "PERSON", "person").
-    // These must be rejected by is_canonical_entity_type — only the exact casing
-    // in ENTITY_TYPE_ALLOWLIST (e.g. "Person") is accepted.  This pins the
-    // case-sensitivity contract explicitly for common mixed-case variants.
+    // is_canonical_entity_type previously required positive-allowlist match.
+    // Now it requires structural validity + placeholder reject only — aligned
+    // with Graphiti's `validate_node_labels` (regex-only) + peer ecosystem
+    // consensus. Tests below assert NEW semantics.
 
     #[test]
-    fn is_canonical_entity_type_rejects_all_caps_person() {
+    fn is_canonical_entity_type_accepts_arbitrary_valid_string() {
+        // Novel labels NOT in any historical canonical list are ACCEPTED if
+        // structurally valid. Aligns with Graphiti/Mem0/Cognee: no positive
+        // allowlist; LLM is the type-discoverer.
         assert!(
-            !is_canonical_entity_type("PERSON"),
-            "'PERSON' (all-caps) must be rejected — canonical form is 'Person'"
+            is_canonical_entity_type("SomeRandomType"),
+            "structurally-valid novel types are accepted (no positive allowlist)"
+        );
+        assert!(
+            is_canonical_entity_type("Court"),
+            "ground-truth domain type 'Court' accepted (was missing from old allowlist)"
+        );
+        assert!(
+            is_canonical_entity_type("Species"),
+            "ground-truth domain type 'Species' accepted (was missing from old allowlist)"
         );
     }
 
     #[test]
-    fn is_canonical_entity_type_rejects_all_caps_organisation() {
+    fn is_canonical_entity_type_accepts_case_variants() {
+        // Case variants pass structural validity; canonical case-folding is
+        // the responsibility of `normalize_label`, NOT this validator.
         assert!(
-            !is_canonical_entity_type("ORGANISATION"),
-            "'ORGANISATION' (all-caps) must be rejected — canonical form is 'Organisation'"
+            is_canonical_entity_type("person"),
+            "'person' (lowercase) is structurally valid; normalize_label maps to 'Person'"
+        );
+        assert!(
+            is_canonical_entity_type("PERSON"),
+            "'PERSON' (all-caps) is structurally valid; normalize_label maps to 'Person'"
+        );
+        assert!(
+            is_canonical_entity_type("ORGANISATION"),
+            "'ORGANISATION' (all-caps) is structurally valid"
         );
     }
 
     #[test]
-    fn is_canonical_entity_type_rejects_lowercased_canonical() {
-        // Lowercasing any canonical type must produce a rejected label.
-        for canonical in super::ENTITY_TYPE_ALLOWLIST {
-            let lowercased = canonical.to_lowercase();
-            // Skip "Date" — "date" lowercased == "date" which is not in the allowlist.
-            // All canonical types have at least one uppercase letter, so the lowercased
-            // form will never match the allowlist entry.
-            assert!(
-                !is_canonical_entity_type(&lowercased),
-                "lowercased '{}' must be rejected (canonical is '{}')",
-                lowercased,
-                canonical
-            );
-        }
+    fn is_canonical_entity_type_rejects_structural_junk() {
+        // Single-char, leading-digit, all-punctuation, or excessively-long
+        // labels are structurally invalid (Graphiti-style Cypher safety pattern).
+        assert!(!is_canonical_entity_type("A"), "single char rejected");
+        assert!(!is_canonical_entity_type("123Type"), "leading digit rejected");
+        assert!(!is_canonical_entity_type("!!!"), "punctuation-only rejected");
+        assert!(
+            !is_canonical_entity_type(&"X".repeat(100)),
+            "overlong label rejected"
+        );
     }
 
     #[test]
-    fn allowlist_covers_core_extraction_types() {
-        // All types emitted by the extraction prompts must be in the allowlist.
-        // This is a structural test: if a type is added to a prompt but not to
-        // ENTITY_TYPE_ALLOWLIST, this test fails, prompting a deliberate update.
-        let prompt_types = [
-            // DEFAULT_ENTITY_TYPES
-            "Person",
-            "Organisation",
-            "Location",
-            "Technology",
-            "Product",
-            "Event",
-            "Date",
-        ];
-        for t in &prompt_types {
+    fn normalize_label_canonicalizes_case() {
+        assert_eq!(normalize_label("PERSON"), "Person");
+        assert_eq!(normalize_label("person"), "Person");
+        assert_eq!(normalize_label("Person"), "Person");
+    }
+
+    #[test]
+    fn normalize_label_handles_us_uk_spelling() {
+        // qwen2.5:14b emits "Organization" (US); kremory's canonical is "Organisation" (UK).
+        // Same source of the original B3 mismatch documented in Vera review.
+        assert_eq!(normalize_label("Organization"), "Organisation");
+        assert_eq!(normalize_label("ORGANIZATION"), "Organisation");
+        assert_eq!(normalize_label("Organisation"), "Organisation");
+        // Also handle common abbreviations + synonyms.
+        assert_eq!(normalize_label("Company"), "Organisation");
+        assert_eq!(normalize_label("ORG"), "Organisation");
+    }
+
+    #[test]
+    fn normalize_label_preserves_novel_labels() {
+        // Novel labels not in alias map pass through unchanged (trimmed).
+        assert_eq!(normalize_label("Court"), "Court");
+        assert_eq!(normalize_label("Software"), "Software");
+        assert_eq!(normalize_label("  Species  "), "Species");
+    }
+
+    #[test]
+    fn canonical_forms_constant_pass_validation() {
+        // ENTITY_TYPE_CANONICAL_FORMS contains the canonical reference set
+        // for prompt interpolation. Each form must pass structural validity.
+        for canonical in super::ENTITY_TYPE_CANONICAL_FORMS {
             assert!(
-                is_canonical_entity_type(t),
-                "type '{t}' from DEFAULT_ENTITY_TYPES must be in ENTITY_TYPE_ALLOWLIST"
+                is_canonical_entity_type(canonical),
+                "canonical form '{canonical}' must pass is_canonical_entity_type"
             );
         }
     }

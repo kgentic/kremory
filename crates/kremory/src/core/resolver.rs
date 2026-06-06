@@ -318,6 +318,7 @@ mod tests {
         Entity {
             id: id.to_string(),
             label: label.to_string(),
+            entity_type_id: 0,
             properties: serde_json::json!({"name": name}),
             recorded_at: Utc::now(),
             updated_at: None,

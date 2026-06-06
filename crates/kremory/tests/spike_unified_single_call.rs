@@ -51,6 +51,7 @@ mod spike {
                 allowed_edge_types: &[],
                 excluded_entity_types: &[],
                 content_type: ContentType::Text,
+                registry_specs: &[],
             };
             let gleaned = extractor.extract(text, &glean_ctx).await?;
             llm_calls += 1;

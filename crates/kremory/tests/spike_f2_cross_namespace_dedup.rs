@@ -33,7 +33,7 @@ async fn spike_f2_same_name_two_namespaces() {
     let r1 = g
         .insert_entity_with_group(
             entity_id,
-            "Organisation",
+            0,
             serde_json::json!({"name": "Acme Corp", "context": "first mention in ns-a"}),
             Some(ns_a),
         )
@@ -46,7 +46,7 @@ async fn spike_f2_same_name_two_namespaces() {
     let r2 = g
         .insert_entity_with_group(
             entity_id,
-            "Organisation",
+            0,
             serde_json::json!({"name": "Acme Corp", "context": "second mention in ns-b"}),
             Some(ns_b),
         )
@@ -104,7 +104,7 @@ async fn spike_f2_reassign_entity_group_dangerous_overwrite() {
 
     g.insert_entity_with_group(
         entity_id,
-        "Organisation",
+        0,
         serde_json::json!({"name": "Acme Corp"}),
         Some(ns_a),
     )
@@ -150,7 +150,7 @@ async fn spike_f2_second_insert_returns_cross_namespace_collision() {
 
     g.insert_entity_with_group(
         entity_id,
-        "Organisation",
+        0,
         serde_json::json!({"name": "Acme Corp"}),
         Some("ns-a"),
     )
@@ -160,7 +160,7 @@ async fn spike_f2_second_insert_returns_cross_namespace_collision() {
     let err = g
         .insert_entity_with_group(
             entity_id,
-            "Organisation",
+            0,
             serde_json::json!({"name": "Acme Corp"}),
             Some("ns-b"),
         )

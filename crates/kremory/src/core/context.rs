@@ -170,15 +170,15 @@ mod tests {
         let now = Utc::now();
 
         rql.graph
-            .insert_entity("alice", "Person", serde_json::json!({"name": "Alice"}))
+            .insert_entity("alice", 0, serde_json::json!({"name": "Alice"}))
             .await
             .unwrap();
         rql.graph
-            .insert_entity("acme", "Organization", serde_json::json!({"name": "Acme"}))
+            .insert_entity("acme", 0, serde_json::json!({"name": "Acme"}))
             .await
             .unwrap();
         rql.graph
-            .insert_entity("bob", "Person", serde_json::json!({"name": "Bob"}))
+            .insert_entity("bob", 0, serde_json::json!({"name": "Bob"}))
             .await
             .unwrap();
 
@@ -256,8 +256,10 @@ mod tests {
     async fn test_contextualize_respects_limit() {
         let rql = setup_graph_with_data().await;
 
-        // FTS for "Person" matches alice and bob; limit=1 should only seed 1 entity
-        let ctx = rql.contextualize("Person", None, Some(1)).await.unwrap();
+        // Phase 2 (Migration 009): entities_fts.label is empty — FTS searches
+        // properties only.  Search for "Alice" which appears in alice's properties["name"].
+        // limit=1 means at most 1 seed entity (neighbours may expand the final set).
+        let ctx = rql.contextualize("Alice", None, Some(1)).await.unwrap();
 
         // We should get no more seed entities than the limit requested
         // (neighbours may expand the set, but seed query is capped)
@@ -273,9 +275,10 @@ mod tests {
     async fn test_context_result_includes_facts() {
         let rql = setup_graph_with_data().await;
 
-        // FTS search for "Organization" hits acme; 1-hop from acme should include
-        // alice and bob via works_at facts.
-        let ctx = rql.contextualize("Organization", None, None).await.unwrap();
+        // Phase 2 (Migration 009): entities_fts.label is empty — FTS searches
+        // properties only.  Search for "Acme" which appears in acme's properties["name"].
+        // 1-hop from acme should include alice and bob via works_at facts.
+        let ctx = rql.contextualize("Acme", None, None).await.unwrap();
 
         assert!(
             !ctx.facts.is_empty(),

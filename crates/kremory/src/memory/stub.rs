@@ -2,8 +2,7 @@
 //!
 //! ## Purpose
 //!
-//! Downstream consumers (the host application integration tests, aidocs SDK test suites,
-//! kremory integration tests) need a concrete `&dyn GraphHandle` without the
+//! Downstream consumers' integration tests need a concrete `&dyn GraphHandle` without the
 //! overhead of spinning up a real libSQL database. `StubGraphHandle` provides
 //! that — every method panics with `unimplemented!()` so consumers discover
 //! at test time which methods their code path actually calls, and supply a

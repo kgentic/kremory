@@ -281,12 +281,13 @@ impl TemporalGraph {
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
 
         let sql = format!(
-            "SELECT e.id, e.label, e.properties, e.recorded_at, e.updated_at, e.group_id,
-                    e.access_count,
-                    vector_distance_cos(e.embedding, vector(?1)) as distance
-             FROM vector_top_k('entities_vec_idx', vector(?1), ?2) AS v
-             JOIN entities AS e ON e.rowid = v.id
-             WHERE 1=1{}
+            "SELECT e.id, COALESCE(et.name, 'Entity') AS label, e.properties, \
+                    e.recorded_at, e.updated_at, e.group_id, e.access_count, e.entity_type_id, \
+                    vector_distance_cos(e.embedding, vector(?1)) as distance \
+             FROM vector_top_k('entities_vec_idx', vector(?1), ?2) AS v \
+             JOIN entities AS e ON e.rowid = v.id \
+             LEFT JOIN entity_types et ON et.group_id = e.group_id AND et.id = e.entity_type_id \
+             WHERE 1=1{} \
              ORDER BY distance ASC",
             group_clause
         );
@@ -305,7 +306,8 @@ impl TemporalGraph {
             let entity = row_to_entity_from_row(&row)?;
             // vector_distance_cos returns NULL when either vector has zero magnitude;
             // skip those rows rather than propagating a "Null value" error.
-            let Some(distance) = row.get::<Option<f64>>(7)? else {
+            // distance is at col 8 (cols 0-7 are entity fields + entity_type_id).
+            let Some(distance) = row.get::<Option<f64>>(8)? else {
                 continue;
             };
             // Convert cosine distance to a score (negative distance so lower = closer, matching FTS convention)
@@ -323,16 +325,18 @@ impl TemporalGraph {
         limit: usize,
         filters: &SearchFilters,
     ) -> anyhow::Result<Vec<SearchHit<Entity>>> {
-        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
-        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "entities", 3);
+        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit).
+        // Table is aliased as "e" in the query, so use "e" here.
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
 
         let sql = format!(
-            "SELECT id, label, properties, recorded_at, updated_at, group_id,
-                    access_count,
-                    vector_distance_cos(embedding, vector(?1)) as distance
-             FROM entities
-             WHERE embedding IS NOT NULL{}
-             ORDER BY distance ASC
+            "SELECT e.id, COALESCE(et.name, 'Entity') AS label, e.properties, \
+                    e.recorded_at, e.updated_at, e.group_id, e.access_count, e.entity_type_id, \
+                    vector_distance_cos(e.embedding, vector(?1)) as distance \
+             FROM entities e \
+             LEFT JOIN entity_types et ON et.group_id = e.group_id AND et.id = e.entity_type_id \
+             WHERE e.embedding IS NOT NULL{} \
+             ORDER BY distance ASC \
              LIMIT ?2",
             group_clause
         );
@@ -350,7 +354,8 @@ impl TemporalGraph {
             let entity = row_to_entity_from_row(&row)?;
             // vector_distance_cos returns NULL when either vector has zero magnitude;
             // skip those rows rather than propagating a "Null value" error.
-            let Some(distance) = row.get::<Option<f64>>(7)? else {
+            // distance is at col 8 (cols 0-7 are entity fields + entity_type_id).
+            let Some(distance) = row.get::<Option<f64>>(8)? else {
                 continue;
             };
             hits.push(SearchHit {
@@ -800,8 +805,9 @@ pub(crate) fn effective_k(k: usize, n_available: usize) -> usize {
 }
 
 /// Helper to extract an Entity from a query row.
-/// Expected columns: id(0), label(1), properties(2), recorded_at(3), updated_at(4),
-///                   group_id(5), access_count(6).
+/// Expected columns (canonical entity SELECT with LEFT JOIN entity_types):
+///   id(0), label(1) [COALESCE(et.name,'Entity')], properties(2), recorded_at(3),
+///   updated_at(4), group_id(5), access_count(6), entity_type_id(7).
 fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
     use chrono::DateTime;
     let id = row.get::<String>(0)?;
@@ -811,6 +817,8 @@ fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
     let updated_str = row.get::<Option<String>>(4)?;
     let group_id = row.get::<Option<String>>(5)?;
     let access_count = row.get::<i64>(6)?;
+    let entity_type_id_raw: i64 = row.get::<i64>(7)?;
+    let entity_type_id: u32 = entity_type_id_raw.max(0) as u32;
 
     let parse_dt = |s: &str| -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
         Ok(DateTime::parse_from_rfc3339(s)
@@ -828,6 +836,7 @@ fn row_to_entity_from_row(row: &libsql::Row) -> anyhow::Result<Entity> {
     Ok(Entity {
         id,
         label,
+        entity_type_id,
         properties,
         recorded_at,
         updated_at,
@@ -962,28 +971,28 @@ mod tests {
 
         g.insert_entity(
             "alice",
-            "Person",
+            0,
             serde_json::json!({"role": "engineer", "department": "platform"}),
         )
         .await
         .unwrap();
         g.insert_entity(
             "bob",
-            "Person",
+            0,
             serde_json::json!({"role": "manager", "department": "sales"}),
         )
         .await
         .unwrap();
         g.insert_entity(
             "acme",
-            "Company",
+            0,
             serde_json::json!({"industry": "technology", "size": "startup"}),
         )
         .await
         .unwrap();
         g.insert_entity(
             "budget_2025",
-            "Document",
+            0,
             serde_json::json!({"title": "Q1 Budget Review"}),
         )
         .await
@@ -1036,14 +1045,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fts_search_entities_by_label() {
+    async fn test_fts_search_entities_by_department() {
+        // After Phase 2 (Migration 009), entities_fts.label is empty (entities.label
+        // column was dropped). FTS searches on entity properties only.
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_entities("Person", 10, &no_filter)
+            .fts_search_entities("platform", 10, &no_filter)
             .await
             .unwrap();
-        assert_eq!(hits.len(), 2, "should find 2 Person entities");
+        assert_eq!(hits.len(), 1, "should find alice by 'platform' in properties");
+        assert_eq!(hits[0].item.id, "alice");
         // BM25 scores should be negative
         for hit in &hits {
             assert!(hit.score < 0.0, "BM25 rank should be negative");
@@ -1078,10 +1090,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_fts_search_entities_limit() {
+        // setup_graph_with_data inserts alice (role/department), bob (role/sales),
+        // acme (industry/technology), budget_2025 (title).
+        // "role" appears in alice + bob properties — 2 potential matches.
+        // Label is no longer in FTS after Phase 2 (entities.label column dropped).
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_entities("Person", 1, &no_filter)
+            .fts_search_entities("role", 1, &no_filter)
             .await
             .unwrap();
         assert_eq!(hits.len(), 1, "limit should cap results");
@@ -1221,13 +1237,13 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("alice", "Person", serde_json::json!({"role": "engineer"}))
+        g.insert_entity("alice", 0, serde_json::json!({"role": "engineer"}))
             .await
             .unwrap();
-        g.insert_entity("bob", "Person", serde_json::json!({"role": "manager"}))
+        g.insert_entity("bob", 0, serde_json::json!({"role": "manager"}))
             .await
             .unwrap();
-        g.insert_entity("acme", "Company", serde_json::json!({"industry": "tech"}))
+        g.insert_entity("acme", 0, serde_json::json!({"industry": "tech"}))
             .await
             .unwrap();
 
@@ -1257,13 +1273,13 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("a", "Person", serde_json::json!({}))
+        g.insert_entity("a", 0, serde_json::json!({}))
             .await
             .unwrap();
-        g.insert_entity("b", "Person", serde_json::json!({}))
+        g.insert_entity("b", 0, serde_json::json!({}))
             .await
             .unwrap();
-        g.insert_entity("c", "Person", serde_json::json!({}))
+        g.insert_entity("c", 0, serde_json::json!({}))
             .await
             .unwrap();
 
@@ -1298,10 +1314,10 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("with_emb", "Person", serde_json::json!({}))
+        g.insert_entity("with_emb", 0, serde_json::json!({}))
             .await
             .unwrap();
-        g.insert_entity("no_emb", "Person", serde_json::json!({}))
+        g.insert_entity("no_emb", 0, serde_json::json!({}))
             .await
             .unwrap();
 
@@ -1322,10 +1338,10 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("close", "Person", serde_json::json!({}))
+        g.insert_entity("close", 0, serde_json::json!({}))
             .await
             .unwrap();
-        g.insert_entity("far", "Person", serde_json::json!({}))
+        g.insert_entity("far", 0, serde_json::json!({}))
             .await
             .unwrap();
 
@@ -1354,15 +1370,15 @@ mod tests {
         let no_filter = SearchFilters::new();
 
         // Create entities with both text and embeddings
-        g.insert_entity("alice", "Person", serde_json::json!({"role": "engineer"}))
+        g.insert_entity("alice", 0, serde_json::json!({"role": "engineer"}))
             .await
             .unwrap();
-        g.insert_entity("bob", "Person", serde_json::json!({"role": "manager"}))
+        g.insert_entity("bob", 0, serde_json::json!({"role": "manager"}))
             .await
             .unwrap();
         g.insert_entity(
             "acme",
-            "Company",
+            0,
             serde_json::json!({"industry": "technology"}),
         )
         .await
@@ -1396,21 +1412,21 @@ mod tests {
 
         g.insert_entity(
             "both_match",
-            "Person",
+            0,
             serde_json::json!({"role": "engineer"}),
         )
         .await
         .unwrap();
         g.insert_entity(
             "fts_only",
-            "Person",
+            0,
             serde_json::json!({"role": "engineer"}),
         )
         .await
         .unwrap();
         g.insert_entity(
             "vec_only",
-            "Company",
+            0,
             serde_json::json!({"industry": "finance"}),
         )
         .await
@@ -1443,13 +1459,13 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("a", "Person", serde_json::json!({"x": "y"}))
+        g.insert_entity("a", 0, serde_json::json!({"x": "y"}))
             .await
             .unwrap();
-        g.insert_entity("b", "Person", serde_json::json!({"x": "y"}))
+        g.insert_entity("b", 0, serde_json::json!({"x": "y"}))
             .await
             .unwrap();
-        g.insert_entity("c", "Person", serde_json::json!({"x": "y"}))
+        g.insert_entity("c", 0, serde_json::json!({"x": "y"}))
             .await
             .unwrap();
 
@@ -1501,27 +1517,30 @@ mod tests {
     async fn test_fts_search_entities_filters_by_group_id() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        // Insert entities in different groups
+        // Insert entities in different groups.
+        // All entities share "employee" in their properties so FTS matches all 4;
+        // label is no longer in FTS (Phase 2 dropped entities.label column —
+        // entity types are resolved via JOIN on entity_types at query time).
         g.insert_entity_with_group(
             "alice",
-            "Person",
-            serde_json::json!({"role": "engineer"}),
+            0,
+            serde_json::json!({"category": "employee", "role": "engineer"}),
             Some("group-a"),
         )
         .await
         .unwrap();
         g.insert_entity_with_group(
             "bob",
-            "Person",
-            serde_json::json!({"role": "manager"}),
+            0,
+            serde_json::json!({"category": "employee", "role": "manager"}),
             Some("group-b"),
         )
         .await
         .unwrap();
         g.insert_entity_with_group(
             "carol",
-            "Person",
-            serde_json::json!({"role": "designer"}),
+            0,
+            serde_json::json!({"category": "employee", "role": "designer"}),
             Some("group-a"),
         )
         .await
@@ -1529,24 +1548,27 @@ mod tests {
         // dave: None → 'default' post-ADR-029b (no longer NULL = workspace-wide).
         g.insert_entity_with_group(
             "dave",
-            "Person",
-            serde_json::json!({"role": "analyst"}),
+            0,
+            serde_json::json!({"category": "employee", "role": "analyst"}),
             None,
         )
         .await
         .unwrap();
 
-        // No filter: all 4 Person entities
+        // No filter: all 4 employee entities (search on properties term, not label).
         let no_filter = SearchFilters::new();
         let all = g
-            .fts_search_entities("Person", 10, &no_filter)
+            .fts_search_entities("employee", 10, &no_filter)
             .await
             .unwrap();
         assert_eq!(all.len(), 4, "no filter should return all entities");
 
         // Filter to group-a: alice + carol only (dave is in 'default', not 'group-a').
         let group_a = SearchFilters::for_group("group-a");
-        let hits_a = g.fts_search_entities("Person", 10, &group_a).await.unwrap();
+        let hits_a = g
+            .fts_search_entities("employee", 10, &group_a)
+            .await
+            .unwrap();
         assert_eq!(
             hits_a.len(),
             2,
@@ -1562,7 +1584,10 @@ mod tests {
 
         // Filter to group-b: bob only.
         let group_b = SearchFilters::for_group("group-b");
-        let hits_b = g.fts_search_entities("Person", 10, &group_b).await.unwrap();
+        let hits_b = g
+            .fts_search_entities("employee", 10, &group_b)
+            .await
+            .unwrap();
         assert_eq!(
             hits_b.len(),
             1,
@@ -1574,7 +1599,7 @@ mod tests {
         // Filter to 'default': dave only.
         let group_default = SearchFilters::for_group("default");
         let hits_default = g
-            .fts_search_entities("Person", 10, &group_default)
+            .fts_search_entities("employee", 10, &group_default)
             .await
             .unwrap();
         assert_eq!(hits_default.len(), 1, "'default' should return only dave");
@@ -1582,7 +1607,10 @@ mod tests {
 
         // Filter to non-existent group: empty (no workspace-wide entities post-ADR-029b).
         let group_x = SearchFilters::for_group("group-x");
-        let hits_x = g.fts_search_entities("Person", 10, &group_x).await.unwrap();
+        let hits_x = g
+            .fts_search_entities("employee", 10, &group_x)
+            .await
+            .unwrap();
         assert_eq!(
             hits_x.len(),
             0,
@@ -1594,18 +1622,37 @@ mod tests {
     async fn test_fts_search_entities_filters_by_multiple_groups() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        g.insert_entity_with_group("alice", "Person", serde_json::json!({}), Some("g1"))
-            .await
-            .unwrap();
-        g.insert_entity_with_group("bob", "Person", serde_json::json!({}), Some("g2"))
-            .await
-            .unwrap();
-        g.insert_entity_with_group("carol", "Person", serde_json::json!({}), Some("g3"))
-            .await
-            .unwrap();
+        // "member" is a common term in all properties — label no longer in FTS after Phase 2.
+        g.insert_entity_with_group(
+            "alice",
+            0,
+            serde_json::json!({"kind": "member"}),
+            Some("g1"),
+        )
+        .await
+        .unwrap();
+        g.insert_entity_with_group(
+            "bob",
+            0,
+            serde_json::json!({"kind": "member"}),
+            Some("g2"),
+        )
+        .await
+        .unwrap();
+        g.insert_entity_with_group(
+            "carol",
+            0,
+            serde_json::json!({"kind": "member"}),
+            Some("g3"),
+        )
+        .await
+        .unwrap();
 
         let filters = SearchFilters::for_groups(vec!["g1".into(), "g3".into()]);
-        let hits = g.fts_search_entities("Person", 10, &filters).await.unwrap();
+        let hits = g
+            .fts_search_entities("member", 10, &filters)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 2);
         let ids: Vec<&str> = hits.iter().map(|h| h.item.id.as_str()).collect();
         assert!(ids.contains(&"alice"));
@@ -1616,10 +1663,10 @@ mod tests {
     async fn test_vector_search_entities_filters_by_group_id() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        g.insert_entity_with_group("alice", "Person", serde_json::json!({}), Some("group-a"))
+        g.insert_entity_with_group("alice", 0, serde_json::json!({}), Some("group-a"))
             .await
             .unwrap();
-        g.insert_entity_with_group("bob", "Person", serde_json::json!({}), Some("group-b"))
+        g.insert_entity_with_group("bob", 0, serde_json::json!({}), Some("group-b"))
             .await
             .unwrap();
 
@@ -1650,7 +1697,7 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let t0 = Utc::now() - Duration::hours(1);
 
-        g.insert_entity("alice", "Person", serde_json::json!({}))
+        g.insert_entity("alice", 0, serde_json::json!({}))
             .await
             .unwrap();
 
@@ -1705,7 +1752,7 @@ mod tests {
         // Simulate file indexed at workspace level (group_id = "default")
         g.insert_entity_with_group(
             "pricing_chunk_0",
-            "pricing-options (part 1)",
+            0,
             serde_json::json!({"text": "Full Build price £3,000 + VAT"}),
             Some("default"),
         )
@@ -1770,7 +1817,7 @@ mod tests {
         // Insert entity WITHOUT group_id — maps to 'default' post-ADR-029b.
         g.insert_entity(
             "kb_doc",
-            "Document",
+            0,
             serde_json::json!({ "text": "revenue targets" }),
         )
         .await
@@ -1779,7 +1826,7 @@ mod tests {
         // Insert entity WITH group_id — scoped to space-1.
         g.insert_entity_with_group(
             "scoped_doc",
-            "Document",
+            0,
             serde_json::json!({ "text": "revenue analysis" }),
             Some("space-1"),
         )
@@ -1837,7 +1884,7 @@ mod tests {
         // Insert entity with a unique label so FTS will return it deterministically.
         g.insert_entity(
             "ac_entity_1",
-            "AccessCountTestEntity",
+            0,
             serde_json::json!({ "text": "kremory_ac_probe_term_unique" }),
         )
         .await
@@ -1882,7 +1929,7 @@ mod tests {
 
         g.insert_entity_with_group(
             "doc_a",
-            "Document",
+            0,
             serde_json::json!({ "text": "alpha project" }),
             Some("group-1"),
         )
@@ -1890,7 +1937,7 @@ mod tests {
         .unwrap();
         g.insert_entity_with_group(
             "doc_b",
-            "Document",
+            0,
             serde_json::json!({ "text": "alpha budget" }),
             Some("group-2"),
         )

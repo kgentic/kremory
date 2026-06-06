@@ -262,9 +262,9 @@ pub enum InvalidPolicyError {
     IncoherentAppendOnly { policy: NamespacePolicy },
 }
 
-/// Kind of source an episode came from. Domain-agnostic — the host application writes
-/// `Meeting`, a doc-ingestion consumer writes `Document`, a chatbot writes
-/// `Chat`. No the host application-specific names leak into the public surface.
+/// Kind of source an episode came from. Domain-agnostic source classifier;
+/// consumers tag according to their upstream type (e.g. `Meeting`, `Document`,
+/// `Chat`). No consumer-specific names leak into the public surface.
 ///
 /// `#[non_exhaustive]` allows adding new variants (e.g. `Episode` in v0.1.1)
 /// without a SemVer major bump. Consumers must use a wildcard arm when
@@ -384,6 +384,13 @@ pub struct SearchOpts {
     pub source_kind: Option<SourceKind>,
 }
 
+/// Default value for `RetrievedContext::entity_type_name` when absent from
+/// serialised JSON (pre-TD-013 data) or constructed via `::new()` without
+/// a type name. Mirrors the SQL COALESCE sentinel: `COALESCE(et.name, 'Entity')`.
+fn default_entity_type_name() -> String {
+    "Entity".to_string()
+}
+
 /// A single retrieved result composed of an entity, the edges anchoring
 /// it, and the temporal facts that produced it.
 ///
@@ -407,6 +414,29 @@ pub struct RetrievedContext {
     /// still deserialises correctly (defaults to `false`).
     #[serde(default)]
     pub incomplete: bool,
+
+    /// Integer entity-type id for this result's entity within its namespace.
+    ///
+    /// Mirrors `entities.entity_type_id` (introduced by Migration 008, TD-013).
+    /// `0` = "Entity" catch-all sentinel. Populated by the engine recall path
+    /// from the SQL LEFT JOIN with `entity_types`. Defaults to `0` for results
+    /// constructed via `RetrievedContext::new()` (e.g. test fixtures,
+    /// pre-TD-013 serialised JSON).
+    ///
+    /// `#[serde(default)]` ensures backward-compatible deserialisation.
+    #[serde(default)]
+    pub entity_type_id: u32,
+
+    /// Resolved entity type name for this result's entity.
+    ///
+    /// Populated from `COALESCE(entity_types.name, 'Entity')` at query time
+    /// via the SQL LEFT JOIN already present in all entity SELECT paths.
+    /// Mirrors `Entity::label` (which IS the type label, not the entity name).
+    /// Defaults to `"Entity"` for results constructed via `RetrievedContext::new()`.
+    ///
+    /// `#[serde(default)]` ensures backward-compatible deserialisation.
+    #[serde(default = "default_entity_type_name")]
+    pub entity_type_name: String,
 
     /// The namespace this result was retrieved from. Set by both single-namespace
     /// recall (`in_namespace`) and multi-namespace recall (`in_namespaces`).
@@ -450,6 +480,8 @@ impl RetrievedContext {
             score,
             source_refs,
             incomplete: false,
+            entity_type_id: 0,
+            entity_type_name: default_entity_type_name(),
             namespace: None,
         }
     }
@@ -492,7 +524,7 @@ pub enum ContextTemplate {
 #[derive(Debug, Clone, Default)]
 pub struct SubmitOpts {
     /// Run rqlc's add_episode cycle (Phase 2: LLM extract + dedup + invalidate).
-    /// Default: false. the host application: false (upstream pre-extracts). aidocs: true.
+    /// Default: false. Set to false when caller has pre-extracted facts via with_facts(); set to true to have substrate's LLM extractor process raw content.
     pub enrich_per_episode: bool,
 
     /// Requires `enrich_per_episode = true`. If true: return after Phase 1

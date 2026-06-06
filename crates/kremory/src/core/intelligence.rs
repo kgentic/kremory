@@ -1,4 +1,5 @@
 use crate::core::config::ContentType;
+use crate::core::entity_types::EntityTypeSpec;
 use crate::core::error::Result;
 use crate::core::schema::{Entity, Fact};
 
@@ -64,6 +65,35 @@ pub struct ExtractionContext<'a> {
     pub excluded_entity_types: &'a [String],
     /// The structural format of the input text, used to tailor the extraction prompt.
     pub content_type: ContentType,
+    /// L2 prompt engineering: entity type registry specs for this namespace.
+    ///
+    /// When non-empty, extraction prompts render a structured registry table so the
+    /// LLM can choose a known `entity_type_id` instead of inventing type names.
+    /// Defaults to `&[]` (no registry injection) for backward-compatibility.
+    ///
+    /// Populated by `ingest_with` from the `entity_types` DB table for the active
+    /// `group_id`. Left empty in tests that don't need registry-aware prompts.
+    pub registry_specs: &'a [EntityTypeSpec],
+    /// L4' prompt-time existing-entity injection.
+    ///
+    /// When non-empty, extraction prompts render a table of canonical entities
+    /// already in the knowledge graph so the LLM reuses exact names rather than
+    /// inventing variant spellings (e.g. "Alice Johnson" vs "Alice J.").
+    ///
+    /// Each entry is `(entity_name, entity_label)` ordered by descending
+    /// `access_count` (most-recently-used first).  Capped at
+    /// `L4_PRIME_MAX_ENTITIES` (50) entries at render time.
+    ///
+    /// Populated by `ingest_with` from the graph before the extraction loop.
+    /// Left empty in tests that don't need existing-entity injection.
+    pub existing_graph_entities: &'a [(String, String)],
+    /// Per-arm wall-clock budget for structured-output extraction (ms).
+    ///
+    /// Threaded from `PipelineConfig::extraction_arm_budget_ms`.
+    /// Default: 30_000 (30s — production fail-fast).
+    /// Override for slow local LLMs (qwen2.5:14b ~80-130s per call) by
+    /// setting `PipelineConfig::extraction_arm_budget_ms` to 180_000-300_000.
+    pub arm_budget_ms: u64,
 }
 
 impl<'a> Default for ExtractionContext<'a> {
@@ -74,6 +104,9 @@ impl<'a> Default for ExtractionContext<'a> {
             known_entities: &[],
             excluded_entity_types: &[],
             content_type: ContentType::Text,
+            registry_specs: &[],
+            existing_graph_entities: &[],
+            arm_budget_ms: 30_000,
         }
     }
 }
@@ -434,6 +467,7 @@ mod tests {
         Entity {
             id: id.to_string(),
             label: label.to_string(),
+            entity_type_id: 0,
             properties: serde_json::json!({"name": name}),
             recorded_at: Utc::now(),
             updated_at: None,

@@ -29,7 +29,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::LazyLock;
 
-use super::{RawEntitySimple, RawFact, RawRelationship};
+use super::{
+    EntityListIntegerWrapper, HybridTypingWrapper, RawEntitySimple, RawFact, RawRelationship,
+};
 
 // ─── Wrapper structs (§3.2) ──────────────────────────────────────────────────
 
@@ -99,6 +101,19 @@ pub(crate) struct RelOnlyOutput {
     pub(crate) relationships: Vec<RawRelationship>,
 }
 
+/// Wrapper for the L7 dream-phase reclassification response.
+///
+/// Single integer field: `entity_type_id`.  Integer schema enforcement
+/// is used (not string label) so the provider must emit a registered id
+/// directly, consistent with ingest-time EntityTyping enforcement.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub(crate) struct ReclassifyWrapper {
+    /// Integer entity type id within the owning namespace.
+    /// Must be a registered id from the entity_types table.
+    /// id=0 = "Entity" catch-all — treated as reclassification failure.
+    pub(crate) entity_type_id: u32,
+}
+
 // ─── NuExtractOutput visibility re-export ────────────────────────────────────
 
 // NuExtractOutput is defined and pub(crate) in mod.rs — imported directly by
@@ -119,6 +134,13 @@ pub(crate) enum FallbackArm {
     FormatSchema,
     /// llm_json repair fallback (preserves `deser_string_or_array` semantics).
     LlmJsonRepair,
+    /// LightRAG-style `<|#|>`-delimited tuple format (L6 fallback).
+    ///
+    /// Prompts the LLM to emit one entity per line as:
+    /// `entity<|#|>name<|#|>entity_type_id<|#|>description`
+    /// Terminated by an optional `<|COMPLETE|>` sentinel.
+    /// Per-line parser: one malformed line drops one entity, not the whole parse.
+    DelimitedTuple,
     /// Prompt-only, no provider-side enforcement.
     PromptOnly,
 }
@@ -132,6 +154,77 @@ pub(crate) static SCHEMA_ENTITY_LIST: LazyLock<Value> = LazyLock::new(|| {
         panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
     })
 });
+
+/// Build a per-call entity-list schema with `label` constrained to an enum of
+/// registry names (Phase 8 v3 — structural enforcement, CLAUDE.md Rule 15).
+///
+/// Returns a CLONED + mutated Value (not a static reference). The static
+/// `SCHEMA_ENTITY_LIST` declares only `name`; this fn inserts a `label`
+/// property with `enum: [Person, Organisation, Location, ...]` so the
+/// provider's format_schema arm (Ollama) or strict native-schema arm
+/// (Anthropic/OpenAI) constrains LLM output at decode time. LLM physically
+/// cannot emit "Entity" unless it appears in the enum.
+///
+/// When `specs` is empty, returns the static schema unchanged (no enum
+/// constraint — any string acceptable, server-side label_to_id falls back
+/// to id=0 catch-all).
+pub(crate) fn entity_list_schema_with_label_enum(
+    specs: &[crate::core::entity_types::EntityTypeSpec],
+) -> Value {
+    let mut schema = (*SCHEMA_ENTITY_LIST).clone();
+    if specs.is_empty() {
+        return schema;
+    }
+    // Filter out id=0 catch-all from the schema enum: LLM must commit to a
+    // specific type. Server-side label_to_id falls back to 0 if the emitted
+    // label somehow bypasses the grammar (defensive only — Ollama
+    // format_schema enforces the enum at decode time).
+    let names: Vec<Value> = specs
+        .iter()
+        .filter(|s| s.id != 0)
+        .map(|s| Value::String(s.name.clone()))
+        .collect();
+    if names.is_empty() {
+        return schema;
+    }
+    let label_property = serde_json::json!({
+        "type": "string",
+        "enum": names,
+        "description": "Entity type label; must be one of the registered type names."
+    });
+    // Try $defs/RawEntitySimple path first (schemars output shape).
+    if let Some(props) = schema
+        .pointer_mut("/$defs/RawEntitySimple/properties")
+        .and_then(|v| v.as_object_mut())
+    {
+        props.insert("label".to_string(), label_property.clone());
+        if let Some(req) = schema
+            .pointer_mut("/$defs/RawEntitySimple/required")
+            .and_then(|v| v.as_array_mut())
+        {
+            if !req.iter().any(|v| v.as_str() == Some("label")) {
+                req.push(Value::String("label".to_string()));
+            }
+        }
+        return schema;
+    }
+    // Fallback: inlined items shape (no $defs).
+    if let Some(props) = schema
+        .pointer_mut("/properties/items/items/properties")
+        .and_then(|v| v.as_object_mut())
+    {
+        props.insert("label".to_string(), label_property);
+        if let Some(req) = schema
+            .pointer_mut("/properties/items/items/required")
+            .and_then(|v| v.as_array_mut())
+        {
+            if !req.iter().any(|v| v.as_str() == Some("label")) {
+                req.push(Value::String("label".to_string()));
+            }
+        }
+    }
+    schema
+}
 
 /// Schema for relationship-type-name lists (DefaultExtractor stage 2).
 /// Root object with `items: [String]`.
@@ -218,6 +311,125 @@ pub(crate) static SCHEMA_RESOLUTION_VERDICT: LazyLock<Value> = LazyLock::new(|| 
     })
 });
 
+/// Schema for the L7 dream-phase entity reclassification call.
+///
+/// Root object with a single `entity_type_id: u32` field.  Integer-typed schema
+/// enforces the provider to emit an integer id matching the registered type table,
+/// consistent with the ingest-time `EntityTyping` schema enforcement.
+///
+/// id=0 is the catch-all sentinel; the reclassification pass treats any
+/// `validate_or_fallback`-returned 0 as a no-op (insufficient context).
+pub(crate) static SCHEMA_RECLASSIFY: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::to_value(schemars::schema_for!(ReclassifyWrapper)).unwrap_or_else(|e| {
+        panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
+    })
+});
+
+/// Schema for the integer-ID entity list (TD-013 L1).
+///
+/// Root object with `entities: [RawEntityIntegerId]`.  The `entity_type_id`
+/// field is a plain `u32` — `entity_list_schema_with_id_bounds` mutates this
+/// static's clone to inject an `enum` + `minimum`/`maximum` constraint derived
+/// from the active namespace registry.
+///
+/// Call sites MUST use `entity_list_schema_with_id_bounds` (which clones this
+/// static and injects the runtime constraint) rather than this static directly.
+pub(crate) static SCHEMA_ENTITY_LIST_INTEGER_ID: std::sync::LazyLock<Value> =
+    std::sync::LazyLock::new(|| {
+        serde_json::to_value(schemars::schema_for!(EntityListIntegerWrapper)).unwrap_or_else(|e| {
+            panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
+        })
+    });
+
+/// Build a per-call entity-list schema with `entity_type_id` constrained to an
+/// `enum` of registered integer IDs (TD-013 L1 — integer-ID backbone).
+///
+/// Returns a cloned + mutated `Value`.  The `entity_type_id` property in the
+/// `RawEntityIntegerId` definition is replaced with:
+/// ```json
+/// {"type": "integer", "enum": [0, 1, 2, ...], "minimum": 0, "maximum": N,
+///  "description": "Entity type id from the registry."}
+/// ```
+///
+/// id=0 (catch-all "Entity") is included in the enum so the LLM can fall back
+/// to it when uncertain — the grammar enforces the choice at decode time.
+///
+/// When `specs` is empty, returns the base static unchanged (no enum constraint).
+///
+/// Navigation path follows the schemars output shape:
+/// `$defs/RawEntityIntegerId/properties/entity_type_id` (primary).
+/// Falls back to inline `properties/entities/items/properties/entity_type_id`.
+pub(crate) fn entity_list_schema_with_id_bounds(
+    specs: &[crate::core::entity_types::EntityTypeSpec],
+) -> Value {
+    let mut schema = (*SCHEMA_ENTITY_LIST_INTEGER_ID).clone();
+    if specs.is_empty() {
+        return schema;
+    }
+    // FILTER OUT id=0 catch-all from the enum: LLM must commit to a specific
+    // type. Diagnostic 2026-06-04 confirmed: with id=0 in enum, qwen2.5:14b
+    // picks it for 11/11 uncertain entities (then encodes the real type as
+    // parenthetical text in the NAME field). Server-side validate_or_fallback
+    // still resolves out-of-enum emissions to id=0 if the grammar somehow
+    // allows (defensive only — Ollama format_schema enforces the enum at
+    // decode time so this branch is unreachable for compliant providers).
+    let ids: Vec<Value> = specs
+        .iter()
+        .filter(|s| s.id != 0)
+        .map(|s| Value::Number(s.id.into()))
+        .collect();
+    if ids.is_empty() {
+        return schema; // no specific types registered, leave schema unconstrained
+    }
+    let max_id = specs.iter().map(|s| s.id).max().unwrap_or(0);
+    let min_id = specs
+        .iter()
+        .filter(|s| s.id != 0)
+        .map(|s| s.id)
+        .min()
+        .unwrap_or(1);
+    let id_property = serde_json::json!({
+        "type": "integer",
+        "enum": ids,
+        "minimum": min_id,
+        "maximum": max_id,
+        "description": "Entity type id from the registry. MUST be a SPECIFIC type. id=0 catch-all is reserved server-side and not a valid LLM emission."
+    });
+
+    // Primary path: $defs/RawEntityIntegerId/properties/entity_type_id
+    if let Some(props) = schema
+        .pointer_mut("/$defs/RawEntityIntegerId/properties")
+        .and_then(|v| v.as_object_mut())
+    {
+        props.insert("entity_type_id".to_string(), id_property.clone());
+        if let Some(req) = schema
+            .pointer_mut("/$defs/RawEntityIntegerId/required")
+            .and_then(|v| v.as_array_mut())
+        {
+            if !req.iter().any(|v| v.as_str() == Some("entity_type_id")) {
+                req.push(Value::String("entity_type_id".to_string()));
+            }
+        }
+        return schema;
+    }
+    // Fallback: inline items shape (no $defs).
+    if let Some(props) = schema
+        .pointer_mut("/properties/entities/items/properties")
+        .and_then(|v| v.as_object_mut())
+    {
+        props.insert("entity_type_id".to_string(), id_property);
+        if let Some(req) = schema
+            .pointer_mut("/properties/entities/items/required")
+            .and_then(|v| v.as_array_mut())
+        {
+            if !req.iter().any(|v| v.as_str() == Some("entity_type_id")) {
+                req.push(Value::String("entity_type_id".to_string()));
+            }
+        }
+    }
+    schema
+}
+
 // ─── Per-schema force_arm overrides (§3.3) ───────────────────────────────────
 
 /// Force `SCHEMA_NUEXTRACT_RELATIONS_ONLY` through the LlmJsonRepair arm.
@@ -235,6 +447,111 @@ pub(crate) const SCHEMA_NUEXTRACT_RELATIONS_ONLY_FORCE_ARM: Option<FallbackArm> 
 pub(crate) const SCHEMA_REL_ONLY_FORCE_FALLBACK_FORCE_ARM: Option<FallbackArm> =
     Some(FallbackArm::LlmJsonRepair);
 
+// ─── TD-023 Hybrid typing schema (index-based) ───────────────────────────────
+
+/// Base schema for the TD-023 hybrid typing response.
+///
+/// Root: `{typings: [{idx: u32, entity_type_id: u32}]}`. Both fields are
+/// numerically bounded by `hybrid_typing_schema_with_bounds` at the call
+/// site — `idx` to `[0, num_candidates - 1]` and `entity_type_id` to the
+/// active namespace registry's enum. This is the [[load-bearing-invariants-
+/// at-emit-not-prompt]] enforcement: the LLM cannot drop or misalign
+/// candidates because both keys are integer-constrained at decode time.
+pub(crate) static SCHEMA_HYBRID_TYPING: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::to_value(schemars::schema_for!(HybridTypingWrapper)).unwrap_or_else(|e| {
+        panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
+    })
+});
+
+/// Inject runtime bounds for the TD-023 hybrid typing schema:
+///   - `idx`: enum [0, 1, ..., num_candidates - 1]; minimum=0; maximum=N-1
+///   - `entity_type_id`: enum of registered ids (excluding id=0 catch-all);
+///     bounded by min/max registered id
+///
+/// `num_candidates` MUST equal the input candidate list length so the LLM
+/// cannot emit an out-of-range idx. `specs` should be the active namespace
+/// registry. Both fields end up `required` so the parser fails loudly on
+/// missing field per [[llm-output-parse-loudly]].
+pub(crate) fn hybrid_typing_schema_with_bounds(
+    num_candidates: usize,
+    specs: &[crate::core::entity_types::EntityTypeSpec],
+) -> Value {
+    let mut schema = (*SCHEMA_HYBRID_TYPING).clone();
+
+    if num_candidates == 0 {
+        // No candidates → no LLM call should be made; return base schema unchanged.
+        return schema;
+    }
+
+    let last_idx = num_candidates.saturating_sub(1);
+    let idx_enum: Vec<Value> = (0..=last_idx as u64).map(Value::from).collect();
+    let idx_property = serde_json::json!({
+        "type": "integer",
+        "enum": idx_enum,
+        "minimum": 0,
+        "maximum": last_idx,
+        "description": "0-based index into the candidate list. MUST match exactly one of the listed indices."
+    });
+
+    let entity_type_ids: Vec<Value> = specs
+        .iter()
+        .filter(|s| s.id != 0)
+        .map(|s| Value::Number(s.id.into()))
+        .collect();
+    let type_id_property = if entity_type_ids.is_empty() {
+        // No registered types — leave the entity_type_id unconstrained but typed.
+        serde_json::json!({
+            "type": "integer",
+            "minimum": 0,
+            "description": "Entity type id; registry is empty for this namespace."
+        })
+    } else {
+        let max_id = specs.iter().map(|s| s.id).max().unwrap_or(0);
+        let min_id = specs
+            .iter()
+            .filter(|s| s.id != 0)
+            .map(|s| s.id)
+            .min()
+            .unwrap_or(1);
+        serde_json::json!({
+            "type": "integer",
+            "enum": entity_type_ids,
+            "minimum": min_id,
+            "maximum": max_id,
+            "description": "Entity type id from the registry. MUST be a SPECIFIC type. id=0 catch-all is reserved server-side."
+        })
+    };
+
+    // Primary path: $defs/RawHybridTyping/properties
+    if let Some(props) = schema
+        .pointer_mut("/$defs/RawHybridTyping/properties")
+        .and_then(|v| v.as_object_mut())
+    {
+        props.insert("idx".to_string(), idx_property.clone());
+        props.insert("entity_type_id".to_string(), type_id_property.clone());
+        if let Some(req) = schema
+            .pointer_mut("/$defs/RawHybridTyping/required")
+            .and_then(|v| v.as_array_mut())
+        {
+            for field in ["idx", "entity_type_id"] {
+                if !req.iter().any(|v| v.as_str() == Some(field)) {
+                    req.push(Value::String(field.to_string()));
+                }
+            }
+        }
+        return schema;
+    }
+    // Fallback: inline items shape (no $defs).
+    if let Some(props) = schema
+        .pointer_mut("/properties/typings/items/properties")
+        .and_then(|v| v.as_object_mut())
+    {
+        props.insert("idx".to_string(), idx_property);
+        props.insert("entity_type_id".to_string(), type_id_property);
+    }
+    schema
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -251,6 +568,31 @@ mod tests {
         assert_eq!(schema["type"], "object", "root must be object");
         let items = &schema["properties"]["items"];
         assert_eq!(items["type"], "array", "items must be array");
+    }
+
+    #[test]
+    fn entity_list_schema_with_label_enum_injects_enum() {
+        use crate::core::entity_types::EntityTypeSpec;
+        let specs = vec![
+            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch".to_string() },
+            EntityTypeSpec { id: 1, name: "Person".to_string(), description: "p".to_string() },
+            EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "o".to_string() },
+        ];
+        let schema = entity_list_schema_with_label_enum(&specs);
+        let pretty = serde_json::to_string_pretty(&schema).unwrap();
+        eprintln!("SCHEMA DUMP:\n{pretty}");
+        // Try $defs path first
+        let label_at_defs = schema.pointer("/$defs/RawEntitySimple/properties/label");
+        let label_inline = schema.pointer("/properties/items/items/properties/label");
+        let label = label_at_defs.or(label_inline);
+        assert!(label.is_some(), "label property must be injected somewhere; schema: {pretty}");
+        let label = label.unwrap();
+        let enum_arr = label["enum"].as_array().unwrap_or_else(|| panic!("label must have enum array; got: {label}"));
+        let names: Vec<&str> = enum_arr.iter().filter_map(|v| v.as_str()).collect();
+        // id=0 Entity is FILTERED OUT to force LLM to commit to a specific type.
+        assert!(!names.contains(&"Entity"), "id=0 catch-all must be filtered from enum");
+        assert!(names.contains(&"Person"));
+        assert!(names.contains(&"Organisation"));
     }
 
     #[test]
@@ -344,6 +686,8 @@ mod tests {
         // Verify FallbackArm variants are distinct (not accidentally equal).
         assert_ne!(FallbackArm::NativeSchema, FallbackArm::LlmJsonRepair);
         assert_ne!(FallbackArm::FormatSchema, FallbackArm::PromptOnly);
+        assert_ne!(FallbackArm::DelimitedTuple, FallbackArm::LlmJsonRepair);
+        assert_ne!(FallbackArm::DelimitedTuple, FallbackArm::PromptOnly);
     }
 
     // ── ContradictionVerdictWrapper round-trip ────────────────────────────────
@@ -407,5 +751,60 @@ mod tests {
             w.verdict, "",
             "empty object must yield empty verdict string"
         );
+    }
+
+    // ── Integer-ID schema (TD-013 L1) ─────────────────────────────────────────
+
+    #[test]
+    fn entity_list_schema_with_id_bounds_injects_enum_and_bounds() {
+        use crate::core::entity_types::EntityTypeSpec;
+        let specs = vec![
+            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
+            EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
+            EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+        ];
+        let schema = entity_list_schema_with_id_bounds(&specs);
+        let pretty = serde_json::to_string_pretty(&schema).unwrap();
+
+        // entity_type_id property must be injected somewhere
+        let at_defs = schema.pointer("/$defs/RawEntityIntegerId/properties/entity_type_id");
+        let inline = schema.pointer("/properties/entities/items/properties/entity_type_id");
+        let prop = at_defs.or(inline).unwrap_or_else(|| panic!(
+            "entity_type_id must be injected in schema; got:\n{pretty}"
+        ));
+
+        // type must be integer
+        assert_eq!(prop["type"], "integer", "entity_type_id must have type=integer");
+
+        // enum must EXCLUDE id=0 catch-all — LLM must commit to a specific type.
+        // Server-side validate_or_fallback handles bypass + maps unknowns to 0.
+        let enum_arr = prop["enum"].as_array().unwrap_or_else(|| panic!(
+            "entity_type_id must have enum array; got: {prop}"
+        ));
+        let ids: Vec<u64> = enum_arr.iter().filter_map(|v| v.as_u64()).collect();
+        assert!(!ids.contains(&0), "enum must EXCLUDE id=0 catch-all; got: {ids:?}");
+        assert!(ids.contains(&1), "enum must include id=1 (Person); got: {ids:?}");
+        assert!(ids.contains(&2), "enum must include id=2 (Organisation); got: {ids:?}");
+
+        // bounds: minimum is now the smallest non-zero registered id
+        assert_eq!(prop["minimum"], 1, "minimum must be smallest non-zero id");
+        assert_eq!(prop["maximum"], 2, "maximum must be max registered id");
+    }
+
+    #[test]
+    fn entity_list_schema_with_id_bounds_empty_specs_returns_base() {
+        let schema = entity_list_schema_with_id_bounds(&[]);
+        // No enum injected — schema should still be valid object with entities array.
+        assert_eq!(schema["type"], "object", "root must be object when no specs");
+        let entities = &schema["properties"]["entities"];
+        assert_eq!(entities["type"], "array", "entities must be array");
+    }
+
+    #[test]
+    fn schema_entity_list_integer_id_is_object_with_entities_array() {
+        let schema: &Value = &SCHEMA_ENTITY_LIST_INTEGER_ID;
+        assert_eq!(schema["type"], "object", "root must be object");
+        let entities = &schema["properties"]["entities"];
+        assert_eq!(entities["type"], "array", "entities must be array");
     }
 }

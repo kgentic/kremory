@@ -246,6 +246,7 @@ impl Memory {
             embedding_dim: None,
             provider_rates_path: None,
             episode_content_warn_threshold: Some(10_000),
+            extractor_source: None,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -309,6 +310,7 @@ impl Memory {
             sink: None,
             no_wait: false,
             opts: None,
+            skip_extraction: false,
         }
     }
 
@@ -720,6 +722,11 @@ pub struct MemoryBuilder<L, E> {
     /// chunk size. `None` disables the warning. Never enforced as a hard limit;
     /// observability only.
     episode_content_warn_threshold: Option<usize>,
+    /// Optional explicit extractor source. When `None`, defaults to
+    /// `ExtractorSource::FromEnv` (reads `KREMORY_EXTRACTOR`). When `Some`,
+    /// pins the extractor regardless of env. See spec
+    /// `kremory-v017-hybrid-extractor-production-wire-in-spec-2026-06-04` §4.
+    extractor_source: Option<crate::core::extraction::ExtractorSource>,
     _llm_state: std::marker::PhantomData<L>,
     _emb_state: std::marker::PhantomData<E>,
 }
@@ -772,6 +779,21 @@ impl<L, E> MemoryBuilder<L, E> {
         self.episode_content_warn_threshold = threshold;
         self
     }
+
+    /// Pin the extractor source explicitly. Bypasses `KREMORY_EXTRACTOR` env
+    /// var. Use this when you want hybrid extraction in code regardless of
+    /// the deployment env, or pin NuExtract in a test that should not depend
+    /// on env state.
+    ///
+    /// Default (when this method is not called): `ExtractorSource::FromEnv`
+    /// — preserves bit-for-bit existing behaviour when env var is unset.
+    pub fn extractor(
+        mut self,
+        source: crate::core::extraction::ExtractorSource,
+    ) -> Self {
+        self.extractor_source = Some(source);
+        self
+    }
 }
 
 impl MemoryBuilder<NoLlm, NoEmb> {
@@ -789,6 +811,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             embedding_dim: self.embedding_dim,
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
+            extractor_source: self.extractor_source,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -841,6 +864,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             embedding_dim: self.embedding_dim,
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
+            extractor_source: self.extractor_source,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -862,6 +886,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             embedding_dim: self.embedding_dim,
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
+            extractor_source: self.extractor_source,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -902,6 +927,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 llm.clone(),
                 embedder.clone(),
                 self.embedding_dim,
+                self.extractor_source,
             )
             .await?;
 
@@ -952,6 +978,10 @@ pub struct RememberRequest<'a> {
     sink: Option<Arc<dyn EnrichmentEventSink>>,
     no_wait: bool,
     opts: Option<SubmitOpts>,
+    /// ADR-035 §2 — when `true`, Phase 2 LLM extraction is skipped at engine
+    /// level. Episode + embedding + `with_facts` triples are still persisted.
+    /// Set via [`RememberRequest::skip_extraction`] builder method.
+    skip_extraction: bool,
 }
 
 impl<'a> RememberRequest<'a> {
@@ -1018,10 +1048,35 @@ impl<'a> RememberRequest<'a> {
         self
     }
 
-    /// Attach pre-extracted structured facts. When provided, skips Phase 2
-    /// LLM extraction for these facts (they are pinned directly into the graph).
+    /// Attach pre-extracted structured facts.
+    ///
+    /// Caller's facts are pinned into the graph BEFORE Phase 2 LLM extraction
+    /// runs (ADR-035 Path X / Option A). LLM-extracted duplicates of the same
+    /// `(subject, predicate, object)` triple are silently swallowed via the
+    /// substrate `try_insert_fact` helper — caller wins by virtue of being
+    /// there first. Phase 2 LLM extraction still runs on `content`
+    /// (additive default).
+    ///
+    /// To skip Phase 2 LLM extraction entirely (caller is the sole source of
+    /// truth for facts), chain [`RememberRequest::skip_extraction`].
     pub fn with_facts(mut self, facts: Vec<StructuredFact>) -> Self {
         self.facts = facts;
+        self
+    }
+
+    /// Skip Phase 2 LLM extraction for this episode.
+    ///
+    /// When set, the engine persists the episode + embedding + any
+    /// [`with_facts`](Self::with_facts)-supplied triples, then bails before
+    /// invoking the entity/edge extractor. Suitable for bulk-import workloads
+    /// where the caller already has high-confidence structured data and LLM
+    /// cycles would be wasted.
+    ///
+    /// Method name is implementation-agnostic — if a future kremory version
+    /// swaps the Phase 2 extractor (GLiNER, regex, hybrid), the semantics
+    /// remain "skip the discovery step". Added v0.1.8 per ADR-035 §2.
+    pub fn skip_extraction(mut self) -> Self {
+        self.skip_extraction = true;
         self
     }
 
@@ -1081,10 +1136,17 @@ impl<'a> RememberRequest<'a> {
             published_at: self.published_at,
         });
 
-        let opts = self.opts.unwrap_or(SubmitOpts {
+        // Build SubmitOpts; if caller invoked `.skip_extraction()`, force
+        // `enrich_per_episode = false` so the gate at engine_handle propagates
+        // into `SourceParams.skip_extraction` and the engine bails after the
+        // caller-pin step. Caller's explicit `.opts(...)` overrides this.
+        let mut opts = self.opts.unwrap_or(SubmitOpts {
             enrich_per_episode: true,
             run_in_background: self.no_wait,
         });
+        if self.skip_extraction {
+            opts.enrich_per_episode = false;
+        }
 
         // ADR-029a lazy population: ensure a default-policy row exists for
         // the namespace before the first write.
@@ -4024,12 +4086,13 @@ mod forget_by_source_id_tests {
         let conn = &tg.conn;
 
         // Insert entity (idempotent via INSERT OR IGNORE on PRIMARY KEY).
+        // Migration 009 dropped entities.label — use entity_type_id=0 (catch-all).
         conn.execute(
-            "INSERT OR IGNORE INTO entities (id, label, properties, recorded_at, group_id) \
+            "INSERT OR IGNORE INTO entities (id, entity_type_id, properties, recorded_at, group_id) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
             libsql::params![
                 entity_id,
-                entity_id,
+                0i64,
                 "{}",
                 "2026-05-29T12:00:00Z",
                 ns.namespace.as_str()

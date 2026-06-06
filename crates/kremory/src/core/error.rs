@@ -243,6 +243,28 @@ pub enum Error {
         schema_name: String,
         raw_response: String,
     },
+
+    // ── TD-023 ProductionExtractor factory (v0.1.7 KH1) ──────────────────────
+    /// Hybrid extractor construction failed (e.g. GLiNER weight download or
+    /// ONNX session init). Only fires when `ExtractorSource::Hybrid` was
+    /// EXPLICITLY pinned via builder — env-var path warns + falls back to
+    /// NuExtract per spec KD4.
+    ///
+    /// Field is `detail` not `source` because thiserror treats `source` as a
+    /// chained-error source automatically and requires it to be `std::error::Error`.
+    #[error("hybrid extractor init failed: {detail}")]
+    ExtractorInit { detail: String },
+
+    /// Consumer requested a feature-gated extractor but kremory was built
+    /// without that feature. e.g. `ExtractorSource::Hybrid` requires the
+    /// `ner` cargo feature.
+    #[error("extractor feature disabled: '{feature}' was not compiled in")]
+    FeatureDisabled { feature: &'static str },
+
+    /// Builder pin to an unknown extractor source. Env-var path warns and
+    /// defaults to NuExtract silently; builder pin errors loudly per KD4.
+    #[error("unknown extractor source requested: '{requested}'")]
+    UnknownExtractor { requested: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

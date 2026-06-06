@@ -72,9 +72,7 @@ pub struct BatchPhase2Complete {
 ///
 /// If sink saturation under burst becomes a real consumer-pain pattern,
 /// substrate-owned backpressure (queue + drop policy + ordering guarantees)
-/// will be added — see the deferred backpressure design candidate parked at
-/// `kremory-v016-api-gaps-aidocs-consumer-2026-05-29.md` (G7/G8 deferred
-/// block, lines 407–468). Until then, sync-inline is the contract.
+/// will be added — G7/G8 deferred per ratified API-gap spec. Until then, sync-inline is the contract.
 pub trait EnrichmentEventSink: IngestEventSink {
     /// A community in the graph was recomputed during Phase 3 consolidation.
     fn on_community_updated(&self, community_id: &str, member_count: usize);

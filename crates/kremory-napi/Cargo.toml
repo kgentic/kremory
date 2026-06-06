@@ -1,13 +1,16 @@
 [package]
 name = "kremory-napi"
-version = "0.1.6-alpha.0"
+version = "0.1.7-alpha.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Node.js (napi-rs) binding for kremory agent memory"
 repository = "https://github.com/kgentic/kremory"
 
 [lib]
-crate-type = ["cdylib"]
+# Both crate types needed: cdylib = Node.js .node binary, rlib = `cargo test`
+# integration tests (tests/*.rs cannot import a cdylib-only crate).
+# Standard pattern for napi-rs/PyO3 FFI crates — see PyO3 FAQ and napi-rs docs.
+crate-type = ["cdylib", "rlib"]
 
 [features]
 # NEW-003 cycle-2 fix: explicit `default` prevents `--all-features` CI builds
@@ -19,6 +22,13 @@ default = []
 # See .ai-docs/specs/kremory-napi-v016-surface-expansion-2026-05-29.md §10.
 unstable-graph = ["kremory/unstable-graph"]
 
+# ner: passes through to substrate. Enables `JsOpenOptions.extractor: 'hybrid'`
+# (TD-023 hybrid GLiNER + 1-LLM-typing-call extractor). When off, requesting
+# 'hybrid' returns a typed napi error `KremoryError::FeatureDisabled('ner')`.
+# Aidocs distribution builds with this feature ON by default.
+# See .ai-docs/specs/kremory-v017-hybrid-extractor-production-wire-in-spec-2026-06-04.md §4.3.
+ner = ["kremory/ner"]
+
 # unstable-tags: split from unstable-graph per Vera cycle-2 NEW-001. Gates
 # B1.b (JsEpisodeDraft.tags + JsRecallOptions.filterTagAny/All). Consumers can
 # adopt indexed tag filtering without opting into the higher-risk CTE graph
@@ -27,6 +37,14 @@ unstable-tags = ["kremory/unstable-tags"]
 
 [dependencies]
 kremory = { path = "../kremory" }
+# Direct dep required for resolve_env_llm (ADR-030 Tier-2 BYOM bridge).
+# Provides LLMBuilder + backend types (Ollama/OpenAI/Anthropic) to env-detect
+# the LLM when the caller supplies a custom JS embedder. kremory::facade::providers
+# does not expose an LLM-only detection function, so kremory-napi must construct
+# providers directly. The workspace [patch.crates-io] redirects this to the
+# kgentic fork (feat/chat-provider-model-accessor), matching kremory's own dep.
+# Same version + features as kremory itself uses for Tier-1 shortcuts.
+autoagents-llm = { version = "0.3", features = ["ollama", "openai", "anthropic"] }
 # napi-rs v3 migration spike output saved at .ai-docs/research/... — recipe ready
 # when napi work resumes post-substrate-v0.1.6. v2 pins held for now so the
 # v0.1.5 binding (currently shipped + working) doesn't regress. Substrate work
@@ -38,6 +56,7 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 # ADR-031 Layer 3 parity test — syn parses substrate + napi source files.

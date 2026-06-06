@@ -150,6 +150,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
             )
             .messages(gleaning_msgs)
             .model(self.llm.model())
+            .ttft_budget_ms(ctx.arm_budget_ms)
             .call()
             .await
             .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
@@ -226,6 +227,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
         )
         .messages(typing_msgs)
         .model(self.llm.model())
+        .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;

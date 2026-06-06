@@ -7,39 +7,57 @@
 //
 // Run: `pnpm test:types`
 
-import { JsMemory } from '../index.js';
+import { Memory } from '../index.js';
 import type {
-  JsOpenOptions,
-  JsIngestOptions,
-  JsRecallOptions,
-  JsIngestResult,
-  JsRetrievedContext,
-  JsEpisodeDraft,
-  JsEpisode,
-  JsDreamSummary,
-  JsDreamOpts,
-  JsMetadataFilter,
+  OpenOptions,
+  RememberOptions,
+  RecallOptions,
+  IngestResult,
+  RetrievedContext,
+  StructuredFact,
+  Episode,
+  DreamSummary,
+  DreamOptions,
+  MetadataFilter,
+  BatchOptions,
+  IngestStatusResult,
+  DreamStatusResult,
+  BatchStatus,
+  CancelOutcome,
 } from '../index.js';
 
 // ── Surface contracts ──────────────────────────────────────────────────────
 
-// JsOpenOptions must accept embeddingDim + defaultNamespace.
-const _openOpts: JsOpenOptions = {
+// OpenOptions must accept embeddingDim + defaultNamespace.
+const _openOpts: OpenOptions = {
   embeddingDim: 384,
   defaultNamespace: 'check',
 };
 
-// JsIngestOptions must accept namespace + referenceTime + contentType.
-const _ingestOpts: JsIngestOptions = {
-  namespace: 'check',
-  referenceTime: '2026-05-29T00:00:00Z',
-  contentType: 'chat',
+// OpenOptions must accept withEmbedder callback (ADR-030 Tier-2 BYOM).
+const _openOptsWithEmbedder: OpenOptions = {
+  embeddingDim: 256,
+  defaultNamespace: 'byom',
+  withEmbedder: async (text: string): Promise<number[]> => {
+    return Array.from({ length: 256 }, (_, i) => (i / 256) * (text.length / 100));
+  },
 };
 
-// JsRecallOptions must accept the ADR-029c surface: in_namespaces,
+// withEmbedder must also accept null and undefined (optional field).
+const _openOptsNullEmbedder: OpenOptions = { withEmbedder: null };
+const _openOptsUndefinedEmbedder: OpenOptions = { withEmbedder: undefined };
+
+// RememberOptions must accept content + namespace + referenceTime.
+const _opts: RememberOptions = {
+  content: 'check content',
+  namespace: 'check',
+  referenceTime: '2026-05-29T00:00:00Z',
+};
+
+// RecallOptions must accept the ADR-029c surface: in_namespaces,
 // best_effort, per_namespace_top_k. If napi-rs camel-casing changes these,
 // this declaration fails to type-check.
-const _recallOpts: JsRecallOptions = {
+const _recallOpts: RecallOptions = {
   k: 5,
   namespace: 'check',
   inNamespaces: ['a', 'b'],
@@ -48,23 +66,26 @@ const _recallOpts: JsRecallOptions = {
   asOf: '2026-05-29T00:00:00Z',
 };
 
-// JsIngestResult shape (returned by ingest).
-function _checkIngestResult(r: JsIngestResult): void {
+// IngestResult shape (returned by ingest).
+function _checkIngestResult(r: IngestResult): void {
   const _id: string = r.episodeEntityId;
   const _ts: string = r.committedAt;
   void _id;
   void _ts;
 }
 
-// JsRetrievedContext shape (per-row of recall). namespace must be present
-// on the type (ADR-029c).
-function _checkRetrieved(r: JsRetrievedContext): void {
+// RetrievedContext shape (per-row of recall). namespace must be present
+// on the type (ADR-029c). entityTypeId + entityTypeName added by TD-013 Phase 8.
+function _checkRetrieved(r: RetrievedContext): void {
   const _entityId: string = r.entityId;
   const _entityName: string = r.entityName;
   const _summary: string = r.summary;
   const _score: number = r.score;
   const _refs: string[] = r.sourceRefs;
   const _incomplete: boolean = r.incomplete;
+  // TD-013 Phase 8: entity type fields (additive, always present).
+  const _typeId: number = r.entityTypeId;
+  const _typeName: string = r.entityTypeName;
   // namespace is Option<String> on the Rust side -> `string | null | undefined`
   // in napi-rs generated TS. Accept all three.
   const _ns: string | null | undefined = r.namespace;
@@ -74,25 +95,27 @@ function _checkRetrieved(r: JsRetrievedContext): void {
   void _score;
   void _refs;
   void _incomplete;
+  void _typeId;
+  void _typeName;
   void _ns;
 }
 
-// JsMemory async-method contract: open/ingest/recall/close must return
+// Memory async-method contract: open/ingest/recall/close must return
 // Promises of the documented shapes.
 async function _exerciseSurface(): Promise<void> {
-  const mem: JsMemory = await JsMemory.open('/tmp/x.db', _openOpts);
-  const ingest: JsIngestResult = await mem.ingest('hi', _ingestOpts);
+  const mem: Memory = await Memory.open('/tmp/x.db', _openOpts);
+  const ingest: IngestResult = await mem.remember(_opts);
   _checkIngestResult(ingest);
 
-  const results: JsRetrievedContext[] = await mem.recall('q', _recallOpts);
+  const results: RetrievedContext[] = await mem.recall('q', _recallOpts);
   for (const r of results) _checkRetrieved(r);
 
   await mem.close();
 }
 
-// ── B1: JsEpisodeDraft shape ───────────────────────────────────────────────
+// ── B1: RememberOptions shape ────────────────────────────────────────────
 
-const _episodeDraft: JsEpisodeDraft = {
+const _episodeDraft: RememberOptions = {
   content: 'episode body',
   sourceId: 'doc-001',
   sourceUri: 'path/to/doc.md',
@@ -100,13 +123,13 @@ const _episodeDraft: JsEpisodeDraft = {
   namespace: 'check',
 };
 
-const _episodeDraftMinimal: JsEpisodeDraft = {
+const _episodeDraftMinimal: RememberOptions = {
   content: 'bare episode, no source_id',
 };
 
-// ── B1: JsIngestResult now includes warnings ───────────────────────────────
+// ── B1: IngestResult now includes warnings ───────────────────────────────
 
-function _checkIngestResultV2(r: JsIngestResult): void {
+function _checkIngestResultV2(r: IngestResult): void {
   const _id: string = r.episodeEntityId;
   const _ts: string = r.committedAt;
   const _warnings: string[] = r.warnings;
@@ -115,9 +138,9 @@ function _checkIngestResultV2(r: JsIngestResult): void {
   void _warnings;
 }
 
-// ── B5: JsEpisode shape ────────────────────────────────────────────────────
+// ── B5: Episode shape ────────────────────────────────────────────────────
 
-function _checkEpisode(ep: JsEpisode): void {
+function _checkEpisode(ep: Episode): void {
   const _id: number = ep.id;
   const _sid: string | null | undefined = ep.sourceId;
   const _uri: string | null | undefined = ep.sourceUri;
@@ -136,9 +159,9 @@ function _checkEpisode(ep: JsEpisode): void {
   void _hash;
 }
 
-// ── B6: JsDreamSummary + JsDreamOpts shapes ───────────────────────────────
+// ── B6: DreamSummary + DreamOptions shapes ───────────────────────────────
 
-function _checkDreamSummary(s: JsDreamSummary): void {
+function _checkDreamSummary(s: DreamSummary): void {
   const _cu: number = s.communitiesUpdated;
   const _cem: number = s.crossEpisodeMerges;
   const _sr: number = s.supersessionsRecorded;
@@ -151,11 +174,11 @@ function _checkDreamSummary(s: JsDreamSummary): void {
   void _dm;
 }
 
-const _dreamOpts: JsDreamOpts = { namespace: 'check' };
+const _dreamOpts: DreamOptions = { namespace: 'check' };
 
-// ── B9: JsRecallOptions now includes filterMetadata ───────────────────────
+// ── B9: RecallOptions now includes filterMetadata ───────────────────────
 
-const _recallOptsWithFilter: JsRecallOptions = {
+const _recallOptsWithFilter: RecallOptions = {
   k: 5,
   namespace: 'check',
   filterMetadata: [
@@ -164,47 +187,40 @@ const _recallOptsWithFilter: JsRecallOptions = {
   ],
 };
 
-const _metadataFilter: JsMetadataFilter = {
+const _metadataFilter: MetadataFilter = {
   key: 'docType',
   value: 'adr',
 };
 
-// ── B2/B3/B5/B6/B7/B8: JsMemory method surface ───────────────────────────
+// ── B2/B3/B5/B6/B7/B8: Memory method surface ───────────────────────────
 
 async function _exerciseNewSurface(): Promise<void> {
-  const mem: JsMemory = await JsMemory.open('/tmp/x.db', _openOpts);
+  const mem: Memory = await Memory.open('/tmp/x.db', _openOpts);
 
-  // B1: ingestEpisode
-  const draft: JsEpisodeDraft = _episodeDraft;
-  const r1: JsIngestResult = await mem.ingestEpisode(draft);
+  // B1: remember (replaces ingestEpisode)
+  const draft: RememberOptions = _episodeDraft;
+  const r1: IngestResult = await mem.remember(draft);
   _checkIngestResultV2(r1);
 
-  // B2: updateMetadata
-  const updated: number = await mem.updateMetadata('doc-001', { status: 'active' });
+  // B2: updateEpisodeMetadata
+  const updated: number = await mem.updateEpisodeMetadata('doc-001', { status: 'active' });
   void updated;
 
-  // B3: updateUri
-  const uriRows: number = await mem.updateUri('doc-001', 'path/new.md');
+  // B3: updateSourceUri
+  const uriRows: number = await mem.updateSourceUri('doc-001', 'path/new.md');
   void uriRows;
 
-  // B5: getBySourceId
-  const episodes: JsEpisode[] = await mem.getBySourceId('doc-001', 'check');
+  // B5: recallBySourceId
+  const episodes: Episode[] = await mem.recallBySourceId('doc-001', 'check');
   for (const ep of episodes) _checkEpisode(ep);
 
   // B6: dream
-  const summary: JsDreamSummary = await mem.dream(_dreamOpts);
+  const summary: DreamSummary = await mem.dream(_dreamOpts);
   _checkDreamSummary(summary);
 
   // B7: forget
   const deleted: number = await mem.forget('doc-001', 'check');
   void deleted;
-
-  // B8: reindex (stub — always rejects)
-  try {
-    await mem.reindex();
-  } catch (_e) {
-    // expected
-  }
 
   // B9: recall with filterMetadata
   const filteredResults = await mem.recall('query', _recallOptsWithFilter);
@@ -213,11 +229,97 @@ async function _exerciseNewSurface(): Promise<void> {
   await mem.close();
 }
 
+// ── v0.1.8 surface: new types + 9 new methods ───────────────────────────
+
+// A1. BatchOptions literal — episodes array + optional batchId.
+const _batchOpts: BatchOptions = {
+  episodes: [
+    { content: 'episode one', namespace: 'v018' },
+    { content: 'episode two', namespace: 'v018', skipExtraction: true },
+  ],
+  batchId: 'batch-v018-001',
+};
+
+// A1b. BatchOptions minimal (batchId optional).
+const _batchOptsMinimal: BatchOptions = {
+  episodes: [{ content: 'bare episode' }],
+};
+
+// A2. IngestStatusResult exercises all status variant strings + optional errorMessage.
+const _ingestStatusPending: IngestStatusResult = { status: 'pending' };
+const _ingestStatusExtracting: IngestStatusResult = { status: 'extracting' };
+const _ingestStatusDeduplicating: IngestStatusResult = { status: 'deduplicating' };
+const _ingestStatusInvalidating: IngestStatusResult = { status: 'invalidating' };
+const _ingestStatusComplete: IngestStatusResult = { status: 'complete' };
+const _ingestStatusFailed: IngestStatusResult = { status: 'failed', errorMessage: 'extraction timed out' };
+
+// A3. DreamStatusResult — same shape as IngestStatusResult.
+const _dreamStatusPending: DreamStatusResult = { status: 'pending' };
+const _dreamStatusProcessing: DreamStatusResult = { status: 'processing' };
+const _dreamStatusComplete: DreamStatusResult = { status: 'complete' };
+const _dreamStatusFailed: DreamStatusResult = { status: 'failed', errorMessage: 'dream failed' };
+
+// A4. BatchStatus literal — all numeric fields present.
+const _batchStatus: BatchStatus = {
+  total: 10,
+  completed: 8,
+  skipped: 1,
+  failed: 1,
+};
+
+// A5. CancelOutcome literal — cancelledPhase, rolledBack, partial.
+const _cancelOutcomeEnrichment: CancelOutcome = {
+  cancelledPhase: 'enrichment',
+  rolledBack: true,
+  partial: [],
+};
+const _cancelOutcomeConsolidation: CancelOutcome = {
+  cancelledPhase: 'consolidation',
+  rolledBack: false,
+  partial: ['entity-uuid-001', 'entity-uuid-002'],
+};
+
+// A7. IngestResult.runId is string | null | undefined (Quinn M-01 fix).
+function _checkIngestResultRunId(r: IngestResult): void {
+  const _runId: string | null | undefined = r.runId;
+  void _runId;
+}
+
+// A6. Type-check the 9 new method signatures on Memory.
+async function _exerciseV018NewSurface(): Promise<void> {
+  const mem: Memory = await Memory.open('/tmp/v018.db', _openOpts);
+
+  const _rememberBatch: (opts: BatchOptions) => Promise<IngestResult[]> = mem.rememberBatch.bind(mem);
+  const _statusOf: (commitId: string) => Promise<IngestStatusResult> = mem.statusOf.bind(mem);
+  const _awaitEnrichment: (commitId: string, timeoutMs: number) => Promise<IngestStatusResult> = mem.awaitEnrichment.bind(mem);
+  const _awaitDream: (handleId: string, timeoutMs: number) => Promise<DreamStatusResult> = mem.awaitDream.bind(mem);
+  const _awaitBatch: (batchId: string, timeoutMs: number) => Promise<BatchStatus> = mem.awaitBatch.bind(mem);
+  const _cancel: (commitId: string) => Promise<CancelOutcome> = mem.cancel.bind(mem);
+  const _cancelDream: (handleId: string) => Promise<CancelOutcome> = mem.cancelDream.bind(mem);
+  const _registerNamespace: (namespace: string) => Promise<void> = mem.registerNamespace.bind(mem);
+  const _upgradeNamespacePolicy: (namespace: string) => Promise<void> = mem.upgradeNamespacePolicy.bind(mem);
+
+  void _rememberBatch;
+  void _statusOf;
+  void _awaitEnrichment;
+  void _awaitDream;
+  void _awaitBatch;
+  void _cancel;
+  void _cancelDream;
+  void _registerNamespace;
+  void _upgradeNamespacePolicy;
+
+  await mem.close();
+}
+
 // Re-export so tsc keeps the symbol resolved (avoids dead-code stripping
 // affecting the import graph).
 export {
   _openOpts,
-  _ingestOpts,
+  _openOptsWithEmbedder,
+  _openOptsNullEmbedder,
+  _openOptsUndefinedEmbedder,
+  _opts,
   _recallOpts,
   _exerciseSurface,
   _episodeDraft,
@@ -226,4 +328,21 @@ export {
   _recallOptsWithFilter,
   _metadataFilter,
   _exerciseNewSurface,
+  // v0.1.8
+  _batchOpts,
+  _batchOptsMinimal,
+  _ingestStatusPending,
+  _ingestStatusExtracting,
+  _ingestStatusDeduplicating,
+  _ingestStatusInvalidating,
+  _ingestStatusComplete,
+  _ingestStatusFailed,
+  _dreamStatusPending,
+  _dreamStatusProcessing,
+  _dreamStatusComplete,
+  _dreamStatusFailed,
+  _batchStatus,
+  _cancelOutcomeEnrichment,
+  _cancelOutcomeConsolidation,
+  _exerciseV018NewSurface,
 };
