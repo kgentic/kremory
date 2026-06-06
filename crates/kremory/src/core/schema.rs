@@ -81,7 +81,20 @@ pub static LAST_TTL_SWEEP: AtomicI64 = AtomicI64::new(0);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
     pub id: String,
+    /// Type label resolved from `entity_types.name` at query time (via LEFT JOIN).
+    ///
+    /// Phase 1 (Migration 008) retained the `label` column on `entities` for
+    /// backward compat.  Phase 2 (Migration 009) drops the column.  After
+    /// Migration 009 this field is populated by LEFT JOIN with `entity_types` on
+    /// `(group_id, entity_type_id)`.  Defaults to "Entity" when entity_type_id=0
+    /// or the join produces NULL.
     pub label: String,
+    /// Integer entity-type id within the owning namespace (group_id).
+    ///
+    /// Maps to `entity_types(group_id, id)`.  id=0 = "Entity" catch-all sentinel.
+    /// Introduced by Migration 008; populated by Phase 2 ingest path.
+    /// Use [`EntityTypeRegistry::id_to_name`] to resolve to a display string.
+    pub entity_type_id: u32,
     pub properties: serde_json::Value,
     /// When this row was recorded in the database (audit timestamp).
     /// Renamed from `created_at` per Story #A1 (honesty fix).
@@ -622,6 +635,29 @@ impl TemporalGraph {
         // Idempotent: PRAGMA table_info gate skips when both columns already present.
         crate::core::migrations::migrate_007_source_id_source_uri(&self.conn).await?;
 
+        // TD-013 Migration 008: entity_types registry + entity_type_id on entities.
+        // Creates entity_types table, seeds per-group_id catch-all (id=0 "Entity")
+        // + observed labels, adds entity_type_id column backfilled from label.
+        // Idempotent: PRAGMA table_info gate (G1) + IF NOT EXISTS + INSERT OR IGNORE.
+        crate::core::migrations::migrate_008_entity_types(&self.conn).await?;
+
+        // TD-013 Migration 009 (Phase 2): DROP entities.label column.
+        // All INSERT/SELECT paths now use entity_type_id + LEFT JOIN entity_types
+        // to resolve the label at query time.  Must run AFTER migrate_008 which
+        // guarantees entity_type_id is populated.
+        // Idempotent: PRAGMA table_info gate — skips when label column is already absent.
+        crate::core::migrations::migrate_009_drop_label_column(&self.conn).await?;
+
+        // TD-013 Migration 010: seed default entity_types vocabulary per group_id.
+        // Backfills Migration 008's gap: 008 only seeded id=0 for groups with
+        // pre-existing entities. 010 ensures every observed group_id has the
+        // full default OntoNotes vocabulary (Entity+Person+Organisation+Location
+        // +Date+Time+Money+Quantity+Event+Concept). Without this, fresh DBs
+        // produce empty L2 prompts and LLM returns zero entities. The override
+        // mechanism (SourceParams.entity_types_override) augments these defaults.
+        // Idempotent: ensure_default_types_seeded no-ops when group_id already has rows.
+        crate::core::migrations::migrate_010_default_entity_types(&self.conn).await?;
+
         Ok(())
     }
 
@@ -967,8 +1003,9 @@ mod schema_tests {
         }
 
         // Insert an entity + fact with object_value = 'hello', then verify FTS query.
+        // Migration 009 dropped entities.label — insert without it.
         conn.execute(
-            "INSERT INTO entities (id, label, recorded_at, group_id) VALUES ('ent1', 'Entity1', '2026-01-01T00:00:00Z', 'default')",
+            "INSERT INTO entities (id, entity_type_id, recorded_at, group_id) VALUES ('ent1', 0, '2026-01-01T00:00:00Z', 'default')",
             (),
         )
         .await
@@ -1071,9 +1108,9 @@ mod schema_tests {
             "pre-condition: facts_bak_006 must exist after open_in_memory"
         );
 
-        // Insert a sentinel row.
+        // Insert a sentinel row. Migration 009 dropped entities.label — omit it.
         conn.execute(
-            "INSERT INTO entities (id, label, recorded_at, group_id) VALUES ('skip_ent', 'SkipEnt', '2026-01-01T00:00:00Z', 'default')",
+            "INSERT INTO entities (id, entity_type_id, recorded_at, group_id) VALUES ('skip_ent', 0, '2026-01-01T00:00:00Z', 'default')",
             (),
         )
         .await
@@ -1196,10 +1233,10 @@ mod schema_tests {
             .await
             .expect("fk on");
 
-        // INSERT the entity first.
+        // INSERT the entity first. Migration 009 dropped entities.label — omit it.
         conn.execute(
-            "INSERT INTO entities (id, label, recorded_at, group_id) \
-             VALUES ('alice', 'Alice', '2026-01-01T00:00:00Z', 'ns1')",
+            "INSERT INTO entities (id, entity_type_id, recorded_at, group_id) \
+             VALUES ('alice', 0, '2026-01-01T00:00:00Z', 'ns1')",
             (),
         )
         .await

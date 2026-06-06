@@ -90,7 +90,7 @@ async fn build_engine(
         .build()
         .expect("PipelineConfig default");
 
-    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), Arc::new(emb), config);
+    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), Arc::new(emb), config).expect("Engine::new should succeed in tests");
     (engine, llm, graph)
 }
 

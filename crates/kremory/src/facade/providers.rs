@@ -54,6 +54,7 @@ pub(crate) async fn open_graph(
     llm: Arc<dyn ChatProvider>,
     embedder: Arc<dyn DynEmbeddingProvider>,
     embedding_dim: Option<usize>,
+    extractor_source: Option<crate::core::extraction::ExtractorSource>,
 ) -> Result<(Arc<dyn GraphHandle>, Arc<TemporalGraph>)> {
     let path_str = path
         .as_ref()
@@ -73,12 +74,18 @@ pub(crate) async fn open_graph(
         .build()
         .map_err(MemoryError::Core)?;
 
-    let engine = Engine::new(
+    // Use explicit extractor source if pinned via builder; otherwise default
+    // to FromEnv (reads KREMORY_EXTRACTOR or falls back to NuExtract).
+    let source = extractor_source
+        .unwrap_or(crate::core::extraction::ExtractorSource::FromEnv);
+    let engine = Engine::with_extractor_source(
         graph,
         Arc::new(ArcChatProvider::new(llm)),
         Arc::new(ArcEmbedder(embedder)),
         config,
-    );
+        source,
+    )
+    .map_err(MemoryError::Core)?;
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
     Ok((handle, graph_for_facade))
@@ -92,7 +99,7 @@ pub(crate) async fn open_graph(
 /// previously hardcoded to `http://localhost:11434` regardless). When
 /// `OLLAMA_CHAT_MODEL` is also set, its VALUE overrides the default chat
 /// model. Previously both were silently dropped, causing env-based config
-/// from consumers (aidocs adapter, etc.) to be ignored and breaking smoke
+/// from consumers to be ignored and breaking smoke
 /// runs on hosts where `localhost` resolves to `::1` but Ollama binds
 /// IPv4-only, or where the default MLX chat model hangs on `/api/chat`.
 pub async fn auto(path: impl AsRef<Path>) -> Result<Memory> {
@@ -326,7 +333,7 @@ async fn build_memory_with_model(
     }
 
     let (graph, temporal_graph) =
-        open_graph(path.as_ref(), llm.clone(), embedder.clone(), embedding_dim).await?;
+        open_graph(path.as_ref(), llm.clone(), embedder.clone(), embedding_dim, None).await?;
 
     // T6 cycle 2 (ARCH-001 + ARCH-002) — Warm schema caches for Tier 1 paths.
     // Spawned on a background tokio task so Memory construction is not blocked.

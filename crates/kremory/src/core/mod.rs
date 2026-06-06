@@ -40,12 +40,15 @@
 
 pub mod arena;
 pub mod background;
+pub mod canonicalization;
 pub mod chat_tracking;
 pub mod config;
 pub mod context;
 pub mod contradiction;
+pub mod disambiguation;
 pub mod embedding;
 pub mod engine;
+pub mod entity_types;
 pub mod error;
 pub mod extraction;
 pub mod extraction_window;
@@ -60,6 +63,7 @@ pub mod migrations;
 pub mod ner;
 pub mod provider;
 pub mod rates;
+pub mod reclassification;
 pub mod resolver;
 pub mod schema;
 pub mod search;

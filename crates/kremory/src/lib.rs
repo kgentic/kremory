@@ -28,6 +28,12 @@
 //! # }
 //! ```
 
+// Per CLAUDE.md testing-policy.md: implementation code is strictly typed (no
+// unwrap/expect on Result), test code is exempt. This applies that policy
+// structurally at the crate root so inline `#[cfg(test)] mod tests` blocks
+// don't each need their own `#![allow(...)]` header.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod core;
 pub mod facade;
 pub mod memory;

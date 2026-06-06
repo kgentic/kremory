@@ -236,6 +236,15 @@ impl<L: ChatProvider + Send + Sync> ChatProvider for TokenTrackingChatProvider<L
 
         result
     }
+
+    /// TD-013 F2: delegate model() to the stored model string so the model
+    /// string reaches StructuredCallBuilder.capability_of() at the production
+    /// wrapper-chain boundary. Without this delegation, capability_of("")
+    /// returns PromptOnly and FormatSchema arm never fires for Ollama models.
+    /// See ADR adr-td-013-graph-quality-remediation-2026-06-03.
+    fn model(&self) -> &str {
+        &self.model
+    }
 }
 
 // ── Unit tests ─────────────────────────────────────────────────────────────────

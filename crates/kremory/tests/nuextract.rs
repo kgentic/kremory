@@ -14,6 +14,7 @@ use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
 fn block_on<F: std::future::Future>(f: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .unwrap()
         .block_on(f)

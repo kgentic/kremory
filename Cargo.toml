@@ -22,12 +22,13 @@ opt-level = 0
 debug = 1
 
 # Redirect all autoagents-llm 0.3.x deps (including transitive via
-# autoagents-llamacpp) to the kgentic fork branch that carries:
-#   - Anthropic output_config wire-up
-#   - ChatProvider::model() accessor (PR #237 upstream, pending merge)
+# autoagents-llamacpp) to upstream main, which now carries:
+#   - Anthropic output_config wire-up (PR #236, merged 2026-06-03)
+#   - ChatProvider::model() accessor (PR #237, merged 2026-06-04)
 #
-# Git source (not local path) so CI containers resolve without filesystem
-# dependency. Remove once upstream merges + releases a pinned version.
+# Git source (not crates.io) because upstream has not yet cut a release
+# containing these merges (crates.io max = 0.3.7, 2026-03-25). Remove once
+# upstream publishes a version > 0.3.7 that includes both PRs.
 # Blocks cargo publish.
 [patch.crates-io]
-autoagents-llm = { git = "https://github.com/kgentic/AutoAgents.git", branch = "feat/chat-provider-model-accessor" }
+autoagents-llm = { git = "https://github.com/liquidos-ai/AutoAgents.git", branch = "main" }

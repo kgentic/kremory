@@ -781,6 +781,8 @@ mod tests {
                 score: 0.5,
                 source_refs: vec![],
                 incomplete: false,
+                entity_type_id: 0,
+                entity_type_name: "Entity".to_string(),
                 namespace: None,
             }])
         }

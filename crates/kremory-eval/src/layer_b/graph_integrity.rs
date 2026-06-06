@@ -458,7 +458,7 @@ mod tests {
     async fn graph_with_entity_and_fact_passes_orphan_check() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("e1", "Person", serde_json::json!({}))
+            .insert_entity("e1", 0, serde_json::json!({}))
             .await
             .unwrap();
         graph
@@ -496,7 +496,7 @@ mod tests {
     async fn orphan_entity_fails_when_not_allowed() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("isolated", "Concept", serde_json::json!({}))
+            .insert_entity("isolated", 0, serde_json::json!({}))
             .await
             .unwrap();
         // No fact references "isolated", no episodic edge
@@ -518,7 +518,7 @@ mod tests {
     async fn orphan_entity_passes_when_allowed() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("isolated", "Concept", serde_json::json!({}))
+            .insert_entity("isolated", 0, serde_json::json!({}))
             .await
             .unwrap();
 
@@ -542,11 +542,11 @@ mod tests {
     async fn fts_count_mismatch_fails() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("e1", "Person", serde_json::json!({}))
+            .insert_entity("e1", 0, serde_json::json!({}))
             .await
             .unwrap();
         graph
-            .insert_entity("e2", "Org", serde_json::json!({}))
+            .insert_entity("e2", 0, serde_json::json!({}))
             .await
             .unwrap();
 
@@ -623,7 +623,7 @@ mod tests {
     async fn episode_edge_missing_fails() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("e1", "Person", serde_json::json!({}))
+            .insert_entity("e1", 0, serde_json::json!({}))
             .await
             .unwrap();
         // No episodic edge inserted for e1
@@ -642,7 +642,7 @@ mod tests {
     async fn integrity_report_failures_method() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("orphan", "Concept", serde_json::json!({}))
+            .insert_entity("orphan", 0, serde_json::json!({}))
             .await
             .unwrap();
         // orphan + no episodic edge = 2 failures

@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use crate::core::config::PipelineConfig;
 use crate::core::error::IngestStatus;
-use crate::core::ingest::{Engine, SourceParams};
+use crate::core::ingest::{Engine, PrePinnedFact, SourceParams};
 use crate::core::provider::{ArcChatProvider, ArcEmbedder};
 use crate::core::schema::TemporalGraph;
 use crate::memory::{
@@ -126,7 +126,7 @@ impl EngineGraphHandle {
         embedder: Arc<dyn crate::core::provider::DynEmbeddingProvider>,
         config: PipelineConfig,
     ) -> Self {
-        let engine = Engine::new(
+        let engine = Engine::with_nuextract(
             graph,
             Arc::new(ArcChatProvider::new(chat)),
             Arc::new(ArcEmbedder(embedder)),
@@ -149,7 +149,7 @@ impl GraphHandle for EngineGraphHandle {
         namespace: &Namespace,
         source_ref: &SourceRef,
         content: &str,
-        _structured_facts: &[StructuredFact],
+        structured_facts: &[StructuredFact],
         _provider: Arc<dyn ChatProvider>,
         batch_id: Option<String>,
         opts: SubmitOpts,
@@ -157,6 +157,29 @@ impl GraphHandle for EngineGraphHandle {
     ) -> Result<EpisodeCommit> {
         let group_id = namespace_to_group_id(namespace);
         let reference_time = Some(source_ref.occurred_at);
+
+        // ADR-035 §5 Option A: translate caller's StructuredFact (memory layer)
+        // into PrePinnedFact (core layer) so engine.ingest can pin them
+        // BEFORE Phase 2 LLM runs. Translation handles None valid_from by
+        // falling back to source_ref's published_at, then to occurred_at
+        // (caller can override via `published_at()` builder). Object goes
+        // to object_value (literal); object_id resolution is the engine's
+        // job during Phase 2 if applicable. Confidence defaults to 1.0
+        // (StructuredFact does not carry a confidence field).
+        let pre_pinned_facts: Vec<PrePinnedFact> = structured_facts
+            .iter()
+            .map(|sf| PrePinnedFact {
+                subject: sf.subject.clone(),
+                predicate: sf.predicate.clone(),
+                object_id: None,
+                object_value: Some(sf.object.clone()),
+                valid_from: sf
+                    .valid_from
+                    .or(source_ref.published_at)
+                    .unwrap_or(source_ref.occurred_at),
+                confidence: 1.0,
+            })
+            .collect();
 
         // Phase 1 + optional Phase 2 inline (enrich_per_episode = true, run_in_background = false)
         if opts.enrich_per_episode && opts.run_in_background {
@@ -192,12 +215,17 @@ impl GraphHandle for EngineGraphHandle {
                     });
             }
 
+            let pre_pinned_facts_owned = pre_pinned_facts.clone();
+            let skip_extraction_owned = !opts.enrich_per_episode;
             let task = tokio::task::spawn(async move {
                 ingest_runs.insert(run_id, IngestStatus::Extracting);
                 let sp = SourceParams {
                     source_id: Some(source_id_owned),
                     source_uri: source_uri_owned,
                     recorded_at: recorded_at_owned,
+                    entity_types_override: None,
+                    pre_pinned_facts: pre_pinned_facts_owned,
+                    skip_extraction: skip_extraction_owned,
                 };
                 match engine
                     .ingest(
@@ -263,6 +291,9 @@ impl GraphHandle for EngineGraphHandle {
                     source_id: Some(source_ref.id.clone()),
                     source_uri: None,
                     recorded_at: Some(source_ref.occurred_at),
+                    entity_types_override: None,
+                    pre_pinned_facts,
+                    skip_extraction: !opts.enrich_per_episode,
                 },
             )
             .await
@@ -486,6 +517,11 @@ impl GraphHandle for EngineGraphHandle {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
+            // entity.label is the type label resolved via SQL COALESCE(et.name, 'Entity')
+            // at query time. entity.entity_type_id is the raw integer id.
+            let entity_type_id = entity.entity_type_id;
+            let entity_type_name = entity.label.clone();
+
             results.push(RetrievedContext {
                 entity_id: entity.id,
                 entity_name,
@@ -493,6 +529,8 @@ impl GraphHandle for EngineGraphHandle {
                 score,
                 source_refs,
                 incomplete,
+                entity_type_id,
+                entity_type_name,
                 namespace: Some(namespace.clone()),
             });
         }
@@ -573,7 +611,7 @@ mod tests {
             Arc::new(ArcChatProvider::new(chat)),
             Arc::new(ArcEmbedder(embedder)),
             config,
-        );
+        ).expect("Engine::new should succeed in tests");
         EngineGraphHandle::new(engine)
     }
 

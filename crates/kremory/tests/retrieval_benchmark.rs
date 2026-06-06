@@ -27,6 +27,9 @@ mod common;
 #[derive(Debug, Deserialize)]
 struct GroundTruthEntity {
     name: String,
+    // label is deserialized from JSON fixtures but entity insertion now uses
+    // entity_type_id=0 (integer backbone). Retain for JSON compat.
+    #[allow(dead_code)]
     label: String,
 }
 
@@ -127,7 +130,7 @@ async fn test_fts_entity_recall_all_domains() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
         }
@@ -221,7 +224,7 @@ async fn test_vector_self_retrieval() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -315,7 +318,7 @@ async fn test_hybrid_search_finds_entities() {
     for entity in &domain.entities {
         let id = entity_id(&entity.name);
         graph
-            .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+            .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
             .await
             .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -393,17 +396,17 @@ async fn test_fts_fact_retrieval() {
 
     // Insert 3 entities
     graph
-        .insert_entity("alice", "Person", serde_json::json!({"name": "Alice"}))
+        .insert_entity("alice", 0, serde_json::json!({"name": "Alice"}))
         .await
         .expect("insert alice");
     graph
-        .insert_entity("acme", "Organisation", serde_json::json!({"name": "Acme"}))
+        .insert_entity("acme", 0, serde_json::json!({"name": "Acme"}))
         .await
         .expect("insert acme");
     graph
         .insert_entity(
             "project_x",
-            "Project",
+            0,
             serde_json::json!({"name": "Project X"}),
         )
         .await
@@ -519,17 +522,17 @@ async fn test_contextualize_one_hop_expansion() {
     let now = Utc::now();
 
     graph
-        .insert_entity("alice", "Person", serde_json::json!({"name": "Alice"}))
+        .insert_entity("alice", 0, serde_json::json!({"name": "Alice"}))
         .await
         .expect("insert alice");
     graph
-        .insert_entity("acme", "Organisation", serde_json::json!({"name": "Acme"}))
+        .insert_entity("acme", 0, serde_json::json!({"name": "Acme"}))
         .await
         .expect("insert acme");
     graph
         .insert_entity(
             "project_x",
-            "Project",
+            0,
             serde_json::json!({"name": "Project X"}),
         )
         .await
@@ -569,7 +572,7 @@ async fn test_contextualize_one_hop_expansion() {
         .expect("PipelineConfig build");
 
     let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
-        Engine::new(graph, llm, embedder, config);
+        Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
 
     let result: ContextResult = rql
         .contextualize("alice", None, None)
@@ -653,7 +656,7 @@ async fn test_fact_retrieval_benchmark() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
         }
@@ -894,7 +897,7 @@ async fn test_retrieval_benchmark_summary() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 

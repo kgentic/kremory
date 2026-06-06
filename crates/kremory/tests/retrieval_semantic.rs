@@ -28,6 +28,7 @@ mod semantic_tests {
     #[derive(Debug, Deserialize)]
     struct GroundTruthEntity {
         name: String,
+        #[allow(dead_code)]
         label: String,
     }
 
@@ -113,7 +114,7 @@ mod semantic_tests {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -201,7 +202,7 @@ mod semantic_tests {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -297,7 +298,7 @@ mod semantic_tests {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -426,9 +427,9 @@ mod semantic_tests {
             ("south_korea", "South Korea", "Location"),
         ];
 
-        for (id, name, label) in entities {
+        for (id, name, _label) in entities {
             graph
-                .insert_entity(id, label, serde_json::json!({"name": name}))
+                .insert_entity(id, 0, serde_json::json!({"name": name}))
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -476,7 +477,7 @@ mod semantic_tests {
             .build()
             .expect("PipelineConfig::build");
         let rql: Engine<MockChatProvider, OnnxEmbeddingProvider> =
-            Engine::new(graph, Arc::new(MockChatProvider::null()), embedder, config);
+            Engine::new(graph, Arc::new(MockChatProvider::null()), embedder, config).expect("Engine::new should succeed in tests");
 
         // contextualize() uses FTS — "Ria" in the label should match.
         let ctx: ContextResult = rql
@@ -558,7 +559,7 @@ mod semantic_tests {
             for entity in &domain.entities {
                 let id = entity_id(&entity.name);
                 graph
-                    .insert_entity(&id, &entity.label, serde_json::json!({"name": entity.name}))
+                    .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
                     .await
                     .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 

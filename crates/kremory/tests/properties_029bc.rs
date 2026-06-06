@@ -35,6 +35,7 @@ fn make_entity(id: &str, group_id: Option<&str>) -> Entity {
     Entity {
         id: id.to_owned(),
         label: id.to_owned(),
+        entity_type_id: 0,
         properties: serde_json::Value::Null,
         recorded_at: Utc::now(),
         updated_at: None,

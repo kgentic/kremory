@@ -229,6 +229,7 @@ mod spike {
                     allowed_edge_types: &[],
                     excluded_entity_types: &[],
                     content_type: ContentType::Text,
+                    registry_specs: &[],
                 };
                 match extractor.extract(chunk, &ctx).await {
                     Ok(result) => {
@@ -259,6 +260,7 @@ mod spike {
                     allowed_edge_types: &[],
                     excluded_entity_types: &[],
                     content_type: ContentType::Text,
+                    registry_specs: &[],
                 };
                 match extractor.extract(chunk, &ctx).await {
                     Ok(result) => {

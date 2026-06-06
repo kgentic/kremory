@@ -16,10 +16,12 @@
 //! The builder returns a `serde_json::Value`; callers deserialise into the
 //! appropriate wrapper struct.
 
-use metrics::counter;
+use metrics::{counter, histogram};
 use serde_json::Value;
 
 use crate::core::error::Error as ExtractionError;
+use crate::core::extraction::delimited_tuple;
+use crate::core::extraction::prompts;
 use crate::core::extraction::schemas::FallbackArm;
 use crate::core::provider::{
     capability_of, ChatMessage, ChatProvider, ProviderCaps, StructuredOutputFormat,
@@ -42,7 +44,7 @@ pub(crate) struct StructuredCallBuilder<'a, L: ChatProvider> {
     /// which require `'static` label values.  Empty string = unknown model
     /// = `PromptOnly` capability → `LlmJsonRepair` first arm.
     model: String,
-    schema: &'static Value,
+    schema: &'a Value,
     schema_name: &'static str,
     messages: Vec<ChatMessage>,
     max_retries: u8,
@@ -62,7 +64,7 @@ impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
     /// - `schema_name` — human-readable label for metrics + self-correction prompt.
     ///
     /// Call [`.model()`][Self::model] to enable provider-native schema enforcement.
-    pub(crate) fn new(llm: &'a L, schema: &'static Value, schema_name: &'static str) -> Self {
+    pub(crate) fn new(llm: &'a L, schema: &'a Value, schema_name: &'static str) -> Self {
         Self {
             llm,
             model: String::new(),
@@ -75,6 +77,10 @@ impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
             // arm even if HTTP succeeds-then-hangs. Override via .ttft_budget_ms.
             // Tests exercising async paths MUST use timer-enabled runtimes
             // (#[tokio::test(start_paused = true)] or multi_thread flavor).
+            //
+            // Call-sites that flow through Engine thread the budget from
+            // PipelineConfig::extraction_arm_budget_ms via ExtractionContext.
+            // Slow local LLMs (qwen2.5:14b ~80-130s) set 300_000 on the builder.
             ttft_budget_ms: Some(30_000),
             force_arm: None,
         }
@@ -168,6 +174,10 @@ impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
         let mut last_err_str = String::new();
         let arm_budget = self.ttft_budget_ms.map(std::time::Duration::from_millis);
 
+        // TD-019 Gap 4: cache env-var check once before the ladder loop so each
+        // arm attempt doesn't pay a syscall-ish env::var read (Vera Finding 3).
+        let debug_enabled = std::env::var("KREMORY_DEBUG").is_ok();
+
         for (arm_idx, &arm) in ladder.iter().enumerate() {
             counter!(
                 "rql.extraction.structured_call_attempt",
@@ -179,10 +189,18 @@ impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
 
             // Wall-clock cap per arm. Prevents one stalled arm from burning
             // the entire fallback ladder (default 30s; configurable via builder).
+            //
+            // TD-019 Gap 5: per-call timing — distinguishes "1 entity per call
+            // × 3 chunks" from "10 entities in 1 chunk". Wraps the arm invocation
+            // (incl. timeout cap so timed-out arms still record their cost).
+            let call_start = std::time::Instant::now();
             let result = match arm_budget {
                 Some(d) => {
-                    match tokio::time::timeout(d, try_arm(llm, arm, schema, schema_name, &messages))
-                        .await
+                    match tokio::time::timeout(
+                        d,
+                        try_arm(llm, arm, schema, schema_name, &messages, debug_enabled),
+                    )
+                    .await
                     {
                         Ok(r) => r,
                         Err(_) => {
@@ -202,8 +220,15 @@ impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
                         }
                     }
                 }
-                None => try_arm(llm, arm, schema, schema_name, &messages).await,
+                None => try_arm(llm, arm, schema, schema_name, &messages, debug_enabled).await,
             };
+            histogram!(
+                "rql.extraction.call_ms",
+                "schema" => schema_name,
+                "arm" => arm_name(arm),
+                "model" => model_str.clone(),
+            )
+            .record(call_start.elapsed().as_secs_f64() * 1000.0);
 
             match result {
                 Ok(value) => {
@@ -255,8 +280,15 @@ impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
                                 let correction_msg = build_correction_message(&detail);
                                 messages.push(correction_msg);
 
-                                let retry_result =
-                                    try_arm(llm, arm, schema, schema_name, &messages).await;
+                                let retry_result = try_arm(
+                                    llm,
+                                    arm,
+                                    schema,
+                                    schema_name,
+                                    &messages,
+                                    debug_enabled,
+                                )
+                                .await;
 
                                 if let Ok(retry_value) = retry_result {
                                     if validate_against_schema(&retry_value, schema).is_ok() {
@@ -318,35 +350,57 @@ impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
 
 /// Build the fallback ladder for a given provider capability.
 ///
-/// Per spec §6.2 K3:
-/// - Anthropic/OpenAI NativeStructuredOutput: Native → LlmJsonRepair → PromptOnly
-/// - Ollama FormatSchema: FormatSchema → LlmJsonRepair → PromptOnly
-/// - Unknown PromptOnly: LlmJsonRepair → PromptOnly
+/// Per spec §6.2 K3 + TD-013 Phase 4 (L6 DelimitedTuple):
+/// - Anthropic/OpenAI NativeStructuredOutput: Native → LlmJsonRepair → DelimitedTuple → PromptOnly
+/// - Ollama FormatSchema: FormatSchema → LlmJsonRepair → DelimitedTuple → PromptOnly
+/// - Unknown PromptOnly: LlmJsonRepair → DelimitedTuple → PromptOnly
+///
+/// DelimitedTuple sits after LlmJsonRepair (JSON repair already tried) and before
+/// PromptOnly (last resort). When LlmJsonRepair fails to produce parseable JSON,
+/// the LightRAG-style pipe-delimited format is attempted before giving up.
 fn build_ladder(caps: ProviderCaps) -> Vec<FallbackArm> {
     match caps {
         ProviderCaps::NativeStructuredOutput => vec![
             FallbackArm::NativeSchema,
             FallbackArm::LlmJsonRepair,
+            FallbackArm::DelimitedTuple,
             FallbackArm::PromptOnly,
         ],
         ProviderCaps::FormatSchema => vec![
             FallbackArm::FormatSchema,
             FallbackArm::LlmJsonRepair,
+            FallbackArm::DelimitedTuple,
             FallbackArm::PromptOnly,
         ],
-        ProviderCaps::PromptOnly => vec![FallbackArm::LlmJsonRepair, FallbackArm::PromptOnly],
+        ProviderCaps::PromptOnly => vec![
+            FallbackArm::LlmJsonRepair,
+            FallbackArm::DelimitedTuple,
+            FallbackArm::PromptOnly,
+        ],
     }
 }
 
 // ─── Arm execution ───────────────────────────────────────────────────────────
 
+// `try_arm` is a substrate dispatch fn with 6 semantically-distinct args
+// (provider, arm selector, schema, schema_name, messages, debug flag).
+// Grouping into a context struct would require an opaque builder layer
+// solely to satisfy clippy — same precedent as `Engine::ingest_with` /
+// `Engine::ingest_deferred`. Documented exemption, not a band-aid.
+#[allow(clippy::too_many_arguments)]
 async fn try_arm<L: ChatProvider>(
     llm: &L,
     arm: FallbackArm,
-    schema: &'static Value,
+    schema: &Value,
     schema_name: &'static str,
     messages: &[ChatMessage],
+    debug_enabled: bool,
 ) -> Result<Value, ExtractionError> {
+    // DelimitedTuple has its own prompt injection + parser path — handle separately.
+    if arm == FallbackArm::DelimitedTuple {
+        return try_delimited_tuple_arm(llm, messages).await;
+    }
+
     let text = match arm {
         FallbackArm::NativeSchema | FallbackArm::FormatSchema => {
             // Pass schema to the provider via StructuredOutputFormat.
@@ -370,10 +424,61 @@ async fn try_arm<L: ChatProvider>(
                 .map_err(|e| ExtractionError::Llm(e.to_string()))?;
             response.text().unwrap_or_default()
         }
+        // Handled above — unreachable, but exhaustiveness requires the arm.
+        FallbackArm::DelimitedTuple => unreachable!("DelimitedTuple handled above"),
     };
+
+    // TD-019 Gap 4: capture raw arm response (KREMORY_DEBUG-gated). Lets a
+    // debug session see what FormatSchema actually emitted that triggered a
+    // fallback, instead of inferring from "success-then-fail" counters.
+    if debug_enabled {
+        tracing::debug!(
+            target: "kremory.extraction.arm_response",
+            arm = arm_name(arm),
+            schema = schema_name,
+            response_len = text.len(),
+            raw = %text,
+            "raw arm response captured"
+        );
+    }
 
     // Parse the response text to a JSON Value.
     parse_response_to_value(&text, arm)
+}
+
+/// Attempt the L6 DelimitedTuple arm.
+///
+/// Appends the pipe-delimited format instruction to the message list and
+/// sends the request without provider-side schema enforcement (same as
+/// `LlmJsonRepair`/`PromptOnly` arms — raw text response).
+///
+/// The raw text is then parsed by the delimited-tuple parser, which converts
+/// valid lines into a `{"entities": [...]}` JSON object.  Per-line errors are
+/// silently counted via metric `rql.extraction.delimited_tuple_skip_row` and
+/// do not fail the arm.
+async fn try_delimited_tuple_arm<L: ChatProvider>(
+    llm: &L,
+    messages: &[ChatMessage],
+) -> Result<Value, ExtractionError> {
+    use crate::core::provider::{ChatRole, MessageType};
+
+    // Append the pipe-delimited format instruction as a follow-up user message.
+    // This avoids mutating the original message vec (caller owns it).
+    let format_instruction = prompts::render_delimited_tuple_prompt();
+    let mut msgs_with_instruction = messages.to_vec();
+    msgs_with_instruction.push(ChatMessage {
+        role: ChatRole::User,
+        message_type: MessageType::Text,
+        content: format_instruction,
+    });
+
+    let response = llm
+        .chat_with_tools(&msgs_with_instruction, None, None)
+        .await
+        .map_err(|e| ExtractionError::Llm(e.to_string()))?;
+
+    let text = response.text().unwrap_or_default();
+    Ok(delimited_tuple::parse_delimited_tuple_response(&text))
 }
 
 /// Parse a raw LLM response string into a `serde_json::Value`.
@@ -537,6 +642,7 @@ fn arm_name(arm: FallbackArm) -> &'static str {
         FallbackArm::NativeSchema => "native_schema",
         FallbackArm::FormatSchema => "format_schema",
         FallbackArm::LlmJsonRepair => "llm_json_repair",
+        FallbackArm::DelimitedTuple => "delimited_tuple",
         FallbackArm::PromptOnly => "prompt_only",
     }
 }
@@ -656,7 +762,8 @@ mod tests {
         let ladder = build_ladder(ProviderCaps::NativeStructuredOutput);
         assert_eq!(ladder[0], FallbackArm::NativeSchema);
         assert_eq!(ladder[1], FallbackArm::LlmJsonRepair);
-        assert_eq!(ladder[2], FallbackArm::PromptOnly);
+        assert_eq!(ladder[2], FallbackArm::DelimitedTuple);
+        assert_eq!(ladder[3], FallbackArm::PromptOnly);
     }
 
     #[test]
@@ -664,14 +771,60 @@ mod tests {
         let ladder = build_ladder(ProviderCaps::FormatSchema);
         assert_eq!(ladder[0], FallbackArm::FormatSchema);
         assert_eq!(ladder[1], FallbackArm::LlmJsonRepair);
-        assert_eq!(ladder[2], FallbackArm::PromptOnly);
+        assert_eq!(ladder[2], FallbackArm::DelimitedTuple);
+        assert_eq!(ladder[3], FallbackArm::PromptOnly);
     }
 
     #[test]
     fn prompt_only_caps_ladder_starts_with_llm_json_repair() {
         let ladder = build_ladder(ProviderCaps::PromptOnly);
         assert_eq!(ladder[0], FallbackArm::LlmJsonRepair);
-        assert_eq!(ladder[1], FallbackArm::PromptOnly);
+        assert_eq!(ladder[1], FallbackArm::DelimitedTuple);
+        assert_eq!(ladder[2], FallbackArm::PromptOnly);
+    }
+
+    #[test]
+    fn delimited_tuple_sits_between_llm_json_repair_and_prompt_only_native() {
+        let ladder = build_ladder(ProviderCaps::NativeStructuredOutput);
+        let dt_pos = ladder
+            .iter()
+            .position(|&a| a == FallbackArm::DelimitedTuple)
+            .expect("DelimitedTuple must be in the native ladder");
+        let repair_pos = ladder
+            .iter()
+            .position(|&a| a == FallbackArm::LlmJsonRepair)
+            .expect("LlmJsonRepair must be in the native ladder");
+        let prompt_pos = ladder
+            .iter()
+            .position(|&a| a == FallbackArm::PromptOnly)
+            .expect("PromptOnly must be in the native ladder");
+        assert!(
+            repair_pos < dt_pos,
+            "DelimitedTuple must come after LlmJsonRepair"
+        );
+        assert!(
+            dt_pos < prompt_pos,
+            "DelimitedTuple must come before PromptOnly"
+        );
+    }
+
+    #[test]
+    fn delimited_tuple_sits_between_llm_json_repair_and_prompt_only_prompt_only_caps() {
+        let ladder = build_ladder(ProviderCaps::PromptOnly);
+        let dt_pos = ladder
+            .iter()
+            .position(|&a| a == FallbackArm::DelimitedTuple)
+            .expect("DelimitedTuple must be in the PromptOnly ladder");
+        let repair_pos = ladder
+            .iter()
+            .position(|&a| a == FallbackArm::LlmJsonRepair)
+            .expect("LlmJsonRepair must be in the PromptOnly ladder");
+        let prompt_pos = ladder
+            .iter()
+            .position(|&a| a == FallbackArm::PromptOnly)
+            .expect("PromptOnly must be in the PromptOnly ladder");
+        assert!(repair_pos < dt_pos, "must come after LlmJsonRepair");
+        assert!(dt_pos < prompt_pos, "must come before PromptOnly");
     }
 
     // ── force_arm bypass ──────────────────────────────────────────────────────
