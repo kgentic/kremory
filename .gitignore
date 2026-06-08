@@ -49,3 +49,7 @@ crates/*/fixtures/output/
 librust_out.rlib
 repomix-output.xml
 repomix-eval-output.xml
+repomix-*.xml
+
+# Local Claude agent worktrees (created by Agent tool with isolation: "worktree")
+.claude/worktrees/
