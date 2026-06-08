@@ -29,7 +29,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::LazyLock;
 
-use super::{
+use super::models::{
     EntityListIntegerWrapper, HybridTypingWrapper, RawEntitySimple, RawFact, RawRelationship,
 };
 
@@ -118,7 +118,7 @@ pub(crate) struct ReclassifyWrapper {
 
 // NuExtractOutput is defined and pub(crate) in mod.rs — imported directly by
 // the SCHEMA_NUEXTRACT_BOTH static below.
-use super::NuExtractOutput;
+use super::models::NuExtractOutput;
 
 // ─── FallbackArm enum (§3.3) ─────────────────────────────────────────────────
 

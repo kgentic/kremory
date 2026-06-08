@@ -261,11 +261,12 @@ fn parse_typed_response(
     // the fallback ladder can retry. If the response is too garbled to parse,
     // we fall through with an empty typing map and every candidate keeps its
     // GLiNER label (recorded via the candidate_unmatched_by_llm counter).
-    let wrapper: super::HybridTypingWrapper = match serde_json::from_value(response.clone()) {
+    let wrapper: super::models::HybridTypingWrapper = match serde_json::from_value(response.clone())
+    {
         Ok(w) => w,
         Err(_) => {
             metrics::counter!("rql.hybrid.response_parse_fail").increment(1);
-            super::HybridTypingWrapper::default()
+            super::models::HybridTypingWrapper::default()
         }
     };
 
