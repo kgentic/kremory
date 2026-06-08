@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use metrics::counter;
 
-use super::NuExtractExtractor;
+use super::nuextract::NuExtractExtractor;
 #[cfg(feature = "ner")]
 use crate::core::error::Error;
 use crate::core::error::Result;
