@@ -39,7 +39,7 @@ No model bundled. No server process. No API key required to ship.
 ## Why kremory
 
 - **Embeddable, not a service.** One `cargo add`. No subprocess. No container. No API key required to ship. The SQLite of agent memory.
-- **BYOM — Bring Your Own Model.** kremory never bundles a 440MB embedding model. Wire your own `Arc<dyn EmbeddingProvider>` and `Arc<dyn ChatProvider>` — OpenAI, Anthropic, Ollama, local GGUF, anything. Your costs, your keys, your data.
+- **BYOM — Bring Your Own Model.** kremory never bundles an LLM or embedding model. Wire your own `Arc<dyn EmbeddingProvider>` and `Arc<dyn ChatProvider>` — OpenAI, Anthropic, Ollama, local GGUF, anything. Your costs, your keys, your data. _Caveat: enabling the optional `ner` cargo feature + routing through `KREMORY_EXTRACTOR=hybrid` auto-downloads `onnx-community/gliner_large-v2.1` (~650 MB, INT8, HF Hub-cached) on first use. Default builds use the pure-LLM `NuExtract` path — no download. See [crate README](crates/kremory/README.md#what-about-gliner-when-you-opt-into-ner)._
 - **Two-clock temporal model.** Every fact carries `recorded_at` (when the system learned it — immutable) and `valid_from`/`valid_to` (when it was true in the world — mutable). Audit-grade history with no data loss.
 - **First-class observability.** Token counters, cumulative USD cost gauges, duration histograms, OpenTelemetry GenAI SemConv spans — emitted automatically when you wire BYOM providers via Tier 1 shortcuts or `with_llm_tracked` builder. Optional OTLP exporter behind the `otel` cargo feature.
 

@@ -106,6 +106,33 @@ Wire any provider — OpenAI, Ollama, local GGUF, sentence-transformers via HTTP
 
 Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays under 1MB published. See [ADR-002](../../.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
 
+### What about GLiNER? (when you opt into NER)
+
+kremory ships **no LLM or embedding weights**. The one exception is GLiNER: if you enable the `ner` cargo feature **and** route extraction through the TD-023 hybrid path (`KREMORY_EXTRACTOR=hybrid`), kremory auto-downloads the `onnx-community/gliner_large-v2.1` INT8 model (~650 MB) from HuggingFace Hub on first use. The model is cached locally by `hf-hub` thereafter — subsequent runs are offline.
+
+- **Default build** (no `ner` feature): no download, no GLiNER. The `NuExtract` (pure-LLM) extractor handles entity extraction via your BYOM LLM.
+- **`--features ner` + `KREMORY_EXTRACTOR=hybrid`**: GLiNER downloads on first use. Empirically the highest-precision extractor (TD-023: 100% mock_interview / 93.8% legal_deposition).
+- **No env opt-out yet**: if you enable `ner` and call the hybrid path, the download fires. A `KREMORY_GLINER_OFFLINE=1` opt-out is a tracked follow-up.
+
+Threshold tunable via `KREMORY_GLINER_THRESHOLD` (default `0.5`). Lower → higher recall, more noise candidates.
+
+### Recommended model defaults
+
+The `with_ollama` Tier-1 convenience constructor uses **`qwen3.5:9b-mlx`** as the default chat model (MLX backend on Apple Silicon for 1.83× speedup over GGUF). Override via `with_ollama_at_model(url, Some("model-name"), path)` when the default isn't pulled or MLX is unavailable.
+
+For extraction precision specifically, empirically tested models (post-TD-013 parser fixes, 2026-06-04 — see `tests/llm_integration.rs:7-30` for the full ladder):
+
+| Model | Precision | Wall-clock | Use case |
+|---|---|---|---|
+| `gemma4:e4b` | 90% | ~378s | Deferred / batch quality |
+| `gemma4-e2b:latest` | 80% | ~37s | Interactive / fast UX |
+| `qwen2.5:14b` | retest | ~268s | Legacy fallback |
+| `gemma4:26b` | 90% but emits junk | ~1728s | **NOT recommended** (shape-validator can't reject all garbage) |
+
+**Note on tag form**: `gemma4-e2b:latest` requires the explicit `:latest` tag — bare `gemma4-e2b` routes through the PromptOnly arm instead of FormatSchema and returns empty results. Capability classifier footgun tracked as a v0.1.x follow-up.
+
+For embedding, `nomic-embed-text` (Ollama, 768-dim) is the kremory-tested default.
+
 ---
 
 ## Two-Clock Temporal Model
