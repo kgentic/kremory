@@ -180,7 +180,10 @@ entity<|#|>Stanford<|#|>2<|#|>Description of Stanford.\n\
     fn parse_empty_input_returns_zero_entities() {
         let result = parse_delimited_tuple_response("");
         let entities = result["entities"].as_array().unwrap();
-        assert!(entities.is_empty(), "empty input must produce empty entities");
+        assert!(
+            entities.is_empty(),
+            "empty input must produce empty entities"
+        );
     }
 
     #[test]
@@ -192,7 +195,11 @@ entity<|#|>Acme<|#|>2<|#|>A technology company.";
 
         let result = parse_delimited_tuple_response(input);
         let entities = result["entities"].as_array().unwrap();
-        assert_eq!(entities.len(), 2, "sentinel is optional; both lines must parse");
+        assert_eq!(
+            entities.len(),
+            2,
+            "sentinel is optional; both lines must parse"
+        );
         assert_eq!(entities[0]["name"], "Alice");
         assert_eq!(entities[1]["name"], "Acme");
     }
@@ -200,8 +207,7 @@ entity<|#|>Acme<|#|>2<|#|>A technology company.";
     #[test]
     fn parse_with_field_overflow_five_fields_skips_line() {
         // Line has 5 fields — splitn(5, ..) produces 5 parts → reject.
-        let input =
-            "entity<|#|>Alice<|#|>1<|#|>Description<|#|>ExtraField\n\
+        let input = "entity<|#|>Alice<|#|>1<|#|>Description<|#|>ExtraField\n\
              entity<|#|>Acme<|#|>2<|#|>Good line.\n\
              <|COMPLETE|>";
 
@@ -249,7 +255,10 @@ entity<|#|>Acme<|#|>2<|#|>Valid type id.\n\
     fn parse_only_sentinel_returns_zero_entities() {
         let result = parse_delimited_tuple_response("<|COMPLETE|>");
         let entities = result["entities"].as_array().unwrap();
-        assert!(entities.is_empty(), "sentinel-only input must produce empty entities");
+        assert!(
+            entities.is_empty(),
+            "sentinel-only input must produce empty entities"
+        );
     }
 
     #[test]
@@ -310,10 +319,12 @@ entity<|#|>Bob<|#|>1<|#|>After sentinel — must be ignored.";
 
     #[test]
     fn field_sep_and_sentinel_are_correct_literals() {
-        assert_eq!(FIELD_SEP, "<|#|>", "FIELD_SEP must be the LightRAG separator");
         assert_eq!(
-            SENTINEL,
-            "<|COMPLETE|>",
+            FIELD_SEP, "<|#|>",
+            "FIELD_SEP must be the LightRAG separator"
+        );
+        assert_eq!(
+            SENTINEL, "<|COMPLETE|>",
             "SENTINEL must be the LightRAG end-of-output marker"
         );
     }

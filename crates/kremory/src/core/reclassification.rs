@@ -216,14 +216,9 @@ pub async fn run_dream_phase_passes<L: ChatProvider>(
     let mut entities_reclassified = 0usize;
     for entity in &entities {
         if entity.entity_type_id == 0 {
-            let outcome = reclassify_entity_type_in_dream_phase(
-                graph,
-                llm,
-                entity,
-                &episodes,
-                registry,
-            )
-            .await?;
+            let outcome =
+                reclassify_entity_type_in_dream_phase(graph, llm, entity, &episodes, registry)
+                    .await?;
             if outcome.is_some() {
                 entities_reclassified += 1;
             }
@@ -377,11 +372,7 @@ mod tests {
                 .await
                 .expect("reclassify");
 
-        assert_eq!(
-            result,
-            Some(1),
-            "valid LLM id=1 must return Some(1)"
-        );
+        assert_eq!(result, Some(1), "valid LLM id=1 must return Some(1)");
 
         // Verify DB was updated.
         let updated = graph

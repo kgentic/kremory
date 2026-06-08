@@ -1019,35 +1019,42 @@ impl TemporalGraph {
         // None → 'default' so callers using None-as-unscoped retain their semantics.
         let effective_group_id = group_id.unwrap_or("default");
         let guard = self.begin_immediate_if_needed().await?;
-        let inner: Result<()> =
-            async {
-                self.conn
-                    .execute(
-                        "INSERT INTO entities (id, entity_type_id, properties, recorded_at, group_id)
+        let inner: Result<()> = async {
+            self.conn
+                .execute(
+                    "INSERT INTO entities (id, entity_type_id, properties, recorded_at, group_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(id, group_id) DO UPDATE SET
                    entity_type_id = excluded.entity_type_id,
                    properties = excluded.properties,
                    recorded_at = excluded.recorded_at",
-                        libsql::params![id, entity_type_id as i64, props_str.clone(), now, effective_group_id],
-                    )
-                    .await?;
-                // FTS shadow upsert via DELETE+INSERT (FTS5 idiomatic pattern).
-                // label column in entities_fts is no longer populated (entities.label
-                // was dropped in Migration 009); insert empty string for that column.
-                self.conn
-                    .execute(
-                        "DELETE FROM entities_fts WHERE entity_id = ?1",
-                        libsql::params![id],
-                    )
-                    .await?;
-                self.conn.execute(
-                "INSERT INTO entities_fts(entity_id, label, properties) VALUES (?1, '', ?2)",
-                libsql::params![id, props_str],
-            ).await?;
-                Ok(())
-            }
-            .await;
+                    libsql::params![
+                        id,
+                        entity_type_id as i64,
+                        props_str.clone(),
+                        now,
+                        effective_group_id
+                    ],
+                )
+                .await?;
+            // FTS shadow upsert via DELETE+INSERT (FTS5 idiomatic pattern).
+            // label column in entities_fts is no longer populated (entities.label
+            // was dropped in Migration 009); insert empty string for that column.
+            self.conn
+                .execute(
+                    "DELETE FROM entities_fts WHERE entity_id = ?1",
+                    libsql::params![id],
+                )
+                .await?;
+            self.conn
+                .execute(
+                    "INSERT INTO entities_fts(entity_id, label, properties) VALUES (?1, '', ?2)",
+                    libsql::params![id, props_str],
+                )
+                .await?;
+            Ok(())
+        }
+        .await;
         match inner {
             Ok(()) => {
                 guard.commit().await?;
@@ -2671,11 +2678,7 @@ mod tests {
             .expect("DROP TABLE entities_fts must succeed on fresh in-memory DB");
 
         let result = g
-            .insert_entity(
-                "test-atomic-1",
-                0,
-                serde_json::json!({"text": "hello"}),
-            )
+            .insert_entity("test-atomic-1", 0, serde_json::json!({"text": "hello"}))
             .await;
         assert!(
             result.is_err(),
@@ -3026,9 +3029,7 @@ mod tests {
         // Insert 250 entities.
         let ids: Vec<String> = (0..250).map(|i| format!("ent-{i:04}")).collect();
         for id in &ids {
-            g.insert_entity(id, 0, serde_json::json!({}))
-                .await
-                .unwrap();
+            g.insert_entity(id, 0, serde_json::json!({})).await.unwrap();
         }
 
         // Verify setup.
@@ -3059,14 +3060,9 @@ mod tests {
         let g = TemporalGraph::open(&db).await.expect("open");
 
         // First call inserts (entity_type_id=0 = catch-all).
-        g.upsert_entity_with_group(
-            "alice",
-            0,
-            serde_json::json!({"context": "v1"}),
-            None,
-        )
-        .await
-        .expect("first upsert");
+        g.upsert_entity_with_group("alice", 0, serde_json::json!({"context": "v1"}), None)
+            .await
+            .expect("first upsert");
 
         // After Phase 2 (Migration 009), entities.label is gone.
         // Verify via entity_type_id + properties columns.
@@ -3086,14 +3082,9 @@ mod tests {
 
         // Second call updates in place — same id, no duplicate row.
         // entity_type_id changes from 0 to 1 to verify ON CONFLICT updates it.
-        g.upsert_entity_with_group(
-            "alice",
-            1,
-            serde_json::json!({"context": "v2"}),
-            None,
-        )
-        .await
-        .expect("second upsert");
+        g.upsert_entity_with_group("alice", 1, serde_json::json!({"context": "v2"}), None)
+            .await
+            .expect("second upsert");
 
         let mut count_rows = g
             .conn
@@ -3118,7 +3109,10 @@ mod tests {
         let r2 = rows2.next().await.expect("row").expect("some");
         let etype2: i64 = r2.get(0).expect("entity_type_id");
         let props2: String = r2.get(1).expect("props");
-        assert_eq!(etype2, 1, "entity_type_id must be updated by ON CONFLICT path");
+        assert_eq!(
+            etype2, 1,
+            "entity_type_id must be updated by ON CONFLICT path"
+        );
         assert!(props2.contains("v2"), "properties must be updated");
 
         // FTS shadow row consistency — exactly 1 fts row after upsert (DELETE+INSERT).

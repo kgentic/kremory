@@ -176,12 +176,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ) -> Result<Self> {
         let m = llm.model().trim().to_string();
         let model = if m.is_empty() { None } else { Some(m) };
-        let extractor = Arc::new(
-            crate::core::extraction::ProductionExtractor::from_source(
-                extractor_source,
-                Arc::clone(&llm),
-            )?,
-        );
+        let extractor = Arc::new(crate::core::extraction::ProductionExtractor::from_source(
+            extractor_source,
+            Arc::clone(&llm),
+        )?);
         Ok(Self {
             graph,
             llm,
@@ -551,11 +549,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         //     present for `effective_gid` before any registry-dependent work
         //     (L2 prompt, L3 validation). Idempotent: no-ops once seeded.
         //     This catches namespaces created AFTER Migration 010 ran at boot.
-        crate::core::entity_types::ensure_default_types_seeded(
-            &self.graph.conn,
-            effective_gid,
-        )
-        .await?;
+        crate::core::entity_types::ensure_default_types_seeded(&self.graph.conn, effective_gid)
+            .await?;
 
         let registry = if let Some(ref override_specs) = source_params.entity_types_override {
             let db_registry =
@@ -601,10 +596,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                                 ],
                             )
                             .await
-                            .map_err(|e| crate::core::error::Error::Other(anyhow::anyhow!(
-                                "additive override persist failed for spec '{}': {e}",
-                                spec.name
-                            )))?;
+                            .map_err(|e| {
+                                crate::core::error::Error::Other(anyhow::anyhow!(
+                                    "additive override persist failed for spec '{}': {e}",
+                                    spec.name
+                                ))
+                            })?;
                         newly_persisted += 1;
                     }
                 }
@@ -903,24 +900,25 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // If registration itself fails (DB error), fall back to id=0
                         // and emit a swallow counter (Vera Finding 1) — the stub
                         // promotion is best-effort and must not abort the transaction.
-                        let entity_type_id = match crate::core::entity_types::label_to_id_or_register(
-                            &self.graph.conn,
-                            group_id.unwrap_or("default"),
-                            &registry,
-                            &label,
-                        )
-                        .await
-                        {
-                            Ok(id) => id,
-                            Err(_) => {
-                                metrics::counter!(
-                                    "rql.entity_types.registration_swallowed_total",
-                                    "site" => "stub_promotion",
-                                )
-                                .increment(1);
-                                0
-                            }
-                        };
+                        let entity_type_id =
+                            match crate::core::entity_types::label_to_id_or_register(
+                                &self.graph.conn,
+                                group_id.unwrap_or("default"),
+                                &registry,
+                                &label,
+                            )
+                            .await
+                            {
+                                Ok(id) => id,
+                                Err(_) => {
+                                    metrics::counter!(
+                                        "rql.entity_types.registration_swallowed_total",
+                                        "site" => "stub_promotion",
+                                    )
+                                    .increment(1);
+                                    0
+                                }
+                            };
                         // `.ok()` — promotion is best-effort; failure to promote
                         // leaves the stub row but does not abort the transaction.
                         self.graph
@@ -1496,8 +1494,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
 
         histogram!("rql.ingest.deferred_fact_count").record(inserted_count as f64);
-        histogram!("rql.ingest.phase2_ms")
-            .record(phase2_start.elapsed().as_secs_f64() * 1000.0);
+        histogram!("rql.ingest.phase2_ms").record(phase2_start.elapsed().as_secs_f64() * 1000.0);
         tracing::info!(inserted_count, "kremory.ingest.deferred_facts inserted");
         Ok(inserted_count)
     }
@@ -1836,7 +1833,8 @@ mod tests {
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
         let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
-            Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
+            Engine::new(Arc::clone(&graph), llm, embedder, config)
+                .expect("Engine::new should succeed in tests");
 
         // Extractor provides "Alice" (canonical label). Proper noun scanner will
         // detect "Zenith Dynamics" but assign label="Entity" (placeholder).
@@ -1910,7 +1908,8 @@ mod tests {
         let config = PipelineConfig::builder().build().expect("config");
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine =
+            Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
 
         // Two entities with identical names — normalize to the same id.
         let extractor = FixedExtractor {
@@ -1989,7 +1988,8 @@ mod tests {
         let config = PipelineConfig::builder().build().expect("config");
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
 
         // Alice in entity list; Bob only referenced in facts (forward reference).
         let extractor = FixedExtractorWithFacts {
@@ -2063,7 +2063,8 @@ mod tests {
         let config = PipelineConfig::builder().build().expect("config");
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
 
         // Ingest 1: Alice + forward-ref Bob → Bob becomes stub.
         let extractor_1 = FixedExtractorWithFacts {
@@ -2168,7 +2169,8 @@ mod tests {
 
         let before_count = graph.list_entities().await.expect("list").len();
 
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
 
         // Use a canonical label ("Person") so the TD-012 guard does not filter
         // these out before the dedup logic runs.  The test invariant is dedup,
@@ -2263,7 +2265,8 @@ mod tests {
             model_str: "qwen2.5:14b",
         });
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine =
+            Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
 
         // AC8: model field must hold Some("qwen2.5:14b") — the value returned by llm.model().
         assert_eq!(
@@ -2288,7 +2291,8 @@ mod tests {
         let config = PipelineConfig::builder().build().unwrap();
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine =
+            Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
 
         // AC8: empty model string must map to None, not Some("").
         assert_eq!(
@@ -2340,7 +2344,8 @@ mod tests {
             Arc::new(NamedMock),
             Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
             config,
-        ).expect("Engine::new should succeed in tests");
+        )
+        .expect("Engine::new should succeed in tests");
 
         assert_eq!(
             engine.model.as_deref(),
@@ -2374,7 +2379,8 @@ mod tests {
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
 
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
 
         let extractor = FixedExtractor {
             entities: vec![
@@ -2464,10 +2470,7 @@ mod tests {
 
         let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
         let config = PipelineConfig::builder()
-            .allowed_entity_types(vec![
-                "Person".to_string(),
-                "Organisation".to_string(),
-            ])
+            .allowed_entity_types(vec!["Person".to_string(), "Organisation".to_string()])
             .build()
             .expect("config");
 
@@ -2480,14 +2483,26 @@ mod tests {
             "[]",
         ));
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
-        let extractor =
-            Arc::clone(&engine.extractor);
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
+        let extractor = Arc::clone(&engine.extractor);
 
         let override_specs = vec![
-            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "Catch-all.".to_string() },
-            EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A human individual.".to_string() },
-            EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "A company or institution.".to_string() },
+            EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "Catch-all.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A human individual.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "A company or institution.".to_string(),
+            },
         ];
 
         // ── First call: override present, DB empty for "fresh" group ─────────────
@@ -2599,14 +2614,22 @@ mod tests {
         );
         let llm = Arc::new(MockChatProvider::new(mock_map));
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
-        let extractor =
-            Arc::clone(&engine.extractor);
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
+        let extractor = Arc::clone(&engine.extractor);
 
         // Override with a type list that includes CustomType(5) — not in the DB.
         let override_specs = vec![
-            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            EntityTypeSpec { id: 5, name: "CustomType".to_string(), description: "A custom type.".to_string() },
+            EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            EntityTypeSpec {
+                id: 5,
+                name: "CustomType".to_string(),
+                description: "A custom type.".to_string(),
+            },
         ];
 
         let _ = engine
@@ -2699,9 +2722,9 @@ mod tests {
             "[]",
         ));
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
-        let extractor =
-            Arc::clone(&engine.extractor);
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
+        let extractor = Arc::clone(&engine.extractor);
 
         let result = engine
             .ingest_with(
@@ -2764,7 +2787,8 @@ mod tests {
         let llm = Arc::new(MockChatProvider::null());
         let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
 
-        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config).expect("Engine::new should succeed in tests");
+        let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
+            .expect("Engine::new should succeed in tests");
 
         // Inject an entity whose label matches the runtime config but NOT the
         // compile-time allowlist. Without the M5 fix this is silently rejected.

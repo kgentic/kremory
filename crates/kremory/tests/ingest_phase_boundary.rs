@@ -69,6 +69,7 @@ async fn phase_1_remember_alone_yields_episode_with_empty_metadata() {
         .remember("Phase 1 content only — no metadata supplied.")
         .from_source(slug, SourceKind::Document)
         .in_namespace(ns.clone())
+        .skip_extraction() // ner feature: test is not about extraction
         .await
         .expect("Phase 1 remember must succeed");
 
@@ -110,6 +111,7 @@ async fn phase_2_metadata_update_persists_after_phase_1() {
     mem.remember("Phase 1 then Phase 2 sequenced.")
         .from_source(slug, SourceKind::Document)
         .in_namespace(ns.clone())
+        .skip_extraction() // ner feature: test is not about extraction
         .await
         .expect("Phase 1 must succeed");
 

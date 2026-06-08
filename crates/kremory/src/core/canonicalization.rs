@@ -118,7 +118,6 @@ pub async fn canonicalize_surface_forms(
         });
     }
 
-
     // ── Step 2: pairwise cosine similarity via SQL ────────────────────────────
     let pairs_to_merge = find_merge_pairs(graph, &slots, threshold).await?;
     let pairs_examined = (slots.len() * (slots.len().saturating_sub(1))) / 2;
@@ -167,7 +166,10 @@ pub async fn canonicalize_surface_forms(
             .and_modify(|existing_keeper| {
                 // Keep the longer-description keeper.
                 let new_len = desc_len_map.get(keeper_id).copied().unwrap_or(0);
-                let existing_len = desc_len_map.get(existing_keeper.as_str()).copied().unwrap_or(0);
+                let existing_len = desc_len_map
+                    .get(existing_keeper.as_str())
+                    .copied()
+                    .unwrap_or(0);
                 if new_len > existing_len {
                     *existing_keeper = keeper_id.clone();
                 }
@@ -264,7 +266,10 @@ async fn load_entity_slots(graph: &TemporalGraph, group_id: &str) -> Result<Vec<
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
             .and_then(|v| v.get("description").and_then(|d| d.as_str()).map(str::len))
             .unwrap_or(0);
-        slots.push(EntitySlot { id, description_len });
+        slots.push(EntitySlot {
+            id,
+            description_len,
+        });
     }
     Ok(slots)
 }
@@ -312,11 +317,12 @@ async fn find_merge_pairs(
 
             if similarity > threshold {
                 // Keeper = longer description (LightRAG heuristic).
-                let (keeper_idx, loser_idx) = if slots[i].description_len >= slots[j].description_len {
-                    (i, j)
-                } else {
-                    (j, i)
-                };
+                let (keeper_idx, loser_idx) =
+                    if slots[i].description_len >= slots[j].description_len {
+                        (i, j)
+                    } else {
+                        (j, i)
+                    };
                 merge_pairs.push((slots[loser_idx].id.clone(), slots[keeper_idx].id.clone()));
             }
         }
@@ -548,14 +554,7 @@ mod tests {
             &unit_vec(384),
         )
         .await;
-        insert_entity_with_embedding(
-            &graph,
-            "e_short",
-            "g_pair",
-            "Alice.",
-            &unit_vec(384),
-        )
-        .await;
+        insert_entity_with_embedding(&graph, "e_short", "g_pair", "Alice.", &unit_vec(384)).await;
 
         let report = canonicalize_surface_forms(&graph, "g_pair", L5_CANONICALIZATION_THRESHOLD)
             .await
@@ -580,7 +579,8 @@ mod tests {
         // All three entities have the same unit vector → pairwise cosine = 1.0 (>0.8).
         // Longest description → "c_long" is the keeper.
         insert_entity_with_embedding(&graph, "a_short", "g_tri", "Alice.", &unit_vec(384)).await;
-        insert_entity_with_embedding(&graph, "b_mid", "g_tri", "Alice Johnson.", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "b_mid", "g_tri", "Alice Johnson.", &unit_vec(384))
+            .await;
         insert_entity_with_embedding(
             &graph,
             "c_long",
@@ -636,13 +636,17 @@ mod tests {
         // Use a threshold of 0.99 and unit vectors (similarity ≈ 1.0) → should merge.
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         insert_entity_with_embedding(&graph, "b1", "g_bound", "Alpha.", &unit_vec(384)).await;
-        insert_entity_with_embedding(&graph, "b2", "g_bound", "Alpha extended.", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "b2", "g_bound", "Alpha extended.", &unit_vec(384))
+            .await;
 
         // Threshold 0.99 — unit vectors have cosine = 1.0 > 0.99 → merge.
         let r = canonicalize_surface_forms(&graph, "g_bound", 0.99)
             .await
             .expect("canonicalize");
-        assert_eq!(r.merges_applied, 1, "cosine=1.0 > threshold=0.99 must merge");
+        assert_eq!(
+            r.merges_applied, 1,
+            "cosine=1.0 > threshold=0.99 must merge"
+        );
     }
 
     #[tokio::test]
@@ -668,10 +672,24 @@ mod tests {
 
         // group_a: two very similar entities (should merge within a).
         insert_entity_with_embedding(&graph, "ga1", "group_a", "Short.", &unit_vec(384)).await;
-        insert_entity_with_embedding(&graph, "ga2", "group_a", "Longer description.", &unit_vec(384)).await;
+        insert_entity_with_embedding(
+            &graph,
+            "ga2",
+            "group_a",
+            "Longer description.",
+            &unit_vec(384),
+        )
+        .await;
 
         // group_b: one entity only (no pair → no merge).
-        insert_entity_with_embedding(&graph, "gb1", "group_b", "Unrelated entity.", &unit_vec(384)).await;
+        insert_entity_with_embedding(
+            &graph,
+            "gb1",
+            "group_b",
+            "Unrelated entity.",
+            &unit_vec(384),
+        )
+        .await;
 
         // Canonicalize group_a only.
         let ra = canonicalize_surface_forms(&graph, "group_a", L5_CANONICALIZATION_THRESHOLD)
@@ -696,7 +714,8 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
         insert_entity_with_embedding(&graph, "ac_loser", "g_ac", "Short.", &unit_vec(384)).await;
-        insert_entity_with_embedding(&graph, "ac_keeper", "g_ac", "Longer desc.", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "ac_keeper", "g_ac", "Longer desc.", &unit_vec(384))
+            .await;
 
         // Artificially bump access_count on loser via SQL.
         graph
@@ -715,7 +734,13 @@ mod tests {
 
         // Keeper should have accumulated loser's access_count (0 + 7 = 7).
         let entities = graph.list_entities_in_group("g_ac").await.expect("list");
-        let keeper = entities.iter().find(|e| e.id == "ac_keeper").expect("keeper");
-        assert_eq!(keeper.access_count, 7, "keeper must accumulate loser access_count");
+        let keeper = entities
+            .iter()
+            .find(|e| e.id == "ac_keeper")
+            .expect("keeper");
+        assert_eq!(
+            keeper.access_count, 7,
+            "keeper must accumulate loser access_count"
+        );
     }
 }

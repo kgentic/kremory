@@ -574,9 +574,21 @@ mod tests {
     fn entity_list_schema_with_label_enum_injects_enum() {
         use crate::core::entity_types::EntityTypeSpec;
         let specs = vec![
-            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch".to_string() },
-            EntityTypeSpec { id: 1, name: "Person".to_string(), description: "p".to_string() },
-            EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "o".to_string() },
+            EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch".to_string(),
+            },
+            EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "p".to_string(),
+            },
+            EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "o".to_string(),
+            },
         ];
         let schema = entity_list_schema_with_label_enum(&specs);
         let pretty = serde_json::to_string_pretty(&schema).unwrap();
@@ -585,12 +597,20 @@ mod tests {
         let label_at_defs = schema.pointer("/$defs/RawEntitySimple/properties/label");
         let label_inline = schema.pointer("/properties/items/items/properties/label");
         let label = label_at_defs.or(label_inline);
-        assert!(label.is_some(), "label property must be injected somewhere; schema: {pretty}");
+        assert!(
+            label.is_some(),
+            "label property must be injected somewhere; schema: {pretty}"
+        );
         let label = label.unwrap();
-        let enum_arr = label["enum"].as_array().unwrap_or_else(|| panic!("label must have enum array; got: {label}"));
+        let enum_arr = label["enum"]
+            .as_array()
+            .unwrap_or_else(|| panic!("label must have enum array; got: {label}"));
         let names: Vec<&str> = enum_arr.iter().filter_map(|v| v.as_str()).collect();
         // id=0 Entity is FILTERED OUT to force LLM to commit to a specific type.
-        assert!(!names.contains(&"Entity"), "id=0 catch-all must be filtered from enum");
+        assert!(
+            !names.contains(&"Entity"),
+            "id=0 catch-all must be filtered from enum"
+        );
         assert!(names.contains(&"Person"));
         assert!(names.contains(&"Organisation"));
     }
@@ -759,9 +779,21 @@ mod tests {
     fn entity_list_schema_with_id_bounds_injects_enum_and_bounds() {
         use crate::core::entity_types::EntityTypeSpec;
         let specs = vec![
-            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
-            EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+            EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A person.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "An org.".to_string(),
+            },
         ];
         let schema = entity_list_schema_with_id_bounds(&specs);
         let pretty = serde_json::to_string_pretty(&schema).unwrap();
@@ -769,22 +801,34 @@ mod tests {
         // entity_type_id property must be injected somewhere
         let at_defs = schema.pointer("/$defs/RawEntityIntegerId/properties/entity_type_id");
         let inline = schema.pointer("/properties/entities/items/properties/entity_type_id");
-        let prop = at_defs.or(inline).unwrap_or_else(|| panic!(
-            "entity_type_id must be injected in schema; got:\n{pretty}"
-        ));
+        let prop = at_defs
+            .or(inline)
+            .unwrap_or_else(|| panic!("entity_type_id must be injected in schema; got:\n{pretty}"));
 
         // type must be integer
-        assert_eq!(prop["type"], "integer", "entity_type_id must have type=integer");
+        assert_eq!(
+            prop["type"], "integer",
+            "entity_type_id must have type=integer"
+        );
 
         // enum must EXCLUDE id=0 catch-all — LLM must commit to a specific type.
         // Server-side validate_or_fallback handles bypass + maps unknowns to 0.
-        let enum_arr = prop["enum"].as_array().unwrap_or_else(|| panic!(
-            "entity_type_id must have enum array; got: {prop}"
-        ));
+        let enum_arr = prop["enum"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entity_type_id must have enum array; got: {prop}"));
         let ids: Vec<u64> = enum_arr.iter().filter_map(|v| v.as_u64()).collect();
-        assert!(!ids.contains(&0), "enum must EXCLUDE id=0 catch-all; got: {ids:?}");
-        assert!(ids.contains(&1), "enum must include id=1 (Person); got: {ids:?}");
-        assert!(ids.contains(&2), "enum must include id=2 (Organisation); got: {ids:?}");
+        assert!(
+            !ids.contains(&0),
+            "enum must EXCLUDE id=0 catch-all; got: {ids:?}"
+        );
+        assert!(
+            ids.contains(&1),
+            "enum must include id=1 (Person); got: {ids:?}"
+        );
+        assert!(
+            ids.contains(&2),
+            "enum must include id=2 (Organisation); got: {ids:?}"
+        );
 
         // bounds: minimum is now the smallest non-zero registered id
         assert_eq!(prop["minimum"], 1, "minimum must be smallest non-zero id");
@@ -795,7 +839,10 @@ mod tests {
     fn entity_list_schema_with_id_bounds_empty_specs_returns_base() {
         let schema = entity_list_schema_with_id_bounds(&[]);
         // No enum injected — schema should still be valid object with entities array.
-        assert_eq!(schema["type"], "object", "root must be object when no specs");
+        assert_eq!(
+            schema["type"], "object",
+            "root must be object when no specs"
+        );
         let entities = &schema["properties"]["entities"];
         assert_eq!(entities["type"], "array", "entities must be array");
     }

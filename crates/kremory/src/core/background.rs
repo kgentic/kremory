@@ -684,7 +684,8 @@ mod tests {
             Arc::new(FailingLlmClient),
             Arc::new(NullEmbeddingProvider { dim }),
             config,
-        ).expect("Engine::new should succeed in tests");
+        )
+        .expect("Engine::new should succeed in tests");
 
         let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 
@@ -894,7 +895,8 @@ mod tests {
             Arc::new(llm),
             Arc::new(NullEmbeddingProvider { dim }),
             config,
-        ).expect("Engine::new should succeed in tests")
+        )
+        .expect("Engine::new should succeed in tests")
     }
 
     // -----------------------------------------------------------------------

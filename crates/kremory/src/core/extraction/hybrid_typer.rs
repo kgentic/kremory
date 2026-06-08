@@ -87,7 +87,11 @@ impl<L: ChatProvider + 'static> EntityExtractor for HybridGlinerLlmExtractor<L> 
         // because of the digit). Empirical bench (TD-023 v4 + this fix
         // expected): +6.2pt → +10-12pt total on legal_deposition.
         let normalized_text = normalize_allcaps_words(text);
-        let normalized_count = if normalized_text != text { 1usize } else { 0usize };
+        let normalized_count = if normalized_text != text {
+            1usize
+        } else {
+            0usize
+        };
         metrics::counter!("rql.hybrid.allcaps_normalized_invocations")
             .increment(normalized_count as u64);
 
@@ -146,22 +150,18 @@ impl<L: ChatProvider + 'static> EntityExtractor for HybridGlinerLlmExtractor<L> 
         // semantic choices (93.8% vs 87.5% on legal_deposition). Accept
         // slightly higher arm-fail rate for better semantic accuracy.
         let model_name = self.llm.model().to_string();
-        let value = StructuredCallBuilder::new(
-            self.llm.as_ref(),
-            &schema,
-            "HybridTyping",
-        )
-        .messages(messages)
-        .model(&model_name)
-        .ttft_budget_ms(ctx.arm_budget_ms)
-        .force_arm(crate::core::extraction::schemas::FallbackArm::LlmJsonRepair)
-        .call()
-        .await
-        .map_err(|e| {
-            crate::core::error::Error::Other(anyhow::anyhow!(
-                "HybridGlinerLlmExtractor phase 2 LLM typing call failed: {e}"
-            ))
-        })?;
+        let value = StructuredCallBuilder::new(self.llm.as_ref(), &schema, "HybridTyping")
+            .messages(messages)
+            .model(&model_name)
+            .ttft_budget_ms(ctx.arm_budget_ms)
+            .force_arm(crate::core::extraction::schemas::FallbackArm::LlmJsonRepair)
+            .call()
+            .await
+            .map_err(|e| {
+                crate::core::error::Error::Other(anyhow::anyhow!(
+                    "HybridGlinerLlmExtractor phase 2 LLM typing call failed: {e}"
+                ))
+            })?;
 
         let phase2_ms = phase2_start.elapsed().as_secs_f64() * 1000.0;
         metrics::histogram!("rql.hybrid.phase2_llm_typing_ms").record(phase2_ms);
@@ -172,8 +172,7 @@ impl<L: ChatProvider + 'static> EntityExtractor for HybridGlinerLlmExtractor<L> 
         // candidate list assigning the refined label.
         let typed_entities = parse_typed_response(&value, &gliner_result.entities, &registry);
 
-        metrics::histogram!("rql.hybrid.final_entity_count")
-            .record(typed_entities.len() as f64);
+        metrics::histogram!("rql.hybrid.final_entity_count").record(typed_entities.len() as f64);
         metrics::counter!("rql.hybrid.invocation_complete").increment(1);
 
         Ok(ExtractionResult {
@@ -204,9 +203,14 @@ fn normalize_allcaps_words(text: &str) -> String {
             let (word, ws) = chunk.split_at(trailing_ws_start);
 
             let is_target = word.chars().count() > 1
-                && word
-                    .chars()
-                    .all(|c| c.is_ascii_alphabetic() || c == '\'' || c == '.' || c == ',' || c == ';' || c == ':')
+                && word.chars().all(|c| {
+                    c.is_ascii_alphabetic()
+                        || c == '\''
+                        || c == '.'
+                        || c == ','
+                        || c == ';'
+                        || c == ':'
+                })
                 && word.chars().any(|c| c.is_ascii_alphabetic())
                 && word
                     .chars()
@@ -288,17 +292,13 @@ fn parse_typed_response(
         let validated = registry.validate_or_fallback(typing.entity_type_id);
         if validated == 0 {
             // Model returned an out-of-registry id that resolved to 0.
-            metrics::counter!(
-                "rql.hybrid.llm_out_of_registry_fallback",
-            )
-            .increment(1);
+            metrics::counter!("rql.hybrid.llm_out_of_registry_fallback",).increment(1);
             continue;
         }
         typing_by_idx.insert(idx, validated);
     }
 
-    metrics::histogram!("rql.hybrid.llm_typing_response_count")
-        .record(typing_by_idx.len() as f64);
+    metrics::histogram!("rql.hybrid.llm_typing_response_count").record(typing_by_idx.len() as f64);
 
     let mut result: Vec<ExtractedEntity> = Vec::with_capacity(gliner_entities.len());
     for (idx, entity) in gliner_entities.iter().enumerate() {

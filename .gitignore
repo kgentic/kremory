@@ -53,3 +53,11 @@ repomix-*.xml
 
 # Local Claude agent worktrees (created by Agent tool with isolation: "worktree")
 .claude/worktrees/
+
+# Obsidian — vault is rooted at .ai-docs/. Track config, ignore user-local state.
+.ai-docs/.obsidian/workspace.json
+.ai-docs/.obsidian/workspaces.json
+.ai-docs/.obsidian/workspace-mobile.json
+.ai-docs/.obsidian/cache
+.ai-docs/.obsidian/graph.json
+.ai-docs/_attachments/

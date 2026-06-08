@@ -247,6 +247,7 @@ impl Memory {
             provider_rates_path: None,
             episode_content_warn_threshold: Some(10_000),
             extractor_source: None,
+            allowed_entity_types: vec![],
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -727,6 +728,11 @@ pub struct MemoryBuilder<L, E> {
     /// pins the extractor regardless of env. See spec
     /// `kremory-v017-hybrid-extractor-production-wire-in-spec-2026-06-04` §4.
     extractor_source: Option<crate::core::extraction::ExtractorSource>,
+    /// Entity type names the extractor is allowed to emit. Forwarded to
+    /// `PipelineConfig::allowed_entity_types`. When empty (the default), the
+    /// `GlinerExtractor` rejects all entities — callers that activate the `ner`
+    /// feature MUST supply this via [`MemoryBuilder::allowed_entity_types`].
+    allowed_entity_types: Vec<String>,
     _llm_state: std::marker::PhantomData<L>,
     _emb_state: std::marker::PhantomData<E>,
 }
@@ -787,11 +793,32 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Default (when this method is not called): `ExtractorSource::FromEnv`
     /// — preserves bit-for-bit existing behaviour when env var is unset.
-    pub fn extractor(
-        mut self,
-        source: crate::core::extraction::ExtractorSource,
-    ) -> Self {
+    pub fn extractor(mut self, source: crate::core::extraction::ExtractorSource) -> Self {
         self.extractor_source = Some(source);
+        self
+    }
+
+    /// Set the entity type names the extractor is allowed to emit.
+    ///
+    /// Forwarded to [`PipelineConfig::allowed_entity_types`]. Required when
+    /// the `ner` feature is active and you want extraction to produce results.
+    /// With an empty list (the default) the `GlinerExtractor` will reject all
+    /// candidate entities.
+    ///
+    /// Typically callers pass the names from `DEFAULT_ENTITY_TYPES`:
+    ///
+    /// ```rust,no_run
+    /// use kremory::Memory;
+    /// use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
+    ///
+    /// let names: Vec<String> = DEFAULT_ENTITY_TYPES
+    ///     .iter()
+    ///     .map(|(_, name, _)| name.to_string())
+    ///     .collect();
+    /// // Memory::open("./db").allowed_entity_types(names)…
+    /// ```
+    pub fn allowed_entity_types(mut self, types: Vec<String>) -> Self {
+        self.allowed_entity_types = types;
         self
     }
 }
@@ -812,6 +839,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
             extractor_source: self.extractor_source,
+            allowed_entity_types: self.allowed_entity_types,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -865,6 +893,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
             extractor_source: self.extractor_source,
+            allowed_entity_types: self.allowed_entity_types,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -887,6 +916,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
             extractor_source: self.extractor_source,
+            allowed_entity_types: self.allowed_entity_types,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -928,6 +958,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 embedder.clone(),
                 self.embedding_dim,
                 self.extractor_source,
+                self.allowed_entity_types,
             )
             .await?;
 

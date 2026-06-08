@@ -85,14 +85,11 @@ pub async fn ensure_default_types_seeded(
                     e
                 ))
             })?;
-        let row = rows
-            .next()
-            .await
-            .map_err(|e| {
-                crate::core::error::Error::Other(anyhow::anyhow!(
-                    "ensure_default_types_seeded presence row read failed: {e}"
-                ))
-            })?;
+        let row = rows.next().await.map_err(|e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "ensure_default_types_seeded presence row read failed: {e}"
+            ))
+        })?;
         match row {
             Some(r) => r.get::<i64>(0).map_err(|e| {
                 crate::core::error::Error::Other(anyhow::anyhow!(
@@ -248,10 +245,7 @@ impl EntityTypeRegistry {
     /// Case-sensitive match (canonical form after `normalize_label`).
     /// Returns `None` when the name is not registered.
     pub fn name_to_id(&self, name: &str) -> Option<u32> {
-        self.specs
-            .iter()
-            .find(|s| s.name == name)
-            .map(|s| s.id)
+        self.specs.iter().find(|s| s.name == name).map(|s| s.id)
     }
 
     /// Return a slice of all registered types for this namespace.
@@ -267,11 +261,7 @@ impl EntityTypeRegistry {
     /// Needed by L3 bounds validation (validate_or_fallback): any LLM-emitted
     /// id > max_id is out-of-range and must fall back to id=0.
     pub fn max_id(&self) -> u32 {
-        self.specs
-            .iter()
-            .map(|s| s.id)
-            .max()
-            .unwrap_or(0)
+        self.specs.iter().map(|s| s.id).max().unwrap_or(0)
     }
 
     /// L3 bounds validation: validate an LLM-emitted `entity_type_id`.
@@ -441,8 +431,7 @@ pub async fn label_to_id_or_register(
         }
     };
     if let Some(id) = existing_id {
-        counter!("rql.entity_types.label_cache_hit_total", "via" => "db_lookup")
-            .increment(1);
+        counter!("rql.entity_types.label_cache_hit_total", "via" => "db_lookup").increment(1);
         return Ok(id as u32);
     }
 
@@ -567,14 +556,11 @@ pub async fn upsert_entity_types(
                     "upsert_entity_types presence check failed: {e}"
                 ))
             })?;
-        let row = rows
-            .next()
-            .await
-            .map_err(|e| {
-                crate::core::error::Error::Other(anyhow::anyhow!(
-                    "upsert_entity_types row read failed: {e}"
-                ))
-            })?;
+        let row = rows.next().await.map_err(|e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "upsert_entity_types row read failed: {e}"
+            ))
+        })?;
         match row {
             Some(r) => r.get::<i64>(0).map_err(|e| {
                 crate::core::error::Error::Other(anyhow::anyhow!(
@@ -595,7 +581,12 @@ pub async fn upsert_entity_types(
         conn.execute(
             "INSERT OR IGNORE INTO entity_types (group_id, id, name, description) \
              VALUES (?1, ?2, ?3, ?4)",
-            libsql::params![group_id, spec.id as i64, spec.name.clone(), spec.description.clone()],
+            libsql::params![
+                group_id,
+                spec.id as i64,
+                spec.name.clone(),
+                spec.description.clone()
+            ],
         )
         .await
         .map_err(|e| {
@@ -665,7 +656,10 @@ mod tests {
         // unless migration 008 seeds a catch-all — which it only does for groups
         // that already have entity rows; "t1" has none so entity_types is empty for it).
         let before = count_rows(&conn, "t1").await;
-        assert_eq!(before, 0, "pre-condition: entity_types must be empty for 't1'");
+        assert_eq!(
+            before, 0,
+            "pre-condition: entity_types must be empty for 't1'"
+        );
 
         let specs = vec![
             EntityTypeSpec {
@@ -726,14 +720,37 @@ mod tests {
         .expect("pre-seed insert");
 
         let before = count_rows(&conn, "t2").await;
-        assert_eq!(before, 1, "pre-condition: exactly 1 row for 't2' before upsert");
+        assert_eq!(
+            before, 1,
+            "pre-condition: exactly 1 row for 't2' before upsert"
+        );
 
         let specs = vec![
-            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
-            EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
-            EntityTypeSpec { id: 3, name: "Location".to_string(), description: "A place.".to_string() },
-            EntityTypeSpec { id: 4, name: "Event".to_string(), description: "An event.".to_string() },
+            EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A person.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "An org.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 3,
+                name: "Location".to_string(),
+                description: "A place.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 4,
+                name: "Event".to_string(),
+                description: "An event.".to_string(),
+            },
         ];
 
         let inserted = upsert_entity_types(&conn, "t2", &specs)
@@ -766,19 +783,51 @@ mod tests {
         let conn = open_migrated_conn().await;
 
         // Pre-condition: both groups have zero rows on a fresh DB.
-        assert_eq!(count_rows(&conn, "alpha").await, 0, "alpha must start empty");
+        assert_eq!(
+            count_rows(&conn, "alpha").await,
+            0,
+            "alpha must start empty"
+        );
         assert_eq!(count_rows(&conn, "beta").await, 0, "beta must start empty");
 
         let alpha_specs = vec![
-            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
-            EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
-            EntityTypeSpec { id: 3, name: "Location".to_string(), description: "A place.".to_string() },
+            EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A person.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "An org.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 3,
+                name: "Location".to_string(),
+                description: "A place.".to_string(),
+            },
         ];
         let beta_specs = vec![
-            EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            EntityTypeSpec { id: 1, name: "Court".to_string(), description: "A judicial court.".to_string() },
-            EntityTypeSpec { id: 2, name: "Statute".to_string(), description: "A legal statute.".to_string() },
+            EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            EntityTypeSpec {
+                id: 1,
+                name: "Court".to_string(),
+                description: "A judicial court.".to_string(),
+            },
+            EntityTypeSpec {
+                id: 2,
+                name: "Statute".to_string(),
+                description: "A legal statute.".to_string(),
+            },
         ];
 
         let alpha_inserted = upsert_entity_types(&conn, "alpha", &alpha_specs)
@@ -788,8 +837,14 @@ mod tests {
             .await
             .expect("upsert beta");
 
-        assert_eq!(alpha_inserted, 4, "alpha must report 4 inserts; got {alpha_inserted}");
-        assert_eq!(beta_inserted, 3, "beta must report 3 inserts; got {beta_inserted}");
+        assert_eq!(
+            alpha_inserted, 4,
+            "alpha must report 4 inserts; got {alpha_inserted}"
+        );
+        assert_eq!(
+            beta_inserted, 3,
+            "beta must report 3 inserts; got {beta_inserted}"
+        );
 
         let alpha_count = count_rows(&conn, "alpha").await;
         let beta_count = count_rows(&conn, "beta").await;
@@ -807,7 +862,10 @@ mod tests {
             .expect("total count query");
         let total_row = rows.next().await.expect("row iter").expect("row");
         let total: i64 = total_row.get(0).expect("count col");
-        assert_eq!(total, 7, "total rows across both groups must be 7; got {total}");
+        assert_eq!(
+            total, 7,
+            "total rows across both groups must be 7; got {total}"
+        );
     }
 
     // ── ensure_default_types_seeded DB tests ─────────────────────────────────
@@ -823,7 +881,10 @@ mod tests {
 
         // Pre-condition: "fresh_grp" has no rows on a fresh DB.
         let before = count_rows(&conn, "fresh_grp").await;
-        assert_eq!(before, 0, "pre-condition: entity_types must be empty for 'fresh_grp'");
+        assert_eq!(
+            before, 0,
+            "pre-condition: entity_types must be empty for 'fresh_grp'"
+        );
 
         let inserted = ensure_default_types_seeded(&conn, "fresh_grp")
             .await
@@ -866,7 +927,10 @@ mod tests {
         .expect("pre-seed insert");
 
         let before = count_rows(&conn, "existing_grp").await;
-        assert_eq!(before, 1, "pre-condition: exactly 1 row for 'existing_grp' before seeding");
+        assert_eq!(
+            before, 1,
+            "pre-condition: exactly 1 row for 'existing_grp' before seeding"
+        );
 
         let inserted = ensure_default_types_seeded(&conn, "existing_grp")
             .await
@@ -896,8 +960,16 @@ mod tests {
         let conn = open_migrated_conn().await;
 
         // Pre-condition: both groups start empty.
-        assert_eq!(count_rows(&conn, "grp_a").await, 0, "grp_a must start empty");
-        assert_eq!(count_rows(&conn, "grp_b").await, 0, "grp_b must start empty");
+        assert_eq!(
+            count_rows(&conn, "grp_a").await,
+            0,
+            "grp_a must start empty"
+        );
+        assert_eq!(
+            count_rows(&conn, "grp_b").await,
+            0,
+            "grp_b must start empty"
+        );
 
         let a_inserted = ensure_default_types_seeded(&conn, "grp_a")
             .await
@@ -907,14 +979,26 @@ mod tests {
             .expect("seed grp_b");
 
         let expected = DEFAULT_ENTITY_TYPES.len();
-        assert_eq!(a_inserted, expected, "grp_a must report {expected} inserts; got {a_inserted}");
-        assert_eq!(b_inserted, expected, "grp_b must report {expected} inserts; got {b_inserted}");
+        assert_eq!(
+            a_inserted, expected,
+            "grp_a must report {expected} inserts; got {a_inserted}"
+        );
+        assert_eq!(
+            b_inserted, expected,
+            "grp_b must report {expected} inserts; got {b_inserted}"
+        );
 
         let a_count = count_rows(&conn, "grp_a").await;
         let b_count = count_rows(&conn, "grp_b").await;
 
-        assert_eq!(a_count, expected, "grp_a must have {expected} rows; got {a_count}");
-        assert_eq!(b_count, expected, "grp_b must have {expected} rows; got {b_count}");
+        assert_eq!(
+            a_count, expected,
+            "grp_a must have {expected} rows; got {a_count}"
+        );
+        assert_eq!(
+            b_count, expected,
+            "grp_b must have {expected} rows; got {b_count}"
+        );
 
         // Cross-group isolation: total rows = 2 * DEFAULT_ENTITY_TYPES.len().
         let mut rows = conn
@@ -927,7 +1011,8 @@ mod tests {
         let total_row = rows.next().await.expect("row iter").expect("row");
         let total: i64 = total_row.get(0).expect("count col");
         assert_eq!(
-            total as usize, expected * 2,
+            total as usize,
+            expected * 2,
             "total rows across both groups must be {}; got {total}",
             expected * 2
         );
@@ -1109,12 +1194,14 @@ mod tests {
             .await
             .expect("load registry");
 
-        let new_id =
-            label_to_id_or_register(&conn, "g1", &registry, "Court")
-                .await
-                .expect("register novel label");
+        let new_id = label_to_id_or_register(&conn, "g1", &registry, "Court")
+            .await
+            .expect("register novel label");
 
-        assert!(new_id > 0, "novel type must register with id > 0; got {new_id}");
+        assert!(
+            new_id > 0,
+            "novel type must register with id > 0; got {new_id}"
+        );
         let after_count = count_rows(&conn, "g1").await;
         assert_eq!(
             after_count,
@@ -1145,14 +1232,12 @@ mod tests {
         let registry = EntityTypeRegistry::load_for_group(&conn, "g2")
             .await
             .expect("load registry");
-        let first =
-            label_to_id_or_register(&conn, "g2", &registry, "Drug")
-                .await
-                .expect("first register");
-        let second =
-            label_to_id_or_register(&conn, "g2", &registry, "Drug")
-                .await
-                .expect("second register");
+        let first = label_to_id_or_register(&conn, "g2", &registry, "Drug")
+            .await
+            .expect("first register");
+        let second = label_to_id_or_register(&conn, "g2", &registry, "Drug")
+            .await
+            .expect("second register");
 
         assert_eq!(
             first, second,
@@ -1201,12 +1286,14 @@ mod tests {
         let reg_a = std::sync::Arc::clone(&registry);
         let reg_b = std::sync::Arc::clone(&registry);
 
-        let h1 = tokio::spawn(async move {
-            label_to_id_or_register(&conn_a, "g3", &reg_a, "Species").await
-        });
-        let h2 = tokio::spawn(async move {
-            label_to_id_or_register(&conn_b, "g3", &reg_b, "Species").await
-        });
+        let h1 =
+            tokio::spawn(
+                async move { label_to_id_or_register(&conn_a, "g3", &reg_a, "Species").await },
+            );
+        let h2 =
+            tokio::spawn(
+                async move { label_to_id_or_register(&conn_b, "g3", &reg_b, "Species").await },
+            );
         let id1 = h1.await.expect("h1 join").expect("h1 register");
         let id2 = h2.await.expect("h2 join").expect("h2 register");
 
@@ -1244,7 +1331,9 @@ mod tests {
             .await
             .expect("load registry");
 
-        for label in ["Entity", "ENTITY", "entity", "UNKNOWN", "unknown", "", "   "] {
+        for label in [
+            "Entity", "ENTITY", "entity", "UNKNOWN", "unknown", "", "   ",
+        ] {
             let id = label_to_id_or_register(&conn, "g4", &registry, label)
                 .await
                 .unwrap_or_else(|e| {

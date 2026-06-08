@@ -367,7 +367,8 @@ mod model_comparison_tests {
                 .await
                 .expect("failed to open graph"),
         );
-        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config).expect("Engine::new should succeed in tests");
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config)
+            .expect("Engine::new should succeed in tests");
         let extractor = NuExtractExtractor::new(llm);
 
         let start = Instant::now();
@@ -417,7 +418,8 @@ mod model_comparison_tests {
                 .await
                 .expect("failed to open graph"),
         );
-        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config).expect("Engine::new should succeed in tests");
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config)
+            .expect("Engine::new should succeed in tests");
         let extractor = DefaultExtractor::new(llm);
 
         let start = Instant::now();
@@ -467,7 +469,8 @@ mod model_comparison_tests {
                 .await
                 .expect("failed to open graph"),
         );
-        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config).expect("Engine::new should succeed in tests");
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config)
+            .expect("Engine::new should succeed in tests");
         let extractor = DefaultExtractor::new(llm);
 
         let start = Instant::now();
@@ -517,7 +520,8 @@ mod model_comparison_tests {
                 .await
                 .expect("failed to open graph"),
         );
-        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config).expect("Engine::new should succeed in tests");
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config)
+            .expect("Engine::new should succeed in tests");
         let extractor = GroundedNuExtractExtractor::new(llm);
 
         let start = Instant::now();

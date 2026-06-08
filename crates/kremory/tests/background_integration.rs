@@ -24,6 +24,7 @@ use std::time::Duration;
 use chrono::Utc;
 use kremory::core::background::{BackgroundIngestor, IngestorConfig};
 use kremory::core::config::PipelineConfig;
+use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::extraction::NuExtractExtractor;
 use kremory::core::ingest::Engine;
 use kremory::core::provider::{
@@ -189,7 +190,8 @@ async fn background_ingestor_contradiction_round_trip() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = Engine::new(temporal, llm, embedder, config).expect("Engine::new should succeed in tests");
+    let graph =
+        Engine::new(temporal, llm, embedder, config).expect("Engine::new should succeed in tests");
 
     // Ingestor config: tiny channel — only 2 slots needed
     let ingestor_config = IngestorConfig {
@@ -265,7 +267,8 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = Engine::new(temporal, Arc::clone(&llm), embedder, config).expect("Engine::new should succeed in tests");
+    let graph = Engine::new(temporal, Arc::clone(&llm), embedder, config)
+        .expect("Engine::new should succeed in tests");
 
     // Use NuExtractExtractor explicitly so the scripted LLM responses are consumed
     // regardless of whether the `ner` feature is enabled (which would otherwise
@@ -399,6 +402,12 @@ async fn deferred_extraction_invoked_after_successful_ner() {
     );
 
     let config = PipelineConfig::builder()
+        .allowed_entity_types(
+            DEFAULT_ENTITY_TYPES
+                .iter()
+                .map(|(_, name, _)| name.to_string())
+                .collect(),
+        )
         .build()
         .expect("PipelineConfig build failed");
 
@@ -435,7 +444,8 @@ async fn deferred_extraction_invoked_after_successful_ner() {
     let queue_handle = Arc::clone(&scripted_llm.queue);
 
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
-    let graph = Engine::new(temporal, Arc::new(scripted_llm), embedder, config).expect("Engine::new should succeed in tests");
+    let graph = Engine::new(temporal, Arc::new(scripted_llm), embedder, config)
+        .expect("Engine::new should succeed in tests");
 
     let ingestor_config = IngestorConfig {
         deferred_extraction_enabled: true,
@@ -499,7 +509,8 @@ async fn background_ingestor_drains_without_errors() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = Engine::new(temporal, llm, embedder, config).expect("Engine::new should succeed in tests");
+    let graph =
+        Engine::new(temporal, llm, embedder, config).expect("Engine::new should succeed in tests");
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 
     ingestor

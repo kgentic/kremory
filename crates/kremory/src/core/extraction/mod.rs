@@ -194,11 +194,7 @@ pub fn normalize_label(raw: &str) -> String {
             // Title-case any single ASCII-alphabetic word so "court" → "Court",
             // "software" → "Software" without needing an explicit alias entry.
             // Multi-word and non-alphabetic labels pass through trimmed.
-            if trimmed
-                .chars()
-                .all(|c| c.is_ascii_alphabetic() || c == '_')
-                && !trimmed.is_empty()
-            {
+            if trimmed.chars().all(|c| c.is_ascii_alphabetic() || c == '_') && !trimmed.is_empty() {
                 let mut chars = trimmed.chars();
                 let Some(first_char) = chars.next() else {
                     return trimmed.to_string();
@@ -749,8 +745,7 @@ impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
                 names.join(", ")
             )
         };
-        let existing_block =
-            prompts::render_existing_entities_block(ctx.existing_graph_entities);
+        let existing_block = prompts::render_existing_entities_block(ctx.existing_graph_entities);
         let stage1_prompt = format!(
             "{existing_block}{}{known_hint}",
             build_graphiti_entity_prompt(text, ctx.allowed_entity_types, ctx.registry_specs)
@@ -1550,7 +1545,8 @@ fn parse_entities_integer(
                     Ok(v) => {
                         // Per Rule 20: repair-path success is suspicious. Track separately
                         // so qwen-vs-haiku divergence and post-repair garbage are visible.
-                        counter!("rql.extraction.json_parse_ok", "path" => "post_repair").increment(1);
+                        counter!("rql.extraction.json_parse_ok", "path" => "post_repair")
+                            .increment(1);
                         v
                     }
                     Err(e) => {
@@ -1560,9 +1556,7 @@ fn parse_entities_integer(
                             parser = "entities_integer",
                             "kremory.extraction.json_parse_fail"
                         );
-                        eprintln!(
-                            "warn: failed to parse integer-id entity JSON after repair: {e}"
-                        );
+                        eprintln!("warn: failed to parse integer-id entity JSON after repair: {e}");
                         return Ok(vec![]);
                     }
                 }
@@ -1581,7 +1575,8 @@ fn parse_entities_integer(
             // into the name field; reject any name containing JSON syntax chars
             // so garbage entities never reach persistence.
             if name_looks_like_json_fragment(&e.name) {
-                counter!("rql.extraction.entity_rejected", "reason" => "name_json_fragment").increment(1);
+                counter!("rql.extraction.entity_rejected", "reason" => "name_json_fragment")
+                    .increment(1);
                 tracing::warn!(
                     raw_name = %e.name,
                     "kremory.extraction.entity_rejected.name_json_fragment"
@@ -2210,9 +2205,21 @@ mod tests {
         let stage3 = r#"[{"subject":"Alice","predicate":"works_at","object":"Acme Corp","is_entity_ref":true,"confidence":0.9}]"#;
 
         let specs = vec![
-            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
-            crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A person.".to_string(),
+            },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "An org.".to_string(),
+            },
         ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
         let extractor = DefaultExtractor::new(mock);
@@ -2262,8 +2269,16 @@ mod tests {
 
         // Also verify the full extractor runs without error.
         let specs = vec![
-            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "An org.".to_string(),
+            },
         ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
         let extractor = DefaultExtractor::new(mock);
@@ -2284,9 +2299,21 @@ mod tests {
         let stage3 = r#"[]"#;
 
         let specs = vec![
-            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
-            crate::core::entity_types::EntityTypeSpec { id: 3, name: "StopWord".to_string(), description: "A stop-word entity.".to_string() },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A person.".to_string(),
+            },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 3,
+                name: "StopWord".to_string(),
+                description: "A stop-word entity.".to_string(),
+            },
         ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
         let extractor = DefaultExtractor::new(mock);
@@ -2463,9 +2490,21 @@ mod tests {
 
     fn make_test_registry() -> crate::core::entity_types::EntityTypeRegistry {
         crate::core::entity_types::EntityTypeRegistry::from_specs(vec![
-            crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-            crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
-            crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A person.".to_string(),
+            },
+            crate::core::entity_types::EntityTypeSpec {
+                id: 2,
+                name: "Organisation".to_string(),
+                description: "An org.".to_string(),
+            },
         ])
     }
 
@@ -2478,7 +2517,10 @@ mod tests {
         let alice = entities.iter().find(|e| e.name == "Alice").unwrap();
         assert_eq!(alice.label, "Person", "id=1 must resolve to Person");
         let acme = entities.iter().find(|e| e.name == "Acme Corp").unwrap();
-        assert_eq!(acme.label, "Organisation", "id=2 must resolve to Organisation");
+        assert_eq!(
+            acme.label, "Organisation",
+            "id=2 must resolve to Organisation"
+        );
     }
 
     #[test]
@@ -2488,7 +2530,10 @@ mod tests {
         let json = r#"{"entities":[{"name":"Unknown Thing","entity_type_id":99}]}"#;
         let entities = parse_entities_integer(json, &registry).unwrap();
         assert_eq!(entities.len(), 1);
-        assert_eq!(entities[0].label, "Entity", "out-of-range id must fall back to Entity");
+        assert_eq!(
+            entities[0].label, "Entity",
+            "out-of-range id must fall back to Entity"
+        );
     }
 
     #[test]
@@ -2498,7 +2543,8 @@ mod tests {
         // `name` field (e.g. `Boston", "entity_type_id": 3}, {`). Without the
         // shape-validator these used to silently collapse to label="Entity".
         let registry = make_test_registry();
-        let garbage = r#"{"entities":[{"name":"Boston\", \"entity_type_id\": 3}, {","entity_type_id":0}]}"#;
+        let garbage =
+            r#"{"entities":[{"name":"Boston\", \"entity_type_id\": 3}, {","entity_type_id":0}]}"#;
         let entities = parse_entities_integer(garbage, &registry).unwrap();
         assert!(
             entities.is_empty(),
@@ -2586,9 +2632,21 @@ mod tests {
             let stage2 = r#"["works_at"]"#;
             let stage3 = r#"[{"subject":"Alice","predicate":"works_at","object":"Acme Corp","is_entity_ref":true,"confidence":0.9}]"#;
             let specs = vec![
-                crate::core::entity_types::EntityTypeSpec { id: 0, name: "Entity".to_string(), description: "catch-all".to_string() },
-                crate::core::entity_types::EntityTypeSpec { id: 1, name: "Person".to_string(), description: "A person.".to_string() },
-                crate::core::entity_types::EntityTypeSpec { id: 2, name: "Organisation".to_string(), description: "An org.".to_string() },
+                crate::core::entity_types::EntityTypeSpec {
+                    id: 0,
+                    name: "Entity".to_string(),
+                    description: "catch-all".to_string(),
+                },
+                crate::core::entity_types::EntityTypeSpec {
+                    id: 1,
+                    name: "Person".to_string(),
+                    description: "A person.".to_string(),
+                },
+                crate::core::entity_types::EntityTypeSpec {
+                    id: 2,
+                    name: "Organisation".to_string(),
+                    description: "An org.".to_string(),
+                },
             ];
             let mock = Arc::new(staged_mock(stage1, stage2, stage3));
             let extractor = DefaultExtractor::new(mock);
@@ -3035,8 +3093,14 @@ mod tests {
         // Single-char, leading-digit, all-punctuation, or excessively-long
         // labels are structurally invalid (Graphiti-style Cypher safety pattern).
         assert!(!is_canonical_entity_type("A"), "single char rejected");
-        assert!(!is_canonical_entity_type("123Type"), "leading digit rejected");
-        assert!(!is_canonical_entity_type("!!!"), "punctuation-only rejected");
+        assert!(
+            !is_canonical_entity_type("123Type"),
+            "leading digit rejected"
+        );
+        assert!(
+            !is_canonical_entity_type("!!!"),
+            "punctuation-only rejected"
+        );
         assert!(
             !is_canonical_entity_type(&"X".repeat(100)),
             "overlong label rejected"
