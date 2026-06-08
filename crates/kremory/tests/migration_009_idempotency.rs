@@ -114,10 +114,7 @@ async fn migration_009_fts_still_usable() {
     // is not valid FTS5 syntax and the table may be empty (properties='{}').
     let mut rows = graph
         .conn
-        .query(
-            "SELECT entity_id FROM entities_fts",
-            (),
-        )
+        .query("SELECT entity_id FROM entities_fts", ())
         .await
         .expect("entities_fts table-scan must succeed after migration 009");
 
@@ -148,13 +145,10 @@ async fn migration_009_idempotent_double_apply() {
     );
 
     // Second run via the test hook — must not error.
-    graph
-        .run_migrations_again_for_test()
-        .await
-        .expect(
-            "second run_migrations must be idempotent for migration 009 — \
+    graph.run_migrations_again_for_test().await.expect(
+        "second run_migrations must be idempotent for migration 009 — \
              PRAGMA gate must detect label column already absent and skip DROP",
-        );
+    );
 
     // Column shape unchanged.
     let cols_second = table_columns(&graph, "entities").await;

@@ -1054,7 +1054,11 @@ mod tests {
             .fts_search_entities("platform", 10, &no_filter)
             .await
             .unwrap();
-        assert_eq!(hits.len(), 1, "should find alice by 'platform' in properties");
+        assert_eq!(
+            hits.len(),
+            1,
+            "should find alice by 'platform' in properties"
+        );
         assert_eq!(hits[0].item.id, "alice");
         // BM25 scores should be negative
         for hit in &hits {
@@ -1096,10 +1100,7 @@ mod tests {
         // Label is no longer in FTS after Phase 2 (entities.label column dropped).
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g
-            .fts_search_entities("role", 1, &no_filter)
-            .await
-            .unwrap();
+        let hits = g.fts_search_entities("role", 1, &no_filter).await.unwrap();
         assert_eq!(hits.len(), 1, "limit should cap results");
     }
 
@@ -1376,13 +1377,9 @@ mod tests {
         g.insert_entity("bob", 0, serde_json::json!({"role": "manager"}))
             .await
             .unwrap();
-        g.insert_entity(
-            "acme",
-            0,
-            serde_json::json!({"industry": "technology"}),
-        )
-        .await
-        .unwrap();
+        g.insert_entity("acme", 0, serde_json::json!({"industry": "technology"}))
+            .await
+            .unwrap();
 
         let alice_emb = make_embedding(1.0);
         let bob_emb = make_embedding(5.0);
@@ -1410,27 +1407,15 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity(
-            "both_match",
-            0,
-            serde_json::json!({"role": "engineer"}),
-        )
-        .await
-        .unwrap();
-        g.insert_entity(
-            "fts_only",
-            0,
-            serde_json::json!({"role": "engineer"}),
-        )
-        .await
-        .unwrap();
-        g.insert_entity(
-            "vec_only",
-            0,
-            serde_json::json!({"industry": "finance"}),
-        )
-        .await
-        .unwrap();
+        g.insert_entity("both_match", 0, serde_json::json!({"role": "engineer"}))
+            .await
+            .unwrap();
+        g.insert_entity("fts_only", 0, serde_json::json!({"role": "engineer"}))
+            .await
+            .unwrap();
+        g.insert_entity("vec_only", 0, serde_json::json!({"industry": "finance"}))
+            .await
+            .unwrap();
 
         let query_emb = make_embedding(1.0);
         g.set_entity_embedding("both_match", &make_embedding(1.01))
@@ -1631,14 +1616,9 @@ mod tests {
         )
         .await
         .unwrap();
-        g.insert_entity_with_group(
-            "bob",
-            0,
-            serde_json::json!({"kind": "member"}),
-            Some("g2"),
-        )
-        .await
-        .unwrap();
+        g.insert_entity_with_group("bob", 0, serde_json::json!({"kind": "member"}), Some("g2"))
+            .await
+            .unwrap();
         g.insert_entity_with_group(
             "carol",
             0,
@@ -1649,10 +1629,7 @@ mod tests {
         .unwrap();
 
         let filters = SearchFilters::for_groups(vec!["g1".into(), "g3".into()]);
-        let hits = g
-            .fts_search_entities("member", 10, &filters)
-            .await
-            .unwrap();
+        let hits = g.fts_search_entities("member", 10, &filters).await.unwrap();
         assert_eq!(hits.len(), 2);
         let ids: Vec<&str> = hits.iter().map(|h| h.item.id.as_str()).collect();
         assert!(ids.contains(&"alice"));

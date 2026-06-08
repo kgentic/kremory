@@ -189,7 +189,14 @@ async fn migration_008_entity_types_table_exists() {
         "entity_types table must exist after migration 008; PRAGMA table_info returned nothing"
     );
 
-    for required in &["id", "group_id", "name", "description", "created_at", "use_count"] {
+    for required in &[
+        "id",
+        "group_id",
+        "name",
+        "description",
+        "created_at",
+        "use_count",
+    ] {
         assert!(
             cols.iter().any(|c| c == *required),
             "entity_types must have column `{required}`; found: {cols:?}"
@@ -252,8 +259,8 @@ async fn migration_008_seeds_observed_labels_alphabetically() {
     let entities = [
         ("e1", "Location", "test-ns"),
         ("e2", "Person", "test-ns"),
-        ("e3", "Person", "test-ns"),   // duplicate — must NOT produce duplicate row
-        ("e4", "Entity", "test-ns"),   // must NOT be seeded at id>=1
+        ("e3", "Person", "test-ns"), // duplicate — must NOT produce duplicate row
+        ("e4", "Entity", "test-ns"), // must NOT be seeded at id>=1
     ];
     let (graph, _tmp) = open_graph_with_pre_seeded_entities(&entities).await;
 
@@ -279,7 +286,11 @@ async fn migration_008_seeds_observed_labels_alphabetically() {
         3,
         "test-ns must have 3 entity_types rows (Entity + 2 observed labels); got: {seeded:?}"
     );
-    assert_eq!(seeded[0], (0, "Entity".to_string()), "id=0 must be 'Entity'");
+    assert_eq!(
+        seeded[0],
+        (0, "Entity".to_string()),
+        "id=0 must be 'Entity'"
+    );
     assert_eq!(
         seeded[1],
         (1, "Location".to_string()),
@@ -371,7 +382,11 @@ async fn migration_008_backfill_maps_labels_to_type_ids() {
         .expect("entity_types query must succeed");
 
     let mut type_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    while let Some(row) = type_rows.next().await.expect("type_rows iteration must not error") {
+    while let Some(row) = type_rows
+        .next()
+        .await
+        .expect("type_rows iteration must not error")
+    {
         let tid: i64 = row.get(0).expect("id");
         let name: String = row.get(1).expect("name");
         type_map.insert(name, tid);
@@ -440,13 +455,10 @@ async fn migration_008_idempotent_double_apply() {
         .expect("count at col 0");
 
     // Second run — must not error.
-    graph
-        .run_migrations_again_for_test()
-        .await
-        .expect(
-            "second run_migrations must be idempotent for migration 008 — \
+    graph.run_migrations_again_for_test().await.expect(
+        "second run_migrations must be idempotent for migration 008 — \
              duplicate-column or UNIQUE-constraint error means the idempotency gate is missing",
-        );
+    );
 
     // Column count unchanged.
     let cols_second = table_columns(&graph, "entities").await;

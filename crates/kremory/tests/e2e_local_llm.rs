@@ -96,7 +96,8 @@ three business days after the API merge to run the full regression suite.";
                 .expect("failed to open in-memory TemporalGraph"),
         );
 
-        let rql = Engine::new(graph, Arc::new(llm), Arc::new(embedder), config).expect("Engine::new should succeed in tests");
+        let rql = Engine::new(graph, Arc::new(llm), Arc::new(embedder), config)
+            .expect("Engine::new should succeed in tests");
 
         let result = rql
             .ingest(
@@ -386,7 +387,8 @@ three business days after the API merge to run the full regression suite.";
                 .expect("failed to open in-memory TemporalGraph"),
         );
 
-        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config).expect("Engine::new should succeed in tests");
+        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config)
+            .expect("Engine::new should succeed in tests");
 
         let extractor = NuExtractExtractor::new(llm);
         let result = rql

@@ -1233,15 +1233,9 @@ pub(crate) async fn migrate_009_drop_label_column(
         .map_err(step("pragma_table_info"))?;
 
     let mut has_label = false;
-    while let Some(row) = pragma_rows
-        .next()
-        .await
-        .map_err(step("pragma_row_next"))?
-    {
+    while let Some(row) = pragma_rows.next().await.map_err(step("pragma_row_next"))? {
         // PRAGMA table_info columns: cid(0), name(1), type(2), notnull(3), dflt_value(4), pk(5)
-        let col_name: String = row
-            .get::<String>(1)
-            .map_err(step("pragma_col_name_read"))?;
+        let col_name: String = row.get::<String>(1).map_err(step("pragma_col_name_read"))?;
         if col_name == "label" {
             has_label = true;
             break;

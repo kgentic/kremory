@@ -611,7 +611,8 @@ mod tests {
             Arc::new(ArcChatProvider::new(chat)),
             Arc::new(ArcEmbedder(embedder)),
             config,
-        ).expect("Engine::new should succeed in tests");
+        )
+        .expect("Engine::new should succeed in tests");
         EngineGraphHandle::new(engine)
     }
 

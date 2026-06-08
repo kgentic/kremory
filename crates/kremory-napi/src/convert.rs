@@ -103,7 +103,11 @@ impl napi::bindgen_prelude::FromNapiValue for JsOpenOptions {
     ) -> napi::Result<Self> {
         // Never called in test builds — napi runtime is absent.
         // Stub satisfies the trait bound required by #[napi] on JsMemory::open.
-        Ok(JsOpenOptions { embedding_dim: None, default_namespace: None, extractor: None })
+        Ok(JsOpenOptions {
+            embedding_dim: None,
+            default_namespace: None,
+            extractor: None,
+        })
     }
 }
 
@@ -172,9 +176,9 @@ impl TryFrom<JsStructuredFact> for kremory::memory::types::StructuredFact {
         let memory_type = match js.memory_type.as_deref() {
             None | Some("") => None,
             Some(s) => Some(
-                serde_json::from_value::<kremory::MemoryType>(
-                    serde_json::Value::String(s.to_string()),
-                )
+                serde_json::from_value::<kremory::MemoryType>(serde_json::Value::String(
+                    s.to_string(),
+                ))
                 .map_err(|e| {
                     napi::Error::from_reason(format!(
                         "JsStructuredFact.memory_type: unknown value {:?} \
@@ -637,13 +641,7 @@ mod tests {
     // Helper: build a minimal RetrievedContext via ::new() then patch
     // entity_type_id / entity_type_name directly (within-crate access allowed).
     fn make_ctx(entity_type_id: u32, entity_type_name: &str) -> RetrievedContext {
-        let mut ctx = RetrievedContext::new(
-            "ent-1",
-            "Alice",
-            "summary text",
-            0.9_f32,
-            vec![],
-        );
+        let mut ctx = RetrievedContext::new("ent-1", "Alice", "summary text", 0.9_f32, vec![]);
         ctx.entity_type_id = entity_type_id;
         ctx.entity_type_name = entity_type_name.to_string();
         ctx

@@ -166,11 +166,18 @@ pub struct JsEmbedderBridge {
 #[cfg(test)]
 enum MockKind {
     /// Returns a fixed vec on every call. Optional dim check.
-    Fixed { vec: Vec<f32>, expected_dim: Option<usize> },
+    Fixed {
+        vec: Vec<f32>,
+        expected_dim: Option<usize>,
+    },
     /// Every call returns a descriptive error.
     Error { message: String },
     /// Returns vec and increments a shared counter. Dim is validated.
-    Counting { vec: Vec<f32>, expected_dim: usize, counter: Arc<std::sync::atomic::AtomicUsize> },
+    Counting {
+        vec: Vec<f32>,
+        expected_dim: usize,
+        counter: Arc<std::sync::atomic::AtomicUsize>,
+    },
 }
 
 #[cfg(test)]
@@ -178,18 +185,32 @@ impl JsEmbedderBridge {
     /// Happy-path mock: returns `vec` on every call. No dim validation.
     /// For dim-validated mocks, use `new_mock_with_dim_check`.
     pub fn new_mock(vec: Vec<f32>) -> Self {
-        Self { kind: MockKind::Fixed { vec, expected_dim: None } }
+        Self {
+            kind: MockKind::Fixed {
+                vec,
+                expected_dim: None,
+            },
+        }
     }
 
     /// Error mock: every call returns a descriptive error containing `message`.
     pub fn new_error_mock(message: impl Into<String>) -> Self {
-        Self { kind: MockKind::Error { message: message.into() } }
+        Self {
+            kind: MockKind::Error {
+                message: message.into(),
+            },
+        }
     }
 
     /// Dim-check mock: returns `vec` but validates length against `expected_dim`.
     /// When lengths differ, embed_dyn returns a descriptive CoreError.
     pub fn new_mock_with_dim_check(vec: Vec<f32>, expected_dim: usize) -> Self {
-        Self { kind: MockKind::Fixed { vec, expected_dim: Some(expected_dim) } }
+        Self {
+            kind: MockKind::Fixed {
+                vec,
+                expected_dim: Some(expected_dim),
+            },
+        }
     }
 
     /// Counting mock: returns `vec` and increments `counter` on each embed_dyn call.
@@ -198,7 +219,13 @@ impl JsEmbedderBridge {
         expected_dim: usize,
         counter: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
-        Self { kind: MockKind::Counting { vec, expected_dim, counter } }
+        Self {
+            kind: MockKind::Counting {
+                vec,
+                expected_dim,
+                counter,
+            },
+        }
     }
 }
 
@@ -209,16 +236,18 @@ impl DynEmbeddingProvider for JsEmbedderBridge {
         _text: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, CoreError>> + Send + 'a>> {
         let result: Result<Vec<f32>, CoreError> = match &self.kind {
-            MockKind::Fixed { vec, expected_dim } => {
-                match validate_dim(vec, *expected_dim) {
-                    Err(e) => Err(e),
-                    Ok(()) => Ok(vec.clone()),
-                }
-            }
-            MockKind::Error { message } => {
-                Err(CoreError::Other(anyhow!("embedder callback error: {message}")))
-            }
-            MockKind::Counting { vec, expected_dim, counter } => {
+            MockKind::Fixed { vec, expected_dim } => match validate_dim(vec, *expected_dim) {
+                Err(e) => Err(e),
+                Ok(()) => Ok(vec.clone()),
+            },
+            MockKind::Error { message } => Err(CoreError::Other(anyhow!(
+                "embedder callback error: {message}"
+            ))),
+            MockKind::Counting {
+                vec,
+                expected_dim,
+                counter,
+            } => {
                 counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 match validate_dim(vec, Some(*expected_dim)) {
                     Err(e) => Err(e),
@@ -298,8 +327,8 @@ pub(crate) async fn resolve_env_llm() -> napi::Result<Arc<dyn ChatProvider>> {
         // backend, ~9GB, ~14.8B params. Reliable for NuExtract schema. Override via
         // OLLAMA_CHAT_MODEL env var. Avoid `-mlx` variants pending upstream
         // autoagents-llm structured-output patches.
-        let model = std::env::var("OLLAMA_CHAT_MODEL")
-            .unwrap_or_else(|_| "qwen2.5:14b".to_string());
+        let model =
+            std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "qwen2.5:14b".to_string());
 
         // Default 30s timeout — Apple Silicon MLX/14B cold-load or model-swap
         // routinely exceeds 10s (kremory facade convention). Override via
@@ -313,8 +342,7 @@ pub(crate) async fn resolve_env_llm() -> napi::Result<Arc<dyn ChatProvider>> {
         // unload after each call), which causes model swap thrash on
         // GPU-constrained hosts when multiple consumers share Ollama.
         // Override via OLLAMA_KEEP_ALIVE env var.
-        let keep_alive = std::env::var("OLLAMA_KEEP_ALIVE")
-            .unwrap_or_else(|_| "1h".to_string());
+        let keep_alive = std::env::var("OLLAMA_KEEP_ALIVE").unwrap_or_else(|_| "1h".to_string());
 
         let chat: Arc<Ollama> = LLMBuilder::<Ollama>::new()
             .base_url(&host)
@@ -384,13 +412,13 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::sync::{
-        Arc,
         atomic::{AtomicUsize, Ordering},
+        Arc,
     };
 
     use kremory::DynEmbeddingProvider;
 
-    use super::{JsEmbedderBridge, into_arc};
+    use super::{into_arc, JsEmbedderBridge};
 
     // ── D1: Happy-path dispatch ───────────────────────────────────────────────
 
@@ -406,7 +434,11 @@ mod tests {
         let result = arc.embed_dyn("hello world").await;
         let vec = result.expect("embed_dyn must succeed on happy path");
 
-        assert_eq!(vec.len(), expected_dim, "returned vec length must equal expected_dim");
+        assert_eq!(
+            vec.len(),
+            expected_dim,
+            "returned vec length must equal expected_dim"
+        );
         for (i, (&got, &exp)) in vec.iter().zip(fixed.iter()).enumerate() {
             assert!(
                 (got - exp).abs() < 1e-6,
@@ -420,10 +452,15 @@ mod tests {
 
     #[tokio::test]
     async fn bridge_propagates_callback_error() {
-        let arc = into_arc(JsEmbedderBridge::new_error_mock("embed failed: model unavailable"));
+        let arc = into_arc(JsEmbedderBridge::new_error_mock(
+            "embed failed: model unavailable",
+        ));
 
         let result = arc.embed_dyn("any text").await;
-        assert!(result.is_err(), "bridge must propagate callback error as Err");
+        assert!(
+            result.is_err(),
+            "bridge must propagate callback error as Err"
+        );
 
         let msg = result.unwrap_err().to_string();
         assert!(
@@ -441,7 +478,10 @@ mod tests {
         let wrong_vec: Vec<f32> = vec![0.5f32; wrong_dim];
 
         // Bridge configured to expect 256-dim but mock returns 128-dim vec.
-        let arc = into_arc(JsEmbedderBridge::new_mock_with_dim_check(wrong_vec, expected_dim));
+        let arc = into_arc(JsEmbedderBridge::new_mock_with_dim_check(
+            wrong_vec,
+            expected_dim,
+        ));
 
         let result = arc.embed_dyn("mismatch text").await;
         assert!(result.is_err(), "dim mismatch must produce Err, not panic");
@@ -462,7 +502,10 @@ mod tests {
         let arc = into_arc(JsEmbedderBridge::new_mock_with_dim_check(vec, dim));
 
         let result = arc.embed_dyn("matching dim text").await;
-        assert!(result.is_ok(), "correct-dim vec must not trigger a dim error");
+        assert!(
+            result.is_ok(),
+            "correct-dim vec must not trigger a dim error"
+        );
         assert_eq!(result.unwrap().len(), dim);
     }
 
@@ -473,7 +516,11 @@ mod tests {
         let call_count = Arc::new(AtomicUsize::new(0));
         let dim = 384usize;
         let fixed: Vec<f32> = vec![0.1f32; dim];
-        let arc = into_arc(JsEmbedderBridge::new_counting_mock(fixed, dim, Arc::clone(&call_count)));
+        let arc = into_arc(JsEmbedderBridge::new_counting_mock(
+            fixed,
+            dim,
+            Arc::clone(&call_count),
+        ));
 
         let _result = arc.embed_dyn("test text for counting").await;
 
@@ -500,8 +547,7 @@ mod tests {
     async fn bridge_concurrent_calls_both_succeed() {
         let dim = 64usize;
         let fixed: Vec<f32> = vec![0.42f32; dim];
-        let bridge: Arc<dyn DynEmbeddingProvider> =
-            Arc::new(JsEmbedderBridge::new_mock(fixed));
+        let bridge: Arc<dyn DynEmbeddingProvider> = Arc::new(JsEmbedderBridge::new_mock(fixed));
         let bridge2 = Arc::clone(&bridge);
 
         let h1 = tokio::spawn(async move { bridge.embed_dyn("first concurrent text").await });
@@ -546,7 +592,10 @@ mod tests {
 
         assert_eq!(v1.len(), dim, "first call must return correct dim");
         assert_eq!(v2.len(), dim, "second call must return correct dim");
-        assert_eq!(v1, v2, "both calls on same mock bridge must return identical vecs");
+        assert_eq!(
+            v1, v2,
+            "both calls on same mock bridge must return identical vecs"
+        );
     }
 
     // ── D10: into_arc produces correct trait object ───────────────────────────

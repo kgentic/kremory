@@ -163,8 +163,8 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     // Load fixture + ground truth. TD-021: KREMORY_BENCH_DOMAIN env var lets
     // any 14-domain fixture be benchmarked through the same test logic.
     // Defaults to mock_interview for backwards-compat with existing CI.
-    let domain_key = std::env::var("KREMORY_BENCH_DOMAIN")
-        .unwrap_or_else(|_| "mock_interview".to_string());
+    let domain_key =
+        std::env::var("KREMORY_BENCH_DOMAIN").unwrap_or_else(|_| "mock_interview".to_string());
     let fixture_filename = format!("{}.txt", domain_key);
     let ground_truth = load_ground_truth();
     let domain = ground_truth
@@ -232,11 +232,18 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             .collect();
         // Augment with KREMORY_BENCH_EXTRA_TYPES if provided.
         if let Ok(extras) = std::env::var("KREMORY_BENCH_EXTRA_TYPES") {
-            for extra in extras.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            for extra in extras
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
                 names.push(extra.to_string());
             }
         }
-        eprintln!("label_precision_benchmark: GLiNER allowed_types={:?}", names);
+        eprintln!(
+            "label_precision_benchmark: GLiNER allowed_types={:?}",
+            names
+        );
         names
     } else {
         Vec::new()
@@ -257,7 +264,8 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             .expect("PipelineConfig default")
     };
 
-    let engine = Engine::new(Arc::clone(&graph), llm.clone(), Arc::new(emb), config).expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm.clone(), Arc::new(emb), config)
+        .expect("Engine::new should succeed in tests");
 
     // TD-021: KREMORY_BENCH_EXTRA_TYPES allows passing additional entity types
     // (comma-separated, e.g. "Court,Drug,Species") on top of the 10 defaults so
@@ -321,14 +329,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             )
             .expect("HybridGlinerLlmExtractor::new — needs GLiNER model + LLM");
             engine
-                .ingest_with(
-                    &hybrid,
-                    &fixture_text,
-                    None,
-                    None,
-                    None,
-                    source_params,
-                )
+                .ingest_with(&hybrid, &fixture_text, None, None, None, source_params)
                 .await
         }
         #[cfg(not(feature = "ner"))]
@@ -345,14 +346,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             let gliner = kremory::core::ner::GlinerExtractor::new()
                 .expect("GlinerExtractor::new — downloads ~650MB INT8 model from HF on first use");
             engine
-                .ingest_with(
-                    &gliner,
-                    &fixture_text,
-                    None,
-                    None,
-                    None,
-                    source_params,
-                )
+                .ingest_with(&gliner, &fixture_text, None, None, None, source_params)
                 .await
         }
         #[cfg(not(feature = "ner"))]
@@ -365,14 +359,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     } else {
         let extractor = DefaultExtractor::new(Arc::clone(&llm));
         engine
-            .ingest_with(
-                &extractor,
-                &fixture_text,
-                None,
-                None,
-                None,
-                source_params,
-            )
+            .ingest_with(&extractor, &fixture_text, None, None, None, source_params)
             .await
     };
 
@@ -380,7 +367,10 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     // panicking. Multi-stage extraction may fail at any stage; the metrics
     // captured up to the failure point still reveal what labels surfaced.
     if let Err(e) = &ingest_result {
-        eprintln!("\n── PHASE 1 EARLY-PANIC METRICS DUMP (ingest failed: {}) ──", e);
+        eprintln!(
+            "\n── PHASE 1 EARLY-PANIC METRICS DUMP (ingest failed: {}) ──",
+            e
+        );
         let snap = snapshotter.snapshot().into_vec();
         let mut rejected_labels: Vec<(String, u64)> = Vec::new();
         for (key, _, _, debug_value) in &snap {
@@ -416,11 +406,17 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             if !name.starts_with("rql.") {
                 continue;
             }
-            let labels: Vec<_> = key.key().labels().map(|l| format!("{}={}", l.key(), l.value())).collect();
+            let labels: Vec<_> = key
+                .key()
+                .labels()
+                .map(|l| format!("{}={}", l.key(), l.value()))
+                .collect();
             let count = match dv {
                 metrics_util::debugging::DebugValue::Counter(v) => format!("counter={}", v),
                 metrics_util::debugging::DebugValue::Gauge(v) => format!("gauge={:?}", v),
-                metrics_util::debugging::DebugValue::Histogram(samples) => format!("histogram[{} samples]", samples.len()),
+                metrics_util::debugging::DebugValue::Histogram(samples) => {
+                    format!("histogram[{} samples]", samples.len())
+                }
             };
             eprintln!("    {} [{}] {}", name, labels.join(","), count);
         }
@@ -521,8 +517,12 @@ async fn label_precision_gte_0_75_on_mock_interview() {
                     let mut sum = 0.0_f64;
                     for s in samples {
                         let v = s.0;
-                        if v < min { min = v; }
-                        if v > max { max = v; }
+                        if v < min {
+                            min = v;
+                        }
+                        if v > max {
+                            max = v;
+                        }
                         sum += v;
                     }
                     let avg = sum / n as f64;
@@ -551,7 +551,9 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     if rejected_labels.is_empty() {
         eprintln!("  rql.entity.label_rejected_total: NO REJECTIONS RECORDED");
     } else {
-        eprintln!("  rql.entity.label_rejected_total — LITERAL labels emitted by LLM and rejected by L2:");
+        eprintln!(
+            "  rql.entity.label_rejected_total — LITERAL labels emitted by LLM and rejected by L2:"
+        );
         for (label, count) in &rejected_labels {
             eprintln!("    '{}' rejected {} time(s)", label, count);
         }
@@ -618,7 +620,9 @@ async fn label_precision_haiku_on_mock_interview() {
     let base_url = match ollama_base_url() {
         Some(url) => url,
         None => {
-            eprintln!("SKIP label_precision_haiku: OLLAMA_HOST not set (still needed for embeddings)");
+            eprintln!(
+                "SKIP label_precision_haiku: OLLAMA_HOST not set (still needed for embeddings)"
+            );
             return;
         }
     };
@@ -667,7 +671,8 @@ async fn label_precision_haiku_on_mock_interview() {
         .expect("PipelineConfig default");
 
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
-    let engine = Engine::new(Arc::clone(&graph), llm, Arc::new(emb), config).expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, Arc::new(emb), config)
+        .expect("Engine::new should succeed in tests");
 
     let ingest_result = engine
         .ingest_with(

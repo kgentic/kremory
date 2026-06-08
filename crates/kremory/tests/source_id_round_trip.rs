@@ -62,6 +62,7 @@ async fn remember_from_source_then_recall_by_source_id_returns_episode() {
         .remember("Episode content for source_id round-trip test.")
         .from_source(source_slug, SourceKind::Document)
         .in_namespace(ns.clone())
+        .skip_extraction() // ner feature: test is not about extraction
         .await
         .expect("remember().from_source() must succeed");
 
@@ -105,6 +106,7 @@ async fn recall_by_source_id_is_namespace_scoped() {
     mem.remember("Content in namespace A.")
         .from_source(slug, SourceKind::Document)
         .in_namespace(ns_a.clone())
+        .skip_extraction() // ner feature: test is not about extraction
         .await
         .expect("ingest into ns-a must succeed");
 

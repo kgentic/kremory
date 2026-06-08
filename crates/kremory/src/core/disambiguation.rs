@@ -311,10 +311,7 @@ pub async fn insert_potential_alias_fact(
 ///
 /// - Either endpoint entity has no embedding (`NULL` in DB) → skip the fact.
 /// - `object_id` is `None` on the fact row → skip (malformed alias fact).
-pub async fn resolve_pending_aliases(
-    graph: &TemporalGraph,
-    group_id: &str,
-) -> Result<usize> {
+pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> Result<usize> {
     let alias_facts = graph.get_alias_facts_in_group(group_id).await?;
     if alias_facts.is_empty() {
         return Ok(0);
@@ -523,8 +520,7 @@ mod tests {
     async fn null_embedder_returns_new() -> KResult<()> {
         let graph = TemporalGraph::open_in_memory().await?;
         let embedder = NullEmbeddingProvider { dim: 384 };
-        let outcome =
-            disambiguate("Alice", Some("test-group"), &graph, &embedder).await?;
+        let outcome = disambiguate("Alice", Some("test-group"), &graph, &embedder).await?;
         assert_eq!(
             outcome,
             DisambiguationOutcome::New,

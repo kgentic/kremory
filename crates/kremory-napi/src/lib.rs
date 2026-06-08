@@ -20,8 +20,8 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
-mod convert;
 pub mod bridge;
+mod convert;
 
 use napi_derive::napi;
 
@@ -258,7 +258,8 @@ impl JsMemory {
                     warnings.push(format!("metadata update failed: {e}"));
                 }
             } else {
-                warnings.push("metadata supplied without source_id — metadata not stored".to_string());
+                warnings
+                    .push("metadata supplied without source_id — metadata not stored".to_string());
             }
         }
 
@@ -300,17 +301,15 @@ impl JsMemory {
     /// Wraps substrate `Memory::update_source_uri`. Rejects if no episode matches
     /// `source_id`. Returns the count of rows updated.
     #[napi]
-    pub async fn update_source_uri(
-        &self,
-        source_id: String,
-        new_uri: String,
-    ) -> napi::Result<f64> {
+    pub async fn update_source_uri(&self, source_id: String, new_uri: String) -> napi::Result<f64> {
         let updated = self
             .inner
             .update_source_uri(source_id)
             .to(new_uri)
             .await
-            .map_err(|e| napi::Error::from_reason(format!("kremory updateSourceUri failed: {e}")))?;
+            .map_err(|e| {
+                napi::Error::from_reason(format!("kremory updateSourceUri failed: {e}"))
+            })?;
 
         // u64 → f64: safe up to 2^53; episode update counts never approach that limit.
         #[allow(clippy::cast_precision_loss)]
@@ -504,10 +503,7 @@ impl JsMemory {
     /// Returns a `Vec<IngestResult>` in the same order as the input episodes.
     /// The batch is committed sequentially — the first error aborts the batch.
     #[napi]
-    pub async fn remember_batch(
-        &self,
-        opts: JsBatchOptions,
-    ) -> napi::Result<Vec<JsIngestResult>> {
+    pub async fn remember_batch(&self, opts: JsBatchOptions) -> napi::Result<Vec<JsIngestResult>> {
         let mut builder = self.inner.remember_batch();
 
         if let Some(ref id) = opts.batch_id {
@@ -523,14 +519,14 @@ impl JsMemory {
                 .map(kremory::Namespace::new)
                 .or_else(|| self.default_namespace.clone());
 
-            let facts: Vec<kremory::memory::types::StructuredFact> =
-                match ep_opts.structured_facts {
-                    Some(items) => items
-                        .into_iter()
-                        .map(kremory::memory::types::StructuredFact::try_from)
-                        .collect::<Result<_, _>>()?,
-                    None => Vec::new(),
-                };
+            let facts: Vec<kremory::memory::types::StructuredFact> = match ep_opts.structured_facts
+            {
+                Some(items) => items
+                    .into_iter()
+                    .map(kremory::memory::types::StructuredFact::try_from)
+                    .collect::<Result<_, _>>()?,
+                None => Vec::new(),
+            };
 
             let mut entry = builder.entry(ep_opts.content.clone());
 
@@ -740,11 +736,10 @@ impl JsMemory {
             batch_id: None,
         };
 
-        let outcome = self
-            .inner
-            .cancel_dream(&handle)
-            .await
-            .map_err(|e| napi::Error::from_reason(format!("kremory cancelDream failed: {e}")))?;
+        let outcome =
+            self.inner.cancel_dream(&handle).await.map_err(|e| {
+                napi::Error::from_reason(format!("kremory cancelDream failed: {e}"))
+            })?;
 
         Ok(convert::cancel_outcome_to_js(outcome))
     }
@@ -760,9 +755,7 @@ impl JsMemory {
         self.inner
             .register_namespace(kremory::Namespace::new(namespace))
             .await
-            .map_err(|e| {
-                napi::Error::from_reason(format!("kremory registerNamespace failed: {e}"))
-            })
+            .map_err(|e| napi::Error::from_reason(format!("kremory registerNamespace failed: {e}")))
     }
 
     /// Monotonically upgrade a namespace's immutability from `Mutable` to
@@ -776,9 +769,7 @@ impl JsMemory {
             .upgrade_namespace_policy(kremory::Namespace::new(namespace))
             .await
             .map_err(|e| {
-                napi::Error::from_reason(format!(
-                    "kremory upgradeNamespacePolicy failed: {e}"
-                ))
+                napi::Error::from_reason(format!("kremory upgradeNamespacePolicy failed: {e}"))
             })
     }
 

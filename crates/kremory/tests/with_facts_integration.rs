@@ -135,6 +135,7 @@ fn with_facts_pins_facts_and_recall_returns_them() {
                 .remember("ADR-035 body — with_facts semantics and skip_extraction.")
                 .with_facts(facts)
                 .from_document("adr-035-doc")
+                .skip_extraction() // ner feature: test is not about extraction
                 .await
                 .expect("remember should succeed");
 
@@ -163,10 +164,8 @@ fn with_facts_pins_facts_and_recall_returns_them() {
                 results.len()
             );
 
-            let pinned = find_counter_labeled(
-                snapshotter.snapshot(),
-                "kremory.with_facts.pinned_total",
-            );
+            let pinned =
+                find_counter_labeled(snapshotter.snapshot(), "kremory.with_facts.pinned_total");
             assert_eq!(
                 pinned, n_facts as u64,
                 "all {} caller-supplied facts must have been pinned; counter={}",
@@ -211,10 +210,8 @@ fn skip_extraction_suppresses_phase2_via_counter() {
             );
 
             // Sanity: pinned counter still incremented (caller facts written).
-            let pinned = find_counter_labeled(
-                snapshotter.snapshot(),
-                "kremory.with_facts.pinned_total",
-            );
+            let pinned =
+                find_counter_labeled(snapshotter.snapshot(), "kremory.with_facts.pinned_total");
             assert_eq!(
                 pinned,
                 three_fact_fixture().len() as u64,
@@ -244,15 +241,14 @@ fn with_facts_empty_vec_equivalent_to_no_facts() {
                 .remember("plain content, no caller facts")
                 .with_facts(vec![])
                 .from_chat("empty-fixture")
+                .skip_extraction() // ner feature: test is not about extraction
                 .await
                 .expect("empty-vec remember should succeed");
 
             assert!(!commit.episode_entity_id.is_empty());
 
-            let pinned = find_counter_labeled(
-                snapshotter.snapshot(),
-                "kremory.with_facts.pinned_total",
-            );
+            let pinned =
+                find_counter_labeled(snapshotter.snapshot(), "kremory.with_facts.pinned_total");
             assert_eq!(
                 pinned, 0,
                 "empty with_facts vec must NOT increment pinned_total; got {}",
@@ -304,10 +300,8 @@ fn with_facts_skip_extraction_combined_roundtrip() {
             assert!(!commit.episode_entity_id.is_empty());
 
             // Round-trip invariant 1: caller facts pinned.
-            let pinned = find_counter_labeled(
-                snapshotter.snapshot(),
-                "kremory.with_facts.pinned_total",
-            );
+            let pinned =
+                find_counter_labeled(snapshotter.snapshot(), "kremory.with_facts.pinned_total");
             assert_eq!(
                 pinned, n_facts as u64,
                 "caller facts MUST be pinned even when skip_extraction is set; got pinned={}",

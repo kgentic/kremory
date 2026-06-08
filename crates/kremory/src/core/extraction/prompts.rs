@@ -92,15 +92,17 @@ pub fn render_registry_block(specs: &[EntityTypeSpec]) -> String {
 
     let mut lines = Vec::with_capacity(specs.len() + 6);
     lines.push(
-        "Entity types — set each entity's `entity_type_id` field to ONE of these integer ids:".to_string(),
+        "Entity types — set each entity's `entity_type_id` field to ONE of these integer ids:"
+            .to_string(),
     );
     for spec in specs {
-        lines.push(format!("  {} — {} — {}", spec.id, spec.name, spec.description));
+        lines.push(format!(
+            "  {} — {} — {}",
+            spec.id, spec.name, spec.description
+        ));
     }
     lines.push(String::new()); // blank line separator
-    lines.push(
-        "CRITICAL CLASSIFICATION RULES:".to_string(),
-    );
+    lines.push("CRITICAL CLASSIFICATION RULES:".to_string());
     lines.push(
         "  • Every named entity MUST be assigned its most specific matching type from the list above.".to_string(),
     );
@@ -116,9 +118,7 @@ pub fn render_registry_block(specs: &[EntityTypeSpec]) -> String {
     lines.push(
         "  • Use \"Entity\" ONLY as a last resort when NO other type fits. Choosing \"Entity\" for a country/company/person is INCORRECT.".to_string(),
     );
-    lines.push(
-        "  • NEVER invent type names not listed above.".to_string(),
-    );
+    lines.push("  • NEVER invent type names not listed above.".to_string());
 
     lines.join("\n")
 }
@@ -527,7 +527,8 @@ mod tests {
         );
         // Negative assertions: mother and watch are NOT entities
         assert!(
-            CROSS_DOMAIN_EXAMPLES.contains("\"mother\"") || CROSS_DOMAIN_EXAMPLES.contains("\"watch\""),
+            CROSS_DOMAIN_EXAMPLES.contains("\"mother\"")
+                || CROSS_DOMAIN_EXAMPLES.contains("\"watch\""),
             "Example 3 must show that mother/watch are NOT entities"
         );
     }
@@ -559,14 +560,8 @@ mod tests {
         // TD-013 Phase 8: registry block renders names as quoted strings (LLM
         // emits string label per L2 schema; integer id is server-side via
         // registry.label_to_id lookup).
-        assert!(
-            result.contains("\"Entity\""),
-            "must render Entity entry"
-        );
-        assert!(
-            result.contains("\"Person\""),
-            "must render Person entry"
-        );
+        assert!(result.contains("\"Entity\""), "must render Entity entry");
+        assert!(result.contains("\"Person\""), "must render Person entry");
         assert!(
             result.contains("\"Organisation\""),
             "must render Organisation entry"

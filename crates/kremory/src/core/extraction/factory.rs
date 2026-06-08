@@ -100,7 +100,7 @@ impl<L: ChatProvider + 'static> ProductionExtractor<L> {
     pub fn nuextract_only(llm: Arc<L>) -> Self {
         counter!("kremory.extraction.factory_choice",
             "extractor" => "nuextract")
-            .increment(1);
+        .increment(1);
         tracing::debug!(
             target: "kremory.extraction.factory",
             "using NuExtractExtractor (infallible constructor)"
@@ -119,7 +119,7 @@ impl<L: ChatProvider + 'static> ProductionExtractor<L> {
         // Emit BEFORE construction so failures are attributable.
         counter!("kremory.extraction.factory_choice",
             "extractor" => chosen.label())
-            .increment(1);
+        .increment(1);
 
         match chosen {
             ResolvedSource::NuExtract => {
@@ -135,9 +135,11 @@ impl<L: ChatProvider + 'static> ProductionExtractor<L> {
                     target: "kremory.extraction.factory",
                     "using HybridGlinerLlmExtractor (TD-023)"
                 );
-                let hybrid = super::hybrid_typer::HybridGlinerLlmExtractor::new(llm)
-                    .map_err(|e| Error::ExtractorInit {
-                        detail: format!("{e}"),
+                let hybrid =
+                    super::hybrid_typer::HybridGlinerLlmExtractor::new(llm).map_err(|e| {
+                        Error::ExtractorInit {
+                            detail: format!("{e}"),
+                        }
                     })?;
                 Ok(Self::Hybrid(Box::new(hybrid)))
             }
@@ -170,7 +172,7 @@ impl<L: ChatProvider + 'static> ProductionExtractor<L> {
                 counter!("kremory.extraction.factory_choice_fallback",
                     "reason" => "feature_disabled",
                     "attempted" => "hybrid")
-                    .increment(1);
+                .increment(1);
                 ResolvedSource::NuExtract
             }
             other => {
@@ -182,7 +184,7 @@ impl<L: ChatProvider + 'static> ProductionExtractor<L> {
                 counter!("kremory.extraction.factory_choice_fallback",
                     "reason" => "unrecognized_env_value",
                     "attempted" => other.to_string())
-                    .increment(1);
+                .increment(1);
                 ResolvedSource::NuExtract
             }
         }

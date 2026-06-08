@@ -404,11 +404,7 @@ async fn test_fts_fact_retrieval() {
         .await
         .expect("insert acme");
     graph
-        .insert_entity(
-            "project_x",
-            0,
-            serde_json::json!({"name": "Project X"}),
-        )
+        .insert_entity("project_x", 0, serde_json::json!({"name": "Project X"}))
         .await
         .expect("insert project_x");
 
@@ -530,11 +526,7 @@ async fn test_contextualize_one_hop_expansion() {
         .await
         .expect("insert acme");
     graph
-        .insert_entity(
-            "project_x",
-            0,
-            serde_json::json!({"name": "Project X"}),
-        )
+        .insert_entity("project_x", 0, serde_json::json!({"name": "Project X"}))
         .await
         .expect("insert project_x");
 
