@@ -495,7 +495,15 @@ async fn background_ingestor_drains_without_errors() {
             .expect("open_in_memory failed"),
     );
 
+    // TD-006 fix (Phase E E-4): set allowed_entity_types so the ner-feature
+    // GlinerExtractor doesn't reject the open-ended config at extract time.
     let config = PipelineConfig::builder()
+        .allowed_entity_types(
+            DEFAULT_ENTITY_TYPES
+                .iter()
+                .map(|(_, name, _)| name.to_string())
+                .collect(),
+        )
         .build()
         .expect("PipelineConfig build failed");
 
