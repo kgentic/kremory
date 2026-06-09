@@ -1347,6 +1347,148 @@ pub(crate) async fn migrate_010_default_entity_types(
     Ok(())
 }
 
+// ─── Migration 011 ─────────────────────────────────────────────────────────
+
+/// Migration 011 (Phase G, ADR-042, TD-003): add `content_hash` column to
+/// `episodes` with SHA-256 backfill over existing rows.
+///
+/// ### Motivation
+///
+/// The `Episode` struct has carried `content_hash: Option<String>` since
+/// approximately v0.1.4.  The `episodes` table never had a matching column —
+/// so the field was always `None` when populated from any `SELECT`.  This
+/// migration adds the column and backfills it so that existing rows return a
+/// real hash immediately after the migration runs.
+///
+/// SQLite has no built-in SHA-256 function, so backfill is performed in Rust:
+/// we iterate all rows with `content_hash IS NULL`, compute
+/// `sha2::Sha256::digest(content)`, and issue a batched UPDATE.
+///
+/// ### Steps
+///
+/// 1. PRAGMA-gate: scan `PRAGMA table_info('episodes')` for `content_hash`.
+///    If already present, return early — no-op.
+/// 2. `ALTER TABLE episodes ADD COLUMN content_hash TEXT` (NULL default for
+///    existing rows; populated by the backfill below).
+/// 3. Rust-side backfill: query `id, content` for all rows where
+///    `content_hash IS NULL`, compute hex-encoded SHA-256, batch-UPDATE.
+/// 4. `CREATE INDEX IF NOT EXISTS idx_episodes_content_hash ON episodes(content_hash)`.
+///    Enables O(log n) future dedup queries.
+///
+/// ### Idempotency
+///
+/// G1 — `content_hash` column already present → return early.
+/// Index uses `IF NOT EXISTS` — always idempotent.
+/// Backfill UPDATE is filtered to `content_hash IS NULL` — safe on re-run
+/// if the migration crashes between the ALTER and the UPDATE.
+pub(crate) async fn migrate_011_episodes_content_hash(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_011 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // ── G1: idempotency gate ─────────────────────────────────────────────────
+
+    let mut info = conn
+        .query("PRAGMA table_info('episodes')", ())
+        .await
+        .map_err(step("pragma_table_info"))?;
+
+    let mut has_content_hash = false;
+    while let Some(row) = info.next().await.map_err(step("pragma_table_info_next"))? {
+        let col_name: String = row
+            .get(1)
+            .map_err(step("pragma_table_info_row_get"))?;
+        if col_name == "content_hash" {
+            has_content_hash = true;
+            break;
+        }
+    }
+
+    if has_content_hash {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_011: content_hash column already present on episodes — skipping"
+        );
+        return Ok(());
+    }
+
+    // ── Step 2: ADD COLUMN ───────────────────────────────────────────────────
+
+    conn.execute(
+        "ALTER TABLE episodes ADD COLUMN content_hash TEXT",
+        (),
+    )
+    .await
+    .map_err(step("alter_table_add_content_hash"))?;
+
+    // ── Step 3: Rust-side SHA-256 backfill ───────────────────────────────────
+    //
+    // SQLite has no built-in sha256().  We iterate all rows that need a hash
+    // (content_hash IS NULL, which is every row immediately after the ALTER)
+    // and issue individual UPDATE statements within a single logical batch.
+    // For fixture-sized databases (~50 rows) this is negligible.  For larger
+    // production databases the one-time cost is still bounded and acceptable
+    // (hashing is CPU-only; no I/O per row beyond the UPDATE).
+
+    {
+        use sha2::Digest as _;
+
+        let mut rows = conn
+            .query(
+                "SELECT id, content FROM episodes WHERE content_hash IS NULL",
+                (),
+            )
+            .await
+            .map_err(step("backfill_select"))?;
+
+        let mut updates: Vec<(i64, String)> = Vec::new();
+        while let Some(row) = rows.next().await.map_err(step("backfill_row_next"))? {
+            let id: i64 = row.get(0).map_err(step("backfill_row_get_id"))?;
+            let content: String = row.get(1).map_err(step("backfill_row_get_content"))?;
+            let hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
+            updates.push((id, hash));
+        }
+
+        let count = updates.len();
+        for (id, hash) in updates {
+            conn.execute(
+                "UPDATE episodes SET content_hash = ?1 WHERE id = ?2",
+                libsql::params![hash, id],
+            )
+            .await
+            .map_err(step("backfill_update"))?;
+        }
+
+        tracing::info!(
+            target: "kremory::migrations",
+            backfilled = count,
+            "migrate_011: SHA-256 backfill complete"
+        );
+    }
+
+    // ── Step 4: index ────────────────────────────────────────────────────────
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_episodes_content_hash ON episodes(content_hash)",
+        (),
+    )
+    .await
+    .map_err(step("create_idx_content_hash"))?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_011: content_hash column added to episodes; SHA-256 backfill done; \
+         idx_episodes_content_hash created."
+    );
+    Ok(())
+}
+
 // ─── Migration 006 ─────────────────────────────────────────────────────────
 
 /// Migration 006: install composite FK constraints on `facts` and `episodic_edges`

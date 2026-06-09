@@ -658,6 +658,11 @@ impl TemporalGraph {
         // Idempotent: ensure_default_types_seeded no-ops when group_id already has rows.
         crate::core::migrations::migrate_010_default_entity_types(&self.conn).await?;
 
+        // TD-003 Migration 011 (Phase G, ADR-042): add content_hash column to
+        // episodes with SHA-256 backfill. Idempotent: PRAGMA table_info gate
+        // skips the ALTER TABLE when the column already exists.
+        crate::core::migrations::migrate_011_episodes_content_hash(&self.conn).await?;
+
         Ok(())
     }
 
