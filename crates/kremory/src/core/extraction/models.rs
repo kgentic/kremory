@@ -285,18 +285,26 @@ pub(crate) struct RawEntitySimple {
 ///
 /// Spike 1c/1d (2026-06-03) confirmed: qwen2.5:14b emits id=0 (catch-all)
 /// even when prompted to bypass — grammar physically prevents out-of-range.
-// NOTE: `#[serde(default)]` is intentionally REMOVED from both fields (2026-06-04).
-// Previously defaults swallowed truncated LLM output: a fragmented post-repair JSON
-// like `[{"name":"Boston\", \"entity_type_id\":3}, {"}]` deserialized as a single
-// entity with name=<garbage> and entity_type_id=0 (the default), collapsing all
-// extractions to label="Entity". Without defaults, missing fields fail loudly so
+// NOTE: `#[serde(default)]` is intentionally REMOVED from `name` and `entity_type_id`
+// (2026-06-04). Previously defaults swallowed truncated LLM output: a fragmented
+// post-repair JSON like `[{"name":"Boston\", \"entity_type_id\":3}, {"}]` deserialized
+// as a single entity with name=<garbage> and entity_type_id=0 (the default), collapsing
+// all extractions to label="Entity". Without defaults, missing fields fail loudly so
 // the fallback ladder (LlmJsonRepair → DelimitedTuple → PromptOnly) can retry.
+//
+// `confidence` is the sole explicit exception per migration-010 spec §1.4:
+// missing confidence is semantically valid (LLM-only path does not emit it),
+// NOT a parse failure. `Option<f32>` + `#[serde(default)]` models "absent" correctly.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct RawEntityIntegerId {
     pub(crate) name: String,
     /// Integer entity type id constrained to the active namespace registry.
     /// id=0 = "Entity" catch-all; id ≥ 1 = user-defined types.
     pub(crate) entity_type_id: u32,
+    /// GLiNER / NER span confidence score (Phase 1 only). Absent on LLM-only extraction paths.
+    /// `#[serde(default)]` is intentional: missing = None, not a parse error (spec §1.4).
+    #[serde(default)]
+    pub(crate) confidence: Option<f32>,
 }
 
 /// Wrapper for the integer-ID entity list (TD-013 L1).
