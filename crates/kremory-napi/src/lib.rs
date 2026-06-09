@@ -92,8 +92,8 @@ impl JsMemory {
                 .and_then(|d| usize::try_from(d).ok());
 
             // Detect which extractor knobs are set.
-            let has_gliner = opts.as_ref().map_or(false, |o| o.gliner.is_some());
-            let has_extractor = opts.as_ref().map_or(false, |o| o.extractor.is_some());
+            let has_gliner = opts.as_ref().is_some_and(|o| o.gliner.is_some());
+            let has_extractor = opts.as_ref().is_some_and(|o| o.extractor.is_some());
 
             // Conflict: gliner + extractor simultaneously is a BuilderConflict.
             if has_gliner && has_extractor {
@@ -116,7 +116,7 @@ impl JsMemory {
             // Extractor knobs require a BYOM embedder (ADR-039 §6 compat matrix).
             // All valid rows that include gliner or extractor also include withEmbedder.
             if (has_gliner || has_extractor)
-                && opts.as_ref().map_or(true, |o| o.with_embedder.is_none())
+                && opts.as_ref().is_none_or(|o| o.with_embedder.is_none())
             {
                 return Err(napi::Error::from_reason(
                     "KremoryError::BuilderConflict: \
