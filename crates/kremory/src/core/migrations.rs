@@ -1595,6 +1595,11 @@ pub(crate) async fn migrate_012_source_tier_columns(
     // reconcile pass (ADR-046 §1). ConsumerPinned entities are excluded — they
     // are structurally protected from dream re-typing (ADR-045 §3).
 
+    // NOTE: entities has no separate `name` column. The normalized entity name
+    // IS the primary key `id` (set by normalize_name() at ingest time). The drift
+    // view therefore compares LOWER(TRIM(e1.id)) to LOWER(TRIM(e2.id)).
+    // The spec draft used `e2.namespace` (actual column: `group_id`) and
+    // `e2.name` (actual field: `id`) — both corrected here per T1-T2-impl.md.
     conn.execute(
         "CREATE VIEW IF NOT EXISTS v_entity_drift_candidates AS \
          SELECT e1.id AS entity_id \
@@ -1602,7 +1607,7 @@ pub(crate) async fn migrate_012_source_tier_columns(
          WHERE (e1.entity_type_source IS NULL OR e1.entity_type_source != 'ConsumerPinned') \
            AND EXISTS ( \
                SELECT 1 FROM entities e2 \
-               WHERE LOWER(TRIM(e2.name)) = LOWER(TRIM(e1.name)) \
+               WHERE LOWER(TRIM(e2.id)) = LOWER(TRIM(e1.id)) \
                  AND e2.group_id = e1.group_id \
                  AND e2.entity_type_id != e1.entity_type_id \
                  AND e2.id != e1.id \
