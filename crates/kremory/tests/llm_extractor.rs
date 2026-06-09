@@ -93,7 +93,9 @@ async fn byoe_dream_returns_llm_required_when_no_llm() {
         .in_namespace(Namespace::new("test"))
         .await;
 
-    let err = result.err().expect("dream without LLM must return LlmRequired");
+    let Err(err) = result else {
+        panic!("dream without LLM must return LlmRequired");
+    };
     let detail = err.to_string();
     assert!(
         detail.contains("LLM") || detail.contains("llm") || detail.contains("dream"),
