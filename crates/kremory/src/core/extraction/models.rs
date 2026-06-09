@@ -357,3 +357,75 @@ pub(crate) struct RawFact {
     #[serde(default = "default_confidence")]
     pub(crate) confidence: f64,
 }
+
+// ─── A6: confidence field round-trip (DoD, spec §1.4) ────────────────────────
+//
+// RawEntityIntegerId is pub(crate) so these live here, not in integration tests.
+#[cfg(test)]
+mod tests_a6_confidence_round_trip {
+    use super::RawEntityIntegerId;
+
+    #[test]
+    fn confidence_with_value() {
+        let json = r#"{"name":"Alice","entity_type_id":1,"confidence":0.9}"#;
+        let parsed: RawEntityIntegerId =
+            serde_json::from_str(json).expect("parse with confidence must succeed");
+        assert_eq!(parsed.name, "Alice");
+        assert_eq!(parsed.entity_type_id, 1);
+        let conf = parsed.confidence.expect("confidence must be Some(0.9)");
+        assert!(
+            (conf - 0.9_f32).abs() < 1e-5,
+            "confidence must be ~0.9; got {conf}"
+        );
+    }
+
+    #[test]
+    fn confidence_missing_is_none() {
+        // Missing confidence field must deserialise to None, NOT a parse error.
+        // This is the explicit exception to the loud-parse rule (spec §1.4).
+        let json = r#"{"name":"Bob","entity_type_id":2}"#;
+        let parsed: RawEntityIntegerId =
+            serde_json::from_str(json).expect("parse without confidence must succeed");
+        assert_eq!(parsed.name, "Bob");
+        assert_eq!(parsed.entity_type_id, 2);
+        assert!(
+            parsed.confidence.is_none(),
+            "missing confidence must be None; got {:?}",
+            parsed.confidence
+        );
+    }
+
+    #[test]
+    fn confidence_explicit_null_is_none() {
+        let json = r#"{"name":"Carol","entity_type_id":3,"confidence":null}"#;
+        let parsed: RawEntityIntegerId =
+            serde_json::from_str(json).expect("parse with null confidence must succeed");
+        assert!(
+            parsed.confidence.is_none(),
+            "null confidence must be None; got {:?}",
+            parsed.confidence
+        );
+    }
+
+    #[test]
+    fn name_required_loud_parse() {
+        // Missing `name` must fail loudly — no #[serde(default)] on required fields.
+        let json = r#"{"entity_type_id":1}"#;
+        let result = serde_json::from_str::<RawEntityIntegerId>(json);
+        assert!(
+            result.is_err(),
+            "missing `name` must be a parse error; got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn entity_type_id_required_loud_parse() {
+        // Missing `entity_type_id` must fail loudly.
+        let json = r#"{"name":"Dave"}"#;
+        let result = serde_json::from_str::<RawEntityIntegerId>(json);
+        assert!(
+            result.is_err(),
+            "missing `entity_type_id` must be a parse error; got: {result:?}"
+        );
+    }
+}
