@@ -6,7 +6,7 @@
 //! - `helpers` — context snippet extraction + SimpleGraph test alias
 //! - `pipeline` — `ingest_with` + `ingest_deferred` impl blocks
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use metrics;
@@ -125,6 +125,65 @@ pub struct IngestionResult {
     pub stub_entities_inserted: usize,
 }
 
+// ── Dream pass types (Phase C DoD C1/C2) ──────────────────────────────────────
+
+/// Options for a synchronous dream pass.
+///
+/// Passed to [`Engine::run_dream_pass_sync`]. All fields have sensible defaults
+/// via [`Default`] — callers can construct with `DreamPassOpts::default()` and
+/// selectively override.
+///
+/// # ADR reference
+///
+/// ADR-045 §3 (dream pass architecture); Phase C DoD C2
+/// (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+#[derive(Debug, Clone)]
+pub struct DreamPassOpts {
+    /// When `true`, Pass 0 type-discovery runs to find novel entity types not
+    /// in the current registry. Requires LLM. Default: `false`.
+    ///
+    /// Phase D wires the actual Pass 0 logic; Phase C stubs this path.
+    pub include_type_discovery: bool,
+    /// Minimum confidence threshold for entity type assignments to be re-examined
+    /// during the reclassify pass. Range [0.0, 1.0]. Default: `0.5`.
+    pub confidence_threshold: f32,
+    /// Cap on the number of ghost episodes processed per run.
+    /// `None` = process all available ghost episodes. Default: `None`.
+    pub max_episodes_per_run: Option<usize>,
+    /// Confidence threshold above which `ConsumerPinned` entities are protected
+    /// from reclassification during the dream pass. Range [0.0, 1.0].
+    /// Default: `0.7` (ADR-045 §3).
+    pub reclassify_high_conf_threshold: f32,
+}
+
+impl Default for DreamPassOpts {
+    fn default() -> Self {
+        Self {
+            include_type_discovery: false,
+            confidence_threshold: 0.5,
+            max_episodes_per_run: None,
+            // ADR-045 §3: 0.7 is the ConsumerPinned protection threshold.
+            reclassify_high_conf_threshold: 0.7,
+        }
+    }
+}
+
+/// Summary returned by [`Engine::run_dream_pass_sync`].
+///
+/// Phase C returns zeroed counts (Pass 0 + Pass 2 are stubbed). Phase D/E
+/// will populate with real counts from the LLM consolidation pass.
+#[derive(Debug, Clone, Default)]
+pub struct DreamPassSummary {
+    /// Number of ghost episodes reprocessed (Phase 2 retry).
+    pub ghost_episodes_retried: usize,
+    /// Number of entity types discovered during Pass 0 (type discovery).
+    pub types_discovered: usize,
+    /// Number of entities reclassified during the dream reclassify pass.
+    pub entities_reclassified: usize,
+    /// Wall-clock duration of the dream pass in milliseconds.
+    pub duration_ms: u64,
+}
+
 /// High-level kremory graph engine with intelligence pipeline.
 /// Wraps TemporalGraph and adds extraction, resolution, and contradiction detection.
 pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
@@ -146,6 +205,14 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     /// `GlinerLlm` (behind `ner` feature); consumer extensions via `Custom`.
     /// See ADR-039 and `factory.rs`.
     pub(crate) extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
+    /// Serialization lock for dream passes (Phase C DoD C3).
+    ///
+    /// At-most-one dream pass runs concurrently per engine instance. Concurrent
+    /// callers block on this mutex — dream passes are expected to be rare
+    /// (nightly / manual trigger) so mutex contention is not a concern.
+    ///
+    /// Arc-wrapped so the lock survives `Engine` moves into `Arc<Engine>`.
+    pub(crate) dream_lock: Arc<Mutex<()>>,
 }
 
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
@@ -181,6 +248,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             oov_auditor: None,
             model,
             extractor,
+            dream_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -207,6 +275,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             oov_auditor: None,
             model,
             extractor,
+            dream_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -231,6 +300,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             oov_auditor: None,
             model: None,
             extractor,
+            dream_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -296,6 +366,201 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             SourceParams::default(),
         )
         .await
+    }
+
+    // ── Dream pass API (Phase C DoD C1–C5, C8) ───────────────────────────────
+
+    /// Run a synchronous dream pass on the graph.
+    ///
+    /// **Phase C stub**: Pass 0 (type discovery) and Pass 2 (LLM re-extraction of
+    /// ghost episodes) are not yet implemented. This method acquires the
+    /// serialization lock (C3), records timing + metrics (C8), and returns a
+    /// zeroed [`DreamPassSummary`]. Phase D wires the actual pass logic.
+    ///
+    /// Concurrent callers block until the running pass completes — at-most-one
+    /// dream pass runs per engine instance (ADR-045 §3 / Phase C DoD C3).
+    ///
+    /// # ADR reference
+    ///
+    /// ADR-045 §3; Phase C DoD C1 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    pub async fn run_dream_pass_sync(&self, opts: DreamPassOpts) -> Result<DreamPassSummary> {
+        let start = std::time::Instant::now();
+
+        // C3: acquire dream serialization lock (blocks concurrent passes).
+        // The lock is released when `_guard` is dropped at end of scope.
+        let _guard = self
+            .dream_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // C8: emit dream pass start counter.
+        metrics::counter!("rql.dream.pass_started_total").increment(1);
+
+        // Phase C stub: Pass 0 (type discovery) — wired in Phase D.
+        if opts.include_type_discovery {
+            metrics::counter!(
+                "rql.dream.pass0_type_discovery_total",
+                "status" => "stub"
+            )
+            .increment(1);
+            tracing::debug!(
+                confidence_threshold = opts.confidence_threshold,
+                "kremory.dream.pass0 type discovery: stubbed in Phase C — Phase D wires impl"
+            );
+        }
+
+        // Phase C stub: ghost episode retry pass — wired in Phase D.
+        let ghost_episodes_retried = 0usize;
+
+        // Phase C stub: entity reclassify pass — wired in Phase E.
+        let entities_reclassified = 0usize;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // C8: emit dream pass completion histogram + summary counters.
+        metrics::histogram!("rql.dream.pass_duration_ms").record(duration_ms as f64);
+        metrics::counter!("rql.dream.ghost_episodes_retried_total")
+            .increment(ghost_episodes_retried as u64);
+        metrics::counter!("rql.dream.entities_reclassified_total")
+            .increment(entities_reclassified as u64);
+        metrics::counter!("rql.dream.pass_completed_total").increment(1);
+
+        tracing::info!(
+            duration_ms,
+            ghost_episodes_retried,
+            entities_reclassified,
+            include_type_discovery = opts.include_type_discovery,
+            max_episodes_per_run = opts.max_episodes_per_run,
+            "kremory.dream.pass_sync completed"
+        );
+
+        Ok(DreamPassSummary {
+            ghost_episodes_retried,
+            types_discovered: 0,
+            entities_reclassified,
+            duration_ms,
+        })
+    }
+
+    /// Return episode IDs where Phase 1 (NER + episode commit) succeeded but
+    /// Phase 2 (LLM fact extraction) produced zero facts.
+    ///
+    /// These are "ghost episodes" — they exist in the `episodes` table and are
+    /// searchable, but have no associated facts. The dream pass retries Phase 2
+    /// for ghost episodes. Callers can also use this list to decide whether to
+    /// trigger a dream pass.
+    ///
+    /// Ghost episodes are identified as: episodes that have no rows in `facts`
+    /// with a matching `source_episode_id`.
+    ///
+    /// An optional `group_id` restricts the query to a single namespace/thread
+    /// (use `namespace_to_group_id()` to derive it from a `Namespace`). `None`
+    /// returns ghost episodes across all namespaces.
+    ///
+    /// # ADR reference
+    ///
+    /// ADR-045 §3; Phase C DoD C4 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    pub async fn ghost_episodes(&self, group_id: Option<&str>) -> Result<Vec<i64>> {
+        let start = std::time::Instant::now();
+
+        let ids = if let Some(gid) = group_id {
+            let mut rows = self
+                .graph
+                .conn
+                .query(
+                    "SELECT e.id FROM episodes e \
+                     WHERE e.group_id = ?1 \
+                       AND NOT EXISTS ( \
+                           SELECT 1 FROM facts f \
+                           WHERE f.source_episode_id = e.id \
+                       ) \
+                     ORDER BY e.id",
+                    libsql::params![gid],
+                )
+                .await
+                .map_err(crate::core::error::Error::from)?;
+            let mut ids = Vec::new();
+            while let Some(row) = rows.next().await.map_err(crate::core::error::Error::from)? {
+                let id: i64 = row.get(0).map_err(crate::core::error::Error::from)?;
+                ids.push(id);
+            }
+            ids
+        } else {
+            let mut rows = self
+                .graph
+                .conn
+                .query(
+                    "SELECT e.id FROM episodes e \
+                     WHERE NOT EXISTS ( \
+                         SELECT 1 FROM facts f \
+                         WHERE f.source_episode_id = e.id \
+                     ) \
+                     ORDER BY e.id",
+                    (),
+                )
+                .await
+                .map_err(crate::core::error::Error::from)?;
+            let mut ids = Vec::new();
+            while let Some(row) = rows.next().await.map_err(crate::core::error::Error::from)? {
+                let id: i64 = row.get(0).map_err(crate::core::error::Error::from)?;
+                ids.push(id);
+            }
+            ids
+        };
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+        // C8: ghost episodes gauge + query duration.
+        metrics::gauge!("rql.dream.ghost_episodes_count").set(ids.len() as f64);
+        metrics::histogram!("rql.dream.ghost_episodes_query_ms").record(elapsed_ms as f64);
+
+        tracing::debug!(
+            count = ids.len(),
+            elapsed_ms,
+            group_id = group_id.unwrap_or("<all>"),
+            "kremory.dream.ghost_episodes queried"
+        );
+
+        Ok(ids)
+    }
+
+    /// Pin an entity's type as `ConsumerPinned`, protecting it from dream-pass
+    /// reclassification.
+    ///
+    /// Writes `entity_type_source = 'ConsumerPinned'` and
+    /// `entity_type_assigned_at = <now>` on the entity row identified by
+    /// `entity_id` within `group_id` (the SQL `entities.group_id` column).
+    ///
+    /// When `group_id` is `None`, defaults to `"default"` — matching the
+    /// `update_entity_source_tier` behaviour for legacy rows that predate the
+    /// namespace migration.
+    ///
+    /// The `entity_type_id` parameter is currently unused by the storage layer
+    /// (the tier-update path only stamps `source` + `assigned_at`). It is
+    /// present in the public API per Phase C DoD C5 for future-compat — Phase E
+    /// may wire it to update the `entity_type_id` column when an explicit type
+    /// is supplied alongside the pin.
+    ///
+    /// # ADR reference
+    ///
+    /// ADR-045 §3 (ConsumerPinned protection); Phase C DoD C5.
+    pub async fn assert_entity_type(
+        &self,
+        entity_id: &str,
+        _entity_type_id: u32,
+        group_id: Option<&str>,
+    ) -> Result<()> {
+        self.graph
+            .update_entity_source_tier(entity_id, group_id, "ConsumerPinned")
+            .await?;
+
+        tracing::debug!(
+            entity_id,
+            group_id = group_id.unwrap_or("default"),
+            "kremory.dream.assert_entity_type ConsumerPinned stamped"
+        );
+
+        Ok(())
     }
 
     /// Full pipeline: text → chunk → extract → resolve → contradict → store.

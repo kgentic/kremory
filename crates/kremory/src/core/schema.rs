@@ -677,6 +677,13 @@ impl TemporalGraph {
         // backfill legacy NULL rows to 'Phase1Ner'. Idempotent: PRAGMA table_info guards.
         crate::core::migrations::migrate_012_source_tier_columns(&self.conn).await?;
 
+        // ADR-037 §9.5 Migration 014 (v0.1.1, Dream Pass 0): add provenance columns
+        // to `entity_types` — discovered_at / discovered_by / evidence_count / confidence.
+        // Backfills pre-existing seed types with discovered_by = 'seed'.
+        // Idempotent: PRAGMA table_info gate per column.
+        // (Migration 013 is reserved for Phase E drift mechanism — see migrations.rs.)
+        crate::core::migrations::migrate_014_entity_types_provenance(&self.conn).await?;
+
         Ok(())
     }
 

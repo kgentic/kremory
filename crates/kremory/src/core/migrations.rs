@@ -1640,6 +1640,141 @@ pub(crate) async fn migrate_012_source_tier_columns(
 // The following block is intentionally absent. When Phase E lands, migrate_013
 // will be authored here against empirical Phase G TD-017 benchmark data.
 
+// ─── Migration 014 ────────────────────────────────────────────────────────────
+
+/// Migration 014: add provenance columns to `entity_types` (ADR-037 §9.5,
+/// Dream Pass 0).
+///
+/// Adds four columns that record how a type was discovered:
+/// - `discovered_at TEXT`  — ISO-8601 timestamp when the type was discovered
+/// - `discovered_by TEXT`  — source identifier (e.g. `'DreamPass0'`, `'seed'`)
+/// - `evidence_count INTEGER` — count of catch-all entities that prompted the proposal
+/// - `confidence REAL`     — LLM-assigned confidence [0, 1] at proposal time
+///
+/// Pre-existing seed types get `discovered_by = 'seed'` in the backfill.
+/// All other nullable columns default to NULL for pre-migration rows.
+///
+/// Idempotency: PRAGMA table_info gate per column — safe to re-run.
+pub(crate) async fn migrate_014_entity_types_provenance(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_014 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // ── Step 1: Inspect existing entity_types columns ────────────────────────
+
+    let mut rows = conn
+        .query("PRAGMA table_info(entity_types)", ())
+        .await
+        .map_err(step("pragma_table_info"))?;
+
+    let mut has_discovered_at = false;
+    let mut has_discovered_by = false;
+    let mut has_evidence_count = false;
+    let mut has_confidence = false;
+
+    while let Some(row) = rows.next().await.map_err(step("pragma_row_next"))? {
+        let col_name: String = row.get(1).map_err(step("pragma_col_name"))?;
+        match col_name.as_str() {
+            "discovered_at" => has_discovered_at = true,
+            "discovered_by" => has_discovered_by = true,
+            "evidence_count" => has_evidence_count = true,
+            "confidence" => has_confidence = true,
+            _ => {}
+        }
+    }
+
+    // ── Step 2: ADD COLUMN discovered_at ─────────────────────────────────────
+
+    if !has_discovered_at {
+        conn.execute(
+            "ALTER TABLE entity_types ADD COLUMN discovered_at TEXT",
+            (),
+        )
+        .await
+        .map_err(step("alter_table_add_discovered_at"))?;
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_014: discovered_at already present — skipping ADD COLUMN"
+        );
+    }
+
+    // ── Step 3: ADD COLUMN discovered_by ─────────────────────────────────────
+
+    if !has_discovered_by {
+        conn.execute(
+            "ALTER TABLE entity_types ADD COLUMN discovered_by TEXT",
+            (),
+        )
+        .await
+        .map_err(step("alter_table_add_discovered_by"))?;
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_014: discovered_by already present — skipping ADD COLUMN"
+        );
+    }
+
+    // ── Step 4: ADD COLUMN evidence_count ────────────────────────────────────
+
+    if !has_evidence_count {
+        conn.execute(
+            "ALTER TABLE entity_types ADD COLUMN evidence_count INTEGER",
+            (),
+        )
+        .await
+        .map_err(step("alter_table_add_evidence_count"))?;
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_014: evidence_count already present — skipping ADD COLUMN"
+        );
+    }
+
+    // ── Step 5: ADD COLUMN confidence ────────────────────────────────────────
+
+    if !has_confidence {
+        conn.execute(
+            "ALTER TABLE entity_types ADD COLUMN confidence REAL",
+            (),
+        )
+        .await
+        .map_err(step("alter_table_add_confidence"))?;
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_014: confidence already present — skipping ADD COLUMN"
+        );
+    }
+
+    // ── Step 6: Backfill seed types ───────────────────────────────────────────
+    //
+    // Rows inserted before Migration 014 have NULL discovered_by.
+    // Mark them as 'seed' so downstream queries can rely on the column
+    // being non-NULL for all pre-migration rows.
+    // Idempotent: WHERE clause restricts to NULL-discovered_by rows only.
+
+    conn.execute(
+        "UPDATE entity_types SET discovered_by = 'seed' WHERE discovered_by IS NULL",
+        (),
+    )
+    .await
+    .map_err(step("backfill_discovered_by_seed"))?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_014: discovered_at / discovered_by / evidence_count / confidence \
+         added to entity_types; seed backfill done."
+    );
+    Ok(())
+}
+
 // ─── Migration 006 ─────────────────────────────────────────────────────────
 
 /// Migration 006: install composite FK constraints on `facts` and `episodic_edges`

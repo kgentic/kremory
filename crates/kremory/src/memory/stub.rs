@@ -140,6 +140,29 @@ impl GraphHandle for StubGraphHandle {
     ) -> Result<DreamPhaseResult> {
         unimplemented!("StubGraphHandle::graph_run_consolidation — provide a concrete stub");
     }
+
+    async fn graph_run_dream_pass_sync(
+        &self,
+        _opts: crate::core::ingest::DreamPassOpts,
+    ) -> Result<crate::facade::DreamSummary> {
+        unimplemented!("StubGraphHandle::graph_run_dream_pass_sync — provide a concrete stub");
+    }
+
+    async fn graph_ghost_episodes(
+        &self,
+        _group_id: Option<&str>,
+    ) -> Result<Vec<i64>> {
+        unimplemented!("StubGraphHandle::graph_ghost_episodes — provide a concrete stub");
+    }
+
+    async fn graph_assert_entity_type(
+        &self,
+        _entity_id: &str,
+        _entity_type_id: u32,
+        _group_id: Option<&str>,
+    ) -> Result<()> {
+        unimplemented!("StubGraphHandle::graph_assert_entity_type — provide a concrete stub");
+    }
 }
 
 /// `CancelOutcome` for stubs that need a do-nothing cancel response.

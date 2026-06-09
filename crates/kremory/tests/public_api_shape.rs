@@ -143,6 +143,37 @@ impl GraphHandle for StubHandle {
     ) -> kremory::memory::types::Result<DreamPhaseResult> {
         Ok(DreamPhaseResult::default())
     }
+
+    async fn graph_run_dream_pass_sync(
+        &self,
+        _opts: kremory::DreamPassOpts,
+    ) -> kremory::memory::types::Result<kremory::DreamSummary> {
+        Ok(kremory::DreamSummary {
+            communities_updated: 0,
+            cross_episode_merges: 0,
+            supersessions_recorded: 0,
+            facts_archived: 0,
+            duration_ms: 0,
+            types_discovered: vec![],
+            warnings: vec![],
+        })
+    }
+
+    async fn graph_ghost_episodes(
+        &self,
+        _group_id: Option<&str>,
+    ) -> kremory::memory::types::Result<Vec<i64>> {
+        Ok(vec![])
+    }
+
+    async fn graph_assert_entity_type(
+        &self,
+        _entity_id: &str,
+        _entity_type_id: u32,
+        _group_id: Option<&str>,
+    ) -> kremory::memory::types::Result<()> {
+        Ok(())
+    }
 }
 
 fn null_provider() -> Arc<dyn ChatProvider> {

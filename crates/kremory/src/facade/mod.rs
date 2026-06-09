@@ -123,6 +123,8 @@ pub struct WithEmb;
 ///
 /// Contains the same statistics as the underlying `DreamPhaseResult` / the
 /// substrate's consolidation output, wrapped at the facade level.
+///
+/// ADR-037 §3 D6: `types_discovered` + `warnings` added for Dream Pass 0.
 #[derive(Debug, Clone)]
 pub struct DreamSummary {
     pub communities_updated: usize,
@@ -130,6 +132,12 @@ pub struct DreamSummary {
     pub supersessions_recorded: usize,
     pub facts_archived: usize,
     pub duration_ms: u64,
+    /// Entity types proposed and accepted by Dream Pass 0 type discovery.
+    /// Empty when Pass 0 was not run or produced no accepted proposals.
+    pub types_discovered: Vec<crate::core::dream::TypeProposal>,
+    /// Warnings emitted during the dream phase.
+    /// Includes degraded-mode notices (e.g. anti-redundancy gate skipped).
+    pub warnings: Vec<String>,
 }
 
 impl From<DreamPhaseResult> for DreamSummary {
@@ -140,6 +148,25 @@ impl From<DreamPhaseResult> for DreamSummary {
             supersessions_recorded: r.supersessions_recorded,
             facts_archived: r.facts_archived,
             duration_ms: r.duration_ms,
+            types_discovered: r.types_discovered,
+            warnings: r.dream_warnings,
+        }
+    }
+}
+
+impl From<crate::core::ingest::DreamPassSummary> for DreamSummary {
+    fn from(s: crate::core::ingest::DreamPassSummary) -> Self {
+        Self {
+            // DreamPassSummary fields map to DreamSummary where applicable.
+            // Fields without a direct mapping are zeroed — Phase D/E will
+            // populate them from real consolidation output.
+            communities_updated: 0,
+            cross_episode_merges: s.ghost_episodes_retried,
+            supersessions_recorded: 0,
+            facts_archived: 0,
+            duration_ms: s.duration_ms,
+            types_discovered: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 }
@@ -229,6 +256,11 @@ pub struct Memory {
     /// `content.len()` exceeds this value. Never enforced — observability only.
     /// `None` disables the warning. Default (via builder): `Some(10_000)`.
     pub(crate) episode_content_warn_threshold: Option<usize>,
+    /// Background dream scheduler handle. `None` when `DreamSchedule::Off` (default)
+    /// or when `Memory` is constructed by a test stub path. Stored as
+    /// `Arc<Mutex<Option<…>>>` so `Clone` works without requiring the handle to be
+    /// `Clone` (a `JoinHandle<()>` is not `Clone`).
+    pub(crate) dream_scheduler: std::sync::Arc<std::sync::Mutex<Option<crate::memory::scheduler::DreamSchedulerHandle>>>,
 }
 
 impl Memory {
@@ -265,6 +297,7 @@ impl Memory {
             #[cfg(feature = "ner")]
             use_gliner: false,
             allowed_entity_types: vec![],
+            dream_schedule: crate::memory::scheduler::DreamSchedule::Off,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -748,6 +781,104 @@ impl Memory {
             .clone()
             .unwrap_or_else(|| Arc::new(crate::core::provider::NullChatProvider))
     }
+
+    // ── Dream pass API (Phase C DoD C1, C4, C5, C11) ─────────────────────────
+
+    /// Run a synchronous dream pass with the given options.
+    ///
+    /// At-most-one concurrent dream pass per engine (serialised via internal
+    /// Mutex). Subsequent calls will block until the active pass completes.
+    ///
+    /// Pass 0 (type discovery) and Pass 2 (ghost episode retry) are **stubbed**
+    /// in Phase C — they return empty/zero counts. Real logic lands in Phase D/E.
+    ///
+    /// # ADR reference
+    ///
+    /// Phase C DoD C1 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    pub async fn run_dream_pass_sync(
+        &self,
+        opts: crate::core::ingest::DreamPassOpts,
+    ) -> Result<DreamSummary> {
+        self.graph.graph_run_dream_pass_sync(opts).await
+    }
+
+    /// Return episode IDs where Phase 1 succeeded but Phase 2 produced no facts
+    /// (ghost episodes).
+    ///
+    /// An optional `group_id` restricts the query to one namespace/thread.
+    /// `None` returns ghost episodes across all namespaces.
+    ///
+    /// # ADR reference
+    ///
+    /// Phase C DoD C4 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    pub async fn ghost_episodes(
+        &self,
+        group_id: Option<&str>,
+    ) -> Result<Vec<i64>> {
+        self.graph.graph_ghost_episodes(group_id).await
+    }
+
+    /// Pin an entity as `ConsumerPinned`, protecting it from dream reclassification.
+    ///
+    /// Writes `entity_type_source = 'ConsumerPinned'` on the entity row.
+    ///
+    /// # ADR reference
+    ///
+    /// Phase C DoD C5 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    pub async fn assert_entity_type(
+        &self,
+        entity_id: &str,
+        entity_type_id: u32,
+        group_id: Option<&str>,
+    ) -> Result<()> {
+        self.graph
+            .graph_assert_entity_type(entity_id, entity_type_id, group_id)
+            .await
+    }
+
+    /// Start a dream scheduler background task at runtime.
+    ///
+    /// Returns a [`DreamSchedulerHandle`] the caller can use to stop the task.
+    /// For scheduler-at-build-time, use [`MemoryBuilder::with_dream_schedule`]
+    /// instead.
+    ///
+    /// If a scheduler was already started via `with_dream_schedule` at build
+    /// time, calling this method starts an ADDITIONAL independent scheduler.
+    /// Stop the build-time one via [`Memory::stop_dream_scheduler`] first if
+    /// you want to replace it.
+    ///
+    /// # ADR reference
+    ///
+    /// Phase C DoD C11 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    pub fn start_dream_scheduler(
+        &self,
+        schedule: crate::memory::scheduler::DreamSchedule,
+    ) -> crate::memory::scheduler::DreamSchedulerHandle {
+        crate::memory::scheduler::spawn_scheduler(
+            Arc::clone(&self.graph),
+            schedule,
+            crate::core::ingest::DreamPassOpts::default,
+        )
+    }
+
+    /// Stop the scheduler that was started via `with_dream_schedule` at build
+    /// time, if one is running.
+    ///
+    /// No-op if no build-time scheduler is active. Returns `true` if a
+    /// scheduler was stopped, `false` if none was running.
+    pub async fn stop_dream_scheduler(&self) -> bool {
+        let handle = self
+            .dream_scheduler
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(h) = handle {
+            h.stop().await;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 // ── MemoryBuilder ─────────────────────────────────────────────────────────────
@@ -786,6 +917,9 @@ pub struct MemoryBuilder<L, E> {
     /// `GlinerExtractor` rejects all entities — callers that activate the `ner`
     /// feature MUST supply this via [`MemoryBuilder::allowed_entity_types`].
     allowed_entity_types: Vec<String>,
+    /// Automatic dream-pass scheduling policy.
+    /// Default: `DreamSchedule::Off` (no background task).
+    dream_schedule: crate::memory::scheduler::DreamSchedule,
     _llm_state: std::marker::PhantomData<L>,
     _emb_state: std::marker::PhantomData<E>,
 }
@@ -896,6 +1030,42 @@ impl<L, E> MemoryBuilder<L, E> {
         self.allowed_entity_types = types;
         self
     }
+
+    /// Configure automatic dream-pass scheduling.
+    ///
+    /// Default: [`DreamSchedule::Off`] — no background task is spawned.
+    ///
+    /// When set to a non-`Off` variant, a background tokio task is spawned
+    /// during `.await` (i.e. at `MemoryBuilder::into_future`). The task runs
+    /// until [`DreamSchedulerHandle::stop`] is called or the `Memory` is
+    /// dropped.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kremory::{Memory, DreamSchedule};
+    /// use std::time::Duration;
+    /// # async fn ex() -> kremory::memory::Result<()> {
+    /// # let llm = todo!(); let emb = todo!();
+    /// let mem = Memory::open("./agent.db")
+    ///     .with_llm(llm)
+    ///     .with_embedder(emb)
+    ///     .with_dream_schedule(DreamSchedule::Interval(Duration::from_secs(300)))
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # ADR reference
+    ///
+    /// Phase C DoD C10 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    pub fn with_dream_schedule(
+        mut self,
+        schedule: crate::memory::scheduler::DreamSchedule,
+    ) -> Self {
+        self.dream_schedule = schedule;
+        self
+    }
 }
 
 impl MemoryBuilder<NoLlm, NoEmb> {
@@ -917,6 +1087,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            dream_schedule: self.dream_schedule,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -973,6 +1144,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            dream_schedule: self.dream_schedule,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -998,6 +1170,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            dream_schedule: self.dream_schedule,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -1028,6 +1201,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            dream_schedule: self.dream_schedule,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -1163,6 +1337,20 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 });
             }
 
+            // ── Dream scheduler (C10) ────────────────────────────────────────
+            // Spawn background scheduler if a non-Off schedule was requested.
+            let dream_scheduler_handle = match self.dream_schedule {
+                crate::memory::scheduler::DreamSchedule::Off => None,
+                schedule => {
+                    let handle = crate::memory::scheduler::spawn_scheduler(
+                        Arc::clone(&graph),
+                        schedule,
+                        crate::core::ingest::DreamPassOpts::default,
+                    );
+                    Some(handle)
+                }
+            };
+
             Ok(Memory {
                 graph,
                 llm: Some(llm),
@@ -1171,6 +1359,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 default_namespace: self.default_namespace,
                 temporal_graph: Some(temporal_graph),
                 episode_content_warn_threshold: self.episode_content_warn_threshold,
+                dream_scheduler: std::sync::Arc::new(std::sync::Mutex::new(dream_scheduler_handle)),
             })
         })
     }
@@ -1236,6 +1425,7 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                 default_namespace: self.default_namespace,
                 temporal_graph: Some(temporal_graph),
                 episode_content_warn_threshold: self.episode_content_warn_threshold,
+                dream_scheduler: std::sync::Arc::new(std::sync::Mutex::new(None)),
             })
         })
     }

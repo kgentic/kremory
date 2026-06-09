@@ -463,6 +463,7 @@ async fn build_memory_with_model(
         default_namespace: None,
         temporal_graph: Some(temporal_graph),
         episode_content_warn_threshold: Some(10_000),
+        dream_scheduler: std::sync::Arc::new(std::sync::Mutex::new(None)),
     })
 }
 

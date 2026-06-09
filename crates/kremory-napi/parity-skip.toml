@@ -480,3 +480,60 @@ revisit = "v0.1.7"
 symbol = "IngestEventSink"
 reason = "B10 substrate gap: IngestEventSink trait binding deferred — see MemoryBuilder::with_event_sink entry for root cause"
 revisit = "v0.1.7"
+
+# ── Dream Pass 0 type discovery fields (ADR-037 §3 D6) ───────────────────────
+#
+# DreamSummary.types_discovered (Vec<TypeProposal>) and DreamSummary.warnings
+# (Vec<String>) were added in v0.1.1 for Dream Pass 0. Surfacing TypeProposal
+# on the JS side requires a JsTypeProposal napi(object) struct + converter —
+# deferred to v0.2.0 when the full dream API surface is stabilised.
+# Until then JsDreamSummary continues to omit these fields; JS consumers
+# receive the numeric summary only.
+
+[[skip]]
+symbol = "DreamSummary::types_discovered"
+reason = "ADR-037 §3 D6: TypeProposal napi mirror (JsTypeProposal) deferred to v0.2.0; JsDreamSummary omits this field until the full dream API surface stabilises"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "DreamSummary::warnings"
+reason = "ADR-037 §3 D6: dream-phase warning strings deferred to v0.2.0 alongside types_discovered; JsDreamSummary omits this field"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "DreamOpts::include_type_discovery"
+reason = "ADR-037 §3 D6: Pass 0 opt-out toggle; JsDreamOpts does not expose this field in v0.1.1 — JS consumers always run type discovery by default"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "TypeProposal"
+reason = "ADR-037 §3: new type introduced for Dream Pass 0; napi mirror (JsTypeProposal) deferred to v0.2.0"
+revisit = "v0.2.0"
+
+# ── Phase C v0.1.1 dream scheduler surface (ADR-006 / sprint plan §Phase C C9-C11) ──
+#
+# DreamSchedule enum + with_dream_schedule builder + start/stop_dream_scheduler
+# runtime API are the substrate-side scheduler mechanism. v0.1.1 ships these as
+# Rust-only surface; the JS-side scheduler integration is deferred to v0.2.0
+# where DreamSchedule needs a JS-friendly representation (Interval/EveryNIngests
+# variants don't map cleanly to napi tagged-union shapes without extra wrapping).
+
+[[skip]]
+symbol = "MemoryBuilder::with_dream_schedule"
+reason = "Phase C DoD C10 (sprint plan v0-1-1-dream-impl-sprint-plan-2026-06-09.md): substrate-only builder method. DreamSchedule enum requires JS-shape design (tagged-union mapping) before napi mirror; deferred to v0.2.0"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::start_dream_scheduler"
+reason = "Phase C DoD C11: runtime scheduler start API; same rationale as with_dream_schedule — DreamScheduleHandle return type needs a JS-side representation deferred to v0.2.0. JS consumers use runDreamPassSync directly for now."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::stop_dream_scheduler"
+reason = "Phase C DoD C11: stops the build-time scheduler. Mirror of with_dream_schedule which is itself skipped; no consumer path on JS side until v0.2.0 scheduler exposure."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::allowed_entity_types"
+reason = "GLiNER feature builder knob (Phase D adjacent). Mirrored on JS side via JsOpenOptions.gliner config; direct builder method not exposed because JsMemory.open is the single JS construction entry point per ADR-030 Form B."
+revisit = "v0.2.0"

@@ -102,6 +102,12 @@ pub struct IngestError {
     pub message: String,
     /// Coarse failure category.
     pub kind: IngestErrorKind,
+    /// Episode id produced by Phase 1 when the failure occurs at Phase 2
+    /// (deferred LLM fact extraction). `0` when the failure occurs during
+    /// Phase 1 itself (episode was never committed) or when the episode_id
+    /// is unknown. Non-zero values identify "ghost episodes" — Phase 1
+    /// committed, Phase 2 failed — queryable via `Memory::ghost_episodes()`.
+    pub episode_id: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +380,8 @@ async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                 failed_at: Utc::now(),
                 message: e.to_string(),
                 kind: IngestErrorKind::from(&e),
+                // Phase 1 failure — episode was never committed; id unknown.
+                episode_id: 0,
             };
             if error_tx.try_send(err).is_err() {
                 metrics::counter!("rql.background.errors_dropped_total").increment(1);
@@ -421,12 +429,23 @@ async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
             metrics::histogram!("rql.background.deferred_extraction_duration_ms")
                 .record(elapsed_ms);
             metrics::counter!("rql.background.deferred_errors_total").increment(1);
-            tracing::error!(elapsed_ms, error = %e, "kremory.background.deferred_extraction failed");
+            // C6: ghost episode — Phase 1 committed, Phase 2 failed.
+            // Counter is observable per Rule 19 §3 (per-source counters).
+            metrics::counter!("rql.ingest.ghost_episode_total").increment(1);
+            tracing::error!(
+                elapsed_ms,
+                episode_id = req.episode_id,
+                error = %e,
+                "kremory.background.deferred_extraction failed — ghost episode"
+            );
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),
                 message: format!("deferred: {e}"),
                 kind: IngestErrorKind::from(&e),
+                // Phase 2 failure: episode WAS committed; carry the id so
+                // ghost_episodes() can surface it.
+                episode_id: req.episode_id,
             };
             if error_tx.try_send(err).is_err() {
                 metrics::counter!("rql.background.errors_dropped_total").increment(1);

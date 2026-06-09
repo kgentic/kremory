@@ -551,6 +551,53 @@ impl GraphHandle for EngineGraphHandle {
             adr_ref: "ADR-007 §3",
         })
     }
+
+    // ── 12. graph_run_dream_pass_sync (Phase C DoD C1) ───────────────────────
+
+    async fn graph_run_dream_pass_sync(
+        &self,
+        opts: crate::core::ingest::DreamPassOpts,
+    ) -> Result<crate::facade::DreamSummary> {
+        let summary = self
+            .engine
+            .run_dream_pass_sync(opts)
+            .await
+            .map_err(MemoryError::Core)?;
+        Ok(crate::facade::DreamSummary::from(
+            crate::core::ingest::DreamPassSummary {
+                ghost_episodes_retried: summary.ghost_episodes_retried,
+                types_discovered: summary.types_discovered,
+                entities_reclassified: summary.entities_reclassified,
+                duration_ms: summary.duration_ms,
+            },
+        ))
+    }
+
+    // ── 13. graph_ghost_episodes (Phase C DoD C4) ────────────────────────────
+
+    async fn graph_ghost_episodes(
+        &self,
+        group_id: Option<&str>,
+    ) -> Result<Vec<i64>> {
+        self.engine
+            .ghost_episodes(group_id)
+            .await
+            .map_err(MemoryError::Core)
+    }
+
+    // ── 14. graph_assert_entity_type (Phase C DoD C5) ────────────────────────
+
+    async fn graph_assert_entity_type(
+        &self,
+        entity_id: &str,
+        entity_type_id: u32,
+        group_id: Option<&str>,
+    ) -> Result<()> {
+        self.engine
+            .assert_entity_type(entity_id, entity_type_id, group_id)
+            .await
+            .map_err(MemoryError::Core)
+    }
 }
 
 // ---------------------------------------------------------------------------
