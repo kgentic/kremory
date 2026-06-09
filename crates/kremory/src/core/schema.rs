@@ -167,6 +167,15 @@ pub struct Episode {
     /// makes the Rust model consistent with the schema (mirrors
     /// `EpisodicEdge.recorded_at` pattern).
     pub recorded_at: Option<String>,
+    /// Opaque caller-supplied identifier for the source document/conversation
+    /// (e.g. a slug or UUID). Matches the `source_id` column added by
+    /// Migration 007. `None` for episodes ingested before the column existed.
+    /// TD-003 Phase G — closes struct ↔ table column asymmetry.
+    pub source_id: Option<String>,
+    /// Optional URI pointing to the original source artifact (URL, file path,
+    /// etc.). Matches `source_uri` column added by Migration 007.
+    /// TD-003 Phase G — closes struct ↔ table column asymmetry.
+    pub source_uri: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

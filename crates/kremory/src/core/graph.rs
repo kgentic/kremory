@@ -1381,8 +1381,10 @@ impl TemporalGraph {
         let mut rows = self
             .conn
             .query(
+                // TD-003 Phase G: added source_id (idx 10) + source_uri (idx 11) to
+                // close Episode struct ↔ table column asymmetry.
                 "SELECT id, content, timestamp, source_type, metadata, group_id, saga_id,
-                        sequence_number, content_hash, recorded_at
+                        sequence_number, content_hash, recorded_at, source_id, source_uri
                  FROM episodes
                  WHERE group_id = ?1
                  ORDER BY timestamp ASC",
@@ -1405,6 +1407,8 @@ impl TemporalGraph {
             let seq: Option<i64> = row.get::<Option<i64>>(7)?;
             let content_hash: Option<String> = row.get::<Option<String>>(8)?;
             let recorded_at: Option<String> = row.get::<Option<String>>(9)?;
+            let source_id: Option<String> = row.get::<Option<String>>(10)?;
+            let source_uri: Option<String> = row.get::<Option<String>>(11)?;
             episodes.push(Episode {
                 id,
                 content,
@@ -1416,6 +1420,8 @@ impl TemporalGraph {
                 sequence_number: seq,
                 content_hash,
                 recorded_at,
+                source_id,
+                source_uri,
             });
         }
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;

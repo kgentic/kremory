@@ -301,6 +301,8 @@ mod tests {
                 sequence_number: None,
                 content_hash: None,
                 recorded_at: None,
+                source_id: None,
+                source_uri: None,
             })
             .collect()
     }
