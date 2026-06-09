@@ -264,8 +264,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             .expect("PipelineConfig default")
     };
 
-    let engine = Engine::new(Arc::clone(&graph), llm.clone(), Arc::new(emb), config)
-        ; // Phase E: Engine::new is infallible (was Result)
+    let engine = Engine::new(Arc::clone(&graph), llm.clone(), Arc::new(emb), config); // Phase E: Engine::new is infallible (was Result)
 
     // TD-021: KREMORY_BENCH_EXTRA_TYPES allows passing additional entity types
     // (comma-separated, e.g. "Court,Drug,Species") on top of the 10 defaults so
@@ -324,10 +323,8 @@ async fn label_precision_gte_0_75_on_mock_interview() {
         #[cfg(feature = "ner")]
         {
             eprintln!("label_precision_benchmark: USING GlinerLlmExtractor (TD-023)");
-            let hybrid = kremory::core::extraction::GlinerLlmExtractor::new(
-                Arc::clone(&llm),
-            )
-            .expect("GlinerLlmExtractor::new — needs GLiNER model + LLM");
+            let hybrid = kremory::core::extraction::GlinerLlmExtractor::new(Arc::clone(&llm))
+                .expect("GlinerLlmExtractor::new — needs GLiNER model + LLM");
             engine
                 .ingest_with(&hybrid, &fixture_text, None, None, None, source_params)
                 .await
@@ -671,8 +668,7 @@ async fn label_precision_haiku_on_mock_interview() {
         .expect("PipelineConfig default");
 
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
-    let engine = Engine::new(Arc::clone(&graph), llm, Arc::new(emb), config)
-        ; // Phase E: Engine::new is infallible (was Result)
+    let engine = Engine::new(Arc::clone(&graph), llm, Arc::new(emb), config); // Phase E: Engine::new is infallible (was Result)
 
     let ingest_result = engine
         .ingest_with(

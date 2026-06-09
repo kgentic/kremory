@@ -166,8 +166,8 @@ impl TokenBucketState {
     /// Refill tokens based on elapsed time, capped at burst.
     fn refill(&mut self) {
         let elapsed = self.last_refill.elapsed().as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.limit.tokens_per_second)
-            .min(self.limit.burst as f64);
+        self.tokens =
+            (self.tokens + elapsed * self.limit.tokens_per_second).min(self.limit.burst as f64);
         self.last_refill = std::time::Instant::now();
     }
 

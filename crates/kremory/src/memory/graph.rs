@@ -175,10 +175,7 @@ pub trait GraphHandle: Send + Sync {
     /// # ADR reference
     ///
     /// ADR-045 §3; Phase C DoD C4.
-    async fn graph_ghost_episodes(
-        &self,
-        group_id: Option<&str>,
-    ) -> Result<Vec<i64>>;
+    async fn graph_ghost_episodes(&self, group_id: Option<&str>) -> Result<Vec<i64>>;
 
     /// Pin an entity as `ConsumerPinned`, protecting it from dream reclassification.
     ///

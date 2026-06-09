@@ -981,7 +981,13 @@ impl TemporalGraph {
                      (id, entity_type_id, properties, recorded_at, group_id, \
                       entity_type_source, entity_type_assigned_at) \
                      VALUES (?1, ?2, ?3, ?4, ?5, 'Phase1Ner', ?4)",
-                    libsql::params![id, entity_type_id as i64, props_str.clone(), now, effective_group_id],
+                    libsql::params![
+                        id,
+                        entity_type_id as i64,
+                        props_str.clone(),
+                        now,
+                        effective_group_id
+                    ],
                 )
                 .await?;
             // FTS: label column in entities_fts is no longer populated (entities.label

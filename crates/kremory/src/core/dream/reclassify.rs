@@ -204,13 +204,14 @@ pub async fn reclassify<L: ChatProvider>(
 
     // ── Step 3: Load entity type registry for prompt building ─────────────────
 
-    let registry = crate::core::entity_types::EntityTypeRegistry::load_for_group(conn, group_id).await?;
+    let registry =
+        crate::core::entity_types::EntityTypeRegistry::load_for_group(conn, group_id).await?;
     let model_str = llm.model().to_string();
 
     // ── Step 4: Build JSON schema ─────────────────────────────────────────────
 
-    let schema = reclassify_schema()
-        .map_err(|e| crate::core::error::Error::Other(anyhow::anyhow!(e)))?;
+    let schema =
+        reclassify_schema().map_err(|e| crate::core::error::Error::Other(anyhow::anyhow!(e)))?;
 
     // ── Step 5: Build LLM prompt ──────────────────────────────────────────────
 
@@ -297,10 +298,8 @@ pub async fn reclassify<L: ChatProvider>(
     // ── Step 8: Apply decisions with confidence-aware source-tier stamping ─────
 
     // Build candidate lookup by id for fast match
-    let candidate_map: std::collections::HashMap<&str, &Candidate> = candidates
-        .iter()
-        .map(|c| (c.id.as_str(), c))
-        .collect();
+    let candidate_map: std::collections::HashMap<&str, &Candidate> =
+        candidates.iter().map(|c| (c.id.as_str(), c)).collect();
 
     let now = Utc::now().to_rfc3339();
 
@@ -542,7 +541,9 @@ async fn count_rows_with_one_param(
         .query(sql, libsql::params![param.to_string()])
         .await
         .map_err(|e| {
-            crate::core::error::Error::Other(anyhow::anyhow!("reclassify: count_rows query failed: {e}"))
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "reclassify: count_rows query failed: {e}"
+            ))
         })?;
     let row = rows.next().await.map_err(|e| {
         crate::core::error::Error::Other(anyhow::anyhow!("reclassify: count_rows row failed: {e}"))

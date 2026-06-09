@@ -460,11 +460,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // This closes the self-learning loop: Pass 0 writes new types to the registry;
         // the next ingest sees them immediately without an engine rebuild.
         // Spec: td-028-phase1-pull-shape-registry-read-micro-spec-2026-06-09.md §1.
-        let allowed_entity_types_live: Vec<String> = registry
-            .specs()
-            .iter()
-            .map(|s| s.name.clone())
-            .collect();
+        let allowed_entity_types_live: Vec<String> =
+            registry.specs().iter().map(|s| s.name.clone()).collect();
 
         let mut all_entities: Vec<ExtractedEntity> = Vec::new();
         let mut all_facts: Vec<ExtractedFact> = Vec::new();

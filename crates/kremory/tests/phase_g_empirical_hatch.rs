@@ -226,14 +226,7 @@ where
     } else {
         let extractor = DefaultExtractor::new(Arc::clone(&llm));
         engine
-            .ingest_with(
-                &extractor,
-                &fixture_text,
-                None,
-                None,
-                None,
-                source_params,
-            )
+            .ingest_with(&extractor, &fixture_text, None, None, None, source_params)
             .await
             .unwrap_or_else(|e| panic!("PRE-dream ingest of {fixture_key} failed: {e}"))
     };
@@ -242,11 +235,7 @@ where
     // Collect PRE-dream extracted entities.
     let mut extracted_pre: Vec<(String, String)> = Vec::new();
     for entity_id in &ingest_result.upserted_entities {
-        if let Some(entity) = graph
-            .get_entity(entity_id)
-            .await
-            .expect("get_entity PRE")
-        {
+        if let Some(entity) = graph.get_entity(entity_id).await.expect("get_entity PRE") {
             let display_name = entity
                 .properties
                 .get("name")
@@ -400,7 +389,9 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
     let base_url = match ollama_base_url() {
         Some(url) => url,
         None => {
-            eprintln!("SKIP phase_g_gemma4_e2b_pre_post_dream: OLLAMA_BASE_URL / OLLAMA_HOST not set");
+            eprintln!(
+                "SKIP phase_g_gemma4_e2b_pre_post_dream: OLLAMA_BASE_URL / OLLAMA_HOST not set"
+            );
             return;
         }
     };
@@ -631,7 +622,9 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
     }
 
     eprintln!("[G] === Phase G gemma4-e2b local gate: PASS ===");
-    eprintln!("[G] G4: per-provider INDEPENDENT pass satisfied (gemma4-e2b cleared independently).");
+    eprintln!(
+        "[G] G4: per-provider INDEPENDENT pass satisfied (gemma4-e2b cleared independently)."
+    );
     eprintln!(
         "[G] G3: cloud-LLM gate — see `phase_g_cloud_llm_gate` test (runs if API key present)."
     );
@@ -724,7 +717,12 @@ async fn phase_g_cloud_llm_gate() {
             .build()
             .expect("PipelineConfig cloud default");
 
-        let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))), config);
+        let engine = Engine::new(
+            Arc::clone(&graph),
+            Arc::clone(&llm),
+            Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
+            config,
+        );
 
         // Cloud provider uses DefaultExtractor (no GLiNER hybrid — cloud inference only).
         let result = measure_pre_post(MeasureArgs {
@@ -779,7 +777,12 @@ async fn phase_g_cloud_llm_gate() {
             .build()
             .expect("PipelineConfig cloud legal default");
 
-        let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))), config);
+        let engine = Engine::new(
+            Arc::clone(&graph),
+            Arc::clone(&llm),
+            Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
+            config,
+        );
 
         let result = measure_pre_post(MeasureArgs {
             engine: &engine,

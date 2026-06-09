@@ -78,14 +78,14 @@ async fn c_d_real_llm_smoke_dream_with_pass_0() {
     let snapshotter = recorder.snapshotter();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    let base_url = std::env::var("OLLAMA_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let base_url =
+        std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
 
     // Per substrate SoT (tests/llm_integration.rs:1-25): gemma4-e2b:latest is the
     // interactive default (80% / ~37-54s). qwen2.5:14b is legacy fallback.
     // Callers can override via OLLAMA_CHAT_MODEL.
-    let chat_model = std::env::var("OLLAMA_CHAT_MODEL")
-        .unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
+    let chat_model =
+        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
 
     let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)
@@ -229,12 +229,18 @@ async fn d8_migration_014_idempotent() {
     let (graph, _tmp) = open_graph().await;
     // Columns must be present after open (first migration run).
     let cols = entity_types_columns(&graph).await;
-    assert!(cols.iter().any(|c| c == "discovered_at"), "discovered_at after first open");
+    assert!(
+        cols.iter().any(|c| c == "discovered_at"),
+        "discovered_at after first open"
+    );
     // Keep graph alive across the check.
     let _ = &graph.conn;
     // Column still present — idempotent PRAGMA gates guaranteed no-op.
     let cols2 = entity_types_columns(&graph).await;
-    assert!(cols2.iter().any(|c| c == "discovered_at"), "discovered_at still present");
+    assert!(
+        cols2.iter().any(|c| c == "discovered_at"),
+        "discovered_at still present"
+    );
 }
 
 // ─── D6: DreamSummary API shape ───────────────────────────────────────────────

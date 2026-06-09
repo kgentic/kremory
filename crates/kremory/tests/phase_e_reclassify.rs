@@ -95,12 +95,7 @@ async fn insert_entity_type(graph: &TemporalGraph, id: u32, name: &str, descript
             "INSERT OR IGNORE INTO entity_types \
              (id, group_id, name, description, created_at) \
              VALUES (?1, 'test-group', ?2, ?3, ?4)",
-            libsql::params![
-                id as i64,
-                name.to_string(),
-                description.to_string(),
-                now
-            ],
+            libsql::params![id as i64, name.to_string(), description.to_string(), now],
         )
         .await
         .expect("insert_entity_type");
@@ -158,11 +153,10 @@ impl ChatProvider for MockLlm {
         _messages: &[ChatMessage],
         _tools: Option<&[Tool]>,
         _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
-    ) -> std::result::Result<
-        Box<dyn ChatResponseTrait>,
-        autoagents_llm::error::LLMError,
-    > {
-        Ok(Box::new(MockChatResponse { text: self.response.clone() }))
+    ) -> std::result::Result<Box<dyn ChatResponseTrait>, autoagents_llm::error::LLMError> {
+        Ok(Box::new(MockChatResponse {
+            text: self.response.clone(),
+        }))
     }
 
     fn model(&self) -> &str {
@@ -206,17 +200,32 @@ async fn e1_catch_all_arm_includes_zero_type_id_only() {
     .expect("reclassify must succeed");
 
     // catch-all-entity must have been reclassified
-    assert_eq!(result.entities_reclassified, 1, "E1: catch-all entity must be reclassified");
+    assert_eq!(
+        result.entities_reclassified, 1,
+        "E1: catch-all entity must be reclassified"
+    );
 
     // ConsumerPinned entity must NOT have been touched
     let (cp_type, cp_source) = read_entity_fields(&graph, "consumer-pinned-zero").await;
-    assert_eq!(cp_type, 0, "E1: ConsumerPinned entity_type_id must be unchanged");
-    assert_eq!(cp_source, "ConsumerPinned", "E1: ConsumerPinned source must be unchanged");
+    assert_eq!(
+        cp_type, 0,
+        "E1: ConsumerPinned entity_type_id must be unchanged"
+    );
+    assert_eq!(
+        cp_source, "ConsumerPinned",
+        "E1: ConsumerPinned source must be unchanged"
+    );
 
     // DreamPass1 entity must NOT have been touched
     let (dp_type, dp_source) = read_entity_fields(&graph, "dreampass1-entity").await;
-    assert_eq!(dp_type, 0, "E1: DreamPass1 entity_type_id must be unchanged");
-    assert_eq!(dp_source, "DreamPass1", "E1: DreamPass1 source must be unchanged");
+    assert_eq!(
+        dp_type, 0,
+        "E1: DreamPass1 entity_type_id must be unchanged"
+    );
+    assert_eq!(
+        dp_source, "DreamPass1",
+        "E1: DreamPass1 source must be unchanged"
+    );
 }
 
 /// E1: low_confidence arm selects Phase1Ner entities below threshold.
@@ -249,12 +258,18 @@ async fn e1_low_confidence_arm_selects_phase1ner_below_threshold() {
     .await
     .expect("reclassify must succeed");
 
-    assert_eq!(result.entities_reclassified, 1, "E1: low-conf entity must be reclassified");
+    assert_eq!(
+        result.entities_reclassified, 1,
+        "E1: low-conf entity must be reclassified"
+    );
 
     // high-conf entity must be unchanged
     let (hc_type, hc_source) = read_entity_fields(&graph, "high-conf-entity").await;
     assert_eq!(hc_type, 2, "E1: high-conf entity_type_id must be unchanged");
-    assert_eq!(hc_source, "Phase1Ner", "E1: high-conf source must be unchanged");
+    assert_eq!(
+        hc_source, "Phase1Ner",
+        "E1: high-conf source must be unchanged"
+    );
 }
 
 // ─── E3: Confidence-aware source-tier stamping ────────────────────────────────
@@ -286,7 +301,10 @@ async fn e3_high_confidence_stamps_dreampass1() {
 
     let (new_type, new_source) = read_entity_fields(&graph, "entity-for-stamp").await;
     assert_eq!(new_type, 1, "E3: entity_type_id must be updated to 1");
-    assert_eq!(new_source, "DreamPass1", "E3: high-conf must stamp DreamPass1");
+    assert_eq!(
+        new_source, "DreamPass1",
+        "E3: high-conf must stamp DreamPass1"
+    );
 }
 
 /// E3: Decision with confidence < 0.7 updates type_id only; source preserved.
@@ -316,7 +334,10 @@ async fn e3_low_confidence_preserves_source_tier() {
 
     let (new_type, new_source) = read_entity_fields(&graph, "entity-low-conf").await;
     assert_eq!(new_type, 1, "E3: entity_type_id must be updated");
-    assert_eq!(new_source, "Phase1Ner", "E3: low-conf must preserve original source");
+    assert_eq!(
+        new_source, "Phase1Ner",
+        "E3: low-conf must preserve original source"
+    );
 }
 
 // ─── E4: entity_id preserved (UPDATE not DELETE+INSERT) ───────────────────────
@@ -391,7 +412,10 @@ async fn e5_dreampass1_excluded_from_next_cycle() {
     .expect("first reclassify must succeed");
 
     let (_, source_after_first) = read_entity_fields(&graph, "retype-protected").await;
-    assert_eq!(source_after_first, "DreamPass1", "E5: first pass must stamp DreamPass1");
+    assert_eq!(
+        source_after_first, "DreamPass1",
+        "E5: first pass must stamp DreamPass1"
+    );
 
     // Second pass: attempts to reclassify to type 2 — must be blocked by WHERE exclusion
     let mock2 = MockLlm::new(
@@ -411,12 +435,21 @@ async fn e5_dreampass1_excluded_from_next_cycle() {
     .expect("second reclassify must succeed");
 
     // The mock returned a decision but the entity was not in scope — decision is ignored
-    assert_eq!(result2.entities_reclassified, 0, "E5: DreamPass1 entity must not be reclassified again");
+    assert_eq!(
+        result2.entities_reclassified, 0,
+        "E5: DreamPass1 entity must not be reclassified again"
+    );
 
     let (type_after_second, source_after_second) =
         read_entity_fields(&graph, "retype-protected").await;
-    assert_eq!(type_after_second, 1, "E5: entity_type_id must remain 1 after second pass");
-    assert_eq!(source_after_second, "DreamPass1", "E5: source must remain DreamPass1");
+    assert_eq!(
+        type_after_second, 1,
+        "E5: entity_type_id must remain 1 after second pass"
+    );
+    assert_eq!(
+        source_after_second, "DreamPass1",
+        "E5: source must remain DreamPass1"
+    );
 }
 
 // ─── E6: Idempotency ─────────────────────────────────────────────────────────
@@ -430,8 +463,7 @@ async fn e6_idempotent_two_runs_converge() {
     insert_entity_type(&graph, 1, "Person", "A human individual").await;
 
     // Both calls return the same decision; second should be a no-op
-    let decision =
-        r#"{"decisions": [{"entity_id": "idempotent-entity", "entity_type_id": 1, "confidence": 0.9}]}"#;
+    let decision = r#"{"decisions": [{"entity_id": "idempotent-entity", "entity_type_id": 1, "confidence": 0.9}]}"#;
 
     let r1 = kremory::core::dream::reclassify::reclassify(
         &graph.conn,
@@ -459,8 +491,14 @@ async fn e6_idempotent_two_runs_converge() {
     .await
     .expect("second pass must succeed");
 
-    assert_eq!(r1.entities_reclassified, 1, "E6: first pass must reclassify 1 entity");
-    assert_eq!(r2.entities_reclassified, 0, "E6: second pass must find no candidates (idempotent)");
+    assert_eq!(
+        r1.entities_reclassified, 1,
+        "E6: first pass must reclassify 1 entity"
+    );
+    assert_eq!(
+        r2.entities_reclassified, 0,
+        "E6: second pass must find no candidates (idempotent)"
+    );
 }
 
 // ─── E7: Pass ordering — reclassify called after Pass 0 ──────────────────────
@@ -481,7 +519,10 @@ async fn e7_dream_summary_entities_reclassified_field_exists() {
         entities_reclassified: 42,
         warnings: vec![],
     };
-    assert_eq!(summary.entities_reclassified, 42, "E7/E8: entities_reclassified field must be accessible");
+    assert_eq!(
+        summary.entities_reclassified, 42,
+        "E7/E8: entities_reclassified field must be accessible"
+    );
 }
 
 // ─── E8: DreamSummary.entities_reclassified aggregates ───────────────────────
@@ -501,11 +542,7 @@ async fn e8_reclassify_all_groups_aggregates_across_namespaces() {
                  (id, group_id, entity_type_id, entity_type_source, ner_confidence, \
                   recorded_at, updated_at, entity_type_assigned_at) \
                  VALUES (?1, ?2, 0, 'Phase1Ner', 0.1, ?3, ?3, ?3)",
-                libsql::params![
-                    format!("entity-in-{group}"),
-                    group.to_string(),
-                    now.clone()
-                ],
+                libsql::params![format!("entity-in-{group}"), group.to_string(), now.clone()],
             )
             .await
             .expect("insert entity for group");
@@ -589,22 +626,34 @@ async fn e9_observability_counters_fire() {
     let has_duration = snapshot
         .iter()
         .any(|(k, _, _, _)| k.key().name() == "kremory.dream.reclassify_call_duration_ms");
-    assert!(has_duration, "E9: reclassify_call_duration_ms histogram must be emitted");
+    assert!(
+        has_duration,
+        "E9: reclassify_call_duration_ms histogram must be emitted"
+    );
 
     let has_outcome = snapshot
         .iter()
         .any(|(k, _, _, _)| k.key().name() == "kremory.dream.reclassify_call_outcome_total");
-    assert!(has_outcome, "E9: reclassify_call_outcome_total counter must be emitted");
+    assert!(
+        has_outcome,
+        "E9: reclassify_call_outcome_total counter must be emitted"
+    );
 
     let has_reclassified = snapshot
         .iter()
         .any(|(k, _, _, _)| k.key().name() == "kremory.dream.entities_reclassified_total");
-    assert!(has_reclassified, "E9: entities_reclassified_total counter must be emitted");
+    assert!(
+        has_reclassified,
+        "E9: entities_reclassified_total counter must be emitted"
+    );
 
     let has_tier = snapshot
         .iter()
         .any(|(k, _, _, _)| k.key().name() == "kremory.dream.reclassify_source_tier_written_total");
-    assert!(has_tier, "E9: reclassify_source_tier_written_total counter must be emitted");
+    assert!(
+        has_tier,
+        "E9: reclassify_source_tier_written_total counter must be emitted"
+    );
 }
 
 // ─── E9: parse_fail path emits counter ───────────────────────────────────────
@@ -641,7 +690,10 @@ async fn e9_parse_fail_counter_fires_on_garbage_response() {
     .await
     .expect("reclassify must not error on parse_fail");
 
-    assert_eq!(result.entities_reclassified, 0, "E9: parse_fail must result in 0 reclassified");
+    assert_eq!(
+        result.entities_reclassified, 0,
+        "E9: parse_fail must result in 0 reclassified"
+    );
 
     let snapshot = snapshotter.snapshot().into_vec();
     let has_parse_fail = snapshot.iter().any(|(k, _, _, _)| {
@@ -650,7 +702,10 @@ async fn e9_parse_fail_counter_fires_on_garbage_response() {
                 .labels()
                 .any(|l| l.key() == "outcome" && l.value() == "parse_fail")
     });
-    assert!(has_parse_fail, "E9: parse_fail outcome counter must fire on garbage response");
+    assert!(
+        has_parse_fail,
+        "E9: parse_fail outcome counter must fire on garbage response"
+    );
 }
 
 // ─── E10: Real-LLM smoke test ─────────────────────────────────────────────────
@@ -688,12 +743,12 @@ async fn e_real_llm_smoke_reclassify() {
     let snapshotter = recorder.snapshotter();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    let base_url = std::env::var("OLLAMA_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let base_url =
+        std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
 
     // Per substrate SoT (tests/llm_integration.rs:1-25): gemma4-e2b:latest
-    let chat_model = std::env::var("OLLAMA_CHAT_MODEL")
-        .unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
+    let chat_model =
+        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
 
     let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)
