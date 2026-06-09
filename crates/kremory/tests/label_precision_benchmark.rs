@@ -265,7 +265,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     };
 
     let engine = Engine::new(Arc::clone(&graph), llm.clone(), Arc::new(emb), config)
-        .expect("Engine::new should succeed in tests");
+        ; // Phase E: Engine::new is infallible (was Result)
 
     // TD-021: KREMORY_BENCH_EXTRA_TYPES allows passing additional entity types
     // (comma-separated, e.g. "Court,Drug,Species") on top of the 10 defaults so
@@ -672,7 +672,7 @@ async fn label_precision_haiku_on_mock_interview() {
 
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
     let engine = Engine::new(Arc::clone(&graph), llm, Arc::new(emb), config)
-        .expect("Engine::new should succeed in tests");
+        ; // Phase E: Engine::new is infallible (was Result)
 
     let ingest_result = engine
         .ingest_with(
