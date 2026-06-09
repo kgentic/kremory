@@ -477,8 +477,7 @@ mod semantic_tests {
             .build()
             .expect("PipelineConfig::build");
         let rql: Engine<MockChatProvider, OnnxEmbeddingProvider> =
-            Engine::new(graph, Arc::new(MockChatProvider::null()), embedder, config)
-                .expect("Engine::new should succeed in tests");
+            Engine::new(graph, Arc::new(MockChatProvider::null()), embedder, config);
 
         // contextualize() uses FTS — "Ria" in the label should match.
         let ctx: ContextResult = rql

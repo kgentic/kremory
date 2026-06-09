@@ -1,45 +1,53 @@
 <!-- sprint-activate-begin -->
 ## Active Sprint
 
-**Sprint**: Foundation Sprint Plan — v0.2.0 BYOE + TD Closure (2026-06-08)
-**Plan doc**: foundation-sprint-plan-2026-06-08
-**Current phase**: E0 — mechanical file-split (TD-001)
-**Activated**: 2026-06-08T20:40:00Z
+**Sprint**: v0.1.1 Dream-Impl Sprint — Multi-tier Architecture + Pass 0 + Reclassify
+**Plan doc**: `v0-1-1-dream-impl-sprint-plan-2026-06-09`
+**Current phase**: A — Migration 010 + source-tier contract
+**Activated**: 2026-06-09
 
 ### Phases
 
 | Phase | Scope | Status |
 |---|---|---|
-| E0 | Mechanical file-split: facade/mod.rs + extraction/mod.rs + ingest.rs into submodules (TD-001) | pending |
-| E | BYOE redesign — ExtractorKind + dual-trait + napi Shape B + TD-006 sweep (ADR-039) | pending |
-| G | Episode struct + Migration 009 content_hash backfill (ADR-042, TD-003) | pending |
-| H | napi BYOM bridge ThreadsafeFunction crash spike — HUMAN-LED (TD-005) | pending |
-| C | Tessa 7 CI gates + module-size lint (TD-002) | pending |
-| B | TD ledger close + boy-scout sweep + v0.2.0 tag | pending |
+| A | Migration 010 (source-tier columns + drift_detection_view + legacy backfill); `RawEntityIntegerId.confidence`; per-extractor source-tier contract; `ConsumerPinned` write | pending |
+| B | TD-028 Phase 1 pull-shape registry-read derivation | pending |
+| C | Dream API surface: `Engine::run_dream_pass_sync`, `DreamOpts`, `ghost_episodes`, `assert_entity_type`, `Mutex<()>` serialization | pending |
+| D | Dream Pass 0 implementation (ADR-037): clustering + LLM proposal call + anti-redundancy gate | pending |
+| E | Dream Pass 2 reclassify (ADR-046 unified scope): 3-arm SELECT + confidence-aware source-tier write | pending |
+| F | Observability + ergonomics: rate limits + concurrency docs + within-episode contradiction pre-check | pending |
+| G | TD-017 empirical hatch benchmark (gemma4-e2b + cloud-LLM) | pending |
+| H | TD ledger close + boy-scout sweep | pending |
 
-### Definition of Done
+### Definition of Done (sprint-level)
 
-- [ ] All 7 Tessa CI gates pass on Rust 1.86 (`cargo test --workspace`, `cargo test --workspace --all-features`, `pnpm test`, `cargo clippy`, `cargo fmt`, `cargo build --release`, module-size lint)
-- [ ] TD-001, TD-002, TD-003, TD-005 (or ADR-043 escalation), TD-006 closed in tech-debt-register with commit refs
-- [ ] TD-007, TD-008, TD-009, TD-011 confirmed closed (pre-sprint; verify at Phase B ledger pass)
-- [ ] TD-004 + TD-010 confirmed OPEN with sprint-slot notes updated to reference this plan
-- [ ] Foundation sprint plan status → `completed`
-- [ ] v0.2.0 tagged + released per ADR-026 per-release discipline
-- [ ] v0.1.1 dream-phase impl first task unblocked (Phase trait scaffolding can begin)
+- [ ] All 8 phases pass per-phase DoD criteria (48 mechanical checks total) per the plan
+- [ ] `/quality-gate` PASSES between every phase commit
+- [ ] `cargo test --workspace --all-features` passes (compile + run) on every phase commit
+- [ ] No new test failures introduced; baseline preserved (80 passed default-features as of 2026-06-09)
+- [ ] TD-017..TD-029 status transitions logged in tech-debt-register with commit refs
+- [ ] ADR-044, ADR-045, ADR-046, ADR-037 NOT modified during implementation (ratified-only)
+- [ ] v0.1.1 release tag cut after Phase G empirical hatch verdict captured
 
 ### Out-of-sprint deferrals (autonomous loop MUST reject)
 
-- TD-004 — `episode_tags` junction table (v0.1.7 entity_edges cycle gate)
-- TD-010 — Pass 0 shape validator placeholder gap (v0.1.9 Pass 0 gate)
-- v0.1.1 dream-phase implementation (depends on this sprint; starts after)
-- aidocs vNext napi integration (consumer-side; after Option E surface stable)
+- TD-005 — napi BYOM bridge crash (v0.1.9 binding-layer cleanup)
+- TD-016 — Ziad fixture text gap (opportunistic / v0.1.9)
+- TD-029 — aidocs status-frontmatter bug (file upstream)
+- v0.2.x `ExtractorKind::GlinerLlm` deletion (gated by Phase G empirical hatch)
+- aidocs vNext napi integration (consumer-side; after v0.1.1 stable)
 
 ### Phase-boundary discipline
 
-- **Recovery tags**: `post-E0-2026-06-08`, `post-E-2026-06-08`, `post-G-2026-06-08`, `post-H-2026-06-08`, `post-C-2026-06-08` created after each phase merge.
-- **Pre-commit gate**: `/quality-gate` MUST run before every phase commit per CLAUDE.md non-negotiable rule.
-- **Quinn adversarial review**: `/ship-build-review` (Sonnet) MUST run after every phase impl + before tagging per `feedback_quinn_review_before_every_commit`.
-- **Phase H is HUMAN-LED**: pause autonomous loop at Phase H slot, defer to user `/ship-spike` with 1.5d cap.
+- **Pre-commit gate**: `/quality-gate` MUST run before every phase commit per CLAUDE.md non-negotiable rule
+- **Quinn adversarial review**: `/ship-build-review` MUST run after every phase impl per `feedback_quinn_review_before_every_commit`
+- **Stop conditions** (7 total): see plan §Stop Conditions — autonomous loop halts + HITLs on any of them
+- **Phase G empirical hatch**: per-provider INDEPENDENT pass; aggregate-pass FORBIDDEN per ADR-044 §5
+- **Source-tier contract**: per Migration 010 detail spec §1.2 — all entity insert sites MUST pick a value from the authoritative table
 
-> Managed by `/ship-sprint-activate foundation-sprint-plan-2026-06-08`. Remove this section with `/ship-sprint-complete`.
+### Implementation-readiness verdict
+
+PASS (95.5% aggregate, 2026-06-09). See `.ai-docs/lessons/2026-06-09-v0-1-1-readiness-gate-verdict.md`.
+
+> Sprint scaffolding installed manually per `2026-06-09-ship-sprint-activate-dogfood-findings.md` (skill had 4 bugs). Remove this section after v0.1.1 ships.
 <!-- sprint-activate-end -->
