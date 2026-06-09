@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Extractor-selection compat matrix tests (ADR-039 §6 Shape B).
 //!
 //! Validates the `EntityExtractor` + `MemoryBuilder` composition rules that the
