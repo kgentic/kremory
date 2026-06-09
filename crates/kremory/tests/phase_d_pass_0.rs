@@ -24,6 +24,152 @@
 
 use kremory::core::schema::TemporalGraph;
 
+// ─── helpers (shared with llm_integration.rs) ────────────────────────────────
+// Only compiled when the `llm-integration` feature is active, so the helpers
+// module (which depends on autoagents_llm + metrics_util) is gated accordingly.
+#[cfg(feature = "llm-integration")]
+mod helpers;
+
+// ─── Phase C+D real-LLM smoke test ───────────────────────────────────────────
+
+/// Universal-3 LLM integration smoke for Phases C + D combined.
+///
+/// Covers:
+/// - Phase C: `mem.run_dream_pass_sync(DreamPassOpts::default())` API surface
+///   against real LLM; returns `Ok(DreamSummary)` without panic.
+/// - Phase D: `discover_types` LLM call exercises the Pass 0 path (stochastic
+///   output — primary assertion is "doesn't panic or error").
+///
+/// The test ingests 4 short texts whose entities (Vanguard Therapeutics, Acme
+/// Capital) are outside `DEFAULT_ENTITY_TYPES`, so `entity_type_id = 0`
+/// catch-alls accumulate — giving Pass 0 discovery logic a real trigger.
+///
+/// Observability assertions (secondary):
+/// - `rql.dream.pass_started_total` counter fires (Phase C C8)
+/// - `rql.dream.pass_completed_total` counter fires (Phase C C8)
+///
+/// `#[ignore]`: requires live Ollama with `gemma4-e2b:latest` + `nomic-embed-text`.
+///
+/// Per substrate SoT (`tests/llm_integration.rs:1-25`): `gemma4-e2b:latest` is the
+/// interactive default (80% precision / ~37-54s). `qwen2.5:14b` is legacy fallback.
+///
+/// Invoke:
+///   OLLAMA_BASE_URL=http://localhost:11434 OLLAMA_KEEP_ALIVE=1h \
+///   OLLAMA_CHAT_MODEL=gemma4-e2b:latest \
+///   cargo test -p kremory --features llm-integration --test phase_d_pass_0 \
+///     c_d_real_llm_smoke_dream_with_pass_0 -- --ignored
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+#[cfg(feature = "llm-integration")]
+async fn c_d_real_llm_smoke_dream_with_pass_0() {
+    use std::sync::Arc;
+
+    use autoagents_llm::backends::ollama::Ollama;
+    use autoagents_llm::builder::LLMBuilder;
+    use autoagents_llm::embedding::EmbeddingBuilder;
+    use kremory::memory::ChatProvider;
+    use kremory::{DreamPassOpts, DynEmbeddingProvider, Memory, Namespace};
+    use metrics_util::debugging::DebuggingRecorder;
+
+    use helpers::ollama_adapter::OllamaEmbedderAdapter;
+
+    // Install a local metrics recorder so counters are observable.
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let base_url = std::env::var("OLLAMA_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+
+    // Per substrate SoT (tests/llm_integration.rs:1-25): gemma4-e2b:latest is the
+    // interactive default (80% / ~37-54s). qwen2.5:14b is legacy fallback.
+    // Callers can override via OLLAMA_CHAT_MODEL.
+    let chat_model = std::env::var("OLLAMA_CHAT_MODEL")
+        .unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
+
+    let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
+        .base_url(&base_url)
+        .model(&chat_model)
+        .timeout_seconds(120)
+        .keep_alive("1h")
+        .build()
+        .expect("Ollama LLM builder must succeed");
+
+    let raw_emb: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
+        .base_url(&base_url)
+        .model("nomic-embed-text")
+        .build()
+        .expect("Ollama embedder builder must succeed");
+
+    let emb: Arc<dyn DynEmbeddingProvider> = Arc::new(OllamaEmbedderAdapter(raw_emb));
+
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let mem = Memory::open(dir.path().join("c_d_smoke.db"))
+        .with_llm(llm as Arc<dyn ChatProvider>)
+        .with_embedder(emb)
+        .embedding_dim(768)
+        .default_namespace(Namespace::new("c-d-smoke"))
+        .await
+        .expect("Memory::open must succeed for C+D smoke test");
+
+    // Ingest 4 episodes whose entities sit outside DEFAULT_ENTITY_TYPES.
+    // This drives catch-all entity_type_id=0 accumulation — giving Pass 0 a signal.
+    let episodes = [
+        "BioTech startup Vanguard Therapeutics raised Series B funding from Acme Capital.",
+        "Vanguard Therapeutics is developing novel gene-therapy platforms for rare diseases.",
+        "Acme Capital led the investment round; Nexus Ventures co-invested.",
+        "Nexus Ventures focuses on early-stage BioTech and HealthTech opportunities.",
+    ];
+
+    for (i, content) in episodes.iter().enumerate() {
+        mem.remember(*content)
+            .from_chat(format!("c-d-smoke-session-{i}"))
+            .await
+            .unwrap_or_else(|e| panic!("episode {i} ingest must succeed: {e}"));
+    }
+
+    // ── Phase C: run_dream_pass_sync must return Ok(DreamSummary) ─────────────
+    let opts = DreamPassOpts::default();
+    let summary = mem
+        .run_dream_pass_sync(opts)
+        .await
+        .expect("run_dream_pass_sync must return Ok(DreamSummary) — Phase C smoke");
+
+    // Primary assertions: DreamSummary is structurally valid.
+    // duration_ms must be set (Phase C C8 records elapsed time).
+    assert!(
+        summary.duration_ms < 60_000,
+        "duration_ms must be < 60s for a stub pass; got {}ms",
+        summary.duration_ms
+    );
+
+    // types_discovered is stochastic — type-shape check only (not count check).
+    let _ = summary.types_discovered.len();
+
+    // warnings is allowed to be non-empty.
+    let _ = summary.warnings.len();
+
+    // ── Phase C observability (C8): pass counters must have fired ─────────────
+    let snapshot = snapshotter.snapshot().into_vec();
+
+    let pass_started = snapshot
+        .iter()
+        .any(|(k, _, _, _)| k.key().name() == "rql.dream.pass_started_total");
+    let pass_completed = snapshot
+        .iter()
+        .any(|(k, _, _, _)| k.key().name() == "rql.dream.pass_completed_total");
+
+    assert!(
+        pass_started,
+        "rql.dream.pass_started_total must be emitted by run_dream_pass_sync (Phase C C8)"
+    );
+    assert!(
+        pass_completed,
+        "rql.dream.pass_completed_total must be emitted by run_dream_pass_sync (Phase C C8)"
+    );
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 async fn open_graph() -> (TemporalGraph, tempfile::TempDir) {
