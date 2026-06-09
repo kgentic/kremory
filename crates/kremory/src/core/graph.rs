@@ -159,9 +159,14 @@ impl TemporalGraph {
         // when this method is called from inside the ingest pipeline's outer txn.
         let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
+            // ADR-045 §2 + migration-010-detail-spec §1.2: entity_type_source stamped
+            // 'Phase1Ner' at INSERT time — all entity inserts via this method are Phase 1
+            // (with_facts stub creation path). entity_type_assigned_at = now().
             self.conn
                 .execute(
-                    "INSERT INTO entities (id, entity_type_id, properties, recorded_at) VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO entities (id, entity_type_id, properties, recorded_at, \
+                     entity_type_source, entity_type_assigned_at) \
+                     VALUES (?1, ?2, ?3, ?4, 'Phase1Ner', ?4)",
                     libsql::params![id, entity_type_id as i64, props_str.clone(), now],
                 )
                 .await?;
@@ -966,9 +971,16 @@ impl TemporalGraph {
         // called from inside the ingest pipeline's outer txn.
         let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
+            // ADR-045 §2 + migration-010-detail-spec §1.2: all callers of this method
+            // are Phase 1 entity inserts. Source-tier stamped 'Phase1Ner' at INSERT time.
+            // ner_confidence populated separately via set_entity_ner_confidence when
+            // a GLiNER span score is available (pipeline.rs Phase 1 entity loop).
             self.conn
                 .execute(
-                    "INSERT INTO entities (id, entity_type_id, properties, recorded_at, group_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO entities \
+                     (id, entity_type_id, properties, recorded_at, group_id, \
+                      entity_type_source, entity_type_assigned_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'Phase1Ner', ?4)",
                     libsql::params![id, entity_type_id as i64, props_str.clone(), now, effective_group_id],
                 )
                 .await?;
@@ -1020,14 +1032,21 @@ impl TemporalGraph {
         let effective_group_id = group_id.unwrap_or("default");
         let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
+            // ADR-045 §2 / spec §1.2: stamp Phase1Ner on INSERT; preserve existing
+            // entity_type_source on conflict (stub-promotion must not overwrite a
+            // ConsumerPinned or Phase2Llm tier that was already assigned).
             self.conn
                 .execute(
-                    "INSERT INTO entities (id, entity_type_id, properties, recorded_at, group_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(id, group_id) DO UPDATE SET
-                   entity_type_id = excluded.entity_type_id,
-                   properties = excluded.properties,
-                   recorded_at = excluded.recorded_at",
+                    "INSERT INTO entities \
+                     (id, entity_type_id, properties, recorded_at, group_id, \
+                      entity_type_source, entity_type_assigned_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'Phase1Ner', ?4) \
+                     ON CONFLICT(id, group_id) DO UPDATE SET \
+                       entity_type_id = excluded.entity_type_id, \
+                       properties = excluded.properties, \
+                       recorded_at = excluded.recorded_at, \
+                       entity_type_source = COALESCE(entities.entity_type_source, excluded.entity_type_source), \
+                       entity_type_assigned_at = COALESCE(entities.entity_type_assigned_at, excluded.entity_type_assigned_at)",
                     libsql::params![
                         id,
                         entity_type_id as i64,
@@ -1065,6 +1084,57 @@ impl TemporalGraph {
                 Err(e)
             }
         }
+    }
+
+    /// Set `ner_confidence` on an existing entity row.
+    ///
+    /// Called after GLiNER extraction inserts the entity row. Only writes when
+    /// `confidence` is `Some` — no-op on `None` (LLM-only paths produce no score).
+    ///
+    /// Governing spec: migration-010-detail-spec §1.1 + ADR-045 §6 (Phase 1 GLiNER NER).
+    pub async fn set_entity_ner_confidence(
+        &self,
+        id: &str,
+        group_id: Option<&str>,
+        confidence: f32,
+    ) -> Result<()> {
+        let effective_group_id = group_id.unwrap_or("default");
+        self.conn
+            .execute(
+                "UPDATE entities SET ner_confidence = ?1 \
+                 WHERE id = ?2 AND group_id = ?3",
+                libsql::params![confidence as f64, id, effective_group_id],
+            )
+            .await
+            .map_err(crate::core::error::Error::from)?;
+        Ok(())
+    }
+
+    /// Overwrite `entity_type_source` and `entity_type_assigned_at` on an existing entity row.
+    ///
+    /// Used exclusively by the ConsumerPinned write path in `pipeline.rs` after a
+    /// `try_insert_fact_with_group` success — stamps `'ConsumerPinned'` so the dream
+    /// reclassify pass skips this entity.
+    ///
+    /// Governing spec: migration-010-detail-spec §1.2 + ADR-045 §3 (ConsumerPinned protection).
+    pub async fn update_entity_source_tier(
+        &self,
+        id: &str,
+        group_id: Option<&str>,
+        source_tier: &str,
+    ) -> Result<()> {
+        let effective_group_id = group_id.unwrap_or("default");
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE entities \
+                 SET entity_type_source = ?1, entity_type_assigned_at = ?2 \
+                 WHERE id = ?3 AND group_id = ?4",
+                libsql::params![source_tier, now, id, effective_group_id],
+            )
+            .await
+            .map_err(crate::core::error::Error::from)?;
+        Ok(())
     }
 
     /// Insert a fact with an optional group_id.

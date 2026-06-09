@@ -137,6 +137,20 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(Some(fact_id)) => {
                         pinned_count = pinned_count.saturating_add(1);
                         pinned_fact_ids.push(fact_id);
+                        // ADR-045 §3 / spec §1.2: stamp ConsumerPinned on the subject entity
+                        // so the dream reclassify pass skips it. Best-effort — a warn on
+                        // failure is sufficient; the fact is already pinned.
+                        if let Err(e) = self
+                            .graph
+                            .update_entity_source_tier(&pf.subject, group_id, "ConsumerPinned")
+                            .await
+                        {
+                            tracing::warn!(
+                                subject = %pf.subject,
+                                error = %e,
+                                "kremory.with_facts.consumer_pinned_stamp_failed"
+                            );
+                        }
                     }
                     Ok(None) => {
                         // Intra-caller-set duplicate (already counted as
@@ -745,6 +759,27 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "via" => "insert_new",
                     )
                     .increment(1);
+
+                    // ADR-045 §6 / spec §1.1: persist GLiNER span confidence when present.
+                    // `properties["confidence"]` is written by ner.rs for Phase 1 GLiNER
+                    // extractions; absent on LLM-only paths. Best-effort — warn only.
+                    if let Some(conf_val) = extracted.properties.get("confidence") {
+                        if let Some(conf_f64) = conf_val.as_f64() {
+                            #[allow(clippy::cast_possible_truncation)]
+                            let conf_f32 = conf_f64 as f32;
+                            if let Err(e) = self
+                                .graph
+                                .set_entity_ner_confidence(&entity_id, group_id, conf_f32)
+                                .await
+                            {
+                                tracing::warn!(
+                                    entity_id = %entity_id,
+                                    error = %e,
+                                    "kremory.ingest.ner_confidence_write_failed"
+                                );
+                            }
+                        }
+                    }
 
                     // Embed and store embedding
                     let embedding = match self.embedder.embed(&extracted.name).await {
