@@ -1134,6 +1134,15 @@ impl TemporalGraph {
             )
             .await
             .map_err(crate::core::error::Error::from)?;
+        // Rule 19 §3: per-source UPDATE counter so tier-flip writes are observable
+        // independently of INSERT counters (update_entity_source_tier is UPDATE-only;
+        // it never fires `entity_persisted_total`).
+        metrics::counter!(
+            "kremory.ingest.entity_source_tier_updated_total",
+            "source" => source_tier.to_string(),
+            "namespace" => effective_group_id.to_string(),
+        )
+        .increment(1);
         Ok(())
     }
 
