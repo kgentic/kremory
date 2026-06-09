@@ -2,6 +2,7 @@
 name = "kremory-napi"
 version = "0.1.7-alpha.1"
 edition = "2021"
+rust-version = "1.86"
 license = "Apache-2.0"
 description = "Node.js (napi-rs) binding for kremory agent memory"
 repository = "https://github.com/kgentic/kremory"
