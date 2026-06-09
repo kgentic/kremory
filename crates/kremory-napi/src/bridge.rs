@@ -207,9 +207,7 @@ impl kremory::core::intelligence::EntityExtractor for ExternalExtractorJs {
             let js_result: JsExtractionResult = tsfn
                 .call_async(Ok(text_owned))
                 .await
-                .map_err(|e| {
-                    kremory::CoreError::Other(anyhow!("extractor callback error: {e}"))
-                })?;
+                .map_err(|e| kremory::CoreError::Other(anyhow!("extractor callback error: {e}")))?;
 
             let entities = js_result
                 .entities
@@ -302,9 +300,9 @@ impl kremory::core::intelligence::EntityExtractor for MockExtractorBridge {
         let result: kremory::core::error::Result<kremory::core::intelligence::ExtractionResult> =
             match &self.kind {
                 MockExtractorKind::Fixed(r) => Ok(r.clone()),
-                MockExtractorKind::Error { message } => {
-                    Err(kremory::CoreError::Other(anyhow!("extractor error: {message}")))
-                }
+                MockExtractorKind::Error { message } => Err(kremory::CoreError::Other(anyhow!(
+                    "extractor error: {message}"
+                ))),
                 MockExtractorKind::Empty => Ok(kremory::core::intelligence::ExtractionResult {
                     entities: vec![],
                     facts: vec![],

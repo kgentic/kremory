@@ -370,10 +370,7 @@ impl JsMemory {
                 napi::Error::from_reason(format!("kremory recallBySourceId failed: {e}"))
             })?;
 
-        Ok(episodes
-            .into_iter()
-            .map(convert::episode_to_js)
-            .collect())
+        Ok(episodes.into_iter().map(convert::episode_to_js).collect())
     }
 
     /// Trigger the dream-phase batch consolidation (B6).
@@ -862,7 +859,8 @@ async fn open_with_js_embedder(
 
     // Apply BYOE extractor knobs (mutually-exclusive guard already checked in open()).
     if let Some(handle) = extractor_handle {
-        builder = builder.with_extractor(Arc::new(bridge::ExternalExtractorJs::from_handle(handle)));
+        builder =
+            builder.with_extractor(Arc::new(bridge::ExternalExtractorJs::from_handle(handle)));
     } else if let Some(cfg) = gliner_cfg {
         // GLiNER requires ner feature; already checked in open().
         #[cfg(feature = "ner")]

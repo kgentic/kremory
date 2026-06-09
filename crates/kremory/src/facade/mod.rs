@@ -852,9 +852,8 @@ impl<L, E> MemoryBuilder<L, E> {
     where
         Ext: crate::core::intelligence::EntityExtractor + 'static,
     {
-        self.custom_extractor = Some(
-            extractor as Arc<dyn crate::core::intelligence::EntityExtractorDyn>,
-        );
+        self.custom_extractor =
+            Some(extractor as Arc<dyn crate::core::intelligence::EntityExtractorDyn>);
         self
     }
 
@@ -1102,9 +1101,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         crate::core::extraction::hybrid_typer::GlinerLlmExtractor::new(arc_llm)
                             .map_err(|e| {
                                 MemoryError::Core(CoreError::BuilderConflict {
-                                    detail: format!(
-                                        "GLiNER extractor init failed: {e}"
-                                    ),
+                                    detail: format!("GLiNER extractor init failed: {e}"),
                                 })
                             })?;
                     providers::open_graph_with_extractor(
@@ -1115,9 +1112,9 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             allowed_entity_types: self.allowed_entity_types,
                         },
                         llm.clone(),
-                        crate::core::extraction::factory::ExtractorKind::GlinerLlm(
-                            Box::new(gliner_ext),
-                        ),
+                        crate::core::extraction::factory::ExtractorKind::GlinerLlm(Box::new(
+                            gliner_ext,
+                        )),
                     )
                     .await?
                 } else {

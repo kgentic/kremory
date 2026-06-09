@@ -1401,9 +1401,7 @@ pub(crate) async fn migrate_011_episodes_content_hash(
 
     let mut has_content_hash = false;
     while let Some(row) = info.next().await.map_err(step("pragma_table_info_next"))? {
-        let col_name: String = row
-            .get(1)
-            .map_err(step("pragma_table_info_row_get"))?;
+        let col_name: String = row.get(1).map_err(step("pragma_table_info_row_get"))?;
         if col_name == "content_hash" {
             has_content_hash = true;
             break;
@@ -1420,12 +1418,9 @@ pub(crate) async fn migrate_011_episodes_content_hash(
 
     // ── Step 2: ADD COLUMN ───────────────────────────────────────────────────
 
-    conn.execute(
-        "ALTER TABLE episodes ADD COLUMN content_hash TEXT",
-        (),
-    )
-    .await
-    .map_err(step("alter_table_add_content_hash"))?;
+    conn.execute("ALTER TABLE episodes ADD COLUMN content_hash TEXT", ())
+        .await
+        .map_err(step("alter_table_add_content_hash"))?;
 
     // ── Step 3: Rust-side SHA-256 backfill ───────────────────────────────────
     //
