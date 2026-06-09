@@ -54,7 +54,6 @@ pub(crate) async fn open_graph(
     llm: Arc<dyn ChatProvider>,
     embedder: Arc<dyn DynEmbeddingProvider>,
     embedding_dim: Option<usize>,
-    extractor_source: Option<crate::core::extraction::ExtractorSource>,
     allowed_entity_types: Vec<String>,
 ) -> Result<(Arc<dyn GraphHandle>, Arc<TemporalGraph>)> {
     let path_str = path
@@ -76,17 +75,12 @@ pub(crate) async fn open_graph(
     }
     let config = config_builder.build().map_err(MemoryError::Core)?;
 
-    // Use explicit extractor source if pinned via builder; otherwise default
-    // to FromEnv (reads KREMORY_EXTRACTOR or falls back to NuExtract).
-    let source = extractor_source.unwrap_or(crate::core::extraction::ExtractorSource::FromEnv);
-    let engine = Engine::with_extractor_source(
+    let engine = Engine::new(
         graph,
         Arc::new(ArcChatProvider::new(llm)),
         Arc::new(ArcEmbedder(embedder)),
         config,
-        source,
-    )
-    .map_err(MemoryError::Core)?;
+    );
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
     Ok((handle, graph_for_facade))
@@ -338,7 +332,6 @@ async fn build_memory_with_model(
         llm.clone(),
         embedder.clone(),
         embedding_dim,
-        None,
         vec![],
     )
     .await?;

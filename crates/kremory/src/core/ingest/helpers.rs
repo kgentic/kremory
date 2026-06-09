@@ -77,13 +77,13 @@ impl SimpleGraph {
     pub async fn open_in_memory_simple() -> Result<Self> {
         let graph = Arc::new(TemporalGraph::open_in_memory().await?);
         let config = PipelineConfig::builder().build()?;
-        Self::new(
+        Ok(Self::new(
             graph,
             Arc::new(MockChatProvider::null()),
             Arc::new(NullEmbeddingProvider {
                 dim: config.embedding_dim.0,
             }),
             config,
-        )
+        ))
     }
 }

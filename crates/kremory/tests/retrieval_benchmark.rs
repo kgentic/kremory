@@ -564,7 +564,7 @@ async fn test_contextualize_one_hop_expansion() {
         .expect("PipelineConfig build");
 
     let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
-        Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
+        Engine::new(graph, llm, embedder, config);
 
     let result: ContextResult = rql
         .contextualize("alice", None, None)

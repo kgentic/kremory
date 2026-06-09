@@ -617,6 +617,10 @@ mod inner {
     }
 
     impl EntityExtractor for GlinerExtractor {
+        fn name(&self) -> &'static str {
+            "gliner"
+        }
+
         async fn extract<'a>(
             &'a self,
             text: &'a str,

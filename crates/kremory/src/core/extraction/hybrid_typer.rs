@@ -47,19 +47,23 @@ use crate::core::provider::{chat_msg_user, ChatProvider};
 /// The `GlinerExtractor` is held by value — model weights (~650MB INT8) are
 /// loaded once at construction via hf-hub.
 #[cfg(feature = "ner")]
-pub struct HybridGlinerLlmExtractor<L: ChatProvider> {
+pub struct GlinerLlmExtractor<L: ChatProvider> {
     gliner: crate::core::ner::GlinerExtractor,
     llm: Arc<L>,
 }
 
 #[cfg(feature = "ner")]
-impl<L: ChatProvider> HybridGlinerLlmExtractor<L> {
+impl<L: ChatProvider> GlinerLlmExtractor<L> {
     /// Build the hybrid extractor. Downloads `gliner_large-v2.1` INT8 on first
     /// use (cached locally by hf-hub thereafter).
     ///
     /// Threshold tunable via `KREMORY_GLINER_THRESHOLD` env var (default 0.5).
     /// Lower threshold → higher recall (catches more candidates) at the cost
     /// of more noise candidates the LLM has to type-or-reject.
+    ///
+    /// Called from `MemoryBuilder::build()` in E-2 when both `with_gliner` and
+    /// `with_llm` knobs are set.
+    #[allow(dead_code)]
     pub fn new(llm: Arc<L>) -> anyhow::Result<Self> {
         let threshold: f32 = std::env::var("KREMORY_GLINER_THRESHOLD")
             .ok()
@@ -71,7 +75,11 @@ impl<L: ChatProvider> HybridGlinerLlmExtractor<L> {
 }
 
 #[cfg(feature = "ner")]
-impl<L: ChatProvider + 'static> EntityExtractor for HybridGlinerLlmExtractor<L> {
+impl<L: ChatProvider + 'static> EntityExtractor for GlinerLlmExtractor<L> {
+    fn name(&self) -> &'static str {
+        "gliner_llm"
+    }
+
     async fn extract<'a>(
         &'a self,
         text: &'a str,
@@ -159,7 +167,7 @@ impl<L: ChatProvider + 'static> EntityExtractor for HybridGlinerLlmExtractor<L> 
             .await
             .map_err(|e| {
                 crate::core::error::Error::Other(anyhow::anyhow!(
-                    "HybridGlinerLlmExtractor phase 2 LLM typing call failed: {e}"
+                    "GlinerLlmExtractor phase 2 LLM typing call failed: {e}"
                 ))
             })?;
 

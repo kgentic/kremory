@@ -140,12 +140,11 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     /// Model identifier read from `llm.model()` at construction.
     /// None when llm.model() returns empty string.
     pub(crate) model: Option<String>,
-    /// Production entity extractor — constructed once per Engine, shared via
-    /// Arc across all 8 ingest hot-path callsites. See spec
-    /// `kremory-v017-hybrid-extractor-production-wire-in-spec-2026-06-04`
-    /// and ADR-029. Defaults to NuExtract; hybrid opt-in via
-    /// `ExtractorSource` builder method or `KREMORY_EXTRACTOR=hybrid` env.
-    pub(crate) extractor: Arc<crate::core::extraction::ProductionExtractor<L>>,
+    /// Entity extractor — constructed once per Engine, shared via Arc across
+    /// all ingest hot-path callsites.  Built-in variants are `Llm` and
+    /// `GlinerLlm` (behind `ner` feature); consumer extensions via `Custom`.
+    /// See ADR-039 and `factory.rs`.
+    pub(crate) extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
 }
 
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
@@ -166,34 +165,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         llm: Arc<L>,
         embedder: Arc<Emb>,
         config: PipelineConfig,
-    ) -> Result<Self> {
-        Self::with_extractor_source(
-            graph,
-            llm,
-            embedder,
-            config,
-            crate::core::extraction::ExtractorSource::FromEnv,
-        )
-    }
-
-    /// Construct an Engine with an explicit extractor source. Use this when
-    /// you want to bypass env-var resolution — e.g. pin NuExtract in test
-    /// suites that don't need hybrid, or pin Hybrid in production code that
-    /// requires it regardless of env.
-    pub fn with_extractor_source(
-        graph: Arc<TemporalGraph>,
-        llm: Arc<L>,
-        embedder: Arc<Emb>,
-        config: PipelineConfig,
-        extractor_source: crate::core::extraction::ExtractorSource,
-    ) -> Result<Self> {
+    ) -> Self {
         let m = llm.model().trim().to_string();
         let model = if m.is_empty() { None } else { Some(m) };
-        let extractor = Arc::new(crate::core::extraction::ProductionExtractor::from_source(
-            extractor_source,
-            Arc::clone(&llm),
-        )?);
-        Ok(Self {
+        let extractor = Arc::new(crate::core::extraction::factory::ExtractorKind::Llm(
+            crate::core::extraction::graphiti::LlmExtractor::new(Arc::clone(&llm)),
+        ));
+        Self {
             graph,
             llm,
             embedder,
@@ -201,28 +179,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             oov_auditor: None,
             model,
             extractor,
-        })
+        }
     }
 
-    /// Construct an Engine pinned to NuExtract via the infallible factory
-    /// constructor. Returns `Self` directly (no `Result`) because NuExtract
-    /// construction has no I/O and no model load.
-    ///
-    /// Test-convenience constructor — production code should normally use
-    /// [`Self::new`] (env-driven) or [`Self::with_extractor_source`] (when
-    /// an explicit pin to Hybrid is required and the caller is prepared to
-    /// handle a GLiNER weight-load failure).
-    pub fn with_nuextract(
+    /// Construct an Engine with an explicit `ExtractorKind`.  Use this when
+    /// the caller wants to bypass the default `LlmExtractor` — e.g. pin
+    /// `GlinerLlm` explicitly, or inject a `Custom` extractor.
+    /// Wired in E-2 via `MemoryBuilder::with_extractor` / `with_gliner` knobs.
+    #[allow(dead_code)]
+    pub(crate) fn with_extractor(
         graph: Arc<TemporalGraph>,
         llm: Arc<L>,
         embedder: Arc<Emb>,
         config: PipelineConfig,
+        extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
     ) -> Self {
         let m = llm.model().trim().to_string();
         let model = if m.is_empty() { None } else { Some(m) };
-        let extractor = Arc::new(
-            crate::core::extraction::ProductionExtractor::nuextract_only(Arc::clone(&llm)),
-        );
         Self {
             graph,
             llm,

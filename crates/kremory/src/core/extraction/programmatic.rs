@@ -142,6 +142,10 @@ Output a single JSON object with a \"relationships\" array only."
 }
 
 impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
+    fn name(&self) -> &'static str {
+        "programmatic"
+    }
+
     async fn extract<'a>(
         &'a self,
         text: &'a str,

@@ -254,6 +254,10 @@ impl<L: ChatProvider> HybridExtractor<L> {
 }
 
 impl<L: ChatProvider> EntityExtractor for HybridExtractor<L> {
+    fn name(&self) -> &'static str {
+        "hybrid"
+    }
+
     async fn extract<'a>(
         &'a self,
         text: &'a str,

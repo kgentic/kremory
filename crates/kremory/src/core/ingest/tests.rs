@@ -11,6 +11,10 @@ struct FixedExtractor {
 }
 
 impl EntityExtractor for FixedExtractor {
+    fn name(&self) -> &'static str {
+        "fixed"
+    }
+
     async fn extract<'a>(
         &'a self,
         _text: &'a str,
@@ -24,7 +28,7 @@ impl EntityExtractor for FixedExtractor {
 }
 
 /// Build a MockChatProvider with staged responses matching the prompt substrings
-/// used by NuExtractExtractor, DefaultExtractor, CascadeResolver, and TwoPoolDetector.
+/// used by LlmExtractor, DefaultExtractor, CascadeResolver, and TwoPoolDetector.
 fn build_mock_llm(
     entities_json: &str,
     relations_json: &str,
@@ -33,17 +37,22 @@ fn build_mock_llm(
     contradiction_response: &str,
 ) -> MockChatProvider {
     let mut map = HashMap::new();
-    // NuExtractExtractor prompt contains "# Template:"
-    // NuExtract expects a JSON object with "entities" and "relationships" arrays
-    let entities: Vec<serde_json::Value> = serde_json::from_str(entities_json).unwrap_or_default();
-    let relationships: Vec<serde_json::Value> =
-        serde_json::from_str(triplets_json).unwrap_or_default();
-    let nuextract_response = serde_json::json!({
-        "entities": entities,
-        "relationships": relationships
-    });
-    map.insert("# Template:".to_string(), nuextract_response.to_string());
-    // DefaultExtractor stage 1: entity extraction prompt ends with this substring
+
+    // ── LlmExtractor (graphiti-style) ─────────────────────────────────────────
+    // Stage 1: entity extraction with integer-ID schema.
+    // Unique substring from build_graphiti_entity_prompt (line ending).
+    map.insert(
+        "Never include type information in the name field.".to_string(),
+        r#"{"entities": [{"name": "Alice", "entity_type_id": 1}, {"name": "Acme", "entity_type_id": 2}]}"#.to_string(),
+    );
+    // Stage 2: relationship extraction.
+    // Unique substring from build_graphiti_relationship_prompt.
+    map.insert(
+        "Extract all factual relationships between the entities above.".to_string(),
+        r#"[{"subject":"Alice","predicate":"works_at","object":"Acme","is_entity_ref":true,"confidence":0.95}]"#.to_string(),
+    );
+
+    // ── DefaultExtractor stage 1: entity extraction prompt ends with this substring ──
     map.insert(
         "Output a JSON array of objects with \"name\" and \"label\" fields.".to_string(),
         entities_json.to_string(),
@@ -91,7 +100,7 @@ async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvid
         "[]",
     ));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests")
+    Engine::new(graph, llm, embedder, config)
 }
 
 #[tokio::test]
@@ -261,8 +270,7 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
-        Engine::new(Arc::clone(&graph), llm, embedder, config)
-            .expect("Engine::new should succeed in tests");
+        Engine::new(Arc::clone(&graph), llm, embedder, config);
 
     // Extractor provides "Alice" (canonical label). Proper noun scanner will
     // detect "Zenith Dynamics" but assign label="Entity" (placeholder).
@@ -336,8 +344,7 @@ async fn ingest_intra_batch_duplicate_dedupes_silently() {
     let config = PipelineConfig::builder().build().expect("config");
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine =
-        Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
     // Two entities with identical names — normalize to the same id.
     let extractor = FixedExtractor {
@@ -391,6 +398,10 @@ struct FixedExtractorWithFacts {
 }
 
 impl EntityExtractor for FixedExtractorWithFacts {
+    fn name(&self) -> &'static str {
+        "fixed_with_facts"
+    }
+
     async fn extract<'a>(
         &'a self,
         _text: &'a str,
@@ -416,8 +427,7 @@ async fn stub_entity_inserted_on_forward_reference_lib() {
     let config = PipelineConfig::builder().build().expect("config");
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
     // Alice in entity list; Bob only referenced in facts (forward reference).
     let extractor = FixedExtractorWithFacts {
@@ -491,8 +501,7 @@ async fn stub_entity_promoted_on_reingestion_lib() {
     let config = PipelineConfig::builder().build().expect("config");
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
     // Ingest 1: Alice + forward-ref Bob → Bob becomes stub.
     let extractor_1 = FixedExtractorWithFacts {
@@ -597,8 +606,7 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
 
     let before_count = graph.list_entities().await.expect("list").len();
 
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
     // Use a canonical label ("Person") so the TD-012 guard does not filter
     // these out before the dedup logic runs.  The test invariant is dedup,
@@ -652,7 +660,6 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
 // by the LLM provider at construction time via llm.model().
 //
 // All three tests FAIL until Green phase adds `model: Option<String>` to
-// the Engine struct and derives it in Engine::new().expect("Engine::new should succeed in tests").
 
 /// AC6+AC8: Engine stores the model string from the LLM provider at construction.
 ///
@@ -693,8 +700,7 @@ async fn engine_stores_model_string_from_llm() {
         model_str: "qwen2.5:14b",
     });
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine =
-        Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
+    let engine = Engine::new(graph, llm, embedder, config);
 
     // AC8: model field must hold Some("qwen2.5:14b") — the value returned by llm.model().
     assert_eq!(
@@ -719,8 +725,7 @@ async fn engine_model_is_none_when_llm_model_empty() {
     let config = PipelineConfig::builder().build().unwrap();
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine =
-        Engine::new(graph, llm, embedder, config).expect("Engine::new should succeed in tests");
+    let engine = Engine::new(graph, llm, embedder, config);
 
     // AC8: empty model string must map to None, not Some("").
     assert_eq!(
@@ -772,8 +777,7 @@ async fn engine_new_signature_unchanged_model_derived_from_llm() {
         Arc::new(NamedMock),
         Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
         config,
-    )
-    .expect("Engine::new should succeed in tests");
+    );
 
     assert_eq!(
         engine.model.as_deref(),
@@ -807,8 +811,7 @@ async fn ingest_persists_entity_catchall_under_l1_design() {
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
 
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
     let extractor = FixedExtractor {
         entities: vec![
@@ -911,8 +914,7 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
         "[]",
     ));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
     let extractor = Arc::clone(&engine.extractor);
 
     let override_specs = vec![
@@ -1042,8 +1044,7 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
     );
     let llm = Arc::new(MockChatProvider::new(mock_map));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
     let extractor = Arc::clone(&engine.extractor);
 
     // Override with a type list that includes CustomType(5) — not in the DB.
@@ -1150,8 +1151,7 @@ async fn test_ingest_with_no_override_fresh_db_extracts_zero_typed_entities() {
         "[]",
     ));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
     let extractor = Arc::clone(&engine.extractor);
 
     let result = engine
@@ -1215,8 +1215,7 @@ async fn ingest_persists_runtime_allowed_entity_label() {
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
 
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
 
     // Inject an entity whose label matches the runtime config but NOT the
     // compile-time allowlist. Without the M5 fix this is silently rejected.

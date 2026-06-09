@@ -13,10 +13,10 @@
 //!   → Fact#1 (friday) has invalid_at set
 //!   → Fact#2 (monday) is the current, valid fact
 //!
-//! Design: BackgroundIngestor runs ingest() which calls NuExtractExtractor (uses LLM).
-//! We supply a ScriptedLlmClient that returns scripted JSON responses in call order,
-//! so each utterance gets a different extraction result and the contradiction check
-//! returns "[1]" to mark Fact#1 as superseded.
+//! Design: BackgroundIngestor runs ingest() which calls LlmExtractor (uses LLM).
+//! We supply a ScriptedLlmClient that returns scripted JSON responses in FIFO order,
+//! so each utterance gets a different extraction result (2 calls/utterance) and the
+//! contradiction check returns {"indices":[1]} to mark Fact#1 as superseded.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -25,7 +25,7 @@ use chrono::Utc;
 use kremory::core::background::{BackgroundIngestor, IngestorConfig};
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
-use kremory::core::extraction::NuExtractExtractor;
+use kremory::core::extraction::LlmExtractor;
 use kremory::core::ingest::Engine;
 use kremory::core::provider::{
     ChatMessage, ChatProvider, ChatResponse, EmbeddingProvider, LLMError, MockChatResponse,
@@ -101,8 +101,8 @@ impl EmbeddingProvider for ScriptedEmbeddingProvider {
 
 // ─── LLM response scripts ─────────────────────────────────────────────────────
 //
-// NuExtractExtractor (used by ingest()) makes ONE LLM call per utterance.
-// It expects a single JSON object with "entities" and "relationships" arrays.
+// LlmExtractor makes TWO LLM calls per utterance (Stage 1: entities with
+// integer-ID schema; Stage 2: fact triplets as bare JSON array).
 //
 // CascadeResolver uses exact-match normalization for "app" == "app" (Tier 1) —
 // no LLM call needed for entity resolution when the same entity reappears.
@@ -111,58 +111,54 @@ impl EmbeddingProvider for ScriptedEmbeddingProvider {
 // empty.  After utterance 1 is ingested, utterance 2's fact shares subject+predicate
 // so pool_a is non-empty and the LLM is called for contradiction detection.
 //
-// Call sequence (3 total LLM calls):
-//   Call 0: Utterance-1 extraction  → {"entities": ["app"], "relationships": [go_live=friday]}
-//   Call 1: Utterance-2 extraction  → {"entities": ["app"], "relationships": [go_live=monday]}
-//   Call 2: Contradiction check     → {"indices":[1]} → Fact#1 (friday) is superseded
+// Call sequence (5 total LLM calls):
+//   Call 0: Utterance-1 Stage 1  → {"entities": [{"name":"app","entity_type_id":0}]}
+//   Call 1: Utterance-1 Stage 2  → [{"subject":"app","predicate":"go_live","object":"friday",...}]
+//   Call 2: Utterance-2 Stage 1  → {"entities": [{"name":"app","entity_type_id":0}]}
+//   Call 3: Utterance-2 Stage 2  → [{"subject":"app","predicate":"go_live","object":"monday",...}]
+//   Call 4: Contradiction check  → {"indices":[1]} → Fact#1 (friday) is superseded
 //
 // Extra entries in the script fall back to "[]" — safe no-op for both extraction
 // and contradiction prompts.
 
 fn build_scripted_llm() -> ScriptedLlmClient {
-    // NuExtractExtractor makes a SINGLE LLM call per utterance and expects a JSON
-    // object with "entities" and "relationships" arrays in one response.
-    // CascadeResolver resolves "app" == "app" by exact-match normalization — no LLM call.
-    // TwoPoolDetector skips the LLM when pool_a is empty (utterance 1 has no prior facts).
+    // LlmExtractor makes TWO LLM calls per utterance (Stage 1: entities, Stage 2:
+    // relationships) and ONE call for contradiction detection — 5 calls total.
+    // ScriptedLlmClient uses capability_of("") → PromptOnly → LlmJsonRepair arm
+    // fires first, which calls chat_with_tools once and parses the raw text as JSON.
+    // Each valid JSON response is consumed in FIFO order.
     //
     // Call sequence:
-    //   Call 0: Utterance-1 extraction  → entity "app" + relationship go_live=friday
-    //   Call 1: Utterance-2 extraction  → entity "app" + relationship go_live=monday
-    //   Call 2: Contradiction check     → {"indices":[1]} supersedes Fact#1 (friday)
-    //   (extra entries fall back to "[]" — safe no-op)
+    //   Call 0: Utterance-1 Stage 1 → integer-ID entity list (app=Entity, id=0)
+    //   Call 1: Utterance-1 Stage 2 → fact triplet (go_live=friday)
+    //   Call 2: Utterance-2 Stage 1 → integer-ID entity list (app=Entity, id=0)
+    //   Call 3: Utterance-2 Stage 2 → fact triplet (go_live=monday)
+    //   Call 4: Contradiction check  → {"indices":[1]} supersedes Fact#1 (friday)
+    //
+    // CascadeResolver resolves "app" == "app" by exact-match normalization — no LLM call.
+    // TwoPoolDetector skips the LLM when pool_a is empty (utterance 1 has no prior facts).
 
-    let u1_extraction = serde_json::json!({
-        "entities": [{"name": "app", "label": "Project"}],
-        "relationships": [
-            {
-                "subject": "app",
-                "predicate": "go_live",
-                "object": "friday"
-            }
-        ]
-    })
-    .to_string();
+    // Stage 1 format: {"entities": [{"name": "...", "entity_type_id": <int>}]}
+    // entity_type_id=0 is the "Entity" catch-all (DEFAULT_ENTITY_TYPES[0]).
+    let u1_stage1 = r#"{"entities": [{"name": "app", "entity_type_id": 0}]}"#;
 
-    let u2_extraction = serde_json::json!({
-        "entities": [{"name": "app", "label": "Project"}],
-        "relationships": [
-            {
-                "subject": "app",
-                "predicate": "go_live",
-                "object": "monday"
-            }
-        ]
-    })
-    .to_string();
+    // Stage 2 format: bare JSON array of triplets.
+    let u1_stage2 = r#"[{"subject":"app","predicate":"go_live","object":"friday","is_entity_ref":false,"confidence":0.9}]"#;
+
+    let u2_stage1 = r#"{"entities": [{"name": "app", "entity_type_id": 0}]}"#;
+
+    let u2_stage2 = r#"[{"subject":"app","predicate":"go_live","object":"monday","is_entity_ref":false,"confidence":0.9}]"#;
 
     // Contradiction check for utterance 2: Fact#1 (friday) is at index 1.
     // Wrapped form required — bare array "[1]" is no longer accepted by parse_index_list.
-    let u2_contradiction = r#"{"indices":[1]}"#.to_owned();
+    let u2_contradiction = r#"{"indices":[1]}"#;
 
     ScriptedLlmClient::new(vec![
-        u1_extraction.as_str(),
-        u2_extraction.as_str(),
-        u2_contradiction.as_str(),
+        u1_stage1,
+        u1_stage2,
+        u2_stage1,
+        u2_stage2,
+        u2_contradiction,
     ])
 }
 
@@ -191,7 +187,7 @@ async fn background_ingestor_contradiction_round_trip() {
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
     let graph =
-        Engine::new(temporal, llm, embedder, config).expect("Engine::new should succeed in tests");
+        Engine::new(temporal, llm, embedder, config);
 
     // Ingestor config: tiny channel — only 2 slots needed
     let ingestor_config = IngestorConfig {
@@ -267,13 +263,12 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = Engine::new(temporal, Arc::clone(&llm), embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let graph = Engine::new(temporal, Arc::clone(&llm), embedder, config);
 
-    // Use NuExtractExtractor explicitly so the scripted LLM responses are consumed
+    // Use LlmExtractor explicitly so the scripted LLM responses are consumed
     // regardless of whether the `ner` feature is enabled (which would otherwise
     // route ingest() through GLiNER and bypass the mock entirely).
-    let extractor = NuExtractExtractor::new(Arc::clone(&llm));
+    let extractor = LlmExtractor::new(Arc::clone(&llm));
 
     // Ingest utterance 1: "the app needs to go live friday"
     let result1 = graph
@@ -444,8 +439,7 @@ async fn deferred_extraction_invoked_after_successful_ner() {
     let queue_handle = Arc::clone(&scripted_llm.queue);
 
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
-    let graph = Engine::new(temporal, Arc::new(scripted_llm), embedder, config)
-        .expect("Engine::new should succeed in tests");
+    let graph = Engine::new(temporal, Arc::new(scripted_llm), embedder, config);
 
     let ingestor_config = IngestorConfig {
         deferred_extraction_enabled: true,
@@ -510,7 +504,7 @@ async fn background_ingestor_drains_without_errors() {
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
     let graph =
-        Engine::new(temporal, llm, embedder, config).expect("Engine::new should succeed in tests");
+        Engine::new(temporal, llm, embedder, config);
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 
     ingestor

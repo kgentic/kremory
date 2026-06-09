@@ -1,4 +1,4 @@
-//! GraphitiStyleExtractor and Graphiti-quality prompt builders.
+//! LlmExtractor and Graphiti-quality prompt builders.
 //!
 //! Split from `mod.rs` as part of TD-001 (E0-B).
 
@@ -20,23 +20,27 @@ use crate::core::intelligence::{
 use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GraphitiStyleExtractor — Graphiti-quality prompts, 3-stage, unconstrained
+// LlmExtractor — Graphiti-quality prompts, 3-stage, unconstrained
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// 3-stage extractor with Graphiti-quality prompts: detailed instructions,
 /// exclusion rules, worked examples, and the "Wikipedia test" quality filter.
 /// Uses unconstrained generation + llm_json repair (no grammar constraints).
-pub struct GraphitiStyleExtractor<L: ChatProvider> {
+pub struct LlmExtractor<L: ChatProvider> {
     llm: Arc<L>,
 }
 
-impl<L: ChatProvider> GraphitiStyleExtractor<L> {
+impl<L: ChatProvider> LlmExtractor<L> {
     pub fn new(llm: Arc<L>) -> Self {
         Self { llm }
     }
 }
 
-impl<L: ChatProvider> EntityExtractor for GraphitiStyleExtractor<L> {
+impl<L: ChatProvider> EntityExtractor for LlmExtractor<L> {
+    fn name(&self) -> &'static str {
+        "llm"
+    }
+
     async fn extract<'a>(
         &'a self,
         text: &'a str,
