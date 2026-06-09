@@ -55,7 +55,7 @@ impl JsMemory {
     ///
     /// ## Tier-1 path (default, backward-compat)
     ///
-    /// When `opts.withEmbedder` is absent or null, uses env-detected providers
+    /// When no extractor knobs are set in `opts`, uses env-detected providers
     /// (`OLLAMA_HOST` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`) via
     /// `Memory::auto`. Behavior is identical to v0.1.6-alpha.0.
     ///
@@ -66,41 +66,20 @@ impl JsMemory {
     /// provider via `MemoryBuilder::with_embedder`. Set `opts.embeddingDim` to
     /// the callback's output dimension — a mismatch yields a descriptive error.
     ///
+    /// ## BYOE extractor knobs (ADR-039 Shape B)
+    ///
+    /// Composable knobs that mirror the Rust `MemoryBuilder`:
+    ///   - `opts.gliner`              → enables `ExtractorKind::GlinerLlm` (requires `--features ner`)
+    ///   - `opts.extractor`           → enables `ExtractorKind::Custom` (BYOE)
+    ///   - `opts.gliner + extractor`  → `BuilderConflict` error
+    ///
     /// ## `opts.defaultNamespace`
     ///
     /// When set, becomes the handle-level default namespace applied to subsequent
     /// ingest/recall calls that omit per-call namespace.
     #[napi(factory)]
     pub async fn open(path: String, opts: Option<JsOpenOptions>) -> napi::Result<JsMemory> {
-        // KH2: handle opts.extractor BEFORE Tier-1/Tier-2 dispatch.
-        // 'hybrid' on a non-`ner` build returns a typed FeatureDisabled error.
-        // Valid values set KREMORY_EXTRACTOR env so both Tier-1 (Memory::auto)
-        // and Tier-2 (MemoryBuilder) honor the choice via ExtractorSource::FromEnv.
-        // Invalid values return a typed napi error.
-        if let Some(extractor) = opts.as_ref().and_then(|o| o.extractor.as_deref()) {
-            match extractor {
-                "auto" => { /* defer to existing env var (or default) */ }
-                "nuextract" => std::env::set_var("KREMORY_EXTRACTOR", "nuextract"),
-                "hybrid" => {
-                    #[cfg(feature = "ner")]
-                    std::env::set_var("KREMORY_EXTRACTOR", "hybrid");
-                    #[cfg(not(feature = "ner"))]
-                    return Err(napi::Error::from_reason(
-                        "KremoryError::FeatureDisabled('ner'): \
-                         JsOpenOptions.extractor='hybrid' requires kremory-napi \
-                         built with --features ner",
-                    ));
-                }
-                other => {
-                    return Err(napi::Error::from_reason(format!(
-                        "invalid JsOpenOptions.extractor '{other}'; expected 'auto'|'hybrid'|'nuextract'"
-                    )));
-                }
-            }
-        }
-        // Tier-2 BYOM path: only available in cdylib builds (ThreadsafeFunction
-        // requires the napi runtime which is absent in cargo test binary builds).
-        // Extract opts fields before consuming opts.with_embedder.
+        // Live napi/cdylib path: ThreadsafeFunction requires the napi runtime.
         #[cfg(not(test))]
         {
             let default_namespace = opts
@@ -112,17 +91,60 @@ impl JsMemory {
                 .and_then(|o| o.embedding_dim)
                 .and_then(|d| usize::try_from(d).ok());
 
-            if let Some(tsfn) = opts.and_then(|o| o.with_embedder) {
-                // `opts.with_embedder` is already a `ThreadsafeFunction` (napi-rs
-                // converts from the JS callback at `FromNapiValue` time). It is
-                // `Send + Sync`, so it can be passed directly into the async block
-                // without `create_threadsafe_function`.
-                return open_with_js_embedder(path, tsfn, expected_dim, default_namespace).await;
+            // Detect which extractor knobs are set.
+            let has_gliner = opts.as_ref().map_or(false, |o| o.gliner.is_some());
+            let has_extractor = opts.as_ref().map_or(false, |o| o.extractor.is_some());
+
+            // Conflict: gliner + extractor simultaneously is a BuilderConflict.
+            if has_gliner && has_extractor {
+                return Err(napi::Error::from_reason(
+                    "KremoryError::BuilderConflict: \
+                     opts.gliner and opts.extractor are mutually exclusive — \
+                     set gliner (for GlinerLlm) OR extractor (for Custom), not both",
+                ));
             }
-            // with_embedder was None — fall through to Tier-1. Re-extract
-            // default_namespace from the opts we didn't consume.
-            // (opts was None or its with_embedder was None — we already extracted
-            // default_namespace above, so reuse it.)
+
+            // ner-feature guard for GLiNER.
+            #[cfg(not(feature = "ner"))]
+            if has_gliner {
+                return Err(napi::Error::from_reason(
+                    "KremoryError::FeatureDisabled('ner'): \
+                     opts.gliner requires kremory-napi built with --features ner",
+                ));
+            }
+
+            // Extractor knobs require a BYOM embedder (ADR-039 §6 compat matrix).
+            // All valid rows that include gliner or extractor also include withEmbedder.
+            if (has_gliner || has_extractor)
+                && opts.as_ref().map_or(true, |o| o.with_embedder.is_none())
+            {
+                return Err(napi::Error::from_reason(
+                    "KremoryError::BuilderConflict: \
+                     opts.gliner / opts.extractor require opts.withEmbedder — \
+                     provide a BYOM embedder callback alongside the extractor knob",
+                ));
+            }
+
+            // Unpack opts, consuming it.
+            let (with_embedder_tsfn, gliner_cfg, extractor_handle) = match opts {
+                Some(o) => (o.with_embedder, o.gliner, o.extractor),
+                None => (None, None, None),
+            };
+
+            // Tier-2 BYOM embedder path: wire JS embedder + LLM via MemoryBuilder.
+            if let Some(tsfn) = with_embedder_tsfn {
+                return open_with_js_embedder(
+                    path,
+                    tsfn,
+                    expected_dim,
+                    default_namespace,
+                    gliner_cfg,
+                    extractor_handle,
+                )
+                .await;
+            }
+
+            // Plain Tier-1: no knobs set (already validated above).
             let mem = Memory::auto(&path)
                 .await
                 .map_err(|e| napi::Error::from_reason(format!("kremory open failed: {e}")))?;
@@ -132,7 +154,9 @@ impl JsMemory {
             })
         }
 
-        // Tier-1 path for test builds (cfg(test) excludes the block above).
+        // Test path: napi runtime absent — use Memory::auto only.
+        // Extractor knobs are tested via MockExtractorBridge directly in
+        // extractor_selection_compat_matrix.rs.
         #[cfg(test)]
         {
             let default_namespace = opts
@@ -786,26 +810,31 @@ impl JsMemory {
     }
 }
 
-// ── Tier-2 BYOM helper (live cdylib path only) ────────────────────────────────
+// ── Tier-2 BYOM / BYOE helpers (live cdylib path only) ───────────────────────
+//
+// These helpers are excluded from `#[cfg(test)]` because:
+// - `ThreadsafeFunction` cannot be constructed outside a napi runtime.
+// - `resolve_env_llm` constructs real LLM provider instances that require
+//   live network endpoints.
+//
+// Integration tests cover the extractor-selection matrix via `MockExtractorBridge`
+// in `tests/extractor_selection_compat_matrix.rs`.
+//
+// # Typestate note
+//
+// `MemoryBuilder::IntoFuture` is only implemented for `<WithLlm, WithEmb>` and
+// `<NoLlm, WithEmb>`. Therefore every builder path that ends in `.await` must have
+// both an LLM (optional for NoLlm path) AND an embedder set. The `withEmbedder`
+// callback is required when extractor knobs are used — the ADR-039 §6 compat matrix
+// lists no row where an extractor is set without a BYOM embedder.
 
-/// Open a kremory Memory at `path` with a caller-supplied JS embedder callback.
+/// Open a Memory with a caller-supplied JS embedder callback (ADR-030 Tier-2).
 ///
-/// Called by `JsMemory::open` when `opts.withEmbedder` is present.
+/// Also applies any BYOE extractor / GLiNER knobs from the options object.
+/// Called when `opts.withEmbedder` is present.
 ///
-/// Steps:
-///   1. Env-detect LLM via `bridge::resolve_env_llm`.
-///   2. Wrap `tsfn` in `JsEmbedderBridge` with optional `expected_dim` validation.
-///   3. Build Memory via `Memory::open(path).with_llm(llm).with_embedder(emb).await`.
-///
-/// `expected_dim` comes from `opts.embeddingDim`. When present, the bridge will
-/// return `Err` if the callback returns a vec of a different length.
-///
-/// This function is excluded from `#[cfg(test)]` because:
-/// - `ThreadsafeFunction` cannot be constructed outside a napi runtime.
-/// - `resolve_env_llm` constructs real LLM provider instances that require
-///   live network endpoints.
-///
-/// Cargo tests cover the bridge logic via the mock variant in `bridge.rs`.
+/// Builder typestate path: `NoLlm,NoEmb` → `with_llm` → `WithLlm,NoEmb`
+///   → `with_embedder` → `WithLlm,WithEmb` → `.await`.
 #[cfg(not(test))]
 async fn open_with_js_embedder(
     path: String,
@@ -815,20 +844,41 @@ async fn open_with_js_embedder(
     >,
     expected_dim: Option<usize>,
     default_namespace: Option<Namespace>,
+    gliner_cfg: Option<convert::GlinerConfigJs>,
+    extractor_handle: Option<bridge::ExternalExtractorHandle>,
 ) -> napi::Result<JsMemory> {
     use std::sync::Arc;
 
     // Step 1: env-detect LLM.
     let llm = bridge::resolve_env_llm().await?;
 
-    // Step 2: wrap the JS callback in the bridge, which implements DynEmbeddingProvider.
+    // Step 2: wrap the JS embedder callback.
     let emb: Arc<dyn kremory::DynEmbeddingProvider> =
         bridge::into_arc(bridge::JsEmbedderBridge::new(tsfn, expected_dim));
 
-    // Step 3: build Memory via Tier-2 builder.
-    let mem = Memory::open(&path)
-        .with_llm(llm)
-        .with_embedder(emb)
+    // Step 3: build Memory — LLM + embedder + optional extractor knobs.
+    // Builder is now `WithLlm, WithEmb` after with_llm + with_embedder.
+    let mut builder = Memory::open(&path).with_llm(llm).with_embedder(emb);
+
+    // Apply BYOE extractor knobs (mutually-exclusive guard already checked in open()).
+    if let Some(handle) = extractor_handle {
+        builder = builder.with_extractor(Arc::new(bridge::ExternalExtractorJs::from_handle(handle)));
+    } else if let Some(cfg) = gliner_cfg {
+        // GLiNER requires ner feature; already checked in open().
+        #[cfg(feature = "ner")]
+        {
+            builder = builder.with_gliner(cfg.into());
+        }
+        #[cfg(not(feature = "ner"))]
+        {
+            let _ = cfg;
+            return Err(napi::Error::from_reason(
+                "KremoryError::FeatureDisabled('ner'): opts.gliner requires --features ner",
+            ));
+        }
+    }
+
+    let mem = builder
         .await
         .map_err(|e| napi::Error::from_reason(format!("kremory open with embedder failed: {e}")))?;
 

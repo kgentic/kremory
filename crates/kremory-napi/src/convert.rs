@@ -9,33 +9,59 @@ use kremory::{DreamSummary, Namespace, RetrievedContext};
 
 // ── Input option structs ──────────────────────────────────────────────────────
 
-/// Options for `Memory.open` — live napi/cdylib build.
+/// GLiNER configuration passed via `MemoryOpenOptionsJs.gliner` (ADR-039 Part 10).
 ///
-/// When `with_embedder` is supplied, the Tier-2 BYOM builder path is taken:
-/// the env-detected LLM is combined with the JS callback as the embedding
-/// provider. When absent, the Tier-1 `Memory::auto` path is used (backward-compat).
+/// Mirrors `kremory::core::extraction::GlinerConfig`. Currently a placeholder —
+/// all knobs are reserved for future tuning (threshold, model path, batch size).
+/// An empty `{}` object in JS is the standard way to enable GLiNER with defaults.
+///
+/// Requires kremory-napi built with `--features ner`. Passing this field on a
+/// non-ner build causes `Memory.open` to return an error.
+#[napi(object, js_name = "GlinerConfig")]
+#[derive(Default)]
+pub struct GlinerConfigJs {
+    /// Model file path override. `null` = use default bundled model.
+    pub model_path: Option<String>,
+    /// Span-detection confidence threshold in `[0.0, 1.0]`.
+    /// `null` = use substrate default (reads `KREMORY_GLINER_THRESHOLD` env,
+    /// falls back to 0.3).
+    pub threshold: Option<f64>,
+}
+
+// GlinerConfig is gated behind the `ner` cargo feature in the substrate.
+// The From impl is only valid when that feature is compiled in.
+#[cfg(feature = "ner")]
+impl From<GlinerConfigJs> for kremory::core::extraction::GlinerConfig {
+    fn from(_js: GlinerConfigJs) -> Self {
+        // GlinerConfig fields are private (reserved per ADR-039 §A6); use Default.
+        // When public knobs are added, map _js.threshold / _js.model_path here.
+        kremory::core::extraction::GlinerConfig::default()
+    }
+}
+
+/// Options for `Memory.open` — live napi/cdylib build (Shape B, ADR-039 Part 10).
+///
+/// Replaces the old string-literal `extractor: 'auto'|'hybrid'|'nuextract'` API.
+/// Mirrors the Rust `MemoryBuilder` composable knobs:
+///   - `{ embedder, llm }`          → `ExtractorKind::Llm`
+///   - `{ embedder, llm, gliner }`  → `ExtractorKind::GlinerLlm`
+///   - `{ embedder, extractor }`    → `ExtractorKind::Custom` (NoLlm typestate)
+///   - `{ embedder, llm, extractor }` → `ExtractorKind::Custom` (WithLlm typestate)
+///   - `{ embedder, gliner, extractor }` → `Err` (conflict)
+///   - `{ embedder }` alone          → `Err` (no extractor wired)
 ///
 /// `object_to_js = false`: skip `ToNapiValue` generation so `ThreadsafeFunction`
 /// (which is `Send + Sync` but lacks `ToNapiValue`) can be used as a field.
-/// `JsFunction` would satisfy both traits but is `!Send` (wraps `*mut napi_env__`),
-/// making the async factory future `!Send` and failing `execute_tokio_future`'s
-/// Send bound. `ThreadsafeFunction` is `Send + Sync` and correct here.
-///
 /// `JsOpenOptions` is only ever constructed from JS → Rust, never returned.
-/// Skipping `ToNapiValue` is therefore correct and safe.
 ///
-/// This struct is excluded from `cfg(test)` because napi-derive macro-generated
-/// `FromNapiValue` code references `ThreadsafeFunction` symbols that are only
-/// available in a live napi runtime (cdylib target). The test variant below
-/// (`cfg(test)`) omits the `with_embedder` field so unit tests can construct
-/// `JsOpenOptions` without a napi runtime.
+/// Excluded from `cfg(test)` because napi-derive macro-generated `FromNapiValue`
+/// references `ThreadsafeFunction` symbols only available in a live napi runtime.
 #[cfg(not(test))]
 #[napi(object, object_to_js = false, js_name = "OpenOptions")]
 pub struct JsOpenOptions {
     /// Embedding vector dimensionality. Must match the callback's output
-    /// dimension when `with_embedder` is set. When `with_embedder` is absent,
-    /// this field is ignored (the active env-detected provider's native dim
-    /// is used). Defaults to `None`.
+    /// dimension when `with_embedder` is set. Ignored when `with_embedder`
+    /// is absent.
     pub embedding_dim: Option<i64>,
     /// Default namespace applied to all operations on this handle when no
     /// per-call namespace is specified.
@@ -45,15 +71,7 @@ pub struct JsOpenOptions {
     /// Callback signature: `(text: string) => Promise<number[]>`.
     ///
     /// When set, kremory wires this JS function as the embedding provider via
-    /// the `MemoryBuilder` Tier-2 path. The LLM is still resolved from env
-    /// (`OLLAMA_HOST` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`).
-    ///
-    /// Set `embeddingDim` to the callback's output dimension. A mismatch
-    /// between the returned vec length and `embeddingDim` is rejected with a
-    /// descriptive error rather than a panic.
-    ///
-    /// When absent (the default), `Memory.open` behaves identically to
-    /// v0.1.6-alpha.0 — `Memory::auto` with env-detected providers.
+    /// the `MemoryBuilder` Tier-2 path.
     #[napi(ts_type = "((text: string) => Promise<number[]>) | undefined | null")]
     pub with_embedder: Option<
         napi::threadsafe_function::ThreadsafeFunction<
@@ -61,38 +79,40 @@ pub struct JsOpenOptions {
             napi::threadsafe_function::ErrorStrategy::CalleeHandled,
         >,
     >,
-    /// Production extractor selection (KH2, kremory v0.1.7).
+    /// GLiNER configuration (ADR-039 Shape B). When set, selects
+    /// `ExtractorKind::GlinerLlm` and requires `llm` to also be set.
+    /// Requires kremory-napi built with `--features ner`.
+    pub gliner: Option<GlinerConfigJs>,
+    /// External (BYOE) extractor bridge (ADR-039 Shape B).
     ///
-    /// - `"auto"` (default if omitted) — read `KREMORY_EXTRACTOR` env var,
-    ///   falling back to `nuextract` if unset/unrecognized.
-    /// - `"nuextract"` — pin NuExtract regardless of env (TD-013 path).
-    /// - `"hybrid"` — pin Hybrid (TD-023: GLiNER + 1 LLM typing call).
-    ///   Requires kremory built with `--features ner`. On a non-ner build
-    ///   this returns a typed napi error `KremoryError::FeatureDisabled('ner')`.
+    /// When set, selects `ExtractorKind::Custom`. Mutually exclusive with
+    /// `gliner` — setting both returns an error.
     ///
-    /// See spec `kremory-v017-hybrid-extractor-production-wire-in-spec-2026-06-04` §4.3.
-    #[napi(ts_type = "'auto' | 'hybrid' | 'nuextract' | undefined | null")]
-    pub extractor: Option<String>,
+    /// JS shape: `{ extract(text: string, ctx: object): Promise<ExtractionResult>, name(): string }`.
+    /// See `ExternalExtractorJs` in bridge.rs for the full interface.
+    #[napi(
+        ts_type = "{ extract(text: string, ctx: object): Promise<{ entities: Array<{ name: string, label: string }>, facts: Array<{ subject: string, predicate: string, object: string }> }>, name(): string } | undefined | null"
+    )]
+    pub extractor: Option<crate::bridge::ExternalExtractorHandle>,
 }
 
 /// Options for `Memory.open` — test build (no napi runtime).
 ///
-/// Omits `with_embedder` — `ThreadsafeFunction` cannot be constructed outside
-/// the napi cdylib runtime. Unit tests that exercise the bridge logic use the
-/// mock `JsEmbedderBridge` variants in `bridge.rs` directly.
+/// Omits `with_embedder` and `extractor` — `ThreadsafeFunction` cannot be
+/// constructed outside the napi cdylib runtime. Unit tests that exercise bridge
+/// logic use mock variants in `bridge.rs` directly.
 ///
 /// Implements `FromNapiValue` as a stub so `#[napi]` on `JsMemory::open` compiles
 /// in test mode. The impl is never invoked — no napi runtime is present in test
-/// binary builds. The test `cfg` path in `JsMemory::open` never reads
-/// `opts.with_embedder` (it doesn't exist), so this stub is safe.
+/// binary builds.
 #[cfg(test)]
 pub struct JsOpenOptions {
     /// Embedding vector dimensionality.
     pub embedding_dim: Option<i64>,
     /// Default namespace.
     pub default_namespace: Option<String>,
-    /// Extractor selection — see live struct.
-    pub extractor: Option<String>,
+    /// GLiNER config — test builds use Option<()> placeholder.
+    pub gliner: Option<GlinerConfigJs>,
 }
 
 #[cfg(test)]
@@ -106,7 +126,7 @@ impl napi::bindgen_prelude::FromNapiValue for JsOpenOptions {
         Ok(JsOpenOptions {
             embedding_dim: None,
             default_namespace: None,
-            extractor: None,
+            gliner: None,
         })
     }
 }

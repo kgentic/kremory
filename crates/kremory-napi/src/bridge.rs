@@ -80,6 +80,240 @@ use kremory::{CoreError, DynEmbeddingProvider};
 #[cfg(not(test))]
 use kremory::ChatProvider;
 
+// ── ExternalExtractorHandle + ExternalExtractorJs ─────────────────────────────
+//
+// BYOE (Bring-Your-Own-Extractor) bridge: adapts a JS callback pair into
+// `kremory::core::intelligence::EntityExtractor`.
+//
+// # JS interface
+//
+// The consumer passes an object with:
+//   - `name: string`               — short identifier for metrics / logging
+//   - `extract: (text: string) => Promise<ExtractionResult>` — extraction fn
+//
+// `ExtractionContext` is not forwarded to JS: its fields are `&'a [T]` slices
+// with lifetimes that cannot cross FFI. The simplified contract (text only) is
+// sufficient for v0.2.0 BYOE (ADR-039 §6). Full context forwarding is deferred
+// to a future release when a serialised ContextSnapshot type is designed.
+//
+// # Threading model
+//
+// The live path stores the extract function as a
+// `napi::threadsafe_function::ThreadsafeFunction<String, ErrorStrategy::CalleeHandled>`.
+// `name` is stored as a `Box<str>` and leaked once to produce `&'static str`
+// for the `EntityExtractor::name()` contract. This is a single small allocation
+// per handle — acceptable for the open-time construction.
+//
+// # `#[cfg(not(test))]` / `#[cfg(test)]` split
+//
+// Same reason as `JsEmbedderBridge` — napi ABI symbols are absent in test
+// binaries. The mock variant (`MockExtractorBridge`) is used by the
+// `extractor_selection_compat_matrix` integration tests.
+
+/// Live (napi/cdylib) BYOE extractor handle received from JS at `Memory.open` time.
+///
+/// JS consumers pass `{ name: string, extract: (text: string) => Promise<{entities,facts}> }`.
+/// `object_to_js = false` suppresses `ToNapiValue` generation — `ExternalExtractorHandle`
+/// is only ever constructed from JS → Rust, never returned to JS.
+#[cfg(not(test))]
+#[napi_derive::napi(object, object_to_js = false, js_name = "ExternalExtractor")]
+pub struct ExternalExtractorHandle {
+    /// Short identifier for this extractor — used in metrics labels and log output.
+    pub name: String,
+    /// The JS extraction callback.
+    ///
+    /// Receives `text: string`. Returns a `Promise` resolving to:
+    /// `{ entities: Array<{name: string, label: string}>, facts: Array<{subject: string, predicate: string, object: string}> }`
+    #[napi(
+        ts_type = "(text: string) => Promise<{ entities: Array<{ name: string, label: string }>, facts: Array<{ subject: string, predicate: string, object: string }> }>"
+    )]
+    pub extract: napi::threadsafe_function::ThreadsafeFunction<
+        String,
+        napi::threadsafe_function::ErrorStrategy::CalleeHandled,
+    >,
+}
+
+/// Live BYOE extractor: wraps a JS callback + leaked name into an `EntityExtractor`.
+///
+/// Constructed via `ExternalExtractorHandle::into_bridge()` (see `open_with_extractor`
+/// in `lib.rs`). Holds a `ThreadsafeFunction` that posts text to the Node.js event
+/// loop and resolves when the JS Promise settles.
+#[cfg(not(test))]
+pub struct ExternalExtractorJs {
+    /// Leaked once at construction — satisfies `EntityExtractor::name() -> &'static str`.
+    name: &'static str,
+    /// The JS extract callback as a thread-safe napi handle.
+    tsfn: napi::threadsafe_function::ThreadsafeFunction<
+        String,
+        napi::threadsafe_function::ErrorStrategy::CalleeHandled,
+    >,
+}
+
+#[cfg(not(test))]
+impl ExternalExtractorJs {
+    /// Construct from an `ExternalExtractorHandle`, leaking the name string once.
+    pub fn from_handle(handle: ExternalExtractorHandle) -> Self {
+        // Leak once per handle — small String, acceptable cost at open() time.
+        let name: &'static str = Box::leak(handle.name.into_boxed_str());
+        Self {
+            name,
+            tsfn: handle.extract,
+        }
+    }
+}
+
+/// JS extraction response shape — must match the TS interface declared in
+/// `ExternalExtractorHandle.extract` ts_type annotation.
+#[cfg(not(test))]
+#[napi_derive::napi(object)]
+pub struct JsExtractedEntity {
+    pub name: String,
+    pub label: String,
+}
+
+#[cfg(not(test))]
+#[napi_derive::napi(object)]
+pub struct JsExtractedFact {
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+}
+
+#[cfg(not(test))]
+#[napi_derive::napi(object)]
+pub struct JsExtractionResult {
+    pub entities: Vec<JsExtractedEntity>,
+    pub facts: Vec<JsExtractedFact>,
+}
+
+#[cfg(not(test))]
+impl kremory::core::intelligence::EntityExtractor for ExternalExtractorJs {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn extract<'a>(
+        &'a self,
+        text: &'a str,
+        _ctx: &'a kremory::core::intelligence::ExtractionContext<'a>,
+    ) -> impl std::future::Future<
+        Output = kremory::core::error::Result<kremory::core::intelligence::ExtractionResult>,
+    > + Send
+           + 'a {
+        let text_owned = text.to_owned();
+        let tsfn = self.tsfn.clone();
+
+        async move {
+            let js_result: JsExtractionResult = tsfn
+                .call_async(Ok(text_owned))
+                .await
+                .map_err(|e| {
+                    kremory::CoreError::Other(anyhow!("extractor callback error: {e}"))
+                })?;
+
+            let entities = js_result
+                .entities
+                .into_iter()
+                .map(|e| kremory::core::intelligence::ExtractedEntity {
+                    name: e.name,
+                    label: e.label,
+                    properties: serde_json::Value::Null,
+                })
+                .collect();
+
+            let facts = js_result
+                .facts
+                .into_iter()
+                .map(|f| kremory::core::intelligence::ExtractedFact {
+                    subject: f.subject,
+                    predicate: f.predicate,
+                    object: f.object,
+                    is_entity_ref: false,
+                    confidence: 1.0,
+                })
+                .collect();
+
+            Ok(kremory::core::intelligence::ExtractionResult { entities, facts })
+        }
+    }
+}
+
+// ── Mock BYOE extractor (test path) ──────────────────────────────────────────
+
+/// Test-only BYOE extractor mock.
+///
+/// Does not require a live Node.js runtime. Three variants cover the main
+/// test dimensions: happy path (fixed result), error path, and empty result.
+#[cfg(test)]
+pub struct MockExtractorBridge {
+    kind: MockExtractorKind,
+}
+
+#[cfg(test)]
+pub enum MockExtractorKind {
+    /// Returns a fixed `ExtractionResult` on every call.
+    Fixed(kremory::core::intelligence::ExtractionResult),
+    /// Every call returns a descriptive error.
+    Error { message: String },
+    /// Returns an empty `ExtractionResult` (no entities, no facts).
+    Empty,
+}
+
+#[cfg(test)]
+impl MockExtractorBridge {
+    /// Fixed-result mock — returns `result` on every call.
+    pub fn new_fixed(result: kremory::core::intelligence::ExtractionResult) -> Self {
+        Self {
+            kind: MockExtractorKind::Fixed(result),
+        }
+    }
+
+    /// Error mock — every call returns an error containing `message`.
+    pub fn new_error(message: impl Into<String>) -> Self {
+        Self {
+            kind: MockExtractorKind::Error {
+                message: message.into(),
+            },
+        }
+    }
+
+    /// Empty mock — returns no entities and no facts.
+    pub fn new_empty() -> Self {
+        Self {
+            kind: MockExtractorKind::Empty,
+        }
+    }
+}
+
+#[cfg(test)]
+impl kremory::core::intelligence::EntityExtractor for MockExtractorBridge {
+    fn name(&self) -> &'static str {
+        "mock-extractor"
+    }
+
+    fn extract<'a>(
+        &'a self,
+        _text: &'a str,
+        _ctx: &'a kremory::core::intelligence::ExtractionContext<'a>,
+    ) -> impl std::future::Future<
+        Output = kremory::core::error::Result<kremory::core::intelligence::ExtractionResult>,
+    > + Send
+           + 'a {
+        let result: kremory::core::error::Result<kremory::core::intelligence::ExtractionResult> =
+            match &self.kind {
+                MockExtractorKind::Fixed(r) => Ok(r.clone()),
+                MockExtractorKind::Error { message } => {
+                    Err(kremory::CoreError::Other(anyhow!("extractor error: {message}")))
+                }
+                MockExtractorKind::Empty => Ok(kremory::core::intelligence::ExtractionResult {
+                    entities: vec![],
+                    facts: vec![],
+                }),
+            };
+        std::future::ready(result)
+    }
+}
+
 // ── Live (napi/cdylib) path ───────────────────────────────────────────────────
 
 /// JS-callback-backed embedding provider for the live napi cdylib build.
