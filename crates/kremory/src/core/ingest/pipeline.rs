@@ -156,6 +156,41 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             )
                             .increment(1);
                         }
+                        // Q-04 (Option A — symmetric protection per ADR-045 §3 amendment 2026-06-09):
+                        // When a pinned fact references an object entity (object_id = Some), stamp it
+                        // ConsumerPinned too — the consumer asserted a typed relationship, so dream
+                        // re-typing of either endpoint silently invalidates their assertion. When
+                        // object is a literal (object_id = None), no object entity exists to stamp —
+                        // subject-only is correct.
+                        //
+                        // Peer convergence: Graphiti add_triplet + Mem0 infer=False both treat
+                        // endpoints symmetrically. Zero precedent for subject-only protection across
+                        // surveyed peers (Graphiti / Letta / Mem0 / LightRAG / Cognee / LangChain).
+                        if let Some(ref object_id) = pf.object_id {
+                            match self
+                                .graph
+                                .update_entity_source_tier(object_id, group_id, "ConsumerPinned")
+                                .await
+                            {
+                                Ok(()) => {
+                                    metrics::counter!(
+                                        "kremory.with_facts.consumer_pinned_object_tier_stamped_total"
+                                    )
+                                    .increment(1);
+                                }
+                                Err(e) => {
+                                    metrics::counter!(
+                                        "kremory.with_facts.consumer_pinned_object_stamp_failed"
+                                    )
+                                    .increment(1);
+                                    tracing::warn!(
+                                        object_id = %object_id,
+                                        error = %e,
+                                        "kremory.with_facts.consumer_pinned_object_stamp_failed"
+                                    );
+                                }
+                            }
+                        }
                     }
                     Ok(None) => {
                         // Intra-caller-set duplicate (already counted as

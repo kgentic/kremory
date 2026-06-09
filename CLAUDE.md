@@ -37,13 +37,18 @@
 - v0.2.x `ExtractorKind::GlinerLlm` deletion (gated by Phase G empirical hatch)
 - aidocs vNext napi integration (consumer-side; after v0.1.1 stable)
 
-### Phase-boundary discipline
+### Phase-boundary discipline (non-negotiable per-phase exit gate)
 
-- **Pre-commit gate**: `/quality-gate` MUST run before every phase commit per CLAUDE.md non-negotiable rule
-- **Quinn adversarial review**: `/ship-build-review` MUST run after every phase impl per `feedback_quinn_review_before_every_commit`
+Every phase A through H is COMPLETE ONLY when ALL phase-specific DoD criteria PASS **AND** both universal exit gates PASS in this order:
+
+1. **`/quality-gate` PASS** — typecheck + lint + test + build per CLAUDE.md "Pre-Commit Gate NON-NEGOTIABLE". No band-aids — cause-fix any failure per Rule 8.
+2. **Quinn `/ship-build-review` PASS or CONCERNS-resolved** — Sonnet adversarial review over the phase's aggregate diff. HIGH findings BLOCK; MEDIUM findings folded into the same PR or follow-up; LOW findings filed as new TDs.
+
+**The orchestrator MAY NOT make Quinn optional via HITL.** Quinn is automatic between phases. The orchestrator MAY ask the user how to triage Quinn's findings AFTER receiving the verdict, but the review itself is unconditional. Per `feedback_quinn_review_before_every_commit` (2026-05-31 TD-012 diamond fabricated "595 tests PASS" while build was broken) — tests-PASS alone is insufficient at phase boundaries.
+
 - **Stop conditions** (7 total): see plan §Stop Conditions — autonomous loop halts + HITLs on any of them
 - **Phase G empirical hatch**: per-provider INDEPENDENT pass; aggregate-pass FORBIDDEN per ADR-044 §5
-- **Source-tier contract**: per Migration 010 detail spec §1.2 — all entity insert sites MUST pick a value from the authoritative table
+- **Source-tier contract**: per Migration 012 detail spec §1.2 — all entity insert sites MUST pick a value from the authoritative table
 
 ### Implementation-readiness verdict
 
