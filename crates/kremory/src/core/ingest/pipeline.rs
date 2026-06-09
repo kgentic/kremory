@@ -370,8 +370,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             if !self.config.allowed_entity_types.is_empty() {
                 let mut new_types_seeded: usize = 0;
                 for name in &self.config.allowed_entity_types {
-                    // Skip if already registered (case-sensitive canonical match).
-                    if db_registry.name_to_id(name).is_none() {
+                    // QB-01: use case-insensitive match here so we don't fire the
+                    // seed branch when the DB already has the canonical form under a
+                    // different case (e.g. builder has "court", DB has "Court").
+                    // `label_to_id_or_register` does a case-insensitive DB lookup
+                    // (COLLATE NOCASE path), so a case-sensitive `name_to_id` guard
+                    // would count a "skip that never inserts" as a seed — Rule 19
+                    // cardinal failure mode #9 (lying counter).
+                    let already_registered = db_registry
+                        .specs()
+                        .iter()
+                        .any(|s| s.name.eq_ignore_ascii_case(name));
+                    if !already_registered {
                         crate::core::entity_types::label_to_id_or_register(
                             &self.graph.conn,
                             effective_gid,
@@ -388,8 +398,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "namespace" => effective_gid.to_string(),
                     )
                     .increment(1);
-                    metrics::histogram!("rql.ingest.registry_builder_seed_count")
-                        .record(new_types_seeded as f64);
+                    // QB-03: histogram gains namespace label matching the paired counter
+                    // so operators can disaggregate by namespace (Rule 19 observability).
+                    metrics::histogram!(
+                        "rql.ingest.registry_builder_seed_count",
+                        "namespace" => effective_gid.to_string(),
+                    )
+                    .record(new_types_seeded as f64);
                     // Reload the registry so the derived allowed_entity_types_live
                     // below includes the newly-seeded builder types.
                     EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?
