@@ -127,6 +127,73 @@ pub enum IngestSendError {
 // IngestorConfig
 // ---------------------------------------------------------------------------
 
+/// Token-bucket rate limit for Phase 2 deferred LLM calls.
+///
+/// Tokens replenish at `tokens_per_second`; `burst` is the maximum number of
+/// tokens that can accumulate (= maximum in-burst request count).  When the
+/// bucket is exhausted the worker waits until a token is available before
+/// dispatching the next Phase 2 LLM call.
+///
+/// When throttling fires, the counter
+/// `kremory.ingest.llm_rate_limit_deferred_total{namespace}` is incremented
+/// per ADR-019 / CLAUDE.md Rule 19 (observability-first-class).
+#[derive(Debug, Clone)]
+pub struct RateLimit {
+    /// Tokens replenished per second.  E.g. `2.0` = max 2 LLM calls/s sustained.
+    pub tokens_per_second: f64,
+    /// Maximum burst token accumulation.  E.g. `5` = burst up to 5 calls.
+    pub burst: usize,
+}
+
+/// Internal mutable state for the token bucket.  Held in a `tokio::sync::Mutex`
+/// so it can be awaited inside the async worker loop without blocking the thread.
+struct TokenBucketState {
+    tokens: f64,
+    last_refill: std::time::Instant,
+    limit: RateLimit,
+}
+
+impl TokenBucketState {
+    fn new(limit: RateLimit) -> Self {
+        let burst = limit.burst as f64;
+        Self {
+            tokens: burst, // start full
+            last_refill: std::time::Instant::now(),
+            limit,
+        }
+    }
+
+    /// Refill tokens based on elapsed time, capped at burst.
+    fn refill(&mut self) {
+        let elapsed = self.last_refill.elapsed().as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.limit.tokens_per_second)
+            .min(self.limit.burst as f64);
+        self.last_refill = std::time::Instant::now();
+    }
+
+    /// Returns `true` if a token was immediately available (no wait).
+    /// Returns `false` if we had to wait (rate-limit deferral event).
+    fn try_consume(&mut self) -> bool {
+        self.refill();
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Compute the wait duration until the next token is available.
+    fn wait_duration(&self) -> std::time::Duration {
+        if self.tokens >= 1.0 {
+            return std::time::Duration::ZERO;
+        }
+        let needed = 1.0 - self.tokens;
+        let secs = needed / self.limit.tokens_per_second;
+        std::time::Duration::from_secs_f64(secs)
+    }
+}
+
 /// Configuration for [`BackgroundIngestor`].
 #[derive(Debug, Clone)]
 pub struct IngestorConfig {
@@ -146,6 +213,22 @@ pub struct IngestorConfig {
     /// Set to `false` to run Phase 1 only (e.g., in latency-critical tests or
     /// environments without a capable LLM).
     pub deferred_extraction_enabled: bool,
+    /// Number of concurrent Phase 2 (deferred LLM fact extraction) tasks.
+    ///
+    /// Default: `1` (serialised).  The `BackgroundIngestor` serialisation
+    /// invariant is that a single OS thread owns the `Engine` and processes
+    /// work items sequentially — Phase 2 tasks are awaited inline on the
+    /// current-thread tokio runtime, so this field is reserved for future
+    /// multi-engine parallelism.  Only override when you understand the
+    /// consequent ordering and idempotency implications.
+    pub deferred_concurrency: usize,
+    /// Optional token-bucket rate limit for Phase 2 LLM calls.
+    ///
+    /// `None` (default) = unlimited.  When set, Phase 2 LLM calls are
+    /// rate-limited at the configured token rate.  When the bucket is
+    /// exhausted the worker sleeps until a token is available, emitting
+    /// `kremory.ingest.llm_rate_limit_deferred_total{namespace}` per sleep.
+    pub llm_rate_limit: Option<RateLimit>,
 }
 
 impl Default for IngestorConfig {
@@ -155,6 +238,8 @@ impl Default for IngestorConfig {
             error_channel_capacity: 256,
             thread_name: "rql-ingestor".to_string(),
             deferred_extraction_enabled: true,
+            deferred_concurrency: 1,
+            llm_rate_limit: None,
         }
     }
 }
@@ -186,6 +271,22 @@ struct Inner {
 /// the work channel closes and the thread exits after processing remaining items.
 ///
 /// Drop the companion [`IngestGuard`] to wait for the worker to finish.
+///
+/// ## Serialisation invariant
+///
+/// A single OS thread owns the `Engine` and processes all work items
+/// sequentially on a current-thread tokio runtime (`worker_threads(1)`).
+/// This means:
+///
+/// - Phase 1 NER ingest calls are serialised — no concurrent schema mutations.
+/// - Phase 2 deferred LLM fact extraction calls are also serialised within the
+///   same thread, awaited inline after NER-channel idle periods.
+/// - The `Engine` is NOT wrapped in an `Arc` or `Mutex` — exclusive ownership
+///   lives on the worker thread for the ingestor's lifetime.
+///
+/// Do **not** share the same `Engine` between a `BackgroundIngestor` and other
+/// async tasks — move the engine into the ingestor and interact with the graph
+/// through the facade `Memory` handle.
 #[derive(Clone)]
 pub struct BackgroundIngestor {
     inner: Arc<Inner>,
@@ -211,6 +312,7 @@ impl BackgroundIngestor {
         let stop_worker = Arc::clone(&stop);
 
         let deferred_enabled = config.deferred_extraction_enabled;
+        let llm_rate_limit = config.llm_rate_limit;
 
         let parent_span = tracing::Span::current();
         let handle = thread::Builder::new()
@@ -224,6 +326,7 @@ impl BackgroundIngestor {
                     queued_worker,
                     stop_worker,
                     deferred_enabled,
+                    llm_rate_limit,
                 );
             })
             .unwrap_or_else(|e| panic!("invariant: OS rejected rql-ingestor thread spawn: {e}"));
@@ -394,12 +497,38 @@ async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
 
 /// Process one deferred LLM fact extraction request (Phase 2).
 ///
+/// `bucket` is the optional token-bucket rate limiter.  When present, this
+/// function waits until a token is available before dispatching the LLM call,
+/// emitting `kremory.ingest.llm_rate_limit_deferred_total{namespace}` per wait.
+///
 /// Errors are logged via metrics and the error channel but do NOT crash the worker.
 async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
     req: DeferredRequest,
     error_tx: &SyncSender<IngestError>,
+    bucket: &mut Option<TokenBucketState>,
 ) {
+    // F2 / F6: apply rate limit before LLM call; emit counter on throttle.
+    if let Some(b) = bucket {
+        let immediately_available = b.try_consume();
+        if !immediately_available {
+            let wait = b.wait_duration();
+            let ns = req.group_id.as_deref().unwrap_or("default");
+            metrics::counter!(
+                "kremory.ingest.llm_rate_limit_deferred_total",
+                "namespace" => ns.to_string()
+            )
+            .increment(1);
+            tracing::debug!(
+                wait_ms = wait.as_millis(),
+                namespace = ns,
+                "kremory.background.rate_limit_wait"
+            );
+            tokio::time::sleep(wait).await;
+            // Consume after sleep (bucket has refilled by at least one token).
+            b.try_consume();
+        }
+    }
     let start = std::time::Instant::now();
     match graph
         .ingest_deferred(
@@ -464,6 +593,7 @@ fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     queued: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     deferred_enabled: bool,
+    llm_rate_limit: Option<RateLimit>,
 ) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -475,6 +605,9 @@ fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
 
     rt.block_on(async {
         let mut deferred_queue: VecDeque<DeferredRequest> = VecDeque::new();
+        // F2: initialise token bucket from config (None = unlimited).
+        let mut bucket: Option<TokenBucketState> =
+            llm_rate_limit.map(TokenBucketState::new);
 
         loop {
             if stop.load(Ordering::Acquire) {
@@ -512,7 +645,7 @@ fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         let depth = deferred_queue.len();
                         metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
                         tracing::info!(depth, "kremory.background.deferred_queue draining");
-                        process_deferred(&graph, deferred, &error_tx).await;
+                        process_deferred(&graph, deferred, &error_tx, &mut bucket).await;
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
@@ -540,7 +673,7 @@ fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         let depth = deferred_queue.len();
                         metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
                         tracing::info!(depth, "kremory.background.deferred_queue drain-on-disconnect");
-                        process_deferred(&graph, deferred, &error_tx).await;
+                        process_deferred(&graph, deferred, &error_tx, &mut bucket).await;
                     }
                     break;
                 }
