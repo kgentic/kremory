@@ -172,9 +172,9 @@ pub(crate) async fn open_graph_no_llm(
     }
     let config = config_builder.build().map_err(MemoryError::Core)?;
 
-    let extractor_kind = Arc::new(
-        crate::core::extraction::factory::ExtractorKind::Custom(custom_extractor),
-    );
+    let extractor_kind = Arc::new(crate::core::extraction::factory::ExtractorKind::Custom(
+        custom_extractor,
+    ));
     let engine = Engine::with_custom_extractor_no_llm(
         graph,
         Arc::new(ArcEmbedder(params.embedder)),

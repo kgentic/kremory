@@ -32,8 +32,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 use kremory::core::intelligence::{
-    EntityExtractor, EntityExtractorDyn, ExtractionContext, ExtractionResult, ExtractedEntity,
-    ExtractedFact,
+    EntityExtractor, EntityExtractorDyn, ExtractedEntity, ExtractedFact, ExtractionContext,
+    ExtractionResult,
 };
 use kremory::CoreError;
 

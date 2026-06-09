@@ -29,9 +29,7 @@ mod tests;
 // for the test block to compile, mirroring the original ingest.rs top-level imports.
 
 #[cfg(test)]
-pub(crate) use crate::core::intelligence::{
-    EntityExtractor, ExtractedEntity, ExtractedFact,
-};
+pub(crate) use crate::core::intelligence::{EntityExtractor, ExtractedEntity, ExtractedFact};
 
 // Re-export helpers items needed by integration tests and other modules.
 #[cfg(any(test, feature = "test-utils"))]

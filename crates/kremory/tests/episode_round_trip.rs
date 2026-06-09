@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use kremory::{DynEmbeddingProvider, Memory, Namespace, SourceKind};
 use kremory::core::schema::TemporalGraph;
+use kremory::{DynEmbeddingProvider, Memory, Namespace, SourceKind};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -175,13 +175,10 @@ async fn migration_011_idempotent_double_apply() {
     );
 
     // Second migration run via test hook — must not error.
-    graph
-        .run_migrations_again_for_test()
-        .await
-        .expect(
-            "second run_migrations must be idempotent for Migration 011 — \
-             PRAGMA table_info gate must detect content_hash already present and skip ALTER TABLE"
-        );
+    graph.run_migrations_again_for_test().await.expect(
+        "second run_migrations must be idempotent for Migration 011 — \
+             PRAGMA table_info gate must detect content_hash already present and skip ALTER TABLE",
+    );
 
     // Column shape unchanged.
     let cols_second = table_columns(&graph, "episodes").await;
@@ -210,10 +207,7 @@ async fn migration_011_content_hash_index_exists() {
         .await
         .expect("sqlite_master index query must succeed");
 
-    let row = rows
-        .next()
-        .await
-        .expect("row iteration must not error");
+    let row = rows.next().await.expect("row iteration must not error");
 
     assert!(
         row.is_some(),

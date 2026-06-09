@@ -97,9 +97,7 @@ impl<'a> DreamRequest<'a> {
             "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
         )?;
         #[allow(deprecated)]
-        let result =
-            memory::run_dream_phase(self.memory.graph.as_ref(), ns, llm)
-                .await?;
+        let result = memory::run_dream_phase(self.memory.graph.as_ref(), ns, llm).await?;
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
         let _ = sink;

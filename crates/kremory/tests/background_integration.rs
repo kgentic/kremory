@@ -186,8 +186,7 @@ async fn background_ingestor_contradiction_round_trip() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph =
-        Engine::new(temporal, llm, embedder, config);
+    let graph = Engine::new(temporal, llm, embedder, config);
 
     // Ingestor config: tiny channel — only 2 slots needed
     let ingestor_config = IngestorConfig {
@@ -511,8 +510,7 @@ async fn background_ingestor_drains_without_errors() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph =
-        Engine::new(temporal, llm, embedder, config);
+    let graph = Engine::new(temporal, llm, embedder, config);
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 
     ingestor
