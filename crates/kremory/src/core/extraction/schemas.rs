@@ -114,11 +114,11 @@ pub(crate) struct ReclassifyWrapper {
     pub(crate) entity_type_id: u32,
 }
 
-// ─── NuExtractOutput visibility re-export ────────────────────────────────────
+// ─── LlmExtractionOutput visibility re-export ────────────────────────────────────
 
-// NuExtractOutput is defined and pub(crate) in mod.rs — imported directly by
+// LlmExtractionOutput is defined and pub(crate) in mod.rs — imported directly by
 // the SCHEMA_NUEXTRACT_BOTH static below.
-use super::models::NuExtractOutput;
+use super::models::LlmExtractionOutput;
 
 // ─── FallbackArm enum (§3.3) ─────────────────────────────────────────────────
 
@@ -245,7 +245,7 @@ pub(crate) static SCHEMA_TRIPLET_LIST: LazyLock<Value> = LazyLock::new(|| {
 /// Schema for NuExtract full output (entities + relationships).
 /// Used by NuExtractExtractor and GroundedNuExtractExtractor.
 pub(crate) static SCHEMA_NUEXTRACT_BOTH: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::to_value(schemars::schema_for!(NuExtractOutput)).unwrap_or_else(|e| {
+    serde_json::to_value(schemars::schema_for!(LlmExtractionOutput)).unwrap_or_else(|e| {
         panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
     })
 });

@@ -113,3 +113,94 @@ fn entity_extractor_dyn_is_object_safe() {
     // The actual Arc is never used at runtime — compile-test only.
     fn _accepts_dyn(_: Arc<dyn EntityExtractorDyn>) {}
 }
+
+// ── Test: built-in LlmExtractor name() returns "llm" ──────────────────────────
+
+#[test]
+fn llm_extractor_name_returns_llm() {
+    use kremory::core::extraction::LlmExtractor;
+    use kremory::core::provider::MockChatProvider;
+
+    let llm = Arc::new(MockChatProvider::null());
+    let extractor = LlmExtractor::new(llm);
+    assert_eq!(
+        extractor.name(),
+        "llm",
+        "LlmExtractor::name() must return stable observability label 'llm'"
+    );
+}
+
+// ── Test: built-in GlinerLlmExtractor name() returns "gliner_llm" (ner-gated) ─
+
+#[cfg(feature = "ner")]
+#[test]
+fn gliner_llm_extractor_name_signature_compiles() {
+    // The struct exists under ner feature; name() must return stable label "gliner_llm".
+    // We don't construct the full extractor (avoids hf-hub download in unit test);
+    // instead we compile-check the trait+method signature is in place.
+    //
+    // GlinerLlmExtractor<L> implements EntityExtractor; name() is the load-bearing
+    // observability attribution hook used by ExtractorKind dispatch in factory.rs.
+    use kremory::core::extraction::GlinerLlmExtractor;
+    use kremory::core::intelligence::EntityExtractor;
+    fn _check_name<L: kremory::core::provider::ChatProvider + 'static>(
+        e: &GlinerLlmExtractor<L>,
+    ) -> &'static str
+    where
+        GlinerLlmExtractor<L>: EntityExtractor,
+    {
+        e.name()
+    }
+}
+
+// ── Test: KremoryError::LlmRequired carries method + hint fields ──────────────
+
+#[tokio::test]
+async fn llm_required_error_carries_method_and_hint() {
+    let ext = Arc::new(FixedEntityExtractor {
+        entity_name: "Carol".to_string(),
+    });
+
+    let mem = Memory::open(unique_db("llm_required_fields"))
+        .with_embedder(null_embedder())
+        .with_extractor(ext)
+        .await
+        .expect("build should succeed");
+
+    let result = mem
+        .dream()
+        .in_namespace(Namespace::new("test"))
+        .await;
+
+    let Err(err) = result else {
+        panic!("dream without LLM must return LlmRequired");
+    };
+    let detail = err.to_string();
+    // method field should be referenced (in the Display impl per ADR-041 §2)
+    assert!(
+        detail.contains("dream") || detail.contains("requires"),
+        "LlmRequired error must reference the method or 'requires LLM': {detail}"
+    );
+    // hint field should be non-empty + actionable
+    assert!(
+        detail.contains("LLM") || detail.contains("llm") || detail.contains("with_llm"),
+        "LlmRequired error must contain hint referencing LLM wiring: {detail}"
+    );
+}
+
+// ── Test: Custom extractor name flows through ExtractorKind::Custom ───────────
+
+#[test]
+fn custom_extractor_uses_consumer_name() {
+    let ext = FixedEntityExtractor {
+        entity_name: "Dave".to_string(),
+    };
+    // Consumer-defined name comes through the EntityExtractor trait.
+    // The blanket impl on EntityExtractorDyn delegates name() to EntityExtractor::name().
+    // Observability counter `kremory.extraction.kind` labels Custom path with this string.
+    assert_eq!(
+        ext.name(),
+        "fixed-entity-extractor",
+        "Custom EntityExtractor::name() is the observability attribution string"
+    );
+}

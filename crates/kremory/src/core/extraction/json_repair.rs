@@ -5,7 +5,7 @@
 use metrics::counter;
 use tracing;
 
-use super::models::NuExtractOutput;
+use super::models::LlmExtractionOutput;
 use crate::core::intelligence::{ExtractedEntity, ExtractedFact, ExtractionContext};
 
 // ─── JSON object extraction ──────────────────────────────────────────────────
@@ -182,7 +182,7 @@ pub(crate) fn parse_nuextract_response(
     let trimmed = preprocessed.as_ref();
 
     // Try direct parse, then llm_json repair if malformed.
-    let output: NuExtractOutput = match serde_json::from_str(trimmed) {
+    let output: LlmExtractionOutput = match serde_json::from_str(trimmed) {
         Ok(v) => {
             counter!("rql.extraction.json_parse_ok").increment(1);
             v
@@ -192,7 +192,7 @@ pub(crate) fn parse_nuextract_response(
             // Try object-level repair first, then array-unwrap fallback.
             let repaired = llm_json::repair_json(trimmed, &llm_json::RepairOptions::default())
                 .unwrap_or_else(|_| trimmed.to_owned());
-            match serde_json::from_str::<NuExtractOutput>(&repaired) {
+            match serde_json::from_str::<LlmExtractionOutput>(&repaired) {
                 Ok(v) => {
                     counter!("rql.extraction.json_parse_ok").increment(1);
                     v
@@ -212,7 +212,7 @@ pub(crate) fn parse_nuextract_response(
                             } else {
                                 &v
                             };
-                            match serde_json::from_value::<NuExtractOutput>(obj.clone()) {
+                            match serde_json::from_value::<LlmExtractionOutput>(obj.clone()) {
                                 Ok(v) => {
                                     counter!("rql.extraction.json_parse_ok").increment(1);
                                     v

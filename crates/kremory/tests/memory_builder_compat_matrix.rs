@@ -136,7 +136,7 @@ async fn row6_extractor_and_gliner_conflict_returns_err() {
         .with_llm(null_llm())
         .with_embedder(null_embedder())
         .with_extractor(ext)
-        .with_gliner()
+        .with_gliner(kremory::core::extraction::GlinerConfig::default())
         .await;
 
     let Err(err) = result else {
@@ -156,7 +156,7 @@ async fn row6_extractor_and_gliner_conflict_returns_err() {
 async fn row3_gliner_without_llm_returns_err() {
     let result = Memory::open(unique_db("row3"))
         .with_embedder(null_embedder())
-        .with_gliner()
+        .with_gliner(kremory::core::extraction::GlinerConfig::default())
         .await;
 
     let Err(err) = result else {

@@ -73,9 +73,9 @@ pub(super) fn default_string() -> String {
 
 // ─── Serde models for LLM JSON output coercion ──────────────────────────────
 
-/// Top-level NuExtract output. Both fields are optional — LLMs may omit one.
+/// Top-level LLM extraction output. Both fields are optional — LLMs may omit one.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub(crate) struct NuExtractOutput {
+pub(crate) struct LlmExtractionOutput {
     #[serde(default)]
     pub(crate) entities: Vec<RawEntity>,
     #[serde(default)]
