@@ -40,6 +40,7 @@
 
 pub mod arena;
 pub mod background;
+pub mod dream;
 pub mod canonicalization;
 pub mod chat_tracking;
 pub mod config;

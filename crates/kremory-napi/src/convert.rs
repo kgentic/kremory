@@ -367,6 +367,48 @@ pub struct JsDreamOpts {
     pub namespace: Option<String>,
 }
 
+/// Options for `JsMemory.runDreamPassSync` (Phase C DoD C2 / C7).
+///
+/// All fields optional — omit to use defaults from `DreamPassOpts::default()`.
+#[napi(object, js_name = "DreamPassOptions")]
+pub struct JsDreamPassOpts {
+    /// When `true`, Pass 0 type-discovery runs to find novel entity types.
+    /// Requires LLM. Default: `false`.
+    pub include_type_discovery: Option<bool>,
+    /// Minimum confidence threshold for entity type assignments to be re-examined
+    /// during the reclassify pass. Range `[0.0, 1.0]`. Default: `0.5`.
+    pub confidence_threshold: Option<f64>,
+    /// Cap on the number of ghost episodes processed per run.
+    /// `null`/omit = process all available ghost episodes.
+    pub max_episodes_per_run: Option<f64>,
+    /// Confidence threshold above which `ConsumerPinned` entities are protected
+    /// from reclassification. Range `[0.0, 1.0]`. Default: `0.7`.
+    pub reclassify_high_conf_threshold: Option<f64>,
+}
+
+/// Convert JS `DreamPassOptions` to substrate `DreamPassOpts`.
+pub fn js_dream_pass_opts_to_rust(js: Option<JsDreamPassOpts>) -> kremory::DreamPassOpts {
+    let base = kremory::DreamPassOpts::default();
+    match js {
+        None => base,
+        Some(o) => kremory::DreamPassOpts {
+            include_type_discovery: o.include_type_discovery.unwrap_or(base.include_type_discovery),
+            confidence_threshold: o
+                .confidence_threshold
+                .map(|v| v as f32)
+                .unwrap_or(base.confidence_threshold),
+            max_episodes_per_run: o
+                .max_episodes_per_run
+                .map(|v| Some(v as usize))
+                .unwrap_or(base.max_episodes_per_run),
+            reclassify_high_conf_threshold: o
+                .reclassify_high_conf_threshold
+                .map(|v| v as f32)
+                .unwrap_or(base.reclassify_high_conf_threshold),
+        },
+    }
+}
+
 /// Options for `JsMemory.rememberBatch` — bulk episode ingest per ADR-034.
 ///
 /// Each entry maps to one `RememberBatchBuilder::entry(…).done()` call.

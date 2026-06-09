@@ -368,6 +368,13 @@ pub struct DreamPhaseResult {
     pub supersessions_recorded: usize,
     pub facts_archived: usize,
     pub duration_ms: u64,
+    /// Types proposed and accepted by Dream Pass 0 type discovery (ADR-037 §3).
+    /// Empty when Pass 0 was not run or produced no accepted proposals.
+    #[serde(default)]
+    pub types_discovered: Vec<crate::core::dream::TypeProposal>,
+    /// Warnings emitted during the dream phase (e.g. degraded-mode notices).
+    #[serde(default)]
+    pub dream_warnings: Vec<String>,
 }
 
 /// Options for `search`. All fields optional — defaults are the
@@ -653,12 +660,26 @@ pub struct CancelOutcome {
 
 /// Options for `submit_dream_phase` batch consolidation.
 ///
-/// Per ADR §4.7.
-#[derive(Debug, Clone, Default)]
+/// Per ADR §4.7 / ADR-037 §3 (D6).
+#[derive(Debug, Clone)]
 pub struct DreamOpts {
     /// Only consolidate episodes committed after this timestamp.
     /// `None` = consolidate all un-dreamed episodes in scope.
     pub since: Option<DateTime<Utc>>,
+    /// Run Dream Pass 0 type discovery (ADR-037 §3).
+    /// When `true` (default), catch-all entities are clustered and presented
+    /// to the LLM for new entity-type proposals.
+    /// Set to `false` to skip type discovery on this dream cycle.
+    pub include_type_discovery: bool,
+}
+
+impl Default for DreamOpts {
+    fn default() -> Self {
+        Self {
+            since: None,
+            include_type_discovery: true,
+        }
+    }
 }
 
 // Re-export DreamMode so consumers can import from kremory::memory::types.

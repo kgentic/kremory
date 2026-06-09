@@ -147,4 +147,50 @@ pub trait GraphHandle: Send + Sync {
         namespace: &Namespace,
         provider: Arc<dyn ChatProvider>,
     ) -> Result<DreamPhaseResult>;
+
+    // ── Dream pass sync (Phase C — v0.1.1) ───────────────────────────────────
+
+    /// Run a synchronous dream pass with the given options.
+    ///
+    /// Serialised internally (at-most-one concurrent pass per engine instance).
+    /// Pass 0 (type discovery) and Pass 2 (ghost episode retry) are stubbed in
+    /// Phase C and wired in Phase D/E.
+    ///
+    /// Returns a [`DreamSummary`] with pass statistics. All counts are zero in
+    /// the Phase C stub.
+    ///
+    /// # ADR reference
+    ///
+    /// ADR-045 §3; Phase C DoD C1 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    async fn graph_run_dream_pass_sync(
+        &self,
+        opts: crate::core::ingest::DreamPassOpts,
+    ) -> Result<crate::facade::DreamSummary>;
+
+    /// Return episode IDs where Phase 1 succeeded but Phase 2 produced no facts.
+    ///
+    /// An optional `group_id` restricts the query to one namespace/thread.
+    /// `None` returns ghost episodes across all namespaces.
+    ///
+    /// # ADR reference
+    ///
+    /// ADR-045 §3; Phase C DoD C4.
+    async fn graph_ghost_episodes(
+        &self,
+        group_id: Option<&str>,
+    ) -> Result<Vec<i64>>;
+
+    /// Pin an entity as `ConsumerPinned`, protecting it from dream reclassification.
+    ///
+    /// Writes `entity_type_source = 'ConsumerPinned'` on the entity row.
+    ///
+    /// # ADR reference
+    ///
+    /// ADR-045 §3; Phase C DoD C5.
+    async fn graph_assert_entity_type(
+        &self,
+        entity_id: &str,
+        entity_type_id: u32,
+        group_id: Option<&str>,
+    ) -> Result<()>;
 }

@@ -61,7 +61,7 @@ impl<'a> DreamRequest<'a> {
     async fn execute_blocking(self) -> Result<DreamSummary> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
         let sink = self.memory.resolve_sink(self.sink);
-        let _opts = self.opts.unwrap_or_default();
+        let opts = self.opts.unwrap_or_default();
         // ADR-029a lazy population.
         self.memory.ensure_namespace_policy(&ns).await?;
 
@@ -97,10 +97,51 @@ impl<'a> DreamRequest<'a> {
             "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
         )?;
         #[allow(deprecated)]
-        let result = memory::run_dream_phase(self.memory.graph.as_ref(), ns, llm).await?;
+        let mut result = memory::run_dream_phase(self.memory.graph.as_ref(), ns.clone(), llm.clone()).await?;
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
         let _ = sink;
+
+        // ADR-037 §3 D6 — Dream Pass 0: type discovery.
+        // Run after core dream phase so Pass 0 can observe freshly-consolidated graph state.
+        if opts.include_type_discovery {
+            if let Some(tg) = self.memory.temporal_graph.as_ref() {
+                let group_id = namespace_to_group_id(&ns);
+                let embedder_ref: Option<&dyn crate::core::provider::DynEmbeddingProvider> =
+                    Some(self.memory.embedder.as_ref());
+                // ADR-037 §3 D6: wrap `Arc<dyn ChatProvider>` in `ArcChatProvider`
+                // newtype so `discover_types<L: ChatProvider>` (Sized bound) can
+                // accept it monomorphized. Orphan rules prevent
+                // `impl ChatProvider for Arc<dyn ChatProvider>` directly.
+                let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
+                match crate::core::dream::discover_types::discover_types(
+                    &tg.conn,
+                    &group_id,
+                    &arc_llm,
+                    embedder_ref,
+                    crate::core::dream::discover_types::MAX_PROPOSALS,
+                )
+                .await
+                {
+                    Ok(discovery) => {
+                        result.types_discovered = discovery.types_accepted;
+                        result.dream_warnings.extend(discovery.warnings);
+                    }
+                    Err(e) => {
+                        // Pass 0 failure is non-fatal — surface as warning, don't abort dream.
+                        tracing::warn!(
+                            target: "kremory::dream::pass0",
+                            error = %e,
+                            "Dream Pass 0 type discovery failed — skipping; dream phase result unaffected"
+                        );
+                        result.dream_warnings.push(format!(
+                            "Dream Pass 0 type discovery failed: {e}"
+                        ));
+                    }
+                }
+            }
+        }
+
         Ok(DreamSummary::from(result))
     }
 }

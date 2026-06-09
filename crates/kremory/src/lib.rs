@@ -52,6 +52,11 @@ pub use facade::{
     MemoryBuilder, NoEmb, NoLlm, RecallRawRequest, RecallRequest, RecallTemplate,
     RememberBatchBuilder, RememberRequest, WithEmb, WithLlm,
 };
+// Dream scheduler + pass API (Phase C, v0.1.1)
+pub use memory::scheduler::{DreamSchedule, DreamSchedulerHandle};
+pub use core::ingest::DreamPassOpts;
+// Dream Pass 0 type discovery (ADR-037 §3, v0.1.1)
+pub use core::dream::TypeProposal;
 
 // Convenience re-exports from memory
 pub use memory::init_telemetry;

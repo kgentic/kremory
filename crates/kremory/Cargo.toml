@@ -63,6 +63,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 serde_json = "1"
 # tokio: use full feature set (superset of rqlm's macros + rt-multi-thread)
 tokio = { version = "1", features = ["full"] }
+# tokio-util: CancellationToken for DreamScheduler graceful shutdown (C10/C11)
+tokio-util = { version = "0.7", features = ["rt"] }
 anyhow = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }

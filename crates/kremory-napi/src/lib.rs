@@ -28,9 +28,10 @@ use napi_derive::napi;
 use kremory::{Memory, Namespace, SourceKind};
 
 pub use convert::{
-    JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsDreamOpts, JsDreamStatusResult,
-    JsDreamSummary, JsEpisode, JsIngestResult, JsIngestStatusResult, JsMetadataFilter,
-    JsOpenOptions, JsRecallOptions, JsRememberOptions, JsRetrievedContext, JsStructuredFact,
+    JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsDreamOpts, JsDreamPassOpts,
+    JsDreamStatusResult, JsDreamSummary, JsEpisode, JsIngestResult, JsIngestStatusResult,
+    JsMetadataFilter, JsOpenOptions, JsRecallOptions, JsRememberOptions, JsRetrievedContext,
+    JsStructuredFact,
 };
 
 // ── JsMemory ──────────────────────────────────────────────────────────────────
@@ -396,6 +397,60 @@ impl JsMemory {
             .map_err(|e| napi::Error::from_reason(format!("kremory dream failed: {e}")))?;
 
         Ok(convert::dream_summary_to_js(summary))
+    }
+
+    /// Run a single dream pass synchronously (Phase C DoD C7 / `v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    ///
+    /// Lower-level than `dream()` — calls the engine's `run_dream_pass_sync`
+    /// directly with explicit pass options. Concurrent calls serialize via an
+    /// internal `Mutex` on `Engine`. Wraps `Memory::run_dream_pass_sync`.
+    #[napi]
+    pub async fn run_dream_pass_sync(
+        &self,
+        opts: Option<JsDreamPassOpts>,
+    ) -> napi::Result<JsDreamSummary> {
+        let rust_opts = convert::js_dream_pass_opts_to_rust(opts);
+        let summary = self
+            .inner
+            .run_dream_pass_sync(rust_opts)
+            .await
+            .map_err(|e| {
+                napi::Error::from_reason(format!("kremory run_dream_pass_sync failed: {e}"))
+            })?;
+        Ok(convert::dream_summary_to_js(summary))
+    }
+
+    /// Return episode IDs where Phase 1 ingest succeeded but Phase 2 produced
+    /// no facts (ghost episodes — Phase C DoD C4 / C7).
+    ///
+    /// `group_id` restricts the query to one namespace. Omit/`null` to return
+    /// ghost episodes across all namespaces. Wraps `Memory::ghost_episodes`.
+    #[napi]
+    pub async fn ghost_episodes(&self, group_id: Option<String>) -> napi::Result<Vec<i64>> {
+        self.inner
+            .ghost_episodes(group_id.as_deref())
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory ghost_episodes failed: {e}")))
+    }
+
+    /// Pin an entity as `ConsumerPinned`, protecting it from dream
+    /// reclassification (Phase C DoD C5 / C7).
+    ///
+    /// Writes `entity_type_source = 'ConsumerPinned'` on the entity row.
+    /// Wraps `Memory::assert_entity_type`.
+    #[napi]
+    pub async fn assert_entity_type(
+        &self,
+        entity_id: String,
+        entity_type_id: u32,
+        group_id: Option<String>,
+    ) -> napi::Result<()> {
+        self.inner
+            .assert_entity_type(&entity_id, entity_type_id, group_id.as_deref())
+            .await
+            .map_err(|e| {
+                napi::Error::from_reason(format!("kremory assert_entity_type failed: {e}"))
+            })
     }
 
     /// Forget (hard-delete) all episodes matching `source_id` in `namespace` (B7).

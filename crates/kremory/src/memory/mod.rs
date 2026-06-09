@@ -34,12 +34,14 @@ pub mod engine_handle;
 pub mod events;
 pub mod graph;
 pub mod llm_adapters;
+pub mod scheduler;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod stub;
 pub mod types;
 
 pub use engine_handle::EngineGraphHandle;
 pub use graph::GraphHandle;
+pub use scheduler::{DreamSchedule, DreamSchedulerHandle};
 #[cfg(any(test, feature = "test-utils"))]
 pub use stub::StubGraphHandle;
 pub use types::{
@@ -799,7 +801,40 @@ mod tests {
                 supersessions_recorded: 0,
                 facts_archived: 0,
                 duration_ms: 10,
+                types_discovered: vec![],
+                dream_warnings: vec![],
             })
+        }
+
+        async fn graph_run_dream_pass_sync(
+            &self,
+            _opts: crate::core::ingest::DreamPassOpts,
+        ) -> Result<crate::facade::DreamSummary> {
+            Ok(crate::facade::DreamSummary {
+                communities_updated: 0,
+                cross_episode_merges: 0,
+                supersessions_recorded: 0,
+                facts_archived: 0,
+                duration_ms: 0,
+                types_discovered: vec![],
+                warnings: vec![],
+            })
+        }
+
+        async fn graph_ghost_episodes(
+            &self,
+            _group_id: Option<&str>,
+        ) -> Result<Vec<i64>> {
+            Ok(vec![])
+        }
+
+        async fn graph_assert_entity_type(
+            &self,
+            _entity_id: &str,
+            _entity_type_id: u32,
+            _group_id: Option<&str>,
+        ) -> Result<()> {
+            Ok(())
         }
     }
 
