@@ -1484,6 +1484,160 @@ pub(crate) async fn migrate_011_episodes_content_hash(
     Ok(())
 }
 
+// ─── Migration 012 ─────────────────────────────────────────────────────────
+
+/// Migration 012: add source-tier columns to `entities` + `v_entity_drift_candidates` view.
+///
+/// Adds three columns per ADR-045 §2 and ADR-046 §1:
+///   - `entity_type_source TEXT CHECK(...)` — which tier last set the entity type
+///   - `entity_type_assigned_at TEXT`        — ISO-8601 timestamp of the last assignment
+///   - `ner_confidence REAL`                 — GLiNER / NER span confidence (Phase 1 only)
+///
+/// Creates `v_entity_drift_candidates` view (ADR-046 §1): entities with the same
+/// name in the same namespace but different types — candidates for dream-phase reconcile.
+/// ConsumerPinned entities are excluded from the view.
+///
+/// Legacy backfill: sets `entity_type_source = 'Phase1Ner'` and
+/// `entity_type_assigned_at = COALESCE(recorded_at, datetime('now'))` on all existing rows
+/// that have a NULL source, so queries can always rely on the column being non-NULL for rows
+/// written before this migration.
+///
+/// Idempotency: each ADD COLUMN is guarded by a PRAGMA table_info check, so running
+/// this migration twice is a no-op (no error, no duplication). The view uses
+/// `CREATE VIEW IF NOT EXISTS`. The backfill UPDATE applies only to NULL-source rows.
+pub(crate) async fn migrate_012_source_tier_columns(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_012 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // ── G1: idempotency gate — read existing columns ─────────────────────────
+
+    let mut info = conn
+        .query("PRAGMA table_info('entities')", ())
+        .await
+        .map_err(step("pragma_table_info"))?;
+
+    let mut has_entity_type_source = false;
+    let mut has_entity_type_assigned_at = false;
+    let mut has_ner_confidence = false;
+
+    while let Some(row) = info.next().await.map_err(step("pragma_table_info_next"))? {
+        let col_name: String = row.get(1).map_err(step("pragma_table_info_row_get"))?;
+        match col_name.as_str() {
+            "entity_type_source" => has_entity_type_source = true,
+            "entity_type_assigned_at" => has_entity_type_assigned_at = true,
+            "ner_confidence" => has_ner_confidence = true,
+            _ => {}
+        }
+    }
+
+    // ── Step 2: ADD COLUMN entity_type_source ────────────────────────────────
+
+    if !has_entity_type_source {
+        conn.execute(
+            "ALTER TABLE entities ADD COLUMN entity_type_source TEXT \
+             CHECK (entity_type_source IN (\
+               'Phase1Ner', 'Phase2Llm', 'DreamPass0', 'DreamPass1', 'ConsumerPinned'\
+             ))",
+            (),
+        )
+        .await
+        .map_err(step("alter_table_add_entity_type_source"))?;
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_012: entity_type_source already present — skipping ADD COLUMN"
+        );
+    }
+
+    // ── Step 3: ADD COLUMN entity_type_assigned_at ───────────────────────────
+
+    if !has_entity_type_assigned_at {
+        conn.execute(
+            "ALTER TABLE entities ADD COLUMN entity_type_assigned_at TEXT",
+            (),
+        )
+        .await
+        .map_err(step("alter_table_add_entity_type_assigned_at"))?;
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_012: entity_type_assigned_at already present — skipping ADD COLUMN"
+        );
+    }
+
+    // ── Step 4: ADD COLUMN ner_confidence ────────────────────────────────────
+
+    if !has_ner_confidence {
+        conn.execute(
+            "ALTER TABLE entities ADD COLUMN ner_confidence REAL",
+            (),
+        )
+        .await
+        .map_err(step("alter_table_add_ner_confidence"))?;
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_012: ner_confidence already present — skipping ADD COLUMN"
+        );
+    }
+
+    // ── Step 5: CREATE VIEW v_entity_drift_candidates ────────────────────────
+    //
+    // Entities with the same normalised name in the same namespace (group_id)
+    // but different entity_type_id values are drift candidates for the dream
+    // reconcile pass (ADR-046 §1). ConsumerPinned entities are excluded — they
+    // are structurally protected from dream re-typing (ADR-045 §3).
+
+    conn.execute(
+        "CREATE VIEW IF NOT EXISTS v_entity_drift_candidates AS \
+         SELECT e1.id AS entity_id \
+         FROM entities e1 \
+         WHERE (e1.entity_type_source IS NULL OR e1.entity_type_source != 'ConsumerPinned') \
+           AND EXISTS ( \
+               SELECT 1 FROM entities e2 \
+               WHERE LOWER(TRIM(e2.name)) = LOWER(TRIM(e1.name)) \
+                 AND e2.group_id = e1.group_id \
+                 AND e2.entity_type_id != e1.entity_type_id \
+                 AND e2.id != e1.id \
+           )",
+        (),
+    )
+    .await
+    .map_err(step("create_view_drift_candidates"))?;
+
+    // ── Step 6: Legacy backfill ───────────────────────────────────────────────
+    //
+    // All existing rows written before this migration have NULL entity_type_source.
+    // Backfill them to 'Phase1Ner' (the only tier active before v0.1.1) so
+    // downstream queries can rely on the column being non-NULL for pre-migration rows.
+    // entity_type_assigned_at is set from recorded_at (the original ingest timestamp).
+    // Idempotent: WHERE clause restricts to NULL-source rows only.
+
+    conn.execute(
+        "UPDATE entities \
+         SET entity_type_source = 'Phase1Ner', \
+             entity_type_assigned_at = COALESCE(recorded_at, datetime('now')) \
+         WHERE entity_type_source IS NULL",
+        (),
+    )
+    .await
+    .map_err(step("backfill_source_tier"))?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_012: entity_type_source / entity_type_assigned_at / ner_confidence \
+         added to entities; v_entity_drift_candidates view created; legacy backfill done."
+    );
+    Ok(())
+}
+
 // ─── Migration 006 ─────────────────────────────────────────────────────────
 
 /// Migration 006: install composite FK constraints on `facts` and `episodic_edges`

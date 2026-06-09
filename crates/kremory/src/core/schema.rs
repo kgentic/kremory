@@ -672,6 +672,11 @@ impl TemporalGraph {
         // skips the ALTER TABLE when the column already exists.
         crate::core::migrations::migrate_011_episodes_content_hash(&self.conn).await?;
 
+        // ADR-045 §2 Migration 012 (v0.1.1): add entity_type_source / entity_type_assigned_at /
+        // ner_confidence columns to `entities`; create v_entity_drift_candidates view;
+        // backfill legacy NULL rows to 'Phase1Ner'. Idempotent: PRAGMA table_info guards.
+        crate::core::migrations::migrate_012_source_tier_columns(&self.conn).await?;
+
         Ok(())
     }
 
