@@ -1505,6 +1505,11 @@ pub(crate) async fn migrate_011_episodes_content_hash(
 /// Idempotency: each ADD COLUMN is guarded by a PRAGMA table_info check, so running
 /// this migration twice is a no-op (no error, no duplication). The view uses
 /// `CREATE VIEW IF NOT EXISTS`. The backfill UPDATE applies only to NULL-source rows.
+///
+/// NOTE: `'DreamPass1'` is a historical enum name (schema-locked at this migration);
+/// it means "Dream Pass 2 reclassify confident output" per ADR-046 §6. The name
+/// predates the ADR-046 pass-numbering convention and cannot be renamed without a
+/// subsequent migration altering the CHECK constraint and existing rows.
 pub(crate) async fn migrate_012_source_tier_columns(
     conn: &libsql::Connection,
 ) -> crate::core::error::Result<()> {
@@ -1600,6 +1605,10 @@ pub(crate) async fn migrate_012_source_tier_columns(
     // view therefore compares LOWER(TRIM(e1.id)) to LOWER(TRIM(e2.id)).
     // The spec draft used `e2.namespace` (actual column: `group_id`) and
     // `e2.name` (actual field: `id`) — both corrected here per T1-T2-impl.md.
+    //
+    // IS NULL guard: NULL source rows are not ConsumerPinned; spec draft omitted
+    // this (strict != treats NULL as non-match in SQLite, so NULL rows would have
+    // been silently excluded from reclassify candidates without the OR IS NULL arm).
     conn.execute(
         "CREATE VIEW IF NOT EXISTS v_entity_drift_candidates AS \
          SELECT e1.id AS entity_id \
