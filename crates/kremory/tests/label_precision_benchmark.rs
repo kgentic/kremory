@@ -319,15 +319,15 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     // Run extraction with one of:
     //   - DefaultExtractor (LLM, default)
     //   - GlinerExtractor (TD-022 GLiNER only, KREMORY_BENCH_USE_GLINER=1)
-    //   - HybridGlinerLlmExtractor (TD-023 GLiNER + 1 LLM typing call, KREMORY_BENCH_USE_HYBRID=1)
+    //   - GlinerLlmExtractor (TD-023 GLiNER + 1 LLM typing call, KREMORY_BENCH_USE_HYBRID=1)
     let ingest_result = if use_hybrid {
         #[cfg(feature = "ner")]
         {
-            eprintln!("label_precision_benchmark: USING HybridGlinerLlmExtractor (TD-023)");
-            let hybrid = kremory::core::extraction::hybrid_typer::HybridGlinerLlmExtractor::new(
+            eprintln!("label_precision_benchmark: USING GlinerLlmExtractor (TD-023)");
+            let hybrid = kremory::core::extraction::GlinerLlmExtractor::new(
                 Arc::clone(&llm),
             )
-            .expect("HybridGlinerLlmExtractor::new — needs GLiNER model + LLM");
+            .expect("GlinerLlmExtractor::new — needs GLiNER model + LLM");
             engine
                 .ingest_with(&hybrid, &fixture_text, None, None, None, source_params)
                 .await
