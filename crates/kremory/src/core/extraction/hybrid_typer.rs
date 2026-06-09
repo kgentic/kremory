@@ -41,6 +41,22 @@ use crate::core::intelligence::{
 };
 use crate::core::provider::{chat_msg_user, ChatProvider};
 
+/// Builder-time configuration for the GLiNER candidate-generation extractor.
+///
+/// Currently has no public knobs — reserved for future tuning fields such as
+/// threshold, model path, batch size per ADR-039 §A6 deferred architecture
+/// path X. Consumers pass `GlinerConfig::default()` to `with_gliner()` to
+/// preserve the spec'd signature shape while leaving the knob surface forward-
+/// compatible.
+#[cfg(feature = "ner")]
+#[derive(Debug, Default, Clone)]
+pub struct GlinerConfig {
+    // Reserved for future tuning knobs (threshold, model path, batch size).
+    // Adding a field here is non-breaking; consumers always construct via
+    // `GlinerConfig::default()`.
+    _private: (),
+}
+
 /// Hybrid extractor: GLiNER (Phase 1, span discovery) + ONE LLM call (Phase 2, typing).
 ///
 /// Generic over `L: ChatProvider` so callers can wire any LLM provider.

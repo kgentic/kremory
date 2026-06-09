@@ -51,6 +51,10 @@ pub use single_call::{PromptVersion, SingleCallExtractor};
 // Model helpers — pub so integration tests can call is_canonical_entity_type
 pub use models::{is_canonical_entity_type, normalize_label};
 
+// GLiNER config — pub so consumers (and napi) can construct it for `.with_gliner(cfg)`
+#[cfg(feature = "ner")]
+pub use hybrid_typer::{GlinerConfig, GlinerLlmExtractor};
+
 // ─── Test-only re-exports ─────────────────────────────────────────────────────
 //
 // Items only needed by unit tests in this file (via `use super::*`).
