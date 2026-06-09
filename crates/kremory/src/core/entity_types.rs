@@ -44,6 +44,7 @@ pub const DEFAULT_ENTITY_TYPES: &[(u32, &str, &str)] = &[
     (7, "Quantity", "A measurement or count with units. Example: '300 metres', '12 samples'."),
     (8, "Event", "A named occurrence, meeting, or conference. Example: 'NeurIPS 2024', 'Annual Review Meeting'."),
     (9, "Concept", "A named abstract entity, theory, or methodology. Example: 'OAuth 2.0', 'Six Sigma'."),
+    (10, "Court", "A court, tribunal, or judicial body. Example: 'Los Angeles Superior Court', 'Court of Appeal'."),
 ];
 
 /// Seed the default entity_types vocabulary for `group_id` if not already present.
@@ -1194,7 +1195,9 @@ mod tests {
             .await
             .expect("load registry");
 
-        let new_id = label_to_id_or_register(&conn, "g1", &registry, "Court")
+        // "Court" is now a default type (id=10); use "Statute" as a genuinely
+        // novel label not present in DEFAULT_ENTITY_TYPES.
+        let new_id = label_to_id_or_register(&conn, "g1", &registry, "Statute")
             .await
             .expect("register novel label");
 
