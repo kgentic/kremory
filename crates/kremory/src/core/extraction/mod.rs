@@ -1,27 +1,27 @@
 //! Extraction subsystem — entity + relationship extraction from text.
 //!
-//! Module structure (post TD-001 E0-B split):
-//!   models         — serde structs for LLM JSON output coercion
-//!   json_repair    — JSON repair utilities + NuExtract response parser
-//!   parsers        — domain parsers (entities, facts, relation names)
-//!   graphiti       — GraphitiStyleExtractor (3-stage LLM)
+//! Module structure (post E-1 BYOE redesign):
+//!   models            — serde structs for LLM JSON output coercion
+//!   json_repair       — JSON repair utilities
+//!   parsers           — domain parsers (entities, facts, relation names)
+//!   graphiti          — LlmExtractor (3-stage LLM, Graphiti-quality prompts)
 //!   default_extractor — DefaultExtractor (integer-ID L1 path)
-//!   nuextract      — NuExtractExtractor + GroundedNuExtractExtractor
-//!   single_call    — SingleCallExtractor (free-discovery single pass)
-//!   programmatic   — ProgrammaticFirstExtractor (candidates-first)
-//!   factory        — ExtractorSource enum + ProductionExtractor dispatch
-//!   hybrid_typer   — HybridTypingWrapper (GLiNER + LLM)
-//!   delimited_tuple — delimited-tuple structured output
-//!   prompts        — prompt-building utilities
-//!   schemas        — JSON schema definitions
-//!   structured     — structured LLM call builder
+//!   nuextract         — removed (tombstone module)
+//!   single_call       — SingleCallExtractor (free-discovery single pass)
+//!   programmatic      — ProgrammaticFirstExtractor (candidates-first)
+//!   factory           — ExtractorKind dispatch enum
+//!   hybrid_typer      — GlinerLlmExtractor (GLiNER + LLM, `ner` feature)
+//!   delimited_tuple   — delimited-tuple structured output
+//!   prompts           — prompt-building utilities
+//!   schemas           — JSON schema definitions
+//!   structured        — structured LLM call builder
 
-// ─── Existing modules (unchanged) ────────────────────────────────────────────
+// ─── Existing modules ────────────────────────────────────────────────────────
 
 pub(crate) mod delimited_tuple;
-pub mod factory;
+pub(crate) mod factory;
 #[cfg(feature = "ner")]
-pub mod hybrid_typer;
+pub(crate) mod hybrid_typer;
 pub mod prompts;
 pub(crate) mod schemas;
 pub(crate) mod structured;
@@ -37,20 +37,14 @@ pub(crate) mod parsers;
 pub(crate) mod programmatic;
 pub(crate) mod single_call;
 
-// ─── Public re-exports (factory surface, unchanged) ──────────────────────────
-
-pub use factory::{ExtractorSource, ProductionExtractor};
-
-// ─── Re-exports: used by integration tests, hybrid_extractor.rs, ingest.rs ───
+// ─── Public re-exports ───────────────────────────────────────────────────────
 //
 // Integration tests (tests/*.rs) compile as separate crates and access items
 // via `kremory::core::extraction::*`. These must be `pub`, not `pub(crate)`.
-// Unit tests in this file reach them via `use super::*`.
 
 // Extractors — pub so integration tests can name them
 pub use default_extractor::DefaultExtractor;
-pub use graphiti::GraphitiStyleExtractor;
-pub use nuextract::{GroundedNuExtractExtractor, NuExtractExtractor};
+pub use graphiti::LlmExtractor;
 pub use programmatic::ProgrammaticFirstExtractor;
 pub use single_call::{PromptVersion, SingleCallExtractor};
 

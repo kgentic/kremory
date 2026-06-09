@@ -126,7 +126,7 @@ impl EngineGraphHandle {
         embedder: Arc<dyn crate::core::provider::DynEmbeddingProvider>,
         config: PipelineConfig,
     ) -> Self {
-        let engine = Engine::with_nuextract(
+        let engine = Engine::new(
             graph,
             Arc::new(ArcChatProvider::new(chat)),
             Arc::new(ArcEmbedder(embedder)),
@@ -611,8 +611,7 @@ mod tests {
             Arc::new(ArcChatProvider::new(chat)),
             Arc::new(ArcEmbedder(embedder)),
             config,
-        )
-        .expect("Engine::new should succeed in tests");
+        );
         EngineGraphHandle::new(engine)
     }
 

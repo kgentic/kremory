@@ -114,12 +114,54 @@ impl<'a> Default for ExtractionContext<'a> {
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
 /// Extracts entities and facts from text.
+///
+/// The primary ergonomic trait using native async-fn-in-trait (AFIT).  Built-in implementations
+/// (`LlmExtractor`, `GlinerLlmExtractor`) implement this directly.
+///
+/// **Not dyn-compatible** — use [`EntityExtractorDyn`] when you need `Arc<dyn …>`.
 pub trait EntityExtractor: Send + Sync {
+    /// Short identifier for this extractor (used in metrics labels and log output).
+    fn name(&self) -> &'static str;
+
     fn extract<'a>(
         &'a self,
         text: &'a str,
         ctx: &'a ExtractionContext<'a>,
     ) -> impl std::future::Future<Output = Result<ExtractionResult>> + Send + 'a;
+}
+
+/// Object-safe variant of [`EntityExtractor`] that returns a boxed future.
+///
+/// Required because native AFIT is not dyn-compatible on stable Rust.
+/// A blanket `impl<T: EntityExtractor> EntityExtractorDyn for T` is provided so every
+/// `EntityExtractor` implementation automatically satisfies this trait.
+///
+/// Use `Arc<dyn EntityExtractorDyn>` for heterogeneous or consumer-provided extractors
+/// (the `ExtractorKind::Custom` variant).
+pub trait EntityExtractorDyn: Send + Sync {
+    /// Short identifier for this extractor (forwarded from [`EntityExtractor::name`]).
+    fn name(&self) -> &'static str;
+
+    fn extract_dyn<'a>(
+        &'a self,
+        text: &'a str,
+        ctx: &'a ExtractionContext<'a>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExtractionResult>> + Send + 'a>>;
+}
+
+impl<T: EntityExtractor> EntityExtractorDyn for T {
+    fn name(&self) -> &'static str {
+        EntityExtractor::name(self)
+    }
+
+    fn extract_dyn<'a>(
+        &'a self,
+        text: &'a str,
+        ctx: &'a ExtractionContext<'a>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExtractionResult>> + Send + 'a>>
+    {
+        Box::pin(self.extract(text, ctx))
+    }
 }
 
 /// Determines if two entity mentions refer to the same real-world thing.
@@ -155,6 +197,10 @@ pub struct MockExtractor;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl EntityExtractor for MockExtractor {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+
     async fn extract<'a>(
         &'a self,
         text: &'a str,

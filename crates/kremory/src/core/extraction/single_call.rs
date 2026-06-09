@@ -201,6 +201,10 @@ pub(crate) fn build_single_call_prompt_versioned(
 }
 
 impl<L: ChatProvider> EntityExtractor for SingleCallExtractor<L> {
+    fn name(&self) -> &'static str {
+        "single_call"
+    }
+
     async fn extract<'a>(
         &'a self,
         text: &'a str,

@@ -735,11 +735,11 @@ pub struct MemoryBuilder<L, E> {
     /// chunk size. `None` disables the warning. Never enforced as a hard limit;
     /// observability only.
     episode_content_warn_threshold: Option<usize>,
-    /// Optional explicit extractor source. When `None`, defaults to
-    /// `ExtractorSource::FromEnv` (reads `KREMORY_EXTRACTOR`). When `Some`,
-    /// pins the extractor regardless of env. See spec
-    /// `kremory-v017-hybrid-extractor-production-wire-in-spec-2026-06-04` §4.
-    extractor_source: Option<crate::core::extraction::ExtractorSource>,
+    /// Reserved for E-2: composable extractor knobs (with_gliner, with_extractor).
+    /// Unused in E-1 — field kept to avoid cascading builder-struct changes across
+    /// all typestate impl blocks before E-2 lands.
+    #[allow(dead_code)]
+    extractor_source: Option<()>,
     /// Entity type names the extractor is allowed to emit. Forwarded to
     /// `PipelineConfig::allowed_entity_types`. When empty (the default), the
     /// `GlinerExtractor` rejects all entities — callers that activate the `ner`
@@ -798,17 +798,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Pin the extractor source explicitly. Bypasses `KREMORY_EXTRACTOR` env
-    /// var. Use this when you want hybrid extraction in code regardless of
-    /// the deployment env, or pin NuExtract in a test that should not depend
-    /// on env state.
-    ///
-    /// Default (when this method is not called): `ExtractorSource::FromEnv`
-    /// — preserves bit-for-bit existing behaviour when env var is unset.
-    pub fn extractor(mut self, source: crate::core::extraction::ExtractorSource) -> Self {
-        self.extractor_source = Some(source);
-        self
-    }
+    // `extractor()` removed in E-1; replaced by composable `.with_extractor()` in E-2.
 
     /// Set the entity type names the extractor is allowed to emit.
     ///
@@ -969,7 +959,6 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 llm.clone(),
                 embedder.clone(),
                 self.embedding_dim,
-                self.extractor_source,
                 self.allowed_entity_types,
             )
             .await?;

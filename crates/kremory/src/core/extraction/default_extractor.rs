@@ -33,6 +33,10 @@ impl<L: ChatProvider> DefaultExtractor<L> {
 }
 
 impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
+    fn name(&self) -> &'static str {
+        "default"
+    }
+
     async fn extract<'a>(
         &'a self,
         text: &'a str,
