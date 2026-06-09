@@ -69,7 +69,9 @@ async fn row0_no_llm_no_extractor_returns_builder_conflict() {
         .with_embedder(null_embedder())
         .await;
 
-    let err = result.err().expect("row 0 must fail");
+    let Err(err) = result else {
+        panic!("row 0 must fail");
+    };
     let detail = err.to_string();
     assert!(
         detail.contains("no extractor wired") || detail.contains("BuilderConflict"),
@@ -137,7 +139,9 @@ async fn row6_extractor_and_gliner_conflict_returns_err() {
         .with_gliner()
         .await;
 
-    let err = result.err().expect("row 6 must fail — extractor + gliner conflict");
+    let Err(err) = result else {
+        panic!("row 6 must fail — extractor + gliner conflict");
+    };
     let detail = err.to_string();
     assert!(
         detail.contains("conflicts") || detail.contains("BuilderConflict"),
@@ -155,7 +159,9 @@ async fn row3_gliner_without_llm_returns_err() {
         .with_gliner()
         .await;
 
-    let err = result.err().expect("row 3: gliner without LLM must fail");
+    let Err(err) = result else {
+        panic!("row 3: gliner without LLM must fail");
+    };
     let detail = err.to_string();
     assert!(
         detail.contains("GLiNER") || detail.contains("LLM") || detail.contains("BuilderConflict"),
