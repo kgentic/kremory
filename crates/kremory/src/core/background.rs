@@ -938,8 +938,8 @@ mod tests {
             .await
             .expect("guard.shutdown() panicked");
 
-        // NER calls the LLM once (NuExtractExtractor).
-        // Deferred calls the LLM at least once more (ingest_deferred → NuExtractExtractor).
+        // NER calls the LLM once (Phase 1 extraction via the wired extractor).
+        // Deferred calls the LLM at least once more (ingest_deferred → Phase 2 extraction).
         // With a single text item and one chunk, total calls should be exactly 2.
         let final_calls = call_counter.load(Ordering::SeqCst);
         assert!(
@@ -1254,8 +1254,8 @@ mod tests {
             .await
             .expect("guard.shutdown() panicked");
 
-        // 1 NER call (process_item → NuExtractExtractor) +
-        // 1 deferred call (process_deferred → ingest_deferred → NuExtractExtractor) = 2 total.
+        // 1 NER call (process_item → Phase 1 extraction via wired extractor) +
+        // 1 deferred call (process_deferred → ingest_deferred → Phase 2 extraction) = 2 total.
         let total_calls = call_counter.load(Ordering::SeqCst);
         assert_eq!(
             total_calls, 2,

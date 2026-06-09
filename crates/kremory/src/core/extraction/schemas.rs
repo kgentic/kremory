@@ -242,15 +242,15 @@ pub(crate) static SCHEMA_TRIPLET_LIST: LazyLock<Value> = LazyLock::new(|| {
     })
 });
 
-/// Schema for NuExtract full output (entities + relationships).
-/// Used by NuExtractExtractor and GroundedNuExtractExtractor.
+/// Schema for full LLM extraction output (entities + relationships).
+/// Used by [`LlmExtractor`] for single-pass extraction.
 pub(crate) static SCHEMA_NUEXTRACT_BOTH: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(LlmExtractionOutput)).unwrap_or_else(|e| {
         panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
     })
 });
 
-/// Schema for NuExtract entities-only pass (GroundedNuExtractExtractor pass 1).
+/// Schema for entities-only extraction pass (GLiNER+LLM hybrid pass 1 typing step).
 /// Root object with `entities: [RawEntitySimple]`.
 pub(crate) static SCHEMA_NUEXTRACT_ENTITIES_ONLY: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(EntityOnlyOutput)).unwrap_or_else(|e| {
@@ -258,7 +258,7 @@ pub(crate) static SCHEMA_NUEXTRACT_ENTITIES_ONLY: LazyLock<Value> = LazyLock::ne
     })
 });
 
-/// Schema for NuExtract relationships-only pass (GroundedNuExtractExtractor pass 2).
+/// Schema for relationships-only extraction pass (GLiNER+LLM hybrid pass 2 relationship step).
 ///
 /// NOTE: `subject`/`predicate`/`object` are excluded from schema because they use
 /// `deser_string_or_array`. This schema MUST be routed via `LlmJsonRepair` arm.

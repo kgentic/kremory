@@ -154,13 +154,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Accepts `Arc<TemporalGraph>` so callers can share the same graph
     /// instance with the process-global singleton returned by `engine()`.
     ///
-    /// The entity extractor is resolved via `KREMORY_EXTRACTOR` env var
-    /// (default: NuExtract). For explicit control over extractor choice,
-    /// use [`Engine::with_extractor_source`].
+    /// The entity extractor is supplied via the `ExtractorKind` argument.
+    /// Use [`MemoryBuilder::with_llm`], [`MemoryBuilder::with_gliner`], or
+    /// [`MemoryBuilder::with_extractor`] to configure the extractor at the
+    /// facade layer; `Engine::new` receives the resolved [`ExtractorKind`].
     ///
-    /// Returns `Err` only if `KREMORY_EXTRACTOR=hybrid` is set in the
-    /// environment AND the hybrid extractor fails to load GLiNER weights
-    /// (e.g. no network on first run + no hf-hub cache).
+    /// Returns `Err` if `ExtractorKind::GlinerLlm` is requested and the
+    /// GLiNER weights fail to load (e.g. no network on first run + no
+    /// hf-hub cache).
     pub fn new(
         graph: Arc<TemporalGraph>,
         llm: Arc<L>,
