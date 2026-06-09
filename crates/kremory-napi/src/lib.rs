@@ -372,7 +372,7 @@ impl JsMemory {
 
         Ok(episodes
             .into_iter()
-            .map(|ep| convert::episode_to_js(ep, &source_id))
+            .map(convert::episode_to_js)
             .collect())
     }
 
