@@ -1,59 +1,89 @@
 <!-- sprint-activate-begin -->
 ## Active Sprint
 
-**Sprint**: v0.1.1 Dream-Impl Sprint — Multi-tier Architecture + Pass 0 + Reclassify
-**Plan doc**: `v0-1-1-dream-impl-sprint-plan-2026-06-09`
-**Current phase**: A — Migration 010 + source-tier contract
+**Sprint**: v0.1.2 Empirical-Proof Sprint — TD-035 + TD-036 + ADR-047 Pass 4 (consistency_check)
+**Plan doc**: `v0-1-2-empirical-proof-sprint-plan-2026-06-09`
+**Current phase**: A — Compile-spike + setup + baseline (in progress)
 **Activated**: 2026-06-09
 
 ### Phases
 
 | Phase | Scope | Status |
 |---|---|---|
-| A | Migration 012 (source-tier columns + legacy backfill — drift view deferred to Phase E per ADR-046 Amendment); `RawEntityIntegerId.confidence`; per-extractor source-tier contract; symmetric `ConsumerPinned` write (subject + object_id) | **complete** (a57fb6f, Quinn PASS 89/100) |
-| B | TD-028 Phase 1 pull-shape registry-read derivation | pending |
-| C | Dream API surface: `Engine::run_dream_pass_sync`, `DreamOpts`, `ghost_episodes`, `assert_entity_type`, `Mutex<()>` serialization | pending |
-| D | Dream Pass 0 implementation (ADR-037): clustering + LLM proposal call + anti-redundancy gate | pending |
-| E | Dream Pass 2 reclassify (ADR-046 Option E — 2-arm SELECT catch_all_cascade + low_confidence, drift arm deferred per Amendment 2026-06-09): confidence-aware source-tier write | pending |
-| F | Observability + ergonomics: rate limits + concurrency docs + within-episode contradiction pre-check | pending |
-| G | TD-017 empirical hatch benchmark (gemma4-e2b + cloud-LLM) | pending |
-| H | TD ledger close + boy-scout sweep | pending |
+| A | Compile-spike (ADR-047 dyn-compat) + Migration 013/012b spec finalisation + sprint setup + baseline gate | in progress (A1 ✓ compile-spike PASS commit 716879c; A3 ✓ baseline-verdict doc filed; A2+A4 PENDING) |
+| B | Migration 013 (forward — `entity_type_source = 'DreamPass4'` + `dream_pass4_audit` table) + Migration 012b (downgrade) + idempotency tests | pending |
+| C | `crates/kremory/src/core/dream/consistency_check.rs` core module (ConsistencyCheckOpts, run_consistency_check, embed-prefilter gate, Confirm/Reject/Modify schema, cap-overflow guard, 8 observability counters, audit-table writes) | pending |
+| D | TD-036 fixture (`mis_typed_high_conf`) + τ calibration sweep + **RISK-001 LOAD-BEARING acceptance gate** (gemma4-e2b:latest ≥5pt precision lift) | pending |
+| E | TD-035 fixtures (`catch_all_seed` + `low_confidence_seed`) + benchmark + Pass 2 ↔ Pass 4 co-existence verification | pending |
+| F | Engine + DreamOpts integration + Pass 2/4 ordering tests + observability surface verification | pending |
+| G | TD ledger close + README rewrite (consumer-profile two-track) + v0.1.2 tag candidate prep + signed-tag push | pending |
 
 ### Definition of Done (sprint-level)
 
-- [ ] All 8 phases pass per-phase DoD criteria (48 mechanical checks total) per the plan
+- [ ] All 7 phases pass per-phase DoD criteria (47 mechanical checks total) per the plan
 - [ ] `/quality-gate` PASSES between every phase commit
 - [ ] `cargo test --workspace --all-features` passes (compile + run) on every phase commit
-- [ ] No new test failures introduced; baseline preserved (80 passed default-features as of 2026-06-09)
-- [ ] TD-017..TD-029 status transitions logged in tech-debt-register with commit refs
-- [ ] ADR-044, ADR-045, ADR-046, ADR-037 NOT modified during implementation (ratified-only)
-- [ ] v0.1.1 release tag cut after Phase G empirical hatch verdict captured
+- [ ] No new test failures introduced; baseline preserved (604 passed / 2 failed --all-features as of 2026-06-09 commit c36af5c — 2 failures are TD-012 pre-existing v0.1.9 carry-over, EXPLICITLY out-of-scope per R19)
+- [ ] TD-034 + TD-035 + TD-036 status transitions logged in tech-debt-register with commit refs
+- [ ] ADR-047 NOT modified during implementation (cycle 1 amendments folded; ratified-only beyond cycle 2 if surfaced)
+- [ ] **RISK-001 acceptance gate PASS**: gemma4-e2b:latest ≥5pt absolute lift on TD-036 fixture (LOAD-BEARING)
+- [ ] v0.1.2 release tag cut after Phase G with signed annotation including honest framing block
 
 ### Out-of-sprint deferrals (autonomous loop MUST reject)
 
 - TD-005 — napi BYOM bridge crash (v0.1.9 binding-layer cleanup)
+- TD-012 — background_integration deferred items (v0.1.9 — pre-existing carry-over)
 - TD-016 — Ziad fixture text gap (opportunistic / v0.1.9)
 - TD-029 — aidocs status-frontmatter bug (file upstream)
-- v0.2.x `ExtractorKind::GlinerLlm` deletion (gated by Phase G empirical hatch)
-- aidocs vNext napi integration (consumer-side; after v0.1.1 stable)
+- TD-030 — Machine-checkable enum naming constraint (v0.1.2 mechanical; deferred IF time pressure)
+- TD-032 — Drift arm Phase E future amendment (open per ADR-046 Option E)
+- TD-034 — GLiNER structural-miss handling (deferred to v0.1.3+ unless trivially co-located)
+- Pass 2 deprecation evaluation (v0.1.3+ explicit ADR per ADR-047 Pass 2/4 boundary)
+- Predicate-shape heuristic Pass 4 sub-step (candidate B from ADR-047 — explicit revisit trigger per ALT-001)
+- Frontier-model verify benchmark (PRIMARY local gates ratification; frontier is secondary documentation-only)
 
 ### Phase-boundary discipline (non-negotiable per-phase exit gate)
 
-Every phase A through H is COMPLETE ONLY when ALL phase-specific DoD criteria PASS **AND** both universal exit gates PASS in this order:
+Every phase A through G is COMPLETE ONLY when ALL phase-specific DoD criteria PASS **AND** all three universal exit gates PASS in this order:
 
 1. **`/quality-gate` PASS** — typecheck + lint + test + build per CLAUDE.md "Pre-Commit Gate NON-NEGOTIABLE". No band-aids — cause-fix any failure per Rule 8.
-2. **Quinn `/ship-build-review` PASS or CONCERNS-resolved** — Sonnet adversarial review over the phase's aggregate diff. HIGH findings BLOCK; MEDIUM findings folded into the same PR or follow-up; LOW findings filed as new TDs.
-3. **LLM integration smoke PASS** — phase-specific real-LLM end-to-end verification (per CLAUDE.md Rule 10 verify-before-stating). Static unit tests + Quinn paper review are necessary but not sufficient at phase boundaries — the substrate must produce correct outputs against the actual model it ships against (`gemma4-e2b` per `tests/llm_integration.rs:1-15` SoT). The orchestrator runs `cargo test --workspace --features llm-integration -- --ignored <phase-specific test names>` against a live OLLAMA_HOST. If OLLAMA_HOST is unavailable, the orchestrator surfaces this as a HITL ("LLM integration gate requires OLLAMA_HOST — run locally or skip with explicit acknowledgement") — it does NOT silently skip. Per-phase gate criteria are codified in the plan §"Per-Phase LLM Integration Gate".
+2. **Quinn `/ship-build-review` PASS or CONCERNS-resolved** — Sonnet adversarial review over the phase's aggregate diff. HIGH findings BLOCK; MEDIUM findings folded into the same PR or follow-up; LOW findings filed as new TDs OR rolled into boy-scout sweep per `feedback_boy_scout_includes_quinn_low_findings`.
+3. **LLM integration smoke PASS** — phase-specific real-LLM end-to-end verification (per CLAUDE.md Rule 10 verify-before-stating). Per-phase tests `cargo test --workspace --features llm-integration -- --ignored <phase-specific test names>` against live `OLLAMA_HOST` running `gemma4-e2b:latest` per `tests/llm_integration.rs:1-25` SoT. If OLLAMA_HOST unavailable: orchestrator surfaces ONE HITL acknowledgement — never silent skip.
 
-**The orchestrator MAY NOT make Quinn optional via HITL.** Quinn is automatic between phases. The orchestrator MAY ask the user how to triage Quinn's findings AFTER receiving the verdict, but the review itself is unconditional. Per `feedback_quinn_review_before_every_commit` (2026-05-31 TD-012 diamond fabricated "595 tests PASS" while build was broken) — tests-PASS alone is insufficient at phase boundaries. The same applies to the LLM integration gate — it is unconditional unless OLLAMA_HOST is genuinely unavailable, in which case the orchestrator surfaces a HITL with an explicit acknowledgement option, not a silent skip.
+**The orchestrator MAY NOT make Quinn optional.** Quinn is automatic between phases per `feedback_quinn_review_mandatory_between_phases_never_optional`. The orchestrator MAY decide HOW to triage Quinn's findings AFTER receiving the verdict, but the review itself is unconditional.
 
-- **Stop conditions** (7 total): see plan §Stop Conditions — autonomous loop halts + HITLs on any of them
-- **Phase G empirical hatch**: per-provider INDEPENDENT pass; aggregate-pass FORBIDDEN per ADR-044 §5
-- **Source-tier contract**: per Migration 012 detail spec §1.2 — all entity insert sites MUST pick a value from the authoritative table
+- **Stop conditions** (7 total): see plan §Stop Conditions — autonomous loop halts on any of them per user's max-autonomy authorisation
+- **RISK-001 LOAD-BEARING acceptance criterion**: Phase D D5 MUST measure `gemma4-e2b:latest` precision lift ≥5pt on TD-036 fixture to ratify ADR-047. FAIL → sub-decision (i)/(ii)/(iii)/(iv) revision before Phase E.
+- **Module discipline**: `consistency_check.rs` MUST stay <500 LoC at commit per `feedback_split_files_before_adding_when_over_500_loc`
+- **Observability per Rule 19**: every phase ships its own counters inline; NOT a sweep phase
 
-### Implementation-readiness verdict
+### Per-Phase LLM Integration Gate
 
-PASS (95.5% aggregate, 2026-06-09). See `.ai-docs/lessons/2026-06-09-v0-1-1-readiness-gate-verdict.md`.
+Per CLAUDE.md Active Sprint discipline + `feedback_verify_model_sot_every_citation_not_just_first_time`:
 
-> Sprint scaffolding installed manually per `2026-06-09-ship-sprint-activate-dogfood-findings.md` (skill had 4 bugs). Remove this section after v0.1.1 ships.
+| Phase | Real-LLM smoke tests required |
+|---|---|
+| A | None (compile-spike + setup only) |
+| B | None (DB migration only) |
+| C | `consistency_check_schema_parses` (10× real call, 100% direct parse on gemma4-e2b:latest) |
+| D | `benchmark-pass4` on mis_typed_high_conf fixture (RISK-001 LOAD-BEARING) + τ-calibration-sweep |
+| E | `benchmark-pass0-pass2-pass4` on catch_all_seed + low_confidence_seed |
+| F | `dream_run_full_pass_ordering` real-LLM integration test |
+| G | None (ledger + docs + tag) |
+
+### Implementation-readiness verdict (Loop 1)
+
+PASS at ~85% aggregate (2026-06-09). See `.ai-docs/lessons/2026-06-09-v0-1-2-readiness-gate-verdict.md`.
+
+3 dimensions remain inherently-empirical and gated to Phase D D5 RISK-001 acceptance criterion (LLM-verify reliability, τ calibration, Pass 2/4 co-existence). 95% pre-impl is not achievable by category; Phase D D5 IS the empirical-proof mechanism.
+
+### Autonomous chain context (per user 2026-06-09 authorisation)
+
+- **Max-autonomy mode**: push + tag autonomously per user's explicit override of Architectural HITL Gates for THIS sprint scope only
+- **No HITL unless absolutely necessary**: re-confirm only on Stop Condition trigger OR irreversible action outside sprint scope
+- **Cost cap**: $150 (current spend ~$25-30 post-Loop-1)
+- **Skill suite enforcement**: Vera + Quinn + Tessa + /quality-gate all gated; fix all issues before next phase per `feedback_consult_full_skill_suite_in_autonomous_mode`
+- **Spawn-tax awareness**: direct execution when output small + predictable; delegate when large + unpredictable
+
+> Sprint scaffolding installed manually (skill `ship:ship-sprint-activate` had detection bugs per `2026-06-09-ship-sprint-activate-dogfood-findings.md`). Remove this section after v0.1.2 ships.
 <!-- sprint-activate-end -->
