@@ -375,13 +375,19 @@ pub fn render_hybrid_typing_prompt(
          When in doubt, pick the closest semantic match (e.g. 'Superior Court' is a Court when Court is listed; \
          otherwise an Organisation. A named medication is a Drug when Drug is listed; otherwise a Concept).\n\
          \n\
-         Output a JSON object EXACTLY matching this schema:\n\
-         {{\"typings\": [{{\"idx\": <0..{last_idx}>, \"entity_type_id\": <integer>}}, ...]}}\n\
+         Output a JSON object with this exact shape, where each value is a real integer (NOT placeholder text):\n\
+         {{\n\
+           \"typings\": [\n\
+             {{\"idx\": 0, \"entity_type_id\": 1}},\n\
+             {{\"idx\": 1, \"entity_type_id\": 2}}\n\
+           ]\n\
+         }}\n\
          \n\
          RULES:\n\
-         - Use the integer index `idx` from the bracketed prefix above (e.g. for `  [3] Acme Corp` use idx=3).\n\
+         - `idx` must be an integer from 0 to {last_idx} (inclusive). Use the integer prefix from `  [N] Name` above.\n\
+         - `entity_type_id` must be an integer ≥ 1 chosen from the AVAILABLE ENTITY TYPES table above.\n\
          - Emit exactly one object per candidate. Do not skip any. Do not add extras.\n\
-         - DO NOT include the candidate name in the output — only `idx` and `entity_type_id`.",
+         - DO NOT include the candidate name, placeholder text like \"<integer>\", ellipsis, or any string values — only real integers.",
         text = text,
         candidates_block = candidates_block,
         registry_table = registry_table,
