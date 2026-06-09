@@ -9,6 +9,13 @@ exclude = [
     "crates/kremory-mcp",
 ]
 
+[workspace.package]
+# MSRV floor — required for native AFIT dyn-compat per ADR-040.
+# Cycle-3 dual-trait pattern (EntityExtractor + EntityExtractorDyn + blanket
+# impl) is built on Rust 1.86's AFIT in trait stabilisation. Individual crates
+# may declare a HIGHER MSRV but never lower than this floor.
+rust-version = "1.86"
+
 [profile.release]
 strip = true
 lto = true

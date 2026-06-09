@@ -2,6 +2,7 @@
 name = "kremory"
 version = "0.1.7"
 edition = "2021"
+rust-version = "1.86"
 license = "Apache-2.0"
 description = "Bi-temporal knowledge graph engine + agent memory orchestration in pure Rust"
 repository = "https://github.com/kgentic/kremory"
