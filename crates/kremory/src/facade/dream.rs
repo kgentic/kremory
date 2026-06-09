@@ -91,9 +91,14 @@ impl<'a> DreamRequest<'a> {
 
         // Use legacy synchronous path: run_dream_phase → DreamPhaseResult → DreamSummary
         // This is the correct substrate call for blocking dream at v0.1.0.
+        // dream() is a Category B method (ADR-041) — requires LLM; returns LlmRequired on NoLlm.
+        let llm = self.memory.llm_or_err(
+            "dream",
+            "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
+        )?;
         #[allow(deprecated)]
         let result =
-            memory::run_dream_phase(self.memory.graph.as_ref(), ns, self.memory.llm.clone())
+            memory::run_dream_phase(self.memory.graph.as_ref(), ns, llm)
                 .await?;
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
@@ -129,10 +134,15 @@ impl<'a> IntoFuture for DreamFireAndForget<'a> {
             let opts = self.inner.opts.unwrap_or_default();
             // ADR-029a lazy population.
             self.inner.memory.ensure_namespace_policy(&ns).await?;
+            // dream consolidation is Category B (ADR-041) — requires LLM.
+            let llm = self.inner.memory.llm_or_err(
+                "dream",
+                "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
+            )?;
             memory::submit_dream_phase(
                 self.inner.memory.graph.as_ref(),
                 ns,
-                self.inner.memory.llm.clone(),
+                llm,
                 self.inner.batch_id,
                 opts,
                 sink,

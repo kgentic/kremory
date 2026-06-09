@@ -35,6 +35,18 @@ use super::Memory;
 
 // ── Graph factory ─────────────────────────────────────────────────────────────
 
+/// Shared parameters for the three `open_graph*` variants.
+///
+/// Bundles the path + embedder + sizing knobs that are common to all
+/// open-graph call sites, keeping individual function signatures under the
+/// `clippy::too_many_arguments` threshold.
+pub(crate) struct GraphOpenParams {
+    pub path: std::path::PathBuf,
+    pub embedder: Arc<dyn DynEmbeddingProvider>,
+    pub embedding_dim: Option<usize>,
+    pub allowed_entity_types: Vec<String>,
+}
+
 /// Open (or create) the libSQL database at `path` and return an `Arc<dyn GraphHandle>`
 /// backed by a real `EngineGraphHandle`.
 ///
@@ -80,6 +92,94 @@ pub(crate) async fn open_graph(
         Arc::new(ArcChatProvider::new(llm)),
         Arc::new(ArcEmbedder(embedder)),
         config,
+    );
+
+    let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
+    Ok((handle, graph_for_facade))
+}
+
+/// Open (or create) the libSQL database at `path` and return an `Arc<dyn GraphHandle>`
+/// with an **explicit `ExtractorKind`** — used by the `GlinerLlm` and `Custom`+LLM
+/// builder paths where the caller has already resolved which extractor to use.
+///
+/// LLM is still required here (for CascadeResolver + TwoPoolDetector); pass the
+/// no-LLM variant via `open_graph_no_llm` when there is no LLM.
+pub(crate) async fn open_graph_with_extractor(
+    params: GraphOpenParams,
+    llm: Arc<dyn ChatProvider>,
+    extractor_kind: crate::core::extraction::factory::ExtractorKind<ArcChatProvider>,
+) -> Result<(Arc<dyn GraphHandle>, Arc<TemporalGraph>)> {
+    let path_str = params
+        .path
+        .to_str()
+        .ok_or_else(|| MemoryError::Other("path contains non-UTF-8 characters".into()))?;
+
+    let resolved_dim = params.embedding_dim.unwrap_or(384);
+    let graph = Arc::new(
+        TemporalGraph::open_with_dim(path_str, resolved_dim)
+            .await
+            .map_err(MemoryError::Core)?,
+    );
+    let graph_for_facade = Arc::clone(&graph);
+
+    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    if !params.allowed_entity_types.is_empty() {
+        config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
+    }
+    let config = config_builder.build().map_err(MemoryError::Core)?;
+
+    let arc_llm = Arc::new(ArcChatProvider::new(llm));
+    let engine = Engine::with_extractor(
+        graph,
+        arc_llm,
+        Arc::new(ArcEmbedder(params.embedder)),
+        config,
+        Arc::new(extractor_kind),
+    );
+
+    let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
+    Ok((handle, graph_for_facade))
+}
+
+/// Open (or create) the libSQL database at `path` and return an `Arc<dyn GraphHandle>`
+/// for the **no-LLM BYOE path** (`Memory::open(…).with_extractor(…).with_embedder(…)`).
+///
+/// Constructs an `Engine<ArcChatProvider, ArcEmbedder>` using
+/// `Engine::with_custom_extractor_no_llm` — the engine's `llm` field is `None`.
+/// LLM-dependent pipeline steps (entity resolution via `CascadeResolver`,
+/// contradiction detection via `TwoPoolDetector`) return `Error::LlmRequired`
+/// if reached.
+pub(crate) async fn open_graph_no_llm(
+    params: GraphOpenParams,
+    custom_extractor: Arc<dyn crate::core::intelligence::EntityExtractorDyn>,
+) -> Result<(Arc<dyn GraphHandle>, Arc<TemporalGraph>)> {
+    let path_str = params
+        .path
+        .to_str()
+        .ok_or_else(|| MemoryError::Other("path contains non-UTF-8 characters".into()))?;
+
+    let resolved_dim = params.embedding_dim.unwrap_or(384);
+    let graph = Arc::new(
+        TemporalGraph::open_with_dim(path_str, resolved_dim)
+            .await
+            .map_err(MemoryError::Core)?,
+    );
+    let graph_for_facade = Arc::clone(&graph);
+
+    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    if !params.allowed_entity_types.is_empty() {
+        config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
+    }
+    let config = config_builder.build().map_err(MemoryError::Core)?;
+
+    let extractor_kind = Arc::new(
+        crate::core::extraction::factory::ExtractorKind::Custom(custom_extractor),
+    );
+    let engine = Engine::with_custom_extractor_no_llm(
+        graph,
+        Arc::new(ArcEmbedder(params.embedder)),
+        config,
+        extractor_kind,
     );
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
@@ -357,7 +457,7 @@ async fn build_memory_with_model(
 
     Ok(Memory {
         graph,
-        llm,
+        llm: Some(llm),
         embedder,
         default_sink: None,
         default_namespace: None,

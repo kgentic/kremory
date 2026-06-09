@@ -209,7 +209,10 @@ impl From<RecallTemplate> for ContextTemplate {
 #[derive(Clone)]
 pub struct Memory {
     pub(crate) graph: Arc<dyn GraphHandle>,
-    pub(crate) llm: Arc<dyn ChatProvider>,
+    /// `None` when built via the NoLlm path (`Memory::open().with_extractor(…).with_embedder(…)`).
+    /// Category B methods (dream, recall_with_disambiguation, detect_contradictions) call
+    /// `.llm_or_err("method_name")` which returns `Error::LlmRequired` at call time.
+    pub(crate) llm: Option<Arc<dyn ChatProvider>>,
     /// Stored for forward-compat (v0.1.1 will wire to real TemporalGraph::open).
     #[allow(dead_code)]
     pub(crate) embedder: Arc<dyn DynEmbeddingProvider>,
@@ -258,7 +261,9 @@ impl Memory {
             embedding_dim: None,
             provider_rates_path: None,
             episode_content_warn_threshold: Some(10_000),
-            extractor_source: None,
+            custom_extractor: None,
+            #[cfg(feature = "ner")]
+            use_gliner: false,
             allowed_entity_types: vec![],
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
@@ -711,6 +716,38 @@ impl Memory {
     ) -> Option<Arc<dyn EnrichmentEventSink>> {
         per_call.or_else(|| self.default_sink.clone())
     }
+
+    /// Return the wired LLM or `Err(MemoryError::Core(Error::LlmRequired))`.
+    ///
+    /// Used by Category B methods (dream, recall_with_disambiguation,
+    /// detect_contradictions) that unconditionally require an LLM.
+    pub(crate) fn llm_or_err(
+        &self,
+        method: &'static str,
+        hint: &'static str,
+    ) -> Result<Arc<dyn ChatProvider>> {
+        self.llm.clone().ok_or_else(|| {
+            tracing::warn!(
+                method = method,
+                "LLM required but not wired — returning LlmRequired"
+            );
+            metrics::counter!("kremory.llm_required_total", "method" => method).increment(1);
+            MemoryError::Core(CoreError::LlmRequired { method, hint })
+        })
+    }
+
+    /// Return the wired LLM, or a no-op stub when no LLM was configured.
+    ///
+    /// Used by Category A methods (remember, remember_batch) that pass a
+    /// provider arg to `submit_episode` but the engine ignores the arg when
+    /// `skip_extraction = true` or when the custom extractor handles extraction.
+    /// The real `LlmRequired` error fires from `pipeline.rs` if an LLM-dependent
+    /// pipeline step is actually reached without a wired LLM.
+    pub(crate) fn llm_or_stub(&self) -> Arc<dyn ChatProvider> {
+        self.llm
+            .clone()
+            .unwrap_or_else(|| Arc::new(crate::core::provider::NullChatProvider))
+    }
 }
 
 // ── MemoryBuilder ─────────────────────────────────────────────────────────────
@@ -735,11 +772,15 @@ pub struct MemoryBuilder<L, E> {
     /// chunk size. `None` disables the warning. Never enforced as a hard limit;
     /// observability only.
     episode_content_warn_threshold: Option<usize>,
-    /// Reserved for E-2: composable extractor knobs (with_gliner, with_extractor).
-    /// Unused in E-1 — field kept to avoid cascading builder-struct changes across
-    /// all typestate impl blocks before E-2 lands.
-    #[allow(dead_code)]
-    extractor_source: Option<()>,
+    /// Custom extractor supplied via `.with_extractor(Arc<impl EntityExtractor>)`.
+    /// When `Some`, overrides LLM-derived extraction. Mutually exclusive with
+    /// `.with_gliner()` — builder errors at `build()` if both are set.
+    custom_extractor: Option<Arc<dyn crate::core::intelligence::EntityExtractorDyn>>,
+    /// GLiNER enabled via `.with_gliner()`. Requires the `ner` cargo feature.
+    /// When set without `.with_llm()`, builder errors at `build()` because
+    /// GLiNER candidate-gen still needs one LLM typing call.
+    #[cfg(feature = "ner")]
+    use_gliner: bool,
     /// Entity type names the extractor is allowed to emit. Forwarded to
     /// `PipelineConfig::allowed_entity_types`. When empty (the default), the
     /// `GlinerExtractor` rejects all entities — callers that activate the `ner`
@@ -798,7 +839,37 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    // `extractor()` removed in E-1; replaced by composable `.with_extractor()` in E-2.
+    /// Provide a custom entity extractor (BYOE — bring your own extractor).
+    ///
+    /// Accepts any type that implements [`EntityExtractor`]. Wraps it in
+    /// `Arc<dyn EntityExtractorDyn>` internally for object-safe dispatch.
+    ///
+    /// - Mutually exclusive with `.with_gliner()` — builder errors at build time
+    ///   if both are set.
+    /// - Compatible with or without `.with_llm()`: custom extractor runs regardless.
+    ///   If LLM is also wired, it remains available for Category B methods.
+    pub fn with_extractor<Ext>(mut self, extractor: Arc<Ext>) -> Self
+    where
+        Ext: crate::core::intelligence::EntityExtractor + 'static,
+    {
+        self.custom_extractor = Some(
+            extractor as Arc<dyn crate::core::intelligence::EntityExtractorDyn>,
+        );
+        self
+    }
+
+    /// Enable GLiNER-based candidate generation (requires the `ner` cargo feature).
+    ///
+    /// When combined with `.with_llm()`, the builder selects `ExtractorKind::GlinerLlm`
+    /// (GLiNER for candidate spans + one LLM typing call per batch).
+    ///
+    /// Without `.with_llm()`, the builder errors at build time — GLiNER candidate-gen
+    /// still requires one LLM call for entity-type classification.
+    #[cfg(feature = "ner")]
+    pub fn with_gliner(mut self) -> Self {
+        self.use_gliner = true;
+        self
+    }
 
     /// Set the entity type names the extractor is allowed to emit.
     ///
@@ -840,7 +911,9 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             embedding_dim: self.embedding_dim,
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
-            extractor_source: self.extractor_source,
+            custom_extractor: self.custom_extractor,
+            #[cfg(feature = "ner")]
+            use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
@@ -894,7 +967,9 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             embedding_dim: self.embedding_dim,
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
-            extractor_source: self.extractor_source,
+            custom_extractor: self.custom_extractor,
+            #[cfg(feature = "ner")]
+            use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
@@ -917,7 +992,39 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             embedding_dim: self.embedding_dim,
             provider_rates_path: self.provider_rates_path,
             episode_content_warn_threshold: self.episode_content_warn_threshold,
-            extractor_source: self.extractor_source,
+            custom_extractor: self.custom_extractor,
+            #[cfg(feature = "ner")]
+            use_gliner: self.use_gliner,
+            allowed_entity_types: self.allowed_entity_types,
+            _llm_state: std::marker::PhantomData,
+            _emb_state: std::marker::PhantomData,
+        }
+    }
+}
+
+impl MemoryBuilder<NoLlm, NoEmb> {
+    /// Configure the embedding provider for the no-LLM path.
+    ///
+    /// Use this when you supply a custom extractor via `.with_extractor(…)` but
+    /// do not need an LLM provider. The resulting `Memory` supports all Category A
+    /// operations; Category B operations (`dream`, `recall_with_disambiguation`,
+    /// `detect_contradictions`) return `Error::LlmRequired` at call time.
+    pub fn with_embedder(
+        self,
+        emb: Arc<dyn DynEmbeddingProvider>,
+    ) -> MemoryBuilder<NoLlm, WithEmb> {
+        MemoryBuilder {
+            path: self.path,
+            llm: self.llm,
+            embedder: Some(emb),
+            default_sink: self.default_sink,
+            default_namespace: self.default_namespace,
+            embedding_dim: self.embedding_dim,
+            provider_rates_path: self.provider_rates_path,
+            episode_content_warn_threshold: self.episode_content_warn_threshold,
+            custom_extractor: self.custom_extractor,
+            #[cfg(feature = "ner")]
+            use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
@@ -954,14 +1061,86 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
             let embedder = self
                 .embedder
                 .ok_or_else(|| MemoryError::Other("embedder missing".into()))?;
-            let (graph, temporal_graph) = providers::open_graph(
-                self.path.as_path(),
-                llm.clone(),
-                embedder.clone(),
-                self.embedding_dim,
-                self.allowed_entity_types,
-            )
-            .await?;
+
+            // ── Compat matrix (ADR-039, 7-row table) ────────────────────────
+            // Row 6: .with_extractor conflicts with .with_gliner → Err
+            #[cfg(feature = "ner")]
+            if self.custom_extractor.is_some() && self.use_gliner {
+                return Err(MemoryError::Core(CoreError::BuilderConflict {
+                    detail: ".with_extractor conflicts with .with_gliner — \
+                             supply one or the other, not both"
+                        .into(),
+                }));
+            }
+
+            // Row 2: LLM only → Llm extractor (default open_graph path)
+            // Row 3: LLM + gliner → GlinerLlm extractor
+            // Row 5/6 (with LLM): custom extractor wins, LLM still available
+            let (graph, temporal_graph) = if let Some(custom) = self.custom_extractor {
+                // Rows 5/6 with LLM — open with explicit Custom extractor
+                providers::open_graph_with_extractor(
+                    providers::GraphOpenParams {
+                        path: self.path.clone(),
+                        embedder: embedder.clone(),
+                        embedding_dim: self.embedding_dim,
+                        allowed_entity_types: self.allowed_entity_types,
+                    },
+                    llm.clone(),
+                    crate::core::extraction::factory::ExtractorKind::Custom(custom),
+                )
+                .await?
+            } else {
+                #[cfg(feature = "ner")]
+                if self.use_gliner {
+                    // Row 3: LLM + gliner → GlinerLlm
+                    use crate::core::provider::ArcChatProvider;
+                    let arc_llm = Arc::new(ArcChatProvider::new(llm.clone()));
+                    let gliner_ext =
+                        crate::core::extraction::hybrid_typer::GlinerLlmExtractor::new(arc_llm)
+                            .map_err(|e| {
+                                MemoryError::Core(CoreError::BuilderConflict {
+                                    detail: format!(
+                                        "GLiNER extractor init failed: {e}"
+                                    ),
+                                })
+                            })?;
+                    providers::open_graph_with_extractor(
+                        providers::GraphOpenParams {
+                            path: self.path.clone(),
+                            embedder: embedder.clone(),
+                            embedding_dim: self.embedding_dim,
+                            allowed_entity_types: self.allowed_entity_types,
+                        },
+                        llm.clone(),
+                        crate::core::extraction::factory::ExtractorKind::GlinerLlm(
+                            Box::new(gliner_ext),
+                        ),
+                    )
+                    .await?
+                } else {
+                    // Row 2: LLM only → default Llm extractor
+                    providers::open_graph(
+                        self.path.as_path(),
+                        llm.clone(),
+                        embedder.clone(),
+                        self.embedding_dim,
+                        self.allowed_entity_types,
+                    )
+                    .await?
+                }
+                #[cfg(not(feature = "ner"))]
+                {
+                    // Row 2 (no ner feature): default Llm extractor
+                    providers::open_graph(
+                        self.path.as_path(),
+                        llm.clone(),
+                        embedder.clone(),
+                        self.embedding_dim,
+                        self.allowed_entity_types,
+                    )
+                    .await?
+                }
+            };
 
             // T6.2 — Warm schema caches after graph open, before returning.
             // Best-effort: errors are silently ignored inside warm_schema_caches.
@@ -986,7 +1165,72 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
 
             Ok(Memory {
                 graph,
-                llm,
+                llm: Some(llm),
+                embedder,
+                default_sink: self.default_sink,
+                default_namespace: self.default_namespace,
+                temporal_graph: Some(temporal_graph),
+                episode_content_warn_threshold: self.episode_content_warn_threshold,
+            })
+        })
+    }
+}
+
+impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
+    type Output = Result<Memory>;
+    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(async move {
+            // Row 4: gliner set but no LLM → Err
+            #[cfg(feature = "ner")]
+            if self.use_gliner && self.custom_extractor.is_none() {
+                return Err(MemoryError::Core(CoreError::BuilderConflict {
+                    detail: "GLiNER candidate-gen needs LLM for entity-type classification — \
+                             add .with_llm(…) or swap to .with_extractor(…) for a fully \
+                             custom extractor that doesn't require LLM"
+                        .into(),
+                }));
+            }
+
+            // Row 6 (conflict): with_extractor + with_gliner → Err
+            #[cfg(feature = "ner")]
+            if self.custom_extractor.is_some() && self.use_gliner {
+                return Err(MemoryError::Core(CoreError::BuilderConflict {
+                    detail: ".with_extractor conflicts with .with_gliner — \
+                             supply one or the other, not both"
+                        .into(),
+                }));
+            }
+
+            // Row 0: nothing wired → Err
+            let custom = self.custom_extractor.ok_or_else(|| {
+                MemoryError::Core(CoreError::BuilderConflict {
+                    detail: "no extractor wired — call .with_llm(…) for built-in LLM extraction, \
+                             or .with_extractor(Arc<impl EntityExtractor>) to bring your own"
+                        .into(),
+                })
+            })?;
+
+            let embedder = self
+                .embedder
+                .ok_or_else(|| MemoryError::Other("embedder missing".into()))?;
+
+            // Row 4 (no LLM, custom extractor) — open without LLM
+            let (graph, temporal_graph) = providers::open_graph_no_llm(
+                providers::GraphOpenParams {
+                    path: self.path.clone(),
+                    embedder: embedder.clone(),
+                    embedding_dim: self.embedding_dim,
+                    allowed_entity_types: self.allowed_entity_types,
+                },
+                custom,
+            )
+            .await?;
+
+            Ok(Memory {
+                graph,
+                llm: None,
                 embedder,
                 default_sink: self.default_sink,
                 default_namespace: self.default_namespace,
