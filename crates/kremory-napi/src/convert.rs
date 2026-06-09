@@ -518,11 +518,11 @@ pub fn resolve_recall_namespaces(opts: &Option<JsRecallOptions>) -> Option<Vec<N
 
 /// Convert a substrate `kremory::core::schema::Episode` to `JsEpisode`.
 ///
-/// `source_id` is populated from the call argument (the query parameter used
-/// to look up this episode). `source_uri` is always `None` — the substrate
-/// `recall_by_source_id` query does not SELECT that column (known gap, tracked
-/// in parity-skip.toml).
-pub fn episode_to_js(ep: kremory::core::schema::Episode, source_id: &str) -> JsEpisode {
+/// TD-003 Phase G: `source_id` and `source_uri` are now taken directly from the
+/// `Episode` struct (columns were always in the DB; G-2 adds them to the Rust type
+/// and fixes the SELECT projections). The previous workaround that took `source_id`
+/// as a separate `&str` argument and hardcoded `source_uri: None` is removed.
+pub fn episode_to_js(ep: kremory::core::schema::Episode) -> JsEpisode {
     // id: i64 → f64. Safe: i64 values from SQLite rowid fit in f64 mantissa
     // (2^53 > i64::MAX is false but rowids in practice never exceed 2^53).
     // This is the standard napi-rs pattern for i64 → JS number.
@@ -531,8 +531,8 @@ pub fn episode_to_js(ep: kremory::core::schema::Episode, source_id: &str) -> JsE
 
     JsEpisode {
         id: id_f64,
-        source_id: Some(source_id.to_string()),
-        source_uri: None, // substrate recall_by_source_id does not return this column
+        source_id: ep.source_id,
+        source_uri: ep.source_uri,
         content: ep.content,
         timestamp: ep.timestamp.to_rfc3339(),
         source_type: ep.source_type,
