@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-06-09
+
+### Breaking Changes
+1. ExtractorDispatch enum renamed to ExtractorKind. Variants renamed:
+   Llm (was LlmExtractor), GlinerLlm (was HybridGlinerLlm).
+   ProductionExtractor / GraphitiStyleExtractor / HybridGlinerLlmExtractor
+   types deleted. Use ExtractorKind::Custom + Arc<dyn EntityExtractorDyn> for BYOE.
+2. NuExtractExtractor + GroundedNuExtractExtractor + HybridExtractor deleted.
+   No migration path — use MemoryBuilder.with_llm() for LLM-only or
+   .with_extractor(Arc::new(custom)) for BYOE.
+3. KREMORY_EXTRACTOR env var no longer read. Use composable builder knobs:
+   .with_llm(llm) for LlmExtractor (default), .with_gliner(GlinerConfig::default())
+   for GLiNER+LLM hybrid (requires --features ner), .with_extractor(...) for BYOE.
+4. MemoryBuilder.with_gliner() now takes GlinerConfig argument (currently empty
+   placeholder, reserved for future tuning knobs).
+5. kremory-napi open() takes typed options object, not string-literal extractor:
+   open({ path, embedder?, llm?, gliner?, extractor? })
+6. Memory.llm: Arc<...> → Option<Arc<...>>. New typestate Memory<NoLlm, WithEmb>
+   for Custom-extractor-only consumers (no LLM required for storage/embedding).
+7. KremoryError adds BuilderConflict { detail } + LlmRequired { method, hint }
+   variants.
+8. MSRV bumped to Rust 1.86 (required for native AFIT dyn-compat in
+   EntityExtractor + EntityExtractorDyn dual-trait pattern).
+
+### New
+- BYOE (Bring Your Own Extractor): implement EntityExtractor + pass via
+  .with_extractor(Arc::new(my_impl)).
+- Dual-trait pattern: EntityExtractor (RPITIT, ergonomic) + EntityExtractorDyn
+  (BoxFuture, object-safe via Arc<dyn>). Blanket impl bridges; consumers
+  only implement EntityExtractor.
+- Memory<NoLlm, WithEmb> typestate for embedding-only consumers.
+- ExtractorKind::Custom escape hatch for BYOE.
+- Episode struct gains source_id + source_uri + content_hash fields (TD-003).
+- Migration 011: content_hash column on episodes table + SHA256 backfill.
+- napi: GlinerConfigJs + ExternalExtractorJs + MemoryOpenOptionsJs (ADR-039 §6).
+
+### Known Limitations
+- BYOM embedder bridge (smoke-embedder.test.mjs T2): test.skip retained.
+  TD-005 escalated to ADR-043; investigation deferred to v0.1.9 binding-layer
+  cleanup cycle.
+- Workspace test still has 2 deferred background_integration failures +
+  1 pre-existing with_facts_empty_vec_equivalent_to_no_facts. Phase B
+  documents these for v0.1.9.
+
+### Refs
+- ADR-039 (BYOE redesign), ADR-040 (MSRV), ADR-041 (LlmRequired pattern),
+  ADR-042 (Episode content_hash), ADR-043 (TD-005 escalation).
+
+---
+
 ## [0.1.6] — 2026-05-30
 
 ### Fixed
