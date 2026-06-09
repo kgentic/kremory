@@ -15,15 +15,18 @@
 //!      ingest's ctx.allowed_entity_types includes the new type WITHOUT engine rebuild.
 //! B4 — All existing builder-API tests continue to pass (regression — run via
 //!      `cargo test --workspace --all-features`).
+//! B5 — QB-02: Integration test asserts `rql.ingest.registry_builder_seed_applied`
+//!      counter fires on the builder-seed path and does NOT fire on the override path.
 
 use std::sync::Arc;
 
 use kremory::core::config::PipelineConfig;
-use kremory::core::entity_types::{EntityTypeRegistry, label_to_id_or_register};
+use kremory::core::entity_types::{EntityTypeRegistry, EntityTypeSpec, label_to_id_or_register};
 use kremory::core::extraction::LlmExtractor;
 use kremory::core::ingest::{Engine, SourceParams};
 use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
+use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -325,5 +328,161 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
         count_after_first, count_after_second,
         "entity_types count must not grow on second ingest (INSERT OR IGNORE idempotency); \
          first={count_after_first} second={count_after_second}"
+    );
+}
+
+// ─── B5: QB-02 — counter assertion for builder-seed vs override paths ─────────
+
+/// B5 / QB-02 — `rql.ingest.registry_builder_seed_applied` counter:
+///   - FIRES when `allowed_entity_types(...)` on the builder seeds a new type.
+///   - Does NOT fire when the ingest uses `entity_types_override` (override path).
+///
+/// Uses `metrics::with_local_recorder` + `DebuggingRecorder` (same pattern as
+/// kremory's other counter-assertion tests: chat_tracking.rs, extraction/mod.rs).
+/// No global recorder required — library-safe per ADR D2.
+///
+/// Spec: td-028-phase1-pull-shape-registry-read-micro-spec-2026-06-09.md DoD B5.
+/// Quinn finding: QB-02 (MED).
+#[test]
+fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
+    // ── Part 1: builder-seed path — counter must fire ──────────────────────────
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+
+    metrics::with_local_recorder(&recorder, || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime builds");
+
+        rt.block_on(async {
+            let (graph, _tmp) = open_graph().await;
+
+            let config = PipelineConfig::builder()
+                .allowed_entity_types(vec![
+                    "SeedTypeAlpha".to_string(), // NOT in defaults — triggers seed branch
+                    "SeedTypeBeta".to_string(),  // NOT in defaults — triggers seed branch
+                ])
+                .build()
+                .expect("config build must succeed");
+
+            let llm = Arc::new(null_mock_llm());
+            let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
+            let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+            let extractor = LlmExtractor::new(Arc::clone(&llm));
+
+            engine
+                .ingest_with(
+                    &extractor,
+                    "Document for builder-seed counter test.",
+                    None,
+                    Some("b5-seed-ns"),
+                    None,
+                    SourceParams::default(),
+                )
+                .await
+                .expect("ingest_with (builder-seed path) must succeed");
+        });
+    });
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let seed_entries: Vec<_> = snapshot
+        .iter()
+        .filter(|(k, _, _, _)| k.key().name() == "rql.ingest.registry_builder_seed_applied")
+        .collect();
+
+    assert!(
+        !seed_entries.is_empty(),
+        "rql.ingest.registry_builder_seed_applied must be emitted on the builder-seed path; \
+         got no matching metrics in snapshot"
+    );
+
+    // Verify the counter has a positive value and carries the namespace label.
+    let mut found_positive = false;
+    for (key, _, _, value) in &seed_entries {
+        let labels: std::collections::HashMap<&str, &str> =
+            key.key().labels().map(|l| (l.key(), l.value())).collect();
+        // Namespace label must be present (QB-03 parity check).
+        assert!(
+            labels.contains_key("namespace"),
+            "rql.ingest.registry_builder_seed_applied must carry a 'namespace' label; \
+             labels found: {labels:?}"
+        );
+        if let DebugValue::Counter(n) = value {
+            if *n > 0 {
+                found_positive = true;
+            }
+        }
+    }
+    assert!(
+        found_positive,
+        "rql.ingest.registry_builder_seed_applied counter value must be > 0 on seed path"
+    );
+
+    // ── Part 2: override path — counter must NOT fire ──────────────────────────
+    //
+    // When `source_params.entity_types_override` is set, the pipeline takes a
+    // completely different branch (pipeline.rs:297) and never enters the
+    // builder-seed block (pipeline.rs:370). The seed counter must stay silent.
+    let recorder2 = DebuggingRecorder::new();
+    let snapshotter2 = recorder2.snapshotter();
+
+    metrics::with_local_recorder(&recorder2, || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime builds");
+
+        rt.block_on(async {
+            let (graph, _tmp) = open_graph().await;
+
+            // No allowed_entity_types on the builder — override path exclusively.
+            let config = PipelineConfig::builder()
+                .build()
+                .expect("config build must succeed");
+
+            let llm = Arc::new(null_mock_llm());
+            let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
+            let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+            let extractor = LlmExtractor::new(Arc::clone(&llm));
+
+            // Supply entity_types_override — this puts the pipeline on the
+            // override branch; the builder-seed branch is skipped entirely.
+            let override_specs = vec![
+                EntityTypeSpec {
+                    id: 1,
+                    name: "OverrideType".to_string(),
+                    description: "Override-supplied type for B5 test.".to_string(),
+                },
+            ];
+            let src = SourceParams {
+                entity_types_override: Some(override_specs),
+                ..SourceParams::default()
+            };
+
+            engine
+                .ingest_with(
+                    &extractor,
+                    "Document for override-path counter test.",
+                    None,
+                    Some("b5-override-ns"),
+                    None,
+                    src,
+                )
+                .await
+                .expect("ingest_with (override path) must succeed");
+        });
+    });
+
+    let snapshot2 = snapshotter2.snapshot().into_vec();
+    let seed_entries2: Vec<_> = snapshot2
+        .iter()
+        .filter(|(k, _, _, _)| k.key().name() == "rql.ingest.registry_builder_seed_applied")
+        .collect();
+
+    assert!(
+        seed_entries2.is_empty(),
+        "rql.ingest.registry_builder_seed_applied must NOT fire on the override path; \
+         got {seed_entries2:?}"
     );
 }
