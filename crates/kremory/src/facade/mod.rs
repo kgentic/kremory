@@ -265,7 +265,8 @@ pub struct Memory {
     /// or when `Memory` is constructed by a test stub path. Stored as
     /// `Arc<Mutex<Option<…>>>` so `Clone` works without requiring the handle to be
     /// `Clone` (a `JoinHandle<()>` is not `Clone`).
-    pub(crate) dream_scheduler: std::sync::Arc<std::sync::Mutex<Option<crate::memory::scheduler::DreamSchedulerHandle>>>,
+    pub(crate) dream_scheduler:
+        std::sync::Arc<std::sync::Mutex<Option<crate::memory::scheduler::DreamSchedulerHandle>>>,
 }
 
 impl Memory {
@@ -816,10 +817,7 @@ impl Memory {
     /// # ADR reference
     ///
     /// Phase C DoD C4 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
-    pub async fn ghost_episodes(
-        &self,
-        group_id: Option<&str>,
-    ) -> Result<Vec<i64>> {
+    pub async fn ghost_episodes(&self, group_id: Option<&str>) -> Result<Vec<i64>> {
         self.graph.graph_ghost_episodes(group_id).await
     }
 

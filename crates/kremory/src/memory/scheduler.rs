@@ -139,19 +139,17 @@ pub(crate) fn spawn_scheduler(
                 tracing::warn!("kremory.dream.scheduler spawned with Off schedule — exiting");
             }
 
-            DreamSchedule::Interval(interval) => {
-                loop {
-                    tokio::select! {
-                        _ = token_child.cancelled() => {
-                            tracing::debug!("kremory.dream.scheduler interval cancelled");
-                            break;
-                        }
-                        _ = tokio::time::sleep(interval) => {
-                            trigger_pass(&graph, opts_fn()).await;
-                        }
+            DreamSchedule::Interval(interval) => loop {
+                tokio::select! {
+                    _ = token_child.cancelled() => {
+                        tracing::debug!("kremory.dream.scheduler interval cancelled");
+                        break;
+                    }
+                    _ = tokio::time::sleep(interval) => {
+                        trigger_pass(&graph, opts_fn()).await;
                     }
                 }
-            }
+            },
 
             DreamSchedule::EveryNIngests(n) => {
                 // For EveryNIngests, the scheduler polls ingest-count via a
@@ -203,8 +201,7 @@ async fn trigger_pass(graph: &Arc<dyn GraphHandle>, opts: DreamPassOpts) {
     match graph.graph_run_dream_pass_sync(opts).await {
         Ok(summary) => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
-            metrics::histogram!("rql.dream.scheduler_pass_duration_ms")
-                .record(elapsed_ms as f64);
+            metrics::histogram!("rql.dream.scheduler_pass_duration_ms").record(elapsed_ms as f64);
             metrics::counter!("rql.dream.scheduler_pass_completed_total").increment(1);
             tracing::info!(
                 elapsed_ms,
@@ -228,4 +225,3 @@ async fn trigger_pass(graph: &Arc<dyn GraphHandle>, opts: DreamPassOpts) {
         }
     }
 }
-

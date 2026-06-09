@@ -41,9 +41,7 @@ use metrics::{counter, histogram};
 use crate::core::{
     dream::{
         anti_redundancy::{self, GateOutcome},
-        proposed_type::{
-            validate_proposed_name, DiscoveryProposalBatch, RejectionReason,
-        },
+        proposed_type::{validate_proposed_name, DiscoveryProposalBatch, RejectionReason},
     },
     entity_types::EntityTypeRegistry,
     error::Result,
@@ -151,9 +149,9 @@ pub(crate) async fn discover_types<L: ChatProvider>(
         }
         embs
     } else {
-        result.warnings.push(
-            "no embedder configured — anti-redundancy gate skipped".to_string(),
-        );
+        result
+            .warnings
+            .push("no embedder configured — anti-redundancy gate skipped".to_string());
         anti_redundancy::emit_gate_skipped();
         Vec::new()
     };
@@ -275,9 +273,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
         // Shape validate
         if let Err(reason) = validate_proposed_name(&proposal.name, group_id) {
             let reason_str = reason_to_string(reason);
-            result
-                .types_rejected
-                .push((proposal, reason_str));
+            result.types_rejected.push((proposal, reason_str));
             continue;
         }
 
@@ -500,16 +496,8 @@ async fn accept_proposal(
     // (accepted type's name is the only signal).
 
     let retyped_count = if let Some((desc_emb, emb)) = desc_emb_and_embedder {
-        retype_evidence_by_similarity(
-            conn,
-            group_id,
-            catch_alls,
-            new_id,
-            desc_emb,
-            emb,
-            &now,
-        )
-        .await?
+        retype_evidence_by_similarity(conn, group_id, catch_alls, new_id, desc_emb, emb, &now)
+            .await?
     } else {
         retype_evidence_all(conn, group_id, catch_alls, new_id, &now).await?
     };
@@ -685,7 +673,10 @@ fn normalise_name(s: &str) -> String {
 
 // ─── Prompt builder ───────────────────────────────────────────────────────────
 
-fn build_discovery_messages(clusters: &[NameCluster], max_proposals: usize) -> Vec<crate::core::provider::ChatMessage> {
+fn build_discovery_messages(
+    clusters: &[NameCluster],
+    max_proposals: usize,
+) -> Vec<crate::core::provider::ChatMessage> {
     let cluster_list = clusters
         .iter()
         .enumerate()

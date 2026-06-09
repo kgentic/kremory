@@ -53,8 +53,8 @@ pub use facade::{
     RememberBatchBuilder, RememberRequest, WithEmb, WithLlm,
 };
 // Dream scheduler + pass API (Phase C, v0.1.1)
-pub use memory::scheduler::{DreamSchedule, DreamSchedulerHandle};
 pub use core::ingest::DreamPassOpts;
+pub use memory::scheduler::{DreamSchedule, DreamSchedulerHandle};
 // Dream Pass 0 type discovery (ADR-037 §3, v0.1.1)
 pub use core::dream::TypeProposal;
 

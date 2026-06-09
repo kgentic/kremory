@@ -392,7 +392,9 @@ pub fn js_dream_pass_opts_to_rust(js: Option<JsDreamPassOpts>) -> kremory::Dream
     match js {
         None => base,
         Some(o) => kremory::DreamPassOpts {
-            include_type_discovery: o.include_type_discovery.unwrap_or(base.include_type_discovery),
+            include_type_discovery: o
+                .include_type_discovery
+                .unwrap_or(base.include_type_discovery),
             confidence_threshold: o
                 .confidence_threshold
                 .map(|v| v as f32)

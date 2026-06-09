@@ -822,10 +822,7 @@ mod tests {
             })
         }
 
-        async fn graph_ghost_episodes(
-            &self,
-            _group_id: Option<&str>,
-        ) -> Result<Vec<i64>> {
+        async fn graph_ghost_episodes(&self, _group_id: Option<&str>) -> Result<Vec<i64>> {
             Ok(vec![])
         }
 

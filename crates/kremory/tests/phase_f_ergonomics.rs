@@ -90,8 +90,8 @@ fn dream_opts_f3_max_episodes_per_run_default() {
 /// exercised in the F7 real-LLM smoke.
 #[test]
 fn f5_fact_source_episode_id_field_accessible() {
-    use kremory::core::schema::Fact;
     use chrono::Utc;
+    use kremory::core::schema::Fact;
 
     let f = Fact {
         id: 1,
@@ -117,7 +117,10 @@ fn f5_fact_source_episode_id_field_accessible() {
 
     // The F5 check in pipeline.rs mirrors this expression.
     let within_episode_conflict = f.source_episode_id == Some(42_i64);
-    assert!(within_episode_conflict, "F5: source_episode_id equality check works");
+    assert!(
+        within_episode_conflict,
+        "F5: source_episode_id equality check works"
+    );
     let no_conflict = f.source_episode_id == Some(99_i64);
     assert!(!no_conflict, "F5: different episode_id does not conflict");
 }
@@ -158,19 +161,19 @@ fn dream_opts_f6_batch_cap_config_roundtrip() {
 #[ignore]
 #[cfg(feature = "llm-integration")]
 async fn f7_real_llm_smoke() {
-    use std::sync::Arc;
-    use kremory::Memory;
-    use kremory::memory::types::Namespace;
-    use kremory::core::provider::{ChatProvider, DynEmbeddingProvider};
     use autoagents_llm::backends::ollama::Ollama;
     use autoagents_llm::builder::LLMBuilder;
     use autoagents_llm::embedding::EmbeddingBuilder;
     use helpers::ollama_adapter::OllamaEmbedderAdapter;
+    use kremory::core::provider::{ChatProvider, DynEmbeddingProvider};
+    use kremory::memory::types::Namespace;
+    use kremory::Memory;
+    use std::sync::Arc;
 
-    let base_url = std::env::var("OLLAMA_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let model = std::env::var("OLLAMA_CHAT_MODEL")
-        .unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
+    let base_url =
+        std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let model =
+        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
 
     let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)

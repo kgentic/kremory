@@ -355,7 +355,11 @@ async fn a8_update_entity_source_tier_consumer_pinned() {
         .expect("SELECT must succeed");
     let row = rows.next().await.unwrap().unwrap();
     let initial_source: Option<String> = row.get(0).unwrap();
-    assert_eq!(initial_source.as_deref(), Some("Phase1Ner"), "initial source must be Phase1Ner");
+    assert_eq!(
+        initial_source.as_deref(),
+        Some("Phase1Ner"),
+        "initial source must be Phase1Ner"
+    );
 
     // Stamp ConsumerPinned.
     graph

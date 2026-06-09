@@ -23,11 +23,11 @@
 use std::sync::{Arc, Mutex};
 
 use kremory::core::config::PipelineConfig;
-use kremory::core::entity_types::{EntityTypeRegistry, EntityTypeSpec, label_to_id_or_register};
+use kremory::core::entity_types::{label_to_id_or_register, EntityTypeRegistry, EntityTypeSpec};
 use kremory::core::extraction::LlmExtractor;
 use kremory::core::ingest::{Engine, SourceParams};
 use kremory::core::intelligence::{
-    EntityExtractor, ExtractionContext, ExtractionResult, ExtractedEntity,
+    EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult,
 };
 use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
@@ -143,14 +143,9 @@ async fn b3_pass_0_types_visible_in_next_ingest_without_engine_rebuild() {
         .await
         .expect("load registry before Pass 0 sim");
 
-    let new_id = label_to_id_or_register(
-        &graph.conn,
-        "default",
-        &registry_before,
-        "ProductSKU",
-    )
-    .await
-    .expect("Pass 0 simulation: label_to_id_or_register must succeed");
+    let new_id = label_to_id_or_register(&graph.conn, "default", &registry_before, "ProductSKU")
+        .await
+        .expect("Pass 0 simulation: label_to_id_or_register must succeed");
 
     assert!(
         new_id > 0,
@@ -286,10 +281,7 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
     let (graph, _tmp) = open_graph().await;
 
     let config = PipelineConfig::builder()
-        .allowed_entity_types(vec![
-            "Court".to_string(),
-            "Statute".to_string(),
-        ])
+        .allowed_entity_types(vec!["Court".to_string(), "Statute".to_string()])
         .build()
         .expect("config build must succeed");
 
@@ -453,13 +445,11 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
 
             // Supply entity_types_override — this puts the pipeline on the
             // override branch; the builder-seed branch is skipped entirely.
-            let override_specs = vec![
-                EntityTypeSpec {
-                    id: 1,
-                    name: "OverrideType".to_string(),
-                    description: "Override-supplied type for B5 test.".to_string(),
-                },
-            ];
+            let override_specs = vec![EntityTypeSpec {
+                id: 1,
+                name: "OverrideType".to_string(),
+                description: "Override-supplied type for B5 test.".to_string(),
+            }];
             let src = SourceParams {
                 entity_types_override: Some(override_specs),
                 ..SourceParams::default()
@@ -527,7 +517,10 @@ impl EntityExtractor for CapturingExtractor {
         // Snapshot the allowed types this call received.
         let snapshot: Vec<String> = ctx.allowed_entity_types.to_vec();
         let call_index = {
-            let mut lock = self.captured.lock().expect("captured lock must not be poisoned");
+            let mut lock = self
+                .captured
+                .lock()
+                .expect("captured lock must not be poisoned");
             lock.push(snapshot.clone());
             lock.len() // 1-based index of this call
         };
@@ -662,16 +655,20 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
 
     // ── CRITICAL assertions ───────────────────────────────────────────────────
 
-    let lock = captured.lock().expect("lock must not be poisoned");
-
-    assert_eq!(
-        lock.len(),
-        2,
-        "extractor must have been called exactly twice after two ingests; got {}",
-        lock.len()
-    );
-
-    let call2 = &lock[1];
+    // Scope the lock tightly + clone the call-2 vec out so the MutexGuard does NOT
+    // live across the libsql `.await` calls below (clippy::await_holding_lock).
+    // Per [[treat-cause-not-symptom]]: cause-fix is scope-bounded acquisition,
+    // not `#[allow(clippy::await_holding_lock)]`.
+    let call2: Vec<String> = {
+        let lock = captured.lock().expect("lock must not be poisoned");
+        assert_eq!(
+            lock.len(),
+            2,
+            "extractor must have been called exactly twice after two ingests; got {}",
+            lock.len()
+        );
+        lock[1].clone()
+    };
 
     // (a) The second call's ctx.allowed_entity_types MUST include "ProductCompany".
     //     This is the primary B3 invariant: pull from the live registry, not a

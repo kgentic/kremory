@@ -473,7 +473,11 @@ mod tests {
             ]
         });
         let result = parse_typed_response(&response, &candidates, &registry);
-        assert_eq!(result.len(), 6, "all candidates returned (all use GLiNER fallback)");
+        assert_eq!(
+            result.len(),
+            6,
+            "all candidates returned (all use GLiNER fallback)"
+        );
         // All rows fall back to GLiNER's open-vocab label because the whole
         // wrapper failed to deserialize — desired contract on small models.
         assert!(result.iter().all(|e| e.label == "Entity"));

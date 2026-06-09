@@ -1582,12 +1582,9 @@ pub(crate) async fn migrate_012_source_tier_columns(
     // ── Step 4: ADD COLUMN ner_confidence ────────────────────────────────────
 
     if !has_ner_confidence {
-        conn.execute(
-            "ALTER TABLE entities ADD COLUMN ner_confidence REAL",
-            (),
-        )
-        .await
-        .map_err(step("alter_table_add_ner_confidence"))?;
+        conn.execute("ALTER TABLE entities ADD COLUMN ner_confidence REAL", ())
+            .await
+            .map_err(step("alter_table_add_ner_confidence"))?;
     } else {
         tracing::debug!(
             target: "kremory::migrations",
@@ -1692,12 +1689,9 @@ pub(crate) async fn migrate_014_entity_types_provenance(
     // ── Step 2: ADD COLUMN discovered_at ─────────────────────────────────────
 
     if !has_discovered_at {
-        conn.execute(
-            "ALTER TABLE entity_types ADD COLUMN discovered_at TEXT",
-            (),
-        )
-        .await
-        .map_err(step("alter_table_add_discovered_at"))?;
+        conn.execute("ALTER TABLE entity_types ADD COLUMN discovered_at TEXT", ())
+            .await
+            .map_err(step("alter_table_add_discovered_at"))?;
     } else {
         tracing::debug!(
             target: "kremory::migrations",
@@ -1708,12 +1702,9 @@ pub(crate) async fn migrate_014_entity_types_provenance(
     // ── Step 3: ADD COLUMN discovered_by ─────────────────────────────────────
 
     if !has_discovered_by {
-        conn.execute(
-            "ALTER TABLE entity_types ADD COLUMN discovered_by TEXT",
-            (),
-        )
-        .await
-        .map_err(step("alter_table_add_discovered_by"))?;
+        conn.execute("ALTER TABLE entity_types ADD COLUMN discovered_by TEXT", ())
+            .await
+            .map_err(step("alter_table_add_discovered_by"))?;
     } else {
         tracing::debug!(
             target: "kremory::migrations",
@@ -1740,12 +1731,9 @@ pub(crate) async fn migrate_014_entity_types_provenance(
     // ── Step 5: ADD COLUMN confidence ────────────────────────────────────────
 
     if !has_confidence {
-        conn.execute(
-            "ALTER TABLE entity_types ADD COLUMN confidence REAL",
-            (),
-        )
-        .await
-        .map_err(step("alter_table_add_confidence"))?;
+        conn.execute("ALTER TABLE entity_types ADD COLUMN confidence REAL", ())
+            .await
+            .map_err(step("alter_table_add_confidence"))?;
     } else {
         tracing::debug!(
             target: "kremory::migrations",

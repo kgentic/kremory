@@ -114,10 +114,7 @@ const ELLIPSIS_PATTERNS: &[&str] = &["...", "....", "???", "---", "___"];
 /// before returning (observability is built-in at the check boundary, not deferred).
 ///
 /// `namespace` is the metrics label value; pass the group_id string.
-pub(crate) fn validate_proposed_name(
-    name: &str,
-    namespace: &str,
-) -> Result<(), RejectionReason> {
+pub(crate) fn validate_proposed_name(name: &str, namespace: &str) -> Result<(), RejectionReason> {
     let trimmed = name.trim();
 
     // 1. Whitespace-only (must come before length check)
@@ -208,8 +205,7 @@ fn emit_rejected(reason: RejectionReason, namespace: &str) {
 /// cannot fail in practice, but `serde_json::to_value` is fallible by type
 /// signature — propagate via `?` so callers can use the `Result` path cleanly
 /// rather than masking the error with `.expect()`.
-pub(crate) fn discovery_proposal_schema(
-) -> Result<serde_json::Value, serde_json::Error> {
+pub(crate) fn discovery_proposal_schema() -> Result<serde_json::Value, serde_json::Error> {
     let schema = schemars::schema_for!(DiscoveryProposalBatch);
     serde_json::to_value(schema)
 }
@@ -314,8 +310,7 @@ mod tests {
     #[test]
     fn batch_deserializes_from_json() {
         let json = r#"{"proposals":[{"name":"ProductSKU","description":"A product identifier","justification":"Many entities had SKU codes"}]}"#;
-        let batch: DiscoveryProposalBatch =
-            serde_json::from_str(json).expect("deserialize batch");
+        let batch: DiscoveryProposalBatch = serde_json::from_str(json).expect("deserialize batch");
         assert_eq!(batch.proposals.len(), 1);
         assert_eq!(batch.proposals[0].name, "ProductSKU");
     }
@@ -323,7 +318,8 @@ mod tests {
     #[test]
     fn batch_missing_required_name_fails_parse() {
         // name is required — missing it must fail, not default
-        let json = r#"{"proposals":[{"description":"A desc","justification":"justification here"}]}"#;
+        let json =
+            r#"{"proposals":[{"description":"A desc","justification":"justification here"}]}"#;
         let result: Result<DiscoveryProposalBatch, _> = serde_json::from_str(json);
         assert!(result.is_err(), "missing `name` must fail parse");
     }

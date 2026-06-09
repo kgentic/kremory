@@ -40,13 +40,13 @@
 
 pub mod arena;
 pub mod background;
-pub mod dream;
 pub mod canonicalization;
 pub mod chat_tracking;
 pub mod config;
 pub mod context;
 pub mod contradiction;
 pub mod disambiguation;
+pub mod dream;
 pub mod embedding;
 pub mod engine;
 pub mod entity_types;

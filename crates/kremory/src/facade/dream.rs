@@ -97,7 +97,8 @@ impl<'a> DreamRequest<'a> {
             "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
         )?;
         #[allow(deprecated)]
-        let mut result = memory::run_dream_phase(self.memory.graph.as_ref(), ns.clone(), llm.clone()).await?;
+        let mut result =
+            memory::run_dream_phase(self.memory.graph.as_ref(), ns.clone(), llm.clone()).await?;
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
         let _ = sink;
@@ -120,8 +121,7 @@ impl<'a> DreamRequest<'a> {
                 let pass0_max = opts
                     .max_episodes_per_run
                     .map(|cap| {
-                        let default_max =
-                            crate::core::dream::discover_types::MAX_PROPOSALS;
+                        let default_max = crate::core::dream::discover_types::MAX_PROPOSALS;
                         if cap < default_max {
                             metrics::counter!(
                                 "kremory.dream.batch_cap_hit_total",
@@ -160,9 +160,9 @@ impl<'a> DreamRequest<'a> {
                             error = %e,
                             "Dream Pass 0 type discovery failed — skipping; dream phase result unaffected"
                         );
-                        result.dream_warnings.push(format!(
-                            "Dream Pass 0 type discovery failed: {e}"
-                        ));
+                        result
+                            .dream_warnings
+                            .push(format!("Dream Pass 0 type discovery failed: {e}"));
                     }
                 }
             }
@@ -204,10 +204,7 @@ impl<'a> DreamRequest<'a> {
                 // Full per-pass tuning via DreamPassOpts is available on the Engine path;
                 // the DreamRequest path uses sensible defaults until DreamOpts is extended.
                 match crate::core::dream::reclassify::reclassify(
-                    &tg.conn,
-                    &group_id,
-                    &arc_llm,
-                    pass2_opts,
+                    &tg.conn, &group_id, &arc_llm, pass2_opts,
                 )
                 .await
                 {
@@ -229,9 +226,9 @@ impl<'a> DreamRequest<'a> {
                             error = %e,
                             "Dream Pass 2 reclassify failed — skipping; dream phase result unaffected"
                         );
-                        result.dream_warnings.push(format!(
-                            "Dream Pass 2 reclassify failed: {e}"
-                        ));
+                        result
+                            .dream_warnings
+                            .push(format!("Dream Pass 2 reclassify failed: {e}"));
                     }
                 }
             }
