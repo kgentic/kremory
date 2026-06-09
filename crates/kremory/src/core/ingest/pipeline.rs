@@ -150,6 +150,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                                 error = %e,
                                 "kremory.with_facts.consumer_pinned_stamp_failed"
                             );
+                        } else {
+                            metrics::counter!(
+                                "kremory.with_facts.consumer_pinned_tier_stamped_total"
+                            )
+                            .increment(1);
                         }
                     }
                     Ok(None) => {

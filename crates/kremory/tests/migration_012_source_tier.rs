@@ -348,6 +348,97 @@ async fn a5_drift_view_excludes_consumer_pinned() {
     );
 }
 
+// ─── A5 addendum: cross-namespace same-name entities must NOT appear in view ──
+//
+// The view WHERE clause includes `e2.group_id = e1.group_id`, so two entities
+// with the same name but different group_ids (namespaces) are NOT drift candidates
+// relative to each other. This test seeds one same-name/different-type pair in
+// ns_a (should appear) and one entity with the same name in ns_b (different namespace
+// — must NOT cause ns_a entities to be excluded, and ns_b entity itself must not appear
+// as a drift candidate against ns_a entities).
+
+#[tokio::test]
+async fn a5_drift_view_excludes_cross_namespace() {
+    let (graph, _tmp) = open_graph().await;
+
+    // Seed entity types needed for the test.
+    graph
+        .conn
+        .execute(
+            "INSERT OR IGNORE INTO entity_types (id, name, group_id) \
+             VALUES (50, 'Person', 'default')",
+            (),
+        )
+        .await
+        .expect("entity_types insert must succeed");
+
+    // ns_a: two entities with same name, different type — both should appear in view.
+    graph
+        .conn
+        .execute(
+            "INSERT OR IGNORE INTO entities \
+             (id, entity_type_id, properties, recorded_at, group_id, entity_type_source) \
+             VALUES ('cross-ns-a1', 0, '{\"name\":\"Shared\"}', datetime('now'), 'ns_a', 'Phase1Ner')",
+            (),
+        )
+        .await
+        .expect("cross-ns-a1 insert must succeed");
+
+    graph
+        .conn
+        .execute(
+            "INSERT OR IGNORE INTO entities \
+             (id, entity_type_id, properties, recorded_at, group_id, entity_type_source) \
+             VALUES ('cross-ns-a2', 50, '{\"name\":\"Shared\"}', datetime('now'), 'ns_a', 'Phase1Ner')",
+            (),
+        )
+        .await
+        .expect("cross-ns-a2 insert must succeed");
+
+    // ns_b: one entity with the same name — different namespace, must NOT appear.
+    graph
+        .conn
+        .execute(
+            "INSERT OR IGNORE INTO entities \
+             (id, entity_type_id, properties, recorded_at, group_id, entity_type_source) \
+             VALUES ('cross-ns-b1', 0, '{\"name\":\"Shared\"}', datetime('now'), 'ns_b', 'Phase1Ner')",
+            (),
+        )
+        .await
+        .expect("cross-ns-b1 insert must succeed");
+
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT entity_id FROM v_entity_drift_candidates ORDER BY entity_id",
+            (),
+        )
+        .await
+        .expect("v_entity_drift_candidates query must succeed");
+
+    let mut found_ids: Vec<String> = Vec::new();
+    while let Some(row) = rows.next().await.expect("row iteration must not error") {
+        let id: String = row.get(0).expect("entity_id at index 0");
+        found_ids.push(id);
+    }
+
+    // ns_a pair must appear — they share group_id and have different entity_type_id.
+    assert!(
+        found_ids.iter().any(|id| id == "cross-ns-a1"),
+        "cross-ns-a1 must appear in v_entity_drift_candidates (same-ns drift pair); found: {found_ids:?}"
+    );
+    assert!(
+        found_ids.iter().any(|id| id == "cross-ns-a2"),
+        "cross-ns-a2 must appear in v_entity_drift_candidates (same-ns drift pair); found: {found_ids:?}"
+    );
+
+    // ns_b entity must NOT appear — no same-namespace counterpart with different type.
+    assert!(
+        !found_ids.iter().any(|id| id == "cross-ns-b1"),
+        "cross-ns-b1 must NOT appear in v_entity_drift_candidates (cross-namespace, view filters e2.group_id = e1.group_id); found: {found_ids:?}"
+    );
+}
+
 // ─── A6: confidence field round-trip ─────────────────────────────────────────
 // RawEntityIntegerId is pub(crate) — round-trip tests live in
 // crates/kremory/src/core/extraction/models.rs #[cfg(test)] block
