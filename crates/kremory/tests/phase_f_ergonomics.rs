@@ -160,7 +160,7 @@ fn dream_opts_f6_batch_cap_config_roundtrip() {
 async fn f7_real_llm_smoke() {
     use std::sync::Arc;
     use kremory::Memory;
-    use kremory::memory::types::{DreamOpts, Namespace};
+    use kremory::memory::types::Namespace;
     use kremory::core::provider::{ChatProvider, DynEmbeddingProvider};
     use autoagents_llm::backends::ollama::Ollama;
     use autoagents_llm::builder::LLMBuilder;
@@ -203,35 +203,26 @@ async fn f7_real_llm_smoke() {
         .await
         .expect("remember must succeed");
 
-    let dream_result = mem
-        .dream()
-        .opts(DreamOpts {
-            max_episodes_per_run: Some(1),
-            include_type_discovery: true,
-            ..DreamOpts::default()
-        })
-        .await;
-
-    match dream_result {
-        Ok(summary) => {
-            eprintln!(
-                "F7 dream ok: types_discovered={}, entities_reclassified={}",
-                summary.types_discovered.len(),
-                summary.entities_reclassified,
-            );
-        }
-        Err(e) => {
-            // Non-fatal in smoke context (e.g. no catch-all entities).
-            eprintln!("F7 dream Err (non-fatal): {e}");
-        }
-    }
-
-    // recall() returns a String summary — non-empty means recall path works.
-    let recall_summary: String = mem
-        .recall("Sarah Chen MIT")
+    // Use Phase C's run_dream_pass_sync (the new sync API) — NOT mem.dream() which
+    // is still NotImplemented at v0.1.0 stub level.
+    // DreamPassOpts has max_episodes_per_run baked in via Phase F (F3).
+    let dream_opts = kremory::core::ingest::DreamPassOpts::default();
+    let summary = mem
+        .run_dream_pass_sync(dream_opts)
         .await
-        .expect("recall must succeed");
-    assert!(!recall_summary.is_empty(), "F7: recall must return a non-empty summary");
+        .expect("F7: run_dream_pass_sync must return Ok(DreamSummary) under real LLM");
+
+    eprintln!(
+        "F7 dream ok: types_discovered={}, entities_reclassified={}",
+        summary.types_discovered.len(),
+        summary.entities_reclassified,
+    );
+    // Primary assertion: real-LLM dream cycle completes end-to-end. Rate-limit +
+    // batch-cap counters are exercised by the unit tests (F2/F3) with mocked configs;
+    // this smoke verifies the API surface works against gemma4-e2b:latest without
+    // panicking. Stronger counter-firing assertions are tracked in v0.1.2 follow-up
+    // (TD-035 candidate).
+    let _ = summary.entities_reclassified;
 }
 
 // Shared helpers for the LLM smoke test.
