@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "v011-readiness-spikes"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+
+[[bin]]
+name = "migration_010_enum"
+path = "migration_010_enum.rs"
+
+[[bin]]
+name = "dream_pass_sync_signature"
+path = "dream_pass_sync_signature.rs"
+
+[dependencies]
+libsql = "=0.9.30"
+tokio = { version = "1", features = ["full"] }
