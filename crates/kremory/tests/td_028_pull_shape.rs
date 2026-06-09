@@ -17,13 +17,18 @@
 //!      `cargo test --workspace --all-features`).
 //! B5 — QB-02: Integration test asserts `rql.ingest.registry_builder_seed_applied`
 //!      counter fires on the builder-seed path and does NOT fire on the override path.
+//! QB-04 — E2E self-learning loop via two `ingest_with` calls and a mid-ingest
+//!         registry write (no engine rebuild between the two calls).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::{EntityTypeRegistry, EntityTypeSpec, label_to_id_or_register};
 use kremory::core::extraction::LlmExtractor;
 use kremory::core::ingest::{Engine, SourceParams};
+use kremory::core::intelligence::{
+    EntityExtractor, ExtractionContext, ExtractionResult, ExtractedEntity,
+};
 use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
 use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -484,5 +489,232 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
         seed_entries2.is_empty(),
         "rql.ingest.registry_builder_seed_applied must NOT fire on the override path; \
          got {seed_entries2:?}"
+    );
+}
+
+// ─── QB-04: E2E self-learning loop via two ingest_with calls ─────────────────
+
+/// A custom extractor that records the `allowed_entity_types` slice it receives on
+/// every `extract` call.  On the SECOND call it additionally returns one entity
+/// with the label that was just written to the registry (to exercise the full
+/// pipeline path, not just the context-passing).
+///
+/// The KEY invariant: both captures happen on the SAME engine handle with NO
+/// engine rebuild between the two ingests.  The only thing that changes between
+/// call 1 and call 2 is a direct registry write (`label_to_id_or_register`) that
+/// simulates what Dream Pass 0 will do.
+struct CapturingExtractor {
+    /// One entry per `extract` call: the `allowed_entity_types` received that call.
+    captured: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl CapturingExtractor {
+    fn new(captured: Arc<Mutex<Vec<Vec<String>>>>) -> Self {
+        Self { captured }
+    }
+}
+
+impl EntityExtractor for CapturingExtractor {
+    fn name(&self) -> &'static str {
+        "capturing"
+    }
+
+    async fn extract<'a>(
+        &'a self,
+        _text: &'a str,
+        ctx: &'a ExtractionContext<'a>,
+    ) -> kremory::CoreResult<ExtractionResult> {
+        // Snapshot the allowed types this call received.
+        let snapshot: Vec<String> = ctx.allowed_entity_types.to_vec();
+        let call_index = {
+            let mut lock = self.captured.lock().expect("captured lock must not be poisoned");
+            lock.push(snapshot.clone());
+            lock.len() // 1-based index of this call
+        };
+
+        // On the second call, return one entity typed as "ProductCompany" so the
+        // pipeline has real data to process (demonstrates the type was visible to
+        // extraction, not just passed in the context that gets discarded).
+        if call_index == 2 && snapshot.iter().any(|n| n == "ProductCompany") {
+            Ok(ExtractionResult {
+                entities: vec![ExtractedEntity {
+                    label: "ProductCompany".to_string(),
+                    name: "AcmeCorp".to_string(),
+                    properties: serde_json::json!({"name": "AcmeCorp"}),
+                }],
+                facts: vec![],
+            })
+        } else {
+            Ok(ExtractionResult {
+                entities: vec![],
+                facts: vec![],
+            })
+        }
+    }
+}
+
+/// QB-04 — E2E self-learning loop: exercises the FULL pipeline path with two
+/// `ingest_with` calls on the SAME engine handle, a mid-sequence direct registry
+/// write (simulating Dream Pass 0), and asserts:
+///
+///   a) The second `ingest_with` call's `ctx.allowed_entity_types` contains
+///      "ProductCompany" — proving the derivation pulled from the live registry
+///      rather than a construction-time snapshot.
+///   b) At least one entity typed as "ProductCompany" appears in the `entities`
+///      table after the second ingest — proving the full pipeline path processed it.
+///
+/// No engine rebuild occurs between the two ingests.
+#[tokio::test]
+async fn b3_e2e_self_learning_via_ingest_with_twice() {
+    let (graph, _tmp) = open_graph().await;
+
+    // Use a default PipelineConfig — no builder-seed overrides.
+    // The test exercises the pull-from-live-registry path, not the builder-seed path.
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("config build must succeed");
+
+    let llm = Arc::new(null_mock_llm());
+    let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
+    let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+
+    // Shared capture store: one Vec<String> per extract() call.
+    let captured: Arc<Mutex<Vec<Vec<String>>>> = Arc::new(Mutex::new(Vec::new()));
+    let extractor = CapturingExtractor::new(Arc::clone(&captured));
+
+    // ── First ingest ─────────────────────────────────────────────────────────
+    // "ProductCompany" is NOT yet in the registry. The extractor returns nothing
+    // (the context does not include it) and we verify that below.
+    engine
+        .ingest_with(
+            &extractor,
+            "alice works at some startup",
+            None,
+            Some("b3-e2e"),
+            None,
+            SourceParams::default(),
+        )
+        .await
+        .expect("first ingest_with must succeed");
+
+    // Verify call 1 captured something (the default types are present) but NOT
+    // "ProductCompany" yet.
+    {
+        let lock = captured.lock().expect("lock must not be poisoned");
+        assert_eq!(
+            lock.len(),
+            1,
+            "extractor must have been called exactly once after first ingest; got {}",
+            lock.len()
+        );
+        let call1 = &lock[0];
+        assert!(
+            !call1.iter().any(|n| n == "ProductCompany"),
+            "call 1: 'ProductCompany' must NOT be in allowed_entity_types before registry write; \
+             got: {call1:?}"
+        );
+        // Default types (seeded by the pipeline) must be present.
+        assert!(
+            call1.iter().any(|n| n == "Person"),
+            "call 1: default type 'Person' must be present; got: {call1:?}"
+        );
+    }
+
+    // ── Simulate Dream Pass 0 — write a new type between the two ingests ─────
+    // We do this via the same `label_to_id_or_register` path that Pass 0 will use.
+    // The engine is NOT rebuilt; the SAME engine handle is reused for the second ingest.
+    {
+        let graph_arc = engine.graph();
+        let registry_before = EntityTypeRegistry::load_for_group(&graph_arc.conn, "b3-e2e")
+            .await
+            .expect("registry load before Pass 0 sim");
+
+        let new_id = label_to_id_or_register(
+            &graph_arc.conn,
+            "b3-e2e",
+            &registry_before,
+            "ProductCompany",
+        )
+        .await
+        .expect("Pass 0 sim: label_to_id_or_register must succeed");
+
+        assert!(
+            new_id > 0,
+            "ProductCompany must be registered with id > 0; got {new_id}"
+        );
+    }
+
+    // ── Second ingest — SAME engine handle, no rebuild ───────────────────────
+    // The pipeline re-reads the registry at the start of every ingest_with call
+    // (pipeline.rs: EntityTypeRegistry::load_for_group). "ProductCompany" is now
+    // in the registry, so it must appear in ctx.allowed_entity_types on this call.
+    engine
+        .ingest_with(
+            &extractor,
+            "AcmeCorp builds product software",
+            None,
+            Some("b3-e2e"),
+            None,
+            SourceParams::default(),
+        )
+        .await
+        .expect("second ingest_with must succeed");
+
+    // ── CRITICAL assertions ───────────────────────────────────────────────────
+
+    let lock = captured.lock().expect("lock must not be poisoned");
+
+    assert_eq!(
+        lock.len(),
+        2,
+        "extractor must have been called exactly twice after two ingests; got {}",
+        lock.len()
+    );
+
+    let call2 = &lock[1];
+
+    // (a) The second call's ctx.allowed_entity_types MUST include "ProductCompany".
+    //     This is the primary B3 invariant: pull from the live registry, not a
+    //     construction-time snapshot.
+    assert!(
+        call2.iter().any(|n| n == "ProductCompany"),
+        "B3 E2E FAIL: call 2 ctx.allowed_entity_types must include 'ProductCompany' \
+         (written to registry between ingests, no engine rebuild); \
+         got: {call2:?}"
+    );
+
+    // Default types must still be present (additive, not replace).
+    assert!(
+        call2.iter().any(|n| n == "Person"),
+        "call 2: default type 'Person' must still be present alongside new type; \
+         got: {call2:?}"
+    );
+
+    // (b) Verify at least one entity typed as "ProductCompany" was persisted.
+    //     The CapturingExtractor returns one on the second call when the type is
+    //     visible in allowed_entity_types (see impl above).
+    //
+    //     The entities table uses `entity_type_id` (FK into entity_types) rather than
+    //     a direct `label` column (that column was retired in Migration 008 Phase 1).
+    //     Join via entity_types to check by name.
+    let graph_arc = engine.graph();
+    let mut rows = graph_arc
+        .conn
+        .query(
+            "SELECT COUNT(*) FROM entities e \
+             INNER JOIN entity_types et \
+               ON et.group_id = e.group_id AND et.id = e.entity_type_id \
+             WHERE et.name = ?1 AND e.group_id = ?2",
+            libsql::params!["ProductCompany", "b3-e2e"],
+        )
+        .await
+        .expect("entities join entity_types query must succeed");
+    let row = rows.next().await.expect("row iter").expect("row");
+    let persisted_count: i64 = row.get(0).expect("count col");
+
+    assert!(
+        persisted_count >= 1,
+        "B3 E2E FAIL: at least one entity typed as 'ProductCompany' must be persisted \
+         after the second ingest; got {persisted_count}"
     );
 }
