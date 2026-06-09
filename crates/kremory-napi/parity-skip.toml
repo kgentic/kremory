@@ -510,6 +510,16 @@ symbol = "TypeProposal"
 reason = "ADR-037 §3: new type introduced for Dream Pass 0; napi mirror (JsTypeProposal) deferred to v0.2.0"
 revisit = "v0.2.0"
 
+[[skip]]
+symbol = "DreamSummary::entities_reclassified"
+reason = "ADR-046 Option E E8: Dream Pass 2 reclassify count; JsDreamSummary omits this field pending full dream API surface stabilisation at v0.2.0 (same deferral rationale as types_discovered)"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "ReclassifyResult"
+reason = "ADR-046 Option E: internal Pass 2 result type returned from reclassify primitive; not on JS surface — JS consumers see the aggregated entities_reclassified count in JsDreamSummary (when mirrored at v0.2.0)"
+revisit = "v0.2.0"
+
 # ── Phase C v0.1.1 dream scheduler surface (ADR-006 / sprint plan §Phase C C9-C11) ──
 #
 # DreamSchedule enum + with_dream_schedule builder + start/stop_dream_scheduler

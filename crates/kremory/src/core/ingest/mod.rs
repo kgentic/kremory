@@ -6,7 +6,8 @@
 //! - `helpers` — context snippet extraction + SimpleGraph test alias
 //! - `pipeline` — `ingest_with` + `ingest_deferred` impl blocks
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 use metrics;
@@ -387,11 +388,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let start = std::time::Instant::now();
 
         // C3: acquire dream serialization lock (blocks concurrent passes).
+        // Uses tokio::sync::Mutex so the guard is Send across .await points.
         // The lock is released when `_guard` is dropped at end of scope.
-        let _guard = self
-            .dream_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self.dream_lock.lock().await;
 
         // C8: emit dream pass start counter.
         metrics::counter!("rql.dream.pass_started_total").increment(1);
@@ -412,8 +411,34 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // Phase C stub: ghost episode retry pass — wired in Phase D.
         let ghost_episodes_retried = 0usize;
 
-        // Phase C stub: entity reclassify pass — wired in Phase E.
-        let entities_reclassified = 0usize;
+        // Phase E: entity reclassify pass (ADR-046 Option E, 2-arm SELECT).
+        // Runs only when LLM is wired; returns 0 silently on NoLlm path.
+        let entities_reclassified = if let Some(llm_arc) = self.llm.as_ref() {
+            let llm_ref: &L = llm_arc.as_ref();
+            match crate::core::dream::reclassify::reclassify_all_groups(
+                &self.graph,
+                llm_ref,
+                crate::core::dream::reclassify::ReclassifyOpts {
+                    confidence_threshold: opts.confidence_threshold,
+                    high_conf_threshold: opts.reclassify_high_conf_threshold,
+                    max_batch_size: crate::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+                },
+            )
+            .await
+            {
+                Ok(r) => r.entities_reclassified,
+                Err(e) => {
+                    // Non-fatal per E7 — surface as debug log, continue.
+                    tracing::warn!(
+                        error = %e,
+                        "kremory.dream.reclassify_all_groups failed — skipping; dream pass unaffected"
+                    );
+                    0
+                }
+            }
+        } else {
+            0
+        };
 
         let duration_ms = start.elapsed().as_millis() as u64;
 

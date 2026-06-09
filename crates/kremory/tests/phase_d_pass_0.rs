@@ -255,6 +255,7 @@ async fn d6_dream_summary_types_discovered_field_accessible() {
             description: "A test type".to_string(),
             justification: "test".to_string(),
         }],
+        entities_reclassified: 0,
         warnings: vec!["test warning".to_string()],
     };
     assert_eq!(summary.types_discovered.len(), 1);
