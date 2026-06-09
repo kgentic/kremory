@@ -1486,16 +1486,18 @@ pub(crate) async fn migrate_011_episodes_content_hash(
 
 // ─── Migration 012 ─────────────────────────────────────────────────────────
 
-/// Migration 012: add source-tier columns to `entities` + `v_entity_drift_candidates` view.
+/// Migration 012: add source-tier columns to `entities` + legacy backfill.
 ///
 /// Adds three columns per ADR-045 §2 and ADR-046 §1:
 ///   - `entity_type_source TEXT CHECK(...)` — which tier last set the entity type
 ///   - `entity_type_assigned_at TEXT`        — ISO-8601 timestamp of the last assignment
 ///   - `ner_confidence REAL`                 — GLiNER / NER span confidence (Phase 1 only)
 ///
-/// Creates `v_entity_drift_candidates` view (ADR-046 §1): entities with the same
-/// name in the same namespace but different types — candidates for dream-phase reconcile.
-/// ConsumerPinned entities are excluded from the view.
+/// Note: `v_entity_drift_candidates` view is NOT created by this migration. Drift detection
+/// is deferred to Phase E reclassify implementation per ADR-046 Amendment 2026-06-09
+/// (Option E) — the original row-comparison design is structurally impossible under
+/// kremory's `id = normalize_name(text)` dedup model (same name → same row always).
+/// See ADR-046 §Amendment-2026-06-09 and TD-032 for rationale.
 ///
 /// Legacy backfill: sets `entity_type_source = 'Phase1Ner'` and
 /// `entity_type_assigned_at = COALESCE(recorded_at, datetime('now'))` on all existing rows
@@ -1593,40 +1595,15 @@ pub(crate) async fn migrate_012_source_tier_columns(
         );
     }
 
-    // ── Step 5: CREATE VIEW v_entity_drift_candidates ────────────────────────
+    // ── Step 5: Legacy backfill ───────────────────────────────────────────────
     //
-    // Entities with the same normalised name in the same namespace (group_id)
-    // but different entity_type_id values are drift candidates for the dream
-    // reconcile pass (ADR-046 §1). ConsumerPinned entities are excluded — they
-    // are structurally protected from dream re-typing (ADR-045 §3).
-
-    // NOTE: entities has no separate `name` column. The normalized entity name
-    // IS the primary key `id` (set by normalize_name() at ingest time). The drift
-    // view therefore compares LOWER(TRIM(e1.id)) to LOWER(TRIM(e2.id)).
-    // The spec draft used `e2.namespace` (actual column: `group_id`) and
-    // `e2.name` (actual field: `id`) — both corrected here per T1-T2-impl.md.
-    //
-    // IS NULL guard: NULL source rows are not ConsumerPinned; spec draft omitted
-    // this (strict != treats NULL as non-match in SQLite, so NULL rows would have
-    // been silently excluded from reclassify candidates without the OR IS NULL arm).
-    conn.execute(
-        "CREATE VIEW IF NOT EXISTS v_entity_drift_candidates AS \
-         SELECT e1.id AS entity_id \
-         FROM entities e1 \
-         WHERE (e1.entity_type_source IS NULL OR e1.entity_type_source != 'ConsumerPinned') \
-           AND EXISTS ( \
-               SELECT 1 FROM entities e2 \
-               WHERE LOWER(TRIM(e2.id)) = LOWER(TRIM(e1.id)) \
-                 AND e2.group_id = e1.group_id \
-                 AND e2.entity_type_id != e1.entity_type_id \
-                 AND e2.id != e1.id \
-           )",
-        (),
-    )
-    .await
-    .map_err(step("create_view_drift_candidates"))?;
-
-    // ── Step 6: Legacy backfill ───────────────────────────────────────────────
+    // NOTE: v_entity_drift_candidates view is intentionally NOT created here.
+    // Drift detection deferred to Phase E reclassify per ADR-046 Amendment
+    // 2026-06-09 (Option E). The row-comparison approach (self-JOIN on entities
+    // looking for same id, different entity_type_id) is structurally impossible
+    // in kremory: `id = normalize_name(text)` means same name → same row always;
+    // the join condition `e2.id != e1.id AND TRIM(e2.id) = TRIM(e1.id)` can
+    // never be satisfied. See TD-032 + ADR-046 §Amendment-2026-06-09 for rationale.
     //
     // All existing rows written before this migration have NULL entity_type_source.
     // Backfill them to 'Phase1Ner' (the only tier active before v0.1.1) so
@@ -1647,10 +1624,21 @@ pub(crate) async fn migrate_012_source_tier_columns(
     tracing::info!(
         target: "kremory::migrations",
         "migrate_012: entity_type_source / entity_type_assigned_at / ner_confidence \
-         added to entities; v_entity_drift_candidates view created; legacy backfill done."
+         added to entities; legacy backfill done. \
+         (drift view deferred to Phase E per ADR-046 Amendment 2026-06-09 Option E)"
     );
     Ok(())
 }
+
+// ─── Migration 013 is reserved for Phase E (drift mechanism) ─────────────────
+//
+// Per ADR-046 Amendment 2026-06-09 (Option E), the entity_type_assignments
+// history table and updated v_entity_drift_candidates view are deferred.
+// Migration 012 ships source-tier columns + legacy backfill only — no view,
+// no history table. See TD-032.
+//
+// The following block is intentionally absent. When Phase E lands, migrate_013
+// will be authored here against empirical Phase G TD-017 benchmark data.
 
 // ─── Migration 006 ─────────────────────────────────────────────────────────
 
