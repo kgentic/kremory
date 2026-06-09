@@ -2034,7 +2034,7 @@ dependencies = [
 
 [[package]]
 name = "kremory"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "kremory-napi"
-version = "0.1.7-alpha.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "autoagents-llm",
