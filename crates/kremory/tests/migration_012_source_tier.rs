@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-//! Migration 012 source-tier column tests — DoD A1–A9.
+//! Migration 012 source-tier column tests — DoD A1–A9 + Q-04 symmetric protection.
 //!
 //! Governing spec: migration-010-detail-spec-closing-vera-cycle-3-highs-2026-06-09.md §1.1–1.4
 //! ADR-045 §2 (Phase1Ner), §3 (ConsumerPinned), §6 (GLiNER confidence)
@@ -21,6 +21,13 @@
 //! A8 — ConsumerPinned write: update_entity_source_tier stamps 'ConsumerPinned' correctly.
 //! A9 — Implied by A1-A8 + separate `cargo test` invocation.
 
+use std::sync::Arc;
+
+use chrono::Utc;
+use kremory::core::config::PipelineConfig;
+use kremory::core::extraction::LlmExtractor;
+use kremory::core::ingest::{Engine, PrePinnedFact, SourceParams};
+use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -673,5 +680,171 @@ async fn a8_upsert_preserves_consumer_pinned_tier() {
         source.as_deref(),
         Some("ConsumerPinned"),
         "upsert must preserve ConsumerPinned tier (COALESCE guard); got: {source:?}"
+    );
+}
+
+// ─── Q-04: symmetric ConsumerPinned — object_id entity stamped ───────────────
+//
+// Governing spec: ADR-045 §3 amendment 2026-06-09; migration-010-detail-spec §1.2
+// (object row). Tests MUST use Engine::ingest_with() + PrePinnedFact directly —
+// the Memory::with_facts() facade always sets object_id = None.
+
+/// Q-04 gate: when a PrePinnedFact is inserted with object_id = Some(...),
+/// BOTH the subject entity AND the object entity are stamped ConsumerPinned.
+#[tokio::test]
+async fn q04_with_facts_object_id_stamped_consumer_pinned() {
+    let (graph, _tmp) = open_graph().await;
+    let graph = Arc::new(graph);
+
+    let llm = Arc::new(MockChatProvider::null());
+    let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("PipelineConfig default must succeed");
+    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), embedder, config);
+
+    let extractor = LlmExtractor::new(llm);
+
+    // Insert both entities first so the pin_fact branch finds them (stub-insert
+    // path is the same; both are inserted Phase1Ner by the pipeline before pin_fact runs).
+    // We rely on ingest_with doing the stub-insert internally — all we need is
+    // skip_extraction so the LLM-dependent code path is never reached.
+
+    let params = SourceParams {
+        pre_pinned_facts: vec![PrePinnedFact {
+            subject: "q04-alice".to_string(),
+            predicate: "works_at".to_string(),
+            object_id: Some("q04-acme".to_string()),
+            object_value: None,
+            valid_from: Utc::now(),
+            confidence: 1.0,
+        }],
+        skip_extraction: true,
+        ..SourceParams::default()
+    };
+
+    engine
+        .ingest_with(
+            &extractor,
+            "Q-04 symmetric ConsumerPinned test episode.",
+            None,
+            Some("default"),
+            None,
+            params,
+        )
+        .await
+        .expect("ingest_with with object_id fact must succeed");
+
+    // Assert BOTH endpoints are ConsumerPinned.
+    for entity_id in &["q04-alice", "q04-acme"] {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT entity_type_source FROM entities WHERE id = ?1",
+                libsql::params![*entity_id],
+            )
+            .await
+            .expect("SELECT must succeed");
+
+        let row = rows
+            .next()
+            .await
+            .expect("row iteration must not error")
+            .unwrap_or_else(|| panic!("entity '{entity_id}' must exist after ingest_with"));
+
+        let source: Option<String> = row.get(0).expect("entity_type_source at index 0");
+        assert_eq!(
+            source.as_deref(),
+            Some("ConsumerPinned"),
+            "Q-04: entity '{entity_id}' must be ConsumerPinned after pin_fact; got: {source:?}"
+        );
+    }
+}
+
+/// Q-04 negative gate: when a PrePinnedFact has object_id = None (literal
+/// object_value), only the subject entity is stamped ConsumerPinned — no object
+/// entity is created or stamped.
+#[tokio::test]
+async fn q04_with_facts_object_value_literal_no_object_stamp() {
+    let (graph, _tmp) = open_graph().await;
+    let graph = Arc::new(graph);
+
+    let llm = Arc::new(MockChatProvider::null());
+    let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("PipelineConfig default must succeed");
+    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), embedder, config);
+
+    let extractor = LlmExtractor::new(llm);
+
+    let params = SourceParams {
+        pre_pinned_facts: vec![PrePinnedFact {
+            subject: "q04-literal-subject".to_string(),
+            predicate: "has_value".to_string(),
+            object_id: None,
+            object_value: Some("some literal string".to_string()),
+            valid_from: Utc::now(),
+            confidence: 1.0,
+        }],
+        skip_extraction: true,
+        ..SourceParams::default()
+    };
+
+    engine
+        .ingest_with(
+            &extractor,
+            "Q-04 literal object_value — no object entity should be created.",
+            None,
+            Some("default"),
+            None,
+            params,
+        )
+        .await
+        .expect("ingest_with with literal object_value must succeed");
+
+    // Subject must be ConsumerPinned.
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT entity_type_source FROM entities WHERE id = 'q04-literal-subject'",
+            (),
+        )
+        .await
+        .expect("SELECT subject must succeed");
+
+    let row = rows
+        .next()
+        .await
+        .expect("row iteration must not error")
+        .expect("q04-literal-subject must exist after ingest_with");
+
+    let source: Option<String> = row.get(0).expect("entity_type_source at index 0");
+    assert_eq!(
+        source.as_deref(),
+        Some("ConsumerPinned"),
+        "Q-04 literal: subject must be ConsumerPinned; got: {source:?}"
+    );
+
+    // No entity with id matching the literal value should exist.
+    let mut rows2 = graph
+        .conn
+        .query(
+            "SELECT COUNT(*) FROM entities WHERE id = 'some literal string'",
+            (),
+        )
+        .await
+        .expect("SELECT literal id must succeed");
+
+    let row2 = rows2
+        .next()
+        .await
+        .expect("row iteration must not error")
+        .expect("COUNT(*) must return a row");
+
+    let count: i64 = row2.get(0).expect("count at index 0");
+    assert_eq!(
+        count, 0,
+        "Q-04 literal: no entity must be created for a literal object_value; got count={count}"
     );
 }
