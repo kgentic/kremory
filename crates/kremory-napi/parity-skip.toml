@@ -506,6 +506,11 @@ reason = "ADR-037 §3 D6: Pass 0 opt-out toggle; JsDreamOpts does not expose thi
 revisit = "v0.2.0"
 
 [[skip]]
+symbol = "DreamOpts::max_episodes_per_run"
+reason = "Phase F F3: batch-cap ops knob; JsDreamOpts defers episode-count controls to v0.2.0 alongside full dream API surface stabilisation"
+revisit = "v0.2.0"
+
+[[skip]]
 symbol = "TypeProposal"
 reason = "ADR-037 §3: new type introduced for Dream Pass 0; napi mirror (JsTypeProposal) deferred to v0.2.0"
 revisit = "v0.2.0"

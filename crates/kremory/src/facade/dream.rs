@@ -114,12 +114,38 @@ impl<'a> DreamRequest<'a> {
                 // accept it monomorphized. Orphan rules prevent
                 // `impl ChatProvider for Arc<dyn ChatProvider>` directly.
                 let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
+                // F3 — apply max_episodes_per_run cap to Pass 0 cluster budget.
+                // `max_proposals` bounds the entity clusters surfaced to the LLM;
+                // capping it is the observable knob the ops team can tune.
+                let pass0_max = opts
+                    .max_episodes_per_run
+                    .map(|cap| {
+                        let default_max =
+                            crate::core::dream::discover_types::MAX_PROPOSALS;
+                        if cap < default_max {
+                            metrics::counter!(
+                                "kremory.dream.batch_cap_hit_total",
+                                "phase" => "pass0"
+                            )
+                            .increment(1);
+                            tracing::debug!(
+                                target: "kremory::dream::pass0",
+                                cap,
+                                default_max,
+                                "kremory.dream.pass0 batch capped by max_episodes_per_run"
+                            );
+                            cap
+                        } else {
+                            default_max
+                        }
+                    })
+                    .unwrap_or(crate::core::dream::discover_types::MAX_PROPOSALS);
                 match crate::core::dream::discover_types::discover_types(
                     &tg.conn,
                     &group_id,
                     &arc_llm,
                     embedder_ref,
-                    crate::core::dream::discover_types::MAX_PROPOSALS,
+                    pass0_max,
                 )
                 .await
                 {
@@ -151,6 +177,28 @@ impl<'a> DreamRequest<'a> {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
                 let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
+                // F3 — apply max_episodes_per_run cap to Pass 2 entity-candidate batch.
+                // `ReclassifyOpts::max_batch_size` bounds candidates processed per run.
+                let pass2_opts = {
+                    let mut o = crate::core::dream::reclassify::ReclassifyOpts::default();
+                    if let Some(cap) = opts.max_episodes_per_run {
+                        if cap < o.max_batch_size {
+                            metrics::counter!(
+                                "kremory.dream.batch_cap_hit_total",
+                                "phase" => "pass2"
+                            )
+                            .increment(1);
+                            tracing::debug!(
+                                target: "kremory::dream::pass2",
+                                cap,
+                                default_batch = o.max_batch_size,
+                                "kremory.dream.pass2 batch capped by max_episodes_per_run"
+                            );
+                            o.max_batch_size = cap;
+                        }
+                    }
+                    o
+                };
                 // Use reclassify_high_conf_threshold from opts if available via DreamOpts;
                 // DreamOpts does not yet carry per-pass thresholds — use canonical defaults.
                 // Full per-pass tuning via DreamPassOpts is available on the Engine path;
@@ -159,7 +207,7 @@ impl<'a> DreamRequest<'a> {
                     &tg.conn,
                     &group_id,
                     &arc_llm,
-                    crate::core::dream::reclassify::ReclassifyOpts::default(),
+                    pass2_opts,
                 )
                 .await
                 {

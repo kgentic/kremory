@@ -1015,6 +1015,33 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     invalidated_fact_ids.push(*fact_id);
                 }
 
+                // F5 — within-episode contradiction pre-check (SQL-only).
+                // If pool_a already contains a non-expired fact for this subject+predicate
+                // that was created BY THIS episode (`source_episode_id == episode_id`), a
+                // same-episode ingest round is about to emit a contradicting triple.
+                // Emit the observability counter and skip insertion — the first fact wins.
+                // This is purely a client-side filter on data already fetched; no extra
+                // DB round-trip is needed.
+                let within_episode_conflict = pool_a
+                    .iter()
+                    .any(|f| f.source_episode_id == Some(episode_id));
+                if within_episode_conflict {
+                    let ns = group_id.unwrap_or("default");
+                    metrics::counter!(
+                        "rql.ingest.within_episode_contradiction",
+                        "namespace" => ns.to_string()
+                    )
+                    .increment(1);
+                    tracing::debug!(
+                        subject = %subject_id,
+                        predicate = %fact.predicate,
+                        episode_id,
+                        namespace = %ns,
+                        "kremory.ingest.within_episode_contradiction: skipping duplicate triple"
+                    );
+                    continue;
+                }
+
                 // Insert the new fact — skip gracefully if FK constraint fails
                 // (e.g., fact references an entity not in the extraction results).
                 //
@@ -1296,6 +1323,30 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 self.graph
                     .invalidate_fact_with_reason(*fact_id, Utc::now(), ref_time)
                     .await?;
+            }
+
+            // F5 — within-episode contradiction pre-check (deferred path).
+            // Same check as the inline ingest path: if pool_a already contains a
+            // non-expired fact for this subject+predicate originating from this
+            // episode, skip and emit the counter.
+            let deferred_within_conflict = pool_a
+                .iter()
+                .any(|f| f.source_episode_id == Some(episode_id));
+            if deferred_within_conflict {
+                let ns = group_id.unwrap_or("default");
+                metrics::counter!(
+                    "rql.ingest.within_episode_contradiction",
+                    "namespace" => ns.to_string()
+                )
+                .increment(1);
+                tracing::debug!(
+                    subject = %subject_id,
+                    predicate = %fact.predicate,
+                    episode_id,
+                    namespace = %ns,
+                    "kremory.ingest.within_episode_contradiction: deferred path skipping duplicate triple"
+                );
+                continue;
             }
 
             // ADR-035 §5 Option A: use try_insert_fact for caller-pin dedup parity

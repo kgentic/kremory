@@ -671,6 +671,17 @@ pub struct DreamOpts {
     /// to the LLM for new entity-type proposals.
     /// Set to `false` to skip type discovery on this dream cycle.
     pub include_type_discovery: bool,
+    /// Maximum number of episodes processed per dream run.
+    ///
+    /// Caps both Dream Pass 0 (type discovery) and Dream Pass 2 (reclassify)
+    /// episode batches.  `None` (default) = no cap; all qualifying episodes
+    /// are processed in one run.
+    ///
+    /// When the cap is hit the counter
+    /// `kremory.dream.batch_cap_hit_total{phase=pass0|pass2}` is incremented
+    /// per CLAUDE.md Rule 19 (observability-first-class).  Use this knob for
+    /// rate-limiting dream-phase LLM spend on large corpora.
+    pub max_episodes_per_run: Option<usize>,
 }
 
 impl Default for DreamOpts {
@@ -678,6 +689,7 @@ impl Default for DreamOpts {
         Self {
             since: None,
             include_type_discovery: true,
+            max_episodes_per_run: None,
         }
     }
 }
