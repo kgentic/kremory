@@ -10,11 +10,11 @@
 
 | Phase | Scope | Status |
 |---|---|---|
-| A | Migration 010 (source-tier columns + drift_detection_view + legacy backfill); `RawEntityIntegerId.confidence`; per-extractor source-tier contract; `ConsumerPinned` write | pending |
+| A | Migration 012 (source-tier columns + legacy backfill — drift view deferred to Phase E per ADR-046 Amendment); `RawEntityIntegerId.confidence`; per-extractor source-tier contract; symmetric `ConsumerPinned` write (subject + object_id) | **complete** (a57fb6f, Quinn PASS 89/100) |
 | B | TD-028 Phase 1 pull-shape registry-read derivation | pending |
 | C | Dream API surface: `Engine::run_dream_pass_sync`, `DreamOpts`, `ghost_episodes`, `assert_entity_type`, `Mutex<()>` serialization | pending |
 | D | Dream Pass 0 implementation (ADR-037): clustering + LLM proposal call + anti-redundancy gate | pending |
-| E | Dream Pass 2 reclassify (ADR-046 unified scope): 3-arm SELECT + confidence-aware source-tier write | pending |
+| E | Dream Pass 2 reclassify (ADR-046 Option E — 2-arm SELECT catch_all_cascade + low_confidence, drift arm deferred per Amendment 2026-06-09): confidence-aware source-tier write | pending |
 | F | Observability + ergonomics: rate limits + concurrency docs + within-episode contradiction pre-check | pending |
 | G | TD-017 empirical hatch benchmark (gemma4-e2b + cloud-LLM) | pending |
 | H | TD ledger close + boy-scout sweep | pending |
