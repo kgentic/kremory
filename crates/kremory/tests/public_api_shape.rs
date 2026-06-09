@@ -155,6 +155,7 @@ impl GraphHandle for StubHandle {
             facts_archived: 0,
             duration_ms: 0,
             types_discovered: vec![],
+            entities_reclassified: 0,
             warnings: vec![],
         })
     }

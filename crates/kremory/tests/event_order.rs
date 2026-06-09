@@ -253,6 +253,7 @@ impl GraphHandle for StubIngestingHandle {
             facts_archived: 0,
             duration_ms: 0,
             types_discovered: vec![],
+            entities_reclassified: 0,
             warnings: vec![],
         })
     }
@@ -552,6 +553,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
                 facts_archived: 0,
                 duration_ms: 0,
                 types_discovered: vec![],
+                entities_reclassified: 0,
                 warnings: vec![],
             })
         }

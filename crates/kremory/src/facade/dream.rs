@@ -142,6 +142,53 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
+        // ADR-046 Option E — Dream Pass 2: reclassify.
+        // Runs AFTER Pass 0 so newly discovered types (from Pass 0) are available in
+        // the entity type registry for the reclassify LLM prompt.
+        // Pass ordering per DoD E7: Pass 0 commits → Pass 2 (reclassify) → Pass 3 (canonicalize).
+        // Pass 3 (canonicalize) is handled by `run_dream_phase` above (legacy path).
+        {
+            if let Some(tg) = self.memory.temporal_graph.as_ref() {
+                let group_id = namespace_to_group_id(&ns);
+                let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
+                // Use reclassify_high_conf_threshold from opts if available via DreamOpts;
+                // DreamOpts does not yet carry per-pass thresholds — use canonical defaults.
+                // Full per-pass tuning via DreamPassOpts is available on the Engine path;
+                // the DreamRequest path uses sensible defaults until DreamOpts is extended.
+                match crate::core::dream::reclassify::reclassify(
+                    &tg.conn,
+                    &group_id,
+                    &arc_llm,
+                    crate::core::dream::reclassify::ReclassifyOpts::default(),
+                )
+                .await
+                {
+                    Ok(reclassify_result) => {
+                        // Aggregate entities_reclassified into DreamSummary (E8).
+                        // DreamPhaseResult does not yet carry entities_reclassified;
+                        // we accumulate it separately and fold into DreamSummary after From.
+                        let reclassified = reclassify_result.entities_reclassified;
+                        result.dream_warnings.extend(reclassify_result.warnings);
+                        // Convert result → summary, then set reclassified count (E8).
+                        let mut summary = DreamSummary::from(result);
+                        summary.entities_reclassified = reclassified;
+                        return Ok(summary);
+                    }
+                    Err(e) => {
+                        // Pass 2 failure is non-fatal — surface as warning, don't abort dream.
+                        tracing::warn!(
+                            target: "kremory::dream::pass2",
+                            error = %e,
+                            "Dream Pass 2 reclassify failed — skipping; dream phase result unaffected"
+                        );
+                        result.dream_warnings.push(format!(
+                            "Dream Pass 2 reclassify failed: {e}"
+                        ));
+                    }
+                }
+            }
+        }
+
         Ok(DreamSummary::from(result))
     }
 }

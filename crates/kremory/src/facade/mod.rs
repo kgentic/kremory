@@ -125,6 +125,7 @@ pub struct WithEmb;
 /// substrate's consolidation output, wrapped at the facade level.
 ///
 /// ADR-037 §3 D6: `types_discovered` + `warnings` added for Dream Pass 0.
+/// ADR-046 Option E E8: `entities_reclassified` added for Dream Pass 2.
 #[derive(Debug, Clone)]
 pub struct DreamSummary {
     pub communities_updated: usize,
@@ -135,6 +136,9 @@ pub struct DreamSummary {
     /// Entity types proposed and accepted by Dream Pass 0 type discovery.
     /// Empty when Pass 0 was not run or produced no accepted proposals.
     pub types_discovered: Vec<crate::core::dream::TypeProposal>,
+    /// Total entities reclassified by Dream Pass 2 (catch_all_cascade + low_confidence arms).
+    /// Zero when Pass 2 was not run or found no candidates.
+    pub entities_reclassified: usize,
     /// Warnings emitted during the dream phase.
     /// Includes degraded-mode notices (e.g. anti-redundancy gate skipped).
     pub warnings: Vec<String>,
@@ -149,6 +153,7 @@ impl From<DreamPhaseResult> for DreamSummary {
             facts_archived: r.facts_archived,
             duration_ms: r.duration_ms,
             types_discovered: r.types_discovered,
+            entities_reclassified: 0,
             warnings: r.dream_warnings,
         }
     }
@@ -158,14 +163,14 @@ impl From<crate::core::ingest::DreamPassSummary> for DreamSummary {
     fn from(s: crate::core::ingest::DreamPassSummary) -> Self {
         Self {
             // DreamPassSummary fields map to DreamSummary where applicable.
-            // Fields without a direct mapping are zeroed — Phase D/E will
-            // populate them from real consolidation output.
+            // Fields without a direct mapping are zeroed.
             communities_updated: 0,
             cross_episode_merges: s.ghost_episodes_retried,
             supersessions_recorded: 0,
             facts_archived: 0,
             duration_ms: s.duration_ms,
             types_discovered: Vec::new(),
+            entities_reclassified: s.entities_reclassified,
             warnings: Vec::new(),
         }
     }
