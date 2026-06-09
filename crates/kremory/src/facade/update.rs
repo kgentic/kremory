@@ -330,10 +330,14 @@ impl Memory {
 
         // `(? IS NULL OR group_id = ?)` evaluates to TRUE when filter is NULL
         // → no namespace scope applied.
+        // TD-003 Phase G: SELECT now projects source_id (idx 9), source_uri (idx 10),
+        // content_hash (idx 11) — closing Episode struct ↔ table column asymmetry.
+        // Previously content_hash was hardcoded None; source_id/source_uri were absent.
         let mut rows = conn
             .query(
                 "SELECT id, content, timestamp, source_type, metadata, group_id, \
-                        saga_id, sequence_number, recorded_at \
+                        saga_id, sequence_number, recorded_at, source_id, source_uri, \
+                        content_hash \
                  FROM episodes \
                  WHERE source_id = ?1 \
                    AND (?2 IS NULL OR group_id = ?2) \
@@ -368,11 +372,10 @@ impl Memory {
             let group_id = row.get::<Option<String>>(5).map_err(CoreError::Database)?;
             let saga_id = row.get::<Option<String>>(6).map_err(CoreError::Database)?;
             let sequence_number = row.get::<Option<i64>>(7).map_err(CoreError::Database)?;
-            // Episode.content_hash field is currently unsourced (no column on
-            // the episodes table — only facts.content_hash exists). Default
-            // None until/unless a future migration adds the column to episodes.
-            let content_hash: Option<String> = None;
             let recorded_at = row.get::<Option<String>>(8).map_err(CoreError::Database)?;
+            let source_id_col = row.get::<Option<String>>(9).map_err(CoreError::Database)?;
+            let source_uri = row.get::<Option<String>>(10).map_err(CoreError::Database)?;
+            let content_hash = row.get::<Option<String>>(11).map_err(CoreError::Database)?;
 
             out.push(crate::core::schema::Episode {
                 id,
@@ -383,8 +386,10 @@ impl Memory {
                 group_id,
                 saga_id,
                 sequence_number,
-                content_hash,
                 recorded_at,
+                source_id: source_id_col,
+                source_uri,
+                content_hash,
             });
         }
         Ok(out)
