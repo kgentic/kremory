@@ -1,0 +1,156 @@
+{
+  "model": "gemma4-e2b:latest",
+  "fixture": "legal_deposition",
+  "baseline": 81.2,
+  "results": {
+    "current": {
+      "direct_parse_rate": 0.0,
+      "score": {
+        "precision": 0.9333333333333333,
+        "recall": 0.875,
+        "f1": 0.9032258064516129,
+        "tp": 14,
+        "fp": 1,
+        "fn": 2,
+        "tp_names": [
+          "Gregory Tanaka",
+          "Clifford Reeves",
+          "Diana Ohlsson",
+          "Sandra Obi",
+          "Felix Drummond",
+          "Margaret Solis",
+          "Collette Beaumont",
+          "Harlow Industries, Inc.",
+          "Pinnacle Supply Co.",
+          "California Department of Industrial Relations",
+          "Los Angeles",
+          "Fresno",
+          "Alameda County",
+          "February 14, 2024"
+        ],
+        "fp_names": [
+          "Los Angeles Superior Court (wrong label: Organisation)"
+        ],
+        "fn_names": [
+          "Feldstein & Moorhouse LLP",
+          "Los Angeles Superior Court"
+        ]
+      },
+      "wall_clock": 3.6618258953094482
+    },
+    "authority": {
+      "direct_parse_rate": 1.0,
+      "score": {
+        "precision": 0.8666666666666667,
+        "recall": 0.8125,
+        "f1": 0.8387096774193549,
+        "tp": 13,
+        "fp": 2,
+        "fn": 3,
+        "tp_names": [
+          "Gregory Tanaka",
+          "Clifford Reeves",
+          "Diana Ohlsson",
+          "Sandra Obi",
+          "Felix Drummond",
+          "Margaret Solis",
+          "Collette Beaumont",
+          "Pinnacle Supply Co.",
+          "Los Angeles Superior Court",
+          "Los Angeles",
+          "Fresno",
+          "Alameda County",
+          "February 14, 2024"
+        ],
+        "fp_names": [
+          "Harlow Industries, Inc. (wrong label: Date)",
+          "California Department of Industrial Relations (wrong label: Concept)"
+        ],
+        "fn_names": [
+          "Harlow Industries, Inc.",
+          "Feldstein & Moorhouse LLP",
+          "California Department of Industrial Relations"
+        ]
+      },
+      "wall_clock": 17.290678024291992,
+      "avg_reject_rate": 0.0,
+      "additional_surfaced": []
+    }
+  },
+  "raw_responses_current": [
+    "\n\n```json\n{\n  \"typings\": [\n    {\"idx\": 0, \"entity_type_type_id\": ...},\n    // ...\n  ]\n}\n```",
+    "\n\n```json\n{\n  \"typings\": [\n    {\"idx\": 0, \"entity_type_type_id\": ...},\n    // ...\n  ]\n}\n```",
+    "\n\n```json\n{\n  \"typings\": [\n    {\"idx\": 0, \"entity_type_type_id\": ...},\n    // ...\n  ]\n}\n```"
+  ],
+  "raw_responses_authority": [
+    "\n{\"per_candidate\":[{\"idx\":0,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":1,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":2,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":3,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":4,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":5,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":6,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":7,\"decision\":\"Confirm\",\"entity_type_id\":7},{\"idx\":8,\"decision\":\"Confirm\",\"entity_type_id\":2},{\"idx\":9,\"decision\":\"Confirm\",\"entity_type_id\":9},{\"idx\":10,\"decision\":\"Confirm\",\"entity_type_id\":10},{\"idx\":11,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":12,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":13,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":14,\"decision\":\"Confirm\",\"entity_type_id\":7}]}",
+    "\n{\"per_candidate\":[{\"idx\":0,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":1,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":2,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":3,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":4,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":5,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":6,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":7,\"decision\":\"Confirm\",\"entity_type_id\":7},{\"idx\":8,\"decision\":\"Confirm\",\"entity_type_id\":2},{\"idx\":9,\"decision\":\"Confirm\",\"entity_type_id\":9},{\"idx\":10,\"decision\":\"Confirm\",\"entity_type_id\":10},{\"idx\":11,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":12,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":13,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":14,\"decision\":\"Confirm\",\"entity_type_id\":7}]}",
+    "\n{\"per_candidate\":[{\"idx\":0,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":1,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":2,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":3,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":4,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":5,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":6,\"decision\":\"Confirm\",\"entity_type_id\":1},{\"idx\":7,\"decision\":\"Confirm\",\"entity_type_id\":7},{\"idx\":8,\"decision\":\"Confirm\",\"entity_type_id\":2},{\"idx\":9,\"decision\":\"Confirm\",\"entity_type_id\":9},{\"idx\":10,\"decision\":\"Confirm\",\"entity_type_id\":10},{\"idx\":11,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":12,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":13,\"decision\":\"Confirm\",\"entity_type_id\":3},{\"idx\":14,\"decision\":\"Confirm\",\"entity_type_id\":7}]}"
+  ],
+  "ground_truth": [
+    {
+      "name": "Gregory Tanaka",
+      "label": "Person"
+    },
+    {
+      "name": "CLIFFORD REEVES",
+      "label": "Person"
+    },
+    {
+      "name": "DIANA OHLSSON",
+      "label": "Person"
+    },
+    {
+      "name": "Sandra Obi",
+      "label": "Person"
+    },
+    {
+      "name": "Felix Drummond",
+      "label": "Person"
+    },
+    {
+      "name": "Margaret Solis",
+      "label": "Person"
+    },
+    {
+      "name": "Collette Beaumont",
+      "label": "Person"
+    },
+    {
+      "name": "Harlow Industries, Inc.",
+      "label": "Organisation"
+    },
+    {
+      "name": "Pinnacle Supply Co.",
+      "label": "Organisation"
+    },
+    {
+      "name": "Feldstein & Moorhouse LLP",
+      "label": "Organisation"
+    },
+    {
+      "name": "California Department of Industrial Relations",
+      "label": "Organisation"
+    },
+    {
+      "name": "Los Angeles Superior Court",
+      "label": "Court"
+    },
+    {
+      "name": "Los Angeles",
+      "label": "Location"
+    },
+    {
+      "name": "Fresno",
+      "label": "Location"
+    },
+    {
+      "name": "Alameda County",
+      "label": "Location"
+    },
+    {
+      "name": "February 14, 2024",
+      "label": "Date"
+    }
+  ]
+}
