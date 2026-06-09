@@ -131,7 +131,10 @@ pub struct IngestionResult {
 /// Wraps TemporalGraph and adds extraction, resolution, and contradiction detection.
 pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     pub(crate) graph: Arc<TemporalGraph>,
-    pub(crate) llm: Arc<L>,
+    /// `None` when constructed via the NoLlm BYOE path (`Engine::with_custom_extractor`).
+    /// LLM-dependent pipeline steps (CascadeResolver, TwoPoolDetector) return
+    /// `Error::LlmRequired` when this is `None`.
+    pub(crate) llm: Option<Arc<L>>,
     pub(crate) embedder: Arc<Emb>,
     pub(crate) config: PipelineConfig,
     /// Optional OOV auditor for language-agnostic entity safety net.
@@ -173,7 +176,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         ));
         Self {
             graph,
-            llm,
+            llm: Some(llm),
             embedder,
             config,
             oov_auditor: None,
@@ -182,11 +185,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
     }
 
-    /// Construct an Engine with an explicit `ExtractorKind`.  Use this when
-    /// the caller wants to bypass the default `LlmExtractor` — e.g. pin
-    /// `GlinerLlm` explicitly, or inject a `Custom` extractor.
-    /// Wired in E-2 via `MemoryBuilder::with_extractor` / `with_gliner` knobs.
-    #[allow(dead_code)]
+    /// Construct an Engine with an explicit `ExtractorKind` and a wired LLM.
+    ///
+    /// Used by the `MemoryBuilder` when `.with_gliner()` or `.with_extractor()`
+    /// is combined with `.with_llm()` — the caller selects the extractor variant
+    /// explicitly while the LLM is still available for Category B pipeline steps
+    /// (CascadeResolver, TwoPoolDetector).
     pub(crate) fn with_extractor(
         graph: Arc<TemporalGraph>,
         llm: Arc<L>,
@@ -198,11 +202,35 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let model = if m.is_empty() { None } else { Some(m) };
         Self {
             graph,
-            llm,
+            llm: Some(llm),
             embedder,
             config,
             oov_auditor: None,
             model,
+            extractor,
+        }
+    }
+
+    /// Construct an Engine with a `Custom` extractor and NO LLM provider.
+    ///
+    /// Used by the `MemoryBuilder` when `.with_extractor(…)` is set but no
+    /// `.with_llm()` was called (the NoLlm BYOE path). All Category A pipeline
+    /// operations work normally. Category B steps (CascadeResolver, TwoPoolDetector)
+    /// return `Error::LlmRequired` at call time — the caller is responsible for
+    /// ensuring those paths are not reached, or for handling the error.
+    pub(crate) fn with_custom_extractor_no_llm(
+        graph: Arc<TemporalGraph>,
+        embedder: Arc<Emb>,
+        config: PipelineConfig,
+        extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
+    ) -> Self {
+        Self {
+            graph,
+            llm: None,
+            embedder,
+            config,
+            oov_auditor: None,
+            model: None,
             extractor,
         }
     }

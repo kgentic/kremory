@@ -235,6 +235,64 @@ pub fn chat_msg_user(content: impl Into<String>) -> ChatMessage {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// NullChatProvider — production-accessible no-op stub.
+//
+// Used by `Memory::llm_or_stub()` on the NoLlm BYOE path where `submit_episode`
+// requires an `Arc<dyn ChatProvider>` argument but the engine's `_provider`
+// parameter is vestigial (the real LLM slot is `Engine.llm: Option<Arc<L>>`).
+// Never actually called — if an LLM pipeline step is reached without a wired LLM,
+// the engine returns `Error::LlmRequired` from its own `Option::None` check.
+// ---------------------------------------------------------------------------
+
+/// No-op `ChatProvider` for the BYOE no-LLM path.
+///
+/// Always returns an empty string. Only reachable when `Memory` was constructed
+/// without `.with_llm(…)` AND the engine reaches a step that calls the provider
+/// arg — which does not happen in normal operation because `Engine.llm` guards
+/// those steps first.
+#[derive(Debug, Clone)]
+pub(crate) struct NullChatProvider;
+
+#[async_trait::async_trait]
+impl ChatProvider for NullChatProvider {
+    async fn chat_with_tools(
+        &self,
+        _messages: &[ChatMessage],
+        _tools: Option<&[autoagents_llm::chat::Tool]>,
+        _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
+    ) -> std::result::Result<
+        Box<dyn autoagents_llm::chat::ChatResponse>,
+        autoagents_llm::error::LLMError,
+    > {
+        // Return an empty-text response. The only path that reaches here is a
+        // coding error (calling an LLM-dependent method on a NoLlm Memory that
+        // somehow bypassed the LlmRequired guard). Empty response is a safe no-op.
+        Ok(Box::new(crate::core::provider::NullChatResponse))
+    }
+}
+
+/// Response type for `NullChatProvider`.
+#[derive(Debug)]
+pub(crate) struct NullChatResponse;
+
+impl autoagents_llm::chat::ChatResponse for NullChatResponse {
+    fn text(&self) -> Option<String> {
+        Some(String::new())
+    }
+    fn tool_calls(&self) -> Option<Vec<autoagents_llm::ToolCall>> {
+        None
+    }
+    fn usage(&self) -> Option<autoagents_llm::chat::Usage> {
+        None
+    }
+}
+
+impl std::fmt::Display for NullChatResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "")
+    }
+}
+
 // MockChatProvider — replaces MockLlmClient + NullLlmClient in tests.
 //
 // Substring-match: looks for any key in `responses` that appears in the last

@@ -192,7 +192,7 @@ impl<'a> RememberRequest<'a> {
             &self.content,
             source_ref,
             self.facts,
-            self.memory.llm.clone(),
+            self.memory.llm_or_stub(),
             ns,
             None,
             opts,
@@ -275,7 +275,7 @@ impl<'a> RememberBatchBuilder<'a> {
                 &ep.content,
                 source_ref,
                 ep.facts,
-                self.memory.llm.clone(),
+                self.memory.llm_or_stub(),
                 ns,
                 self.batch_id.clone(),
                 SubmitOpts {

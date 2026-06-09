@@ -431,8 +431,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // registry was loaded above at step 2b — reused here for L3 validation
         // (label → integer entity_type_id at insert time).
 
+        let llm_for_resolver = self.llm.as_ref().ok_or_else(|| {
+            crate::core::error::Error::LlmRequired {
+                method: "ingest_with",
+                hint: "wire an LLM via Memory::open(…).with_llm(…) to enable entity \
+                       resolution; or use .with_facts(…) to pin triples without LLM",
+            }
+        })?;
         let resolver = CascadeResolver::new(
-            Arc::clone(&self.llm),
+            Arc::clone(llm_for_resolver),
             self.config.minhash.clone(),
             self.config.entropy.clone(),
         );
@@ -788,7 +795,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             }
 
             // ── Phase 2: detect contradictions and store facts ───────────────────────
-            let detector = TwoPoolDetector::new(Arc::clone(&self.llm));
+            let llm_for_detector = self.llm.as_ref().ok_or_else(|| {
+                crate::core::error::Error::LlmRequired {
+                    method: "ingest_with",
+                    hint: "wire an LLM via Memory::open(…).with_llm(…) to enable \
+                           contradiction detection; or use .with_facts(…) to pin \
+                           triples without LLM",
+                }
+            })?;
+            let detector = TwoPoolDetector::new(Arc::clone(llm_for_detector));
 
             for fact in &all_facts {
                 // Resolve subject and object IDs through the merge map
@@ -1074,7 +1089,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
 
         // Store facts (contradiction detection + insert), same logic as ingest_with.
-        let detector = TwoPoolDetector::new(Arc::clone(&self.llm));
+        let llm_for_batch_detector = self.llm.as_ref().ok_or_else(|| {
+            crate::core::error::Error::LlmRequired {
+                method: "ingest_batch",
+                hint: "wire an LLM via Memory::open(…).with_llm(…) to enable \
+                       contradiction detection; or use .with_facts(…) to pin \
+                       triples without LLM",
+            }
+        })?;
+        let detector = TwoPoolDetector::new(Arc::clone(llm_for_batch_detector));
         let mut inserted_count: usize = 0;
 
         for fact in &all_facts {

@@ -265,6 +265,20 @@ pub enum Error {
     /// defaults to NuExtract silently; builder pin errors loudly per KD4.
     #[error("unknown extractor source requested: '{requested}'")]
     UnknownExtractor { requested: String },
+
+    // ── E-2 builder knobs (ADR-039, v0.2.0) ─────────────────────────────────
+    /// Builder configuration conflict — two mutually exclusive knobs were set,
+    /// or a required knob is missing.
+    #[error("builder configuration conflict: {detail}")]
+    BuilderConflict { detail: String },
+
+    /// Operation requires an LLM provider that was not wired at build time.
+    /// Fires at call time on `Memory` instances constructed without `.with_llm()`.
+    #[error("operation `{method}` requires an LLM provider — {hint}")]
+    LlmRequired {
+        method: &'static str,
+        hint: &'static str,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
