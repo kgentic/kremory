@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "data-modeling": {
+      "source": "melodic-software/claude-code-plugins",
+      "sourceType": "github",
+      "skillPath": "plugins/business-analysis/skills/data-modeling/SKILL.md",
+      "computedHash": "751f18c4ff40620771ec5e757a4edc8f96a1fef0ce93e78273e2423610196fb0"
+    }
+  }
+}
