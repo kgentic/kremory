@@ -357,7 +357,48 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             }
             EntityTypeRegistry::from_specs(override_specs.clone())
         } else {
-            EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?
+            let db_registry =
+                EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?;
+            // TD-028 Phase B — builder-seed: if the builder set `allowed_entity_types`,
+            // any type not already in the registry for this group_id is registered
+            // additively via `label_to_id_or_register`. This runs AFTER
+            // `ensure_default_types_seeded` so the registry is never empty here;
+            // the merge is additive-only (INSERT OR IGNORE via the same race-safe
+            // MAX(id)+1 path that Pass 0 uses). No caller-specified id → SQLite
+            // assigns the next free id, avoiding position-based collisions with
+            // future Pass 0 writes (GAP-006 fix).
+            if !self.config.allowed_entity_types.is_empty() {
+                let mut new_types_seeded: usize = 0;
+                for name in &self.config.allowed_entity_types {
+                    // Skip if already registered (case-sensitive canonical match).
+                    if db_registry.name_to_id(name).is_none() {
+                        crate::core::entity_types::label_to_id_or_register(
+                            &self.graph.conn,
+                            effective_gid,
+                            &db_registry,
+                            name,
+                        )
+                        .await?;
+                        new_types_seeded += 1;
+                    }
+                }
+                if new_types_seeded > 0 {
+                    metrics::counter!(
+                        "rql.ingest.registry_builder_seed_applied",
+                        "namespace" => effective_gid.to_string(),
+                    )
+                    .increment(1);
+                    metrics::histogram!("rql.ingest.registry_builder_seed_count")
+                        .record(new_types_seeded as f64);
+                    // Reload the registry so the derived allowed_entity_types_live
+                    // below includes the newly-seeded builder types.
+                    EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?
+                } else {
+                    db_registry
+                }
+            } else {
+                db_registry
+            }
         };
 
         // 2c. L4': fetch top-N existing entities for prompt-time injection.
@@ -398,11 +439,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // 3. Extract from all chunks, merge results.
         // known_entities grows with each iteration so subsequent chunks receive
         // the entities already found in earlier chunks as context.
+        //
+        // TD-028 Phase B — B1: derive allowed_entity_types from the live registry
+        // (loaded above) rather than the config snapshot taken at engine construction.
+        // This closes the self-learning loop: Pass 0 writes new types to the registry;
+        // the next ingest sees them immediately without an engine rebuild.
+        // Spec: td-028-phase1-pull-shape-registry-read-micro-spec-2026-06-09.md §1.
+        let allowed_entity_types_live: Vec<String> = registry
+            .specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+
         let mut all_entities: Vec<ExtractedEntity> = Vec::new();
         let mut all_facts: Vec<ExtractedFact> = Vec::new();
         for chunk in &chunks {
             let ctx = ExtractionContext {
-                allowed_entity_types: &self.config.allowed_entity_types,
+                allowed_entity_types: &allowed_entity_types_live,
                 allowed_edge_types: &self.config.allowed_edge_types,
                 known_entities: &all_entities,
                 excluded_entity_types: &self.config.excluded_entity_types,
@@ -1113,10 +1166,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let deferred_registry =
             EntityTypeRegistry::load_for_group(&self.graph.conn, deferred_effective_gid).await?;
 
+        // TD-028 Phase B — B1 (deferred path): derive allowed_entity_types from the
+        // live deferred_registry, mirroring the primary ingest path derivation above.
+        // Spec: td-028-phase1-pull-shape-registry-read-micro-spec-2026-06-09.md §1.
+        let deferred_allowed_entity_types_live: Vec<String> = deferred_registry
+            .specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+
         let mut all_facts: Vec<ExtractedFact> = Vec::new();
         for chunk in &chunks {
             let ctx = ExtractionContext {
-                allowed_entity_types: &self.config.allowed_entity_types,
+                allowed_entity_types: &deferred_allowed_entity_types_live,
                 allowed_edge_types: &self.config.allowed_edge_types,
                 known_entities: &known_entities,
                 excluded_entity_types: &self.config.excluded_entity_types,
