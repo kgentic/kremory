@@ -1239,12 +1239,16 @@ impl TemporalGraph {
         // When the caller does not supply a value we default to Utc::now() so the
         // explicit column reference never sends NULL and bypasses the SQL DEFAULT.
         let recorded_at_str = recorded_at.unwrap_or_else(Utc::now).to_rfc3339();
+        // TD-003 Phase G (ADR-042): compute SHA-256 content hash at insert time.
+        // Migration 011 backfills existing rows; new rows are hashed here so the
+        // column is always populated from v0.1.7 onwards.
+        let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
         self.conn
             .execute(
                 "INSERT INTO episodes \
                  (content, timestamp, source_type, metadata, group_id, saga_id, sequence_number, \
-                  source_id, source_uri, recorded_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                  source_id, source_uri, recorded_at, content_hash) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 libsql::params![
                     content,
                     ts_str,
@@ -1255,7 +1259,8 @@ impl TemporalGraph {
                     sequence_number,
                     source_id,
                     source_uri,
-                    recorded_at_str
+                    recorded_at_str,
+                    content_hash
                 ],
             )
             .await?;

@@ -330,9 +330,9 @@ pub struct JsEpisode {
     /// The `source_id` this episode was looked up by. Matches the argument
     /// passed to `getBySourceId`. `null` only for episodes ingested before v0.1.6.
     pub source_id: Option<String>,
-    /// URI of the source document. Currently always `null` — substrate
-    /// `recall_by_source_id` does not return this column. Use `updateUri` to
-    /// set and the DB column is persisted; this field is a known gap.
+    /// URI of the source document. Populated from the `source_uri` column on
+    /// the `episodes` table (added by Migration 007). `null` when no URI was
+    /// set at ingest time.
     pub source_uri: Option<String>,
     /// Episode text content.
     pub content: String,
