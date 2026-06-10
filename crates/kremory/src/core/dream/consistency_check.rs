@@ -120,11 +120,21 @@ struct VerifyBatch {
 /// `NativeSchema` arm (which requires `additionalProperties: false` on every
 /// `object` node and rejects `minimum`/`maximum` on `number` types).
 ///
-/// `schemars::schema_for!(VerifyBatch)` does NOT add `additionalProperties: false`
-/// by default, causing the Anthropic API to return a 400 error, which makes the
-/// fallback ladder step down to PromptOnly → `{}` → empty decisions list.
-/// This static schema is the cause-fix (ADR-047 §2, CLAUDE.md Rule 8).
-fn verify_batch_schema() -> serde_json::Value {
+/// Two layered cause-fixes per [[load-bearing-invariants-at-emit-not-prompt]]:
+///
+/// 1. `additionalProperties: false` on every object — schemars defaults DON'T add
+///    this, causing Anthropic API to return 400, falling back to PromptOnly →
+///    `{}` → empty decisions list. (Phase D iter 1 cause-fix, ADR-047 §2.)
+///
+/// 2. `minItems: count` AND `maxItems: count` on the `decisions` array, where
+///    `count` = number of flagged entities passed in this batch. This makes
+///    "empty decisions" STRUCTURALLY IMPOSSIBLE at the schema layer — the model
+///    cannot exit with `decisions: []` because the schema rejects it.
+///    Without this, the schema accepts empty arrays as valid, and the model
+///    has zero reason NOT to take the path of least resistance for ambiguous
+///    cases. (Phase D iter 2 cause-fix — load-bearing invariant moved from
+///    prompt-side ("decide for each") to emit-side structural constraint.)
+fn verify_batch_schema(decision_count: usize) -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
@@ -132,6 +142,8 @@ fn verify_batch_schema() -> serde_json::Value {
         "properties": {
             "decisions": {
                 "type": "array",
+                "minItems": decision_count,
+                "maxItems": decision_count,
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -174,7 +186,11 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
 }
 
 // ─── Candidate row ────────────────────────────────────────────────────────────
@@ -257,13 +273,16 @@ pub async fn run_consistency_check(
     // schemars::schema_for!(VerifyBatch) does NOT add `additionalProperties: false`
     // which Anthropic NativeSchema arm requires — causing silent 400 → fallback to
     // PromptOnly → {} → empty decisions (root cause of Phase D FAIL, ADR-047 §2).
-    let schema = verify_batch_schema();
-    let raw_value =
-        crate::core::extraction::structured::StructuredCallBuilder::new(llm, &schema, "VerifyBatch")
-            .model(&verify_model)
-            .messages(messages)
-            .call()
-            .await;
+    let schema = verify_batch_schema(flagged.len());
+    let raw_value = crate::core::extraction::structured::StructuredCallBuilder::new(
+        llm,
+        &schema,
+        "VerifyBatch",
+    )
+    .model(&verify_model)
+    .messages(messages)
+    .call()
+    .await;
     let elapsed_ms = call_start.elapsed().as_millis() as u64;
     histogram!("kremory.dream.consistency_check.llm_call_latency_ms_histogram")
         .record(elapsed_ms as f64);
@@ -273,7 +292,10 @@ pub async fn run_consistency_check(
     // (prev hardcoded "ollama" was wrong for Anthropic verify provider — Rule 19).
     let provider_label = if verify_model.starts_with("claude-") {
         "anthropic"
-    } else if verify_model.starts_with("gpt-") || verify_model.starts_with("o1-") || verify_model.starts_with("o3-") {
+    } else if verify_model.starts_with("gpt-")
+        || verify_model.starts_with("o1-")
+        || verify_model.starts_with("o3-")
+    {
         "openai"
     } else {
         "ollama"
@@ -399,12 +421,20 @@ async fn load_type_registry(
         .await
         .map_err(|e| Error::Other(anyhow::anyhow!("load_type_registry: {e}")))?;
     let mut map = std::collections::HashMap::new();
-    while let Some(row) = rows.next().await
+    while let Some(row) = rows
+        .next()
+        .await
         .map_err(|e| Error::Other(anyhow::anyhow!("load_type_registry row: {e}")))?
     {
-        let id: i64 = row.get(0).map_err(|e| Error::Other(anyhow::anyhow!("type_id: {e}")))?;
-        let name: String = row.get(1).map_err(|e| Error::Other(anyhow::anyhow!("type_name: {e}")))?;
-        let desc: String = row.get(2).map_err(|e| Error::Other(anyhow::anyhow!("type_desc: {e}")))?;
+        let id: i64 = row
+            .get(0)
+            .map_err(|e| Error::Other(anyhow::anyhow!("type_id: {e}")))?;
+        let name: String = row
+            .get(1)
+            .map_err(|e| Error::Other(anyhow::anyhow!("type_name: {e}")))?;
+        let desc: String = row
+            .get(2)
+            .map_err(|e| Error::Other(anyhow::anyhow!("type_desc: {e}")))?;
         map.insert(id, (name, desc));
     }
     Ok(map)
@@ -421,14 +451,27 @@ async fn load_candidates(db: &libsql::Connection) -> Result<Vec<CandidateRow>> {
         .await
         .map_err(|e| Error::Other(anyhow::anyhow!("load_candidates: {e}")))?;
     let mut candidates = Vec::new();
-    while let Some(row) = rows.next().await
+    while let Some(row) = rows
+        .next()
+        .await
         .map_err(|e| Error::Other(anyhow::anyhow!("load_candidates row: {e}")))?
     {
-        let rowid: i64 = row.get(0).map_err(|e| Error::Other(anyhow::anyhow!("rowid: {e}")))?;
-        let name: String = row.get(1).map_err(|e| Error::Other(anyhow::anyhow!("entity.id: {e}")))?;
-        let type_id: i64 = row.get(2).map_err(|e| Error::Other(anyhow::anyhow!("entity_type_id: {e}")))?;
+        let rowid: i64 = row
+            .get(0)
+            .map_err(|e| Error::Other(anyhow::anyhow!("rowid: {e}")))?;
+        let name: String = row
+            .get(1)
+            .map_err(|e| Error::Other(anyhow::anyhow!("entity.id: {e}")))?;
+        let type_id: i64 = row
+            .get(2)
+            .map_err(|e| Error::Other(anyhow::anyhow!("entity_type_id: {e}")))?;
         let top3_facts = load_top3_facts(db, &name).await?;
-        candidates.push(CandidateRow { rowid, name, entity_type_id: type_id, top3_facts });
+        candidates.push(CandidateRow {
+            rowid,
+            name,
+            entity_type_id: type_id,
+            top3_facts,
+        });
     }
     Ok(candidates)
 }
@@ -444,10 +487,14 @@ async fn load_top3_facts(db: &libsql::Connection, entity_id: &str) -> Result<Vec
         .await
         .map_err(|e| Error::Other(anyhow::anyhow!("load_top3_facts: {e}")))?;
     let mut facts = Vec::new();
-    while let Some(row) = rows.next().await
+    while let Some(row) = rows
+        .next()
+        .await
         .map_err(|e| Error::Other(anyhow::anyhow!("load_top3_facts row: {e}")))?
     {
-        let val: String = row.get(0).map_err(|e| Error::Other(anyhow::anyhow!("fact: {e}")))?;
+        let val: String = row
+            .get(0)
+            .map_err(|e| Error::Other(anyhow::anyhow!("fact: {e}")))?;
         facts.push(val);
     }
     Ok(facts)
@@ -465,7 +512,12 @@ async fn apply_correction(
         libsql::params![new_type_id, now.to_string(), candidate.rowid],
     )
     .await
-    .map_err(|e| Error::Other(anyhow::anyhow!("apply_correction rowid={}: {e}", candidate.rowid)))?;
+    .map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "apply_correction rowid={}: {e}",
+            candidate.rowid
+        ))
+    })?;
     Ok(())
 }
 
@@ -486,12 +538,21 @@ async fn write_audit_row(db: &libsql::Connection, p: AuditRowParams<'_>) -> Resu
          (entity_id, pre_type_id, post_type_id, verify_confidence, verify_model, run_id) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         libsql::params![
-            p.entity_rowid, p.pre_type_id, p.post_type_id,
-            p.verify_confidence as f64, p.verify_model.to_string(), p.run_id.to_string()
+            p.entity_rowid,
+            p.pre_type_id,
+            p.post_type_id,
+            p.verify_confidence as f64,
+            p.verify_model.to_string(),
+            p.run_id.to_string()
         ],
     )
     .await
-    .map_err(|e| Error::Other(anyhow::anyhow!("write_audit_row entity_id={}: {e}", p.entity_rowid)))?;
+    .map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "write_audit_row entity_id={}: {e}",
+            p.entity_rowid
+        ))
+    })?;
     Ok(())
 }
 
@@ -507,9 +568,12 @@ fn build_verify_messages(
     type_map: &std::collections::HashMap<i64, (String, String)>,
 ) -> Vec<crate::core::provider::ChatMessage> {
     let system = "You are an entity-type verification assistant. \
-        Given entities and their assigned types, decide for each: confirm (type correct), \
-        correct (type wrong — provide new_type_id from the registry below), or uncertain \
-        (insufficient info). Respond with a JSON object matching the VerifyBatch schema.";
+        For EACH entity provided below you MUST output exactly one decision. \
+        The `decisions` array length MUST equal the number of entities listed. \
+        Per-decision actions: confirm (type is correct), correct (type is wrong — \
+        you MUST provide new_type_id from the registry below), or uncertain \
+        (insufficient info to decide). Use `uncertain` rather than skipping. \
+        Respond with a JSON object matching the VerifyBatch schema.";
 
     // Build the type registry menu so the LLM knows which ID corresponds to which type.
     let mut registry_lines: Vec<String> = type_map
@@ -530,7 +594,11 @@ fn build_verify_messages(
             format!(
                 "entity_id={} name=\"{}\" current_type_id={} current_type_name=\"{}\" \
                  type_description=\"{}\" facts=\"{}\"",
-                c.rowid, c.name, c.entity_type_id, type_name, type_desc,
+                c.rowid,
+                c.name,
+                c.entity_type_id,
+                type_name,
+                type_desc,
                 c.top3_facts.join("; ")
             )
         })

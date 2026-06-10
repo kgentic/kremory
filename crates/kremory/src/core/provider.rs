@@ -561,7 +561,9 @@ impl EmbeddingProvider for DeterministicEmbeddingProvider {
             for i in 0..dim {
                 // Step 1: mix dimension index into a seed that differs by bits,
                 //         not magnitude.
-                let dim_seed = (i as u64).wrapping_mul(LCG_MUL).wrapping_add(1442695040888963407);
+                let dim_seed = (i as u64)
+                    .wrapping_mul(LCG_MUL)
+                    .wrapping_add(1442695040888963407);
                 // Step 2: XOR with text hash so same dimension → different text →
                 //         different value.
                 let h = base_hash ^ dim_seed;
@@ -625,7 +627,9 @@ impl EmbeddingProvider for MockEmbeddingProvider {
             const LCG_MUL: u64 = 6364136223846793005;
             let mut vec = Vec::with_capacity(dim);
             for i in 0..dim {
-                let dim_seed = (i as u64).wrapping_mul(LCG_MUL).wrapping_add(1442695040888963407);
+                let dim_seed = (i as u64)
+                    .wrapping_mul(LCG_MUL)
+                    .wrapping_add(1442695040888963407);
                 let h = base_hash ^ dim_seed;
                 let h = h
                     .wrapping_mul(1099511628211_u64)
