@@ -361,11 +361,20 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
         .map_err(|_| MemoryError::Other("ANTHROPIC_API_KEY is not set".into()))?;
 
     // Anthropic API identifier — the model string sent in HTTP requests.
-    // NOTE: "claude-3-haiku-20240307" is the API-level name for claude-haiku-4-5.
-    // The metric label below uses "claude-haiku-4-5" to match provider-rates.toml.
+    //
+    // Default: claude-haiku-4-5-20251001 (current Claude 4.5 Haiku as of 2026-06-10).
+    // Was previously incorrectly defaulted to "claude-3-haiku-20240307" with a comment
+    // claiming it was "the API-level name for claude-haiku-4-5" — that was wrong;
+    // claude-3-haiku-20240307 is the deprecated March-2024 model and now returns 404.
+    // Discovered via OOB cloud-model smoke (crates/kremory/tests/oob_anthropic_smoke.rs)
+    // 2026-06-10 during v0.1.2 Phase D resolution work.
+    //
+    // capability_of() in provider.rs recognizes "claude-haiku-4-5*" prefix and routes
+    // to NativeStructuredOutput, so this default is wire-compatible with kremory's
+    // structured-output ladder.
     let chat_provider: Arc<Anthropic> = LLMBuilder::<Anthropic>::new()
         .api_key(&key)
-        .model("claude-3-haiku-20240307")
+        .model("claude-haiku-4-5-20251001")
         .timeout_seconds(10)
         .build()
         .map_err(|e| MemoryError::Other(format!("Anthropic chat provider error: {e}")))?;
