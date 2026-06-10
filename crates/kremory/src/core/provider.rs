@@ -548,14 +548,28 @@ impl EmbeddingProvider for DeterministicEmbeddingProvider {
         let base_hash = Self::hash_text(text);
 
         async move {
-            const FNV_PRIME: u64 = 1099511628211;
+            // Per-dimension hash: XOR base_hash with a dimension-specific seed
+            // BEFORE any multiply, so each element starts from a completely
+            // different state. Adding `i` to a large hash product (10^19+) loses
+            // precision in f32 conversion — all elements collapse to nearly the
+            // same value. XOR-first avoids that collapse.
+            //
+            // LCG multiplier (Knuth) chosen to spread dimension index across all
+            // bits without depending on FNV magnitude.
+            const LCG_MUL: u64 = 6364136223846793005;
             let mut vec = Vec::with_capacity(dim);
             for i in 0..dim {
-                let h = base_hash
-                    .wrapping_mul(FNV_PRIME)
-                    .wrapping_add(i as u64)
-                    .wrapping_mul(FNV_PRIME);
-                // Map to [-1.0, 1.0]
+                // Step 1: mix dimension index into a seed that differs by bits,
+                //         not magnitude.
+                let dim_seed = (i as u64).wrapping_mul(LCG_MUL).wrapping_add(1442695040888963407);
+                // Step 2: XOR with text hash so same dimension → different text →
+                //         different value.
+                let h = base_hash ^ dim_seed;
+                // Step 3: one more FNV-like avalanche to spread the bits.
+                let h = h
+                    .wrapping_mul(1099511628211_u64)
+                    .wrapping_add(dim_seed.wrapping_mul(2654435761));
+                // Map u64 to [-1.0, 1.0]
                 let val = (h as f32 / u64::MAX as f32) * 2.0 - 1.0;
                 vec.push(val);
             }
@@ -605,14 +619,17 @@ impl EmbeddingProvider for MockEmbeddingProvider {
         let base_hash = Self::hash_text(text);
 
         async move {
+            // Same per-dimension hash as DeterministicEmbeddingProvider — XOR-first
+            // avoids the f32 precision-collapse that occurs when adding small `i` to a
+            // large product (~10^19), which made all elements nearly identical.
+            const LCG_MUL: u64 = 6364136223846793005;
             let mut vec = Vec::with_capacity(dim);
             for i in 0..dim {
-                const FNV_PRIME: u64 = 1099511628211;
-                let h = base_hash
-                    .wrapping_mul(FNV_PRIME)
-                    .wrapping_add(i as u64)
-                    .wrapping_mul(FNV_PRIME);
-                // Map to [-1.0, 1.0]
+                let dim_seed = (i as u64).wrapping_mul(LCG_MUL).wrapping_add(1442695040888963407);
+                let h = base_hash ^ dim_seed;
+                let h = h
+                    .wrapping_mul(1099511628211_u64)
+                    .wrapping_add(dim_seed.wrapping_mul(2654435761));
                 let val = (h as f32 / u64::MAX as f32) * 2.0 - 1.0;
                 vec.push(val);
             }
