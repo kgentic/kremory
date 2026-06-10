@@ -151,7 +151,10 @@ fn build_scripted_llm() -> ScriptedLlmClient {
 
     // Contradiction check for utterance 2: Fact#1 (friday) is at index 1.
     // Wrapped form required — bare array "[1]" is no longer accepted by parse_index_list.
-    let u2_contradiction = r#"{"indices":[1]}"#;
+    // T1.7 (sprint plan v0-2-0-phase-b-prep): `reason` is REQUIRED on
+    // ContradictionVerdictWrapper per `llm-output-parse-loudly` — mock must emit it.
+    let u2_contradiction =
+        r#"{"indices":[1], "reason":"monday declaration supersedes prior friday"}"#;
 
     ScriptedLlmClient::new(vec![
         u1_stage1,

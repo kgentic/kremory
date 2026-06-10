@@ -457,6 +457,7 @@ async fn c6_cap_overflow_guard_drops_excess() {
         embed_prefilter_threshold: 0.99, // near-1.0 forces ALL entities to be flagged
         max_candidates_per_run: Some(50),
         verify_model_override: None,
+        dry_run: false,
     };
 
     let summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)
@@ -549,6 +550,7 @@ async fn c7_observability_counters_increment_on_right_paths() {
         embed_prefilter_threshold: 0.99, // force all 4 to be flagged
         max_candidates_per_run: Some(3), // cap=3 → 1 overflow
         verify_model_override: None,
+        dry_run: false,
     };
 
     let _summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)
@@ -656,6 +658,7 @@ async fn c8_run_consistency_check_orchestrates_full_flow() {
         embed_prefilter_threshold: 0.99, // force all 3 to be flagged
         max_candidates_per_run: Some(50),
         verify_model_override: None,
+        dry_run: false,
     };
 
     let summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)
@@ -744,6 +747,7 @@ async fn c9_audit_row_written_per_corrected_action() {
         embed_prefilter_threshold: 0.99, // force the entity to be flagged
         max_candidates_per_run: Some(50),
         verify_model_override: None,
+        dry_run: false,
     };
 
     let summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)

@@ -30,6 +30,7 @@ pub(crate) mod structured;
 
 pub(crate) mod default_extractor;
 pub(crate) mod graphiti;
+pub mod injection_patterns;
 pub(crate) mod json_repair;
 pub(crate) mod models;
 pub(crate) mod nuextract;

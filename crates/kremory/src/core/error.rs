@@ -279,6 +279,17 @@ pub enum Error {
         method: &'static str,
         hint: &'static str,
     },
+
+    // ── Store integrity (T1.8, v0.2.0 Phase B-prep) ──────────────────────────
+    /// `TemporalGraph::open` refused to operate because the on-disk store failed
+    /// a critical integrity check: a required table is missing or the schema
+    /// version does not match the expected version for this binary.
+    ///
+    /// `reason` carries the specific diagnostic (e.g. "missing table: episodes",
+    /// "schema_version mismatch: expected 13, got 5"). The store is NOT modified;
+    /// callers must repair the database before re-opening.
+    #[error("store integrity check failed: {reason}")]
+    CorruptStore { reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
