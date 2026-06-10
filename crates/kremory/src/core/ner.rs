@@ -679,6 +679,37 @@ mod inner {
 #[cfg(feature = "ner")]
 pub use inner::GlinerExtractor;
 
+/// Return a reference to the process-wide singleton `GlinerExtractor` instance.
+///
+/// ## Why a shared singleton (MNT-001)
+///
+/// `GlinerExtractor` loads the GLiNER ONNX model into memory (~650 MB INT8).
+/// Previously `ingest_with` (ingest/mod.rs) and `ingest_phase1_ner` (ingest/pipeline.rs)
+/// each maintained a separate `static OnceLock<GlinerExtractor>` — meaning two ingest
+/// paths active in the same process would each load the model, consuming ~1.3 GB.
+///
+/// This function provides a single process-wide `OnceLock` that both ingest paths
+/// share. The first caller initialises the model; subsequent callers receive the
+/// already-loaded instance at zero extra cost.
+///
+/// ## Errors
+///
+/// Returns `Err` if model initialisation fails (e.g. model file missing, ORT error).
+/// The error propagates to the first caller; subsequent calls succeed once the
+/// `OnceLock` is populated.
+#[cfg(feature = "ner")]
+pub fn ner_singleton() -> crate::core::error::Result<&'static GlinerExtractor> {
+    use std::sync::OnceLock;
+    static GLINER: OnceLock<GlinerExtractor> = OnceLock::new();
+    if GLINER.get().is_none() {
+        let g = GlinerExtractor::new().map_err(crate::core::error::Error::from)?;
+        let _ = GLINER.set(g);
+    }
+    Ok(GLINER.get().unwrap_or_else(|| {
+        unreachable!("GLINER OnceLock empty immediately after set — invariant violated")
+    }))
+}
+
 #[cfg(all(test, feature = "ner"))]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

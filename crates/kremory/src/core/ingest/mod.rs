@@ -36,6 +36,10 @@ pub(crate) use crate::core::intelligence::{EntityExtractor, ExtractedEntity, Ext
 #[cfg(any(test, feature = "test-utils"))]
 pub use helpers::SimpleGraph;
 
+// Phase A foundational types (C6 spec §5.5 GAP-001) — public so integration
+// tests and verify_stage can reference them.
+pub use pipeline::{EntityCandidate, IngestPhase1Result, ResolvedDecision, UpsertedEntities};
+
 /// Optional source provenance fields forwarded to the `episodes` table
 /// (Migration 007 columns: source_id, source_uri, recorded_at).
 ///
@@ -605,16 +609,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ) -> Result<IngestionResult> {
         #[cfg(feature = "ner")]
         {
-            use std::sync::OnceLock;
-            static GLINER: OnceLock<crate::core::ner::GlinerExtractor> = OnceLock::new();
-            if GLINER.get().is_none() {
-                let g = crate::core::ner::GlinerExtractor::new()
-                    .map_err(crate::core::error::Error::from)?;
-                let _ = GLINER.set(g);
-            }
-            let extractor = GLINER.get().unwrap_or_else(|| {
-                panic!("invariant: GLINER OnceLock empty immediately after set")
-            });
+            // MNT-001: use the process-wide singleton from ner::ner_singleton() so
+            // both ingest_with and ingest_phase1_ner share a single loaded model
+            // (~650 MB INT8). Previously this path had its own OnceLock, risking
+            // double model load (~1.3 GB) when both paths were used in the same process.
+            let extractor = crate::core::ner::ner_singleton()?;
             return self
                 .ingest_with(
                     extractor,

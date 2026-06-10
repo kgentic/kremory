@@ -141,7 +141,8 @@ struct VerifyBatch {
 /// 3. `enum` on `action` rejects values outside {confirm, correct, uncertain}
 /// 4. Prompt instruction "MUST output exactly one decision per entity"
 /// 5. Caller-side post-call check that `summary.scanned == flagged.len()`
-fn verify_batch_schema(_decision_count: usize) -> serde_json::Value {
+#[doc(hidden)]
+pub fn verify_batch_schema(_decision_count: usize) -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
@@ -200,19 +201,309 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 // ─── Candidate row ────────────────────────────────────────────────────────────
 
-struct CandidateRow {
-    rowid: i64,
-    name: String,
-    entity_type_id: i64,
-    top3_facts: Vec<String>,
+/// Internal candidate row for verify batch operations.
+///
+/// `pub` so the `pub(crate)` functions `verify_batch` and `build_verify_messages`
+/// can use it in their signatures without triggering `private_interfaces`. Also
+/// exposed via `test-utils` feature for integration-test GAP-002 DoD checks.
+/// Not part of the public semver API — treat as sealed.
+#[doc(hidden)]
+pub struct CandidateRow {
+    pub rowid: i64,
+    pub name: String,
+    pub entity_type_id: i64,
+    pub top3_facts: Vec<String>,
     /// Source-episode text (the most recent episode that mentioned this entity).
-    /// Phase D iter 4 (2026-06-10) addition per ADR-047 amendment + user-driven
-    /// debug session — empirical evidence showed Pass 4 with only name + thin
-    /// facts produces ~50% precision. Including the source episode text gives
-    /// the LLM the disambiguating context (e.g., "Apple emailed me" not just
-    /// "Apple"). Academic precedent: arXiv:2605.29168 ontology-grounded
-    /// post-extraction correction uses full source-document context.
-    source_episode: Option<String>,
+    /// Phase D iter 4 (2026-06-10) addition per ADR-047 amendment.
+    pub source_episode: Option<String>,
+}
+
+// ─── Core verify batch ────────────────────────────────────────────────────────
+
+/// Counts from one `verify_batch` invocation. `#[doc(hidden)]` — internal API.
+#[doc(hidden)]
+pub struct VerifyBatchCounts {
+    pub confirmed: usize,
+    pub corrected: usize,
+    pub uncertain: usize,
+}
+
+/// The action taken for a single candidate in a `verify_batch` call.
+/// `#[doc(hidden)]` — internal API, not part of the public semver contract.
+#[doc(hidden)]
+pub enum VerifyAction {
+    /// LLM confirmed the current type is correct.
+    Confirm,
+    /// LLM corrected the type — `new_type_id` holds the replacement.
+    Correct,
+    /// LLM was uncertain / candidate missing from response — demote to catch-all.
+    ///
+    /// Per C6 spec §10.4: missing LLM decisions → Demote (not Confirm).
+    /// This matches DK3 ratified direction (Option α: strict safety default).
+    Demote,
+}
+
+/// Per-entity decision returned by `verify_batch` alongside the counts.
+/// Carries enough information to derive `ResolvedDecision` without a DB
+/// round-trip — critical for the Stage 2 pre-write flow where entities are
+/// NOT yet in the DB when `verify_batch_for_candidates` is called.
+/// `#[doc(hidden)]` — internal API.
+#[doc(hidden)]
+pub struct VerifyBatchDecision {
+    /// Index into the `params.flagged` slice (NOT a DB rowid).
+    pub candidate_idx: usize,
+    /// The action the LLM decided (or Demote for missing/parse-error responses).
+    pub action: VerifyAction,
+    /// Populated only when `action == Correct`.
+    pub new_type_id: Option<i64>,
+}
+
+/// Combined outcome of `verify_batch`: aggregate counts + per-entity decisions.
+///
+/// `decisions` has exactly `params.flagged.len()` entries — one per input
+/// candidate. Missing LLM responses default to `VerifyAction::Demote` per
+/// C6 spec §10.4.
+/// `#[doc(hidden)]` — internal API.
+#[doc(hidden)]
+pub struct VerifyBatchOutcome {
+    pub counts: VerifyBatchCounts,
+    pub decisions: Vec<VerifyBatchDecision>,
+}
+
+/// Bundled parameters for [`verify_batch`] (keeps arg count ≤ 5 per clippy).
+/// `#[doc(hidden)]` — internal API.
+#[doc(hidden)]
+pub struct VerifyBatchParams<'a> {
+    /// Candidate rows to verify (caller owns the subset selection).
+    pub flagged: &'a [&'a CandidateRow],
+    /// Entity type id → (name, description), loaded by caller.
+    pub type_map: &'a std::collections::HashMap<i64, (String, String)>,
+    /// Chat provider for the structured verify call.
+    pub llm: &'a dyn ChatProvider,
+    /// Model string passed to `StructuredCallBuilder`.
+    pub verify_model: &'a str,
+    /// UUID string for the audit trail (`dream_pass4_audit.run_id`).
+    pub run_id: &'a str,
+}
+
+/// Run the LLM verify call on `params.flagged` candidates and apply corrections to the DB.
+///
+/// Promoted to `pub` (with `#[doc(hidden)]`) per C6 spec §5.2 — `verify_stage.rs`
+/// MUST invoke this directly rather than routing through `run_consistency_check`
+/// to avoid spurious embed-prefilter exclusions at Stage 2 scope.
+///
+/// ## Return contract (C6 spec §10.4 — SCOPE-001)
+///
+/// Returns `VerifyBatchOutcome` containing both aggregate `counts` and a
+/// `decisions` vec with exactly `params.flagged.len()` entries — one per input
+/// candidate, ordered by input index.
+///
+/// Missing LLM decisions (M of N returned) default to `VerifyAction::Demote`
+/// per spec §10.4 DK3 ratified direction (Option α: strict safety default).
+/// This ensures `verify_batch_for_candidates` can derive `ResolvedDecision`
+/// from the outcome without a DB round-trip — critical for the Stage 2
+/// pre-write flow (entities NOT yet in DB when this function returns).
+///
+/// ## Why `unreachable!` for action=correct without new_type_id (SCOPE-001)
+///
+/// The custom `VerifyDecision` `Deserialize` impl rejects `action=correct`
+/// entries that lack `new_type_id` at parse time (returns an Err). Any
+/// `VerifyDecision` that reaches the match arm where `action == "correct"` is
+/// therefore guaranteed to have `new_type_id.is_some()`. The `unreachable!`
+/// is not a fallback — it is a structural invariant: if the deserializer lets
+/// through a correct-without-new_type_id, it is a bug in the deserializer,
+/// not a recoverable runtime case. Panicking loudly is correct here.
+///
+/// ## Why WARN not DEBUG for malformed decisions
+///
+/// Malformed decisions indicate the LLM emitted a structurally invalid
+/// response. This is observable signal for prompt/schema tuning — DEBUG would
+/// hide it by default in production logs. WARN surfaces it without being
+/// ERROR-level (single malformed entry does not fail the batch). This log
+/// level was escalated from DEBUG during Phase D iter 3 debugging when
+/// silent skips made precision regressions invisible.
+#[doc(hidden)]
+pub async fn verify_batch(
+    db: &libsql::Connection,
+    params: VerifyBatchParams<'_>,
+) -> Result<VerifyBatchOutcome> {
+    let flagged = params.flagged;
+    let type_map = params.type_map;
+    let llm = params.llm;
+    let verify_model = params.verify_model;
+    let run_id = params.run_id;
+    let mut counts = VerifyBatchCounts {
+        confirmed: 0,
+        corrected: 0,
+        uncertain: 0,
+    };
+
+    // Pre-allocate decisions vec with one Demote per candidate.
+    // Per C6 spec §10.4: missing decisions → Demote (not Confirm).
+    // Entries are overwritten below when the LLM provides a decision for that rowid.
+    let mut decisions: Vec<VerifyBatchDecision> = flagged
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| VerifyBatchDecision {
+            candidate_idx: idx,
+            action: VerifyAction::Demote,
+            new_type_id: None,
+        })
+        .collect();
+
+    if flagged.is_empty() {
+        return Ok(VerifyBatchOutcome { counts, decisions });
+    }
+
+    let messages = build_verify_messages(flagged, type_map);
+    let call_start = Instant::now();
+    let schema = verify_batch_schema(flagged.len());
+    let raw_value = crate::core::extraction::structured::StructuredCallBuilder::new(
+        llm,
+        &schema,
+        "VerifyBatch",
+    )
+    .model(verify_model)
+    .messages(messages)
+    .call()
+    .await;
+    let elapsed_ms = call_start.elapsed().as_millis() as u64;
+    histogram!("kremory.dream.consistency_check.llm_call_latency_ms_histogram")
+        .record(elapsed_ms as f64);
+
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        tracing::debug!(
+            target: "kremory.dream.consistency_check.raw_response",
+            verify_model = %verify_model,
+            response = ?raw_value,
+            "verify_batch raw response"
+        );
+    }
+
+    let raw_value = match raw_value {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                target: "kremory::dream::consistency_check",
+                error = %e,
+                "verify_batch LLM call failed — all candidates default to Demote"
+            );
+            // All decisions remain Demote (pre-allocated above). Count as uncertain.
+            counts.uncertain = flagged.len();
+            return Ok(VerifyBatchOutcome { counts, decisions });
+        }
+    };
+
+    // Parse decisions
+    let batch: VerifyBatch = {
+        match serde_json::from_value(raw_value.clone()) {
+            Ok(b) => b,
+            Err(_) => {
+                let repaired = if raw_value.is_array() {
+                    serde_json::json!({ "decisions": raw_value })
+                } else {
+                    raw_value.clone()
+                };
+                match serde_json::from_value::<VerifyBatch>(repaired) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!(target: "kremory::dream::consistency_check",
+                            error = %e, "verify_batch failed to parse LLM batch — all candidates default to Demote");
+                        counts.uncertain = flagged.len();
+                        return Ok(VerifyBatchOutcome { counts, decisions });
+                    }
+                }
+            }
+        }
+    };
+
+    // Build a rowid → candidate_idx map so we can overwrite the pre-allocated Demote entries.
+    let rowid_to_idx: std::collections::HashMap<i64, usize> =
+        flagged.iter().enumerate().map(|(idx, c)| (c.rowid, idx)).collect();
+    let now = Utc::now().to_rfc3339();
+
+    for raw_decision in &batch.decisions {
+        let decision: VerifyDecision = match serde_json::from_value(raw_decision.clone()) {
+            Ok(d) => d,
+            Err(e) => {
+                // See fn-level doc: WARN not DEBUG — malformed entries are tuning signal.
+                tracing::warn!(target: "kremory::dream::consistency_check",
+                    error = %e, decision = %raw_decision, "skipping malformed decision");
+                continue;
+            }
+        };
+
+        let Some(&candidate_idx) = rowid_to_idx.get(&decision.entity_id) else {
+            tracing::debug!(target: "kremory::dream::consistency_check",
+                entity_id = decision.entity_id, "decision for unknown rowid — skipped");
+            continue;
+        };
+        let candidate = flagged[candidate_idx];
+
+        match decision.action.as_str() {
+            "confirm" => {
+                decisions[candidate_idx] = VerifyBatchDecision {
+                    candidate_idx,
+                    action: VerifyAction::Confirm,
+                    new_type_id: None,
+                };
+                counts.confirmed += 1;
+                counter!("kremory.dream.consistency_check.verify_confirmed_total").increment(1);
+            }
+            "correct" => {
+                // See fn-level doc: unreachable! enforces SCOPE-001 structural invariant.
+                let new_type_id = decision.new_type_id.unwrap_or_else(|| {
+                    unreachable!("action=correct without new_type_id should be rejected at parse (SCOPE-001)")
+                });
+                // For dream-phase flow (entities already in DB), apply the correction now.
+                // For Stage 2 pre-write flow (entities NOT in DB), rowid == -1 so
+                // apply_correction UPDATE hits 0 rows — no harm done. The per-entity
+                // decision is what matters; write_verified_entities uses new_type_id directly.
+                if candidate.rowid > 0 {
+                    apply_correction(db, candidate, new_type_id, &now).await?;
+                    let audit = AuditRowParams {
+                        entity_rowid: candidate.rowid,
+                        pre_type_id: candidate.entity_type_id,
+                        post_type_id: new_type_id,
+                        verify_confidence: decision.confidence,
+                        verify_model,
+                        run_id,
+                    };
+                    write_audit_row(db, audit).await?;
+                }
+                decisions[candidate_idx] = VerifyBatchDecision {
+                    candidate_idx,
+                    action: VerifyAction::Correct,
+                    new_type_id: Some(new_type_id),
+                };
+                counts.corrected += 1;
+                counter!(
+                    "kremory.dream.consistency_check.verify_corrected_total",
+                    "from_type" => candidate.entity_type_id.to_string(),
+                    "to_type" => new_type_id.to_string()
+                )
+                .increment(1);
+            }
+            "uncertain" => {
+                // LLM said uncertain — keep the pre-allocated Demote for this entry,
+                // since uncertain means we cannot confirm the NER type is correct.
+                // counts.uncertain tracks the LLM-signalled uncertainty explicitly.
+                decisions[candidate_idx] = VerifyBatchDecision {
+                    candidate_idx,
+                    action: VerifyAction::Demote,
+                    new_type_id: None,
+                };
+                counts.uncertain += 1;
+                counter!("kremory.dream.consistency_check.verify_uncertain_total").increment(1);
+            }
+            other => {
+                tracing::debug!(target: "kremory::dream::consistency_check",
+                    action = %other, "unknown action — skipped (treated as Demote)");
+            }
+        }
+    }
+
+    Ok(VerifyBatchOutcome { counts, decisions })
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -279,28 +570,6 @@ pub async fn run_consistency_check(
         return Ok(summary);
     }
 
-    // LLM-verify call
-    let messages = build_verify_messages(&flagged, &type_map);
-    let call_start = Instant::now();
-    // Use the hand-crafted Anthropic-compatible schema (see verify_batch_schema()).
-    // schemars::schema_for!(VerifyBatch) does NOT add `additionalProperties: false`
-    // which Anthropic NativeSchema arm requires — causing silent 400 → fallback to
-    // PromptOnly → {} → empty decisions (root cause of Phase D FAIL, ADR-047 §2).
-    let schema = verify_batch_schema(flagged.len());
-    let raw_value = crate::core::extraction::structured::StructuredCallBuilder::new(
-        llm,
-        &schema,
-        "VerifyBatch",
-    )
-    .model(&verify_model)
-    .messages(messages)
-    .call()
-    .await;
-    let elapsed_ms = call_start.elapsed().as_millis() as u64;
-    histogram!("kremory.dream.consistency_check.llm_call_latency_ms_histogram")
-        .record(elapsed_ms as f64);
-    summary.latency_ms_p50 = elapsed_ms;
-    summary.latency_ms_p95 = elapsed_ms;
     // Derive provider label from model string for correct attribution
     // (prev hardcoded "ollama" was wrong for Anthropic verify provider — Rule 19).
     let provider_label = if verify_model.starts_with("claude-") {
@@ -320,118 +589,229 @@ pub async fn run_consistency_check(
     )
     .increment(1);
 
-    // Phase D iter 3 (2026-06-10): per Rule 19 — raw LLM response captured at
-    // debug level so future diagnostic sessions can see what the verify call
-    // actually returned. KREMORY_DEBUG-gated to avoid log spam in production.
-    if std::env::var("KREMORY_DEBUG").is_ok() {
-        tracing::debug!(
-            target: "kremory.dream.consistency_check.raw_response",
-            verify_model = %verify_model,
-            response = ?raw_value,
-            "verify call raw response"
-        );
-    }
-    let raw_value = match raw_value {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(
-                target: "kremory::dream::consistency_check",
-                error = %e,
-                "LLM call failed — returning partial summary"
-            );
-            return Ok(summary);
-        }
-    };
+    let call_start = Instant::now();
+    let outcome = verify_batch(
+        db,
+        VerifyBatchParams {
+            flagged: &flagged,
+            type_map: &type_map,
+            llm,
+            verify_model: &verify_model,
+            run_id: &run_id,
+        },
+    )
+    .await?;
+    let elapsed_ms = call_start.elapsed().as_millis() as u64;
+    summary.latency_ms_p50 = elapsed_ms;
+    summary.latency_ms_p95 = elapsed_ms;
 
-    // Parse decisions
-    let batch: VerifyBatch = {
-        match serde_json::from_value(raw_value.clone()) {
-            Ok(b) => b,
-            Err(_) => {
-                let repaired = if raw_value.is_array() {
-                    serde_json::json!({ "decisions": raw_value })
-                } else {
-                    raw_value.clone()
-                };
-                match serde_json::from_value::<VerifyBatch>(repaired) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        tracing::warn!(target: "kremory::dream::consistency_check",
-                            error = %e, "failed to parse LLM batch");
-                        return Ok(summary);
-                    }
-                }
-            }
-        }
-    };
-
-    let candidate_by_rowid: std::collections::HashMap<i64, &CandidateRow> =
-        flagged.iter().map(|c| (c.rowid, *c)).collect();
-    let now = Utc::now().to_rfc3339();
-
-    for raw_decision in &batch.decisions {
-        let decision: VerifyDecision = match serde_json::from_value(raw_decision.clone()) {
-            Ok(d) => d,
-            Err(e) => {
-                // Upgrade to WARN (Phase D iter 3 finding 2026-06-10): silent debug-level
-                // drops at this site hid the field-name mismatch bug for hours. Per
-                // [[observability-first-class]] Rule 19 — silent drop paths MUST be
-                // visible at production log levels.
-                tracing::warn!(target: "kremory::dream::consistency_check",
-                    error = %e, decision = %raw_decision, "skipping malformed decision");
-                continue;
-            }
-        };
-
-        let Some(candidate) = candidate_by_rowid.get(&decision.entity_id) else {
-            tracing::debug!(target: "kremory::dream::consistency_check",
-                entity_id = decision.entity_id, "decision for unknown rowid — skipped");
-            continue;
-        };
-
-        match decision.action.as_str() {
-            "confirm" => {
-                summary.confirmed += 1;
-                counter!("kremory.dream.consistency_check.verify_confirmed_total").increment(1);
-            }
-            "correct" => {
-                // SCOPE-001: action=correct structurally requires new_type_id — enforced by
-                // the custom Deserialize on VerifyDecision (missing new_type_id is a parse
-                // error, not a runtime case). unreachable! documents the invariant without
-                // triggering the clippy::expect_used lint.
-                let new_type_id = decision.new_type_id.unwrap_or_else(|| {
-                    unreachable!("action=correct without new_type_id should be rejected at parse")
-                });
-                apply_correction(db, candidate, new_type_id, &now).await?;
-                let audit = AuditRowParams {
-                    entity_rowid: candidate.rowid,
-                    pre_type_id: candidate.entity_type_id,
-                    post_type_id: new_type_id,
-                    verify_confidence: decision.confidence,
-                    verify_model: &verify_model,
-                    run_id: &run_id,
-                };
-                write_audit_row(db, audit).await?;
-                summary.corrected += 1;
-                counter!(
-                    "kremory.dream.consistency_check.verify_corrected_total",
-                    "from_type" => candidate.entity_type_id.to_string(),
-                    "to_type" => new_type_id.to_string()
-                )
-                .increment(1);
-            }
-            "uncertain" => {
-                summary.uncertain += 1;
-                counter!("kremory.dream.consistency_check.verify_uncertain_total").increment(1);
-            }
-            other => {
-                tracing::debug!(target: "kremory::dream::consistency_check",
-                    action = %other, "unknown action — skipped");
-            }
-        }
-    }
+    summary.confirmed = outcome.counts.confirmed;
+    summary.corrected = outcome.counts.corrected;
+    summary.uncertain = outcome.counts.uncertain;
 
     Ok(summary)
+}
+
+// ─── verify_batch_for_candidates (GAP-003) ───────────────────────────────────
+
+/// Tuning knobs for [`verify_batch_for_candidates`].
+///
+/// Mirrors the relevant subset of [`ConsistencyCheckOpts`] without the
+/// embed-prefilter fields (which are irrelevant when candidates are supplied
+/// directly by the caller).
+#[derive(Debug, Clone, Default)]
+pub struct VerifyBatchForCandidatesOpts {
+    /// Hard cap on the number of candidates sent to LLM. `None` = no cap (uses
+    /// all provided candidates). Default: `None`.
+    pub max_candidates: Option<usize>,
+    /// Override LLM model string. `None` = use `llm.model()`.
+    pub verify_model_override: Option<String>,
+}
+
+/// Result of [`verify_batch_for_candidates`].
+#[derive(Debug)]
+pub struct VerifyBatchForCandidatesResult {
+    /// One decision per input candidate (same length as `candidates` slice).
+    pub decisions: Vec<crate::core::ingest::ResolvedDecision>,
+}
+
+/// Run the LLM verify call on the provided `candidates` directly.
+///
+/// Per C6 spec §5.2 — Stage 2 MUST invoke `verify_batch` directly to avoid
+/// spurious embed-prefilter exclusions. This function is the public entry-point
+/// for that path: it accepts candidates in hand (from Phase 1 NER) without any
+/// DB round-trip to load or filter the candidate set.
+///
+/// # Invariant
+///
+/// Returns exactly `candidates.len()` decisions — one per input candidate. If
+/// the LLM returns fewer decisions, missing candidates default to `Demote`
+/// (catch-all, entity_type_id = 0) per C6 spec §10.4 DK3 ratified direction.
+///
+/// # DB usage
+///
+/// `db` is used ONLY for:
+/// - Looking up entity rowids (needed for the `verify_batch` LLM prompt format;
+///   entities NOT in DB get rowid = -1 sentinel, still included in the prompt)
+/// - Writing `dream_pass4_audit` rows for `correct` decisions on entities that
+///   ARE already in the DB (dream-phase compat; no-op for rowid = -1 entries)
+///
+/// The function does NOT perform a `SELECT * FROM entities` to expand/replace
+/// the input candidate set. The `candidates` slice is the authoritative input.
+/// Decisions are derived DIRECTLY from `VerifyBatchOutcome.decisions` — NOT
+/// from a post-verify DB re-query — so this function is correct for both:
+/// - Stage 2 ingest-time flow (entities not yet in DB, rowid = -1)
+/// - Dream-phase flow (entities already in DB, rowid > 0)
+///
+/// ## Observability (CLAUDE.md Rule 19)
+/// - `kremory.verify_batch_for_candidates.invoked_total`
+/// - `kremory.verify_batch_for_candidates.decisions_total{variant}`
+pub async fn verify_batch_for_candidates(
+    db: &libsql::Connection,
+    candidates: &[crate::core::ingest::EntityCandidate],
+    source_episode_text: &str,
+    llm: &dyn ChatProvider,
+    opts: VerifyBatchForCandidatesOpts,
+) -> Result<VerifyBatchForCandidatesResult> {
+    use crate::core::ingest::ResolvedDecision;
+    use crate::core::resolver::normalize_name;
+
+    counter!("kremory.verify_batch_for_candidates.invoked_total").increment(1);
+
+    if candidates.is_empty() {
+        return Ok(VerifyBatchForCandidatesResult {
+            decisions: Vec::new(),
+        });
+    }
+
+    let verify_model = opts
+        .verify_model_override
+        .clone()
+        .unwrap_or_else(|| llm.model().to_string());
+
+    // Cap candidates if requested.
+    let effective_candidates: &[crate::core::ingest::EntityCandidate] =
+        if let Some(cap) = opts.max_candidates {
+            &candidates[..cap.min(candidates.len())]
+        } else {
+            candidates
+        };
+
+    // Load entity type registry for the verify prompt.
+    let type_map = load_type_registry(db).await?;
+
+    // Build CandidateRow values from the provided EntityCandidate slice.
+    // Look up each entity's rowid by name so the LLM prompt uses integer ids
+    // (consistent with how run_consistency_check works).
+    // For entities not yet in DB (Stage 2 ingest-time flow), rowid = -1 sentinel.
+    // verify_batch will include them in the LLM prompt; rowid = -1 entries skip
+    // apply_correction and write_audit_row (no DB rows to update yet).
+    let mut candidate_rows: Vec<CandidateRow> = Vec::with_capacity(effective_candidates.len());
+    for ec in effective_candidates {
+        let entity_id = normalize_name(&ec.name);
+        let rowid: i64 = {
+            let mut rows = db
+                .query(
+                    "SELECT rowid FROM entities WHERE id = ?1 LIMIT 1",
+                    libsql::params![entity_id.clone()],
+                )
+                .await
+                .map_err(|e| Error::Other(anyhow::anyhow!("rowid lookup '{}': {e}", entity_id)))?;
+            if let Some(row) = rows
+                .next()
+                .await
+                .map_err(|e| Error::Other(anyhow::anyhow!("rowid row '{}': {e}", entity_id)))?
+            {
+                row.get(0)
+                    .map_err(|e| Error::Other(anyhow::anyhow!("rowid col '{}': {e}", entity_id)))?
+            } else {
+                // Entity not yet in DB — Stage 2 ingest-time flow.
+                // rowid = -1 is a sentinel; verify_batch skips DB writes for these.
+                -1i64
+            }
+        };
+        let top3_facts = if rowid > 0 {
+            load_top3_facts(db, &entity_id).await.unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        candidate_rows.push(CandidateRow {
+            rowid,
+            name: ec.name.clone(),
+            entity_type_id: ec.entity_type_id_raw,
+            top3_facts,
+            source_episode: Some(source_episode_text.to_string()),
+        });
+    }
+
+    // Build &[&CandidateRow] for verify_batch.
+    let flagged_refs: Vec<&CandidateRow> = candidate_rows.iter().collect();
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let outcome = verify_batch(
+        db,
+        VerifyBatchParams {
+            flagged: &flagged_refs,
+            type_map: &type_map,
+            llm,
+            verify_model: &verify_model,
+            run_id: &run_id,
+        },
+    )
+    .await?;
+
+    // Derive ResolvedDecision directly from outcome.decisions — NO DB re-query.
+    //
+    // This is the ARCH-001 fix: the previous implementation re-queried
+    // `SELECT entity_type_id FROM entities WHERE id=?` after verify_batch returned,
+    // which always returned None for Stage 2 (entities not yet written) and fell
+    // through to Confirm for every candidate — rendering the verify gate a no-op.
+    //
+    // outcome.decisions has exactly flagged_refs.len() entries (pre-allocated with
+    // Demote, overwritten for candidates the LLM returned decisions for).
+    // Per C6 spec §10.4: missing entries stay Demote (strict safety default).
+    let mut decisions: Vec<ResolvedDecision> = Vec::with_capacity(effective_candidates.len());
+    for vbd in &outcome.decisions {
+        let resolved = match vbd.action {
+            VerifyAction::Confirm => {
+                counter!(
+                    "kremory.verify_batch_for_candidates.decisions_total",
+                    "variant" => "confirm"
+                )
+                .increment(1);
+                ResolvedDecision::Confirm {
+                    candidate_idx: vbd.candidate_idx,
+                }
+            }
+            VerifyAction::Correct => {
+                let new_type_id = vbd.new_type_id.unwrap_or_else(|| {
+                    unreachable!("VerifyAction::Correct must always carry new_type_id (SCOPE-001)")
+                });
+                counter!(
+                    "kremory.verify_batch_for_candidates.decisions_total",
+                    "variant" => "correct"
+                )
+                .increment(1);
+                ResolvedDecision::Correct {
+                    candidate_idx: vbd.candidate_idx,
+                    new_type_id,
+                }
+            }
+            VerifyAction::Demote => {
+                counter!(
+                    "kremory.verify_batch_for_candidates.decisions_total",
+                    "variant" => "demote"
+                )
+                .increment(1);
+                ResolvedDecision::Demote {
+                    candidate_idx: vbd.candidate_idx,
+                }
+            }
+        };
+        decisions.push(resolved);
+    }
+
+    Ok(VerifyBatchForCandidatesResult { decisions })
 }
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -628,7 +1008,8 @@ async fn write_audit_row(db: &libsql::Connection, p: AuditRowParams<'_>) -> Resu
 /// the LLM has no grounding for integer IDs and will produce corrections that
 /// don't match any row in `entity_types`, yielding zero precision lift even when
 /// the action decisions are semantically correct.
-fn build_verify_messages(
+#[doc(hidden)]
+pub fn build_verify_messages(
     candidates: &[&CandidateRow],
     type_map: &std::collections::HashMap<i64, (String, String)>,
 ) -> Vec<crate::core::provider::ChatMessage> {
