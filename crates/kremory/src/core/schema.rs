@@ -681,8 +681,12 @@ impl TemporalGraph {
         // to `entity_types` — discovered_at / discovered_by / evidence_count / confidence.
         // Backfills pre-existing seed types with discovered_by = 'seed'.
         // Idempotent: PRAGMA table_info gate per column.
-        // (Migration 013 is reserved for Phase E drift mechanism — see migrations.rs.)
         crate::core::migrations::migrate_014_entity_types_provenance(&self.conn).await?;
+
+        // ADR-047 Migration 013 (v0.1.2, Phase B): extend entity_type_source CHECK with
+        // 'DreamPass4' + create dream_pass4_audit table.
+        // Idempotent: sqlite_master DDL gate (checks for 'DreamPass4' in entities DDL).
+        crate::core::migrations::migrate_013_pass4_source_tier(&self.conn).await?;
 
         Ok(())
     }
