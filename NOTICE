@@ -1,0 +1,36 @@
+kremory
+Copyright 2026 kgentic-dev
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+Third-Party Notices
+================================================================================
+
+This product includes software originally developed by third parties under
+permissive licenses. Their notices are reproduced below.
+
+--------------------------------------------------------------------------------
+Graphiti (https://github.com/getzep/graphiti)
+--------------------------------------------------------------------------------
+
+Portions of kremory's entity-extraction prompt content
+(crates/kremory/src/core/extraction/prompts.rs — NEVER_LIST constant and
+possessor-qualification guidance) are adapted from Graphiti's
+graphiti_core/prompts/extract_nodes.py user-prompt strings.
+
+Graphiti is licensed under the Apache License, Version 2.0:
+
+    Copyright (c) 2024-2026 Zep Software, Inc.
+    https://github.com/getzep/graphiti/blob/main/LICENSE
+
+Adaptations made by kremory:
+  - Python f-string format → Rust raw string literal
+  - Category text preserved verbatim
+  - Possessor-qualification rule and object-extraction guideline retained
+  - kremory's own cross-domain few-shot examples (academic/legal coverage)
+    retained alongside the Graphiti-derived content
