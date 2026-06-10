@@ -232,6 +232,18 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
 
             match result {
                 Ok(value) => {
+                    // Phase D iter 3 (2026-06-10): per Rule 19 — log which arm succeeded
+                    // so we can verify NativeSchema fires for capable providers vs falling
+                    // through to LlmJsonRepair (schema-not-enforced).
+                    if debug_enabled {
+                        tracing::debug!(
+                            target: "kremory.extraction.arm_success",
+                            schema = schema_name,
+                            arm = arm_name(arm),
+                            model = %model_str,
+                            "structured-call arm succeeded"
+                        );
+                    }
                     // Schema validation is only meaningful for provider-native arms
                     // (NativeSchema / FormatSchema) where the provider guarantees
                     // structural compliance.  LlmJsonRepair and PromptOnly arms are
@@ -324,6 +336,17 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                 Err(llm_err) => {
                     // Provider-level error — capture for FallbackExhausted and step down.
                     last_err_str = llm_err.to_string();
+                    // Phase D iter 3 (2026-06-10): per Rule 19 — surface arm-failure
+                    // reason at WARN level so silent NativeSchema 400s become visible.
+                    // Anthropic's "maxItems not supported" 400 was hidden here for ~24h.
+                    tracing::warn!(
+                        target: "kremory.extraction.arm_failure",
+                        schema = schema_name,
+                        arm = arm_name(arm),
+                        model = %model_str,
+                        error = %last_err_str,
+                        "structured-call arm failed — ladder stepping down"
+                    );
                     if let Some(&next_arm) = ladder.get(arm_idx + 1) {
                         counter!(
                             "rql.extraction.fallback_ladder_step",

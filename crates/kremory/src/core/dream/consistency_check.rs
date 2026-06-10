@@ -116,25 +116,32 @@ struct VerifyBatch {
     decisions: Vec<serde_json::Value>,
 }
 
-/// Hand-crafted JSON Schema for `VerifyBatch` that is compatible with Anthropic's
-/// `NativeSchema` arm (which requires `additionalProperties: false` on every
-/// `object` node and rejects `minimum`/`maximum` on `number` types).
+/// Hand-crafted JSON Schema for `VerifyBatch` compatible with Anthropic's
+/// `NativeSchema` arm.
 ///
-/// Two layered cause-fixes per [[load-bearing-invariants-at-emit-not-prompt]]:
+/// Anthropic structured-output constraints (verified empirically 2026-06-10 via
+/// `curl -d '{...,"maxItems":1}' https://api.anthropic.com/v1/messages` →
+/// `{"error":{"type":"invalid_request_error","message":"output_config.format.schema:
+/// For 'array' type, property 'maxItems' is not supported"}}`):
 ///
-/// 1. `additionalProperties: false` on every object — schemars defaults DON'T add
-///    this, causing Anthropic API to return 400, falling back to PromptOnly →
-///    `{}` → empty decisions list. (Phase D iter 1 cause-fix, ADR-047 §2.)
+/// - REQUIRED: `additionalProperties: false` on every `object` node. Without
+///   this, Anthropic returns 400 → ladder falls to LlmJsonRepair which does
+///   NOT enforce schema → LLM free to emit wrong field names. (Phase D iter 1.)
+/// - FORBIDDEN: `minItems` and `maxItems` on `array` types. (Phase D iter 3 finding —
+///   my earlier addition of these BROKE NativeSchema for ~24h until curl-tested.)
+/// - FORBIDDEN: `minimum`, `maximum` on `number` types.
+/// - The `decision_count` parameter is retained in the signature for caller
+///   compatibility but is UNUSED — array-length enforcement must come from
+///   the prompt + caller-side validation, not the schema (Anthropic limitation).
 ///
-/// 2. `minItems: count` AND `maxItems: count` on the `decisions` array, where
-///    `count` = number of flagged entities passed in this batch. This makes
-///    "empty decisions" STRUCTURALLY IMPOSSIBLE at the schema layer — the model
-///    cannot exit with `decisions: []` because the schema rejects it.
-///    Without this, the schema accepts empty arrays as valid, and the model
-///    has zero reason NOT to take the path of least resistance for ambiguous
-///    cases. (Phase D iter 2 cause-fix — load-bearing invariant moved from
-///    prompt-side ("decide for each") to emit-side structural constraint.)
-fn verify_batch_schema(decision_count: usize) -> serde_json::Value {
+/// Per [[load-bearing-invariants-at-emit-not-prompt]] the load-bearing
+/// invariant (one-decision-per-entity) is structurally enforced by:
+/// 1. `additionalProperties: false` rejects extra fields → enforces field-name correctness
+/// 2. `required: ["entity_id", "action", "confidence"]` rejects missing required fields
+/// 3. `enum` on `action` rejects values outside {confirm, correct, uncertain}
+/// 4. Prompt instruction "MUST output exactly one decision per entity"
+/// 5. Caller-side post-call check that `summary.scanned == flagged.len()`
+fn verify_batch_schema(_decision_count: usize) -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
@@ -142,8 +149,6 @@ fn verify_batch_schema(decision_count: usize) -> serde_json::Value {
         "properties": {
             "decisions": {
                 "type": "array",
-                "minItems": decision_count,
-                "maxItems": decision_count,
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -307,6 +312,17 @@ pub async fn run_consistency_check(
     )
     .increment(1);
 
+    // Phase D iter 3 (2026-06-10): per Rule 19 — raw LLM response captured at
+    // debug level so future diagnostic sessions can see what the verify call
+    // actually returned. KREMORY_DEBUG-gated to avoid log spam in production.
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        tracing::debug!(
+            target: "kremory.dream.consistency_check.raw_response",
+            verify_model = %verify_model,
+            response = ?raw_value,
+            "verify call raw response"
+        );
+    }
     let raw_value = match raw_value {
         Ok(v) => v,
         Err(e) => {
@@ -349,7 +365,11 @@ pub async fn run_consistency_check(
         let decision: VerifyDecision = match serde_json::from_value(raw_decision.clone()) {
             Ok(d) => d,
             Err(e) => {
-                tracing::debug!(target: "kremory::dream::consistency_check",
+                // Upgrade to WARN (Phase D iter 3 finding 2026-06-10): silent debug-level
+                // drops at this site hid the field-name mismatch bug for hours. Per
+                // [[observability-first-class]] Rule 19 — silent drop paths MUST be
+                // visible at production log levels.
+                tracing::warn!(target: "kremory::dream::consistency_check",
                     error = %e, decision = %raw_decision, "skipping malformed decision");
                 continue;
             }
@@ -570,10 +590,22 @@ fn build_verify_messages(
     let system = "You are an entity-type verification assistant. \
         For EACH entity provided below you MUST output exactly one decision. \
         The `decisions` array length MUST equal the number of entities listed. \
-        Per-decision actions: confirm (type is correct), correct (type is wrong — \
-        you MUST provide new_type_id from the registry below), or uncertain \
-        (insufficient info to decide). Use `uncertain` rather than skipping. \
-        Respond with a JSON object matching the VerifyBatch schema.";
+        \
+        Each decision MUST use these EXACT JSON field names (do NOT use synonyms): \
+        - `entity_id` (integer) — copy verbatim from the entity provided \
+        - `action` (string) — MUST be one of EXACTLY \"confirm\", \"correct\", or \"uncertain\" \
+        - `new_type_id` (integer, REQUIRED when action=correct) — id from the registry below \
+        - `confidence` (number 0.0-1.0) — your confidence in this decision \
+        \
+        Do NOT use the field name `decision` (use `action`). Do NOT use the field name \
+        `reason` (use `confidence` as a number). Do NOT include extra fields like \
+        `current_type_id`, `name`, or `reason` — they will cause schema rejection. \
+        \
+        Action semantics: confirm (current type is correct), correct (current type is \
+        wrong — you MUST provide new_type_id from the registry), uncertain (insufficient \
+        info to decide — prefer this over skipping). \
+        \
+        Respond with a JSON object matching the VerifyBatch schema exactly.";
 
     // Build the type registry menu so the LLM knows which ID corresponds to which type.
     let mut registry_lines: Vec<String> = type_map
