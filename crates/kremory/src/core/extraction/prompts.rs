@@ -40,14 +40,32 @@ use crate::core::schema::{Entity, Episode};
 /// Injected into every entity extraction prompt as a hard exclusion rule.
 /// Pattern from Graphiti's `extract_nodes.py` anti-extraction rules and
 /// Cognee's "Don't use too generic terms like Entity" guidance.
-pub const NEVER_LIST: &str = "\
-NEVER extract the following as entities:
-- Pronouns (he, she, it, they, we, you, I, me, him, her, them, us, who, which, that)
-- Abstract concepts (love, time, idea, freedom, happiness, justice, success, truth, knowledge)
-- Generic nouns without a specific name (\"the company\", \"a person\", \"the system\", \"the team\", \"an item\", \"a thing\", \"an object\")
-- Placeholder labels (\"entity\", \"object\", \"the X\", \"some X\", \"a X\")
-- Bare relational roles without qualification (dad, mom, boss, friend, colleague — extract as \"Alice's dad\" only if the possessor is named)
-- Common objects that are not specifically named (watch, car, book, phone — unless the object has a specific product name like \"iPhone 15\")";
+// ────────────────────────────────────────────────────────────────────────────
+// NEVER_LIST — ported from Graphiti (getzep/graphiti, Apache 2.0)
+// Source: graphiti_core/prompts/extract_nodes.py extract_message user_prompt
+// Adaptation: Python f-string → Rust raw string literal; categories preserved
+//             verbatim; possessor-qualification rule kept intact.
+// Attribution required per Apache 2.0 §4 — see NOTICE / LICENSE entries.
+// Ported 2026-06-10 during v0.1.2 Phase D post-ship prompt-quality sweep.
+// ────────────────────────────────────────────────────────────────────────────
+pub const NEVER_LIST: &str = r#"NEVER extract any of the following:
+- Pronouns (you, me, I, he, she, they, we, us, it, them, him, her, this, that, those, who, which)
+- Abstract concepts or feelings (love, joy, balance, growth, resilience, happiness, passion, motivation, freedom, justice, success, truth, knowledge, idea, time)
+- Generic common nouns or bare object words (day, life, people, work, stuff, things, food, time, way, tickets, supplies, clothes, keys, gear)
+- Generic media/content nouns unless uniquely identified in the entity name itself (photo, pic, picture, image, video, post, story)
+- Generic event/activity nouns unless uniquely identified in the entity name itself (event, game, meeting, class, workshop, competition)
+- Broad institutional nouns unless explicitly named or uniquely qualified (government, school, company, team, office)
+- Ambiguous bare nouns whose meaning depends on sentence context rather than the entity name itself
+- Sentence fragments or clauses ("what you really care about", "results of that effort")
+- Adjectives or descriptive phrases ("amazing", "something different", "new hair color")
+- Duplicate references to the same real-world entity. Extract each entity at most once, even if it appears multiple times in the text.
+- Generic placeholder labels ("entity", "object", "the X", "some X", "a X")
+- Bare relational or kinship terms (dad, mom, mother, father, sister, brother, husband, wife, spouse, son, daughter, uncle, aunt, cousin, grandma, grandpa, friend, boss, colleague, teacher, neighbor, roommate) and bare animal/pet words (dog, cat, pet, puppy, kitten). These are too generic on their own. Instead, qualify them with the possessor: extract "Nisha's dad" not "dad", "Jordan's dog" not "dog".
+- Bare generic objects that cannot be meaningfully qualified with a possessor, brand, or distinguishing detail (NEVER extract "supplies" from "I picked up some supplies")
+
+Possessor-qualification rule: when a person refers to a relative, pet, or associate using a bare term ("my dad", "his cat"), extract the entity qualified with the possessor's name ("Nisha's dad", "Jordan's cat"). Do NOT extract the bare term alone.
+
+Object extraction guideline: for objects, possessions, and physical items, extract ONLY when specific enough to distinguish from other items of the same category. EXTRACT brand-named items ("Gamecube", "Ford Mustang", "Moen faucet"); qualified items ("wool coat", "red and purple lighting", "cracked windshield", "dog leash"); items with a concrete distinguishing descriptor (color, material, size, model, owner, specific use). Do NOT extract bare head nouns alone ("car", "coat", "game", "lighting", "windshield")."#;
 
 // ─── Cross-domain few-shot examples ─────────────────────────────────────────
 
