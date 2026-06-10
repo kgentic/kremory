@@ -39,7 +39,8 @@ async fn anthropic_verify_oneshot_dumps_raw_response() {
     let llm: Arc<dyn autoagents_llm::chat::ChatProvider + Send + Sync> = llm_inner;
     let llm_wrapped = ArcChatProvider::new(llm);
 
-    let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(DeterministicEmbeddingProvider::new(384));
+    let embedder: Arc<dyn DynEmbeddingProvider> =
+        Arc::new(DeterministicEmbeddingProvider::new(384));
 
     // ── In-memory graph + manually seed ONE deliberately wrong-typed entity ──
     let graph = TemporalGraph::open_in_memory()

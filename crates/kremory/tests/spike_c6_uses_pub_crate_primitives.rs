@@ -66,9 +66,7 @@ mod visibility_tests {
     // 1. `verify_batch_schema` is `fn` (not `pub(crate)`)
     // 2. Even if promoted to `pub(crate)`, it's not in kremory's public test-utils re-export yet
     use kremory::core::dream::consistency_check::{
-        build_verify_messages,
-        verify_batch,
-        verify_batch_schema,
+        build_verify_messages, verify_batch, verify_batch_schema,
     };
 
     /// Compile-time test: `verify_batch_schema` is accessible as pub(crate) via test-utils re-export.

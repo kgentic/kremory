@@ -418,8 +418,11 @@ pub async fn verify_batch(
     };
 
     // Build a rowid → candidate_idx map so we can overwrite the pre-allocated Demote entries.
-    let rowid_to_idx: std::collections::HashMap<i64, usize> =
-        flagged.iter().enumerate().map(|(idx, c)| (c.rowid, idx)).collect();
+    let rowid_to_idx: std::collections::HashMap<i64, usize> = flagged
+        .iter()
+        .enumerate()
+        .map(|(idx, c)| (c.rowid, idx))
+        .collect();
     let now = Utc::now().to_rfc3339();
 
     for raw_decision in &batch.decisions {
@@ -917,10 +920,7 @@ async fn load_top3_facts(db: &libsql::Connection, entity_id: &str) -> Result<Vec
 /// needs source-text context to disambiguate polyseme entities ("Apple emailed
 /// me" vs "Apple is a fruit"). Without it the LLM operates on name + thin facts
 /// alone and produces ~50% precision on polysemes per RISK-001 iter 3 evidence.
-async fn load_source_episode(
-    db: &libsql::Connection,
-    entity_id: &str,
-) -> Result<Option<String>> {
+async fn load_source_episode(db: &libsql::Connection, entity_id: &str) -> Result<Option<String>> {
     let mut rows = db
         .query(
             "SELECT e.content FROM episodes e \

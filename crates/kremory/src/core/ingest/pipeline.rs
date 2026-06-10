@@ -159,19 +159,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
             // Load registry for entity_type_id resolution.
             let effective_gid = "default";
-            crate::core::entity_types::ensure_default_types_seeded(
-                &self.graph.conn,
-                effective_gid,
-            )
-            .await?;
+            crate::core::entity_types::ensure_default_types_seeded(&self.graph.conn, effective_gid)
+                .await?;
             let registry = crate::core::entity_types::EntityTypeRegistry::load_for_group(
                 &self.graph.conn,
                 effective_gid,
             )
             .await?;
 
-            let allowed: Vec<String> =
-                registry.specs().iter().map(|s| s.name.clone()).collect();
+            let allowed: Vec<String> = registry.specs().iter().map(|s| s.name.clone()).collect();
             let ctx = crate::core::intelligence::ExtractionContext {
                 allowed_entity_types: &allowed,
                 allowed_edge_types: &self.config.allowed_edge_types,
