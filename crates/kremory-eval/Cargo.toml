@@ -37,6 +37,10 @@ path = "src/bin/eval.rs"
 name = "consistency_check_sweep"
 path = "src/bin/consistency_check_sweep.rs"
 
+[[bin]]
+name = "spike_c6_async_gate"
+path = "src/bin/spike_c6_async_gate.rs"
+
 [dev-dependencies]
 # Enable test-utils feature so MockChatProvider + NullEmbeddingProvider are
 # visible in integration tests (tests/ are separate binaries; cfg(test) does

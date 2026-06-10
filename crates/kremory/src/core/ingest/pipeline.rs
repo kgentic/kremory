@@ -25,7 +25,305 @@ use crate::core::search::SearchFilters;
 use super::helpers::extract_context_snippet;
 use super::{Engine, IngestionResult, SourceParams};
 
+// ─── Phase A foundational types (C6 spec §5.5 GAP-001) ───────────────────────
+
+/// A NER candidate returned by Phase 1 (`ingest_phase1_ner`).
+///
+/// Represents a single entity span extracted by NER (GLiNER when the `ner`
+/// feature is active, or empty Vec without it). Passed to Stage 2 verify and
+/// then to `write_verified_entities` after decisions are resolved.
+///
+/// Per C6 spec §5.5 — callers MUST NOT write entity rows until after
+/// `write_verified_entities` is called with the resolved decisions.
+#[derive(Debug, Clone)]
+pub struct EntityCandidate {
+    /// Entity surface form as extracted by NER.
+    pub name: String,
+    /// Raw entity type id assigned by the NER stage. For GLiNER, this is the
+    /// integer id from the entity type registry. `0` = catch-all ("Entity").
+    pub entity_type_id_raw: i64,
+    /// NER span confidence score. Populated by GLiNER; 0.0 on non-NER paths.
+    pub ner_confidence: f32,
+    /// Byte-offset span `(start, end)` of the entity mention in the source text.
+    pub span: (usize, usize),
+}
+
+/// Result of `ingest_phase1_ner`: episode stored + NER candidates surfaced.
+///
+/// Contains exactly one episode row (already written to the DB) and zero
+/// entity rows — entity writes are deferred to `write_verified_entities`.
+///
+/// Per C6 spec §5.5: episode_id is the FK used by `write_verified_entities`
+/// to link written entities back to their source episode.
+#[derive(Debug)]
+pub struct IngestPhase1Result {
+    /// Id of the episode row written by `ingest_phase1_ner`.
+    pub episode_id: i64,
+    /// NER candidates found in the episode text. May be empty when the `ner`
+    /// feature is not active or when no candidates are found.
+    pub candidates: Vec<EntityCandidate>,
+}
+
+/// A decision about a single `EntityCandidate` from the verify stage.
+///
+/// Used by `write_verified_entities` to determine which entity_type_id to
+/// write for each candidate. Per C6 spec §5.4:
+/// - `Confirm` — write with `candidate.entity_type_id_raw` (NER was correct)
+/// - `Correct` — write with `new_type_id` (verify corrected the NER type)
+/// - `Demote` — write with `entity_type_id = 0` (catch-all; NER was wrong,
+///   no better type known)
+#[derive(Debug, Clone)]
+pub enum ResolvedDecision {
+    /// NER type was correct — persist `candidate.entity_type_id_raw` verbatim.
+    Confirm {
+        /// Index into the candidates slice passed to `write_verified_entities`.
+        candidate_idx: usize,
+    },
+    /// NER type was wrong — persist `new_type_id` instead.
+    Correct {
+        /// Index into the candidates slice.
+        candidate_idx: usize,
+        /// Verified correct entity type id from the registry.
+        new_type_id: i64,
+    },
+    /// NER type was wrong and no better type is known — demote to catch-all (id=0).
+    Demote {
+        /// Index into the candidates slice.
+        candidate_idx: usize,
+    },
+}
+
+/// Entities written by `write_verified_entities`.
+#[derive(Debug, Default)]
+pub struct UpsertedEntities {
+    /// Normalized entity ids (= `normalize_name(candidate.name)`) that were
+    /// successfully written to the `entities` table.
+    pub entity_ids: Vec<String>,
+}
+
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
+    // ── Phase A foundational methods (C6 spec §5.5 GAP-001) ──────────────────
+
+    /// Phase 1 ingest: store episode + run NER, return candidates.
+    ///
+    /// Writes exactly ONE row to `episodes` and ZERO rows to `entities`. Entity
+    /// writes are deferred to [`write_verified_entities`] after the verify stage
+    /// has resolved the NER candidates.
+    ///
+    /// Per C6 spec §5.5 — the hot path (`ingest_phase1_ner`) must be callable
+    /// without an LLM (NER is GLiNER or empty-candidates; no LLM call fires here).
+    /// Using `MockChatProvider::null()` with this method is safe and correct.
+    ///
+    /// # Returns
+    /// `IngestPhase1Result { episode_id, candidates }` where `episode_id > 0` and
+    /// `candidates` is a (possibly empty) Vec of NER span extractions.
+    /// Phase 1 ingest entry point — see full doc on the function above.
+    // Phase A: pub so integration tests (external crates) can call it.
+    // Phase B: verify_stage.rs calls this from within the crate (pub(crate) would suffice
+    // then, but pub is required now for the integration test boundary).
+    pub async fn ingest_phase1_ner(
+        &self,
+        text: &str,
+        source_params: SourceParams,
+    ) -> crate::core::error::Result<IngestPhase1Result> {
+        let ref_time = Utc::now();
+
+        // 1. Insert episode row — same path as ingest_with Step 1.
+        let episode_id = self
+            .graph
+            .insert_episode_with_group(
+                text,
+                ref_time,
+                Some("ingest_phase1_ner"),
+                None,
+                None,
+                None,
+                None,
+                source_params.source_id.as_deref(),
+                source_params.source_uri.as_deref(),
+                source_params.recorded_at,
+            )
+            .await?;
+
+        // 2. NER only — no LLM, no entity writes.
+        //    When the `ner` feature is active, run GLiNER to obtain span candidates.
+        //    Without the feature, return empty candidates (caller proceeds to verify
+        //    with nothing to verify, which is correct — no entities, no verify needed).
+        #[cfg(feature = "ner")]
+        let candidates = {
+            // MNT-001: use the process-wide singleton from ner::ner_singleton() so
+            // both ingest_phase1_ner and ingest_with share a single loaded model
+            // (~650 MB INT8). Previously each path had its own OnceLock, risking
+            // double model load (~1.3 GB) when both paths were used in the same process.
+            let gliner = crate::core::ner::ner_singleton()?;
+
+            // Load registry for entity_type_id resolution.
+            let effective_gid = "default";
+            crate::core::entity_types::ensure_default_types_seeded(
+                &self.graph.conn,
+                effective_gid,
+            )
+            .await?;
+            let registry = crate::core::entity_types::EntityTypeRegistry::load_for_group(
+                &self.graph.conn,
+                effective_gid,
+            )
+            .await?;
+
+            let allowed: Vec<String> =
+                registry.specs().iter().map(|s| s.name.clone()).collect();
+            let ctx = crate::core::intelligence::ExtractionContext {
+                allowed_entity_types: &allowed,
+                allowed_edge_types: &self.config.allowed_edge_types,
+                known_entities: &[],
+                excluded_entity_types: &self.config.excluded_entity_types,
+                content_type: crate::core::config::ContentType::Text,
+                registry_specs: registry.specs(),
+                existing_graph_entities: &[],
+                arm_budget_ms: self.config.extraction_arm_budget_ms,
+            };
+            let extraction = gliner.extract(text, &ctx).await?;
+            extraction
+                .entities
+                .into_iter()
+                .map(|e| {
+                    // Resolve entity_type_id from label; fall back to 0 (catch-all).
+                    let type_id = registry
+                        .name_to_id(&e.label)
+                        .map(|id| id as i64)
+                        .unwrap_or(0i64);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let confidence = e
+                        .properties
+                        .get("confidence")
+                        .and_then(|v| v.as_f64())
+                        .map(|c| c as f32)
+                        .unwrap_or(0.0_f32);
+                    EntityCandidate {
+                        name: e.name,
+                        entity_type_id_raw: type_id,
+                        ner_confidence: confidence,
+                        span: (0, 0), // GLiNER span resolution not needed for Phase A
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        #[cfg(not(feature = "ner"))]
+        let candidates: Vec<EntityCandidate> = Vec::new();
+
+        Ok(IngestPhase1Result {
+            episode_id,
+            candidates,
+        })
+    }
+
+    /// Write entity rows for the given NER candidates based on verify decisions.
+    ///
+    /// Per C6 spec §5.5 decision semantics:
+    /// - `Confirm { candidate_idx }` → write with `candidate.entity_type_id_raw`
+    /// - `Correct { candidate_idx, new_type_id }` → write with `new_type_id`
+    /// - `Demote { candidate_idx }` → write with `entity_type_id = 0` (catch-all)
+    ///
+    /// Entity ids are derived via `normalize_name(candidate.name)` matching the
+    /// existing pipeline convention. Duplicate entity ids are silently skipped
+    /// (INSERT OR IGNORE semantics — entity already exists from a prior ingest).
+    ///
+    /// # Parameters
+    /// - `episode_id` — FK linking entities to their source episode (from Phase 1)
+    /// - `candidates` — NER candidates produced by `ingest_phase1_ner`
+    /// - `decisions` — verify decisions, one per relevant candidate
+    // Phase A: pub so integration tests (external crates) can call it.
+    pub async fn write_verified_entities(
+        &self,
+        episode_id: i64,
+        candidates: &[EntityCandidate],
+        decisions: &[ResolvedDecision],
+    ) -> crate::core::error::Result<UpsertedEntities> {
+        use crate::core::resolver::normalize_name;
+
+        let now = Utc::now().to_rfc3339();
+        let mut result = UpsertedEntities::default();
+
+        for decision in decisions {
+            let (candidate_idx, entity_type_id) = match decision {
+                ResolvedDecision::Confirm { candidate_idx } => {
+                    let candidate = &candidates[*candidate_idx];
+                    (*candidate_idx, candidate.entity_type_id_raw)
+                }
+                ResolvedDecision::Correct {
+                    candidate_idx,
+                    new_type_id,
+                } => (*candidate_idx, *new_type_id),
+                ResolvedDecision::Demote { candidate_idx } => (*candidate_idx, 0i64),
+            };
+
+            let candidate = &candidates[candidate_idx];
+            let entity_id = normalize_name(&candidate.name);
+            let props = serde_json::json!({ "name": candidate.name });
+            let props_str = serde_json::to_string(&props)
+                .map_err(|e| crate::core::error::Error::Other(anyhow::anyhow!("{e}")))?;
+
+            // INSERT OR IGNORE — if entity already exists from a prior ingest,
+            // skip silently. Per ingest_with pattern: first-mention-wins.
+            self.graph
+                .conn
+                .execute(
+                    "INSERT OR IGNORE INTO entities \
+                     (id, entity_type_id, properties, recorded_at, group_id, \
+                      entity_type_source, entity_type_assigned_at, ner_confidence) \
+                     VALUES (?1, ?2, ?3, ?4, 'default', 'Phase1Ner', ?4, ?5)",
+                    libsql::params![
+                        entity_id.clone(),
+                        entity_type_id,
+                        props_str.clone(),
+                        now.clone(),
+                        candidate.ner_confidence as f64
+                    ],
+                )
+                .await
+                .map_err(|e| {
+                    crate::core::error::Error::Other(anyhow::anyhow!(
+                        "write_verified_entities INSERT entity '{}': {e}",
+                        entity_id
+                    ))
+                })?;
+
+            // FTS insert (entities_fts row required per graph.rs invariant).
+            // INSERT OR IGNORE — mirrors the FTS insert in insert_entity.
+            self.graph
+                .conn
+                .execute(
+                    "INSERT OR IGNORE INTO entities_fts(entity_id, label, properties) \
+                     VALUES (?1, '', ?2)",
+                    libsql::params![entity_id.clone(), props_str],
+                )
+                .await
+                .map_err(|e| {
+                    crate::core::error::Error::Other(anyhow::anyhow!(
+                        "write_verified_entities FTS INSERT entity '{}': {e}",
+                        entity_id
+                    ))
+                })?;
+
+            // Episodic edge: link entity to its source episode.
+            self.graph
+                .insert_episodic_edge(episode_id, &entity_id, "mention")
+                .await
+                .ok();
+
+            metrics::counter!(
+                "rql.ingest.entity_persisted_total",
+                "source" => "phase1_verified",
+            )
+            .increment(1);
+
+            result.entity_ids.push(entity_id);
+        }
+
+        Ok(result)
+    }
+
     /// Full pipeline with a caller-supplied extractor.
     /// Any type implementing `EntityExtractor` can be used (DefaultExtractor, NuExtractExtractor, etc.).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.

@@ -14,3 +14,27 @@ pub mod reclassify;
 
 pub use discover_types::{DiscoveryResult, TypeProposal};
 pub use reclassify::ReclassifyResult;
+
+// Test-utils re-exports for GAP-002 DoD compile checks.
+// Items are `pub` + `#[doc(hidden)]` in consistency_check.rs; re-exported here
+// so `tests/spike_c6_uses_pub_crate_primitives.rs` can import them under
+// `kremory::core::dream::consistency_check::*` with `feature = "test-utils"`.
+//
+// ## pub + #[doc(hidden)] semver contract (MNT-002)
+//
+// These items are intentionally `pub` rather than `pub(crate)` due to an E0365
+// constraint: `pub(crate)` items cannot be re-exported as `pub` in this re-export
+// block (integration test crates live outside the kremory crate boundary).
+// `#[doc(hidden)]` hides them from rustdoc but NOT from autocomplete or downstream
+// crates that import with `feature = "test-utils"`.
+//
+// Consumers of `feature = "test-utils"` MUST treat these as explicitly unstable:
+// they will change without semver notice. The `test-utils` feature is not
+// part of the public API contract.
+#[cfg(any(test, feature = "test-utils"))]
+pub use consistency_check::{
+    build_verify_messages, verify_batch, verify_batch_schema, CandidateRow, VerifyBatchParams,
+    // ARCH-001 fix types — also exposed for Phase B verify_stage.rs integration tests.
+    VerifyAction, VerifyBatchDecision, VerifyBatchOutcome,
+};
+
