@@ -38,7 +38,7 @@ use crate::core::provider::{
 /// schema-structure validation.  Call `.model(model_str)` to unlock
 /// NativeSchema (Anthropic/OpenAI) or FormatSchema (Ollama) arms based on
 /// provider-capability detection.
-pub(crate) struct StructuredCallBuilder<'a, L: ChatProvider> {
+pub(crate) struct StructuredCallBuilder<'a, L: ?Sized + ChatProvider> {
     llm: &'a L,
     /// Owned so the `call()` async fn can pass it to `counter!` macros
     /// which require `'static` label values.  Empty string = unknown model
@@ -56,7 +56,7 @@ pub(crate) struct StructuredCallBuilder<'a, L: ChatProvider> {
     force_arm: Option<FallbackArm>,
 }
 
-impl<'a, L: ChatProvider> StructuredCallBuilder<'a, L> {
+impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
     /// Construct a builder.
     ///
     /// - `schema` — `'static` schema value (one of the `SCHEMA_*` statics in
@@ -388,7 +388,7 @@ fn build_ladder(caps: ProviderCaps) -> Vec<FallbackArm> {
 // solely to satisfy clippy — same precedent as `Engine::ingest_with` /
 // `Engine::ingest_deferred`. Documented exemption, not a band-aid.
 #[allow(clippy::too_many_arguments)]
-async fn try_arm<L: ChatProvider>(
+async fn try_arm<L: ?Sized + ChatProvider>(
     llm: &L,
     arm: FallbackArm,
     schema: &Value,
@@ -456,7 +456,7 @@ async fn try_arm<L: ChatProvider>(
 /// valid lines into a `{"entities": [...]}` JSON object.  Per-line errors are
 /// silently counted via metric `rql.extraction.delimited_tuple_skip_row` and
 /// do not fail the arm.
-async fn try_delimited_tuple_arm<L: ChatProvider>(
+async fn try_delimited_tuple_arm<L: ?Sized + ChatProvider>(
     llm: &L,
     messages: &[ChatMessage],
 ) -> Result<Value, ExtractionError> {
@@ -678,7 +678,7 @@ fn arm_name(arm: FallbackArm) -> &'static str {
 ///
 /// Gated by `#[cfg(not(test))]` at all call-sites so unit tests retain fast
 /// engine open without LLM round-trips.
-pub(crate) async fn warm_schema_caches<L: ChatProvider>(llm: &L, model: Option<&str>) {
+pub(crate) async fn warm_schema_caches<L: ?Sized + ChatProvider>(llm: &L, model: Option<&str>) {
     use crate::core::extraction::schemas::{
         SCHEMA_CONTRADICTION_VERDICT, SCHEMA_ENTITY_LIST, SCHEMA_ENTITY_TYPING,
         SCHEMA_NUEXTRACT_BOTH, SCHEMA_NUEXTRACT_ENTITIES_ONLY, SCHEMA_NUEXTRACT_RELATIONS_ONLY,

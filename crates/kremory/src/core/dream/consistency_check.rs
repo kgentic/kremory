@@ -19,7 +19,6 @@ use std::time::Instant;
 
 use chrono::Utc;
 use metrics::{counter, histogram};
-use schemars::JsonSchema;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -111,10 +110,45 @@ impl<'de> Deserialize<'de> for VerifyDecision {
 }
 
 /// Batch wrapper; `#[serde(default)]` on Vec is acceptable (empty = no decisions).
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize)]
 struct VerifyBatch {
     #[serde(default)]
     decisions: Vec<serde_json::Value>,
+}
+
+/// Hand-crafted JSON Schema for `VerifyBatch` that is compatible with Anthropic's
+/// `NativeSchema` arm (which requires `additionalProperties: false` on every
+/// `object` node and rejects `minimum`/`maximum` on `number` types).
+///
+/// `schemars::schema_for!(VerifyBatch)` does NOT add `additionalProperties: false`
+/// by default, causing the Anthropic API to return a 400 error, which makes the
+/// fallback ladder step down to PromptOnly → `{}` → empty decisions list.
+/// This static schema is the cause-fix (ADR-047 §2, CLAUDE.md Rule 8).
+fn verify_batch_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decisions"],
+        "properties": {
+            "decisions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["entity_id", "action", "confidence"],
+                    "properties": {
+                        "entity_id": { "type": "integer" },
+                        "action": {
+                            "type": "string",
+                            "enum": ["confirm", "correct", "uncertain"]
+                        },
+                        "new_type_id": { "type": ["integer", "null"] },
+                        "confidence": { "type": "number" }
+                    }
+                }
+            }
+        }
+    })
 }
 
 // ─── Pure functions ───────────────────────────────────────────────────────────
@@ -155,10 +189,10 @@ struct CandidateRow {
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 /// Run Dream Pass 4 consistency check (ADR-047).
-pub async fn run_consistency_check<L: ChatProvider>(
+pub async fn run_consistency_check(
     db: &libsql::Connection,
     embedder: &dyn DynEmbeddingProvider,
-    llm: &L,
+    llm: &dyn ChatProvider,
     opts: ConsistencyCheckOpts,
 ) -> Result<ConsistencyCheckSummary> {
     let mut summary = ConsistencyCheckSummary::default();
@@ -169,7 +203,7 @@ pub async fn run_consistency_check<L: ChatProvider>(
         .clone()
         .unwrap_or_else(|| llm.model().to_string());
 
-    let type_map = load_type_descriptions(db).await?;
+    let type_map = load_type_registry(db).await?;
     let candidates = load_candidates(db).await?;
     summary.scanned = candidates.len();
     counter!("kremory.dream.consistency_check.scanned_total").increment(candidates.len() as u64);
@@ -183,7 +217,7 @@ pub async fn run_consistency_check<L: ChatProvider>(
     for candidate in &candidates {
         let embed_input = embed_input_formatter(&candidate.name, &candidate.top3_facts);
         let entity_vec = embedder.embed_dyn(&embed_input).await?;
-        let cos = if let Some(type_desc) = type_map.get(&candidate.entity_type_id) {
+        let cos = if let Some((_name, type_desc)) = type_map.get(&candidate.entity_type_id) {
             let type_vec = embedder.embed_dyn(type_desc).await?;
             cosine_similarity(&entity_vec, &type_vec)
         } else {
@@ -219,8 +253,11 @@ pub async fn run_consistency_check<L: ChatProvider>(
     // LLM-verify call
     let messages = build_verify_messages(&flagged, &type_map);
     let call_start = Instant::now();
-    let schema = serde_json::to_value(schemars::schema_for!(VerifyBatch))
-        .map_err(|e| Error::Other(anyhow::anyhow!("VerifyBatch schema: {e}")))?;
+    // Use the hand-crafted Anthropic-compatible schema (see verify_batch_schema()).
+    // schemars::schema_for!(VerifyBatch) does NOT add `additionalProperties: false`
+    // which Anthropic NativeSchema arm requires — causing silent 400 → fallback to
+    // PromptOnly → {} → empty decisions (root cause of Phase D FAIL, ADR-047 §2).
+    let schema = verify_batch_schema();
     let raw_value =
         crate::core::extraction::structured::StructuredCallBuilder::new(llm, &schema, "VerifyBatch")
             .model(&verify_model)
@@ -232,10 +269,19 @@ pub async fn run_consistency_check<L: ChatProvider>(
         .record(elapsed_ms as f64);
     summary.latency_ms_p50 = elapsed_ms;
     summary.latency_ms_p95 = elapsed_ms;
+    // Derive provider label from model string for correct attribution
+    // (prev hardcoded "ollama" was wrong for Anthropic verify provider — Rule 19).
+    let provider_label = if verify_model.starts_with("claude-") {
+        "anthropic"
+    } else if verify_model.starts_with("gpt-") || verify_model.starts_with("o1-") || verify_model.starts_with("o3-") {
+        "openai"
+    } else {
+        "ollama"
+    };
     counter!(
         "kremory.dream.consistency_check.verify_model_used",
         "model_name" => verify_model.clone(),
-        "provider" => "ollama"
+        "provider" => provider_label
     )
     .increment(1);
 
@@ -340,20 +386,26 @@ pub async fn run_consistency_check<L: ChatProvider>(
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
-async fn load_type_descriptions(
+/// Load entity type registry: id → (name, description).
+///
+/// Both name and description are needed:
+/// - description for embed-prefilter cosine comparison
+/// - name for the LLM verify-prompt type menu (so LLM knows which ID = which type)
+async fn load_type_registry(
     db: &libsql::Connection,
-) -> Result<std::collections::HashMap<i64, String>> {
+) -> Result<std::collections::HashMap<i64, (String, String)>> {
     let mut rows = db
-        .query("SELECT id, description FROM entity_types", ())
+        .query("SELECT id, name, description FROM entity_types", ())
         .await
-        .map_err(|e| Error::Other(anyhow::anyhow!("load_type_descriptions: {e}")))?;
+        .map_err(|e| Error::Other(anyhow::anyhow!("load_type_registry: {e}")))?;
     let mut map = std::collections::HashMap::new();
     while let Some(row) = rows.next().await
-        .map_err(|e| Error::Other(anyhow::anyhow!("load_type_descriptions row: {e}")))?
+        .map_err(|e| Error::Other(anyhow::anyhow!("load_type_registry row: {e}")))?
     {
         let id: i64 = row.get(0).map_err(|e| Error::Other(anyhow::anyhow!("type_id: {e}")))?;
-        let desc: String = row.get(1).map_err(|e| Error::Other(anyhow::anyhow!("type_desc: {e}")))?;
-        map.insert(id, desc);
+        let name: String = row.get(1).map_err(|e| Error::Other(anyhow::anyhow!("type_name: {e}")))?;
+        let desc: String = row.get(2).map_err(|e| Error::Other(anyhow::anyhow!("type_desc: {e}")))?;
+        map.insert(id, (name, desc));
     }
     Ok(map)
 }
@@ -443,26 +495,52 @@ async fn write_audit_row(db: &libsql::Connection, p: AuditRowParams<'_>) -> Resu
     Ok(())
 }
 
+/// Build the LLM messages for a verify batch (ADR-047 §3).
+///
+/// The user message MUST include the full type registry (id → name) so the LLM
+/// can assign valid `new_type_id` values when action=correct.  Without this menu
+/// the LLM has no grounding for integer IDs and will produce corrections that
+/// don't match any row in `entity_types`, yielding zero precision lift even when
+/// the action decisions are semantically correct.
 fn build_verify_messages(
     candidates: &[&CandidateRow],
-    type_map: &std::collections::HashMap<i64, String>,
+    type_map: &std::collections::HashMap<i64, (String, String)>,
 ) -> Vec<crate::core::provider::ChatMessage> {
     let system = "You are an entity-type verification assistant. \
         Given entities and their assigned types, decide for each: confirm (type correct), \
-        correct (type wrong — provide new_type_id), or uncertain (insufficient info). \
-        Respond with a JSON object matching the VerifyBatch schema.";
+        correct (type wrong — provide new_type_id from the registry below), or uncertain \
+        (insufficient info). Respond with a JSON object matching the VerifyBatch schema.";
+
+    // Build the type registry menu so the LLM knows which ID corresponds to which type.
+    let mut registry_lines: Vec<String> = type_map
+        .iter()
+        .filter(|(&id, _)| id != 0) // exclude catch-all
+        .map(|(&id, (name, _desc))| format!("  id={id} name=\"{name}\""))
+        .collect();
+    registry_lines.sort(); // deterministic order
+    let registry_block = registry_lines.join("\n");
+
     let entity_lines: Vec<String> = candidates
         .iter()
         .map(|c| {
-            let type_desc = type_map.get(&c.entity_type_id).map(|d| d.as_str()).unwrap_or("unknown");
+            let (type_name, type_desc) = type_map
+                .get(&c.entity_type_id)
+                .map(|(n, d)| (n.as_str(), d.as_str()))
+                .unwrap_or(("unknown", "unknown"));
             format!(
-                "entity_id={} name=\"{}\" current_type_id={} type_description=\"{}\" facts=\"{}\"",
-                c.rowid, c.name, c.entity_type_id, type_desc, c.top3_facts.join("; ")
+                "entity_id={} name=\"{}\" current_type_id={} current_type_name=\"{}\" \
+                 type_description=\"{}\" facts=\"{}\"",
+                c.rowid, c.name, c.entity_type_id, type_name, type_desc,
+                c.top3_facts.join("; ")
             )
         })
         .collect();
+
     vec![
         chat_msg_system(system),
-        chat_msg_user(format!("Verify these entity type assignments:\n{}", entity_lines.join("\n"))),
+        chat_msg_user(format!(
+            "Available entity types:\n{registry_block}\n\nVerify these entity type assignments:\n{}",
+            entity_lines.join("\n")
+        )),
     ]
 }

@@ -33,8 +33,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use autoagents_llm::{
-    backends::ollama::Ollama,
+    backends::{anthropic::Anthropic, ollama::Ollama},
     builder::LLMBuilder,
+    chat::ChatProvider,
     embedding::{model_provider::EmbeddingBuilder, EmbeddingProvider as AutoEmbeddingProvider},
 };
 use chrono::Utc;
@@ -302,6 +303,25 @@ fn build_llm(ollama_host: &str, model: &str) -> Result<Arc<Ollama>> {
         .map_err(|e| anyhow::anyhow!("Ollama LLM builder (model={model}): {e}"))
 }
 
+/// Build an Anthropic chat client for use as the verify provider.
+///
+/// Uses the `ANTHROPIC_API_KEY` environment variable. Fails loudly if absent
+/// (per [[llm-output-parse-loudly]] — never silently default to no-op).
+fn build_anthropic_llm(model: &str) -> Result<Arc<Anthropic>> {
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set — required for anthropic verify provider"))?;
+    if api_key.is_empty() {
+        return Err(anyhow::anyhow!("ANTHROPIC_API_KEY is empty — required for anthropic verify provider"));
+    }
+    LLMBuilder::<Anthropic>::new()
+        .api_key(api_key)
+        .model(model)
+        .max_tokens(512) // verify calls are short; cap spend
+        .timeout_seconds(60)
+        .build()
+        .map_err(|e| anyhow::anyhow!("Anthropic LLM builder (model={model}): {e}"))
+}
+
 /// Build an Ollama embedder + adapter.
 fn build_embedder(ollama_host: &str, embed_model: &str) -> Result<Arc<OllamaEmbedAdapter<Ollama>>> {
     let raw_emb: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
@@ -380,11 +400,12 @@ struct TauResult {
 /// `verify_llm` is the model used for consistency_check verification calls.
 /// It is intentionally separate from the ingest model so RISK-001 can isolate
 /// Dream Pass 4 verification quality from Phase 1 extraction quality.
+/// Accepts any `ChatProvider` so Ollama and Anthropic both work.
 async fn run_sweep_for_tau(
     base_db_path: &Path,
     tau: f32,
     gt: &[GroundTruthEntity],
-    verify_llm: Arc<Ollama>,
+    verify_llm: &dyn ChatProvider,
     embedder: Arc<OllamaEmbedAdapter<Ollama>>,
 ) -> Result<TauResult> {
     // Copy base DB to scratch path for this τ run.
@@ -419,7 +440,7 @@ async fn run_sweep_for_tau(
         verify_model_override: None,
     };
 
-    let summary = run_consistency_check(&scratch_graph.conn, arc_embedder.as_ref(), &*verify_llm, opts)
+    let summary = run_consistency_check(&scratch_graph.conn, arc_embedder.as_ref(), verify_llm, opts)
         .await
         .context("run_consistency_check failed")?;
 
@@ -464,12 +485,13 @@ struct Risk001Verdict {
 ///
 /// `ingest_llm` handles Phase 1 NER (needs to handle 21-type schema reliably).
 /// `verify_llm` handles consistency_check verification calls (the model under test).
+/// `verify_llm` is `&dyn ChatProvider` so Ollama and Anthropic both work without boxing.
 async fn run_risk001_gate(
     fixture_text: &str,
     tau: f32,
     gt: &[GroundTruthEntity],
     ingest_llm: Arc<Ollama>,
-    verify_llm: Arc<Ollama>,
+    verify_llm: &dyn ChatProvider,
     embedder: Arc<OllamaEmbedAdapter<Ollama>>,
 ) -> Result<Risk001Verdict> {
     let dir = tempfile::tempdir().context("risk001 tempdir")?;
@@ -505,7 +527,7 @@ async fn run_risk001_gate(
         verify_model_override: None,
     };
 
-    let summary = run_consistency_check(&graph.conn, arc_embedder.as_ref(), &*verify_llm, opts)
+    let summary = run_consistency_check(&graph.conn, arc_embedder.as_ref(), verify_llm, opts)
         .await
         .context("risk001 run_consistency_check")?;
 
@@ -542,7 +564,7 @@ async fn run_risk001_gate(
 
 // ─── Document writers ─────────────────────────────────────────────────────────
 
-fn write_sweep_doc(workspace_root: &Path, results: &[TauResult], best_tau: f32) -> Result<()> {
+fn write_sweep_doc(workspace_root: &Path, results: &[TauResult], best_tau: f32, verify_provider_label: &str) -> Result<()> {
     let dir = workspace_root.join(".ai-docs").join("lessons");
     std::fs::create_dir_all(&dir).context("create .ai-docs/lessons")?;
     let path = dir.join("2026-06-10-v0-1-2-tau-calibration-sweep.md");
@@ -576,7 +598,7 @@ fn write_sweep_doc(workspace_root: &Path, results: &[TauResult], best_tau: f32) 
     lines.push("\n## Notes\n".to_string());
     lines.push("- F1 computed on correction task: TP=was-wrong-now-correct, FP=was-correct-now-wrong, FN=still-wrong-after.".to_string());
     lines.push("- Fixture: `crates/kremory-eval/fixtures/mis_typed_high_conf.txt` (10 polysemous entities, Phase D TD-036).".to_string());
-    lines.push("- Verify model (RISK-001 target): `gemma4-e2b:latest` (SoT: `tests/llm_integration.rs:1-25`).".to_string());
+    lines.push(format!("- Verify provider (RISK-001 target): `{verify_provider_label}`."));
     lines.push("- Ingest model: `qwen2.5:14b` (handles 21-type integer enum; EXTRA_TYPES required for fixture GT).".to_string());
     lines.push("- τ precedent: Graphiti NODE_DEDUP_COSINE_MIN_SCORE=0.6 — NOT validated for kremory type-validation space.".to_string());
 
@@ -657,14 +679,29 @@ async fn main() -> Result<()> {
     // SoT: tests/llm_integration.rs:1-25.
     // - verify_model: gemma4-e2b:latest (interactive default, RISK-001 target)
     // - ingest_model: qwen2.5:14b (legacy fallback, handles 21-type integer enum reliably)
-    let verify_model = std::env::var("OLLAMA_CHAT_MODEL")
-        .unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
+    //
+    // KREMORY_VERIFY_PROVIDER=anthropic routes verify calls to Anthropic instead of Ollama.
+    // This is the sub-decision (iv) path: frontier-only Pass 4 (ADR-047 amendment 2026-06-10).
+    let verify_provider_name = std::env::var("KREMORY_VERIFY_PROVIDER")
+        .unwrap_or_else(|_| "ollama".to_string());
+    let verify_model = std::env::var("KREMORY_VERIFY_MODEL")
+        .or_else(|_| std::env::var("OLLAMA_CHAT_MODEL"))
+        .unwrap_or_else(|_| {
+            if verify_provider_name.to_lowercase() == "anthropic" {
+                "claude-haiku-4-5-20251001".to_string()
+            } else {
+                "gemma4-e2b:latest".to_string()
+            }
+        });
     let ingest_model = std::env::var("OLLAMA_INGEST_MODEL")
         .unwrap_or_else(|_| "qwen2.5:14b".to_string());
     let embed_model = std::env::var("OLLAMA_EMBED_MODEL")
         .unwrap_or_else(|_| "nomic-embed-text".to_string());
 
-    eprintln!("[sweep] ollama={ollama_host} ingest_model={ingest_model} verify_model={verify_model} embed={embed_model}");
+    // Human-readable label for docs (never contains the API key).
+    let verify_provider_label = format!("{verify_provider_name}/{verify_model}");
+
+    eprintln!("[sweep] ollama={ollama_host} ingest_model={ingest_model} verify_provider={verify_provider_label} embed={embed_model}");
 
     // ── Locate fixtures ──────────────────────────────────────────────────────
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -684,9 +721,31 @@ async fn main() -> Result<()> {
     eprintln!("[sweep] fixture: {} chars, {} ground-truth entities", fixture_text.len(), gt.len());
 
     // ── Build providers ──────────────────────────────────────────────────────
+    // Ingest provider: always Ollama (qwen2.5:14b handles the 21-type integer enum reliably).
+    // Verify provider: Ollama or Anthropic depending on KREMORY_VERIFY_PROVIDER.
     let ingest_llm = build_llm(&ollama_host, &ingest_model)?;
-    let verify_llm = build_llm(&ollama_host, &verify_model)?;
     let embedder = build_embedder(&ollama_host, &embed_model)?;
+
+    // Build verify LLM and obtain a `&dyn ChatProvider` reference.
+    // The owned provider must outlive the sweep + gate calls, so we hold both
+    // concrete arcs and dispatch via a trait-object ref (no boxing needed).
+    let verify_ollama_opt: Option<Arc<Ollama>> = if verify_provider_name.to_lowercase() == "anthropic" {
+        None
+    } else {
+        Some(build_llm(&ollama_host, &verify_model)?)
+    };
+    let verify_anthropic_opt: Option<Arc<Anthropic>> = if verify_provider_name.to_lowercase() == "anthropic" {
+        Some(build_anthropic_llm(&verify_model)?)
+    } else {
+        None
+    };
+    let verify_llm_ref: &dyn ChatProvider = if let Some(ref a) = verify_anthropic_opt {
+        a.as_ref()
+    } else if let Some(ref o) = verify_ollama_opt {
+        o.as_ref()
+    } else {
+        return Err(anyhow::anyhow!("no verify LLM provider built — this is a bug"));
+    };
 
     // ── Phase 1 ingest (base DB) ─────────────────────────────────────────────
     // Uses ingest_llm (qwen2.5:14b by default) which reliably handles the
@@ -736,7 +795,7 @@ async fn main() -> Result<()> {
             &base_db_path,
             tau,
             &gt,
-            Arc::clone(&verify_llm),
+            verify_llm_ref,
             Arc::clone(&embedder),
         )
         .await
@@ -778,7 +837,7 @@ async fn main() -> Result<()> {
     );
 
     // ── Write sweep doc ──────────────────────────────────────────────────────
-    write_sweep_doc(&workspace_root, &sweep_results, best_tau)?;
+    write_sweep_doc(&workspace_root, &sweep_results, best_tau, &verify_provider_label)?;
 
     // ── RISK-001 gate (D5) ───────────────────────────────────────────────────
     eprintln!("[sweep] === RISK-001 Acceptance Gate ===");
@@ -787,13 +846,13 @@ async fn main() -> Result<()> {
         best_tau,
         &gt,
         Arc::clone(&ingest_llm),
-        Arc::clone(&verify_llm),
+        verify_llm_ref,
         Arc::clone(&embedder),
     )
     .await
     .context("RISK-001 gate")?;
 
-    write_risk001_doc(&workspace_root, &verdict, &verify_model)?;
+    write_risk001_doc(&workspace_root, &verdict, &verify_provider_label)?;
 
     eprintln!(
         "[sweep] Total elapsed: {:.1}s",
