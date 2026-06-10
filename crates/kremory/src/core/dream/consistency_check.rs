@@ -205,6 +205,14 @@ struct CandidateRow {
     name: String,
     entity_type_id: i64,
     top3_facts: Vec<String>,
+    /// Source-episode text (the most recent episode that mentioned this entity).
+    /// Phase D iter 4 (2026-06-10) addition per ADR-047 amendment + user-driven
+    /// debug session — empirical evidence showed Pass 4 with only name + thin
+    /// facts produces ~50% precision. Including the source episode text gives
+    /// the LLM the disambiguating context (e.g., "Apple emailed me" not just
+    /// "Apple"). Academic precedent: arXiv:2605.29168 ontology-grounded
+    /// post-extraction correction uses full source-document context.
+    source_episode: Option<String>,
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -486,11 +494,13 @@ async fn load_candidates(db: &libsql::Connection) -> Result<Vec<CandidateRow>> {
             .get(2)
             .map_err(|e| Error::Other(anyhow::anyhow!("entity_type_id: {e}")))?;
         let top3_facts = load_top3_facts(db, &name).await?;
+        let source_episode = load_source_episode(db, &name).await?;
         candidates.push(CandidateRow {
             rowid,
             name,
             entity_type_id: type_id,
             top3_facts,
+            source_episode,
         });
     }
     Ok(candidates)
@@ -518,6 +528,41 @@ async fn load_top3_facts(db: &libsql::Connection, entity_id: &str) -> Result<Vec
         facts.push(val);
     }
     Ok(facts)
+}
+
+/// Load the source-episode text for the most recent episode that mentioned
+/// this entity. Returns `None` if no episodic edge exists.
+///
+/// Phase D iter 4 (2026-06-10) addition per ADR-047 amendment. The verify call
+/// needs source-text context to disambiguate polyseme entities ("Apple emailed
+/// me" vs "Apple is a fruit"). Without it the LLM operates on name + thin facts
+/// alone and produces ~50% precision on polysemes per RISK-001 iter 3 evidence.
+async fn load_source_episode(
+    db: &libsql::Connection,
+    entity_id: &str,
+) -> Result<Option<String>> {
+    let mut rows = db
+        .query(
+            "SELECT e.content FROM episodes e \
+             INNER JOIN episodic_edges ee ON ee.episode_id = e.id \
+             WHERE ee.entity_id = ?1 \
+             ORDER BY e.recorded_at DESC LIMIT 1",
+            libsql::params![entity_id.to_string()],
+        )
+        .await
+        .map_err(|e| Error::Other(anyhow::anyhow!("load_source_episode: {e}")))?;
+    if let Some(row) = rows
+        .next()
+        .await
+        .map_err(|e| Error::Other(anyhow::anyhow!("load_source_episode row: {e}")))?
+    {
+        let content: String = row
+            .get(0)
+            .map_err(|e| Error::Other(anyhow::anyhow!("episode.content: {e}")))?;
+        Ok(Some(content))
+    } else {
+        Ok(None)
+    }
 }
 
 async fn apply_correction(
@@ -623,15 +668,32 @@ fn build_verify_messages(
                 .get(&c.entity_type_id)
                 .map(|(n, d)| (n.as_str(), d.as_str()))
                 .unwrap_or(("unknown", "unknown"));
+            // Truncate source episode to avoid bloat (8000 chars ~= 2000 tokens
+            // per entity; cap covers most natural-prose paragraphs).
+            let source_excerpt: String = c
+                .source_episode
+                .as_deref()
+                .map(|s| {
+                    if s.len() > 8000 {
+                        format!("{}…[truncated]", &s[..8000])
+                    } else {
+                        s.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "[no source episode available]".to_string());
+            // Per ADR-047 amendment + arXiv:2605.29168 ontology-grounded post-extraction
+            // correction precedent — source-episode text gives the LLM disambiguating
+            // context for polysemes ("Apple emailed me" vs "Apple is a fruit").
             format!(
                 "entity_id={} name=\"{}\" current_type_id={} current_type_name=\"{}\" \
-                 type_description=\"{}\" facts=\"{}\"",
+                 type_description=\"{}\" facts=\"{}\" source_episode=\"\"\"{}\"\"\"",
                 c.rowid,
                 c.name,
                 c.entity_type_id,
                 type_name,
                 type_desc,
-                c.top3_facts.join("; ")
+                c.top3_facts.join("; "),
+                source_excerpt
             )
         })
         .collect();
