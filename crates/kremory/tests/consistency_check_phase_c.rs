@@ -28,11 +28,11 @@
 //!
 //! ## Mocking boundary (per test strategy §Section 4)
 //!
-//! - ALWAYS REAL:  SQLite (TemporalGraph file-backed via tempdir), Embedder
-//!                 (MockEmbeddingProvider / DeterministicEmbeddingProvider — cosine
-//!                  math IS what we test), consistency_check.rs itself.
-//! - ALWAYS MOCK:  ChatProvider (local MockLlm returning golden JSON per test).
-//! - REAL LLM:     Only C10 — #[ignore]-gated, --features llm-integration.
+//! - ALWAYS REAL: SQLite (TemporalGraph file-backed via tempdir), Embedder
+//!   (MockEmbeddingProvider / DeterministicEmbeddingProvider — cosine math IS
+//!   what we test), consistency_check.rs itself.
+//! - ALWAYS MOCK: ChatProvider (local MockLlm returning golden JSON per test).
+//! - REAL LLM: Only C10 — #[ignore]-gated, --features llm-integration.
 
 use autoagents_llm::chat::{ChatMessage, ChatProvider, ChatResponse as ChatResponseTrait, Tool};
 use kremory::core::schema::TemporalGraph;
@@ -187,9 +187,8 @@ fn c1_module_exists_under_500_loc() {
     let rel = "crates/kremory/src/core/dream/consistency_check.rs";
     let full = workspace_root.join(rel);
     let path = full.to_str().expect("path is valid UTF-8");
-    let content = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        panic!("C1: consistency_check.rs must exist at {path}: {e}")
-    });
+    let content = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("C1: consistency_check.rs must exist at {path}: {e}"));
     let line_count = content.lines().count();
     assert!(
         line_count < 500,
@@ -371,8 +370,7 @@ fn c5_confirm_reject_modify_schema_strict_deserialization() {
     );
 
     // C5b: action=correct but missing new_type_id must fail
-    let missing_new_type_id =
-        r#"{"entity_id": 42, "action": "correct", "confidence": 0.8}"#;
+    let missing_new_type_id = r#"{"entity_id": 42, "action": "correct", "confidence": 0.8}"#;
     let result_b: Result<VerifyDecision, _> = serde_json::from_str(missing_new_type_id);
     assert!(
         result_b.is_err(),
@@ -381,8 +379,7 @@ fn c5_confirm_reject_modify_schema_strict_deserialization() {
     );
 
     // C5c: valid JSON with action=confirm deserializes correctly
-    let valid_confirm =
-        r#"{"entity_id": 7, "action": "confirm", "confidence": 0.95}"#;
+    let valid_confirm = r#"{"entity_id": 7, "action": "confirm", "confidence": 0.95}"#;
     let result_c: Result<VerifyDecision, _> = serde_json::from_str(valid_confirm);
     assert!(
         result_c.is_ok(),
@@ -390,10 +387,7 @@ fn c5_confirm_reject_modify_schema_strict_deserialization() {
         result_c.err()
     );
     let decision = result_c.unwrap();
-    assert_eq!(
-        decision.entity_id, 7,
-        "C5c: entity_id must be 7"
-    );
+    assert_eq!(decision.entity_id, 7, "C5c: entity_id must be 7");
 
     // C5d: valid JSON with action=correct and new_type_id deserializes correctly
     let valid_correct =
@@ -405,10 +399,7 @@ fn c5_confirm_reject_modify_schema_strict_deserialization() {
         result_d.err()
     );
     let decision_d = result_d.unwrap();
-    assert_eq!(
-        decision_d.entity_id, 3,
-        "C5d: entity_id must be 3"
-    );
+    assert_eq!(decision_d.entity_id, 3, "C5d: entity_id must be 3");
 }
 
 // ─── C6: Cap-overflow guard ───────────────────────────────────────────────────
@@ -567,9 +558,9 @@ async fn c7_observability_counters_increment_on_right_paths() {
     let snapshot = snapshotter.snapshot().into_vec();
 
     // Check cap_overflow_total counter fired
-    let has_cap_overflow = snapshot.iter().any(|(k, _, _, _)| {
-        k.key().name() == "kremory.dream.consistency_check.cap_overflow_total"
-    });
+    let has_cap_overflow = snapshot
+        .iter()
+        .any(|(k, _, _, _)| k.key().name() == "kremory.dream.consistency_check.cap_overflow_total");
     assert!(
         has_cap_overflow,
         "C7: kremory.dream.consistency_check.cap_overflow_total must be emitted on overflow path; \
@@ -581,18 +572,18 @@ async fn c7_observability_counters_increment_on_right_paths() {
     );
 
     // Check scanned_total fired
-    let has_scanned = snapshot.iter().any(|(k, _, _, _)| {
-        k.key().name() == "kremory.dream.consistency_check.scanned_total"
-    });
+    let has_scanned = snapshot
+        .iter()
+        .any(|(k, _, _, _)| k.key().name() == "kremory.dream.consistency_check.scanned_total");
     assert!(
         has_scanned,
         "C7: kremory.dream.consistency_check.scanned_total must be emitted"
     );
 
     // Check flagged_total fired
-    let has_flagged = snapshot.iter().any(|(k, _, _, _)| {
-        k.key().name() == "kremory.dream.consistency_check.flagged_total"
-    });
+    let has_flagged = snapshot
+        .iter()
+        .any(|(k, _, _, _)| k.key().name() == "kremory.dream.consistency_check.flagged_total");
     assert!(
         has_flagged,
         "C7: kremory.dream.consistency_check.flagged_total must be emitted"
@@ -739,8 +730,7 @@ async fn c9_audit_row_written_per_corrected_action() {
 
     // Seed entity X with entity_type_id=2 (Organisation) — we expect it to be
     // corrected to type_id=5 (Person) by the mock LLM.
-    let rowid_x =
-        insert_entity_with_rowid(&graph, "c9-entity-x", 2, "Phase1Ner", Some(0.91)).await;
+    let rowid_x = insert_entity_with_rowid(&graph, "c9-entity-x", 2, "Phase1Ner", Some(0.91)).await;
 
     // Mock returns a correction: correct entity X to type 5 with confidence 0.8.
     // We embed rowid_x in the response JSON.
@@ -876,8 +866,7 @@ async fn c10_real_llm_schema_parses_100_percent() {
             verify_model_override: None,
         };
 
-        let result =
-            run_consistency_check(&graph.conn, &embedder, llm.as_ref(), opts).await;
+        let result = run_consistency_check(&graph.conn, &embedder, llm.as_ref(), opts).await;
 
         match result {
             Ok(summary) => {
