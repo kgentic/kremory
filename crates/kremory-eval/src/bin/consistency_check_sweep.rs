@@ -157,6 +157,10 @@ fn build_source_params() -> SourceParams {
 /// Query all non-catch-all entities from DB, return (name, type_name) pairs.
 ///
 /// Joins entities → entity_types to get the human-readable label.
+/// Query all non-catch-all entities from DB, return (name, type_name) pairs.
+///
+/// Post-Migration-009: `entities.label` was dropped; `entities.id` IS the entity name.
+/// Joins entities → entity_types to get the human-readable label.
 async fn query_entities(db: &libsql::Connection) -> Result<Vec<(String, String)>> {
     let mut rows = db
         .query(
@@ -174,7 +178,7 @@ async fn query_entities(db: &libsql::Connection) -> Result<Vec<(String, String)>
         .await
         .context("query_entities: row iteration failed")?
     {
-        let name: String = row.get(0).context("query_entities: name column")?;
+        let name: String = row.get(0).context("query_entities: id/name column")?;
         let type_name: String = row.get(1).context("query_entities: type_name column")?;
         result.push((name, type_name));
     }
@@ -286,29 +290,26 @@ fn compute_f1(
 
 // ─── Engine + ingest helpers ──────────────────────────────────────────────────
 
-async fn build_providers(
-    ollama_host: &str,
-    chat_model: &str,
-    embed_model: &str,
-) -> Result<(Arc<Ollama>, Arc<OllamaEmbedAdapter<Ollama>>)> {
+/// Build an Ollama LLM client.
+fn build_llm(ollama_host: &str, model: &str) -> Result<Arc<Ollama>> {
     let keep_alive = std::env::var("OLLAMA_KEEP_ALIVE").unwrap_or_else(|_| "1h".to_string());
-
-    let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
+    LLMBuilder::<Ollama>::new()
         .base_url(ollama_host)
-        .model(chat_model)
-        .timeout_seconds(120)
+        .model(model)
+        .timeout_seconds(300) // 5 min — large models can be slow
         .keep_alive(&keep_alive)
         .build()
-        .map_err(|e| anyhow::anyhow!("Ollama LLM builder: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Ollama LLM builder (model={model}): {e}"))
+}
 
+/// Build an Ollama embedder + adapter.
+fn build_embedder(ollama_host: &str, embed_model: &str) -> Result<Arc<OllamaEmbedAdapter<Ollama>>> {
     let raw_emb: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
         .base_url(ollama_host)
         .model(embed_model)
         .build()
         .map_err(|e| anyhow::anyhow!("Ollama embedder builder: {e}"))?;
-
-    let embedder = Arc::new(OllamaEmbedAdapter { inner: raw_emb });
-    Ok((llm, embedder))
+    Ok(Arc::new(OllamaEmbedAdapter { inner: raw_emb }))
 }
 
 async fn ingest_fixture(
@@ -374,11 +375,16 @@ struct TauResult {
     latency_ms: u64,
 }
 
+/// Run one τ point of the calibration sweep.
+///
+/// `verify_llm` is the model used for consistency_check verification calls.
+/// It is intentionally separate from the ingest model so RISK-001 can isolate
+/// Dream Pass 4 verification quality from Phase 1 extraction quality.
 async fn run_sweep_for_tau(
     base_db_path: &Path,
     tau: f32,
     gt: &[GroundTruthEntity],
-    llm: Arc<Ollama>,
+    verify_llm: Arc<Ollama>,
     embedder: Arc<OllamaEmbedAdapter<Ollama>>,
 ) -> Result<TauResult> {
     // Copy base DB to scratch path for this τ run.
@@ -413,7 +419,7 @@ async fn run_sweep_for_tau(
         verify_model_override: None,
     };
 
-    let summary = run_consistency_check(&scratch_graph.conn, arc_embedder.as_ref(), &*llm, opts)
+    let summary = run_consistency_check(&scratch_graph.conn, arc_embedder.as_ref(), &*verify_llm, opts)
         .await
         .context("run_consistency_check failed")?;
 
@@ -454,11 +460,16 @@ struct Risk001Verdict {
     pass: bool,
 }
 
+/// Run the RISK-001 acceptance gate.
+///
+/// `ingest_llm` handles Phase 1 NER (needs to handle 21-type schema reliably).
+/// `verify_llm` handles consistency_check verification calls (the model under test).
 async fn run_risk001_gate(
     fixture_text: &str,
     tau: f32,
     gt: &[GroundTruthEntity],
-    llm: Arc<Ollama>,
+    ingest_llm: Arc<Ollama>,
+    verify_llm: Arc<Ollama>,
     embedder: Arc<OllamaEmbedAdapter<Ollama>>,
 ) -> Result<Risk001Verdict> {
     let dir = tempfile::tempdir().context("risk001 tempdir")?;
@@ -467,7 +478,7 @@ async fn run_risk001_gate(
     eprintln!(
         "[risk001] Fresh ingest for RISK-001 gate (τ={tau:.2})..."
     );
-    let graph = ingest_fixture(fixture_text, &db_path, Arc::clone(&llm), Arc::clone(&embedder))
+    let graph = ingest_fixture(fixture_text, &db_path, Arc::clone(&ingest_llm), Arc::clone(&embedder))
         .await
         .context("risk001 ingest")?;
 
@@ -494,7 +505,7 @@ async fn run_risk001_gate(
         verify_model_override: None,
     };
 
-    let summary = run_consistency_check(&graph.conn, arc_embedder.as_ref(), &*llm, opts)
+    let summary = run_consistency_check(&graph.conn, arc_embedder.as_ref(), &*verify_llm, opts)
         .await
         .context("risk001 run_consistency_check")?;
 
@@ -565,7 +576,8 @@ fn write_sweep_doc(workspace_root: &Path, results: &[TauResult], best_tau: f32) 
     lines.push("\n## Notes\n".to_string());
     lines.push("- F1 computed on correction task: TP=was-wrong-now-correct, FP=was-correct-now-wrong, FN=still-wrong-after.".to_string());
     lines.push("- Fixture: `crates/kremory-eval/fixtures/mis_typed_high_conf.txt` (10 polysemous entities, Phase D TD-036).".to_string());
-    lines.push("- Model: `gemma4-e2b:latest` (SoT: `tests/llm_integration.rs:1-25`).".to_string());
+    lines.push("- Verify model (RISK-001 target): `gemma4-e2b:latest` (SoT: `tests/llm_integration.rs:1-25`).".to_string());
+    lines.push("- Ingest model: `qwen2.5:14b` (handles 21-type integer enum; EXTRA_TYPES required for fixture GT).".to_string());
     lines.push("- τ precedent: Graphiti NODE_DEDUP_COSINE_MIN_SCORE=0.6 — NOT validated for kremory type-validation space.".to_string());
 
     std::fs::write(&path, lines.join("\n")).with_context(|| format!("write {}", path.display()))?;
@@ -639,13 +651,20 @@ async fn main() -> Result<()> {
     // ── Env config ──────────────────────────────────────────────────────────
     let ollama_host = std::env::var("OLLAMA_HOST")
         .unwrap_or_else(|_| "http://localhost:11434".to_string());
-    // SoT: tests/llm_integration.rs:1-25 — gemma4-e2b:latest is interactive default.
-    let chat_model = std::env::var("OLLAMA_CHAT_MODEL")
+    // Two-model design: ingest model handles the 21-type registry (needs structured-output
+    // reliability with large enum); verify model is the RISK-001 target under test.
+    //
+    // SoT: tests/llm_integration.rs:1-25.
+    // - verify_model: gemma4-e2b:latest (interactive default, RISK-001 target)
+    // - ingest_model: qwen2.5:14b (legacy fallback, handles 21-type integer enum reliably)
+    let verify_model = std::env::var("OLLAMA_CHAT_MODEL")
         .unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
+    let ingest_model = std::env::var("OLLAMA_INGEST_MODEL")
+        .unwrap_or_else(|_| "qwen2.5:14b".to_string());
     let embed_model = std::env::var("OLLAMA_EMBED_MODEL")
         .unwrap_or_else(|_| "nomic-embed-text".to_string());
 
-    eprintln!("[sweep] ollama={ollama_host} chat={chat_model} embed={embed_model}");
+    eprintln!("[sweep] ollama={ollama_host} ingest_model={ingest_model} verify_model={verify_model} embed={embed_model}");
 
     // ── Locate fixtures ──────────────────────────────────────────────────────
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -665,17 +684,21 @@ async fn main() -> Result<()> {
     eprintln!("[sweep] fixture: {} chars, {} ground-truth entities", fixture_text.len(), gt.len());
 
     // ── Build providers ──────────────────────────────────────────────────────
-    let (llm, embedder) = build_providers(&ollama_host, &chat_model, &embed_model).await?;
+    let ingest_llm = build_llm(&ollama_host, &ingest_model)?;
+    let verify_llm = build_llm(&ollama_host, &verify_model)?;
+    let embedder = build_embedder(&ollama_host, &embed_model)?;
 
     // ── Phase 1 ingest (base DB) ─────────────────────────────────────────────
-    eprintln!("[sweep] Ingesting fixture into base DB...");
+    // Uses ingest_llm (qwen2.5:14b by default) which reliably handles the
+    // 21-type integer enum produced by DEFAULT_ENTITY_TYPES + EXTRA_TYPES.
+    eprintln!("[sweep] Ingesting fixture into base DB (model={ingest_model})...");
     let base_dir = tempfile::tempdir().context("base tempdir")?;
     let base_db_path = base_dir.path().join("base.db");
 
     let base_graph = ingest_fixture(
         &fixture_text,
         &base_db_path,
-        Arc::clone(&llm),
+        Arc::clone(&ingest_llm),
         Arc::clone(&embedder),
     )
     .await
@@ -713,7 +736,7 @@ async fn main() -> Result<()> {
             &base_db_path,
             tau,
             &gt,
-            Arc::clone(&llm),
+            Arc::clone(&verify_llm),
             Arc::clone(&embedder),
         )
         .await
@@ -763,13 +786,14 @@ async fn main() -> Result<()> {
         &fixture_text,
         best_tau,
         &gt,
-        Arc::clone(&llm),
+        Arc::clone(&ingest_llm),
+        Arc::clone(&verify_llm),
         Arc::clone(&embedder),
     )
     .await
     .context("RISK-001 gate")?;
 
-    write_risk001_doc(&workspace_root, &verdict, &chat_model)?;
+    write_risk001_doc(&workspace_root, &verdict, &verify_model)?;
 
     eprintln!(
         "[sweep] Total elapsed: {:.1}s",
