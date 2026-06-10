@@ -38,6 +38,15 @@ pub struct ConsistencyCheckOpts {
     pub max_candidates_per_run: Option<usize>,
     /// Override LLM model string. `None` = use `llm.model()`.
     pub verify_model_override: Option<String>,
+    /// Preview mode — when `true`, the verify pass runs through the LLM call and
+    /// returns the would-be decisions in `VerifyBatchOutcome` but SKIPS the
+    /// downstream `apply_correction` UPDATE on `entities` and SKIPS the
+    /// `dream_pass4_audit` row insert. Default: `false`.
+    ///
+    /// Per sprint plan T1.3 (basket item #194 — gbrain `dryRun: bool` on
+    /// maintenance operations). Operators + tests use this to preview Pass 4
+    /// corrections before committing irreversible entity-type rewrites.
+    pub dry_run: bool,
 }
 
 impl Default for ConsistencyCheckOpts {
@@ -46,6 +55,7 @@ impl Default for ConsistencyCheckOpts {
             embed_prefilter_threshold: 0.6,
             max_candidates_per_run: Some(50),
             verify_model_override: None,
+            dry_run: false,
         }
     }
 }
@@ -284,6 +294,9 @@ pub struct VerifyBatchParams<'a> {
     pub verify_model: &'a str,
     /// UUID string for the audit trail (`dream_pass4_audit.run_id`).
     pub run_id: &'a str,
+    /// Preview mode — skip the entity-type UPDATE and `dream_pass4_audit` insert.
+    /// Wired from [`ConsistencyCheckOpts::dry_run`]. Per sprint plan T1.3.
+    pub dry_run: bool,
 }
 
 /// Run the LLM verify call on `params.flagged` candidates and apply corrections to the DB.
@@ -462,7 +475,12 @@ pub async fn verify_batch(
                 // For Stage 2 pre-write flow (entities NOT in DB), rowid == -1 so
                 // apply_correction UPDATE hits 0 rows — no harm done. The per-entity
                 // decision is what matters; write_verified_entities uses new_type_id directly.
-                if candidate.rowid > 0 {
+                //
+                // Dry-run mode (sprint plan T1.3 — basket #194): skip BOTH the
+                // entity-type UPDATE and the audit-row INSERT. The decision is
+                // still returned in VerifyBatchOutcome so the caller can preview
+                // what would have changed.
+                if candidate.rowid > 0 && !params.dry_run {
                     apply_correction(db, candidate, new_type_id, &now).await?;
                     let audit = AuditRowParams {
                         entity_rowid: candidate.rowid,
@@ -473,6 +491,24 @@ pub async fn verify_batch(
                         run_id,
                     };
                     write_audit_row(db, audit).await?;
+                } else if params.dry_run {
+                    // Quinn LOW-02 fix: emit dry_run counter for BOTH dream-phase
+                    // (rowid > 0) and Stage 2 pre-write (rowid <= 0) paths. Without
+                    // the Stage 2 branch, callers running verify_batch_for_candidates
+                    // with dry_run=true would have no observability signal that the
+                    // dry-run guard fired. Labels on the counter distinguish paths.
+                    counter!(
+                        "kremory.dream.consistency_check.dry_run_skipped_total",
+                        "path" => if candidate.rowid > 0 { "dream_phase" } else { "stage2_pre_write" }
+                    )
+                    .increment(1);
+                    tracing::debug!(
+                        target: "kremory::dream::consistency_check",
+                        rowid = candidate.rowid,
+                        from_type = candidate.entity_type_id,
+                        to_type = new_type_id,
+                        "dry_run — skipped apply_correction + audit row"
+                    );
                 }
                 decisions[candidate_idx] = VerifyBatchDecision {
                     candidate_idx,
@@ -601,6 +637,7 @@ pub async fn run_consistency_check(
             llm,
             verify_model: &verify_model,
             run_id: &run_id,
+            dry_run: opts.dry_run,
         },
     )
     .await?;
@@ -759,6 +796,10 @@ pub async fn verify_batch_for_candidates(
             llm,
             verify_model: &verify_model,
             run_id: &run_id,
+            // Stage 2 pre-write path: dry_run is irrelevant here because entities
+            // aren't in the DB yet (rowid == -1), so apply_correction is already
+            // a no-op. Always false to match the historical behavior.
+            dry_run: false,
         },
     )
     .await?;
@@ -1051,15 +1092,20 @@ pub fn build_verify_messages(
                 .unwrap_or(("unknown", "unknown"));
             // Truncate source episode to avoid bloat (8000 chars ~= 2000 tokens
             // per entity; cap covers most natural-prose paragraphs).
+            // Per sprint plan T1.4 — gbrain INJECTION_PATTERNS (basket #68):
+            // sanitize before splice to prevent prompt-injection via user-supplied text.
             let source_excerpt: String = c
                 .source_episode
                 .as_deref()
                 .map(|s| {
-                    if s.len() > 8000 {
+                    let truncated = if s.len() > 8000 {
                         format!("{}…[truncated]", &s[..8000])
                     } else {
                         s.to_string()
-                    }
+                    };
+                    crate::core::extraction::injection_patterns::sanitize_for_verify_prompt(
+                        &truncated,
+                    )
                 })
                 .unwrap_or_else(|| "[no source episode available]".to_string());
             // Per ADR-047 amendment + arXiv:2605.29168 ontology-grounded post-extraction

@@ -318,6 +318,7 @@ impl TemporalGraph {
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
         };
         graph.run_migrations().await?;
+        graph.check_integrity().await?;
         Ok(graph)
     }
 
@@ -334,6 +335,7 @@ impl TemporalGraph {
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
         };
         graph.run_migrations().await?;
+        graph.check_integrity().await?;
         Ok(graph)
     }
 
@@ -688,6 +690,88 @@ impl TemporalGraph {
         // Idempotent: sqlite_master DDL gate (checks for 'DreamPass4' in entities DDL).
         crate::core::migrations::migrate_013_pass4_source_tier(&self.conn).await?;
 
+        Ok(())
+    }
+
+    /// Verify that the open store contains all critical tables required for
+    /// operation.
+    ///
+    /// # Integrity contract (T1.8, v0.2.0 Phase B-prep)
+    ///
+    /// Called by `open_with_dim` and `open_in_memory` **after** `run_migrations`
+    /// succeeds. If any check fails the method returns
+    /// [`crate::core::error::Error::CorruptStore`] and the caller receives `Err`
+    /// before the `TemporalGraph` is returned — refusing-to-operate is always
+    /// safer than silently degrading on a corrupt schema.
+    ///
+    /// ## What is checked
+    ///
+    /// Critical tables: `episodes`, `entities`, `entity_types`, `facts`.
+    /// These four tables are the minimum required for any kremory operation
+    /// (ingest, recall, dream). Loss of any one of them indicates a truncated
+    /// migration run, a manual `DROP TABLE`, or filesystem corruption.
+    ///
+    /// ## What is NOT checked (and why)
+    ///
+    /// - **`PRAGMA user_version`** — `TemporalGraph::run_migrations` does not
+    ///   write `user_version` (only `MigrationRunner::bump_version` does, via a
+    ///   separate path). Checking it here would always read 0 on a fresh DB and
+    ///   produce false positives.
+    /// - **Column-level schema** — deferred; the migration suite's PRAGMA-gated
+    ///   idempotency already provides that guarantee.
+    /// - **Forward / backward version compat** — both directions refused until an
+    ///   explicit ADR relaxes them. Strict table-presence semantics for now.
+    ///
+    /// ## Observability (Rule 19)
+    ///
+    /// Emits `kremory.store.integrity_check_total{outcome="ok"|"corrupt"}`.
+    /// On corruption emits `tracing::error!` naming the specific missing table.
+    async fn check_integrity(&self) -> Result<()> {
+        // Quinn LOW-01 fix: extended from 4 → 6 tables to include `episodic_edges`
+        // (load-bearing for graph traversal — episodes are joined to entities via this
+        // edge table) and `dream_pass4_audit` (ADR-049 audit trail; consistency_check
+        // writes here on every correction). A missing `episodic_edges` would silently
+        // produce empty disambiguation candidate sets; a missing `dream_pass4_audit`
+        // would break verify_batch on first Pass 4 correction.
+        const CRITICAL_TABLES: &[&str] = &[
+            "episodes",
+            "entities",
+            "entity_types",
+            "facts",
+            "episodic_edges",
+            "dream_pass4_audit",
+        ];
+
+        for table in CRITICAL_TABLES {
+            let mut rows = self
+                .conn
+                .query(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1",
+                    libsql::params![*table],
+                )
+                .await?;
+
+            if rows.next().await?.is_none() {
+                let reason = format!("missing table: {table}");
+                tracing::error!(
+                    target: "kremory.store.integrity",
+                    missing_table = %table,
+                    "store integrity check failed — {reason}"
+                );
+                metrics::counter!(
+                    "kremory.store.integrity_check_total",
+                    "outcome" => "corrupt"
+                )
+                .increment(1);
+                return Err(crate::core::error::Error::CorruptStore { reason });
+            }
+        }
+
+        metrics::counter!(
+            "kremory.store.integrity_check_total",
+            "outcome" => "ok"
+        )
+        .increment(1);
         Ok(())
     }
 
@@ -1390,5 +1474,78 @@ mod schema_tests {
             }
         }
         assert!(found, "facts must have composite FK after G3 resume");
+    }
+
+    // ── T1.8 integrity-gate tests (v0.2.0 Phase B-prep) ──────────────────────
+
+    /// T1.8 happy path: a fresh in-memory DB opened via the normal path must
+    /// pass `check_integrity()` and return `Ok`. Verifies the guard does NOT
+    /// reject a legitimately-initialised store.
+    #[tokio::test]
+    async fn temporal_graph_open_succeeds_on_valid_db() {
+        let graph = TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory must succeed on a fresh DB");
+
+        // Belt-and-suspenders: confirm the four critical tables are present.
+        for table in ["episodes", "entities", "entity_types", "facts"] {
+            let mut rows = graph
+                .conn
+                .query(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1",
+                    libsql::params![table],
+                )
+                .await
+                .unwrap_or_else(|e| panic!("query failed for table {table}: {e}"));
+            assert!(
+                rows.next().await.expect("rows.next").is_some(),
+                "critical table '{table}' must exist after normal open"
+            );
+        }
+    }
+
+    /// T1.8 corruption path: build a graph manually (bypassing `open_in_memory`
+    /// so we can drop a table after migrations), then call `check_integrity()`
+    /// directly. Must return `Err(CorruptStore { reason })` naming the missing
+    /// table.
+    #[tokio::test]
+    async fn temporal_graph_open_refuses_corrupt_db() {
+        use super::{NamespacePolicyCache, DEFAULT_NS_POLICY_CACHE_CAP};
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as AsyncMutex;
+
+        let db = libsql::Builder::new_local(":memory:")
+            .build()
+            .await
+            .expect("build db");
+        let conn = db.connect().expect("connect");
+        let graph = TemporalGraph {
+            _db: db,
+            conn,
+            write_lock: Arc::new(AsyncMutex::new(())),
+            has_outer_transaction: AtomicBool::new(false),
+            dirty: Arc::new(AtomicBool::new(false)),
+            embedding_dim: 384,
+            policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
+        };
+        // Run migrations so all tables exist — then corrupt one.
+        graph.run_migrations().await.expect("run_migrations");
+        graph
+            .conn
+            .execute("DROP TABLE episodes", ())
+            .await
+            .expect("DROP TABLE episodes");
+
+        let result = graph.check_integrity().await;
+        match result {
+            Err(crate::core::error::Error::CorruptStore { reason }) => {
+                assert!(
+                    reason.contains("episodes"),
+                    "CorruptStore reason must name the missing table; got: {reason}"
+                );
+            }
+            other => panic!("expected Err(CorruptStore), got {other:?}"),
+        }
     }
 }

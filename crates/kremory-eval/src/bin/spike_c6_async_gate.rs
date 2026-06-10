@@ -411,6 +411,7 @@ async fn run_one(
         embed_prefilter_threshold: 2.0, // DENT-001 workaround: τ=2.0 forces cos<2.0=always true
         max_candidates_per_run: Some(50),
         verify_model_override: None,
+        dry_run: false,
     };
 
     let verify_start = Instant::now();
@@ -522,6 +523,7 @@ async fn validate_second_fixture(
             embed_prefilter_threshold: 2.0, // DENT-001 workaround: τ=2.0 forces verify all
             max_candidates_per_run: Some(50),
             verify_model_override: None,
+            dry_run: false,
         },
     )
     .await

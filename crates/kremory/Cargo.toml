@@ -98,6 +98,8 @@ tracing-opentelemetry = { version = "0.28", optional = true }
 bumpalo = "3.20.2"
 # SHA-256 content hash for insert-level dedup (Story #209)
 sha2 = "0.10"
+# regex: prompt-injection sanitizer patterns (T1.4 — basket #68)
+regex = "1"
 zspell = "0.5"
 stop-words = "0.8"
 unicode-segmentation = "1.11"

@@ -55,9 +55,17 @@ pub(crate) struct TripletListWrapper {
 
 /// Wrapper for ContradictionVerdict — replaces Vec<usize> bare array.
 /// `parse_index_list` in `contradiction.rs` deserialises this wrapper.
-#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+///
+/// `reason` is the LLM's audit-trail justification for the verdict (ADR-049).
+/// No `#[serde(default)]` on `reason` — a missing field from the LLM is a
+/// parse failure, forcing the fallback ladder to retry rather than silently
+/// accepting an incomplete response (per `llm-output-parse-loudly` rule).
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct ContradictionVerdictWrapper {
     pub(crate) indices: Vec<u32>,
+    /// Audit-trail explanation of why these indices were selected.
+    /// Required — LLM must emit this field; absence is a parse error.
+    pub(crate) reason: String,
 }
 
 /// Wrapper for entity-resolution verdict (CascadeResolver Tier 3 LLM call).
@@ -714,9 +722,10 @@ mod tests {
 
     #[test]
     fn contradiction_verdict_wrapper_deserialises_wrapped_form() {
-        let json = r#"{"indices": [0, 1, 2]}"#;
+        let json = r#"{"indices": [0, 1, 2], "reason": "facts [0,1,2] are superseded"}"#;
         let w: ContradictionVerdictWrapper = serde_json::from_str(json).unwrap();
         assert_eq!(w.indices, vec![0u32, 1u32, 2u32]);
+        assert_eq!(w.reason, "facts [0,1,2] are superseded");
     }
 
     #[test]
@@ -728,6 +737,32 @@ mod tests {
             result.is_err(),
             "bare array must be rejected by ContradictionVerdictWrapper"
         );
+    }
+
+    #[test]
+    fn contradiction_verdict_carries_reason() {
+        // ADR-049: reason field is required — missing field must fail parse,
+        // not silently default to empty string (llm-output-parse-loudly rule).
+        let with_reason =
+            r#"{"indices": [1], "reason": "fact 1 is outdated by the new assertion"}"#;
+        let w: ContradictionVerdictWrapper = serde_json::from_str(with_reason).unwrap();
+        assert_eq!(w.indices, vec![1u32]);
+        assert!(!w.reason.is_empty(), "reason must be populated");
+        assert_eq!(w.reason, "fact 1 is outdated by the new assertion");
+
+        // Missing reason field must fail — not silently default.
+        let without_reason = r#"{"indices": [1]}"#;
+        let result = serde_json::from_str::<ContradictionVerdictWrapper>(without_reason);
+        assert!(
+            result.is_err(),
+            "missing reason must be a parse error, not a silent default"
+        );
+
+        // Empty indices with reason is valid (no contradictions, reasoning still required).
+        let no_contradictions = r#"{"indices": [], "reason": "no temporal overlap detected"}"#;
+        let w2: ContradictionVerdictWrapper = serde_json::from_str(no_contradictions).unwrap();
+        assert!(w2.indices.is_empty());
+        assert_eq!(w2.reason, "no temporal overlap detected");
     }
 
     // ── ResolutionVerdictWrapper round-trip ───────────────────────────────────

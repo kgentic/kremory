@@ -435,6 +435,7 @@ async fn run_sweep_for_tau(
         embed_prefilter_threshold: tau,
         max_candidates_per_run: Some(50),
         verify_model_override: None,
+        dry_run: false,
     };
 
     let summary =
@@ -526,6 +527,7 @@ async fn run_risk001_gate(
         embed_prefilter_threshold: tau,
         max_candidates_per_run: Some(50),
         verify_model_override: None,
+        dry_run: false,
     };
 
     let summary = run_consistency_check(&graph.conn, arc_embedder.as_ref(), verify_llm, opts)

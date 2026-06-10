@@ -480,8 +480,13 @@ mod tests {
 
     #[test]
     fn test_parse_index_list_wrapped_valid() {
-        // New contract: LLM must return wrapped form {"indices": [1, 3]}.
-        assert_eq!(parse_index_list(r#"{"indices": [1, 3]}"#), vec![1usize, 3]);
+        // New contract: LLM must return wrapped form {"indices": [1, 3], "reason": "..."}.
+        // T1.7 (sprint plan v0-2-0-phase-b-prep): reason is REQUIRED (no serde-default)
+        // per `llm-output-parse-loudly`; missing reason = parse error = empty fallback.
+        assert_eq!(
+            parse_index_list(r#"{"indices": [1, 3], "reason": "overlap on object"}"#),
+            vec![1usize, 3]
+        );
     }
 
     #[test]
@@ -534,8 +539,9 @@ mod tests {
         // Index value 0 is not a valid 1-based contradiction index, but the parser
         // must NOT discard it — the caller ignores out-of-range indices when it
         // walks index_map, so the parser's job is faithful extraction only.
-        // {"indices": [0]} → vec![0]
-        let result = parse_index_list(r#"{"indices": [0]}"#);
+        // {"indices": [0], "reason": "..."} → vec![0]
+        // T1.7 (sprint plan v0-2-0-phase-b-prep): reason is REQUIRED per llm-output-parse-loudly.
+        let result = parse_index_list(r#"{"indices": [0], "reason": "edge case"}"#);
         assert_eq!(
             result,
             vec![0usize],
@@ -558,7 +564,8 @@ mod tests {
     fn parse_index_list_large_index_is_preserved() {
         // A very large index (9999) is out of range for any real index_map,
         // but the parser must not truncate or reject it — the caller handles bounds.
-        let result = parse_index_list(r#"{"indices": [1, 9999]}"#);
+        // T1.7 (sprint plan v0-2-0-phase-b-prep): reason is REQUIRED per llm-output-parse-loudly.
+        let result = parse_index_list(r#"{"indices": [1, 9999], "reason": "bounds preservation"}"#);
         assert_eq!(result, vec![1usize, 9999]);
     }
 
@@ -642,8 +649,14 @@ mod tests {
         let fact = make_fact(99, "alice", "works_at", Some("acme"), None, t_start, None);
         let new_fact = make_extracted("alice", "works_at", "newco");
 
+        // T1.7 (sprint plan v0-2-0-phase-b-prep): reason is REQUIRED on ContradictionVerdictWrapper
+        // per `llm-output-parse-loudly`; mock must emit it to exercise the live deserializer path.
         let mut responses = HashMap::new();
-        responses.insert("works_at".to_string(), r#"{"indices":[1]}"#.to_string());
+        responses.insert(
+            "works_at".to_string(),
+            r#"{"indices":[1], "reason":"alice cannot work at two orgs simultaneously"}"#
+                .to_string(),
+        );
         let client = Arc::new(MockChatProvider::new(responses));
         let detector = TwoPoolDetector::new(client);
 
