@@ -62,8 +62,15 @@ fn null_embedder() -> Arc<NullEmbeddingProvider> {
 
 async fn count_table_rows(conn: &libsql::Connection, table: &str) -> i64 {
     let sql = format!("SELECT COUNT(*) FROM {table}");
-    let mut rows = conn.query(&sql, libsql::params![]).await.expect("count query");
-    let row = rows.next().await.expect("count row iter").expect("count row");
+    let mut rows = conn
+        .query(&sql, libsql::params![])
+        .await
+        .expect("count query");
+    let row = rows
+        .next()
+        .await
+        .expect("count row iter")
+        .expect("count row");
     row.get::<i64>(0).expect("count col")
 }
 
@@ -100,7 +107,9 @@ async fn phase1_ner_writes_only_episode_returns_candidates() {
     let (graph, _tmp) = open_graph("phase1_only").await;
     seed_entity_types(&graph.conn).await;
 
-    let config = PipelineConfig::builder().build().expect("default PipelineConfig");
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("default PipelineConfig");
     let engine = Engine::new(Arc::clone(&graph), null_llm(), null_embedder(), config);
 
     let episode_count_before = count_table_rows(&graph.conn, "episodes").await;
@@ -108,10 +117,7 @@ async fn phase1_ner_writes_only_episode_returns_candidates() {
 
     // This call MUST NOT exist on current main — compile error expected.
     let result: IngestPhase1Result = engine
-        .ingest_phase1_ner(
-            "Alice works at Acme Corp.",
-            SourceParams::default(),
-        )
+        .ingest_phase1_ner("Alice works at Acme Corp.", SourceParams::default())
         .await
         .expect("ingest_phase1_ner must succeed");
 
@@ -158,7 +164,9 @@ async fn write_verified_entities_writes_entities_per_decision() {
     let (graph, _tmp) = open_graph("write_entities").await;
     seed_entity_types(&graph.conn).await;
 
-    let config = PipelineConfig::builder().build().expect("default PipelineConfig");
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("default PipelineConfig");
     let engine = Engine::new(Arc::clone(&graph), null_llm(), null_embedder(), config);
 
     // Insert an episode manually so write_verified_entities has a valid episode_id FK.
@@ -204,7 +212,10 @@ async fn write_verified_entities_writes_entities_per_decision() {
 
     let decisions = vec![
         ResolvedDecision::Confirm { candidate_idx: 0 },
-        ResolvedDecision::Correct { candidate_idx: 1, new_type_id: 1 },
+        ResolvedDecision::Correct {
+            candidate_idx: 1,
+            new_type_id: 1,
+        },
         ResolvedDecision::Demote { candidate_idx: 2 },
     ];
 
@@ -216,7 +227,10 @@ async fn write_verified_entities_writes_entities_per_decision() {
 
     // Assert 3 entity rows written.
     let entity_count = count_table_rows(&graph.conn, "entities").await;
-    assert_eq!(entity_count, 3, "write_verified_entities must write exactly 3 entity rows (one per decision)");
+    assert_eq!(
+        entity_count, 3,
+        "write_verified_entities must write exactly 3 entity rows (one per decision)"
+    );
 
     // Assert Confirm row (Alice) has entity_type_id = 1 (= candidate.entity_type_id_raw).
     let rows = graph
@@ -326,7 +340,9 @@ async fn legacy_engine_ingest_still_works() {
     let llm = Arc::new(MockChatProvider::new(responses));
     let embedder = null_embedder();
 
-    let config = PipelineConfig::builder().build().expect("default PipelineConfig");
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("default PipelineConfig");
     // LlmExtractor is `pub` — accessible from integration tests.
     // Clone the llm Arc before moving it into Engine::new.
     let extractor = LlmExtractor::new(Arc::clone(&llm));

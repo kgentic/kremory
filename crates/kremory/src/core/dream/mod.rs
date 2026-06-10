@@ -33,8 +33,13 @@ pub use reclassify::ReclassifyResult;
 // part of the public API contract.
 #[cfg(any(test, feature = "test-utils"))]
 pub use consistency_check::{
-    build_verify_messages, verify_batch, verify_batch_schema, CandidateRow, VerifyBatchParams,
+    build_verify_messages,
+    verify_batch,
+    verify_batch_schema,
+    CandidateRow,
     // ARCH-001 fix types — also exposed for Phase B verify_stage.rs integration tests.
-    VerifyAction, VerifyBatchDecision, VerifyBatchOutcome,
+    VerifyAction,
+    VerifyBatchDecision,
+    VerifyBatchOutcome,
+    VerifyBatchParams,
 };
-

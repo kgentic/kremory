@@ -207,10 +207,7 @@ async fn query_entities(db: &libsql::Connection) -> Result<Vec<(String, String)>
 /// A wrong-typed entity is one that appears in the GT list but has a different
 /// type label. Entities not in GT are ignored (they may be correct extractions
 /// not covered by the 10-entity GT set).
-fn count_wrong_typed(
-    extracted: &[(String, String)],
-    expected: &[GroundTruthEntity],
-) -> usize {
+fn count_wrong_typed(extracted: &[(String, String)], expected: &[GroundTruthEntity]) -> usize {
     expected
         .iter()
         .filter(|gt| {
@@ -280,10 +277,7 @@ fn build_ollama_llm(ollama_host: &str, model: &str) -> Result<Arc<Ollama>> {
         .map_err(|e| anyhow::anyhow!("Ollama LLM builder (model={model}): {e}"))
 }
 
-fn build_embedder(
-    ollama_host: &str,
-    embed_model: &str,
-) -> Result<Arc<OllamaEmbedAdapter<Ollama>>> {
+fn build_embedder(ollama_host: &str, embed_model: &str) -> Result<Arc<OllamaEmbedAdapter<Ollama>>> {
     let raw_emb: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
         .base_url(ollama_host)
         .model(embed_model)
@@ -383,14 +377,7 @@ async fn run_one(
     // Phase A spec gap GAP-001 below.
     let hot_start = Instant::now();
     engine
-        .ingest_with(
-            &extractor,
-            fixture_text,
-            None,
-            None,
-            None,
-            source_params,
-        )
+        .ingest_with(&extractor, fixture_text, None, None, None, source_params)
         .await
         .context("ingest_with failed")?;
     let hot_path_ms = hot_start.elapsed().as_millis() as u64;
@@ -506,8 +493,8 @@ async fn validate_second_fixture(
     // Returns (pre_pseudo_precision, post_pseudo_precision, entity_count, verify_corrected).
     // Note: no formal GT for mock_interview — we track entity count + whether
     // verify fires at all, and use a stability proxy.
-    let (graph, engine) = open_engine(db_path, Arc::clone(&ingest_llm), Arc::clone(&embedder))
-        .await?;
+    let (graph, engine) =
+        open_engine(db_path, Arc::clone(&ingest_llm), Arc::clone(&embedder)).await?;
 
     let extractor = DefaultExtractor::new(Arc::clone(&ingest_llm));
     let source_params = SourceParams::default(); // no entity type overrides for mock_interview
@@ -580,7 +567,6 @@ fn collect_phase_a_gaps() -> Vec<&'static str> {
          Phase 2 LLM relation extraction (~2-15s). True Phase 1 hot path (<100ms) requires \
          the ingest() split into ingest_phase1_ner() + write_verified_entities() (C6 spec §5.5). \
          This is a KNOWN Phase A refactor scope item.",
-
         "GAP-002: DENT-001 — verify_batch() / build_verify_messages() / verify_batch_schema() \
          are module-private in consistency_check.rs. Spike uses run_consistency_check() with \
          τ=2.0 (forces cos<2.0=always true, bypassing the embed prefilter) as a workaround. \
@@ -588,14 +574,12 @@ fn collect_phase_a_gaps() -> Vec<&'static str> {
          this was the initial implementation error, caught during spike execution). \
          Phase A MUST promote these to pub(crate) before verify_stage.rs \
          can call them directly per C6 spec §5.1.",
-
         "GAP-003: Per-episode filter absent — ConsistencyCheckOpts has no episode_filter field. \
          Stage 2 in production must verify ONLY the freshly-ingested episode's entities, not all \
          entities in the DB. The spike runs on the full DB (single episode per temp DB, so this \
          is equivalent for the spike). Phase A spec §5.4 run_verify_stage() requires per-episode \
          scope. This needs a new ConsistencyCheckOpts::episode_filter field OR a separate \
          verify_batch() invocation path that accepts a Vec<EntityCandidate> directly.",
-
         "GAP-004: Background pipeline integration not tested — spike runs verify sequentially \
          (not in a BackgroundIngestor worker loop). The mpsc channel + worker thread dynamics \
          (backpressure, queue depth, throughput coupling) are NOT validated by this spike. \
@@ -685,18 +669,22 @@ fn write_spike_doc(
             "**GO**: Stage 2 verify fires at ingest time, delivers +{:.2}pt precision lift \
              (pre={:.2} → post={:.2}), correctness invariant holds (0 wrong-typed entities \
              after verify). Phase A implementation may proceed.",
-            avg_lift * 100.0, avg_pre, avg_post
+            avg_lift * 100.0,
+            avg_pre,
+            avg_post
         ),
         "CONDITIONAL-GO" => format!(
             "**CONDITIONAL-GO**: Verify fires and delivers +{:.2}pt precision lift but \
              full precision target ({:.2}) not met OR correctness concerns found. \
              Proceed with Phase A but address documented gaps.",
-            avg_lift * 100.0, avg_post
+            avg_lift * 100.0,
+            avg_post
         ),
         _ => format!(
             "**NO-GO**: Verify fires but precision lift is insufficient (lift={:.2}pt, \
              avg_post={:.2}). Root cause investigation required before Phase A.",
-            avg_lift * 100.0, avg_post
+            avg_lift * 100.0,
+            avg_post
         ),
     });
 
@@ -705,20 +693,30 @@ fn write_spike_doc(
     lines.push(String::new());
     lines.push("### TD-036 Fixture (mis_typed_high_conf — 10 polysemous entities)".to_string());
     lines.push(String::new());
-    lines.push(format!("Runs: {} | Ingest model: {} | Verify provider: anthropic/{} | Embed: {}",
-        n, ingest_model, verify_model, embed_model));
+    lines.push(format!(
+        "Runs: {} | Ingest model: {} | Verify provider: anthropic/{} | Embed: {}",
+        n, ingest_model, verify_model, embed_model
+    ));
     lines.push(String::new());
     lines.push("| Metric | Value | Target | Status |".to_string());
     lines.push("|---|---|---|---|".to_string());
     lines.push(format!(
         "| Hot path p50 (ms) | {} | <100ms | {} |",
         hot_p50,
-        if hot_p50 < 100 { "TARGET MET†" } else { "EXCEEDS TARGET (see GAP-001)" }
+        if hot_p50 < 100 {
+            "TARGET MET†"
+        } else {
+            "EXCEEDS TARGET (see GAP-001)"
+        }
     ));
     lines.push(format!(
         "| Hot path p99 (ms) | {} | <200ms | {} |",
         hot_p99,
-        if hot_p99 < 200 { "TARGET MET†" } else { "EXCEEDS TARGET (see GAP-001)" }
+        if hot_p99 < 200 {
+            "TARGET MET†"
+        } else {
+            "EXCEEDS TARGET (see GAP-001)"
+        }
     ));
     lines.push(format!(
         "| End-to-end p50 (s) | {:.1} | <30s | {} |",
@@ -732,22 +730,36 @@ fn write_spike_doc(
     ));
     lines.push(format!(
         "| Pre-verify precision (avg) | {:.2} ({:.0}%) | — | — |",
-        avg_pre, avg_pre * 100.0
+        avg_pre,
+        avg_pre * 100.0
     ));
     lines.push(format!(
         "| Post-verify precision (avg) | {:.2} ({:.0}%) | ≥70% | {} |",
-        avg_post, avg_post * 100.0,
-        if avg_post >= 0.70 { "PASS" } else { "BELOW TARGET" }
+        avg_post,
+        avg_post * 100.0,
+        if avg_post >= 0.70 {
+            "PASS"
+        } else {
+            "BELOW TARGET"
+        }
     ));
     lines.push(format!(
         "| Precision lift (avg) | +{:.2}pt | >0pt | {} |",
         avg_lift * 100.0,
-        if avg_lift > 0.0 { "POSITIVE LIFT" } else { "NO LIFT" }
+        if avg_lift > 0.0 {
+            "POSITIVE LIFT"
+        } else {
+            "NO LIFT"
+        }
     ));
     lines.push(format!(
         "| Wrong-typed after verify (max) | {} | 0 | {} |",
         wrong_after_max,
-        if wrong_after_max == 0 { "INVARIANT HOLDS" } else { "INVARIANT VIOLATED" }
+        if wrong_after_max == 0 {
+            "INVARIANT HOLDS"
+        } else {
+            "INVARIANT VIOLATED"
+        }
     ));
     lines.push(format!(
         "| Verify scanned/run (avg) | {:.1} | — | — |",
@@ -772,7 +784,9 @@ fn write_spike_doc(
         .iter()
         .zip(stats.end_to_end_ms_all.iter())
         .zip(
-            stats.pre_precision_all.iter()
+            stats
+                .pre_precision_all
+                .iter()
                 .zip(stats.post_precision_all.iter())
                 .zip(stats.wrong_typed_all.iter())
                 .zip(stats.verify_stats_all.iter())
@@ -782,8 +796,15 @@ fn write_spike_doc(
     {
         lines.push(format!(
             "| {} | {} | {} | {:.2} | {:.2} | {:+.2}pt | {} | {} | {} |",
-            i + 1, hot, e2e, pre, post,
-            (post - pre) * 100.0, wrong, vstats.0, vstats.2
+            i + 1,
+            hot,
+            e2e,
+            pre,
+            post,
+            (post - pre) * 100.0,
+            wrong,
+            vstats.0,
+            vstats.2
         ));
     }
 
@@ -815,8 +836,14 @@ fn write_spike_doc(
     lines.push("### Second Fixture (mock_interview — RISK-005 validation)".to_string());
     lines.push(String::new());
     if let Some((pre, post, entity_count, corrected)) = second_fixture_result {
-        lines.push(format!("Entities extracted: {} | Verify corrected: {}", entity_count, corrected));
-        lines.push(format!("Pre-verify stability proxy: {:.2} | Post-verify stability proxy: {:.2}", pre, post));
+        lines.push(format!(
+            "Entities extracted: {} | Verify corrected: {}",
+            entity_count, corrected
+        ));
+        lines.push(format!(
+            "Pre-verify stability proxy: {:.2} | Post-verify stability proxy: {:.2}",
+            pre, post
+        ));
         lines.push(String::new());
         let stability_ok = post >= pre * 0.9; // allow 10% demote rate as acceptable
         lines.push(format!(
@@ -839,10 +866,13 @@ fn write_spike_doc(
     lines.push("| ConsumerPinned exclusion | No (not tested in spike) | ConsumerPinned entities skipped | N/A — Phase B test |".to_string());
     lines.push("| verify_enabled=false skip | No (not tested in spike) | Stage 2 is a no-op | N/A — Phase B test |".to_string());
     lines.push(String::new());
-    lines.push("**Failure-mode tests are Phase B unit test scope** per C6 spec §12 Phase E \
+    lines.push(
+        "**Failure-mode tests are Phase B unit test scope** per C6 spec §12 Phase E \
         (tests: verify fires + demotes on failure + partial-missing demotes + skip on Path β + \
         ConsumerPinned exclusion). This spike validates that the HAPPY PATH works at \
-        ingest time with source-episode context.".to_string());
+        ingest time with source-episode context."
+            .to_string(),
+    );
 
     // Phase A spec gaps
     lines.push(String::new());
@@ -868,13 +898,29 @@ fn write_spike_doc(
     lines.push("| Source-episode context available | 5/5 | load_source_episode() populates CandidateRow.source_episode; used in build_verify_messages() |".to_string());
     lines.push(format!(
         "| Precision lift positive | {}/5 | {:.2}pt avg lift on TD-036 ({} runs) |",
-        if avg_lift > 0.10 { 5 } else if avg_lift > 0.05 { 4 } else if avg_lift > 0.0 { 3 } else { 1 },
-        avg_lift * 100.0, n
+        if avg_lift > 0.10 {
+            5
+        } else if avg_lift > 0.05 {
+            4
+        } else if avg_lift > 0.0 {
+            3
+        } else {
+            1
+        },
+        avg_lift * 100.0,
+        n
     ));
     lines.push(format!(
         "| Correctness invariant holds | {}/5 | wrong_typed_after_verify max={} across {} runs |",
-        if wrong_after_max == 0 { 5 } else if wrong_after_max <= 1 { 3 } else { 1 },
-        wrong_after_max, n
+        if wrong_after_max == 0 {
+            5
+        } else if wrong_after_max <= 1 {
+            3
+        } else {
+            1
+        },
+        wrong_after_max,
+        n
     ));
     lines.push("| Hot-path latency (Phase 1 only, GAP-001) | UNTESTABLE/5 | GAP-001: current API cannot isolate Phase 1 from Phase 2 LLM. |".to_string());
     lines.push(format!(
@@ -888,7 +934,11 @@ fn write_spike_doc(
     lines.push(String::new());
     lines.push(format!(
         "Vera Cycle 2 RISK-005 (single-fixture extrapolation): {} with second fixture run.",
-        if second_fixture_result.is_some() { "ADDRESSED" } else { "PARTIALLY addressed" }
+        if second_fixture_result.is_some() {
+            "ADDRESSED"
+        } else {
+            "PARTIALLY addressed"
+        }
     ));
     lines.push(String::new());
     lines.push(format!("Total spike wall-clock: {:.1}s", total_elapsed_s));
@@ -896,10 +946,18 @@ fn write_spike_doc(
     lines.push(String::new());
     lines.push("## References".to_string());
     lines.push(String::new());
-    lines.push("- C6 spec: `.ai-docs/architecture/kremory-v020--c6-async-gate-verify-architecture.md`".to_string());
+    lines.push(
+        "- C6 spec: `.ai-docs/architecture/kremory-v020--c6-async-gate-verify-architecture.md`"
+            .to_string(),
+    );
     lines.push("- Phase D RISK-001 result: `.ai-docs/lessons/2026-06-10-v0-1-2-risk-001-acceptance-verdict.md`".to_string());
-    lines.push("- TD-036 fixture: `crates/kremory-eval/fixtures/mis_typed_high_conf.txt`".to_string());
-    lines.push("- `feedback_subagent_fabricates_gate_results` — all measurements are real, not fabricated".to_string());
+    lines.push(
+        "- TD-036 fixture: `crates/kremory-eval/fixtures/mis_typed_high_conf.txt`".to_string(),
+    );
+    lines.push(
+        "- `feedback_subagent_fabricates_gate_results` — all measurements are real, not fabricated"
+            .to_string(),
+    );
 
     std::fs::write(&path, lines.join("\n"))
         .with_context(|| format!("write spike doc: {}", path.display()))?;
@@ -933,7 +991,12 @@ async fn main() -> Result<()> {
     eprintln!(
         "[spike] Starting C6 feasibility spike: ingest={ingest_model} verify=anthropic/{verify_model} embed={embed_model} n_runs={n_runs}"
     );
-    eprintln!("[spike] ANTHROPIC_API_KEY present: {}", std::env::var("ANTHROPIC_API_KEY").map(|k| !k.is_empty()).unwrap_or(false));
+    eprintln!(
+        "[spike] ANTHROPIC_API_KEY present: {}",
+        std::env::var("ANTHROPIC_API_KEY")
+            .map(|k| !k.is_empty())
+            .unwrap_or(false)
+    );
 
     // ── Locate workspace + fixtures ──────────────────────────────────────────
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1015,8 +1078,8 @@ async fn main() -> Result<()> {
     eprintln!("[spike] Starting second fixture (mock_interview, RISK-005 validation)...");
     let mock_fixture_path = fixtures_dir.join("mock_interview.txt");
     let second_fixture_result = if mock_fixture_path.exists() {
-        let mock_text = std::fs::read_to_string(&mock_fixture_path)
-            .context("read mock_interview fixture")?;
+        let mock_text =
+            std::fs::read_to_string(&mock_fixture_path).context("read mock_interview fixture")?;
         let mock_dir = tempfile::tempdir().context("mock tempdir")?;
         let mock_db = mock_dir.path().join("spike_mock.db");
 
@@ -1057,10 +1120,16 @@ async fn main() -> Result<()> {
     let wrong_max = stats.wrong_typed_all.iter().max().copied().unwrap_or(0);
 
     eprintln!("\n[spike] ═══════ RESULTS SUMMARY ═══════");
-    eprintln!("[spike] Runs: {n} | hot_p50={}ms hot_p99={}ms e2e_p50={}ms e2e_p99={}ms",
-        hot_p50, hot_p99, e2e_p50, e2e_p99);
-    eprintln!("[spike] Precision: pre_avg={:.2} post_avg={:.2} lift_avg={:+.2}pt",
-        avg_pre, avg_post, (avg_post - avg_pre) * 100.0);
+    eprintln!(
+        "[spike] Runs: {n} | hot_p50={}ms hot_p99={}ms e2e_p50={}ms e2e_p99={}ms",
+        hot_p50, hot_p99, e2e_p50, e2e_p99
+    );
+    eprintln!(
+        "[spike] Precision: pre_avg={:.2} post_avg={:.2} lift_avg={:+.2}pt",
+        avg_pre,
+        avg_post,
+        (avg_post - avg_pre) * 100.0
+    );
     eprintln!("[spike] Correctness: wrong_typed_after_verify max={wrong_max}");
 
     let gaps = collect_phase_a_gaps();
@@ -1084,7 +1153,11 @@ async fn main() -> Result<()> {
     // ── Print gaps to stderr ─────────────────────────────────────────────────
     eprintln!("\n[spike] Phase A spec gaps surfaced:");
     for (i, gap) in gaps.iter().enumerate() {
-        eprintln!("  GAP-{:03}: {}", i + 1, &gap[..gap.find('.').unwrap_or(gap.len()).min(80)]);
+        eprintln!(
+            "  GAP-{:03}: {}",
+            i + 1,
+            &gap[..gap.find('.').unwrap_or(gap.len()).min(80)]
+        );
     }
 
     // Exit 0 always — FAIL verdict is in the doc, not the exit code.

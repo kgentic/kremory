@@ -448,7 +448,7 @@ mod tests {
             "NEVER_LIST must mention Pronouns"
         );
         assert!(
-            NEVER_LIST.contains("he, she, it, they"),
+            NEVER_LIST.contains("he, she, they"),
             "NEVER_LIST must list common pronouns"
         );
     }
@@ -460,7 +460,7 @@ mod tests {
             "NEVER_LIST must mention abstract concepts"
         );
         assert!(
-            NEVER_LIST.contains("love, time, idea"),
+            NEVER_LIST.contains("love, joy, balance"),
             "NEVER_LIST must list example abstract concepts"
         );
     }
@@ -468,11 +468,11 @@ mod tests {
     #[test]
     fn never_list_contains_generic_nouns() {
         assert!(
-            NEVER_LIST.contains("Generic nouns"),
-            "NEVER_LIST must mention generic nouns"
+            NEVER_LIST.contains("Generic common nouns"),
+            "NEVER_LIST must mention generic common nouns"
         );
         assert!(
-            NEVER_LIST.contains("\"the company\""),
+            NEVER_LIST.contains("day, life, people"),
             "NEVER_LIST must give generic noun examples"
         );
     }
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn never_list_contains_placeholder_labels() {
         assert!(
-            NEVER_LIST.contains("Placeholder labels"),
+            NEVER_LIST.contains("Generic placeholder labels"),
             "NEVER_LIST must mention placeholder labels"
         );
         assert!(

@@ -147,19 +147,19 @@ async fn dream_phase_compat_processes_only_provided() {
 
     let candidates = vec![
         EntityCandidate {
-            name: "Alice".to_string(),  // normalize_name("Alice") = "alice" → matches DB row
+            name: "Alice".to_string(), // normalize_name("Alice") = "alice" → matches DB row
             entity_type_id_raw: 1,
             ner_confidence: 0.95,
             span: (0, 5),
         },
         EntityCandidate {
-            name: "Acme Corp".to_string(),  // normalize_name("Acme Corp") = "acme corp" → matches
+            name: "Acme Corp".to_string(), // normalize_name("Acme Corp") = "acme corp" → matches
             entity_type_id_raw: 2,
             ner_confidence: 0.88,
             span: (15, 24),
         },
         EntityCandidate {
-            name: "London".to_string(),  // normalize_name("London") = "london" → matches
+            name: "London".to_string(), // normalize_name("London") = "london" → matches
             entity_type_id_raw: 3,
             ner_confidence: 0.91,
             span: (30, 36),
