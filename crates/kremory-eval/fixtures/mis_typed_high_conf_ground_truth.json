@@ -1,0 +1,72 @@
+[
+  {
+    "name": "Apple",
+    "entity_type": "Organization",
+    "sentence_index": 0,
+    "dominant_domain_wrong_type": "Product",
+    "note": "GLiNER/LLM trained on Apple-the-company context will likely type as Product/Technology; context here is 'emailed me' — sending entity = Organization"
+  },
+  {
+    "name": "Java",
+    "entity_type": "Location",
+    "sentence_index": 1,
+    "dominant_domain_wrong_type": "Technology",
+    "note": "Java-the-island; dominant training signal is Java-the-programming-language → wrong type expected at high confidence"
+  },
+  {
+    "name": "Mercury",
+    "entity_type": "ChemicalElement",
+    "sentence_index": 2,
+    "dominant_domain_wrong_type": "Planet",
+    "note": "Mercury-the-element causing river poisoning; dominant training signal is Mercury-the-planet"
+  },
+  {
+    "name": "Amazon",
+    "entity_type": "Organization",
+    "sentence_index": 3,
+    "dominant_domain_wrong_type": "Location",
+    "note": "Amazon.com delivered a package; context is unambiguous Organization but 'Amazon' also triggers Location (river) — pipeline may type as Location at high conf"
+  },
+  {
+    "name": "Polish",
+    "entity_type": "Product",
+    "sentence_index": 4,
+    "dominant_domain_wrong_type": "Nationality",
+    "note": "Floor polish (substance/product); dominant training signal is Polish-the-nationality/language — NER will likely mis-type as Nationality at high confidence"
+  },
+  {
+    "name": "Spring",
+    "entity_type": "Technology",
+    "sentence_index": 5,
+    "dominant_domain_wrong_type": "NaturalPhenomenon",
+    "note": "Spring-the-Java-framework with 'buggy release cycle'; dominant NER signal may type as Season/NaturalPhenomenon at high confidence"
+  },
+  {
+    "name": "Victoria",
+    "entity_type": "Person",
+    "sentence_index": 6,
+    "dominant_domain_wrong_type": "Location",
+    "note": "Victoria crossed the finish line — clearly a Person; but 'Victoria' is also a strong Location signal (Queen Victoria, Victoria state, Lake Victoria)"
+  },
+  {
+    "name": "Falcon",
+    "entity_type": "Animal",
+    "sentence_index": 7,
+    "dominant_domain_wrong_type": "Technology",
+    "note": "Falcon-the-bird of prey; dominant training signals include SpaceX Falcon rocket (Technology) — pipeline may mis-type at high confidence"
+  },
+  {
+    "name": "Sage",
+    "entity_type": "Plant",
+    "sentence_index": 8,
+    "dominant_domain_wrong_type": "Person",
+    "note": "Sage-the-herb; 'Sage' is also a common given name (Person) — NER trained on names may fire at high confidence on Sage"
+  },
+  {
+    "name": "Python",
+    "entity_type": "Language",
+    "sentence_index": 9,
+    "dominant_domain_wrong_type": "Technology",
+    "note": "Python spoken in Papua New Guinea highlands — a human language; dominant training signal is Python-the-programming-language (Technology) — high-confidence wrong type expected"
+  }
+]
