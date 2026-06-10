@@ -18,6 +18,8 @@ tracing = "0.1"
 thiserror = "2"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3"
+libsql = "=0.9.30"
 
 [[bin]]
 name = "calibration_spike"
@@ -30,6 +32,10 @@ path = "src/bin/entity_extraction_baseline.rs"
 [[bin]]
 name = "eval"
 path = "src/bin/eval.rs"
+
+[[bin]]
+name = "consistency_check_sweep"
+path = "src/bin/consistency_check_sweep.rs"
 
 [dev-dependencies]
 # Enable test-utils feature so MockChatProvider + NullEmbeddingProvider are
