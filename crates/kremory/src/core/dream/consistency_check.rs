@@ -27,6 +27,21 @@ use crate::core::{
     provider::{chat_msg_system, chat_msg_user, ChatProvider, DynEmbeddingProvider},
 };
 
+// ─── Confidence gate (T2.2 — basket #83 gbrain C1 pattern) ────────────────────
+
+/// Minimum LLM-reported confidence required to accept a `correct` decision.
+///
+/// Per sprint plan T2.2 + basket item #83 (gbrain C1 confidence gate): any
+/// correction with confidence strictly below this threshold is downgraded to
+/// `Confirm` (keep the current type). The gbrain semantics of "downgrade to
+/// no_contradiction" map cleanly to kremory's `Confirm` — the LLM signalled it
+/// is not sure the correction is right, so the safest action is to keep what's
+/// already there rather than risk a wrong-direction correction.
+///
+/// Threshold value 0.7 chosen per the gbrain pattern. Future ADR may revisit
+/// (e.g. per-model calibration, multi-tier gates).
+const MIN_VERIFY_CONFIDENCE: f32 = 0.7;
+
 // ─── Public opts / summary ────────────────────────────────────────────────────
 
 /// Tuning knobs for [`run_consistency_check`].
@@ -464,13 +479,61 @@ pub async fn verify_batch(
                     new_type_id: None,
                 };
                 counts.confirmed += 1;
-                counter!("kremory.dream.consistency_check.verify_confirmed_total").increment(1);
+                // Quinn MED-01 fix: label confirm-counter by source so downstream observers
+                // can distinguish explicit LLM agreement from confidence-gate downgrades.
+                counter!(
+                    "kremory.dream.consistency_check.verify_confirmed_total",
+                    "source" => "explicit"
+                )
+                .increment(1);
             }
             "correct" => {
                 // See fn-level doc: unreachable! enforces SCOPE-001 structural invariant.
                 let new_type_id = decision.new_type_id.unwrap_or_else(|| {
                     unreachable!("action=correct without new_type_id should be rejected at parse (SCOPE-001)")
                 });
+
+                // T2.2 (sprint plan + basket #83 gbrain C1 gate): downgrade
+                // low-confidence corrections to Confirm. The gbrain pattern
+                // says "downgrade to no_contradiction" — kremory's `Confirm`
+                // is the structural equivalent (keep current type, no change).
+                // Without this gate, every confidence value the LLM emits is
+                // treated as load-bearing, including the 0.50-0.65 band where
+                // local models hedge under polysemous-hard cases (per
+                // `c6-verify-model-local-ladder-benchmark-2026-06-10.md`
+                // sub-finding #2).
+                if decision.confidence < MIN_VERIFY_CONFIDENCE {
+                    counter!(
+                        "kremory.dream.consistency_check.verify_low_confidence_downgrade_total",
+                        "from_type" => candidate.entity_type_id.to_string(),
+                        "proposed_to_type" => new_type_id.to_string()
+                    )
+                    .increment(1);
+                    tracing::debug!(
+                        target: "kremory::dream::consistency_check",
+                        rowid = candidate.rowid,
+                        confidence = decision.confidence,
+                        threshold = MIN_VERIFY_CONFIDENCE,
+                        from_type = candidate.entity_type_id,
+                        proposed_to_type = new_type_id,
+                        "low-confidence correct → downgraded to Confirm (keep current type)"
+                    );
+                    decisions[candidate_idx] = VerifyBatchDecision {
+                        candidate_idx,
+                        action: VerifyAction::Confirm,
+                        new_type_id: None,
+                    };
+                    counts.confirmed += 1;
+                    // Quinn MED-01 fix: label confirm-counter by source. This downgrade
+                    // path is observably distinct from the explicit "confirm" LLM emit.
+                    counter!(
+                        "kremory.dream.consistency_check.verify_confirmed_total",
+                        "source" => "downgrade_low_conf"
+                    )
+                    .increment(1);
+                    continue;
+                }
+
                 // For dream-phase flow (entities already in DB), apply the correction now.
                 // For Stage 2 pre-write flow (entities NOT in DB), rowid == -1 so
                 // apply_correction UPDATE hits 0 rows — no harm done. The per-entity
