@@ -2057,6 +2057,7 @@ dependencies = [
  "ort",
  "petgraph",
  "proptest",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
