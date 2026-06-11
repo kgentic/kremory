@@ -690,6 +690,13 @@ impl TemporalGraph {
         // Idempotent: sqlite_master DDL gate (checks for 'DreamPass4' in entities DDL).
         crate::core::migrations::migrate_013_pass4_source_tier(&self.conn).await?;
 
+        // ADR-051 Migration 015a (v0.2.2, Phase 1): add episode_processing_status column
+        // to episodes for the ADR-051 async extraction gate state machine.
+        // Values: Pending → Extracting → Verified | Failed.
+        // Backfill: episodes with episodic_edges are already Verified (R-02 mitigation).
+        // Idempotent: PRAGMA table_info gate + IF NOT EXISTS index.
+        crate::core::migrations::migrate_015a_episode_processing_status(&self.conn).await?;
+
         Ok(())
     }
 
@@ -733,6 +740,13 @@ impl TemporalGraph {
         // writes here on every correction). A missing `episodic_edges` would silently
         // produce empty disambiguation candidate sets; a missing `dream_pass4_audit`
         // would break verify_batch on first Pass 4 correction.
+        //
+        // Note on `*_bak_*` survivors: tables like `entities_bak_004`, `facts_bak_006`,
+        // `episodes_bak_015a` are intentional pre-ALTER row-level backups left by
+        // up-migrations as recovery surface. They are NOT in `CRITICAL_TABLES`
+        // (presence-check semantics), and check_integrity does NOT flag their
+        // presence in sqlite_master as anomalous. Schema auditors querying
+        // sqlite_master directly should expect to see them.
         const CRITICAL_TABLES: &[&str] = &[
             "episodes",
             "entities",
