@@ -187,7 +187,7 @@ impl<'a> RememberRequest<'a> {
         // the namespace before the first write.
         self.memory.ensure_namespace_policy(&ns).await?;
 
-        memory::submit_episode(
+        let commit = memory::submit_episode(
             self.memory.graph.as_ref(),
             &self.content,
             source_ref,
@@ -198,7 +198,32 @@ impl<'a> RememberRequest<'a> {
             opts,
             sink,
         )
-        .await
+        .await?;
+
+        // ADR-051 Phase 4: opt-in synchronous-extraction ergonomics.
+        // When `await_extraction = true`, block until the background worker
+        // transitions the episode to `Verified` (or return Err on
+        // `Failed` / timeout). Per spec §Phase 4 DoD item 3.
+        //
+        // The episode rowid is stored in `episode_entity_id` as a decimal
+        // string (see engine_handle.rs:313 — `ingest_result.episode_id.to_string()`).
+        // We parse it back to i64 here; if parsing fails (stub path or future
+        // format change), we skip the wait and return the commit as-is.
+        if self.memory.await_extraction {
+            if let Ok(episode_id) = commit.episode_entity_id.parse::<i64>() {
+                tracing::debug!(
+                    target: "kremory.remember",
+                    episode_id,
+                    timeout_secs = self.memory.await_extraction_timeout.as_secs(),
+                    "await_extraction=true — waiting for background processing"
+                );
+                self.memory
+                    .wait_for_processing(episode_id, self.memory.await_extraction_timeout)
+                    .await?;
+            }
+        }
+
+        Ok(commit)
     }
 }
 
