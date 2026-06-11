@@ -1,10 +1,11 @@
 //! Worker loop — spawn_worker, drain logic, per-job processing, error reporting.
 //!
 //! Sprint plan T2.1 / ADR-049 §Decision 6 — worker loop module.
+//! ADR-051: GLiNER-to-background unified hot path (Phase 3 wiring).
 //!
 //! Contains:
-//! - [`process_item`]    — Phase 1 NER ingest for one [`IngestRequest`]
-//! - [`process_deferred`] — Phase 2 deferred LLM fact extraction for one [`DeferredRequest`]
+//! - [`process_item`]    — Phase 1: episode INSERT + GLiNER candidates (fast path, no LLM)
+//! - [`process_deferred`] — Phase 2: entity write via `run_verify_stage` + fact extraction
 //! - [`worker_loop`]     — main OS-thread loop; drives both phases, respects stop flag
 
 use std::collections::VecDeque;
@@ -24,10 +25,15 @@ use super::{
 };
 
 // ---------------------------------------------------------------------------
-// process_item — Phase 1 NER ingest
+// process_item — Phase 1: episode INSERT + GLiNER NER candidates (ADR-051)
 // ---------------------------------------------------------------------------
 
-/// Process one NER ingest request (Phase 1).
+/// Process one ingest request (Phase 1): INSERT episode row + run GLiNER NER.
+///
+/// ADR-051 Phase 3: replaces the previous `graph.ingest()` (full pipeline) call
+/// with `graph.ingest_phase1_ner()` (episode INSERT + NER candidates only, no LLM,
+/// no entity writes). Entity writes + fact extraction are deferred to Phase 2
+/// (`process_deferred`).
 ///
 /// Returns `Some(DeferredRequest)` when Phase 2 should be enqueued, or `None`
 /// on error (error already forwarded to `error_tx`).
@@ -38,30 +44,40 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
     deferred_enabled: bool,
 ) -> Option<DeferredRequest> {
     let start = std::time::Instant::now();
+
+    // ADR-051 §Phase 3: call ingest_phase1_ner() (fast: episode INSERT + NER
+    // candidates) instead of ingest() (full pipeline). Entity writes and fact
+    // extraction are deferred to process_deferred via run_verify_stage.
     match graph
-        .ingest(
-            &req.text,
-            req.reference_time,
-            req.group_id.as_deref(),
-            req.content_type.clone(),
-            SourceParams::default(),
-        )
+        .ingest_phase1_ner(&req.text, SourceParams::default())
         .await
     {
-        Ok(result) => {
+        Ok(phase1_result) => {
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("rql.background.ingest_duration_ms").record(elapsed_ms);
             metrics::counter!("rql.background.ingested_total").increment(1);
-            tracing::info!(elapsed_ms, "kremory.background.ingest completed");
+            tracing::info!(
+                elapsed_ms,
+                episode_id = phase1_result.episode_id,
+                candidates = phase1_result.candidates.len(),
+                text_len = req.text.len(),
+                "kremory.background.phase1_completed"
+            );
 
             if deferred_enabled {
-                let ner_entity_names = result.upserted_entities.clone();
+                // Pass candidate names as ner_entity_names so process_deferred
+                // can use them for ingest_deferred fact extraction.
+                let ner_entity_names: Vec<String> = phase1_result
+                    .candidates
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect();
                 Some(DeferredRequest {
                     text: req.text,
                     reference_time: req.reference_time,
                     group_id: req.group_id,
                     content_type: req.content_type,
-                    episode_id: result.episode_id,
+                    episode_id: phase1_result.episode_id,
                     ner_entity_names,
                 })
             } else {
@@ -72,7 +88,7 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("rql.background.ingest_duration_ms").record(elapsed_ms);
             metrics::counter!("rql.background.errors_total").increment(1);
-            tracing::error!(elapsed_ms, error = %e, "kremory.background.ingest failed");
+            tracing::error!(elapsed_ms, error = %e, "kremory.background.phase1_failed");
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),
@@ -88,14 +104,20 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
 }
 
 // ---------------------------------------------------------------------------
-// process_deferred — Phase 2 LLM fact extraction
+// process_deferred — Phase 2: verify_stage entity write + LLM fact extraction
 // ---------------------------------------------------------------------------
 
-/// Process one deferred LLM fact extraction request (Phase 2).
+/// Process one deferred extraction request (Phase 2).
 ///
-/// `bucket` is the optional token-bucket rate limiter.  When present, this
-/// function waits until a token is available before dispatching the LLM call,
-/// emitting `kremory.ingest.llm_rate_limit_deferred_total{namespace}` per wait.
+/// ADR-051 Phase 3 wiring:
+///   1. Calls `run_verify_stage` for entity extraction + write (GLiNER Path α or
+///      LLM Path β depending on whether the engine's LLM is wired).
+///   2. Calls `ingest_deferred` for LLM relationship/fact extraction (unchanged
+///      from pre-ADR-051; runs after entity write is committed).
+///
+/// `bucket` is the optional token-bucket rate limiter applied before the LLM
+/// fact extraction step, emitting
+/// `kremory.ingest.llm_rate_limit_deferred_total{namespace}` per throttle.
 ///
 /// Errors are logged via metrics and the error channel but do NOT crash the worker.
 pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
@@ -104,12 +126,111 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
     error_tx: &SyncSender<IngestError>,
     bucket: &mut Option<TokenBucketState>,
 ) {
+    let episode_id = req.episode_id;
+    let ns = req.group_id.as_deref().unwrap_or("default");
+
+    // ── Step 1: run_verify_stage — entity write (ADR-051) ─────────────────────
+    //
+    // Path α (ner feature active): extractor = GLiNER singleton, verify_llm = LLM
+    // Path β (no ner feature): extractor = engine.extractor (LLM), verify_llm = None
+    //
+    // engine.extractor implements EntityExtractor → blanket impl gives EntityExtractorDyn.
+    // engine.llm is Option<Arc<L>>; deref gives Option<&L> which is &dyn ChatProvider.
+    let verify_start = std::time::Instant::now();
+
+    #[cfg(feature = "ner")]
+    let verify_result = {
+        // Path α: GLiNER singleton for entity candidate extraction;
+        // engine's wired LLM (if any) is used by verify_batch for typing.
+        // If GLiNER model fails to load, fall back gracefully: emit counter + skip
+        // entity write for this episode (fact extraction below still runs).
+        match crate::core::ner::ner_singleton() {
+            Ok(gliner) => {
+                let verify_llm: Option<&dyn crate::core::provider::ChatProvider> = graph
+                    .llm
+                    .as_ref()
+                    .map(|l| l.as_ref() as &dyn crate::core::provider::ChatProvider);
+                super::verify_stage::run_verify_stage(&req, gliner, verify_llm, &graph.graph).await
+            }
+            Err(e) => {
+                metrics::counter!(
+                    "kremory.background.ner_singleton_fail_total",
+                    "namespace" => ns.to_string()
+                )
+                .increment(1);
+                tracing::error!(
+                    episode_id,
+                    error = %e,
+                    "kremory.background.ner_singleton_load_failed — skipping verify_stage"
+                );
+                Err(e)
+            }
+        }
+    };
+
+    #[cfg(not(feature = "ner"))]
+    let verify_result = {
+        // Path β: engine.extractor is an LLM extractor; no separate verify LLM needed.
+        let extractor_ref: &dyn crate::core::intelligence::EntityExtractorDyn =
+            graph.extractor.as_ref();
+        super::verify_stage::run_verify_stage(&req, extractor_ref, None, &graph.graph).await
+    };
+
+    let verify_elapsed_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
+
+    match verify_result {
+        Ok(entities_written) => {
+            metrics::histogram!("rql.background.verify_stage_duration_ms")
+                .record(verify_elapsed_ms);
+            metrics::counter!("rql.background.verify_stage_ok_total").increment(1);
+            tracing::info!(
+                verify_elapsed_ms,
+                episode_id,
+                entities_written,
+                "kremory.background.verify_stage completed"
+            );
+        }
+        Err(e) => {
+            metrics::histogram!("rql.background.verify_stage_duration_ms")
+                .record(verify_elapsed_ms);
+            metrics::counter!("rql.background.verify_stage_errors_total").increment(1);
+            // Ghost episode: entity write failed. Fact extraction below still
+            // runs so any LLM facts can still be committed against the episode
+            // row (which was committed in Phase 1).
+            // Quinn Phase 3 MED-03: `step` label per ~/.claude/rules/observability-first-class.md
+            // — aggregate counter without source attribution would hide which arm produced
+            // ghost episodes. Two firing sites: this one (verify_stage) + fact-extraction one below.
+            metrics::counter!(
+                "rql.ingest.ghost_episode_total",
+                "step" => "verify_stage"
+            )
+            .increment(1);
+            tracing::error!(
+                verify_elapsed_ms,
+                episode_id,
+                error = %e,
+                "kremory.background.verify_stage failed — ghost episode (fact extraction continues)"
+            );
+            let err = IngestError {
+                text_preview: req.text.chars().take(256).collect(),
+                failed_at: Utc::now(),
+                message: format!("verify_stage: {e}"),
+                kind: IngestErrorKind::from(&e),
+                episode_id,
+            };
+            try_send_error(error_tx, err);
+            // Fall through to fact extraction — entity write failing does not
+            // block fact rows from being committed.
+        }
+    }
+
+    // ── Step 2: rate-limit gate before LLM fact extraction ────────────────────
+    //
     // F2 / F6: apply rate limit before LLM call; emit counter on throttle.
     if let Some(b) = bucket {
         let immediately_available = b.try_consume();
         if !immediately_available {
             let wait = b.wait_duration();
-            let ns = req.group_id.as_deref().unwrap_or("default");
             metrics::counter!(
                 "kremory.ingest.llm_rate_limit_deferred_total",
                 "namespace" => ns.to_string()
@@ -125,7 +246,9 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             b.try_consume();
         }
     }
-    let start = std::time::Instant::now();
+
+    // ── Step 3: ingest_deferred — LLM fact/relationship extraction ─────────────
+    let fact_start = std::time::Instant::now();
     match graph
         .ingest_deferred(
             &req.text,
@@ -138,7 +261,7 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
         .await
     {
         Ok(facts_extracted) => {
-            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let elapsed_ms = fact_start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("rql.background.deferred_extraction_duration_ms")
                 .record(elapsed_ms);
             metrics::counter!("rql.background.deferred_facts_extracted_total")
@@ -150,13 +273,16 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             );
         }
         Err(e) => {
-            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let elapsed_ms = fact_start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("rql.background.deferred_extraction_duration_ms")
                 .record(elapsed_ms);
             metrics::counter!("rql.background.deferred_errors_total").increment(1);
-            // C6: ghost episode — Phase 1 committed, Phase 2 failed.
-            // Counter is observable per Rule 19 §3 (per-source counters).
-            metrics::counter!("rql.ingest.ghost_episode_total").increment(1);
+            // Quinn Phase 3 MED-03 sibling: see verify_stage call site comment above.
+            metrics::counter!(
+                "rql.ingest.ghost_episode_total",
+                "step" => "ingest_deferred"
+            )
+            .increment(1);
             tracing::error!(
                 elapsed_ms,
                 episode_id = req.episode_id,
@@ -222,8 +348,7 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
 
             match work_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(req) => {
-                    let ner_depth =
-                        queued.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+                    let ner_depth = queued.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
                     metrics::gauge!("rql.background.queue_depth").set(ner_depth as f64);
                     if let Some(deferred) =
                         process_item(&graph, req, &error_tx, deferred_enabled).await
@@ -263,9 +388,6 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                             tracing::warn!(
                                 abandoned,
                                 "kremory.background.deferred_queue abandoned (stop signal)"
-                            );
-                            eprintln!(
-                                "[BackgroundIngestor] stop signal — abandoning {abandoned} deferred item(s)"
                             );
                             break;
                         }
