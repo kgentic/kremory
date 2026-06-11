@@ -52,15 +52,20 @@ pub(crate) struct IngestRequest {
 ///
 /// Created after a successful Phase 1 NER ingest.  The worker processes these
 /// when the NER channel is idle, giving NER priority over LLM fact extraction.
-pub(crate) struct DeferredRequest {
-    pub(crate) text: String,
-    pub(crate) reference_time: Option<DateTime<Utc>>,
-    pub(crate) group_id: Option<String>,
-    pub(crate) content_type: Option<ContentType>,
+///
+/// `pub` + `#[doc(hidden)]` per MNT-002 pattern (E0365 constraint): integration
+/// tests in `tests/verify_stage_integration.rs` need to construct this directly
+/// under `feature = "test-utils"`.  Not part of the stable public API.
+#[doc(hidden)]
+pub struct DeferredRequest {
+    pub text: String,
+    pub reference_time: Option<DateTime<Utc>>,
+    pub group_id: Option<String>,
+    pub content_type: Option<ContentType>,
     /// The episode ID produced by Phase 1, so deferred facts link to the same episode.
-    pub(crate) episode_id: i64,
+    pub episode_id: i64,
     /// Entity names already inserted by Phase 1, passed as hints to the LLM extractor.
-    pub(crate) ner_entity_names: Vec<String>,
+    pub ner_entity_names: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
