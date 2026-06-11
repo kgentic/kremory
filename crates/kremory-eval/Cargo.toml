@@ -9,6 +9,7 @@ description = "Internal quality evaluation harness for kremory (not published)"
 kremory = { path = "../kremory" }
 autoagents-llamacpp = "0.3.7"
 autoagents-llm = "0.3.7"
+metrics = "0.24"
 metrics-util = "0.18"
 hf-hub = { version = "0.3", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
@@ -20,6 +21,7 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3"
 libsql = "=0.9.30"
+reqwest = { version = "0.12", features = ["json"] }
 
 [[bin]]
 name = "calibration_spike"
@@ -40,6 +42,23 @@ path = "src/bin/consistency_check_sweep.rs"
 [[bin]]
 name = "spike_c6_async_gate"
 path = "src/bin/spike_c6_async_gate.rs"
+
+# O11y Sprint O0.1 — Phase 1 NER standalone benchmark closes ADR-049 §5.5 GAP-001
+# (<100ms p50 hot-path measurement that the spike binary couldn't isolate).
+[[bin]]
+name = "phase1_ner_bench"
+path = "src/bin/phase1_ner_bench.rs"
+required-features = ["ner"]
+
+# O11y Sprint O0.3 — LLM tokens-per-second benchmark via direct Ollama API.
+# autoagents-llm's ChatProvider trait doesn't surface eval_count; this bypasses it.
+[[bin]]
+name = "llm_tokens_bench"
+path = "src/bin/llm_tokens_bench.rs"
+
+[features]
+# Passthrough so `phase1_ner_bench` can gate on kremory's `ner` feature.
+ner = ["kremory/ner"]
 
 [dev-dependencies]
 # Enable test-utils feature so MockChatProvider + NullEmbeddingProvider are

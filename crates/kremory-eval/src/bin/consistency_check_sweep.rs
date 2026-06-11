@@ -683,10 +683,82 @@ fn write_risk001_doc(
     Ok(())
 }
 
+// ─── Metrics capture (O11y Sprint O0.2) ──────────────────────────────────────
+//
+// Wires a `DebuggingRecorder` as the global metrics recorder so every
+// `counter!` / `histogram!` emission throughout `kremory` lands in a queryable
+// snapshot. Closes the previous gap where `kremory.dream.consistency_check.
+// llm_call_latency_ms_histogram` was emitted but routed to /dev/null.
+//
+// Same recorder type as `crates/kremory/tests/helpers/metrics_capture.rs` but
+// installed GLOBALLY rather than thread-locally. The global install is required
+// because async kremory code emits metrics inside `.await` continuations that
+// may resume on different tokio worker threads — `with_local_recorder` (which
+// the test helper uses) would not capture those.
+
+fn install_metrics_recorder() -> metrics_util::debugging::Snapshotter {
+    let recorder = metrics_util::debugging::DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    // Quinn LOW-01 fix: surface install-failure with a WARN. If a previous
+    // process or test harness already installed a global recorder, this
+    // snapshotter would observe ZERO metrics and the downstream JSON dump
+    // would silently report `metric_count: 0`. The WARN tells the operator
+    // why.
+    if metrics::set_global_recorder(recorder).is_err() {
+        eprintln!(
+            "[sweep] WARN: global metrics recorder already installed — snapshot will be EMPTY. \
+             Re-run from a clean process to capture metrics."
+        );
+    }
+    snapshotter
+}
+
+#[derive(serde::Serialize)]
+struct MetricEntry {
+    name: String,
+    kind: String,
+    labels: Vec<(String, String)>,
+    value: serde_json::Value,
+}
+
+fn snapshot_to_json(snapshotter: &metrics_util::debugging::Snapshotter) -> Vec<MetricEntry> {
+    use metrics_util::debugging::DebugValue;
+    let snap = snapshotter.snapshot();
+    snap.into_vec()
+        .into_iter()
+        .map(|(key, kind, _unit, value)| {
+            let name = key.key().name().to_string();
+            let labels: Vec<(String, String)> = key
+                .key()
+                .labels()
+                .map(|l| (l.key().to_string(), l.value().to_string()))
+                .collect();
+            let value_json = match value {
+                DebugValue::Counter(n) => serde_json::json!({ "counter": n }),
+                DebugValue::Gauge(f) => serde_json::json!({ "gauge": f.into_inner() }),
+                DebugValue::Histogram(samples) => serde_json::json!({
+                    "histogram": {
+                        "n": samples.len(),
+                        "samples": samples.iter().map(|s| s.into_inner()).collect::<Vec<_>>(),
+                    }
+                }),
+            };
+            MetricEntry {
+                name,
+                kind: format!("{kind:?}"),
+                labels,
+                value: value_json,
+            }
+        })
+        .collect()
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install metrics recorder FIRST so the rest of the binary emits into it.
+    let snapshotter = install_metrics_recorder();
     let start = std::time::Instant::now();
 
     // ── Env config ──────────────────────────────────────────────────────────
@@ -884,6 +956,32 @@ async fn main() -> Result<()> {
     .context("RISK-001 gate")?;
 
     write_risk001_doc(&workspace_root, &verdict, &verify_provider_label)?;
+
+    // ── O11y Sprint O0.2: dump all captured metrics to JSON ─────────────────
+    let metrics_entries = snapshot_to_json(&snapshotter);
+    let safe_model = verify_provider_label.replace(['/', ':'], "__");
+    let metrics_path = workspace_root
+        .join(".ai-docs")
+        .join("lessons")
+        .join(format!(
+            "2026-06-10-v0-1-2-consistency-check-sweep-metrics-{safe_model}.json"
+        ));
+    std::fs::write(
+        &metrics_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "binary": "consistency_check_sweep",
+            "verify_provider": verify_provider_label,
+            "wall_clock_s": start.elapsed().as_secs_f64(),
+            "metrics": metrics_entries,
+            "metric_count": metrics_entries.len(),
+        }))?,
+    )
+    .with_context(|| format!("write metrics: {}", metrics_path.display()))?;
+    eprintln!(
+        "[sweep] Metrics dumped: {} ({} entries)",
+        metrics_path.display(),
+        metrics_entries.len()
+    );
 
     eprintln!(
         "[sweep] Total elapsed: {:.1}s",
