@@ -6,7 +6,9 @@
 //!
 //! # Chat model selection
 //!
-//! Set `OLLAMA_CHAT_MODEL` env var (default: `llama3.2:3b`).
+//! Set `OLLAMA_CHAT_MODEL` env var (default: `gemma4-e2b:latest` —
+//! interactive default per empirical ladder below). Override to
+//! `gemma4:e4b` for benchmark-gate runs requiring 90% precision.
 //!
 //! ## Empirical ladder (label_precision_benchmark, mock_interview.txt, 2026-06-04
 //! post TD-013 parser fixes — strip serde defaults + name shape validator):
@@ -76,14 +78,19 @@ fn ollama_base_url() -> String {
     std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string())
 }
 
-/// Returns chat model from OLLAMA_CHAT_MODEL env var, or "llama3.2:3b".
+/// Returns chat model from OLLAMA_CHAT_MODEL env var, or `gemma4-e2b:latest`.
 ///
-/// See module-level docstring for the empirical model ladder.
+/// Default tracks the empirical ladder above: `gemma4-e2b:latest` is the
+/// interactive-default (80% precision / ~37-54s) per benchmarks 2026-06-04
+/// post TD-013. Override via `OLLAMA_CHAT_MODEL` for benchmark-gate runs
+/// (`gemma4:e4b`) or Path-β verify experiments (`qwen2.5:14b` per
+/// ADR-048 ratified 2026-06-11).
+///
 /// Note: `gemma4-e2b` REQUIRES the full `gemma4-e2b:latest` tag form so
 /// `capability_of()` routes to the FormatSchema arm. Bare names without
 /// `:tag` fall through to PromptOnly and produce empty / null output.
 fn ollama_chat_model() -> String {
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "llama3.2:3b".to_string())
+    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string())
 }
 
 /// Build a `Memory` instance with real Ollama providers wired to the given tempdir.
@@ -126,7 +133,7 @@ async fn build_mem(dir: &tempfile::TempDir, ns: &str) -> kremory::memory::Result
 /// - score must be normalised in [0.0, 1.0] (Bug C RRF fix)
 /// - 1-hop expansion: Bob or Stanford must also surface
 ///
-/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `llama3.2:3b`) + nomic-embed-text.
+/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `gemma4-e2b:latest`) + nomic-embed-text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 #[cfg(feature = "llm-integration")]
@@ -227,7 +234,7 @@ async fn entity_extraction_alice_bob_stanford() {
 /// `Ok` commit whose enrichment status is `Complete`. Recall must return ≤3
 /// alice results (no phantom duplication).
 ///
-/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `llama3.2:3b`) + nomic-embed-text.
+/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `gemma4-e2b:latest`) + nomic-embed-text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 #[cfg(feature = "llm-integration")]
@@ -301,7 +308,7 @@ async fn dedup_invariant_same_text_twice() {
 /// and SQLite file), submit one episode each concurrently via `tokio::join!`.
 /// Assert all 3 episode_entity_id strings are non-empty and distinct.
 ///
-/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `llama3.2:3b`) + nomic-embed-text.
+/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `gemma4-e2b:latest`) + nomic-embed-text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 #[cfg(feature = "llm-integration")]
@@ -408,7 +415,7 @@ async fn concurrent_ingest_three_episodes_no_panic() {
 /// - All source_refs must be SourceKind::Episode
 /// - score > 0.0
 ///
-/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `llama3.2:3b`) + nomic-embed-text.
+/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `gemma4-e2b:latest`) + nomic-embed-text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 #[cfg(feature = "llm-integration")]
@@ -503,7 +510,7 @@ async fn recall_ranks_alice_episodes_above_unrelated() {
 /// Dream consolidation ships in v0.1.1. This test guards against accidental
 /// silent-Ok or panic regressions at the facade level.
 ///
-/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `llama3.2:3b`) + nomic-embed-text.
+/// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `gemma4-e2b:latest`) + nomic-embed-text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 #[cfg(feature = "llm-integration")]
