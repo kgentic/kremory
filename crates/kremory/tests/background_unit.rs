@@ -344,6 +344,14 @@ async fn deferred_request_created_after_successful_ingest() {
 #[cfg(not(feature = "ner"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deferred_disabled_makes_no_deferred_llm_calls() {
+    // ADR-051 Phase 3: process_item now calls ingest_phase1_ner() (episode INSERT
+    // only, no LLM) instead of the full ingest() pipeline. When deferred is
+    // disabled, process_deferred never runs. Total LLM calls = 0.
+    //
+    // Pre-ADR-051 this test expected "1 NER LLM call" because process_item
+    // called ingest() → ingest_with() → LLM extractor. That sync LLM call
+    // has moved to process_deferred (run_verify_stage Path β). With
+    // deferred_enabled=false, the Phase 2 (extraction) step is skipped entirely.
     let (counting_client, call_counter) = CountingLlmClient::new();
     let graph = graph_with_llm(counting_client).await;
     let config = IngestorConfig {
@@ -358,10 +366,12 @@ async fn deferred_disabled_makes_no_deferred_llm_calls() {
     tokio::task::spawn_blocking(move || guard.shutdown())
         .await
         .expect("guard.shutdown() panicked");
+    // ADR-051: 0 LLM calls — Phase 1 (episode INSERT) makes no LLM calls;
+    // Phase 2 (extraction) is disabled. Worker shuts down without errors.
     let total_calls = call_counter.load(Ordering::SeqCst);
     assert_eq!(
-        total_calls, 1,
-        "expected exactly 1 LLM call (NER only) with deferred_enabled=false; got {total_calls}"
+        total_calls, 0,
+        "ADR-051: deferred disabled + no ner feature: expected 0 LLM calls; got {total_calls}"
     );
 }
 
@@ -456,6 +466,13 @@ async fn deferred_extraction_errors_do_not_crash_worker() {
 #[cfg(not(feature = "ner"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deferred_config_disabled_skips_queue() {
+    // ADR-051 Phase 3: process_item calls ingest_phase1_ner() (episode INSERT
+    // only, no LLM calls). With deferred_enabled=false, process_deferred never
+    // runs. For N items: 0 LLM calls total.
+    //
+    // Pre-ADR-051 this expected "N NER LLM calls" because process_item called
+    // ingest() → LLM extractor per item. Under ADR-051 the LLM call moved to
+    // process_deferred (run_verify_stage Path β). Deferred disabled = 0 calls.
     const N: usize = 3;
     let (counting_client, call_counter) = CountingLlmClient::new();
     let graph = graph_with_llm(counting_client).await;
@@ -473,10 +490,12 @@ async fn deferred_config_disabled_skips_queue() {
     tokio::task::spawn_blocking(move || guard.shutdown())
         .await
         .expect("guard.shutdown() panicked");
+    // ADR-051: 0 LLM calls — Phase 1 episode INSERT never calls LLM;
+    // deferred disabled means Phase 2 extraction is skipped entirely.
     let total_calls = call_counter.load(Ordering::SeqCst);
     assert_eq!(
-        total_calls, N,
-        "deferred disabled: expected exactly {N} LLM calls (NER only); got {total_calls}"
+        total_calls, 0,
+        "ADR-051: deferred disabled + no ner feature: expected 0 LLM calls for {N} items; got {total_calls}"
     );
 }
 

@@ -4,13 +4,11 @@
 //! ADR-051: GLiNER-to-background unified hot path.
 //! Spec: `.ai-docs/specs/v0-2-2-adr-051-only-impl-spec-2026-06-11.md` Phase 2.
 //!
-//! # Phase 2 note — dead_code suppressions
+//! # Phase 3 note — dead_code suppressions removed
 //!
-//! `run_verify_stage` and its private helpers are structurally complete here but
-//! not yet called by `deferred_pipeline::worker_loop`.  That wiring is Phase 3.
-//! The suppressions below are the same documented-exemption pattern used by the
-//! Phase B stub (ADR-049 §Decision 6: "structural prerequisite MUST exist before
-//! wiring").  Phase 3 removes them once the call site is added.
+//! `run_verify_stage` and its private helpers are now called by
+//! `deferred_pipeline::process_deferred` (ADR-051 Phase 3 wiring). The four
+//! dead_code allow attributes present in Phase 2 have been removed per Phase 3 DoD M-03.
 //!
 //! # Observability surface
 //!
@@ -55,10 +53,6 @@ use super::DeferredRequest;
 ///
 /// The single authoritative write path for status transitions (ADR-051 state machine).
 /// Emits `kremory.episode.processing_status_transition_total{from, to}` counter.
-///
-/// `#[allow(dead_code)]` — Phase 2 structural prerequisite; Phase 3 removes this
-/// when `deferred_pipeline` calls `run_verify_stage`.
-#[allow(dead_code)]
 async fn update_episode_status(
     conn: &libsql::Connection,
     episode_id: i64,
@@ -96,9 +90,6 @@ async fn update_episode_status(
 /// type-parameter entanglement.
 ///
 /// Returns the number of entity rows persisted.
-///
-/// `#[allow(dead_code)]` — Phase 2 structural prerequisite; Phase 3 removes this.
-#[allow(dead_code)]
 async fn stage3_write(
     graph: &TemporalGraph,
     episode_id: i64,
@@ -198,9 +189,6 @@ async fn stage3_write(
 ///   `ExtractedEntity.label` → `entity_type_id` via a label-to-id table so Path β
 ///   produces typed entities without an LLM round-trip.
 ///
-/// `#[allow(dead_code)]` — Phase 2 structural prerequisite; Phase 3 spec DoD
-/// requires removal when `worker_loop` wires the caller.
-#[allow(dead_code)]
 fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandidate> {
     result
         .entities
@@ -259,10 +247,7 @@ fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandi
 ///
 /// `pub` + `#[doc(hidden)]` per MNT-002 pattern: integration tests in
 /// `tests/verify_stage_integration.rs` call this directly under `feature = "test-utils"`.
-/// `#[allow(dead_code)]` — Phase 2 structural prerequisite; Phase 3 removes this attribute
-/// once `deferred_pipeline::worker_loop` calls `run_verify_stage`.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub async fn run_verify_stage<'a>(
     request: &'a DeferredRequest,
     extractor: &'a dyn EntityExtractorDyn,

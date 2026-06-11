@@ -92,18 +92,24 @@ async fn seed_entity_types(conn: &libsql::Connection) {
     }
 }
 
-// ─── Test 1: phase1_ner writes only episode, returns candidates ───────────────
+// ─── Test 1: phase1 returns episode_id (no sync NER candidates post-ADR-051) ───
 
-/// `ingest_phase1_ner` MUST write exactly ONE episodes row and ZERO entities rows.
+/// ADR-051 Phase 3: `ingest_phase1_ner` writes exactly ONE episode row and ZERO
+/// entity rows, returns a positive `episode_id`. This is now the background
+/// worker's hot path — NER candidates may be empty (no `ner` feature) or
+/// non-empty (GLiNER active) but entity writes are always deferred to the
+/// background via `run_verify_stage`.
 ///
-/// The returned `IngestPhase1Result.episode_id` must match the row written.
-/// The returned `IngestPhase1Result.candidates` may be empty (no GLiNER feature)
-/// or non-empty (GLiNER active) — we assert it's non-None (the function returned Ok).
+/// Per Phase 3 DoD: "MODIFIED test — rewrite `phase1_ner_writes_only_episode_returns_candidates`
+/// as `phase1_returns_episode_id_no_candidates` since Phase 1 NER no longer runs sync".
 ///
-/// This test FAILS TO COMPILE on current main because `ingest_phase1_ner` and
-/// `IngestPhase1Result` do not exist yet.
+/// Invariants asserted:
+/// 1. Episode row count increases by exactly 1.
+/// 2. Zero entity rows written (entities are written by `run_verify_stage` in background).
+/// 3. `episode_id > 0` (valid row inserted).
+/// 4. `candidates` field is accessible (structural API invariant).
 #[tokio::test]
-async fn phase1_ner_writes_only_episode_returns_candidates() {
+async fn phase1_returns_episode_id_no_candidates() {
     let (graph, _tmp) = open_graph("phase1_only").await;
     seed_entity_types(&graph.conn).await;
 
@@ -115,7 +121,6 @@ async fn phase1_ner_writes_only_episode_returns_candidates() {
     let episode_count_before = count_table_rows(&graph.conn, "episodes").await;
     let entity_count_before = count_table_rows(&graph.conn, "entities").await;
 
-    // This call MUST NOT exist on current main — compile error expected.
     let result: IngestPhase1Result = engine
         .ingest_phase1_ner("Alice works at Acme Corp.", SourceParams::default())
         .await
@@ -124,29 +129,30 @@ async fn phase1_ner_writes_only_episode_returns_candidates() {
     let episode_count_after = count_table_rows(&graph.conn, "episodes").await;
     let entity_count_after = count_table_rows(&graph.conn, "entities").await;
 
-    // Exactly ONE episode row written.
+    // Exactly ONE episode row written (fast hot path = episode INSERT only).
     assert_eq!(
         episode_count_after - episode_count_before,
         1,
         "ingest_phase1_ner must write exactly 1 episode row"
     );
 
-    // ZERO entity rows written — entities are written ONLY after verify stage.
+    // ZERO entity rows written — entity writes are deferred to run_verify_stage
+    // in the background worker (ADR-051 Phase 3).
     assert_eq!(
-        entity_count_after,
-        entity_count_before,
-        "ingest_phase1_ner must NOT write any entity rows; entity writes belong to write_verified_entities"
+        entity_count_after, entity_count_before,
+        "ingest_phase1_ner must NOT write any entity rows; \
+         entity writes are deferred to background run_verify_stage (ADR-051)"
     );
 
-    // episode_id is a valid non-zero integer.
+    // episode_id is a valid non-zero integer — the episode row was committed.
     assert!(
         result.episode_id > 0,
-        "IngestPhase1Result.episode_id must be positive, got {}",
+        "IngestPhase1Result.episode_id must be positive (valid committed row), got {}",
         result.episode_id
     );
 
-    // candidates is a Vec (possibly empty if no NER feature, but the field must exist).
-    // We just assert the field is accessible — the type check is the meaningful assertion here.
+    // candidates field is accessible (structural API invariant preserved).
+    // May be empty without `ner` feature or non-empty with GLiNER active.
     let _candidates: Vec<EntityCandidate> = result.candidates;
 }
 
