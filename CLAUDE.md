@@ -14,7 +14,8 @@
 | v0.2.0 Phase B-prep Phase D | `db305be` | T=0 sweep + retro + benchmark addendum |
 | O11y Tier 0 sprint | `6222156` | phase1_ner_bench + sweep metrics + llm_tokens_bench |
 | Strategy docs | `aa96ff1` | queue-and-background-worker research + cloud-readiness posture |
-| Docs sprint (current) | TBD | ADR-049 amendment + ADR-051 draft + this CLAUDE.md update + tech-debt-register |
+| Docs sprint (prior) | `7dcae25` | ADR-049 amendment + ADR-051 draft + tech-debt-register |
+| Ratifications mini-sprint (current) | TBD | ADR-051 lightweight ratified + ADR-048 `/ship-decision` ratified (v0.3.0 scope) + ADR-049 §5.5 SLA cascade amendment + C6 arch spec amendment block |
 
 **Workspace state**: 627 passing tests / 1 pre-existing TD-C fail (`c1_module_exists_under_500_loc` — consistency_check.rs at 1234 LoC, paired with ADR-050 split sprint). Clippy clean. Branch ready to PR or to enter next sprint.
 
@@ -22,29 +23,30 @@
 
 | Candidate | Effort | Why now |
 |---|---|---|
-| **PR opening + v0.2.0 milestone tag prep** | ~30 min | Six commits ready; merge or rebase decision needed |
-| **ADR-049 §5.5 SLA amendment + ADR-051 ratification** | ~15 min lightweight OR ~30 min `/ship-decision` | Empirical refutation of <100ms target needs formal close. ADR-051 captures GLiNER-to-background unified hot-path; pending lightweight ratification or `/ship-decision` cycle. |
-| **ADR-050 sprint — dream-pass crash-safety + idempotency** | ~1-2 days | Bundles TD-A/B/C remediation gaps: T1.6 cooldown-on-success, T1.10 budget tracking, audit findings #90/#92/#96/#98 (op_checkpoints, content-hash idempotency, is_dream_generated, cooldown-only-on-success) + consistency_check.rs split |
-| **`/ship-decision` on ADR-048 ratify-or-defer** | ~15 min | Now data-backed with 2 viable Path-β candidates (qwen2.5:14b + qwen3.6:35b-mlx per T=0 sweep) |
+| **PR opening + v0.2.0 milestone tag prep** | ~30 min | Eight commits ready (after this ratifications commit); merge or rebase decision needed |
+| **ADR-050 sprint — dream-pass crash-safety + idempotency** | ~1-2 days | Bundles ADR-051 implementation (verify_stage.rs expansion) + TD-A/B/C remediation gaps: T1.6 cooldown-on-success, T1.10 budget tracking, audit findings #90/#92/#96/#98 (op_checkpoints, content-hash idempotency, is_dream_generated, cooldown-only-on-success) + consistency_check.rs split |
 | **GLiNER profiling spike** (orthogonal to ADR-051) | ~half day | ONNX runtime config, entity_types pruning, smaller GLiNER quant — could yield 200-300ms range independent of architectural move |
 | **Tier 1 D1.1/D1.2 — multi-size scaling sweep** | ~10h | Now that phase1_ner_bench + llm_tokens_bench exist; gives scaling matrix instead of single-fixture data |
 | **Tier 1 D1.3 — real-world GT-annotated fixtures** | ~10h manual | 10-20 real episodes (email/transcript/doc/chat) to validate the synthetic-extrapolation claim |
 
-### Open architectural decisions (formal docs exist; not ratified)
+### Open architectural decisions (formal docs exist; ratification state)
 
-- **ADR-050 (candidate)** — Dream-pass crash-safety + idempotency cluster. Named in `prior-art-adoption-audit-2026-06-10.md` Top 5 finding #3. No ADR doc written yet; would be sprint-spec'd from the audit findings.
-- **ADR-051 (proposed)** — GLiNER-to-background unified hot path. Doc at `.ai-docs/adrs/adr-051-gliner-to-background-unified-hot-path-2026-06-11.md`. Pending lightweight ratification OR `/ship-decision` cycle.
-- **ADR-048 (proposed)** — Three-signal local-first consistency check. Already exists; ratification pending; now data-backed.
+- **ADR-050 (candidate)** — Dream-pass crash-safety + idempotency cluster. Named in `prior-art-adoption-audit-2026-06-10.md` Top 5 finding #3. No ADR doc written yet; would be sprint-spec'd from the audit findings. Now ALSO bundles ADR-051 implementation (verify_stage.rs expansion to own GLiNER + verify_batch).
+- ✅ **ADR-051 (accepted 2026-06-11)** — GLiNER-to-background unified hot path. Lightweight ratification; implementation deferred to ADR-050 sprint bundle.
+- ✅ **ADR-048 (accepted 2026-06-11) — scope v0.3.0** — Three-signal local-first consistency check. Ratified via `/ship-decision` (Party Mode + Decision Matrix, option B at 83/96, 26pt gap). Implementation delivery sits in v0.3.0 sprint window; v0.2.x relies on ADR-049 Path-α frontier verify for compounding-corruption protection.
+- ✅ **ADR-049 §5.5 SLA** — superseded by ADR-051 §5.5 SLA Cascade Amendment. New unified hot-path target ~60-250ms p50, <500ms p99 hard cap.
 
 ### Strategic posture docs (load-bearing for future planning)
 
 - `cloud-readiness-posture-2026-06-11` — passive cloud-readiness, no speculative engineering. Apply 30-second self-check at every future ADR/spec.
 - `queue-and-background-worker-research-2026-06-11` — Rust crate landscape + OSS competitor patterns. Recommended hybrid P1+P2 (tokio mpsc + apalis SQLite) when durability becomes a requirement.
 
-### Closed TDs (this session)
+### Closed TDs (this session + prior)
 
 - ✅ TD-A — 4× never_list_* test fixture drift (Phase B-prep Phase A, commit `ae6de1b`)
 - ✅ TD-B — 2× background_integration LLM mock drift (Phase B-prep Phase B, commit `2c496bf`)
+- ✅ ADR-051 ratification + §5.5 cascade — this commit
+- ✅ ADR-048 ratification (v0.3.0 scope) — this commit
 
 ### Still open
 
