@@ -552,3 +552,25 @@ revisit = "v0.2.0"
 symbol = "MemoryBuilder::allowed_entity_types"
 reason = "GLiNER feature builder knob (Phase D adjacent). Mirrored on JS side via JsOpenOptions.gliner config; direct builder method not exposed because JsMemory.open is the single JS construction entry point per ADR-030 Form B."
 revisit = "v0.2.0"
+
+# ── ADR-051 Phase 4 wait API (v0.2.2) ────────────────────────────────────────
+
+[[skip]]
+symbol = "MemoryBuilder::with_await_extraction"
+reason = "ADR-051 Phase 4: opt-in sync-extraction builder knob. JS consumers use the separate waitForProcessing() JS method directly; the builder opt-in pattern doesn't map to napi's JsMemory.open single-entry-point convention (ADR-030 Form B). Revisit when napi adds a construction-time option for sync-wait ergonomics."
+revisit = "v0.3.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_await_extraction_timeout"
+reason = "ADR-051 Phase 4: paired timeout knob for with_await_extraction. Same napi-skip rationale as with_await_extraction — builder-only config not exposed at JS construction surface."
+revisit = "v0.3.0"
+
+[[skip]]
+symbol = "Memory::wait_for_processing"
+reason = "ADR-051 Phase 4: poll episodes.episode_processing_status until Verified/Failed/timeout. Expose on napi surface as JsMemory.waitForProcessing(episodeId: number, timeoutMs: number) in v0.3.0 when napi consumers need read-your-writes semantics on async extraction."
+revisit = "v0.3.0"
+
+[[skip]]
+symbol = "Memory::temporal_graph_for_test"
+reason = "Test-only accessor (cfg(any(test, feature = 'test-utils'))). Never available in release builds; not part of stable API surface. No napi exposure needed."
+revisit = "never"

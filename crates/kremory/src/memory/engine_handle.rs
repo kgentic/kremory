@@ -308,6 +308,33 @@ impl GraphHandle for EngineGraphHandle {
             }
         }
 
+        // ADR-051 Phase 4: inline ingest completed successfully → mark episode
+        // as Verified so `Memory::wait_for_processing` callers do not busy-poll
+        // waiting for a background worker that never fires on the inline path.
+        //
+        // Best-effort: a status write failure is non-fatal for the ingest itself
+        // — we log it and continue. The episode data is fully committed; only the
+        // status column is affected.
+        let episode_id_for_status = ingest_result.episode_id;
+        if let Err(e) = self
+            .engine
+            .graph()
+            .conn
+            .execute(
+                "UPDATE episodes SET episode_processing_status = 'Verified' WHERE id = ?1",
+                libsql::params![episode_id_for_status],
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "kremory.engine_handle",
+                episode_id = episode_id_for_status,
+                error = %e,
+                "inline ingest: failed to write Verified status — \
+                 wait_for_processing may stall for this episode"
+            );
+        }
+
         Ok(EpisodeCommit {
             run_id: None,
             episode_entity_id: ingest_result.episode_id.to_string(),

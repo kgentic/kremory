@@ -473,6 +473,9 @@ async fn build_memory_with_model(
         temporal_graph: Some(temporal_graph),
         episode_content_warn_threshold: Some(10_000),
         dream_scheduler: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        // Tier 1 shortcuts default to fire-and-forget (ADR-051 design intent).
+        await_extraction: false,
+        await_extraction_timeout: std::time::Duration::from_secs(60),
     })
 }
 

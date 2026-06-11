@@ -267,6 +267,23 @@ pub struct Memory {
     /// `Clone` (a `JoinHandle<()>` is not `Clone`).
     pub(crate) dream_scheduler:
         std::sync::Arc<std::sync::Mutex<Option<crate::memory::scheduler::DreamSchedulerHandle>>>,
+    /// When `true`, `Memory::remember(...).await` blocks until background
+    /// extraction (GLiNER/LLM via the ADR-051 worker) has transitioned the
+    /// episode to `Verified` (or returns `Err` on `Failed` / timeout).
+    ///
+    /// Opt-in: default is `false` (fire-and-forget, per ADR-051 design).
+    /// Per D1 peer pattern: equivalent to Cognee's `run_in_background=False`.
+    ///
+    /// ⚠ Cost: enables synchronous-extraction ergonomics at the expense of the
+    /// latency benefit ADR-051 provides. Document this trade-off in consumer
+    /// code. Prefer `Memory::wait_for_processing` directly for fine-grained
+    /// control. See spec §Risk R-06.
+    pub(crate) await_extraction: bool,
+    /// Timeout applied when `await_extraction = true`.
+    ///
+    /// Default: 60 seconds (per spec §Risk R-12 mitigation). Configurable via
+    /// `MemoryBuilder::with_await_extraction_timeout`.
+    pub(crate) await_extraction_timeout: Duration,
 }
 
 impl Memory {
@@ -304,6 +321,8 @@ impl Memory {
             use_gliner: false,
             allowed_entity_types: vec![],
             dream_schedule: crate::memory::scheduler::DreamSchedule::Off,
+            await_extraction: false,
+            await_extraction_timeout: Duration::from_secs(60),
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -342,6 +361,18 @@ impl Memory {
     /// A `tracing::warn!` is emitted at construction time.
     pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Self> {
         providers::with_anthropic(path).await
+    }
+
+    // ── Test utilities ────────────────────────────────────────────────────────
+
+    /// Access the underlying `TemporalGraph` for integration tests that need
+    /// direct SQL access (e.g. asserting `episode_processing_status`).
+    ///
+    /// Only available under `test` or `test-utils` feature. Not part of the
+    /// stable public API.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn temporal_graph_for_test(&self) -> Option<&Arc<TemporalGraph>> {
+        self.temporal_graph.as_ref()
     }
 
     // ── Ingest ────────────────────────────────────────────────────────────────
@@ -470,6 +501,161 @@ impl Memory {
             },
         )
         .await
+    }
+
+    // ── ADR-051 async extraction wait API (v0.2.2, Phase 4) ──────────────────
+
+    /// Poll `episodes.episode_processing_status` for `episode_id` until the
+    /// episode reaches a terminal state or `timeout` is exceeded.
+    ///
+    /// # Terminal states
+    ///
+    /// | Status      | Return value                          |
+    /// |-------------|---------------------------------------|
+    /// | `Verified`  | `Ok(())`                              |
+    /// | `Failed`    | `Err(MemoryError::Core(ExtractionFailed { episode_id }))` |
+    /// | timeout     | `Err(MemoryError::Core(WaitTimeout { episode_id, elapsed }))` |
+    ///
+    /// `Pending` and `Extracting` keep the poll running.
+    ///
+    /// # Polling schedule (spec §Risk R-05 mitigation)
+    ///
+    /// - Interval starts at **50 ms**.
+    /// - After 5 s elapsed the interval backs off to **200 ms**.
+    ///
+    /// # Observability
+    ///
+    /// Emits `kremory.wait_for_processing.duration_ms{outcome}` histogram on
+    /// every terminal exit (outcomes: `verified`, `failed`, `timeout`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(MemoryError::Other(...))` when `temporal_graph` is `None`
+    /// (test-stub path that bypasses `providers::open_graph`).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use kremory::Memory;
+    /// # use std::time::Duration;
+    /// # async fn ex() -> kremory::memory::Result<()> {
+    /// # let mem: Memory = todo!();
+    /// # let commit: kremory::memory::types::EpisodeCommit = todo!();
+    /// // Get the raw episode rowid from the commit's episode_entity_id.
+    /// let episode_id: i64 = commit.episode_entity_id.parse().unwrap_or(0);
+    /// mem.wait_for_processing(episode_id, Duration::from_secs(30)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn wait_for_processing(&self, episode_id: i64, timeout: Duration) -> Result<()> {
+        use tokio::time::{sleep, Duration as TokioDuration, Instant};
+
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::wait_for_processing requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+
+        let start = Instant::now();
+        let mut interval = TokioDuration::from_millis(50);
+        let timeout_dur = timeout;
+        let backoff_threshold = TokioDuration::from_secs(5);
+
+        loop {
+            // SELECT the current status.
+            let status: String = {
+                let mut rows = tg
+                    .conn
+                    .query(
+                        "SELECT episode_processing_status FROM episodes WHERE id = ?1",
+                        libsql::params![episode_id],
+                    )
+                    .await
+                    .map_err(|e| MemoryError::Core(CoreError::Database(e)))?;
+                match rows
+                    .next()
+                    .await
+                    .map_err(|e| MemoryError::Core(CoreError::Database(e)))?
+                {
+                    Some(row) => row
+                        .get::<String>(0)
+                        .map_err(|e| MemoryError::Core(CoreError::Database(e)))?,
+                    None => {
+                        // Episode not found — treat as timeout (episode may not
+                        // have committed yet; callers should ensure Phase 1
+                        // completed before calling wait_for_processing).
+                        let elapsed = start.elapsed();
+                        metrics::histogram!(
+                            "kremory.wait_for_processing.duration_ms",
+                            "outcome" => "not_found"
+                        )
+                        .record(start.elapsed().as_secs_f64() * 1000.0);
+                        return Err(MemoryError::Core(CoreError::WaitTimeout {
+                            episode_id,
+                            elapsed,
+                        }));
+                    }
+                }
+            };
+
+            tracing::debug!(
+                target: "kremory.wait_for_processing",
+                episode_id,
+                status = %status,
+                elapsed_ms = start.elapsed().as_millis(),
+                "polling episode_processing_status"
+            );
+
+            match status.as_str() {
+                "Verified" => {
+                    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                    metrics::histogram!(
+                        "kremory.wait_for_processing.duration_ms",
+                        "outcome" => "verified"
+                    )
+                    .record(elapsed_ms);
+                    return Ok(());
+                }
+                "Failed" => {
+                    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                    metrics::histogram!(
+                        "kremory.wait_for_processing.duration_ms",
+                        "outcome" => "failed"
+                    )
+                    .record(elapsed_ms);
+                    return Err(MemoryError::Core(CoreError::ExtractionFailed {
+                        episode_id,
+                    }));
+                }
+                // "Pending" | "Extracting" | any future intermediate state
+                _ => {}
+            }
+
+            // Check timeout BEFORE sleeping — prevents one extra sleep cycle
+            // after the budget is exhausted.
+            if start.elapsed() >= timeout_dur {
+                let elapsed = start.elapsed();
+                metrics::histogram!(
+                    "kremory.wait_for_processing.duration_ms",
+                    "outcome" => "timeout"
+                )
+                .record(start.elapsed().as_secs_f64() * 1000.0);
+                return Err(MemoryError::Core(CoreError::WaitTimeout {
+                    episode_id,
+                    elapsed,
+                }));
+            }
+
+            // Backoff: after 5 s switch from 50 ms to 200 ms interval
+            // (spec §Risk R-05 — avoids busy-polling long extractions).
+            if start.elapsed() >= backoff_threshold {
+                interval = TokioDuration::from_millis(200);
+            }
+
+            sleep(interval).await;
+        }
     }
 
     /// Block until the dream phase handle reaches a terminal status.
@@ -923,6 +1109,14 @@ pub struct MemoryBuilder<L, E> {
     /// Automatic dream-pass scheduling policy.
     /// Default: `DreamSchedule::Off` (no background task).
     dream_schedule: crate::memory::scheduler::DreamSchedule,
+    /// When `true`, `Memory::remember(...).await` blocks until the background
+    /// extraction pipeline transitions the episode to `Verified` (or returns
+    /// `Err` on `Failed` / timeout). Default: `false`.
+    /// Per spec §Phase 4 / ADR-051 D1 peer pattern (Cognee `run_in_background=False`).
+    await_extraction: bool,
+    /// Timeout applied when `await_extraction = true`.
+    /// Default: 60 s (spec §Risk R-12 mitigation).
+    await_extraction_timeout: Duration,
     _llm_state: std::marker::PhantomData<L>,
     _emb_state: std::marker::PhantomData<E>,
 }
@@ -1069,6 +1263,38 @@ impl<L, E> MemoryBuilder<L, E> {
         self.dream_schedule = schedule;
         self
     }
+
+    /// Opt-in to synchronous-extraction ergonomics: when `true`,
+    /// `Memory::remember(...).await` blocks until the ADR-051 background worker
+    /// has transitioned the episode to `Verified` (returns `Ok(())`) or
+    /// `Failed` / timeout (returns `Err`).
+    ///
+    /// Default: `false` (fire-and-forget — the ADR-051 design intent).
+    ///
+    /// Use [`with_await_extraction_timeout`](Self::with_await_extraction_timeout)
+    /// to configure the maximum wait duration (default 60 s, see spec §Risk R-12).
+    ///
+    /// ⚠ **Cost**: enables sync semantics at the expense of the hot-path latency
+    /// benefit that ADR-051 provides. Prefer `Memory::wait_for_processing` for
+    /// fine-grained per-episode control (spec §Phase 4, Risk R-06).
+    ///
+    /// Per D1 peer pattern: equivalent to Cognee's `run_in_background=False`.
+    pub fn with_await_extraction(mut self, await_extraction: bool) -> Self {
+        self.await_extraction = await_extraction;
+        self
+    }
+
+    /// Configure the maximum time `Memory::remember` will wait when
+    /// `with_await_extraction(true)` is set.
+    ///
+    /// Default: 60 seconds (per spec §Risk R-12 mitigation — prevents
+    /// false-timeout on real 30 s LLM extractions).
+    ///
+    /// Has no effect when `await_extraction` is `false` (the default).
+    pub fn with_await_extraction_timeout(mut self, timeout: Duration) -> Self {
+        self.await_extraction_timeout = timeout;
+        self
+    }
 }
 
 impl MemoryBuilder<NoLlm, NoEmb> {
@@ -1091,6 +1317,8 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
             dream_schedule: self.dream_schedule,
+            await_extraction: self.await_extraction,
+            await_extraction_timeout: self.await_extraction_timeout,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -1148,6 +1376,8 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
             dream_schedule: self.dream_schedule,
+            await_extraction: self.await_extraction,
+            await_extraction_timeout: self.await_extraction_timeout,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -1174,6 +1404,8 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
             dream_schedule: self.dream_schedule,
+            await_extraction: self.await_extraction,
+            await_extraction_timeout: self.await_extraction_timeout,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -1205,6 +1437,8 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
             dream_schedule: self.dream_schedule,
+            await_extraction: self.await_extraction,
+            await_extraction_timeout: self.await_extraction_timeout,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -1363,6 +1597,8 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 temporal_graph: Some(temporal_graph),
                 episode_content_warn_threshold: self.episode_content_warn_threshold,
                 dream_scheduler: std::sync::Arc::new(std::sync::Mutex::new(dream_scheduler_handle)),
+                await_extraction: self.await_extraction,
+                await_extraction_timeout: self.await_extraction_timeout,
             })
         })
     }
@@ -1429,6 +1665,8 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                 temporal_graph: Some(temporal_graph),
                 episode_content_warn_threshold: self.episode_content_warn_threshold,
                 dream_scheduler: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                await_extraction: self.await_extraction,
+                await_extraction_timeout: self.await_extraction_timeout,
             })
         })
     }

@@ -290,6 +290,33 @@ pub enum Error {
     /// callers must repair the database before re-opening.
     #[error("store integrity check failed: {reason}")]
     CorruptStore { reason: String },
+
+    // ── ADR-051 async extraction wait API (v0.2.2, Phase 4) ─────────────────
+    /// Background extraction pipeline transitioned the episode to `Failed`.
+    ///
+    /// `episode_id` is the SQLite rowid of the episode whose extraction failed.
+    /// Callers can re-ingest or inspect the episode's content to diagnose.
+    #[error(
+        "background extraction failed for episode {episode_id}: \
+         extraction pipeline transitioned status to 'Failed'"
+    )]
+    ExtractionFailed { episode_id: i64 },
+
+    /// `Memory::wait_for_processing` exceeded the caller-supplied timeout
+    /// without the episode reaching a terminal status (`Verified` or `Failed`).
+    ///
+    /// `episode_id` is the SQLite rowid of the episode that timed out.
+    /// `elapsed` is the wall-clock duration that passed before the timeout was
+    /// declared. The episode may still complete in the background — this error
+    /// only indicates the caller's wait budget was exhausted.
+    #[error(
+        "wait_for_processing timed out for episode {episode_id} \
+         after {elapsed:?} — episode may still complete in background"
+    )]
+    WaitTimeout {
+        episode_id: i64,
+        elapsed: std::time::Duration,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
