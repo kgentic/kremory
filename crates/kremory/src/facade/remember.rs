@@ -206,20 +206,49 @@ impl<'a> RememberRequest<'a> {
         // `Failed` / timeout). Per spec §Phase 4 DoD item 3.
         //
         // The episode rowid is stored in `episode_entity_id` as a decimal
-        // string (see engine_handle.rs:313 — `ingest_result.episode_id.to_string()`).
-        // We parse it back to i64 here; if parsing fails (stub path or future
-        // format change), we skip the wait and return the commit as-is.
+        // string (see engine_handle.rs — `ingest_result.episode_id.to_string()`).
+        // We parse it back to i64 here.
+        //
+        // Quinn Phase 4 MED-04 cause-fix (ADR-051 Phase 5):
+        // When parsing fails, the path was `run_in_background=true` (`.no_wait()`),
+        // which sets `episode_entity_id` to a UUID string (see engine_handle.rs
+        // background path — `run_id.to_string()`). A UUID is not a parseable i64
+        // rowid, so `wait_for_processing` cannot be called (it requires a rowid to
+        // poll). Behavior: skip the wait (fire-and-forget semantics are correct for
+        // the background path), but emit a tracing::warn + counter so the skip is
+        // observable. Callers combining `with_await_extraction(true)` + `.no_wait()`
+        // receive the commit immediately — `await_extraction` semantics are degraded
+        // to fire-and-forget for this combination, and the log makes that visible.
+        // Per Critical Rule 19 (observability-first-class): silent behavior changes
+        // MUST emit a signal.
         if self.memory.await_extraction {
-            if let Ok(episode_id) = commit.episode_entity_id.parse::<i64>() {
-                tracing::debug!(
-                    target: "kremory.remember",
-                    episode_id,
-                    timeout_secs = self.memory.await_extraction_timeout.as_secs(),
-                    "await_extraction=true — waiting for background processing"
-                );
-                self.memory
-                    .wait_for_processing(episode_id, self.memory.await_extraction_timeout)
-                    .await?;
+            match commit.episode_entity_id.parse::<i64>() {
+                Ok(episode_id) => {
+                    tracing::debug!(
+                        target: "kremory.remember",
+                        episode_id,
+                        timeout_secs = self.memory.await_extraction_timeout.as_secs(),
+                        "await_extraction=true — waiting for background processing"
+                    );
+                    self.memory
+                        .wait_for_processing(episode_id, self.memory.await_extraction_timeout)
+                        .await?;
+                }
+                Err(parse_err) => {
+                    // episode_entity_id is a UUID (background/no_wait path) — cannot
+                    // call wait_for_processing without an i64 rowid. Skip wait, emit
+                    // observability signal per Critical Rule 19.
+                    tracing::warn!(
+                        target: "kremory.remember",
+                        episode_entity_id = %commit.episode_entity_id,
+                        parse_error = %parse_err,
+                        "await_extraction=true but episode_entity_id is not a parseable rowid \
+                         (UUID path — run_in_background=true?); wait skipped. \
+                         Combine with_await_extraction(true) with the default blocking path \
+                         (not .no_wait()) to enable wait semantics."
+                    );
+                    metrics::counter!("kremory.remember.episode_id_parse_fail_total").increment(1);
+                }
             }
         }
 

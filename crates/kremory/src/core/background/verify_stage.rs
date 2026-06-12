@@ -17,19 +17,39 @@
 //! **Histograms** (arm-labelled):
 //! - `kremory.verify_stage.duration_ms{arm="gliner"}` — GLiNER/extractor extract call
 //! - `kremory.verify_stage.duration_ms{arm="verify_batch"}` — Path α verify_batch call
-//! - `kremory.verify_stage.duration_ms{arm="stage3_write"}` — entity write
+//! - `kremory.verify_stage.duration_ms{arm="stage3_write"}` — entity write (shared by both paths)
 //! - `kremory.verify_stage.duration_ms{arm="llm_extract"}` — Path β LLM extract call
 //!
 //! **Counters** (arm + outcome labelled):
 //! - `kremory.verify_stage.outcome_total{arm, outcome}` — terminal outcome per arm
-//!   Outcomes: `success`, `gliner_fail`, `verify_fail`, `write_fail`
+//!   Outcomes: `success`, `gliner_fail`, `verify_fail`, `write_fail`, `status_transition_fail`
 //! - `kremory.episode.processing_status_transition_total{from, to}` — per state-transition
+//!   Observed transitions: `Pending→Extracting`, `Extracting→Verified`, `Extracting→Failed`,
+//!   `Pending→Failed` (initial transition fail path)
 //!
 //! **Tracing events**:
 //! - `tracing::info!` on entry (episode_id, arm, text_len)
 //! - `tracing::info!` on success exit (episode_id, arm, outcome, entities_written, total_duration_ms)
 //! - `tracing::warn!` on verify_batch failure (candidates_count, error chain)
 //! - `tracing::error!` on terminal failure (full diagnostic context)
+//!
+//! # Honest hot-path latency numbers (ADR-049 §5.5 Cascade Amendment, post-ADR-051)
+//!
+//! `run_verify_stage` runs **entirely in the background pipeline** — it is NOT on
+//! the `Memory::ingest` caller hot path. The caller returns after `embed + INSERT
+//! + enqueue` (~tens of ms). This function executes asynchronously thereafter.
+//!
+//! Background pipeline latency targets (normative for v0.2.x):
+//! - **Path β (LLM direct extract)**: ~60–250ms p50, <500ms p99 hard cap.
+//!   Matches the ADR-051 unified hot-path target; Path β never had sync GLiNER.
+//! - **Path α (GLiNER + verify_batch)**: ~450–650ms p50 today (GLiNER alone
+//!   measures 386ms p50 @ 300 chars per `phase1_ner_bench`). ADR-051 §"Revised
+//!   hot path" target is ~60–250ms p50 once GLiNER migration is complete.
+//! - **Hard cap**: <500ms p99 for all paths (embed-tail + INSERT contention budget).
+//!
+//! Source: ADR-049 §5.5 SLA Cascade Amendment (2026-06-11), superseding original
+//! <100ms p50 target that was empirically refuted by `phase1_ner_bench`.
+//! See also ADR-051 §"Revised hot path" for the target architecture.
 
 use std::time::Instant;
 

@@ -280,7 +280,29 @@ impl GraphHandle for EngineGraphHandle {
         //   - enrich_per_episode = false → call engine.ingest() (Phase 1 only via same API;
         //     the engine always does its pipeline — there is no Phase-1-only variant at this
         //     substrate level; skipped enrichment is tracked via batch_status as "skipped").
-        let ingest_result = self
+        //
+        // Quinn Phase 4 MED-03 cause-fix (ADR-051 Phase 5) + Phase 5 M-1 doc-correction:
+        //
+        // On inline ingest error, we CANNOT write `Failed` because the episode_id is
+        // unavailable in this scope. Two failure shapes both lose it:
+        //   1. Failure BEFORE the episode INSERT (embed fail, early validation) → no
+        //      episode row exists; nothing to mark Failed.
+        //   2. Failure DURING extraction AFTER the INSERT → the INSERT did happen and
+        //      committed a Pending row, but `Engine::ingest`'s Err variant does NOT
+        //      carry the partial episode_id back. We've lost the handle.
+        //
+        // Path asymmetry with the BackgroundIngestor: `verify_stage.rs::run_verify_stage`
+        // takes `request.episode_id` as a function parameter (the caller `process_deferred`
+        // already holds it post-Phase-1-INSERT), so its Failed-on-error path is intact.
+        // The inline path doesn't have that handle.
+        //
+        // The honest response: emit `kremory.engine_handle.inline_ingest_fail_no_episode_id_total`
+        // + `tracing::error!` so the gap is visible per CLAUDE.md Rule 19, then propagate the
+        // original error. Episodes that committed a Pending row but failed extraction will
+        // stay at Pending forever on this path — accept it as a known limitation, tracked
+        // for a future fix that threads `Result<(IngestResult, Option<i64>), Error>` or
+        // similar through Engine::ingest's error variant.
+        let ingest_result = match self
             .engine
             .ingest(
                 content,
@@ -297,7 +319,26 @@ impl GraphHandle for EngineGraphHandle {
                 },
             )
             .await
-            .map_err(MemoryError::Core)?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // The error may have occurred before the episode row was INSERTed (e.g.
+                // embed failure). We do not have access to the episode_id at this level
+                // when the INSERT did not fire. Emit a counter for observability so the
+                // "no-episode-id" branch is distinguishable from a post-INSERT failure
+                // that would carry an episode_id from a different code path.
+                metrics::counter!("kremory.engine_handle.inline_ingest_fail_no_episode_id_total")
+                    .increment(1);
+                tracing::error!(
+                    target: "kremory.engine_handle",
+                    error = %e,
+                    "inline ingest failed; episode_id unavailable at this level — \
+                     episode row (if INSERTed) remains at Pending status. \
+                     BackgroundIngestor path writes Failed; inline path cannot without episode_id."
+                );
+                return Err(MemoryError::Core(e));
+            }
+        };
 
         // Increment batch counter for inline path.
         if let Some(ref bid) = batch_id {
@@ -315,24 +356,35 @@ impl GraphHandle for EngineGraphHandle {
         // Best-effort: a status write failure is non-fatal for the ingest itself
         // — we log it and continue. The episode data is fully committed; only the
         // status column is affected.
+        //
+        // Quinn Phase 4 MED-02 cause-fix (ADR-051 Phase 5):
+        // Gate the Verified write on `enrich_per_episode`. When skip_extraction=true
+        // (enrich_per_episode=false), extraction was intentionally skipped — writing
+        // Verified would be semantically wrong ("extraction was verified" when no
+        // extraction ran). Leave status at Pending for the skip_extraction path.
+        // The episode is durably stored; future background workers that filter for
+        // Pending episodes will not attempt to re-extract (the episode was never
+        // enqueued to the background worker), which is correct behavior.
         let episode_id_for_status = ingest_result.episode_id;
-        if let Err(e) = self
-            .engine
-            .graph()
-            .conn
-            .execute(
-                "UPDATE episodes SET episode_processing_status = 'Verified' WHERE id = ?1",
-                libsql::params![episode_id_for_status],
-            )
-            .await
-        {
-            tracing::warn!(
-                target: "kremory.engine_handle",
-                episode_id = episode_id_for_status,
-                error = %e,
-                "inline ingest: failed to write Verified status — \
-                 wait_for_processing may stall for this episode"
-            );
+        if opts.enrich_per_episode {
+            if let Err(e) = self
+                .engine
+                .graph()
+                .conn
+                .execute(
+                    "UPDATE episodes SET episode_processing_status = 'Verified' WHERE id = ?1",
+                    libsql::params![episode_id_for_status],
+                )
+                .await
+            {
+                tracing::warn!(
+                    target: "kremory.engine_handle",
+                    episode_id = episode_id_for_status,
+                    error = %e,
+                    "inline ingest: failed to write Verified status — \
+                     wait_for_processing may stall for this episode"
+                );
+            }
         }
 
         Ok(EpisodeCommit {
