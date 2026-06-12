@@ -12,6 +12,83 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::{ContradictionResolution, IngestStatus, IngestionErrorKind};
 
+// ─── SQL → IngestStatus bridge ───────────────────────────────────────────────
+
+/// Convert an `episode_processing_status` SQL TEXT value to [`IngestStatus`].
+///
+/// ## One-way bridge declaration
+///
+/// This function is the **ONE-WAY bridge** from the 4-state SQL
+/// `episode_processing_status` column to the 7-state `IngestStatus` enum.
+/// There is **NO inverse function**. Do not add one.
+///
+/// The reverse direction (`IngestStatus` → SQL string) is intentionally absent
+/// because `Complete`, `Deduplicating`, and `Invalidating` have no SQL column
+/// representation — the status column is intentionally simpler than the push
+/// enum (polling consumers need coarser state; push consumers need finer).
+///
+/// ## Mapping table
+///
+/// | SQL value       | `IngestStatus` variant                                   |
+/// |-----------------|----------------------------------------------------------|
+/// | `'Pending'`     | `IngestStatus::Pending`                                  |
+/// | `'Extracting'`  | `IngestStatus::Extracting`                               |
+/// | `'Verified'`    | `IngestStatus::EntitiesReady`  ← **NOT `Complete`**      |
+/// | `'Failed'`      | `IngestStatus::Failed("from_sql_status: SQL-level failure; reason not captured")` |
+/// | any other value | `IngestStatus::Failed(format!("unknown_sql_status:{s}"))` |
+///
+/// ### Why `'Verified'` → `EntitiesReady` (not `Complete`)
+///
+/// The SQL column writes `'Verified'` at Phase 2a completion (entity write done,
+/// inside `run_verify_stage`). `IngestStatus::Complete` fires later, after
+/// `ingest_deferred` completes fact extraction — there is no second SQL write at
+/// that point. `EntitiesReady` is the moment `wait_for_processing` resolves;
+/// `Complete` fires later with no SQL equivalent. (ADR-052 Gap 5 Decision D5.)
+///
+/// ### Why unknown values fall back to `Failed` (not `unreachable!()`)
+///
+/// Migration 015a explicitly omits a `CHECK` constraint on
+/// `episode_processing_status` (see migration doc-comment: "SQLite CHECK is
+/// per-row but not enforced retroactively"). We cannot assume the SQL layer
+/// enforces the 4-value set, so an unknown SQL value is treated as a best-effort
+/// failure sentinel rather than an unrecoverable panic.
+///
+/// Placement: `crates/kremory/src/core/sink.rs` (MED-03 — sibling to
+/// `IngestStatus` import and the event-sink trait definitions).
+///
+/// ## Visibility — Phase 1 impl-time deviation from arch spec §4.2
+///
+/// `pub` (not `pub(crate)` as arch spec §4.2 drafted). Reasoning:
+///
+/// 1. **Phase 6 integration test access** — impl spec §9.2 schedules
+///    `sink_ingest_status_from_sql_status` in `tests/sink_wiring.rs`, an
+///    integration test crate. Integration tests cannot reach `pub(crate)`
+///    items. `pub` is required to keep the planned test placement coherent.
+///
+/// 2. **Consumer intent** — the function is a bridge for any caller that
+///    polls the `episode_processing_status` SQL column (a schema-level
+///    surface external consumers may observe directly). External consumers
+///    benefit from the typed mapping; `pub(crate)` would force them to
+///    re-implement the bridge.
+///
+/// 3. **API surface cost** — the function is 6 LoC, pure, has no internal
+///    dependencies, and is fully documented. The semver cost of `pub` is
+///    minimal.
+///
+/// Placement (MED-03) is preserved. Visibility raised. Documented in the
+/// Phase 1 commit message.
+pub fn from_sql_status(s: &str) -> IngestStatus {
+    match s {
+        "Pending" => IngestStatus::Pending,
+        "Extracting" => IngestStatus::Extracting,
+        "Verified" => IngestStatus::EntitiesReady,
+        "Failed" => IngestStatus::Failed(
+            "from_sql_status: SQL-level failure; reason not captured".to_string(),
+        ),
+        other => IngestStatus::Failed(format!("unknown_sql_status:{other}")),
+    }
+}
+
 /// Newtype for entity identity in event payloads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityId(pub String);
