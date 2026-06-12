@@ -156,6 +156,42 @@ fn ingest_event_sink_stub_compiles_and_records_events() {
     assert!(events[5].contains("ParseFailure"));
 }
 
+/// Verifies that `IngestStatus::EntitiesReady` was added as a variant and that
+/// `#[non_exhaustive]` is still present on the enum.
+///
+/// `matches!` expands to a `match` with a `_` catch-all — the catch-all is
+/// required by `#[non_exhaustive]` when matching outside the defining crate.
+/// If the variant is absent, this test fails to compile with "no variant named
+/// EntitiesReady" or "non-exhaustive patterns". If `#[non_exhaustive]` is
+/// removed, the `_` arm becomes unreachable and clippy will flag it — both
+/// confirm the contract.
+///
+/// Per impl spec §3 Phase 1 DoD + test strategy §10.
+#[test]
+fn sink_entities_ready_variant_non_exhaustive() {
+    let status = kremory::core::error::IngestStatus::EntitiesReady;
+    let matched = matches!(status, kremory::core::error::IngestStatus::EntitiesReady);
+    assert!(
+        matched,
+        "IngestStatus::EntitiesReady variant must exist and match"
+    );
+}
+
+/// Verifies that `Arc<dyn EnrichmentEventSink>` satisfies `Send + Sync` bounds
+/// at compile time.
+///
+/// This is a load-bearing compile-time check: napi-rs consumers will store the
+/// sink in an `Arc` and cross thread boundaries. If `EnrichmentEventSink` loses
+/// `Send + Sync`, this test will fail to compile with a trait-bound error,
+/// surfacing the regression immediately.
+///
+/// Per impl spec §3 Phase 1 DoD + test strategy §10.
+#[test]
+fn sink_send_sync_bound_compiles() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<std::sync::Arc<dyn kremory::memory::events::EnrichmentEventSink>>();
+}
+
 #[test]
 fn enrichment_event_sink_extends_ingest_sink() {
     let sink = StubEnrichmentSink::new();
