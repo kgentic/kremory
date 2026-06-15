@@ -868,6 +868,7 @@ async fn c10_real_llm_schema_parses_100_percent() {
             embed_prefilter_threshold: 0.99, // force flag
             max_candidates_per_run: Some(5),
             verify_model_override: None,
+            dry_run: false,
         };
 
         let result = run_consistency_check(&graph.conn, &embedder, llm.as_ref(), opts).await;

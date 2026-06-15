@@ -57,7 +57,8 @@ pub(super) struct Inner {
 /// ## Serialisation invariant
 ///
 /// A single OS thread owns the `Engine` and processes all work items
-/// sequentially on a current-thread tokio runtime (`worker_threads(1)`).
+/// sequentially on a multi-thread tokio runtime pinned to a single worker
+/// (`new_multi_thread().worker_threads(1)`).
 /// This means:
 ///
 /// - Phase 1 NER ingest calls are serialised — no concurrent schema mutations.

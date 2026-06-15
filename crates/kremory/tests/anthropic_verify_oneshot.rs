@@ -89,6 +89,7 @@ async fn anthropic_verify_oneshot_dumps_raw_response() {
         embed_prefilter_threshold: 0.0, // force flag everything regardless of cosine
         max_candidates_per_run: Some(10),
         verify_model_override: Some("claude-haiku-4-5-20251001".to_string()),
+        dry_run: false,
     };
 
     eprintln!("\n========================================");

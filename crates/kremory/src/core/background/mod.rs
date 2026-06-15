@@ -236,9 +236,10 @@ pub struct IngestorConfig {
     ///
     /// Default: `1` (serialised).  The `BackgroundIngestor` serialisation
     /// invariant is that a single OS thread owns the `Engine` and processes
-    /// work items sequentially on a current-thread tokio runtime (`worker_threads(1)`).
-    /// This means Phase 2 tasks are awaited inline on the
-    /// current-thread tokio runtime, so this field is reserved for future
+    /// work items sequentially on a multi-thread tokio runtime pinned to a
+    /// single worker (`new_multi_thread().worker_threads(1)`).
+    /// This means Phase 2 tasks are awaited inline on that single-worker
+    /// runtime, so this field is reserved for future
     /// multi-engine parallelism.  Only override when you understand the
     /// consequent ordering and idempotency implications.
     pub deferred_concurrency: usize,
