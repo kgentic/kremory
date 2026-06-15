@@ -55,6 +55,8 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
 ) -> Option<DeferredRequest> {
     // ── Fire-site 1: on_stage_change(Pending) — entry, before NER call ──────────
     // ADR-052 Gap 1 §3.1 row 1 — triple-emit (ADR-2026-05-20 D1).
+    // Phase 5: callback_duration_ms wraps sink call (G7 slow-consumer detection).
+    let cb_start = std::time::Instant::now();
     if let Some(s) = sink {
         s.on_stage_change(IngestStatus::Pending);
     }
@@ -64,6 +66,12 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
         "to" => "Pending"
     )
     .increment(1);
+    metrics::histogram!(
+        "kremory.sink.callback_duration_ms",
+        "callback" => "on_stage_change",
+        "stage" => "Pending"
+    )
+    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
     tracing::info!(
         text_len = req.text.len(),
         "kremory.background.stage_change.pending"
@@ -157,6 +165,8 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
                 IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
                 _ => "ProviderError",
             };
+            // Phase 5: callback_duration_ms wraps on_ingestion_error (G7 slow-consumer detection).
+            let cb_start = std::time::Instant::now();
             if let Some(s) = sink {
                 s.on_ingestion_error(IngestionError {
                     entity_or_edge_ref: None,
@@ -170,6 +180,12 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
                 "phase" => "phase1"
             )
             .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_ingestion_error",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
             tracing::error!(error = %e, "kremory.background.ingestion_error.phase1");
 
             let err = IngestError {
@@ -353,6 +369,8 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
                 _ => "ProviderError",
             };
+            // Phase 5: callback_duration_ms wraps on_ingestion_error (G7 slow-consumer detection).
+            let cb_start = std::time::Instant::now();
             if let Some(s) = sink {
                 s.on_ingestion_error(IngestionError {
                     entity_or_edge_ref: None,
@@ -366,6 +384,12 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 "phase" => "phase1_verify_fail"
             )
             .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_ingestion_error",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
             tracing::error!(episode_id, error = %e, "kremory.background.ingestion_error.verify_fail");
             // Fall through to fact extraction — entity write failing does not
             // block fact rows from being committed.
@@ -427,6 +451,8 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             // ── Fire-site 3: on_stage_change(Complete) — ingest_deferred Ok ──────
             // ADR-052 Gap 1 §3.1 row 3 — triple-emit (ADR-2026-05-20 D1).
             // MED-02 fix: "from" must be a bounded stable label, not the function name.
+            // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+            let cb_start = std::time::Instant::now();
             if let Some(s) = sink {
                 s.on_stage_change(IngestStatus::Complete);
             }
@@ -436,6 +462,12 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 "to" => "Complete"
             )
             .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_stage_change",
+                "stage" => "Complete"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
             tracing::info!(episode_id, "kremory.background.stage_change.complete");
 
             DeferredOutcome::Succeeded
@@ -497,13 +529,11 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             };
             // MED-02 fix: "from" label must be a bounded state name, not a function name.
             // "phase2" is stable and non-state; normative from/to spec is Phase 7 follow-up.
+            // Phase 5: callback_duration_ms wraps both on_stage_change and on_ingestion_error.
+            // Two distinct histograms emitted (one per callback type) within the same block.
+            let cb_start = std::time::Instant::now();
             if let Some(s) = sink {
                 s.on_stage_change(IngestStatus::Failed(error_detail.clone()));
-                s.on_ingestion_error(IngestionError {
-                    entity_or_edge_ref: None,
-                    error_kind: ingestion_error_kind,
-                    is_retryable: false,
-                });
             }
             metrics::counter!(
                 "kremory.sink.stage_transition_total",
@@ -511,13 +541,33 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 "to" => "Failed"
             )
             .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_stage_change",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+            tracing::error!(episode_id, error = %e, "kremory.background.stage_change.failed");
+            let cb_start = std::time::Instant::now();
+            if let Some(s) = sink {
+                s.on_ingestion_error(IngestionError {
+                    entity_or_edge_ref: None,
+                    error_kind: ingestion_error_kind,
+                    is_retryable: false,
+                });
+            }
             metrics::counter!(
                 "kremory.sink.ingestion_error_total",
                 "error_kind" => error_kind_str,
                 "phase" => "phase2"
             )
             .increment(1);
-            tracing::error!(episode_id, error = %e, "kremory.background.stage_change.failed");
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_ingestion_error",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
             tracing::error!(episode_id, error = %e, "kremory.background.ingestion_error.phase2");
 
             let err = IngestError {
@@ -758,6 +808,8 @@ fn fire_batch_complete_if_terminal(
     } else {
         "partial"
     };
+    // Phase 5: callback_duration_ms wraps on_batch_phase2_complete (G7 slow-consumer detection).
+    let cb_start = std::time::Instant::now();
     if let Some(s) = sink {
         s.on_batch_phase2_complete(terminal_payload.clone());
     }
@@ -766,6 +818,12 @@ fn fire_batch_complete_if_terminal(
         "outcome" => outcome_str
     )
     .increment(1);
+    metrics::histogram!(
+        "kremory.sink.callback_duration_ms",
+        "callback" => "on_batch_phase2_complete",
+        "stage" => "Complete"
+    )
+    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
     tracing::info!(
         batch_id = %terminal_payload.batch_id,
         succeeded = terminal_payload.succeeded,
