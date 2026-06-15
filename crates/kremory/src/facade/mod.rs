@@ -90,6 +90,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::core::background::{BackgroundIngestor, IngestorConfig};
 use crate::core::chat_tracking::TokenTrackingChatProvider;
 use crate::core::error::Error as CoreError;
 use crate::core::provider::DynEmbeddingProvider;
@@ -103,7 +104,7 @@ use crate::memory::{
         DreamPhaseResult, DreamStatus, EpisodeCommit, Namespace, NamespacePolicy, RetrievedContext,
         SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
     },
-    ChatProvider, GraphHandle, MemoryError, Result,
+    BackgroundIngestorGraphHandle, ChatProvider, GraphHandle, MemoryError, Result,
 };
 
 // ── Type-state markers ────────────────────────────────────────────────────────
@@ -411,6 +412,77 @@ impl Memory {
             batch_id: None,
             sink: None,
         }
+    }
+
+    /// Enqueue text for background ingestion as part of a named batch.
+    ///
+    /// Associates the episode with `batch_id` for batch tracking.  When all
+    /// episodes in the batch reach Phase 2 terminal state,
+    /// `on_batch_phase2_complete` fires on the configured sink (if any).
+    ///
+    /// Per ADR-052 Gap 1 §3.2 + Phase 7 DoD + v0.2.3 follow-up closure
+    /// (`BackgroundIngestorGraphHandle` dual-path consolidation, 2026-06-15).
+    ///
+    /// # Namespace resolution
+    ///
+    /// Requires a `default_namespace` on the builder.  Per-call namespace
+    /// override is not available on the batched send path (use
+    /// `remember_batch().with_batch_id()` for per-entry namespace control).
+    ///
+    /// # Architectural note
+    ///
+    /// When `.with_sink()` is configured on the builder, `MemoryBuilder::build()`
+    /// constructs a `BackgroundIngestorGraphHandle` (arch spec §3.2 Option A).
+    /// `send_batched` then routes through `BackgroundIngestor.send_batched` —
+    /// the ADR-051 OS-thread pipeline — and `on_batch_phase2_complete` fires
+    /// via the configured sink when the batch reaches terminal state.
+    ///
+    /// When no sink is configured, `send_batched` routes through the
+    /// `EngineGraphHandle` tokio-spawn path.  `on_batch_phase2_complete` will
+    /// NOT fire (no sink to receive it).  This is the correct behavior: callers
+    /// who don't provide a sink have no listener for the callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(MemoryError::MissingNamespace)` when no `default_namespace`
+    /// is set.
+    ///
+    /// Returns `Err(MemoryError::Core(...))` on substrate failure.
+    pub async fn send_batched(
+        &self,
+        text: impl Into<String>,
+        batch_id: String,
+    ) -> memory::Result<EpisodeCommit> {
+        use crate::memory::types::SubmitOpts;
+
+        let ns = self.resolve_namespace(None)?;
+        let sink = self.default_sink.clone();
+
+        // ADR-029a lazy population.
+        self.ensure_namespace_policy(&ns).await?;
+
+        let source_ref = memory::types::SourceRef {
+            kind: memory::types::SourceKind::Chat,
+            id: uuid::Uuid::new_v4().to_string(),
+            occurred_at: chrono::Utc::now(),
+            published_at: None,
+        };
+
+        memory::submit_episode(
+            self.graph.as_ref(),
+            &text.into(),
+            source_ref,
+            vec![],
+            self.llm_or_stub(),
+            ns,
+            Some(batch_id),
+            SubmitOpts {
+                enrich_per_episode: true,
+                run_in_background: true,
+            },
+            sink,
+        )
+        .await
     }
 
     /// Search for memories matching `query`.
@@ -1507,6 +1579,13 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
             // Row 2: LLM only → Llm extractor (default open_graph path)
             // Row 3: LLM + gliner → GlinerLlm extractor
             // Row 5/6 (with LLM): custom extractor wins, LLM still available
+            //
+            // Clone allowed_entity_types up-front: it may be needed again below
+            // when constructing the BackgroundIngestorGraphHandle's two engines
+            // (when self.default_sink.is_some()). Moved values cannot be cloned
+            // after the move; clone before the compat-matrix branches consume it.
+            let allowed_entity_types_for_bg = self.allowed_entity_types.clone();
+
             let (graph, temporal_graph) = if let Some(custom) = self.custom_extractor {
                 // Rows 5/6 with LLM — open with explicit Custom extractor
                 providers::open_graph_with_extractor(
@@ -1591,6 +1670,108 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                     warm_schema_caches(warmup_llm.as_ref(), None).await;
                 });
             }
+
+            // ── BackgroundIngestorGraphHandle (ADR-052 Gap 1 / Quinn MED-3 fix) ─
+            //
+            // When `.with_sink()` is configured, replace the `Arc<dyn GraphHandle>`
+            // produced by `open_graph` with a `BackgroundIngestorGraphHandle` that
+            // routes `run_in_background=true` calls through `BackgroundIngestor`.
+            //
+            // This is the composable-knobs trigger: `.with_sink()` → builder picks
+            // `BackgroundIngestorGraphHandle` internally (arch spec §3.2 Option A).
+            //
+            // Two-Engine shape (arch spec §3.3):
+            //   - Engine 1 (consumed by BackgroundIngestor): the engine already
+            //     constructed inside `open_graph` above, accessible via `graph`
+            //     (which is Arc<dyn GraphHandle> = Arc<EngineGraphHandle>). Since
+            //     `open_graph` type-erases the engine handle, we open a SECOND
+            //     lightweight `EngineGraphHandle` on the same path for the
+            //     non-background delegate role.
+            //   - Engine 2 (EngineGraphHandle delegate): opened here via
+            //     `providers::open_engine_handle`. Handles search/dream/inline-ingest.
+            //   Both engines open their own libSQL WAL connection; write serialisation
+            //   is enforced by the background OS thread (ADR-051 invariant).
+            //   WAL concurrency safety: empirically verified by Spike B + C in
+            //   `.ai-docs/specs/v0-2-3-followup-dual-path-consolidation-arch-spec-2026-06-15.md §6`.
+            //
+            // When no sink is configured: `graph` stays as-is (EngineGraphHandle path,
+            // unchanged semantics for all existing callers).
+            let graph: Arc<dyn GraphHandle> = if let Some(ref sink) = self.default_sink {
+                // Open a second EngineGraphHandle on the same DB path for the
+                // non-background delegate (search, dream, inline ingest).
+                // Uses `allowed_entity_types_for_bg` (cloned before compat-matrix
+                // branches moved `self.allowed_entity_types`).
+                let (engine_handle, _tg2) = providers::open_engine_handle(
+                    self.path.as_path(),
+                    llm.clone(),
+                    embedder.clone(),
+                    self.embedding_dim,
+                    allowed_entity_types_for_bg.clone(),
+                )
+                .await?;
+
+                // Construct BackgroundIngestor from a THIRD engine connection.
+                // open_graph above type-erases the engine into Arc<dyn GraphHandle>
+                // so we cannot extract it; open a fresh connection for the
+                // BackgroundIngestor's exclusive Engine ownership (ADR-051 invariant).
+                //
+                // Three-connection shape: BG ingestor Engine + EGH delegate Engine
+                // + TemporalGraph (facade). All open their own libSQL WAL connection.
+                // WAL serialises concurrent writes safely (Spike B + C, arch spec §6).
+                let (bg_engine_handle_for_ingestor, _tg3) = providers::open_engine_handle(
+                    self.path.as_path(),
+                    llm.clone(),
+                    embedder.clone(),
+                    self.embedding_dim,
+                    allowed_entity_types_for_bg,
+                )
+                .await?;
+
+                // Unwrap the engine from the EngineGraphHandle to pass to BackgroundIngestor.
+                // BackgroundIngestor takes exclusive ownership per ADR-051 serialisation
+                // invariant (ingestor.rs:62-74).
+                //
+                // `Arc::try_unwrap` succeeds here because `open_engine_handle` wraps
+                // the engine in a fresh `Arc` with exactly one owner. The panic branch
+                // surfaces a construction-time invariant violation (not expected in
+                // production; surfaces in tests if construction logic changes).
+                // Note: `.expect()` requires E: Debug; Engine doesn't impl Debug,
+                // so we use `.unwrap_or_else(|_| panic!(...))` instead.
+                let bg_engine = Arc::try_unwrap(bg_engine_handle_for_ingestor.engine)
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "kremory: BackgroundIngestor engine Arc has unexpected extra owners \
+                             at build() time — invariant violation in open_engine_handle"
+                        )
+                    });
+
+                let ingestor_config = IngestorConfig {
+                    sink: Some(Arc::clone(sink)),
+                    ..IngestorConfig::default()
+                };
+                let (ingestor, guard) = BackgroundIngestor::new(bg_engine, ingestor_config);
+
+                tracing::debug!(
+                    target: "kremory.facade",
+                    "MemoryBuilder::build: sink configured — constructing BackgroundIngestorGraphHandle \
+                     (ADR-052 Gap 1 fix, arch spec §3.2 Option A)"
+                );
+                metrics::counter!(
+                    "kremory.facade.build_path",
+                    "handle" => "BackgroundIngestorGraphHandle"
+                )
+                .increment(1);
+
+                Arc::new(BackgroundIngestorGraphHandle::new(
+                    Arc::new(ingestor),
+                    Arc::new(engine_handle),
+                    guard,
+                ))
+            } else {
+                // No sink configured: use the existing EngineGraphHandle as before.
+                // All existing callers are unaffected (Option A minimal blast radius).
+                graph
+            };
 
             // ── Dream scheduler (C10) ────────────────────────────────────────
             // Spawn background scheduler if a non-Off schedule was requested.
