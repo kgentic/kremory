@@ -14,6 +14,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::memory::events::BatchPhase2Complete;
+
 use chrono::Utc;
 
 use crate::core::error::{IngestStatus, IngestionErrorKind};
@@ -23,8 +25,8 @@ use crate::core::sink::{IngestEventSink, IngestionError};
 use crate::memory::events::EnrichmentEventSink;
 
 use super::{
-    try_send_error, DeferredRequest, IngestError, IngestErrorKind, IngestRequest, RateLimit,
-    TokenBucketState,
+    batch_tracker::BatchTracker, try_send_error, DeferredRequest, IngestError, IngestErrorKind,
+    IngestRequest, RateLimit, TokenBucketState,
 };
 
 // ---------------------------------------------------------------------------
@@ -103,6 +105,9 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
                     content_type: req.content_type,
                     episode_id: phase1_result.episode_id,
                     ner_entity_names,
+                    // Propagate batch_id so worker_loop can do terminal detection
+                    // and fire on_batch_phase2_complete (impl spec §6 Phase 4).
+                    batch_id: req.batch_id,
                 })
             } else {
                 None
@@ -203,13 +208,21 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
 /// signature is stable before Phase 3 lands.
 ///
 /// Errors are logged via metrics and the error channel but do NOT crash the worker.
+/// Outcome of one `process_deferred` call — used by `worker_loop` to update
+/// the `BatchProgress` counter without re-acquiring any state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DeferredOutcome {
+    Succeeded,
+    Failed,
+}
+
 pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
     req: DeferredRequest,
     error_tx: &SyncSender<IngestError>,
     bucket: &mut Option<TokenBucketState>,
     sink: Option<&dyn EnrichmentEventSink>,
-) {
+) -> DeferredOutcome {
     let episode_id = req.episode_id;
     let ns = req.group_id.as_deref().unwrap_or("default");
 
@@ -424,6 +437,8 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             )
             .increment(1);
             tracing::info!(episode_id, "kremory.background.stage_change.complete");
+
+            DeferredOutcome::Succeeded
         }
         Err(e) => {
             let elapsed_ms = fact_start.elapsed().as_secs_f64() * 1000.0;
@@ -515,6 +530,8 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 episode_id: req.episode_id,
             };
             try_send_error(error_tx, err);
+
+            DeferredOutcome::Failed
         }
     }
 }
@@ -527,6 +544,11 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
 //
 // `sink`: Arc owned here; each call to `process_item` / `process_deferred` borrows
 // `sink.as_deref()`.  Per ADR-052 Gap 1; impl spec §3 Phase 2.
+//
+// `batch_tracker`: shared with the caller-side `BackgroundIngestor` handle.
+// After each `process_deferred` terminal, the worker increments the appropriate
+// counter and, when `is_terminal()`, fires `on_batch_phase2_complete` then
+// removes the entry.  Per impl spec §6 Phase 4 DoD item 6.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: Engine<L, Emb>,
@@ -537,6 +559,7 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     deferred_enabled: bool,
     llm_rate_limit: Option<RateLimit>,
     sink: Option<Arc<dyn EnrichmentEventSink>>,
+    batch_tracker: BatchTracker,
 ) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -588,8 +611,21 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         let depth = deferred_queue.len();
                         metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
                         tracing::info!(depth, "kremory.background.deferred_queue draining");
-                        process_deferred(&graph, deferred, &error_tx, &mut bucket, sink.as_deref())
-                            .await;
+                        let batch_id = deferred.batch_id.clone();
+                        let outcome = process_deferred(
+                            &graph,
+                            deferred,
+                            &error_tx,
+                            &mut bucket,
+                            sink.as_deref(),
+                        )
+                        .await;
+                        fire_batch_complete_if_terminal(
+                            &batch_tracker,
+                            batch_id,
+                            outcome,
+                            sink.as_deref(),
+                        );
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
@@ -621,14 +657,123 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                             depth,
                             "kremory.background.deferred_queue drain-on-disconnect"
                         );
-                        process_deferred(&graph, deferred, &error_tx, &mut bucket, sink.as_deref())
-                            .await;
+                        let batch_id = deferred.batch_id.clone();
+                        let outcome = process_deferred(
+                            &graph,
+                            deferred,
+                            &error_tx,
+                            &mut bucket,
+                            sink.as_deref(),
+                        )
+                        .await;
+                        fire_batch_complete_if_terminal(
+                            &batch_tracker,
+                            batch_id,
+                            outcome,
+                            sink.as_deref(),
+                        );
                     }
                     break;
                 }
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Batch terminal helper — called after every process_deferred completion
+// ---------------------------------------------------------------------------
+
+/// Increment the batch counter for `batch_id` (if set) and, when the batch
+/// reaches terminal state, fire the triple-emit for `on_batch_phase2_complete`
+/// then remove the entry from the tracker.
+///
+/// ## Triple-emit (ADR-2026-05-20 D1)
+///
+/// 1. `sink.on_batch_phase2_complete(BatchPhase2Complete { … })`
+/// 2. `metrics::counter!("kremory.sink.batch_complete_total", "outcome" => …)`
+/// 3. `tracing::info!(batch_id = …, succeeded, skipped, failed, duration_ms, …)`
+///
+/// ## D7 cardinality discipline
+///
+/// `batch_id` appears as a **tracing field** only — NEVER as a metric label.
+/// `outcome` is a bounded three-value string and IS allowed as a metric label.
+///
+/// Per impl spec §6 Phase 4 DoD item 6.
+fn fire_batch_complete_if_terminal(
+    batch_tracker: &BatchTracker,
+    batch_id: Option<String>,
+    outcome: DeferredOutcome,
+    sink: Option<&dyn EnrichmentEventSink>,
+) {
+    let Some(bid) = batch_id else {
+        return; // No batch tracking for this episode.
+    };
+
+    // Short critical section: lock → read → mutate → release.
+    // No .await is held across the lock (std::sync::Mutex is correct here).
+    let terminal_payload = {
+        let mut tracker = batch_tracker.lock().unwrap_or_else(|p| p.into_inner());
+
+        let Some(progress) = tracker.get_mut(&bid) else {
+            // Entry was already removed (double-fire guard) or never registered.
+            return;
+        };
+
+        match outcome {
+            DeferredOutcome::Succeeded => progress.succeeded += 1,
+            DeferredOutcome::Failed => progress.failed += 1,
+        }
+
+        if !progress.is_terminal() {
+            return; // Batch not yet complete; release lock.
+        }
+
+        // Batch is terminal — capture payload before removing the entry.
+        let payload = BatchPhase2Complete {
+            batch_id: bid.clone(),
+            succeeded: progress.succeeded,
+            skipped: progress.skipped,
+            failed: progress.failed,
+            duration_ms: progress.started_at.elapsed().as_millis() as u64,
+        };
+        tracker.remove(&bid);
+        payload
+        // Lock released here (tracker guard drops at end of block).
+    };
+
+    // ── Fire-site: on_batch_phase2_complete — triple-emit ────────────────────
+    // ADR-052 Gap 1 §3.2 + impl spec §6 Phase 4 DoD item 6.
+    // D7: batch_id in tracing field; outcome as bounded metric label.
+    //
+    // NOTE: `skipped` is always 0 at v0.2.3 — no code path increments it.
+    // Phase 6 test wiring (per Tessa §5.4) introduces the skip path when
+    // `enrich_per_episode = false`; the outcome_str logic already handles
+    // the all-skipped case implicitly via `failed == 0` → "success".
+    // Per Quinn LOW-2 review finding.
+    let outcome_str = if terminal_payload.failed == 0 {
+        "success"
+    } else if terminal_payload.succeeded == 0 {
+        "all_failed"
+    } else {
+        "partial"
+    };
+    if let Some(s) = sink {
+        s.on_batch_phase2_complete(terminal_payload.clone());
+    }
+    metrics::counter!(
+        "kremory.sink.batch_complete_total",
+        "outcome" => outcome_str
+    )
+    .increment(1);
+    tracing::info!(
+        batch_id = %terminal_payload.batch_id,
+        succeeded = terminal_payload.succeeded,
+        skipped = terminal_payload.skipped,
+        failed = terminal_payload.failed,
+        duration_ms = terminal_payload.duration_ms,
+        "kremory.background.batch_phase2_complete"
+    );
 }
 
 // Tests for deferred pipeline behaviour live in ingestor.rs (co-located with
