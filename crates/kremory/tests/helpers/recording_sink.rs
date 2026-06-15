@@ -99,6 +99,15 @@ pub struct RecordingSink {
 // Cause-fix per CLAUDE.md Rule 8 + Quinn Phase 6 review MED Rule-8.
 impl RecordingSink {
     /// Construct a new, empty recording sink.
+    ///
+    /// `#[allow(dead_code)]` is intentional: `new()` is used by
+    /// `sink_wiring.rs`, `sink_wiring_integration.rs`, and
+    /// `background_ingestor_handle_routing.rs` but NOT by `llm_integration.rs`
+    /// (which pulls in `helpers/mod.rs` for other helpers but doesn't use
+    /// RecordingSink).  Cross-binary asymmetry — same rationale as
+    /// `entity_events`/`edge_events`/`stage_events` below.  Quinn Phase 6
+    /// review MED Rule-8 precedent.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             events: Arc::new(Mutex::new(Vec::new())),
