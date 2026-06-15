@@ -21,6 +21,7 @@ use chrono::{DateTime, Utc};
 use crate::core::config::ContentType;
 use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
+use crate::memory::events::EnrichmentEventSink;
 
 use super::{
     deferred_pipeline::worker_loop, IngestError, IngestRequest, IngestSendError, IngestorConfig,
@@ -69,9 +70,23 @@ pub(super) struct Inner {
 /// Do **not** share the same `Engine` between a `BackgroundIngestor` and other
 /// async tasks — move the engine into the ingestor and interact with the graph
 /// through the facade `Memory` handle.
+///
+/// ## Event sink (ADR-052 Gap 1)
+///
+/// An optional [`EnrichmentEventSink`] can be attached at construction time via
+/// [`IngestorConfig::with_sink`].  When set, the sink receives callbacks at each
+/// pipeline stage on the background worker OS thread (D4 thread-context contract).
+/// All existing code paths remain unaffected when `sink` is `None`.
 #[derive(Clone)]
 pub struct BackgroundIngestor {
     pub(super) inner: Arc<Inner>,
+    /// Sink for background pipeline stage-change / entity / error callbacks.
+    ///
+    /// `Arc` so `BackgroundIngestor` remains `Clone`.  `None` when no sink was
+    /// configured — all code paths compile and behave identically to pre-v0.2.3.
+    ///
+    /// Per ADR-052 Gap 1; impl spec §3 Phase 2.
+    pub(crate) sink: Option<Arc<dyn EnrichmentEventSink>>,
 }
 
 impl BackgroundIngestor {
@@ -95,6 +110,9 @@ impl BackgroundIngestor {
 
         let deferred_enabled = config.deferred_extraction_enabled;
         let llm_rate_limit = config.llm_rate_limit;
+        // Extract sink before config is consumed; clone into worker thread.
+        let sink = config.sink.clone();
+        let sink_for_worker = config.sink.clone();
 
         let parent_span = tracing::Span::current();
         let handle = thread::Builder::new()
@@ -109,6 +127,7 @@ impl BackgroundIngestor {
                     stop_worker,
                     deferred_enabled,
                     llm_rate_limit,
+                    sink_for_worker,
                 );
             })
             .unwrap_or_else(|e| panic!("invariant: OS rejected rql-ingestor thread spawn: {e}"));
@@ -120,6 +139,7 @@ impl BackgroundIngestor {
                 queued,
                 channel_capacity: config.channel_capacity,
             }),
+            sink,
         };
 
         let guard = IngestGuard {
@@ -177,6 +197,18 @@ impl BackgroundIngestor {
     /// decremented by the worker just before each `ingest()` call.
     pub fn queue_depth(&self) -> usize {
         self.inner.queued.load(Ordering::Relaxed)
+    }
+
+    /// Returns a reference to the event sink, if one was configured via
+    /// [`IngestorConfig::with_sink`].
+    ///
+    /// Provided so Phase 6 integration tests (and future Phase 4 batch-tracker
+    /// code) can verify that a sink was wired without poking the private field.
+    /// Returns `None` when no sink was configured.
+    ///
+    /// Per ADR-052 Gap 1; impl spec §3 Phase 2.
+    pub fn sink(&self) -> Option<&Arc<dyn EnrichmentEventSink>> {
+        self.sink.as_ref()
     }
 }
 
