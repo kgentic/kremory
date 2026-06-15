@@ -1642,7 +1642,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // MED-01 normative: fires ONCE per ingest_deferred call, on entry to the
             // contradiction-detection loop when ≥1 fact is extracted. Fires regardless
             // of whether contradictions are actually found. (arch spec §3.1 row 90)
+            // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
             if !fired_deduplicating {
+                let cb_start = Instant::now();
                 if let Some(s) = sink {
                     s.on_stage_change(IngestStatus::Deduplicating);
                 }
@@ -1652,6 +1654,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     "to" => "Deduplicating"
                 )
                 .increment(1);
+                metrics::histogram!(
+                    "kremory.sink.callback_duration_ms",
+                    "callback" => "on_stage_change",
+                    "stage" => "Deduplicating"
+                )
+                .record(cb_start.elapsed().as_secs_f64() * 1000.0);
                 tracing::info!(episode_id, "kremory.background.stage_change.deduplicating");
                 fired_deduplicating = true;
             }
@@ -1668,7 +1676,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // Resolution is always Superseded here — invalidate_fact_with_reason
                 // marks the prior fact invalid_at (bi-temporal supersession path).
                 // (arch spec §3.1 row 92)
+                // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
                 if !fired_invalidating {
+                    let cb_start = Instant::now();
                     if let Some(s) = sink {
                         s.on_stage_change(IngestStatus::Invalidating);
                     }
@@ -1678,6 +1688,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "to" => "Invalidating"
                     )
                     .increment(1);
+                    metrics::histogram!(
+                        "kremory.sink.callback_duration_ms",
+                        "callback" => "on_stage_change",
+                        "stage" => "Invalidating"
+                    )
+                    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
                     tracing::info!(episode_id, "kremory.background.stage_change.invalidating");
                     fired_invalidating = true;
                 }
