@@ -18,6 +18,7 @@ use chrono::Utc;
 
 use crate::core::ingest::{Engine, SourceParams};
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
+use crate::memory::events::EnrichmentEventSink;
 
 use super::{
     try_send_error, DeferredRequest, IngestError, IngestErrorKind, IngestRequest, RateLimit,
@@ -35,6 +36,10 @@ use super::{
 /// no entity writes). Entity writes + fact extraction are deferred to Phase 2
 /// (`process_deferred`).
 ///
+/// `sink` is propagated from [`worker_loop`] per ADR-052 Gap 1 (impl spec §3
+/// Phase 2).  Phase 3 wires the actual callsites; `sink` is accepted here so the
+/// signature is stable before Phase 3 lands.
+///
 /// Returns `Some(DeferredRequest)` when Phase 2 should be enqueued, or `None`
 /// on error (error already forwarded to `error_tx`).
 pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
@@ -42,7 +47,11 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
     req: IngestRequest,
     error_tx: &SyncSender<IngestError>,
     deferred_enabled: bool,
+    sink: Option<&dyn EnrichmentEventSink>,
 ) -> Option<DeferredRequest> {
+    // Phase 3 wires sink callsites (on_stage_change(Pending), on_ingestion_error).
+    // Parameter accepted here for API stability — not yet called. ADR-052 Gap 1.
+    let _ = sink;
     let start = std::time::Instant::now();
 
     // ADR-051 §Phase 3: call ingest_phase1_ner() (fast: episode INSERT + NER
@@ -119,13 +128,23 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
 /// fact extraction step, emitting
 /// `kremory.ingest.llm_rate_limit_deferred_total{namespace}` per throttle.
 ///
+/// `sink` is propagated from [`worker_loop`] per ADR-052 Gap 1 (impl spec §3
+/// Phase 2).  Phase 3 wires the actual callsites inside this function and in
+/// `run_verify_stage` / `ingest_deferred`; `sink` is accepted here so the
+/// signature is stable before Phase 3 lands.
+///
 /// Errors are logged via metrics and the error channel but do NOT crash the worker.
 pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
     req: DeferredRequest,
     error_tx: &SyncSender<IngestError>,
     bucket: &mut Option<TokenBucketState>,
+    sink: Option<&dyn EnrichmentEventSink>,
 ) {
+    // Phase 3 wires sink callsites (on_stage_change, on_entity_extracted,
+    // on_edge_added, on_ingestion_error, on_stage_change(Complete/Failed)).
+    // Parameter accepted here for API stability — not yet called. ADR-052 Gap 1.
+    let _ = sink;
     let episode_id = req.episode_id;
     let ns = req.group_id.as_deref().unwrap_or("default");
 
@@ -308,6 +327,9 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
 // ---------------------------------------------------------------------------
 
 // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+//
+// `sink`: Arc owned here; each call to `process_item` / `process_deferred` borrows
+// `sink.as_deref()`.  Per ADR-052 Gap 1; impl spec §3 Phase 2.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: Engine<L, Emb>,
@@ -317,6 +339,7 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     stop: Arc<AtomicBool>,
     deferred_enabled: bool,
     llm_rate_limit: Option<RateLimit>,
+    sink: Option<Arc<dyn EnrichmentEventSink>>,
 ) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -338,7 +361,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                 while let Ok(req) = work_rx.try_recv() {
                     queued.fetch_sub(1, Ordering::Relaxed);
                     if let Some(deferred) =
-                        process_item(&graph, req, &error_tx, deferred_enabled).await
+                        process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                            .await
                     {
                         deferred_queue.push_back(deferred);
                     }
@@ -351,7 +375,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                     let ner_depth = queued.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
                     metrics::gauge!("rql.background.queue_depth").set(ner_depth as f64);
                     if let Some(deferred) =
-                        process_item(&graph, req, &error_tx, deferred_enabled).await
+                        process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                            .await
                     {
                         deferred_queue.push_back(deferred);
                     }
@@ -366,7 +391,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         let depth = deferred_queue.len();
                         metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
                         tracing::info!(depth, "kremory.background.deferred_queue draining");
-                        process_deferred(&graph, deferred, &error_tx, &mut bucket).await;
+                        process_deferred(&graph, deferred, &error_tx, &mut bucket, sink.as_deref())
+                            .await;
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
@@ -375,7 +401,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                     while let Ok(req) = work_rx.try_recv() {
                         queued.fetch_sub(1, Ordering::Relaxed);
                         if let Some(deferred) =
-                            process_item(&graph, req, &error_tx, deferred_enabled).await
+                            process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                                .await
                         {
                             deferred_queue.push_back(deferred);
                         }
@@ -397,7 +424,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                             depth,
                             "kremory.background.deferred_queue drain-on-disconnect"
                         );
-                        process_deferred(&graph, deferred, &error_tx, &mut bucket).await;
+                        process_deferred(&graph, deferred, &error_tx, &mut bucket, sink.as_deref())
+                            .await;
                     }
                     break;
                 }

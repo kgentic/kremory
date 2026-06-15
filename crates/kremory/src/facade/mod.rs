@@ -1137,6 +1137,24 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Ergonomic alias for [`with_event_sink`](Self::with_event_sink) that
+    /// accepts any concrete type implementing [`EnrichmentEventSink`] and wraps
+    /// it in `Arc` internally.
+    ///
+    /// Equivalent to `.with_event_sink(Arc::new(sink))`.  Prefer this form when
+    /// the caller does not need to share the `Arc` with other owners.
+    ///
+    /// # Sink callback contract (ADR-052 D4)
+    ///
+    /// All callbacks fire **sync-inline** on the background worker OS thread.
+    /// Keep callbacks fast (sub-millisecond ideal, sub-100 ms absolute ceiling).
+    ///
+    /// Refs: ADR-052 Gap 1; impl spec §3 Phase 2 `Memory::with_sink` DoD item.
+    pub fn with_sink(mut self, sink: impl EnrichmentEventSink + Send + Sync + 'static) -> Self {
+        self.default_sink = Some(Arc::new(sink));
+        self
+    }
+
     /// Set the default namespace used by operations that don't specify `.in_namespace()`.
     pub fn default_namespace(mut self, ns: Namespace) -> Self {
         self.default_namespace = Some(ns);
