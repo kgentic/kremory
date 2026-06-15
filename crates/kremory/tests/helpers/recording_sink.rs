@@ -114,6 +114,13 @@ impl RecordingSink {
     }
 
     /// Return only the `StageChange` events, in order.
+    ///
+    /// `#[allow(dead_code)]` is intentional: this helper is used by
+    /// `sink_wiring_integration.rs` stage-order tests but not by
+    /// `background_ingestor_handle_routing.rs`.  Cross-binary asymmetry
+    /// requires `#[allow]` — same rationale as `entity_events` below.
+    /// Quinn Phase 6 review MED Rule-8.
+    #[allow(dead_code)]
     pub fn stage_events(&self) -> Vec<IngestStatus> {
         self.snapshot()
             .into_iter()

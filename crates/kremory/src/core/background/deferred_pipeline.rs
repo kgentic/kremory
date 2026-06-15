@@ -637,6 +637,12 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         deferred_queue.push_back(deferred);
                     }
                 }
+                // ── Stop-flag drain: fire on_batch_phase2_complete(interrupted) ──────
+                // ADR-052 Phase 7 — close the silent-hang foot-gun: any batch with
+                // outstanding items at stop-flag drain time receives an "interrupted"
+                // terminal event so consumers don't wait indefinitely.
+                // D7: batch_id in tracing field only; "interrupted" is a bounded label.
+                fire_interrupted_batches(&batch_tracker, sink.as_deref());
                 break;
             }
 
@@ -699,6 +705,17 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                                 abandoned,
                                 "kremory.background.deferred_queue abandoned (stop signal)"
                             );
+                            // Quinn LOW-P7-02: fire interrupted events for batches
+                            // with outstanding items before breaking (stop fires
+                            // mid-Disconnected-drain path).
+                            // ADR-052 §3.4 stop-flag drain policy — closes the
+                            // narrow race where stop fires after Disconnected arm
+                            // begins draining. The top-of-loop check at entry (line ~628)
+                            // only covers the steady-state case; this covers the
+                            // mid-drain case. Idempotent: fire_interrupted_batches
+                            // uses tracker.retain and double-fire is safe (entry
+                            // already removed after fire).
+                            fire_interrupted_batches(&batch_tracker, sink.as_deref());
                             break;
                         }
                         let depth = deferred_queue.len();
@@ -832,6 +849,83 @@ fn fire_batch_complete_if_terminal(
         duration_ms = terminal_payload.duration_ms,
         "kremory.background.batch_phase2_complete"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Stop-flag interrupted batch helper
+// ---------------------------------------------------------------------------
+
+/// Fire `on_batch_phase2_complete(outcome="interrupted")` for every batch
+/// in `batch_tracker` that still has outstanding items (i.e. episodes that
+/// never reached Phase 2 terminal state because the stop flag fired first).
+///
+/// Called from `worker_loop` immediately before `break` in the stop-flag
+/// drain path.  Closes the silent-hang foot-gun: consumers blocking on
+/// `on_batch_phase2_complete` receive an `"interrupted"` event rather than
+/// waiting indefinitely.
+///
+/// ## Triple-emit (ADR-2026-05-20 D1 / Phase 7 §E)
+///
+/// 1. `sink.on_batch_phase2_complete(BatchPhase2Complete { … })`
+/// 2. `metrics::counter!("kremory.sink.batch_complete_total", "outcome" => "interrupted")`
+/// 3. `tracing::warn!(batch_id = …, …, "kremory.background.batch_phase2_interrupted")`
+///
+/// ## D7 cardinality discipline
+///
+/// `batch_id` appears as a **tracing field** only — NEVER as a metric label.
+/// `outcome = "interrupted"` is a bounded string and IS allowed as a metric label.
+fn fire_interrupted_batches(batch_tracker: &BatchTracker, sink: Option<&dyn EnrichmentEventSink>) {
+    // Short critical section: drain all entries with outstanding items.
+    let interrupted: Vec<BatchPhase2Complete> = {
+        let mut tracker = batch_tracker.lock().unwrap_or_else(|p| p.into_inner());
+        let mut payloads = Vec::new();
+        tracker.retain(|bid, progress| {
+            if !progress.is_terminal() {
+                // Outstanding items — emit interrupted event.
+                payloads.push(BatchPhase2Complete {
+                    batch_id: bid.clone(),
+                    succeeded: progress.succeeded,
+                    skipped: progress.skipped,
+                    failed: progress.failed,
+                    duration_ms: progress.started_at.elapsed().as_millis() as u64,
+                });
+                false // remove from tracker
+            } else {
+                true // already terminal (race: completed just before stop flag) — leave for normal path
+            }
+        });
+        payloads
+        // Lock released here.
+    };
+
+    for payload in interrupted {
+        // ── Fire-site: on_batch_phase2_complete(interrupted) — triple-emit ────
+        // ADR-052 Phase 7 §E + arch spec §3.4 stop-flag drain policy.
+        // D7: batch_id in tracing field only; "interrupted" is bounded label.
+        let cb_start = std::time::Instant::now();
+        if let Some(s) = sink {
+            s.on_batch_phase2_complete(payload.clone());
+        }
+        metrics::counter!(
+            "kremory.sink.batch_complete_total",
+            "outcome" => "interrupted"
+        )
+        .increment(1);
+        metrics::histogram!(
+            "kremory.sink.callback_duration_ms",
+            "callback" => "on_batch_phase2_complete",
+            "stage" => "interrupted"
+        )
+        .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+        tracing::warn!(
+            batch_id = %payload.batch_id,
+            succeeded = payload.succeeded,
+            skipped = payload.skipped,
+            failed = payload.failed,
+            duration_ms = payload.duration_ms,
+            "kremory.background.batch_phase2_interrupted"
+        );
+    }
 }
 
 // Tests for deferred pipeline behaviour live in ingestor.rs (co-located with

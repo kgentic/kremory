@@ -211,15 +211,16 @@ impl BackgroundIngestor {
     /// BEFORE** `work_tx.try_send` fires.  This prevents a fast Phase 2
     /// completion from triggering premature terminal detection.
     ///
-    /// ## Drop-before-complete contract (Phase 7 follow-up)
+    /// ## Drop-before-complete contract (shipped in v0.2.3 Phase 7)
     ///
-    /// If the [`BackgroundIngestor`] / [`IngestGuard`] is dropped while items
-    /// in this batch are still queued or in Phase 2, the
-    /// `on_batch_phase2_complete` callback **may not fire**.  v0.2.4+ Phase 7
-    /// will either emit an `outcome="interrupted"` terminal event or formalise
-    /// this as a normative contract on [`EnrichmentEventSink`].  Consumers
-    /// awaiting the callback across process-shutdown should treat absence as
-    /// "abandoned" rather than "still processing".
+    /// When [`IngestGuard`] is dropped (stop flag set), the worker fires
+    /// `on_batch_phase2_complete` with `outcome="interrupted"` for every batch
+    /// that still has outstanding items at stop-flag drain time.  This guarantees
+    /// no silent hang — the terminal event always fires.
+    ///
+    /// Consumers MUST treat `outcome="interrupted"` as terminal.  The
+    /// `BatchPhase2Complete` payload reflects only the episodes that completed
+    /// before the stop flag fired; `succeeded + failed + skipped ≤ total`.
     ///
     /// Per impl spec §6 Phase 4 DoD item 4 (Quinn MED-1/2/3 folded as
     /// doc-comment per `feedback_boy_scout_includes_quinn_low_findings`).

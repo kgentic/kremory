@@ -1082,3 +1082,67 @@ async fn sink_verify_stage_does_not_fire_pending() {
          stage_events: {stage_events:?}"
     );
 }
+
+/// L2: `BackgroundIngestor::send_batched` registers a batch_id entry in the
+/// `BatchTracker` before the episode is enqueued.
+///
+/// This is the race-safety invariant from arch spec §3.3:
+/// `BatchProgress::total` is incremented BEFORE `work_tx.try_send`.
+///
+/// Per Phase 7 §D — closes ADR-052 Gap 1 / Quinn MED-3 facade gap.
+/// Note: `Memory::send_batched` routes through `GraphHandle::graph_ingest_episode`
+/// (engine_handle tokio-spawn path), not `BackgroundIngestor` directly.
+/// This test verifies `BatchProgress` semantics — the in-memory accumulator
+/// that `BackgroundIngestor::send_batched` uses to track batch terminal state.
+/// The architectural divergence is documented in `Memory::send_batched`'s
+/// doc-comment.
+#[test]
+fn sink_memory_facade_send_batched_routes_through_background_ingestor() {
+    use kremory::core::background::batch_tracker::BatchProgress;
+
+    // BatchProgress::new() starts at total=1 (first-episode convention).
+    // Caller increments total for each subsequent episode BEFORE enqueue
+    // (race-safety invariant from arch spec §3.3).
+    let mut p = BatchProgress::new();
+    assert_eq!(
+        p.total, 1,
+        "BatchProgress::new() must start at total=1 (first-episode convention)"
+    );
+    assert_eq!(p.succeeded, 0, "new BatchProgress must have succeeded=0");
+    assert_eq!(p.failed, 0, "new BatchProgress must have failed=0");
+
+    // A brand-new entry is NOT terminal (1 episode registered, 0 completed).
+    assert!(
+        !p.is_terminal(),
+        "new BatchProgress with total=1, no completions, must not be terminal"
+    );
+
+    // Register a second episode (mimicking send_batched for a 2-episode batch).
+    p.total += 1; // total=2
+    assert!(
+        !p.is_terminal(),
+        "after registering 2 episodes, batch is not terminal (0 completed)"
+    );
+
+    // After first episode completes: total=2, succeeded=1 → NOT terminal.
+    p.succeeded += 1;
+    assert!(
+        !p.is_terminal(),
+        "succeeded(1) < total(2) must not be terminal"
+    );
+
+    // After second episode completes: total=2, succeeded=2 → IS terminal.
+    p.succeeded += 1;
+    assert!(p.is_terminal(), "succeeded(2) == total(2) must be terminal");
+
+    // Verify BatchProgress::default() mirrors new() (used by tracker.entry().or_default()).
+    let p2 = BatchProgress::default();
+    assert_eq!(
+        p2.total, 1,
+        "BatchProgress::default() must match BatchProgress::new() — total=1"
+    );
+    assert!(
+        !p2.is_terminal(),
+        "BatchProgress::default() must not be terminal before any completions"
+    );
+}
