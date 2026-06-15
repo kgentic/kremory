@@ -10,6 +10,7 @@
 //! The worker thread is spawned in [`BackgroundIngestor::new`] and delegates
 //! to [`crate::core::background::deferred_pipeline::worker_loop`].
 
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, TrySendError};
@@ -24,7 +25,8 @@ use crate::core::provider::{ChatProvider, EmbeddingProvider};
 use crate::memory::events::EnrichmentEventSink;
 
 use super::{
-    deferred_pipeline::worker_loop, IngestError, IngestRequest, IngestSendError, IngestorConfig,
+    batch_tracker::BatchTracker, deferred_pipeline::worker_loop, IngestError, IngestRequest,
+    IngestSendError, IngestorConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,20 @@ pub struct BackgroundIngestor {
     ///
     /// Per ADR-052 Gap 1; impl spec §3 Phase 2.
     pub(crate) sink: Option<Arc<dyn EnrichmentEventSink>>,
+    /// Per-batch terminal-detection tracker.
+    ///
+    /// Maps `batch_id → BatchProgress`.  `Arc` so `BackgroundIngestor` stays
+    /// `Clone`; `std::sync::Mutex` (not async) because critical sections are
+    /// O(1) insert/increment — no `.await` is ever held across the lock.
+    ///
+    /// `total` is incremented under this mutex BEFORE `work_tx.try_send` so the
+    /// race-safety invariant (arch spec §3.3) is maintained.
+    ///
+    /// The same `Arc` is cloned into `worker_loop` so both the caller side and
+    /// the worker side share the same map.
+    ///
+    /// Per impl spec §6 Phase 4 DoD item 3.
+    pub(crate) batch_tracker: BatchTracker,
 }
 
 impl BackgroundIngestor {
@@ -114,6 +130,11 @@ impl BackgroundIngestor {
         let sink = config.sink.clone();
         let sink_for_worker = config.sink.clone();
 
+        // Shared batch-terminal tracker (impl spec §6 Phase 4 DoD item 3).
+        // Arc cloned into the worker so both handle and worker share the map.
+        let batch_tracker: BatchTracker = Arc::new(Mutex::new(HashMap::new()));
+        let batch_tracker_for_worker = Arc::clone(&batch_tracker);
+
         let parent_span = tracing::Span::current();
         let handle = thread::Builder::new()
             .name(config.thread_name.clone())
@@ -128,6 +149,7 @@ impl BackgroundIngestor {
                     deferred_enabled,
                     llm_rate_limit,
                     sink_for_worker,
+                    batch_tracker_for_worker,
                 );
             })
             .unwrap_or_else(|e| panic!("invariant: OS rejected rql-ingestor thread spawn: {e}"));
@@ -140,6 +162,7 @@ impl BackgroundIngestor {
                 channel_capacity: config.channel_capacity,
             }),
             sink,
+            batch_tracker,
         };
 
         let guard = IngestGuard {
@@ -161,12 +184,74 @@ impl BackgroundIngestor {
         group_id: Option<String>,
         content_type: Option<ContentType>,
     ) -> Result<(), IngestSendError> {
-        let req = IngestRequest {
+        self.enqueue_req(IngestRequest {
             text: text.into(),
             reference_time,
             group_id,
             content_type,
-        };
+            batch_id: None,
+        })
+    }
+
+    /// Enqueue text for background ingestion as part of a named batch.
+    ///
+    /// Like [`send`](Self::send) but associates the episode with `batch_id`.
+    /// When all episodes in the batch reach Phase 2 terminal state,
+    /// `on_batch_phase2_complete` fires on the configured sink.
+    ///
+    /// `reference_time`, `group_id`, and `content_type` default to `None`.
+    /// Full-control batched enqueue is `pub(crate)`-internal; consumers needing
+    /// non-default fields on a batched send should use [`Memory`](crate::Memory)
+    /// once the facade-level batched method lands (Phase 7 follow-up — Quinn
+    /// MED-3 / facade-gap; ADR-052 Gap 1 unresolved at v0.2.3).
+    ///
+    /// ## Race-safety invariant (arch spec §3.3)
+    ///
+    /// The `BatchProgress::total` counter is incremented **under the mutex
+    /// BEFORE** `work_tx.try_send` fires.  This prevents a fast Phase 2
+    /// completion from triggering premature terminal detection.
+    ///
+    /// ## Drop-before-complete contract (Phase 7 follow-up)
+    ///
+    /// If the [`BackgroundIngestor`] / [`IngestGuard`] is dropped while items
+    /// in this batch are still queued or in Phase 2, the
+    /// `on_batch_phase2_complete` callback **may not fire**.  v0.2.4+ Phase 7
+    /// will either emit an `outcome="interrupted"` terminal event or formalise
+    /// this as a normative contract on [`EnrichmentEventSink`].  Consumers
+    /// awaiting the callback across process-shutdown should treat absence as
+    /// "abandoned" rather than "still processing".
+    ///
+    /// Per impl spec §6 Phase 4 DoD item 4 (Quinn MED-1/2/3 folded as
+    /// doc-comment per `feedback_boy_scout_includes_quinn_low_findings`).
+    pub fn send_batched(
+        &self,
+        text: impl Into<String>,
+        batch_id: String,
+    ) -> Result<(), IngestSendError> {
+        self.enqueue_req(IngestRequest {
+            text: text.into(),
+            reference_time: None,
+            group_id: None,
+            content_type: None,
+            batch_id: Some(batch_id),
+        })
+    }
+
+    /// Low-level enqueue accepting a fully-constructed [`IngestRequest`].
+    ///
+    /// Use when you need `reference_time`, `group_id`, or `content_type` on a
+    /// batched send.  The race-safety invariant (arch spec §3.3) is enforced
+    /// here: `BatchProgress::total` is incremented BEFORE `try_send`.
+    pub(crate) fn enqueue_req(&self, req: IngestRequest) -> Result<(), IngestSendError> {
+        // Race-safety invariant: increment total BEFORE enqueue (arch spec §3.3).
+        if let Some(ref bid) = req.batch_id {
+            let mut tracker = self.batch_tracker.lock().unwrap_or_else(|p| p.into_inner());
+            tracker
+                .entry(bid.clone())
+                .and_modify(|p| p.total += 1)
+                .or_default();
+        }
+
         match self.inner.work_tx.try_send(req) {
             Ok(()) => {
                 let depth = self.inner.queued.fetch_add(1, Ordering::Relaxed) + 1;

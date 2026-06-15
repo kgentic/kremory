@@ -251,6 +251,7 @@ async fn run_verify_stage_path_alpha_writes_entities_and_transitions_status_to_v
         content_type: None,
         episode_id,
         ner_entity_names: vec!["Alice".to_string(), "Bob".to_string()],
+        batch_id: None,
     };
 
     let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
@@ -320,6 +321,7 @@ async fn run_verify_stage_path_beta_writes_entities_and_transitions_status_to_ve
         content_type: None,
         episode_id,
         ner_entity_names: vec!["Carol".to_string(), "Globex".to_string()],
+        batch_id: None,
     };
 
     // Path β: verify_llm = None.
@@ -380,6 +382,7 @@ async fn run_verify_stage_failure_transitions_status_to_failed() {
         content_type: None,
         episode_id,
         ner_entity_names: Vec::new(),
+        batch_id: None,
     };
 
     // Path α with a failing extractor.

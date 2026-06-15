@@ -24,10 +24,12 @@ use crate::core::config::ContentType;
 use crate::core::error::Error;
 use crate::memory::events::EnrichmentEventSink;
 
+pub mod batch_tracker;
 pub mod deferred_pipeline;
 pub mod ingestor;
 pub mod verify_stage;
 
+pub use batch_tracker::BatchTracker;
 pub use ingestor::{BackgroundIngestor, IngestGuard};
 // Quinn MED-02 fix: no re-export of run_verify_stage. The stub is Phase B
 // internal scaffolding (ADR-049 §Decision 6 mandate); Phase B will call it via
@@ -44,6 +46,13 @@ pub(crate) struct IngestRequest {
     pub reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
     pub content_type: Option<ContentType>,
+    /// Caller-set batch identifier.  `None` when the caller is not tracking a
+    /// batch.  When `Some`, the `batch_tracker` entry is updated and
+    /// `on_batch_phase2_complete` fires when the batch reaches terminal state.
+    ///
+    /// Per impl spec §6 Phase 4 + arch spec §3.3 race-safety invariant:
+    /// `BatchProgress::total` is incremented BEFORE this item is enqueued.
+    pub batch_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +77,11 @@ pub struct DeferredRequest {
     pub episode_id: i64,
     /// Entity names already inserted by Phase 1, passed as hints to the LLM extractor.
     pub ner_entity_names: Vec<String>,
+    /// Propagated from [`IngestRequest::batch_id`] so the worker loop can
+    /// increment the terminal counter and fire `on_batch_phase2_complete`.
+    ///
+    /// Per impl spec §6 Phase 4 + arch spec §3.3.
+    pub batch_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
