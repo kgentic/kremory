@@ -16,8 +16,10 @@ use std::time::Duration;
 
 use chrono::Utc;
 
+use crate::core::error::{IngestStatus, IngestionErrorKind};
 use crate::core::ingest::{Engine, SourceParams};
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
+use crate::core::sink::{IngestEventSink, IngestionError};
 use crate::memory::events::EnrichmentEventSink;
 
 use super::{
@@ -49,9 +51,22 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
     deferred_enabled: bool,
     sink: Option<&dyn EnrichmentEventSink>,
 ) -> Option<DeferredRequest> {
-    // Phase 3 wires sink callsites (on_stage_change(Pending), on_ingestion_error).
-    // Parameter accepted here for API stability — not yet called. ADR-052 Gap 1.
-    let _ = sink;
+    // ── Fire-site 1: on_stage_change(Pending) — entry, before NER call ──────────
+    // ADR-052 Gap 1 §3.1 row 1 — triple-emit (ADR-2026-05-20 D1).
+    if let Some(s) = sink {
+        s.on_stage_change(IngestStatus::Pending);
+    }
+    metrics::counter!(
+        "kremory.sink.stage_transition_total",
+        "from" => "queued",
+        "to" => "Pending"
+    )
+    .increment(1);
+    tracing::info!(
+        text_len = req.text.len(),
+        "kremory.background.stage_change.pending"
+    );
+
     let start = std::time::Instant::now();
 
     // ADR-051 §Phase 3: call ingest_phase1_ner() (fast: episode INSERT + NER
@@ -98,6 +113,60 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
             metrics::histogram!("rql.background.ingest_duration_ms").record(elapsed_ms);
             metrics::counter!("rql.background.errors_total").increment(1);
             tracing::error!(elapsed_ms, error = %e, "kremory.background.phase1_failed");
+
+            // ── Fire-site 2: on_ingestion_error — Phase 1 NER failure ────────────
+            // ADR-052 Gap 1 §3.1 row 2 — triple-emit (ADR-2026-05-20 D1).
+            // IngestErrorKind mapping: Llm/Extraction/Resolution/Database/Embedding/Other
+            // → IngestionErrorKind::ProviderError (all Phase 1 failures are provider-level;
+            // episode_id unknown so entity_or_edge_ref = None).
+            let error_detail = e.to_string();
+            let ingestion_error_kind = match IngestErrorKind::from(&e) {
+                IngestErrorKind::Llm => IngestionErrorKind::ProviderError {
+                    provider_name: "llm".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Embedding => IngestionErrorKind::ProviderError {
+                    provider_name: "embedding".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Database => IngestionErrorKind::ProviderError {
+                    provider_name: "database".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Extraction => IngestionErrorKind::ParseFailure {
+                    stage: "phase1_extraction".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Resolution => IngestionErrorKind::ParseFailure {
+                    stage: "phase1_resolution".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Other => IngestionErrorKind::ProviderError {
+                    provider_name: "unknown".to_string(),
+                    detail: error_detail.clone(),
+                },
+            };
+            // HIGH-02 fix: derive error_kind_str from the actual variant so the metric
+            // label does not lie when Extraction/Resolution map to ParseFailure.
+            let error_kind_str = match &ingestion_error_kind {
+                IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
+                _ => "ProviderError",
+            };
+            if let Some(s) = sink {
+                s.on_ingestion_error(IngestionError {
+                    entity_or_edge_ref: None,
+                    error_kind: ingestion_error_kind,
+                    is_retryable: true,
+                });
+            }
+            metrics::counter!(
+                "kremory.sink.ingestion_error_total",
+                "error_kind" => error_kind_str,
+                "phase" => "phase1"
+            )
+            .increment(1);
+            tracing::error!(error = %e, "kremory.background.ingestion_error.phase1");
+
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),
@@ -141,10 +210,6 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
     bucket: &mut Option<TokenBucketState>,
     sink: Option<&dyn EnrichmentEventSink>,
 ) {
-    // Phase 3 wires sink callsites (on_stage_change, on_entity_extracted,
-    // on_edge_added, on_ingestion_error, on_stage_change(Complete/Failed)).
-    // Parameter accepted here for API stability — not yet called. ADR-052 Gap 1.
-    let _ = sink;
     let episode_id = req.episode_id;
     let ns = req.group_id.as_deref().unwrap_or("default");
 
@@ -169,7 +234,8 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                     .llm
                     .as_ref()
                     .map(|l| l.as_ref() as &dyn crate::core::provider::ChatProvider);
-                super::verify_stage::run_verify_stage(&req, gliner, verify_llm, &graph.graph).await
+                super::verify_stage::run_verify_stage(&req, gliner, verify_llm, &graph.graph, sink)
+                    .await
             }
             Err(e) => {
                 metrics::counter!(
@@ -192,7 +258,7 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
         // Path β: engine.extractor is an LLM extractor; no separate verify LLM needed.
         let extractor_ref: &dyn crate::core::intelligence::EntityExtractorDyn =
             graph.extractor.as_ref();
-        super::verify_stage::run_verify_stage(&req, extractor_ref, None, &graph.graph).await
+        super::verify_stage::run_verify_stage(&req, extractor_ref, None, &graph.graph, sink).await
     };
 
     let verify_elapsed_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
@@ -238,6 +304,56 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 episode_id,
             };
             try_send_error(error_tx, err);
+            // ── HIGH-03 fix: on_ingestion_error triple-emit for verify_stage Err ─────
+            // ADR-052 §3.1 row 15: on_ingestion_error MUST fire on Err from run_verify_stage.
+            // verify_stage already fires on_stage_change(Failed) internally — do NOT
+            // duplicate that here. Only on_ingestion_error is missing at this callsite.
+            // is_retryable=false: ghost-episode path continues, no retry mechanism.
+            let error_detail = e.to_string();
+            let ingestion_error_kind = match IngestErrorKind::from(&e) {
+                IngestErrorKind::Llm => IngestionErrorKind::ProviderError {
+                    provider_name: "llm".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Embedding => IngestionErrorKind::ProviderError {
+                    provider_name: "embedding".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Database => IngestionErrorKind::ProviderError {
+                    provider_name: "database".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Extraction => IngestionErrorKind::ParseFailure {
+                    stage: "verify_stage_extraction".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Resolution => IngestionErrorKind::ParseFailure {
+                    stage: "verify_stage_resolution".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Other => IngestionErrorKind::ProviderError {
+                    provider_name: "unknown".to_string(),
+                    detail: error_detail.clone(),
+                },
+            };
+            let error_kind_str = match &ingestion_error_kind {
+                IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
+                _ => "ProviderError",
+            };
+            if let Some(s) = sink {
+                s.on_ingestion_error(IngestionError {
+                    entity_or_edge_ref: None,
+                    error_kind: ingestion_error_kind,
+                    is_retryable: false,
+                });
+            }
+            metrics::counter!(
+                "kremory.sink.ingestion_error_total",
+                "error_kind" => error_kind_str,
+                "phase" => "phase1_verify_fail"
+            )
+            .increment(1);
+            tracing::error!(episode_id, error = %e, "kremory.background.ingestion_error.verify_fail");
             // Fall through to fact extraction — entity write failing does not
             // block fact rows from being committed.
         }
@@ -276,6 +392,10 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             req.content_type,
             req.episode_id,
             &req.ner_entity_names,
+            // Coerce EnrichmentEventSink (supertrait) → &dyn IngestEventSink for
+            // ingest_deferred's inner callbacks (Phase 3c fire-sites).
+            // ADR-052 Gap 1 — sink propagation through the deferred pipeline.
+            sink.map(|s| s as &dyn IngestEventSink),
         )
         .await
     {
@@ -290,6 +410,20 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 facts_extracted,
                 "kremory.background.deferred_extraction completed"
             );
+
+            // ── Fire-site 3: on_stage_change(Complete) — ingest_deferred Ok ──────
+            // ADR-052 Gap 1 §3.1 row 3 — triple-emit (ADR-2026-05-20 D1).
+            // MED-02 fix: "from" must be a bounded stable label, not the function name.
+            if let Some(s) = sink {
+                s.on_stage_change(IngestStatus::Complete);
+            }
+            metrics::counter!(
+                "kremory.sink.stage_transition_total",
+                "from" => "phase2",
+                "to" => "Complete"
+            )
+            .increment(1);
+            tracing::info!(episode_id, "kremory.background.stage_change.complete");
         }
         Err(e) => {
             let elapsed_ms = fact_start.elapsed().as_secs_f64() * 1000.0;
@@ -308,6 +442,69 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 error = %e,
                 "kremory.background.deferred_extraction failed — ghost episode"
             );
+
+            // ── Fire-site 4: on_stage_change(Failed) — ingest_deferred Err ───────
+            // ── Fire-site 5: on_ingestion_error — ingest_deferred Err ─────────────
+            // ADR-052 Gap 1 §3.1 rows 4+5 — triple-emit (ADR-2026-05-20 D1).
+            // IngestErrorKind mapping → IngestionErrorKind (D7: no episode_id label).
+            let error_detail = e.to_string();
+            let ingestion_error_kind = match IngestErrorKind::from(&e) {
+                IngestErrorKind::Llm => IngestionErrorKind::ProviderError {
+                    provider_name: "llm".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Embedding => IngestionErrorKind::ProviderError {
+                    provider_name: "embedding".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Database => IngestionErrorKind::ProviderError {
+                    provider_name: "database".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Extraction => IngestionErrorKind::ParseFailure {
+                    stage: "deferred_extraction".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Resolution => IngestionErrorKind::ParseFailure {
+                    stage: "deferred_resolution".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Other => IngestionErrorKind::ProviderError {
+                    provider_name: "unknown".to_string(),
+                    detail: error_detail.clone(),
+                },
+            };
+            // HIGH-02 fix: derive error_kind_str from the actual variant so the metric
+            // label does not lie when Extraction/Resolution map to ParseFailure.
+            let error_kind_str = match &ingestion_error_kind {
+                IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
+                _ => "ProviderError",
+            };
+            // MED-02 fix: "from" label must be a bounded state name, not a function name.
+            // "phase2" is stable and non-state; normative from/to spec is Phase 7 follow-up.
+            if let Some(s) = sink {
+                s.on_stage_change(IngestStatus::Failed(error_detail.clone()));
+                s.on_ingestion_error(IngestionError {
+                    entity_or_edge_ref: None,
+                    error_kind: ingestion_error_kind,
+                    is_retryable: false,
+                });
+            }
+            metrics::counter!(
+                "kremory.sink.stage_transition_total",
+                "from" => "phase2",
+                "to" => "Failed"
+            )
+            .increment(1);
+            metrics::counter!(
+                "kremory.sink.ingestion_error_total",
+                "error_kind" => error_kind_str,
+                "phase" => "phase2"
+            )
+            .increment(1);
+            tracing::error!(episode_id, error = %e, "kremory.background.stage_change.failed");
+            tracing::error!(episode_id, error = %e, "kremory.background.ingestion_error.phase2");
+
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),

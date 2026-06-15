@@ -12,6 +12,7 @@ use metrics::histogram;
 use crate::core::config::ContentType;
 use crate::core::contradiction::TwoPoolDetector;
 use crate::core::entity_types::EntityTypeRegistry;
+use crate::core::error::{ContradictionResolution, IngestStatus};
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::intelligence::{
@@ -21,6 +22,7 @@ use crate::core::intelligence::{
 use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
 use crate::core::resolver::{normalize_name, CascadeResolver, UnionFind};
 use crate::core::search::SearchFilters;
+use crate::core::sink::{ContradictionDetected, EntityId, IngestEventSink, SinkFact};
 
 use super::helpers::extract_context_snippet;
 use super::{Engine, IngestionResult, SourceParams};
@@ -1461,6 +1463,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ///
     /// Entity insertion is skipped — Phase 1 (NER) already owns that path.
     /// Only facts (relationship triplets) are added in this phase.
+    ///
+    /// `sink` receives per-event callbacks during deferred fact extraction.
+    /// Fires: `on_stage_change(Deduplicating)` once on entry (when ≥1 fact
+    /// extracted), `on_stage_change(Invalidating)` once on first Superseded
+    /// contradiction, `on_contradiction` per resolved contradiction,
+    /// `on_edge_added` after each episodic edge insert (subject + object sites).
+    /// Per ADR-052 §3.1 rows 90–94 (Phase 3c fire-site catalogue).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
     #[allow(clippy::too_many_arguments)]
     pub async fn ingest_deferred(
@@ -1471,6 +1480,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         content_type: Option<ContentType>,
         episode_id: i64,
         ner_entity_names: &[String],
+        sink: Option<&dyn IngestEventSink>,
     ) -> crate::core::error::Result<usize> {
         // TD-019 Gap 2: phase2_ms — deferred relationship extraction latency,
         // distinct from phase1_ms (user-facing sync work).
@@ -1573,6 +1583,26 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let detector = TwoPoolDetector::new(Arc::clone(llm_for_batch_detector));
         let mut inserted_count: usize = 0;
 
+        // MED-01 fire-once flags (ADR-052 §3.1 normative):
+        //   fired_deduplicating — on_stage_change(Deduplicating) fires ONCE per call,
+        //     on entry to the contradiction-detection loop (when ≥1 fact extracted).
+        //   fired_invalidating  — on_stage_change(Invalidating) fires ONCE per call,
+        //     on the FIRST Superseded contradiction resolution.
+        // D7: entity_id / episode_id / fact_id NEVER used as metric labels.
+        let mut fired_deduplicating = false;
+        let mut fired_invalidating = false;
+
+        // Inline helper: bounded ContradictionResolution discriminant string.
+        // DO NOT use format!("{:?}", r) — would expose struct interior + bust cardinality.
+        // Within-crate matching is exhaustive for #[non_exhaustive] enums; no wildcard needed.
+        let resolution_as_str = |r: &ContradictionResolution| -> &'static str {
+            match r {
+                ContradictionResolution::Superseded => "Superseded",
+                ContradictionResolution::Retained => "Retained",
+                ContradictionResolution::Merged => "Merged",
+            }
+        };
+
         for fact in &all_facts {
             let subject_id = name_to_id
                 .get(&normalize_name(&fact.subject))
@@ -1608,12 +1638,104 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             let pool_b: Vec<crate::core::schema::Fact> =
                 pool_b_hits.into_iter().map(|h| h.item).collect();
 
+            // ── Fire-site 1: on_stage_change(Deduplicating) ──────────────────────
+            // MED-01 normative: fires ONCE per ingest_deferred call, on entry to the
+            // contradiction-detection loop when ≥1 fact is extracted. Fires regardless
+            // of whether contradictions are actually found. (arch spec §3.1 row 90)
+            if !fired_deduplicating {
+                if let Some(s) = sink {
+                    s.on_stage_change(IngestStatus::Deduplicating);
+                }
+                metrics::counter!(
+                    "kremory.sink.stage_transition_total",
+                    "from" => "EntitiesReady",
+                    "to" => "Deduplicating"
+                )
+                .increment(1);
+                tracing::info!(episode_id, "kremory.background.stage_change.deduplicating");
+                fired_deduplicating = true;
+            }
+
             let contradiction_result = detector.detect(fact, &pool_a, &pool_b, &ref_time).await?;
 
+            // Build combined pool for prior-fact lookup (used by on_contradiction below).
+            let all_pool: Vec<&crate::core::schema::Fact> =
+                pool_a.iter().chain(pool_b.iter()).collect();
+
             for fact_id in &contradiction_result.contradictions {
+                // ── Fire-site 3: on_stage_change(Invalidating) ───────────────────
+                // MED-01: fires ONCE per call on the FIRST Superseded contradiction.
+                // Resolution is always Superseded here — invalidate_fact_with_reason
+                // marks the prior fact invalid_at (bi-temporal supersession path).
+                // (arch spec §3.1 row 92)
+                if !fired_invalidating {
+                    if let Some(s) = sink {
+                        s.on_stage_change(IngestStatus::Invalidating);
+                    }
+                    metrics::counter!(
+                        "kremory.sink.stage_transition_total",
+                        "from" => "Deduplicating",
+                        "to" => "Invalidating"
+                    )
+                    .increment(1);
+                    tracing::info!(episode_id, "kremory.background.stage_change.invalidating");
+                    fired_invalidating = true;
+                }
+
                 self.graph
                     .invalidate_fact_with_reason(*fact_id, Utc::now(), ref_time)
                     .await?;
+
+                // ── Fire-site 4: on_contradiction ────────────────────────────────
+                // Per-contradiction basis (loop). Fires for each resolved contradiction
+                // regardless of resolution variant. Resolution = Superseded: the prior
+                // fact was marked invalid_at above. (arch spec §3.1 row 93)
+                let prior_sink_fact =
+                    all_pool
+                        .iter()
+                        .find(|f| f.id == *fact_id)
+                        .map(|f| SinkFact {
+                            subject: f.subject_id.clone(),
+                            predicate: f.predicate.clone(),
+                            object: f
+                                .object_value
+                                .as_deref()
+                                .or(f.object_id.as_deref())
+                                .unwrap_or("")
+                                .to_string(),
+                            valid_at: Some(f.valid_from),
+                        });
+                let new_sink_fact = SinkFact {
+                    subject: subject_id.clone(),
+                    predicate: fact.predicate.clone(),
+                    object: fact.object.clone(),
+                    valid_at: Some(ref_time),
+                };
+                let resolution = ContradictionResolution::Superseded;
+                if let Some(s) = sink {
+                    s.on_contradiction(ContradictionDetected {
+                        entity_id: EntityId(subject_id.clone()),
+                        prior_fact: prior_sink_fact.unwrap_or_else(|| SinkFact {
+                            subject: subject_id.clone(),
+                            predicate: fact.predicate.clone(),
+                            object: String::new(),
+                            valid_at: None,
+                        }),
+                        new_fact: new_sink_fact,
+                        resolution: resolution.clone(),
+                        detected_at: Utc::now(),
+                    });
+                }
+                metrics::counter!(
+                    "kremory.sink.contradiction_total",
+                    "resolution" => resolution_as_str(&resolution)
+                )
+                .increment(1);
+                tracing::info!(
+                    resolution = resolution_as_str(&resolution),
+                    episode_id,
+                    "kremory.background.contradiction_resolved"
+                );
             }
 
             // F5 — within-episode contradiction pre-check (deferred path).
@@ -1666,17 +1788,59 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             .ok();
                     }
                     if name_to_id.contains_key(&normalize_name(&fact.subject)) {
-                        self.graph
+                        // ── Fire-site 5a: on_edge_added (subject) ────────────────────
+                        // HIGH-01 fix: guard sink on is_ok() — mirrors verify_stage.rs stage3_write
+                        // pattern. Sink MUST NOT fire for edges that were never written.
+                        // predicate_kind = "fact" distinguishes from Phase 3a mention edges.
+                        // D7: episode_id not used as label; carried in tracing field only.
+                        // (arch spec §3.1 row 94)
+                        if self
+                            .graph
                             .insert_episodic_edge(episode_id, &subject_id, "subject")
                             .await
-                            .ok();
+                            .is_ok()
+                        {
+                            if let Some(s) = sink {
+                                s.on_edge_added(&episode_id.to_string(), &subject_id, "subject");
+                            }
+                            metrics::counter!(
+                                "kremory.sink.edge_added_total",
+                                "predicate_kind" => "fact"
+                            )
+                            .increment(1);
+                            tracing::info!(
+                                episode_id,
+                                predicate = "subject",
+                                "kremory.background.edge_added"
+                            );
+                        }
                     }
                     if let Some(ref obj_id) = object_id {
                         if name_to_id.contains_key(&normalize_name(&fact.object)) {
-                            self.graph
+                            // ── Fire-site 5b: on_edge_added (object) ─────────────────
+                            // HIGH-01 fix: guard sink on is_ok() — same pattern as subject site.
+                            // predicate_kind = "fact" (same bounded label as subject site).
+                            // (arch spec §3.1 row 94)
+                            if self
+                                .graph
                                 .insert_episodic_edge(episode_id, obj_id, "object")
                                 .await
-                                .ok();
+                                .is_ok()
+                            {
+                                if let Some(s) = sink {
+                                    s.on_edge_added(&episode_id.to_string(), obj_id, "object");
+                                }
+                                metrics::counter!(
+                                    "kremory.sink.edge_added_total",
+                                    "predicate_kind" => "fact"
+                                )
+                                .increment(1);
+                                tracing::info!(
+                                    episode_id,
+                                    predicate = "object",
+                                    "kremory.background.edge_added"
+                                );
+                            }
                         }
                     }
                     inserted_count += 1;

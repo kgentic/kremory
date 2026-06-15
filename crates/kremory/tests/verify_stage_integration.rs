@@ -253,7 +253,7 @@ async fn run_verify_stage_path_alpha_writes_entities_and_transitions_status_to_v
         ner_entity_names: vec!["Alice".to_string(), "Bob".to_string()],
     };
 
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph).await;
+    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
 
     assert!(
         result.is_ok(),
@@ -323,7 +323,7 @@ async fn run_verify_stage_path_beta_writes_entities_and_transitions_status_to_ve
     };
 
     // Path β: verify_llm = None.
-    let result = run_verify_stage(&request, &extractor, None, &graph).await;
+    let result = run_verify_stage(&request, &extractor, None, &graph, None).await;
 
     assert!(
         result.is_ok(),
@@ -383,7 +383,7 @@ async fn run_verify_stage_failure_transitions_status_to_failed() {
     };
 
     // Path α with a failing extractor.
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph).await;
+    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
 
     assert!(
         result.is_err(),
