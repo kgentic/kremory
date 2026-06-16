@@ -30,7 +30,7 @@
 //!
 //! - ALWAYS REAL: SQLite (TemporalGraph file-backed via tempdir), Embedder
 //!   (MockEmbeddingProvider / DeterministicEmbeddingProvider — cosine math IS
-//!   what we test), consistency_check.rs itself.
+//!   what we test), the consistency_check module itself.
 //! - ALWAYS MOCK: ChatProvider (local MockLlm returning golden JSON per test).
 //! - REAL LLM: Only C10 — #[ignore]-gated, --features llm-integration.
 
@@ -169,7 +169,7 @@ impl ChatProvider for MockLlm {
 
 // ─── C1: File exists and is <500 LoC ─────────────────────────────────────────
 
-/// C1: `crates/kremory/src/core/dream/consistency_check.rs` must exist
+/// C1: `crates/kremory/src/core/dream/consistency_check/mod.rs` must exist
 /// AND its line count must be strictly less than 500.
 ///
 /// Failure mode without fix: file does not exist → std::fs::read_to_string fails.
@@ -184,15 +184,15 @@ fn c1_module_exists_under_500_loc() {
         .expect("crates/kremory has parent dir (crates/)")
         .parent()
         .expect("crates/ has parent dir (workspace root)");
-    let rel = "crates/kremory/src/core/dream/consistency_check.rs";
+    let rel = "crates/kremory/src/core/dream/consistency_check/mod.rs";
     let full = workspace_root.join(rel);
     let path = full.to_str().expect("path is valid UTF-8");
     let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("C1: consistency_check.rs must exist at {path}: {e}"));
+        .unwrap_or_else(|e| panic!("C1: consistency_check/mod.rs must exist at {path}: {e}"));
     let line_count = content.lines().count();
     assert!(
         line_count < 500,
-        "C1: consistency_check.rs must be <500 LoC per feedback_split_files_before_adding_when_over_500_loc; got {line_count} lines"
+        "C1: consistency_check/mod.rs must be <500 LoC per TD-C module split (ADR-050 §5); got {line_count} lines"
     );
 }
 
