@@ -410,6 +410,17 @@ mod record_replay;
 pub use record_replay::{Cassette, CassetteEntry, RecordReplayChatProvider, VcrMode};
 
 // ---------------------------------------------------------------------------
+// TokenCountingChatProvider — production token-accounting decorator
+// (v0.2.4 Phase 4 / ADR-050 budget tracking). NOT test-gated: the dream-pass
+// wraps its real provider with this in production. Compile-spike landed ahead of
+// the build sprint per impl-spec §11 readiness-gate contingency.
+// ---------------------------------------------------------------------------
+
+mod token_counting;
+
+pub use token_counting::{TokenAccumulator, TokenCountingChatProvider};
+
+// ---------------------------------------------------------------------------
 // EmbeddingProvider + null / mock / ONNX impls
 // (unchanged from original — embeddings are a separate concern)
 // ---------------------------------------------------------------------------

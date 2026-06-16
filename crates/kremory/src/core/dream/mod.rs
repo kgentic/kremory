@@ -9,6 +9,10 @@
 pub(crate) mod anti_redundancy;
 pub mod consistency_check;
 pub(crate) mod discover_types;
+/// Dream-pass idempotency key — canonical entity view + content hash (v0.2.4
+/// Phase 3 / ADR-050 Guard #1). Compile-spike landed ahead of the build sprint
+/// per the impl-spec §11 readiness-gate contingency.
+pub(crate) mod idempotency;
 pub(crate) mod proposed_type;
 pub mod reclassify;
 
