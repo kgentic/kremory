@@ -178,9 +178,13 @@ async fn stage3_write(
                 ))
             })?;
 
-        // Episodic edge — link entity to its source episode.
+        // Episodic edge — link entity to its source episode. `stage3_write`
+        // persists entities under `group_id = 'default'` (the INSERT above), so
+        // the episodic edge MUST also reference the `'default'` namespace for the
+        // Migration 006 composite FK (entity_id, entity_group_id) to resolve.
+        // `None` ⇒ `'default'` matches that.
         graph
-            .insert_episodic_edge(episode_id, &entity_id, "mention")
+            .insert_episodic_edge(episode_id, &entity_id, None, "mention")
             .await
             .ok();
 

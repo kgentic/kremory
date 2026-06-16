@@ -153,10 +153,22 @@ impl GraphHandle for EngineGraphHandle {
         _provider: Arc<dyn ChatProvider>,
         batch_id: Option<String>,
         opts: SubmitOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        sink: Option<Arc<dyn EnrichmentEventSink>>,
     ) -> Result<EpisodeCommit> {
         let group_id = namespace_to_group_id(namespace);
         let reference_time = Some(source_ref.occurred_at);
+
+        // ── ADR-052 Gap 1: coerce the memory-layer EnrichmentEventSink to the
+        // core-layer IngestEventSink supertrait so the unified extraction routine
+        // (Engine::ingest → ingest_with) can fire the per-entity / per-edge /
+        // stage-transition callbacks. The fb85ba8 consolidation dropped this
+        // coercion, leaving `remember().with_event_sink()` a silent no-op on the
+        // INLINE path (golden_path_smoke). Both the inline and background sub-paths
+        // below set this on `SourceParams.sink`. Trait upcast `Arc<dyn Sub>` →
+        // `Arc<dyn Super>` is stable on the project MSRV (Rust 1.86+).
+        let core_sink: Option<Arc<dyn crate::core::sink::IngestEventSink>> = sink
+            .as_ref()
+            .map(|s| Arc::clone(s) as Arc<dyn crate::core::sink::IngestEventSink>);
 
         // ADR-035 §5 Option A: translate caller's StructuredFact (memory layer)
         // into PrePinnedFact (core layer) so engine.ingest can pin them
@@ -217,6 +229,9 @@ impl GraphHandle for EngineGraphHandle {
 
             let pre_pinned_facts_owned = pre_pinned_facts.clone();
             let skip_extraction_owned = !opts.enrich_per_episode;
+            // ADR-052 Gap 1: move the coerced core-layer sink into the spawned
+            // background task so the deferred Engine::ingest fires the callbacks.
+            let core_sink_owned = core_sink.clone();
             let task = tokio::task::spawn(async move {
                 ingest_runs.insert(run_id, IngestStatus::Extracting);
                 let sp = SourceParams {
@@ -226,6 +241,7 @@ impl GraphHandle for EngineGraphHandle {
                     entity_types_override: None,
                     pre_pinned_facts: pre_pinned_facts_owned,
                     skip_extraction: skip_extraction_owned,
+                    sink: core_sink_owned,
                 };
                 match engine
                     .ingest(
@@ -316,6 +332,12 @@ impl GraphHandle for EngineGraphHandle {
                     entity_types_override: None,
                     pre_pinned_facts,
                     skip_extraction: !opts.enrich_per_episode,
+                    // ADR-052 Gap 1: wire the coerced sink onto the INLINE path —
+                    // this is the path `Memory::remember(..).with_event_sink(..).await`
+                    // (no .no_wait()) drives, exercised by golden_path_smoke. The
+                    // background sub-path above returns before this point, so
+                    // `core_sink` is still owned here (last use).
+                    sink: core_sink,
                 },
             )
             .await
