@@ -58,12 +58,13 @@ use chrono::Utc;
 use crate::core::dream::consistency_check::{
     verify_batch_for_candidates, VerifyBatchForCandidatesOpts,
 };
-use crate::core::error::Error;
+use crate::core::error::{Error, IngestStatus};
 use crate::core::ingest::{EntityCandidate, ResolvedDecision};
 use crate::core::intelligence::{EntityExtractorDyn, ExtractionContext, ExtractionResult};
 use crate::core::provider::ChatProvider;
 use crate::core::resolver::normalize_name;
 use crate::core::schema::TemporalGraph;
+use crate::memory::events::EnrichmentEventSink;
 
 use super::DeferredRequest;
 
@@ -109,12 +110,22 @@ async fn update_episode_status(
 /// instead of the generic `&Engine<L, Emb>`, keeping `verify_stage.rs` free of
 /// type-parameter entanglement.
 ///
+/// `sink` receives `on_entity_extracted` and `on_edge_added("mention")` callbacks
+/// per ADR-052 Gap 1 fire-sites 2 + 3.
+///
 /// Returns the number of entity rows persisted.
+///
+/// NOTE (MED-04): `entity_extracted_total{arm}` counter is emitted at the call
+/// sites in `run_verify_stage` (where `arm` is in scope) rather than inside this
+/// function, to keep the argument count within the 5-arg clippy limit. The sink
+/// `on_entity_extracted` callback fires here; the labelled metric fires per-entity
+/// at the call site via a separate accumulator after `stage3_write` returns.
 async fn stage3_write(
     graph: &TemporalGraph,
     episode_id: i64,
     candidates: &[EntityCandidate],
     decisions: &[ResolvedDecision],
+    sink: Option<&dyn EnrichmentEventSink>,
 ) -> Result<usize, Error> {
     let now = Utc::now().to_rfc3339();
     let mut count = 0usize;
@@ -162,6 +173,18 @@ async fn stage3_write(
                 ))
             })?;
 
+        // ── Fire-site 2: on_entity_extracted (ADR-052 Gap 1 §3.1 row 2) ─────
+        // Triple-emit: sink + counter + tracing within 5 lines.
+        // D7: entity_id/episode_id are in tracing fields only, NOT metric labels.
+        // MED-04 note: arm-labelled entity_extracted_total counter is emitted at
+        // call sites (run_verify_stage) where arm is in scope; keeping stage3_write
+        // at 5 args satisfies clippy::too_many_arguments. The unlabelled counter
+        // here is removed in favour of the call-site arm-labelled emit.
+        if let Some(s) = sink {
+            s.on_entity_extracted(&entity_id, &candidate.name);
+        }
+        tracing::debug!(entity_id = %entity_id, name = %candidate.name, "kremory.sink.entity_extracted");
+
         // FTS row — required per graph.rs invariant.
         graph
             .conn
@@ -178,11 +201,30 @@ async fn stage3_write(
                 ))
             })?;
 
-        // Episodic edge — link entity to its source episode.
-        graph
-            .insert_episodic_edge(episode_id, &entity_id, "mention")
+        // Episodic edge — link entity to its source episode. `stage3_write`
+        // persists entities under `group_id = 'default'` (the INSERT above), so
+        // the episodic edge MUST also reference the `'default'` namespace for the
+        // Migration 006 composite FK (entity_id, entity_group_id) to resolve.
+        // `None` ⇒ `'default'` matches that.
+        // ── Fire-site 3: on_edge_added("mention") (ADR-052 Gap 1 §3.1 row 3) ─
+        // Triple-emit fires on Ok only; edge insertion errors are soft (.ok() precedent).
+        // D7: episode_id/entity_id in tracing fields only, NOT metric labels.
+        let episode_id_str = episode_id.to_string();
+        if graph
+            .insert_episodic_edge(episode_id, &entity_id, None, "mention")
             .await
-            .ok();
+            .is_ok()
+        {
+            if let Some(s) = sink {
+                s.on_edge_added(&episode_id_str, &entity_id, "mention");
+            }
+            metrics::counter!(
+                "kremory.sink.edge_added_total",
+                "predicate_kind" => "episodic"
+            )
+            .increment(1);
+            tracing::debug!(episode_id, entity_id = %entity_id, predicate = "mention", "kremory.sink.edge_added");
+        }
 
         metrics::counter!(
             "rql.ingest.entity_persisted_total",
@@ -273,6 +315,7 @@ pub async fn run_verify_stage<'a>(
     extractor: &'a dyn EntityExtractorDyn,
     verify_llm: Option<&'a dyn ChatProvider>,
     graph: &'a TemporalGraph,
+    sink: Option<&'a dyn EnrichmentEventSink>,
 ) -> Result<usize, Error> {
     let total_start = Instant::now();
     let arm = if verify_llm.is_some() {
@@ -324,8 +367,61 @@ pub async fn run_verify_stage<'a>(
         // than this code path can resolve; the original error is what callers see.
         let _ =
             update_episode_status(conn, request.episode_id, "Failed", "Pending", "Failed").await;
+        // ── Fire-site 5a: on_stage_change(Failed) — status_transition_fail arm ─
+        // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" label is bounded enum)
+        // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
+        // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+        let cb_start = Instant::now();
+        if let Some(s) = sink {
+            s.on_stage_change(IngestStatus::Failed(e.to_string()));
+        }
+        metrics::counter!(
+            "kremory.sink.stage_transition_total",
+            "from" => "Pending",
+            "to" => "Failed",
+            "arm" => "status_transition_fail"
+        )
+        .increment(1);
+        metrics::histogram!(
+            "kremory.sink.callback_duration_ms",
+            "callback" => "on_stage_change",
+            "stage" => "Failed"
+        )
+        .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+        tracing::error!(
+            episode_id = request.episode_id,
+            arm,
+            "kremory.sink.stage_change.failed"
+        );
         return Err(e);
     }
+
+    // ── Fire-site 1: on_stage_change(Extracting) (ADR-052 Gap 1 §3.1 row 1) ──
+    // Triple-emit: sink + counter + tracing within 5 lines.
+    // Fires after update_episode_status("Extracting") returns Ok.
+    // D7: episode_id in tracing field only, NOT a metric label.
+    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+    let cb_start = Instant::now();
+    if let Some(s) = sink {
+        s.on_stage_change(IngestStatus::Extracting);
+    }
+    metrics::counter!(
+        "kremory.sink.stage_transition_total",
+        "from" => "Pending",
+        "to" => "Extracting"
+    )
+    .increment(1);
+    metrics::histogram!(
+        "kremory.sink.callback_duration_ms",
+        "callback" => "on_stage_change",
+        "stage" => "Extracting"
+    )
+    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+    tracing::info!(
+        episode_id = request.episode_id,
+        arm,
+        "kremory.sink.stage_change.extracting"
+    );
 
     // ── Extract candidates ─────────────────────────────────────────────────────
     let ctx = ExtractionContext::default();
@@ -356,6 +452,32 @@ pub async fn run_verify_stage<'a>(
             let _ =
                 update_episode_status(conn, request.episode_id, "Failed", "Extracting", "Failed")
                     .await;
+            // ── Fire-site 5b: on_stage_change(Failed) — extract_fail arm ────────
+            // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" is bounded enum)
+            // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
+            // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+            let cb_start = Instant::now();
+            if let Some(s) = sink {
+                s.on_stage_change(IngestStatus::Failed(e.to_string()));
+            }
+            metrics::counter!(
+                "kremory.sink.stage_transition_total",
+                "from" => "Extracting",
+                "to" => "Failed",
+                "arm" => "extract_fail"
+            )
+            .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_stage_change",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+            tracing::error!(
+                episode_id = request.episode_id,
+                arm,
+                "kremory.sink.stage_change.failed"
+            );
             return Err(e);
         }
     };
@@ -404,20 +526,63 @@ pub async fn run_verify_stage<'a>(
                         "Failed",
                     )
                     .await;
+                    // ── Fire-site 5c: on_stage_change(Failed) — verify_fail arm ──
+                    // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
+                    // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
+                    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                    let cb_start = Instant::now();
+                    if let Some(s) = sink {
+                        s.on_stage_change(IngestStatus::Failed(e.to_string()));
+                    }
+                    metrics::counter!(
+                        "kremory.sink.stage_transition_total",
+                        "from" => "Extracting",
+                        "to" => "Failed",
+                        "arm" => "verify_fail"
+                    )
+                    .increment(1);
+                    metrics::histogram!(
+                        "kremory.sink.callback_duration_ms",
+                        "callback" => "on_stage_change",
+                        "stage" => "Failed"
+                    )
+                    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+                    tracing::error!(
+                        episode_id = request.episode_id,
+                        arm = "gliner",
+                        "kremory.sink.stage_change.failed"
+                    );
                     return Err(e);
                 }
             };
 
             let w3_start = Instant::now();
-            let write_result =
-                stage3_write(graph, request.episode_id, &candidates, &vb_result.decisions).await;
+            let write_result = stage3_write(
+                graph,
+                request.episode_id,
+                &candidates,
+                &vb_result.decisions,
+                sink,
+            )
+            .await;
 
             let w3_elapsed_ms = w3_start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("kremory.verify_stage.duration_ms", "arm" => "stage3_write")
                 .record(w3_elapsed_ms);
 
             match write_result {
-                Ok(n) => n,
+                Ok(n) => {
+                    // ── MED-04: arm-labelled entity_extracted_total counter ─────────
+                    // Emitted here (where `arm` is in scope) rather than inside
+                    // stage3_write (which would require a 6th arg, violating clippy limit).
+                    // D7: n is entity count, not an ID — safe as increment value.
+                    metrics::counter!(
+                        "kremory.sink.entity_extracted_total",
+                        "arm" => arm
+                    )
+                    .increment(n as u64);
+                    n
+                }
                 Err(e) => {
                     metrics::counter!(
                         "kremory.verify_stage.outcome_total",
@@ -439,6 +604,32 @@ pub async fn run_verify_stage<'a>(
                         "Failed",
                     )
                     .await;
+                    // ── Fire-site 5d: on_stage_change(Failed) — write_fail (Path α) ─
+                    // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
+                    // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
+                    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                    let cb_start = Instant::now();
+                    if let Some(s) = sink {
+                        s.on_stage_change(IngestStatus::Failed(e.to_string()));
+                    }
+                    metrics::counter!(
+                        "kremory.sink.stage_transition_total",
+                        "from" => "Extracting",
+                        "to" => "Failed",
+                        "arm" => "write_fail"
+                    )
+                    .increment(1);
+                    metrics::histogram!(
+                        "kremory.sink.callback_duration_ms",
+                        "callback" => "on_stage_change",
+                        "stage" => "Failed"
+                    )
+                    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+                    tracing::error!(
+                        episode_id = request.episode_id,
+                        arm = "gliner",
+                        "kremory.sink.stage_change.failed"
+                    );
                     return Err(e);
                 }
             }
@@ -455,14 +646,24 @@ pub async fn run_verify_stage<'a>(
 
             let w3_start = Instant::now();
             let write_result =
-                stage3_write(graph, request.episode_id, &candidates, &decisions).await;
+                stage3_write(graph, request.episode_id, &candidates, &decisions, sink).await;
 
             let w3_elapsed_ms = w3_start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("kremory.verify_stage.duration_ms", "arm" => "stage3_write")
                 .record(w3_elapsed_ms);
 
             match write_result {
-                Ok(n) => n,
+                Ok(n) => {
+                    // ── MED-04: arm-labelled entity_extracted_total counter ─────────
+                    // Emitted here (where `arm` is in scope) rather than inside
+                    // stage3_write (which would require a 6th arg, violating clippy limit).
+                    metrics::counter!(
+                        "kremory.sink.entity_extracted_total",
+                        "arm" => arm
+                    )
+                    .increment(n as u64);
+                    n
+                }
                 Err(e) => {
                     metrics::counter!(
                         "kremory.verify_stage.outcome_total",
@@ -484,6 +685,32 @@ pub async fn run_verify_stage<'a>(
                         "Failed",
                     )
                     .await;
+                    // ── Fire-site 5d: on_stage_change(Failed) — write_fail (Path β) ─
+                    // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
+                    // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
+                    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                    let cb_start = Instant::now();
+                    if let Some(s) = sink {
+                        s.on_stage_change(IngestStatus::Failed(e.to_string()));
+                    }
+                    metrics::counter!(
+                        "kremory.sink.stage_transition_total",
+                        "from" => "Extracting",
+                        "to" => "Failed",
+                        "arm" => "write_fail"
+                    )
+                    .increment(1);
+                    metrics::histogram!(
+                        "kremory.sink.callback_duration_ms",
+                        "callback" => "on_stage_change",
+                        "stage" => "Failed"
+                    )
+                    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+                    tracing::error!(
+                        episode_id = request.episode_id,
+                        arm = "llm_extract",
+                        "kremory.sink.stage_change.failed"
+                    );
                     return Err(e);
                 }
             }
@@ -506,6 +733,62 @@ pub async fn run_verify_stage<'a>(
             episode_id = request.episode_id,
             error = %e,
             "kremory.verify_stage.status_verified_update_fail"
+        );
+        // ── Fire-site 5e: on_stage_change(Failed) — status_transition_fail (Verified) ─
+        // Entities written; status column failed. Sink receives Failed, not EntitiesReady.
+        // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
+        // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
+        // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+        let cb_start = Instant::now();
+        if let Some(s) = sink {
+            s.on_stage_change(IngestStatus::Failed(e.to_string()));
+        }
+        metrics::counter!(
+            "kremory.sink.stage_transition_total",
+            "from" => "Extracting",
+            "to" => "Failed",
+            "arm" => "status_transition_fail"
+        )
+        .increment(1);
+        metrics::histogram!(
+            "kremory.sink.callback_duration_ms",
+            "callback" => "on_stage_change",
+            "stage" => "Failed"
+        )
+        .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+        tracing::error!(
+            episode_id = request.episode_id,
+            arm,
+            "kremory.sink.stage_change.failed"
+        );
+        // Fall through — entities are persisted, return Ok so caller counts them.
+    } else {
+        // ── Fire-site 4: on_stage_change(EntitiesReady) (ADR-052 Gap 1 §3.1 row 4) ─
+        // Triple-emit: sink + counter + tracing within 5 lines.
+        // Fires after update_episode_status("Verified") returns Ok.
+        // D7: episode_id in tracing field only, NOT a metric label.
+        // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+        let cb_start = Instant::now();
+        if let Some(s) = sink {
+            s.on_stage_change(IngestStatus::EntitiesReady);
+        }
+        metrics::counter!(
+            "kremory.sink.stage_transition_total",
+            "from" => "Extracting",
+            "to" => "EntitiesReady"
+        )
+        .increment(1);
+        metrics::histogram!(
+            "kremory.sink.callback_duration_ms",
+            "callback" => "on_stage_change",
+            "stage" => "EntitiesReady"
+        )
+        .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+        tracing::info!(
+            episode_id = request.episode_id,
+            arm,
+            entities_written,
+            "kremory.sink.stage_change.entities_ready"
         );
     }
 

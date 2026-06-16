@@ -35,6 +35,18 @@ otel = ["dep:tracing-subscriber", "dep:opentelemetry", "dep:opentelemetry_sdk", 
 # so they never run in normal `cargo test` unless explicitly enabled with
 # --features llm-integration and -q -- --ignored.
 llm-integration = []
+# llm-smoke: gate the single golden-path smoke test (Tier 2 of the 3-tier test
+# pyramid, ~2 min). Sits between the default mock tier (~30s, no flag) and the
+# full llm-integration tier (~30-60 min). It runs the entire consumer journey
+# through the public `Memory` facade once. Two run modes share one test body:
+#   LIVE   (KREMORY_VCR=record, requires Ollama + gemma4-e2b:latest) — the v0.2.3
+#          push gate + cassette refresh path.
+#   REPLAY (default, no Ollama) — deterministic CI path via
+#          `RecordReplayChatProvider::replay` reading a committed cassette.
+# Depends on `test-utils` so `RecordReplayChatProvider` (gated
+# `#[cfg(any(test, feature = "test-utils"))]`) resolves from the `tests/` binary —
+# integration tests do NOT inherit `#[cfg(test)]`, only feature flags reach them.
+llm-smoke = ["test-utils"]
 # unstable-graph: gates v0.1.6 novel semantic surface — G3.b (episode_tags
 # junction table + with_tags + filter_tag_any/all) and G9 (Memory::get_related
 # graph traversal). Ships at v0.1.6 behind this flag per Vera cycle-2 IRREV-002
@@ -114,6 +126,14 @@ hf-hub = { version = "0.5", optional = true }
 
 [dev-dependencies]
 metrics-util = "0.18"
+# Per-test tracing harness (v0.2.4 Component 3, init_test_log). Wired as
+# dev-deps — NOT through the `otel` feature — so the helper compiles for every
+# test tier (default mocks too), not just OTLP-enabled builds. `tracing-subscriber`
+# is otherwise an optional production dep gated behind `otel`; dev-deps are a
+# separate edge that reaches the `tests/` integration binaries. Do NOT enable the
+# `otel` feature to obtain the subscriber — that pulls the full OTLP stack.
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-appender = "0.2"
 # `no-env-filter` is required for integration tests (in `tests/`) to capture
 # events that target custom names like `kremory.namespace` (ADR-029a). Without
 # this feature `tracing-test`'s default env filter only matches the test-binary

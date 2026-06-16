@@ -16,16 +16,20 @@
 //! and `.ai-docs/plans/v0-2-0-phase-b-prep-sprint-plan-2026-06-10.md` §T2.1.
 
 use std::sync::mpsc::SyncSender;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
 use crate::core::config::ContentType;
 use crate::core::error::Error;
+use crate::memory::events::EnrichmentEventSink;
 
+pub mod batch_tracker;
 pub mod deferred_pipeline;
 pub mod ingestor;
 pub mod verify_stage;
 
+pub use batch_tracker::BatchTracker;
 pub use ingestor::{BackgroundIngestor, IngestGuard};
 // Quinn MED-02 fix: no re-export of run_verify_stage. The stub is Phase B
 // internal scaffolding (ADR-049 §Decision 6 mandate); Phase B will call it via
@@ -42,6 +46,13 @@ pub(crate) struct IngestRequest {
     pub reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
     pub content_type: Option<ContentType>,
+    /// Caller-set batch identifier.  `None` when the caller is not tracking a
+    /// batch.  When `Some`, the `batch_tracker` entry is updated and
+    /// `on_batch_phase2_complete` fires when the batch reaches terminal state.
+    ///
+    /// Per impl spec §6 Phase 4 + arch spec §3.3 race-safety invariant:
+    /// `BatchProgress::total` is incremented BEFORE this item is enqueued.
+    pub batch_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +77,11 @@ pub struct DeferredRequest {
     pub episode_id: i64,
     /// Entity names already inserted by Phase 1, passed as hints to the LLM extractor.
     pub ner_entity_names: Vec<String>,
+    /// Propagated from [`IngestRequest::batch_id`] so the worker loop can
+    /// increment the terminal counter and fire `on_batch_phase2_complete`.
+    ///
+    /// Per impl spec §6 Phase 4 + arch spec §3.3.
+    pub batch_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +230,10 @@ impl TokenBucketState {
 // ---------------------------------------------------------------------------
 
 /// Configuration for [`BackgroundIngestor`].
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually because `sink` holds a trait-object
+/// (`Arc<dyn EnrichmentEventSink>`) which is not `Debug`-derivable.
+#[derive(Clone)]
 pub struct IngestorConfig {
     /// Capacity of the work channel.  Default: 64.
     pub channel_capacity: usize,
@@ -236,9 +255,10 @@ pub struct IngestorConfig {
     ///
     /// Default: `1` (serialised).  The `BackgroundIngestor` serialisation
     /// invariant is that a single OS thread owns the `Engine` and processes
-    /// work items sequentially on a current-thread tokio runtime (`worker_threads(1)`).
-    /// This means Phase 2 tasks are awaited inline on the
-    /// current-thread tokio runtime, so this field is reserved for future
+    /// work items sequentially on a multi-thread tokio runtime pinned to a
+    /// single worker (`new_multi_thread().worker_threads(1)`).
+    /// This means Phase 2 tasks are awaited inline on that single-worker
+    /// runtime, so this field is reserved for future
     /// multi-engine parallelism.  Only override when you understand the
     /// consequent ordering and idempotency implications.
     pub deferred_concurrency: usize,
@@ -249,6 +269,53 @@ pub struct IngestorConfig {
     /// exhausted the worker sleeps until a token is available, emitting
     /// `kremory.ingest.llm_rate_limit_deferred_total{namespace}` per sleep.
     pub llm_rate_limit: Option<RateLimit>,
+    /// Optional event sink for background pipeline callbacks.
+    ///
+    /// When `Some`, the sink receives [`EnrichmentEventSink`] callbacks at each
+    /// stage of background Phase 1 + Phase 2 processing.  Callbacks fire
+    /// **sync-inline** on the background worker OS thread (ADR-052 D4 contract).
+    ///
+    /// Set via [`IngestorConfig::with_sink`] builder method.
+    /// `None` (default) — no callbacks emitted; all existing code paths
+    /// continue to compile and behave identically.
+    ///
+    /// Refs: ADR-052 Gap 1 + impl spec §3 Phase 2.
+    pub sink: Option<Arc<dyn EnrichmentEventSink>>,
+}
+
+impl std::fmt::Debug for IngestorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IngestorConfig")
+            .field("channel_capacity", &self.channel_capacity)
+            .field("error_channel_capacity", &self.error_channel_capacity)
+            .field("thread_name", &self.thread_name)
+            .field(
+                "deferred_extraction_enabled",
+                &self.deferred_extraction_enabled,
+            )
+            .field("deferred_concurrency", &self.deferred_concurrency)
+            .field("llm_rate_limit", &self.llm_rate_limit)
+            .field(
+                "sink",
+                &self.sink.as_ref().map(|_| "<dyn EnrichmentEventSink>"),
+            )
+            .finish()
+    }
+}
+
+impl IngestorConfig {
+    /// Set the event sink for background pipeline callbacks.
+    ///
+    /// The sink receives [`crate::core::sink::IngestEventSink`] callbacks at each
+    /// stage of background Phase 1 + Phase 2 processing.  All callbacks fire
+    /// **sync-inline** on the background worker OS thread — keep them fast
+    /// (sub-millisecond ideal, sub-100 ms absolute ceiling).
+    ///
+    /// Per ADR-052 §Gap 1 D1; impl spec §3 Phase 2 `with_sink` builder.
+    pub fn with_sink(mut self, sink: impl EnrichmentEventSink + Send + Sync + 'static) -> Self {
+        self.sink = Some(Arc::new(sink));
+        self
+    }
 }
 
 impl Default for IngestorConfig {
@@ -260,6 +327,7 @@ impl Default for IngestorConfig {
             deferred_extraction_enabled: true,
             deferred_concurrency: 1,
             llm_rate_limit: None,
+            sink: None,
         }
     }
 }

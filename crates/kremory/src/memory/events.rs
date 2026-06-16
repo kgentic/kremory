@@ -61,12 +61,73 @@ pub struct BatchPhase2Complete {
 /// the *Rust-side enrichment pipeline* is still blocked until `tsf.call()`
 /// returns. Configure `max_queue_size` on the TSF if needed.
 ///
-/// # Panic policy
+/// # Panic policy (D4 thread-context contract)
 ///
 /// A panic inside a sink callback propagates up the enrichment pipeline and
 /// will abort the Phase 2 run for the affected episode. Callbacks SHOULD
 /// catch their own panics if they call into FFI or other panic-on-failure
 /// code (e.g. wrap in `std::panic::catch_unwind`).
+///
+/// # Thread-context contract (ADR-052 D4)
+///
+/// All callbacks inherited from `IngestEventSink` (stage-change, entity
+/// extracted, edge added, ingestion error) fire **sync-inline on the
+/// background worker OS thread** — NOT the caller's thread or the caller's
+/// tokio runtime.  `on_batch_phase2_complete` fires on the same OS thread
+/// after the batch's last episode reaches terminal state.
+///
+/// Consumers using napi-rs MUST use `ThreadsafeFunction::call(value,
+/// Mode::NonBlocking)` to cross the thread boundary.  Using blocking mode
+/// WILL deadlock because the callback fires from within an `async fn` run
+/// via `rt.block_on(async { … })` on the background worker runtime.
+///
+/// # Inline-path limitation (MED-02)
+///
+/// **All fire-sites in v0.2.3 are on the background worker path
+/// (`BackgroundIngestor`).** The inline ingest path (`run_in_background=false`
+/// on the engine handle) bypasses the background worker entirely — a consumer
+/// who registers a sink on the inline path receives **zero** sink events.
+///
+/// Consumers needing sink-driven progress notifications MUST use the
+/// background (deferred) path. Inline-path sink wiring is deferred to
+/// v0.2.4+ pending a confirmed consumer use case.
+///
+/// # `IngestStatus::EntitiesReady` vs `Complete` (ADR-052 D2/D5)
+///
+/// `on_stage_change(EntitiesReady)` fires after Phase 2a (entity writes)
+/// completes — i.e., after the SQL column writes `'Verified'`.
+/// `on_stage_change(Complete)` fires after Phase 2b (fact/relationship
+/// extraction) completes.  `wait_for_processing` resolves at Phase 2a
+/// (SQL `'Verified'`); there is no polling API for Phase 2b completion.
+/// Use `on_stage_change(Complete)` as the push notification.
+///
+/// # `on_stage_change(Deduplicating)` — normative fire condition (MED-01)
+///
+/// `on_stage_change(IngestStatus::Deduplicating)` fires at most ONCE per
+/// episode, when contradiction detection begins — specifically when fact
+/// extraction returned ≥1 fact AND the contradiction-detection loop is
+/// entered.  It does NOT fire when zero facts were extracted (fast-exit
+/// path).  Fires regardless of whether contradictions are actually found.
+///
+/// # `IngestStatus::SkippedIdempotent` — forward-compat (MED-05 / ADR-050)
+///
+/// The `IngestStatus` enum carries `#[non_exhaustive]`.  ADR-050
+/// (crash-safety + idempotency cluster, v0.2.4+) will add a
+/// `SkippedIdempotent` variant that fires when a duplicate episode is
+/// detected and the pipeline skips Phase 2 for that episode.  Consumers
+/// matching on `IngestStatus` MUST include a `_` catch-all arm to remain
+/// forward-compatible.
+///
+/// # `on_batch_phase2_complete` drop-before-complete contract
+///
+/// If the `BackgroundIngestor` (or its companion `IngestGuard`) is dropped
+/// while episodes in a batch are still queued or in Phase 2, the sink
+/// receives `on_batch_phase2_complete` with `outcome="interrupted"` for any
+/// batch with outstanding items at stop-flag drain time.  This closes the
+/// silent-hang foot-gun: consumers can reliably detect an interrupted batch
+/// rather than waiting indefinitely.  The `"interrupted"` outcome is a
+/// bounded string label; `batch_id` is NEVER used as a metric label
+/// (D7 cardinality discipline).
 ///
 /// # Future: substrate-owned backpressure (deferred)
 ///

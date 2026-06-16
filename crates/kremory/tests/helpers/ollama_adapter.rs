@@ -13,6 +13,20 @@ use kremory::CoreError;
 use kremory::EmbeddingProvider;
 
 /// Newtype wrapping an `Arc<Ollama>` to implement kremory's `EmbeddingProvider`.
+///
+/// Used by `tests/llm_integration.rs` (requires `llm-integration` feature).
+/// `dead_code` is suppressed here because the struct is only referenced by
+/// test binaries that opt in to Ollama integration — cargo does not see those
+/// usages when compiling test binaries that include this helper module without
+/// the feature flag.
+///
+/// `#[allow(dead_code)]` (not `#[expect]`) is the right tool: with feature
+/// gating, the struct IS used in some compilations (llm-integration feature
+/// enabled) and not in others; `#[expect]` would fire `unfulfilled-lint-
+/// expectations` in the compiles where it IS used.  Per-cfg gating is the
+/// documented escape hatch for cross-compile-target test helpers.
+/// Quinn Phase 6 review MED Rule-8.
+#[allow(dead_code)]
 pub struct OllamaEmbedderAdapter(pub Arc<Ollama>);
 
 impl EmbeddingProvider for OllamaEmbedderAdapter {

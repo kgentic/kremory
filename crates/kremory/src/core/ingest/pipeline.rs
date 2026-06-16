@@ -12,6 +12,7 @@ use metrics::histogram;
 use crate::core::config::ContentType;
 use crate::core::contradiction::TwoPoolDetector;
 use crate::core::entity_types::EntityTypeRegistry;
+use crate::core::error::{ContradictionResolution, IngestStatus};
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::intelligence::{
@@ -21,9 +22,32 @@ use crate::core::intelligence::{
 use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
 use crate::core::resolver::{normalize_name, CascadeResolver, UnionFind};
 use crate::core::search::SearchFilters;
+use crate::core::sink::{ContradictionDetected, EntityId, IngestEventSink, SinkFact};
 
 use super::helpers::extract_context_snippet;
 use super::{Engine, IngestionResult, SourceParams};
+
+// ─── ADR-052 Gap 1 sink fire-site metrics helper ────────────────────────────
+
+/// Triple-emit metrics companion for the per-entity / per-mention-edge sink
+/// fire-sites in `ingest_with` (ADR-052 Gap 1; canonical pattern from 737e152
+/// verify_stage Fire-sites 2 + 3). Kept as a free fn so the three `mention`
+/// call sites (merged / L4-merge / new-entity) emit identical metric labels
+/// without copy-paste drift. The sink callback itself fires inline at each call
+/// site (it needs the per-site ids); only the label-stable counters live here.
+///
+/// D7 cardinality: NO entity_id / episode_id labels — `predicate_kind` is a
+/// bounded enum, `mention_persisted` a bool string.
+fn fire_entity_edge_metrics(mention_ok: bool) {
+    metrics::counter!("kremory.sink.entity_extracted_total", "arm" => "inline").increment(1);
+    if mention_ok {
+        metrics::counter!(
+            "kremory.sink.edge_added_total",
+            "predicate_kind" => "episodic"
+        )
+        .increment(1);
+    }
+}
 
 // ─── Phase A foundational types (C6 spec §5.5 GAP-001) ───────────────────────
 
@@ -303,8 +327,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 })?;
 
             // Episodic edge: link entity to its source episode.
+            // `write_verified_entities` persists entities under `group_id =
+            // 'default'` (the INSERT above), so the edge MUST reference the same
+            // namespace for the Migration 006 composite FK to resolve.
+            // `None` ⇒ `'default'`.
             self.graph
-                .insert_episodic_edge(episode_id, &entity_id, "mention")
+                .insert_episodic_edge(episode_id, &entity_id, None, "mention")
                 .await
                 .ok();
 
@@ -560,6 +588,60 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             });
         }
 
+        // ── ADR-052 Gap 1 fire-site: on_stage_change(Extracting) ────────────────
+        // Re-establishes the 737e152 verify_stage Fire-site 1 on the UNIFIED
+        // inline/background extraction routine (`ingest_with`) that the public
+        // `Memory::remember(...).with_event_sink(...)` consumer journey actually
+        // drives (engine_handle::graph_ingest_episode → engine.ingest →
+        // ingest_with). The sink is carried on `source_params.sink` as the
+        // core-layer `IngestEventSink` (see SourceParams::sink doc-comment) and
+        // is fired synchronously per the §4.8 sync-inline contract. Triple-emit:
+        // sink + counter + tracing (ADR-2026-05-20 D1). D7: episode_id is a
+        // tracing field only, NEVER a metric label.
+        let sink = source_params.sink.as_deref();
+        if let Some(s) = sink {
+            s.on_stage_change(crate::core::error::IngestStatus::Extracting);
+        }
+        metrics::counter!(
+            "kremory.sink.stage_transition_total",
+            "from" => "Pending",
+            "to" => "Extracting"
+        )
+        .increment(1);
+        tracing::info!(episode_id, "kremory.sink.stage_change.extracting");
+
+        // ── ADR-051 §4 state-machine invariant: Extracting → Failed on ANY error ──
+        // Canonical pattern: `core/background/verify_stage.rs` fires `Failed`
+        // synchronously BEFORE every `Err` propagates (the function's own
+        // doc-comment invariant). Quinn MED-01: the previous terminal `match
+        // phase_result` only fired `Failed` for errors that broke the inner
+        // `'phases` block. Every fallible `?`-step AFTER the `Extracting` fire but
+        // OUTSIDE `'phases` — registry load/seed, `ExtractionWindowSplitter` work,
+        // `extractor.extract(..).await?`, the in-`'phases` `llm_for_detector?`,
+        // `begin_immediate_if_needed().await?`, and `outer_guard.commit().await?` —
+        // returned early WITHOUT firing `Failed`; the consumer saw `Extracting`
+        // then silence.
+        //
+        // Cause-fix per Rule 8 (treat-cause): capture the WHOLE post-`Extracting`
+        // body in one `async` block that returns `Result<IngestionResult>` (every
+        // `?` inside resolves to the block's `Err`, not a function return), then
+        // fire `Failed` exactly once at the single exit before re-propagating. No
+        // error is swallowed — `Failed` fires THEN the `Err` is returned via `?`.
+        let fire_failed = |e: &crate::core::error::Error| {
+            if let Some(s) = sink {
+                s.on_stage_change(crate::core::error::IngestStatus::Failed(e.to_string()));
+            }
+            metrics::counter!(
+                "kremory.sink.stage_transition_total",
+                "from" => "Extracting",
+                "to" => "Failed",
+                "arm" => "post_extracting"
+            )
+            .increment(1);
+            tracing::error!(episode_id, error = %e, "kremory.sink.stage_change.failed");
+        };
+
+        let ingest_outcome: crate::core::error::Result<IngestionResult> = async {
         // 2. Slice into LLM-extraction-prompt windows (no-op for normally-sized episodes;
         //    see core/extraction_window.rs module docstring for kind-2 semantics).
         let splitter = ExtractionWindowSplitter::new(self.config.extraction_window.clone());
@@ -1059,10 +1141,26 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
 
                     // Bug A: episodic edge for merged entity (this episode now references it).
-                    self.graph
-                        .insert_episodic_edge(episode_id, &existing_id, "mention")
+                    // ADR-052 Gap 1 fire-sites: on_entity_extracted + on_edge_added("mention").
+                    // Fires on Ok only (insert error is soft `.ok()` precedent). D7: ids in
+                    // tracing fields only, NOT metric labels.
+                    // ADR-052 / Migration 006: thread the ingest namespace so the
+                    // composite FK (entity_id, entity_group_id) resolves — the
+                    // entity was just merged/promoted under `group_id`, so the edge
+                    // must reference the same namespace or it silently FK-fails.
+                    let mention_ok = self
+                        .graph
+                        .insert_episodic_edge(episode_id, &existing_id, group_id, "mention")
                         .await
-                        .ok();
+                        .is_ok();
+                    if let Some(s) = sink {
+                        s.on_entity_extracted(&existing_id, &extracted.name);
+                        if mention_ok {
+                            s.on_edge_added(&episode_id.to_string(), &existing_id, "mention");
+                        }
+                    }
+                    fire_entity_edge_metrics(mention_ok);
+                    tracing::debug!(entity_id = %existing_id, name = %extracted.name, episode_id, via = "merged", "kremory.sink.entity_extracted");
 
                     existing_id
                 } else {
@@ -1100,10 +1198,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         union_find.union(&norm, l4_existing_id);
                         merged_entities.push((l4_existing_id.clone(), extracted.name.clone()));
                         // Episodic edge: this episode now references the existing entity.
-                        self.graph
-                            .insert_episodic_edge(episode_id, l4_existing_id, "mention")
+                        // ADR-052 Gap 1 fire-sites: on_entity_extracted + on_edge_added("mention").
+                        // ADR-052 / Migration 006: thread the ingest namespace so
+                        // the composite FK resolves for the L4-merged entity (stored
+                        // under `group_id`).
+                        let mention_ok = self
+                            .graph
+                            .insert_episodic_edge(episode_id, l4_existing_id, group_id, "mention")
                             .await
-                            .ok();
+                            .is_ok();
+                        if let Some(s) = sink {
+                            s.on_entity_extracted(l4_existing_id, &extracted.name);
+                            if mention_ok {
+                                s.on_edge_added(&episode_id.to_string(), l4_existing_id, "mention");
+                            }
+                        }
+                        fire_entity_edge_metrics(mention_ok);
+                        tracing::debug!(entity_id = %l4_existing_id, name = %extracted.name, episode_id, via = "l4_merge", "kremory.sink.entity_extracted");
                         name_to_id.insert(norm, l4_existing_id.clone());
                         // Skip the rest of the else block — entity_id is the existing one.
                         // SAFETY: the outer `let entity_id = if ... { ... } else { ... };`
@@ -1217,10 +1328,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
 
                     // Bug A: episodic edge for newly inserted entity.
-                    self.graph
-                        .insert_episodic_edge(episode_id, &entity_id, "mention")
+                    // ADR-052 Gap 1 fire-sites: on_entity_extracted + on_edge_added("mention").
+                    // Migration 006: thread `group_id` — the entity was just inserted
+                    // via `insert_entity_with_group(.., group_id)` above, so the edge
+                    // must reference the same namespace for the composite FK to resolve.
+                    let mention_ok = self
+                        .graph
+                        .insert_episodic_edge(episode_id, &entity_id, group_id, "mention")
                         .await
-                        .ok();
+                        .is_ok();
+                    if let Some(s) = sink {
+                        s.on_entity_extracted(&entity_id, &extracted.name);
+                        if mention_ok {
+                            s.on_edge_added(&episode_id.to_string(), &entity_id, "mention");
+                        }
+                    }
+                    fire_entity_edge_metrics(mention_ok);
+                    tracing::debug!(entity_id = %entity_id, name = %extracted.name, episode_id, via = "insert_new", "kremory.sink.entity_extracted");
 
                     upserted_entities.push(entity_id.clone());
                     entity_id
@@ -1304,6 +1428,60 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         break 'phases Err(e);
                     }
                     invalidated_fact_ids.push(*fact_id);
+
+                    // ── ADR-052 Gap 1 fire-site: on_contradiction ───────────────────
+                    // The new `fact` superseded a prior fact (`*fact_id`) that lives in
+                    // pool_a/pool_b (both already fetched above). Build a faithful
+                    // ContradictionDetected from the prior fact snapshot + the new triple.
+                    // Resolution is always `Superseded` on this path (the prior fact was
+                    // invalidated in favour of the new one — there is no Retained/Merged
+                    // branch in `ingest_with`). Best-effort: if the prior fact cannot be
+                    // located in the pools, skip the sink call rather than fabricate a
+                    // payload (parse-loudly: no silent defaults for load-bearing fields).
+                    if let Some(s) = sink {
+                        if let Some(prior) = pool_a
+                            .iter()
+                            .chain(pool_b.iter())
+                            .find(|f| f.id == *fact_id)
+                        {
+                            use crate::core::sink::{ContradictionDetected, EntityId, SinkFact};
+                            // An empty object_id is LEGITIMATE here, not a silent
+                            // default / parse-loudly violation (Rule 21): a fact may
+                            // be a unary predicate / objectless triple where BOTH
+                            // `object_id` and `object_value` are absent. `unwrap_or_default()`
+                            // yields "" for that case, which is the correct faithful
+                            // representation of an objectless prior fact in the sink
+                            // payload — there is no missing-required-field to surface.
+                            let prior_object = prior
+                                .object_id
+                                .clone()
+                                .or_else(|| prior.object_value.clone())
+                                .unwrap_or_default();
+                            s.on_contradiction(ContradictionDetected {
+                                entity_id: EntityId(subject_id.clone()),
+                                prior_fact: SinkFact {
+                                    subject: prior.subject_id.clone(),
+                                    predicate: prior.predicate.clone(),
+                                    object: prior_object,
+                                    valid_at: Some(prior.valid_from),
+                                },
+                                new_fact: SinkFact {
+                                    subject: fact.subject.clone(),
+                                    predicate: fact.predicate.clone(),
+                                    object: fact.object.clone(),
+                                    valid_at: Some(ref_time),
+                                },
+                                resolution: crate::core::error::ContradictionResolution::Superseded,
+                                detected_at: Utc::now(),
+                            });
+                        }
+                    }
+                    metrics::counter!(
+                        "kremory.sink.contradiction_total",
+                        "resolution" => "Superseded"
+                    )
+                    .increment(1);
+                    tracing::debug!(prior_fact_id = *fact_id, episode_id, "kremory.sink.contradiction");
                 }
 
                 // F5 — within-episode contradiction pre-check (SQL-only).
@@ -1395,10 +1573,28 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // that are stubs or entities not present in the current extraction batch.
                 if let Some(ref obj_id) = object_id {
                     if name_to_id.contains_key(&normalize_name(&fact.object)) {
-                        self.graph
-                            .insert_episodic_edge(episode_id, obj_id, "object")
+                        // ADR-052 Gap 1 fire-site: on_edge_added("object"). Fires on Ok
+                        // only (insert error is soft `.ok()` precedent). D7: ids in
+                        // tracing fields only, NOT metric labels. Migration 006: thread
+                        // `group_id` — this branch is gated on the object being in
+                        // `name_to_id` (a this-batch entity stored under `group_id`),
+                        // so the edge must reference the same namespace.
+                        let object_ok = self
+                            .graph
+                            .insert_episodic_edge(episode_id, obj_id, group_id, "object")
                             .await
-                            .ok();
+                            .is_ok();
+                        if object_ok {
+                            if let Some(s) = sink {
+                                s.on_edge_added(&episode_id.to_string(), obj_id, "object");
+                            }
+                            metrics::counter!(
+                                "kremory.sink.edge_added_total",
+                                "predicate_kind" => "object"
+                            )
+                            .increment(1);
+                            tracing::debug!(entity_id = %obj_id, episode_id, predicate = "object", "kremory.sink.edge_added");
+                        }
                     }
                 }
             }
@@ -1407,9 +1603,46 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }; // end 'phases block
 
         // Commit or rollback the outer transaction based on phase result.
+        //
+        // ── ADR-052 Gap 1 fire-sites: terminal stage transitions ─────────────────
+        // Re-establishes 737e152 verify_stage Fire-sites 4 (EntitiesReady) + 5
+        // (Failed) on the unified inline routine, plus Complete. Successful
+        // sequence per IngestStatus doc: Extracting → EntitiesReady → Complete.
+        // On error: Failed. Triple-emit at each (sink + counter + tracing). D7:
+        // episode_id is a tracing field only, NEVER a metric label. Failed-arm
+        // tracing is `tracing::error!` (ADR-052 §3.1 row 12 / MED-01 precedent).
         match phase_result {
-            Ok(()) => outer_guard.commit().await?,
+            Ok(()) => {
+                outer_guard.commit().await?;
+                if let Some(s) = sink {
+                    s.on_stage_change(crate::core::error::IngestStatus::EntitiesReady);
+                    s.on_stage_change(crate::core::error::IngestStatus::Complete);
+                }
+                metrics::counter!(
+                    "kremory.sink.stage_transition_total",
+                    "from" => "Extracting",
+                    "to" => "EntitiesReady"
+                )
+                .increment(1);
+                metrics::counter!(
+                    "kremory.sink.stage_transition_total",
+                    "from" => "EntitiesReady",
+                    "to" => "Complete"
+                )
+                .increment(1);
+                tracing::info!(
+                    episode_id,
+                    entities_written = upserted_entities.len(),
+                    "kremory.sink.stage_change.entities_ready_then_complete"
+                );
+            }
             Err(e) => {
+                // Roll back the outer transaction, then surface the error as the
+                // async block's `Err`. The `Failed` sink/counter/tracing fire is
+                // performed ONCE at the single exit point below (the outer
+                // `match ingest_outcome`), covering this phase-rollback path AND
+                // every other post-`Extracting` `?` failure uniformly — Quinn
+                // MED-01. Do NOT fire `Failed` here too, or it would double-emit.
                 let _ = outer_guard.rollback().await;
                 return Err(e);
             }
@@ -1448,6 +1681,20 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             token_usage,
             stub_entities_inserted,
         })
+        }
+        .await;
+
+        // ── Single Failed-fire exit (ADR-051 §4 / Quinn MED-01) ─────────────────
+        // The async block above captured every fallible step after the `Extracting`
+        // fire. On ANY `Err`, fire `Failed` exactly once (sink + counter + tracing)
+        // BEFORE re-propagating — the error is NOT swallowed.
+        match ingest_outcome {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                fire_failed(&e);
+                Err(e)
+            }
+        }
     }
 
     /// Phase 2 deferred LLM fact extraction.
@@ -1461,6 +1708,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ///
     /// Entity insertion is skipped — Phase 1 (NER) already owns that path.
     /// Only facts (relationship triplets) are added in this phase.
+    ///
+    /// `sink` receives per-event callbacks during deferred fact extraction.
+    /// Fires: `on_stage_change(Deduplicating)` once on entry (when ≥1 fact
+    /// extracted), `on_stage_change(Invalidating)` once on first Superseded
+    /// contradiction, `on_contradiction` per resolved contradiction,
+    /// `on_edge_added` after each episodic edge insert (subject + object sites).
+    /// Per ADR-052 §3.1 rows 90–94 (Phase 3c fire-site catalogue).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
     #[allow(clippy::too_many_arguments)]
     pub async fn ingest_deferred(
@@ -1471,6 +1725,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         content_type: Option<ContentType>,
         episode_id: i64,
         ner_entity_names: &[String],
+        sink: Option<&dyn IngestEventSink>,
     ) -> crate::core::error::Result<usize> {
         // TD-019 Gap 2: phase2_ms — deferred relationship extraction latency,
         // distinct from phase1_ms (user-facing sync work).
@@ -1573,6 +1828,26 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let detector = TwoPoolDetector::new(Arc::clone(llm_for_batch_detector));
         let mut inserted_count: usize = 0;
 
+        // MED-01 fire-once flags (ADR-052 §3.1 normative):
+        //   fired_deduplicating — on_stage_change(Deduplicating) fires ONCE per call,
+        //     on entry to the contradiction-detection loop (when ≥1 fact extracted).
+        //   fired_invalidating  — on_stage_change(Invalidating) fires ONCE per call,
+        //     on the FIRST Superseded contradiction resolution.
+        // D7: entity_id / episode_id / fact_id NEVER used as metric labels.
+        let mut fired_deduplicating = false;
+        let mut fired_invalidating = false;
+
+        // Inline helper: bounded ContradictionResolution discriminant string.
+        // DO NOT use format!("{:?}", r) — would expose struct interior + bust cardinality.
+        // Within-crate matching is exhaustive for #[non_exhaustive] enums; no wildcard needed.
+        let resolution_as_str = |r: &ContradictionResolution| -> &'static str {
+            match r {
+                ContradictionResolution::Superseded => "Superseded",
+                ContradictionResolution::Retained => "Retained",
+                ContradictionResolution::Merged => "Merged",
+            }
+        };
+
         for fact in &all_facts {
             let subject_id = name_to_id
                 .get(&normalize_name(&fact.subject))
@@ -1608,12 +1883,120 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             let pool_b: Vec<crate::core::schema::Fact> =
                 pool_b_hits.into_iter().map(|h| h.item).collect();
 
+            // ── Fire-site 1: on_stage_change(Deduplicating) ──────────────────────
+            // MED-01 normative: fires ONCE per ingest_deferred call, on entry to the
+            // contradiction-detection loop when ≥1 fact is extracted. Fires regardless
+            // of whether contradictions are actually found. (arch spec §3.1 row 90)
+            // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+            if !fired_deduplicating {
+                let cb_start = Instant::now();
+                if let Some(s) = sink {
+                    s.on_stage_change(IngestStatus::Deduplicating);
+                }
+                metrics::counter!(
+                    "kremory.sink.stage_transition_total",
+                    "from" => "EntitiesReady",
+                    "to" => "Deduplicating"
+                )
+                .increment(1);
+                metrics::histogram!(
+                    "kremory.sink.callback_duration_ms",
+                    "callback" => "on_stage_change",
+                    "stage" => "Deduplicating"
+                )
+                .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+                tracing::info!(episode_id, "kremory.background.stage_change.deduplicating");
+                fired_deduplicating = true;
+            }
+
             let contradiction_result = detector.detect(fact, &pool_a, &pool_b, &ref_time).await?;
 
+            // Build combined pool for prior-fact lookup (used by on_contradiction below).
+            let all_pool: Vec<&crate::core::schema::Fact> =
+                pool_a.iter().chain(pool_b.iter()).collect();
+
             for fact_id in &contradiction_result.contradictions {
+                // ── Fire-site 3: on_stage_change(Invalidating) ───────────────────
+                // MED-01: fires ONCE per call on the FIRST Superseded contradiction.
+                // Resolution is always Superseded here — invalidate_fact_with_reason
+                // marks the prior fact invalid_at (bi-temporal supersession path).
+                // (arch spec §3.1 row 92)
+                // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                if !fired_invalidating {
+                    let cb_start = Instant::now();
+                    if let Some(s) = sink {
+                        s.on_stage_change(IngestStatus::Invalidating);
+                    }
+                    metrics::counter!(
+                        "kremory.sink.stage_transition_total",
+                        "from" => "Deduplicating",
+                        "to" => "Invalidating"
+                    )
+                    .increment(1);
+                    metrics::histogram!(
+                        "kremory.sink.callback_duration_ms",
+                        "callback" => "on_stage_change",
+                        "stage" => "Invalidating"
+                    )
+                    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+                    tracing::info!(episode_id, "kremory.background.stage_change.invalidating");
+                    fired_invalidating = true;
+                }
+
                 self.graph
                     .invalidate_fact_with_reason(*fact_id, Utc::now(), ref_time)
                     .await?;
+
+                // ── Fire-site 4: on_contradiction ────────────────────────────────
+                // Per-contradiction basis (loop). Fires for each resolved contradiction
+                // regardless of resolution variant. Resolution = Superseded: the prior
+                // fact was marked invalid_at above. (arch spec §3.1 row 93)
+                let prior_sink_fact =
+                    all_pool
+                        .iter()
+                        .find(|f| f.id == *fact_id)
+                        .map(|f| SinkFact {
+                            subject: f.subject_id.clone(),
+                            predicate: f.predicate.clone(),
+                            object: f
+                                .object_value
+                                .as_deref()
+                                .or(f.object_id.as_deref())
+                                .unwrap_or("")
+                                .to_string(),
+                            valid_at: Some(f.valid_from),
+                        });
+                let new_sink_fact = SinkFact {
+                    subject: subject_id.clone(),
+                    predicate: fact.predicate.clone(),
+                    object: fact.object.clone(),
+                    valid_at: Some(ref_time),
+                };
+                let resolution = ContradictionResolution::Superseded;
+                if let Some(s) = sink {
+                    s.on_contradiction(ContradictionDetected {
+                        entity_id: EntityId(subject_id.clone()),
+                        prior_fact: prior_sink_fact.unwrap_or_else(|| SinkFact {
+                            subject: subject_id.clone(),
+                            predicate: fact.predicate.clone(),
+                            object: String::new(),
+                            valid_at: None,
+                        }),
+                        new_fact: new_sink_fact,
+                        resolution: resolution.clone(),
+                        detected_at: Utc::now(),
+                    });
+                }
+                metrics::counter!(
+                    "kremory.sink.contradiction_total",
+                    "resolution" => resolution_as_str(&resolution)
+                )
+                .increment(1);
+                tracing::info!(
+                    resolution = resolution_as_str(&resolution),
+                    episode_id,
+                    "kremory.background.contradiction_resolved"
+                );
             }
 
             // F5 — within-episode contradiction pre-check (deferred path).
@@ -1665,18 +2048,67 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             .await
                             .ok();
                     }
+                    // Migration 006: thread `group_id` — deferred-phase entities were
+                    // persisted under this namespace by Phase 1, so the episodic edge
+                    // must reference the same namespace for the composite FK to resolve.
                     if name_to_id.contains_key(&normalize_name(&fact.subject)) {
-                        self.graph
-                            .insert_episodic_edge(episode_id, &subject_id, "subject")
+                        // ── Fire-site 5a: on_edge_added (subject) ────────────────────
+                        // HIGH-01 fix: guard sink on is_ok() — mirrors verify_stage.rs stage3_write
+                        // pattern. Sink MUST NOT fire for edges that were never written.
+                        // predicate_kind = "fact" distinguishes from Phase 3a mention edges.
+                        // D7: episode_id not used as label; carried in tracing field only.
+                        // (arch spec §3.1 row 94)
+                        // Migration 006: thread `group_id` — deferred-phase entities were
+                        // persisted under this namespace by Phase 1, so the episodic edge
+                        // must reference the same namespace for the composite FK to resolve.
+                        if self
+                            .graph
+                            .insert_episodic_edge(episode_id, &subject_id, group_id, "subject")
                             .await
-                            .ok();
+                            .is_ok()
+                        {
+                            if let Some(s) = sink {
+                                s.on_edge_added(&episode_id.to_string(), &subject_id, "subject");
+                            }
+                            metrics::counter!(
+                                "kremory.sink.edge_added_total",
+                                "predicate_kind" => "fact"
+                            )
+                            .increment(1);
+                            tracing::info!(
+                                episode_id,
+                                predicate = "subject",
+                                "kremory.background.edge_added"
+                            );
+                        }
                     }
                     if let Some(ref obj_id) = object_id {
                         if name_to_id.contains_key(&normalize_name(&fact.object)) {
-                            self.graph
-                                .insert_episodic_edge(episode_id, obj_id, "object")
+                            // ── Fire-site 5b: on_edge_added (object) ─────────────────
+                            // HIGH-01 fix: guard sink on is_ok() — same pattern as subject site.
+                            // predicate_kind = "fact" (same bounded label as subject site).
+                            // (arch spec §3.1 row 94)
+                            // Migration 006: thread `group_id` for composite-FK parity.
+                            if self
+                                .graph
+                                .insert_episodic_edge(episode_id, obj_id, group_id, "object")
                                 .await
-                                .ok();
+                                .is_ok()
+                            {
+                                if let Some(s) = sink {
+                                    s.on_edge_added(&episode_id.to_string(), obj_id, "object");
+                                }
+                                metrics::counter!(
+                                    "kremory.sink.edge_added_total",
+                                    "predicate_kind" => "fact"
+                                )
+                                .increment(1);
+                                tracing::info!(
+                                    episode_id,
+                                    predicate = "object",
+                                    "kremory.background.edge_added"
+                                );
+                            }
                         }
                     }
                     inserted_count += 1;
