@@ -33,7 +33,7 @@ All 5 phases shipped with zero `#[allow]` band-aids; every Quinn finding cause-f
 | 6 — Test surface | sequential | NEW tests/helpers/recording_sink.rs, NEW tests/sink_wiring.rs, NEW tests/sink_wiring_integration.rs | 2h |
 | 7 — CI gates + doc-comment polish | sequential | scripts/check-dual-emit.sh, NEW scripts/check-sink-callsite-coverage.sh, memory/events.rs | 1h |
 
-**Workspace baseline at v0.2.3 start**: 627 passing tests / 1 pre-existing TD-C fail (`c1_module_exists_under_500_loc` — consistency_check.rs at 1234 LoC). Clippy clean.
+**Workspace baseline (corrected 2026-06-16, P1 hardening)**: TD-C now CLOSED (consistency_check.rs split → c1 PASS). The "1 pre-existing fail" baseline was wrong — stash-tests on clean HEAD `114b158` confirm **two** pre-existing fails remain: (1) `with_facts_empty_vec_equivalent_to_no_facts` (TD-013, kremory) and (2) `napi_surface_matches_substrate_or_skip_list` (kremory-napi — `parity-skip.toml` 103 entries > its own 100 cap). The napi one is invisible to `cargo test -p kremory` (cross-crate gate). Clippy clean; `cargo fmt --check` NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
 
 ### v0.2.3 DoD highlights (per impl spec §2)
 
@@ -92,7 +92,9 @@ All 5 phases shipped with zero `#[allow]` band-aids; every Quinn finding cause-f
 
 ### Still open
 
-- TD-C — `c1_module_exists_under_500_loc` failing (consistency_check.rs at 1234 LoC). Paired with ADR-050 split sprint. Pre-existing baseline, not a new regression.
+- ✅ TD-C — CLOSED 2026-06-16 (P1a, commit `01231d6`): consistency_check.rs split into mod/verify/audit (each <500 LoC); `c1_module_exists_under_500_loc` PASS. Done ahead of the ADR-050 sprint.
+- TD-013 — `with_facts_empty_vec_equivalent_to_no_facts` failing (empty-vec skip increments skip_extraction counter when it should not). Pre-existing baseline, confirmed via stash-test; scheduled for P2 (fix the bug per Rule 8, not skip).
+- napi parity-cap — `napi_surface_matches_substrate_or_skip_list` fails: `parity-skip.toml` has 103 entries > its own sanity cap of 100. Pre-existing; binding-layer drift (per substrate-first posture, binding parity work defers while substrate evolves). Fix = prune skip-list by refining `tracked_impl_types()`/`tracked_struct_types()` scope, not inflating the cap.
 - TD-005 / TD-012 / TD-016 / TD-029 / TD-030 / TD-032 / TD-034 — pre-existing, out-of-scope per prior deferrals.
 - TD-H (informal) — RISK-001 methodology hardening (multi-run mean ± SD).
 - Vera MED-04 deferred-queue OOM monitoring — spec'd, lands in v0.2.3 Phase 5.
