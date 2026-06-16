@@ -310,10 +310,10 @@ async fn main() -> Result<()> {
         ));
     }
     md.push_str("\n## Interpretation\n\n");
-    md.push_str(&format!(
+    md.push_str(
         "ADR-049 §5.5 claims Phase 1 NER < 100ms p50 hot-path.\n\n\
-         **Result by size**:\n"
-    ));
+         **Result by size**:\n",
+    );
     for r in &size_results {
         md.push_str(&format!(
             "- {} chars: p50={:.2}ms ({} target)\n",

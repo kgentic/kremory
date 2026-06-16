@@ -14,14 +14,19 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::memory::events::BatchPhase2Complete;
+
 use chrono::Utc;
 
+use crate::core::error::{IngestStatus, IngestionErrorKind};
 use crate::core::ingest::{Engine, SourceParams};
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
+use crate::core::sink::{IngestEventSink, IngestionError};
+use crate::memory::events::EnrichmentEventSink;
 
 use super::{
-    try_send_error, DeferredRequest, IngestError, IngestErrorKind, IngestRequest, RateLimit,
-    TokenBucketState,
+    batch_tracker::BatchTracker, try_send_error, DeferredRequest, IngestError, IngestErrorKind,
+    IngestRequest, RateLimit, TokenBucketState,
 };
 
 // ---------------------------------------------------------------------------
@@ -35,6 +40,10 @@ use super::{
 /// no entity writes). Entity writes + fact extraction are deferred to Phase 2
 /// (`process_deferred`).
 ///
+/// `sink` is propagated from [`worker_loop`] per ADR-052 Gap 1 (impl spec §3
+/// Phase 2).  Phase 3 wires the actual callsites; `sink` is accepted here so the
+/// signature is stable before Phase 3 lands.
+///
 /// Returns `Some(DeferredRequest)` when Phase 2 should be enqueued, or `None`
 /// on error (error already forwarded to `error_tx`).
 pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
@@ -42,7 +51,32 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
     req: IngestRequest,
     error_tx: &SyncSender<IngestError>,
     deferred_enabled: bool,
+    sink: Option<&dyn EnrichmentEventSink>,
 ) -> Option<DeferredRequest> {
+    // ── Fire-site 1: on_stage_change(Pending) — entry, before NER call ──────────
+    // ADR-052 Gap 1 §3.1 row 1 — triple-emit (ADR-2026-05-20 D1).
+    // Phase 5: callback_duration_ms wraps sink call (G7 slow-consumer detection).
+    let cb_start = std::time::Instant::now();
+    if let Some(s) = sink {
+        s.on_stage_change(IngestStatus::Pending);
+    }
+    metrics::counter!(
+        "kremory.sink.stage_transition_total",
+        "from" => "queued",
+        "to" => "Pending"
+    )
+    .increment(1);
+    metrics::histogram!(
+        "kremory.sink.callback_duration_ms",
+        "callback" => "on_stage_change",
+        "stage" => "Pending"
+    )
+    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+    tracing::info!(
+        text_len = req.text.len(),
+        "kremory.background.stage_change.pending"
+    );
+
     let start = std::time::Instant::now();
 
     // ADR-051 §Phase 3: call ingest_phase1_ner() (fast: episode INSERT + NER
@@ -79,6 +113,9 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
                     content_type: req.content_type,
                     episode_id: phase1_result.episode_id,
                     ner_entity_names,
+                    // Propagate batch_id so worker_loop can do terminal detection
+                    // and fire on_batch_phase2_complete (impl spec §6 Phase 4).
+                    batch_id: req.batch_id,
                 })
             } else {
                 None
@@ -89,6 +126,68 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
             metrics::histogram!("rql.background.ingest_duration_ms").record(elapsed_ms);
             metrics::counter!("rql.background.errors_total").increment(1);
             tracing::error!(elapsed_ms, error = %e, "kremory.background.phase1_failed");
+
+            // ── Fire-site 2: on_ingestion_error — Phase 1 NER failure ────────────
+            // ADR-052 Gap 1 §3.1 row 2 — triple-emit (ADR-2026-05-20 D1).
+            // IngestErrorKind mapping: Llm/Extraction/Resolution/Database/Embedding/Other
+            // → IngestionErrorKind::ProviderError (all Phase 1 failures are provider-level;
+            // episode_id unknown so entity_or_edge_ref = None).
+            let error_detail = e.to_string();
+            let ingestion_error_kind = match IngestErrorKind::from(&e) {
+                IngestErrorKind::Llm => IngestionErrorKind::ProviderError {
+                    provider_name: "llm".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Embedding => IngestionErrorKind::ProviderError {
+                    provider_name: "embedding".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Database => IngestionErrorKind::ProviderError {
+                    provider_name: "database".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Extraction => IngestionErrorKind::ParseFailure {
+                    stage: "phase1_extraction".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Resolution => IngestionErrorKind::ParseFailure {
+                    stage: "phase1_resolution".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Other => IngestionErrorKind::ProviderError {
+                    provider_name: "unknown".to_string(),
+                    detail: error_detail.clone(),
+                },
+            };
+            // HIGH-02 fix: derive error_kind_str from the actual variant so the metric
+            // label does not lie when Extraction/Resolution map to ParseFailure.
+            let error_kind_str = match &ingestion_error_kind {
+                IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
+                _ => "ProviderError",
+            };
+            // Phase 5: callback_duration_ms wraps on_ingestion_error (G7 slow-consumer detection).
+            let cb_start = std::time::Instant::now();
+            if let Some(s) = sink {
+                s.on_ingestion_error(IngestionError {
+                    entity_or_edge_ref: None,
+                    error_kind: ingestion_error_kind,
+                    is_retryable: true,
+                });
+            }
+            metrics::counter!(
+                "kremory.sink.ingestion_error_total",
+                "error_kind" => error_kind_str,
+                "phase" => "phase1"
+            )
+            .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_ingestion_error",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+            tracing::error!(error = %e, "kremory.background.ingestion_error.phase1");
+
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),
@@ -119,13 +218,27 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
 /// fact extraction step, emitting
 /// `kremory.ingest.llm_rate_limit_deferred_total{namespace}` per throttle.
 ///
+/// `sink` is propagated from [`worker_loop`] per ADR-052 Gap 1 (impl spec §3
+/// Phase 2).  Phase 3 wires the actual callsites inside this function and in
+/// `run_verify_stage` / `ingest_deferred`; `sink` is accepted here so the
+/// signature is stable before Phase 3 lands.
+///
 /// Errors are logged via metrics and the error channel but do NOT crash the worker.
+/// Outcome of one `process_deferred` call — used by `worker_loop` to update
+/// the `BatchProgress` counter without re-acquiring any state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DeferredOutcome {
+    Succeeded,
+    Failed,
+}
+
 pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
     req: DeferredRequest,
     error_tx: &SyncSender<IngestError>,
     bucket: &mut Option<TokenBucketState>,
-) {
+    sink: Option<&dyn EnrichmentEventSink>,
+) -> DeferredOutcome {
     let episode_id = req.episode_id;
     let ns = req.group_id.as_deref().unwrap_or("default");
 
@@ -150,7 +263,8 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                     .llm
                     .as_ref()
                     .map(|l| l.as_ref() as &dyn crate::core::provider::ChatProvider);
-                super::verify_stage::run_verify_stage(&req, gliner, verify_llm, &graph.graph).await
+                super::verify_stage::run_verify_stage(&req, gliner, verify_llm, &graph.graph, sink)
+                    .await
             }
             Err(e) => {
                 metrics::counter!(
@@ -173,7 +287,7 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
         // Path β: engine.extractor is an LLM extractor; no separate verify LLM needed.
         let extractor_ref: &dyn crate::core::intelligence::EntityExtractorDyn =
             graph.extractor.as_ref();
-        super::verify_stage::run_verify_stage(&req, extractor_ref, None, &graph.graph).await
+        super::verify_stage::run_verify_stage(&req, extractor_ref, None, &graph.graph, sink).await
     };
 
     let verify_elapsed_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
@@ -219,6 +333,64 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 episode_id,
             };
             try_send_error(error_tx, err);
+            // ── HIGH-03 fix: on_ingestion_error triple-emit for verify_stage Err ─────
+            // ADR-052 §3.1 row 15: on_ingestion_error MUST fire on Err from run_verify_stage.
+            // verify_stage already fires on_stage_change(Failed) internally — do NOT
+            // duplicate that here. Only on_ingestion_error is missing at this callsite.
+            // is_retryable=false: ghost-episode path continues, no retry mechanism.
+            let error_detail = e.to_string();
+            let ingestion_error_kind = match IngestErrorKind::from(&e) {
+                IngestErrorKind::Llm => IngestionErrorKind::ProviderError {
+                    provider_name: "llm".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Embedding => IngestionErrorKind::ProviderError {
+                    provider_name: "embedding".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Database => IngestionErrorKind::ProviderError {
+                    provider_name: "database".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Extraction => IngestionErrorKind::ParseFailure {
+                    stage: "verify_stage_extraction".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Resolution => IngestionErrorKind::ParseFailure {
+                    stage: "verify_stage_resolution".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Other => IngestionErrorKind::ProviderError {
+                    provider_name: "unknown".to_string(),
+                    detail: error_detail.clone(),
+                },
+            };
+            let error_kind_str = match &ingestion_error_kind {
+                IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
+                _ => "ProviderError",
+            };
+            // Phase 5: callback_duration_ms wraps on_ingestion_error (G7 slow-consumer detection).
+            let cb_start = std::time::Instant::now();
+            if let Some(s) = sink {
+                s.on_ingestion_error(IngestionError {
+                    entity_or_edge_ref: None,
+                    error_kind: ingestion_error_kind,
+                    is_retryable: false,
+                });
+            }
+            metrics::counter!(
+                "kremory.sink.ingestion_error_total",
+                "error_kind" => error_kind_str,
+                "phase" => "phase1_verify_fail"
+            )
+            .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_ingestion_error",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+            tracing::error!(episode_id, error = %e, "kremory.background.ingestion_error.verify_fail");
             // Fall through to fact extraction — entity write failing does not
             // block fact rows from being committed.
         }
@@ -257,6 +429,10 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             req.content_type,
             req.episode_id,
             &req.ner_entity_names,
+            // Coerce EnrichmentEventSink (supertrait) → &dyn IngestEventSink for
+            // ingest_deferred's inner callbacks (Phase 3c fire-sites).
+            // ADR-052 Gap 1 — sink propagation through the deferred pipeline.
+            sink.map(|s| s as &dyn IngestEventSink),
         )
         .await
     {
@@ -271,6 +447,30 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 facts_extracted,
                 "kremory.background.deferred_extraction completed"
             );
+
+            // ── Fire-site 3: on_stage_change(Complete) — ingest_deferred Ok ──────
+            // ADR-052 Gap 1 §3.1 row 3 — triple-emit (ADR-2026-05-20 D1).
+            // MED-02 fix: "from" must be a bounded stable label, not the function name.
+            // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+            let cb_start = std::time::Instant::now();
+            if let Some(s) = sink {
+                s.on_stage_change(IngestStatus::Complete);
+            }
+            metrics::counter!(
+                "kremory.sink.stage_transition_total",
+                "from" => "phase2",
+                "to" => "Complete"
+            )
+            .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_stage_change",
+                "stage" => "Complete"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+            tracing::info!(episode_id, "kremory.background.stage_change.complete");
+
+            DeferredOutcome::Succeeded
         }
         Err(e) => {
             let elapsed_ms = fact_start.elapsed().as_secs_f64() * 1000.0;
@@ -289,6 +489,87 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 error = %e,
                 "kremory.background.deferred_extraction failed — ghost episode"
             );
+
+            // ── Fire-site 4: on_stage_change(Failed) — ingest_deferred Err ───────
+            // ── Fire-site 5: on_ingestion_error — ingest_deferred Err ─────────────
+            // ADR-052 Gap 1 §3.1 rows 4+5 — triple-emit (ADR-2026-05-20 D1).
+            // IngestErrorKind mapping → IngestionErrorKind (D7: no episode_id label).
+            let error_detail = e.to_string();
+            let ingestion_error_kind = match IngestErrorKind::from(&e) {
+                IngestErrorKind::Llm => IngestionErrorKind::ProviderError {
+                    provider_name: "llm".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Embedding => IngestionErrorKind::ProviderError {
+                    provider_name: "embedding".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Database => IngestionErrorKind::ProviderError {
+                    provider_name: "database".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Extraction => IngestionErrorKind::ParseFailure {
+                    stage: "deferred_extraction".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Resolution => IngestionErrorKind::ParseFailure {
+                    stage: "deferred_resolution".to_string(),
+                    detail: error_detail.clone(),
+                },
+                IngestErrorKind::Other => IngestionErrorKind::ProviderError {
+                    provider_name: "unknown".to_string(),
+                    detail: error_detail.clone(),
+                },
+            };
+            // HIGH-02 fix: derive error_kind_str from the actual variant so the metric
+            // label does not lie when Extraction/Resolution map to ParseFailure.
+            let error_kind_str = match &ingestion_error_kind {
+                IngestionErrorKind::ParseFailure { .. } => "ParseFailure",
+                _ => "ProviderError",
+            };
+            // MED-02 fix: "from" label must be a bounded state name, not a function name.
+            // "phase2" is stable and non-state; normative from/to spec is Phase 7 follow-up.
+            // Phase 5: callback_duration_ms wraps both on_stage_change and on_ingestion_error.
+            // Two distinct histograms emitted (one per callback type) within the same block.
+            let cb_start = std::time::Instant::now();
+            if let Some(s) = sink {
+                s.on_stage_change(IngestStatus::Failed(error_detail.clone()));
+            }
+            metrics::counter!(
+                "kremory.sink.stage_transition_total",
+                "from" => "phase2",
+                "to" => "Failed"
+            )
+            .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_stage_change",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+            tracing::error!(episode_id, error = %e, "kremory.background.stage_change.failed");
+            let cb_start = std::time::Instant::now();
+            if let Some(s) = sink {
+                s.on_ingestion_error(IngestionError {
+                    entity_or_edge_ref: None,
+                    error_kind: ingestion_error_kind,
+                    is_retryable: false,
+                });
+            }
+            metrics::counter!(
+                "kremory.sink.ingestion_error_total",
+                "error_kind" => error_kind_str,
+                "phase" => "phase2"
+            )
+            .increment(1);
+            metrics::histogram!(
+                "kremory.sink.callback_duration_ms",
+                "callback" => "on_ingestion_error",
+                "stage" => "Failed"
+            )
+            .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+            tracing::error!(episode_id, error = %e, "kremory.background.ingestion_error.phase2");
+
             let err = IngestError {
                 text_preview: req.text.chars().take(256).collect(),
                 failed_at: Utc::now(),
@@ -299,6 +580,8 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                 episode_id: req.episode_id,
             };
             try_send_error(error_tx, err);
+
+            DeferredOutcome::Failed
         }
     }
 }
@@ -308,6 +591,14 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
 // ---------------------------------------------------------------------------
 
 // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+//
+// `sink`: Arc owned here; each call to `process_item` / `process_deferred` borrows
+// `sink.as_deref()`.  Per ADR-052 Gap 1; impl spec §3 Phase 2.
+//
+// `batch_tracker`: shared with the caller-side `BackgroundIngestor` handle.
+// After each `process_deferred` terminal, the worker increments the appropriate
+// counter and, when `is_terminal()`, fires `on_batch_phase2_complete` then
+// removes the entry.  Per impl spec §6 Phase 4 DoD item 6.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: Engine<L, Emb>,
@@ -317,6 +608,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     stop: Arc<AtomicBool>,
     deferred_enabled: bool,
     llm_rate_limit: Option<RateLimit>,
+    sink: Option<Arc<dyn EnrichmentEventSink>>,
+    batch_tracker: BatchTracker,
 ) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -338,11 +631,18 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                 while let Ok(req) = work_rx.try_recv() {
                     queued.fetch_sub(1, Ordering::Relaxed);
                     if let Some(deferred) =
-                        process_item(&graph, req, &error_tx, deferred_enabled).await
+                        process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                            .await
                     {
                         deferred_queue.push_back(deferred);
                     }
                 }
+                // ── Stop-flag drain: fire on_batch_phase2_complete(interrupted) ──────
+                // ADR-052 Phase 7 — close the silent-hang foot-gun: any batch with
+                // outstanding items at stop-flag drain time receives an "interrupted"
+                // terminal event so consumers don't wait indefinitely.
+                // D7: batch_id in tracing field only; "interrupted" is a bounded label.
+                fire_interrupted_batches(&batch_tracker, sink.as_deref());
                 break;
             }
 
@@ -351,7 +651,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                     let ner_depth = queued.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
                     metrics::gauge!("rql.background.queue_depth").set(ner_depth as f64);
                     if let Some(deferred) =
-                        process_item(&graph, req, &error_tx, deferred_enabled).await
+                        process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                            .await
                     {
                         deferred_queue.push_back(deferred);
                     }
@@ -366,7 +667,21 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         let depth = deferred_queue.len();
                         metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
                         tracing::info!(depth, "kremory.background.deferred_queue draining");
-                        process_deferred(&graph, deferred, &error_tx, &mut bucket).await;
+                        let batch_id = deferred.batch_id.clone();
+                        let outcome = process_deferred(
+                            &graph,
+                            deferred,
+                            &error_tx,
+                            &mut bucket,
+                            sink.as_deref(),
+                        )
+                        .await;
+                        fire_batch_complete_if_terminal(
+                            &batch_tracker,
+                            batch_id,
+                            outcome,
+                            sink.as_deref(),
+                        );
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
@@ -375,7 +690,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                     while let Ok(req) = work_rx.try_recv() {
                         queued.fetch_sub(1, Ordering::Relaxed);
                         if let Some(deferred) =
-                            process_item(&graph, req, &error_tx, deferred_enabled).await
+                            process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                                .await
                         {
                             deferred_queue.push_back(deferred);
                         }
@@ -389,6 +705,17 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                                 abandoned,
                                 "kremory.background.deferred_queue abandoned (stop signal)"
                             );
+                            // Quinn LOW-P7-02: fire interrupted events for batches
+                            // with outstanding items before breaking (stop fires
+                            // mid-Disconnected-drain path).
+                            // ADR-052 §3.4 stop-flag drain policy — closes the
+                            // narrow race where stop fires after Disconnected arm
+                            // begins draining. The top-of-loop check at entry (line ~628)
+                            // only covers the steady-state case; this covers the
+                            // mid-drain case. Idempotent: fire_interrupted_batches
+                            // uses tracker.retain and double-fire is safe (entry
+                            // already removed after fire).
+                            fire_interrupted_batches(&batch_tracker, sink.as_deref());
                             break;
                         }
                         let depth = deferred_queue.len();
@@ -397,13 +724,208 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                             depth,
                             "kremory.background.deferred_queue drain-on-disconnect"
                         );
-                        process_deferred(&graph, deferred, &error_tx, &mut bucket).await;
+                        let batch_id = deferred.batch_id.clone();
+                        let outcome = process_deferred(
+                            &graph,
+                            deferred,
+                            &error_tx,
+                            &mut bucket,
+                            sink.as_deref(),
+                        )
+                        .await;
+                        fire_batch_complete_if_terminal(
+                            &batch_tracker,
+                            batch_id,
+                            outcome,
+                            sink.as_deref(),
+                        );
                     }
                     break;
                 }
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Batch terminal helper — called after every process_deferred completion
+// ---------------------------------------------------------------------------
+
+/// Increment the batch counter for `batch_id` (if set) and, when the batch
+/// reaches terminal state, fire the triple-emit for `on_batch_phase2_complete`
+/// then remove the entry from the tracker.
+///
+/// ## Triple-emit (ADR-2026-05-20 D1)
+///
+/// 1. `sink.on_batch_phase2_complete(BatchPhase2Complete { … })`
+/// 2. `metrics::counter!("kremory.sink.batch_complete_total", "outcome" => …)`
+/// 3. `tracing::info!(batch_id = …, succeeded, skipped, failed, duration_ms, …)`
+///
+/// ## D7 cardinality discipline
+///
+/// `batch_id` appears as a **tracing field** only — NEVER as a metric label.
+/// `outcome` is a bounded three-value string and IS allowed as a metric label.
+///
+/// Per impl spec §6 Phase 4 DoD item 6.
+fn fire_batch_complete_if_terminal(
+    batch_tracker: &BatchTracker,
+    batch_id: Option<String>,
+    outcome: DeferredOutcome,
+    sink: Option<&dyn EnrichmentEventSink>,
+) {
+    let Some(bid) = batch_id else {
+        return; // No batch tracking for this episode.
+    };
+
+    // Short critical section: lock → read → mutate → release.
+    // No .await is held across the lock (std::sync::Mutex is correct here).
+    let terminal_payload = {
+        let mut tracker = batch_tracker.lock().unwrap_or_else(|p| p.into_inner());
+
+        let Some(progress) = tracker.get_mut(&bid) else {
+            // Entry was already removed (double-fire guard) or never registered.
+            return;
+        };
+
+        match outcome {
+            DeferredOutcome::Succeeded => progress.succeeded += 1,
+            DeferredOutcome::Failed => progress.failed += 1,
+        }
+
+        if !progress.is_terminal() {
+            return; // Batch not yet complete; release lock.
+        }
+
+        // Batch is terminal — capture payload before removing the entry.
+        let payload = BatchPhase2Complete {
+            batch_id: bid.clone(),
+            succeeded: progress.succeeded,
+            skipped: progress.skipped,
+            failed: progress.failed,
+            duration_ms: progress.started_at.elapsed().as_millis() as u64,
+        };
+        tracker.remove(&bid);
+        payload
+        // Lock released here (tracker guard drops at end of block).
+    };
+
+    // ── Fire-site: on_batch_phase2_complete — triple-emit ────────────────────
+    // ADR-052 Gap 1 §3.2 + impl spec §6 Phase 4 DoD item 6.
+    // D7: batch_id in tracing field; outcome as bounded metric label.
+    //
+    // NOTE: `skipped` is always 0 at v0.2.3 — no code path increments it.
+    // Phase 6 test wiring (per Tessa §5.4) introduces the skip path when
+    // `enrich_per_episode = false`; the outcome_str logic already handles
+    // the all-skipped case implicitly via `failed == 0` → "success".
+    // Per Quinn LOW-2 review finding.
+    let outcome_str = if terminal_payload.failed == 0 {
+        "success"
+    } else if terminal_payload.succeeded == 0 {
+        "all_failed"
+    } else {
+        "partial"
+    };
+    // Phase 5: callback_duration_ms wraps on_batch_phase2_complete (G7 slow-consumer detection).
+    let cb_start = std::time::Instant::now();
+    if let Some(s) = sink {
+        s.on_batch_phase2_complete(terminal_payload.clone());
+    }
+    metrics::counter!(
+        "kremory.sink.batch_complete_total",
+        "outcome" => outcome_str
+    )
+    .increment(1);
+    metrics::histogram!(
+        "kremory.sink.callback_duration_ms",
+        "callback" => "on_batch_phase2_complete",
+        "stage" => "Complete"
+    )
+    .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+    tracing::info!(
+        batch_id = %terminal_payload.batch_id,
+        succeeded = terminal_payload.succeeded,
+        skipped = terminal_payload.skipped,
+        failed = terminal_payload.failed,
+        duration_ms = terminal_payload.duration_ms,
+        "kremory.background.batch_phase2_complete"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Stop-flag interrupted batch helper
+// ---------------------------------------------------------------------------
+
+/// Fire `on_batch_phase2_complete(outcome="interrupted")` for every batch
+/// in `batch_tracker` that still has outstanding items (i.e. episodes that
+/// never reached Phase 2 terminal state because the stop flag fired first).
+///
+/// Called from `worker_loop` immediately before `break` in the stop-flag
+/// drain path.  Closes the silent-hang foot-gun: consumers blocking on
+/// `on_batch_phase2_complete` receive an `"interrupted"` event rather than
+/// waiting indefinitely.
+///
+/// ## Triple-emit (ADR-2026-05-20 D1 / Phase 7 §E)
+///
+/// 1. `sink.on_batch_phase2_complete(BatchPhase2Complete { … })`
+/// 2. `metrics::counter!("kremory.sink.batch_complete_total", "outcome" => "interrupted")`
+/// 3. `tracing::warn!(batch_id = …, …, "kremory.background.batch_phase2_interrupted")`
+///
+/// ## D7 cardinality discipline
+///
+/// `batch_id` appears as a **tracing field** only — NEVER as a metric label.
+/// `outcome = "interrupted"` is a bounded string and IS allowed as a metric label.
+fn fire_interrupted_batches(batch_tracker: &BatchTracker, sink: Option<&dyn EnrichmentEventSink>) {
+    // Short critical section: drain all entries with outstanding items.
+    let interrupted: Vec<BatchPhase2Complete> = {
+        let mut tracker = batch_tracker.lock().unwrap_or_else(|p| p.into_inner());
+        let mut payloads = Vec::new();
+        tracker.retain(|bid, progress| {
+            if !progress.is_terminal() {
+                // Outstanding items — emit interrupted event.
+                payloads.push(BatchPhase2Complete {
+                    batch_id: bid.clone(),
+                    succeeded: progress.succeeded,
+                    skipped: progress.skipped,
+                    failed: progress.failed,
+                    duration_ms: progress.started_at.elapsed().as_millis() as u64,
+                });
+                false // remove from tracker
+            } else {
+                true // already terminal (race: completed just before stop flag) — leave for normal path
+            }
+        });
+        payloads
+        // Lock released here.
+    };
+
+    for payload in interrupted {
+        // ── Fire-site: on_batch_phase2_complete(interrupted) — triple-emit ────
+        // ADR-052 Phase 7 §E + arch spec §3.4 stop-flag drain policy.
+        // D7: batch_id in tracing field only; "interrupted" is bounded label.
+        let cb_start = std::time::Instant::now();
+        if let Some(s) = sink {
+            s.on_batch_phase2_complete(payload.clone());
+        }
+        metrics::counter!(
+            "kremory.sink.batch_complete_total",
+            "outcome" => "interrupted"
+        )
+        .increment(1);
+        metrics::histogram!(
+            "kremory.sink.callback_duration_ms",
+            "callback" => "on_batch_phase2_complete",
+            "stage" => "interrupted"
+        )
+        .record(cb_start.elapsed().as_secs_f64() * 1000.0);
+        tracing::warn!(
+            batch_id = %payload.batch_id,
+            succeeded = payload.succeeded,
+            skipped = payload.skipped,
+            failed = payload.failed,
+            duration_ms = payload.duration_ms,
+            "kremory.background.batch_phase2_interrupted"
+        );
+    }
 }
 
 // Tests for deferred pipeline behaviour live in ingestor.rs (co-located with

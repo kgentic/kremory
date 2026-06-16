@@ -14,6 +14,13 @@ use thiserror::Error;
 /// `Deduplicating` and `Invalidating` are optional sub-phases that fire only
 /// when facts are extracted and contradictions are found/resolved, respectively.
 ///
+/// ## SQL column mapping
+///
+/// The `episode_processing_status` SQL column is a 4-state subset of this enum.
+/// Use `from_sql_status` in `crate::core::sink` (crate-internal helper) to bridge SQL strings to this enum.
+/// There is NO inverse bridge; `Complete`, `Deduplicating`, and `Invalidating`
+/// have no SQL column equivalent.
+///
 /// ## `#[non_exhaustive]` — forward-compat contract
 ///
 /// This attribute is load-bearing: match arms MUST include a `_` catch-all so
