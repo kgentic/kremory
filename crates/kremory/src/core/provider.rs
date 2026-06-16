@@ -723,9 +723,7 @@ impl ChatProvider for RecordReplayChatProvider {
                             .to_string(),
                     )
                 })?;
-                inner
-                    .chat_with_tools(messages, tools, json_schema)
-                    .await
+                inner.chat_with_tools(messages, tools, json_schema).await
             }
             VcrMode::Record => {
                 let inner = self.inner.as_ref().ok_or_else(|| {
@@ -735,9 +733,7 @@ impl ChatProvider for RecordReplayChatProvider {
                     )
                 })?;
                 let fp = self.fingerprint(messages, tools, json_schema.as_ref())?;
-                let response = inner
-                    .chat_with_tools(messages, tools, json_schema)
-                    .await?;
+                let response = inner.chat_with_tools(messages, tools, json_schema).await?;
                 let text = response.text().unwrap_or_default();
                 {
                     let mut guard = self
@@ -1614,8 +1610,7 @@ mod tests {
             });
 
             // Record
-            let recorder =
-                RecordReplayChatProvider::record(stub.clone(), cassette.clone());
+            let recorder = RecordReplayChatProvider::record(stub.clone(), cassette.clone());
             let msgs = vec![chat_msg_user("Alice met Bob in Boston.")];
             let recorded = recorder
                 .chat_with_tools(&msgs, None, None)
@@ -1628,8 +1623,7 @@ mod tests {
             recorder.flush().expect("flush should write the cassette");
 
             // Replay — same request shape ⇒ same fingerprint ⇒ recorded response.
-            let player =
-                RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
+            let player = RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
             let replayed = player
                 .chat_with_tools(&msgs, None, None)
                 .await
@@ -1652,8 +1646,7 @@ mod tests {
                 model: "gemma4-e2b:latest".to_string(),
                 response: "recorded".to_string(),
             });
-            let recorder =
-                RecordReplayChatProvider::record(stub, cassette.clone());
+            let recorder = RecordReplayChatProvider::record(stub, cassette.clone());
             let recorded_msgs = vec![chat_msg_user("this exact request was recorded")];
             recorder
                 .chat_with_tools(&recorded_msgs, None, None)
@@ -1661,8 +1654,7 @@ mod tests {
                 .expect("record should succeed");
             recorder.flush().expect("flush");
 
-            let player =
-                RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
+            let player = RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
             // A DIFFERENT request ⇒ different fingerprint ⇒ MISS.
             let other_msgs = vec![chat_msg_user("a totally different unrecorded request")];
             let err = player
@@ -1693,16 +1685,14 @@ mod tests {
             });
 
             // Record + Passthrough delegate to inner.model().
-            let recorder =
-                RecordReplayChatProvider::record(stub.clone(), cassette.clone());
+            let recorder = RecordReplayChatProvider::record(stub.clone(), cassette.clone());
             assert_eq!(recorder.model(), "gemma4-e2b:latest");
             let pass = RecordReplayChatProvider::passthrough(stub.clone());
             assert_eq!(pass.model(), "gemma4-e2b:latest");
 
             // Replay returns the cassette header model.
             recorder.flush().expect("flush");
-            let player =
-                RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
+            let player = RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
             assert_eq!(
                 player.model(),
                 "gemma4-e2b:latest",
@@ -1743,8 +1733,7 @@ mod tests {
             let msgs = vec![chat_msg_user("Alice met Bob in Boston.")];
 
             // Record with the populated schema.
-            let recorder =
-                RecordReplayChatProvider::record(stub.clone(), cassette.clone());
+            let recorder = RecordReplayChatProvider::record(stub.clone(), cassette.clone());
             recorder
                 .chat_with_tools(&msgs, None, Some(schema_a.clone()))
                 .await
@@ -1752,8 +1741,7 @@ mod tests {
             recorder.flush().expect("flush should write the cassette");
 
             // Replay with the SAME schema ⇒ same fingerprint ⇒ recorded response.
-            let player =
-                RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
+            let player = RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
             let replayed = player
                 .chat_with_tools(&msgs, None, Some(schema_a.clone()))
                 .await
@@ -1776,8 +1764,7 @@ mod tests {
                 })),
                 strict: Some(false),
             };
-            let player2 =
-                RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
+            let player2 = RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
             let err = player2
                 .chat_with_tools(&msgs, None, Some(schema_b))
                 .await
