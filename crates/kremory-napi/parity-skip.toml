@@ -574,3 +574,20 @@ revisit = "v0.3.0"
 symbol = "Memory::temporal_graph_for_test"
 reason = "Test-only accessor (cfg(any(test, feature = 'test-utils'))). Never available in release builds; not part of stable API surface. No napi exposure needed."
 revisit = "never"
+
+# ── ADR-052 v0.2.3 sink wiring ───────────────────────────────────────────────
+
+[[skip]]
+symbol = "MemoryBuilder::with_sink"
+reason = "ADR-052 v0.2.3 sink plumbing: ergonomic alias for with_event_sink that accepts impl EnrichmentEventSink. napi-rs binding touches are explicitly out-of-scope for v0.2.3 per 00-plan.md hard constraint. Revisit when napi adds JS-side event sink (ThreadsafeFunction<Mode::NonBlocking> per D4 thread-context contract)."
+revisit = "v0.3.0"
+
+[[skip]]
+symbol = "IngestorConfig::with_sink"
+reason = "ADR-052 v0.2.3 sink plumbing: builder method on IngestorConfig. BackgroundIngestor is not directly exposed via napi (consumers use JsMemory facade). No napi exposure needed at v0.2.3."
+revisit = "v0.3.0"
+
+[[skip]]
+symbol = "Memory::send_batched"
+reason = "v0.2.3 follow-up (2026-06-15): send_batched now routes through BackgroundIngestorGraphHandle when sink is configured (arch spec §3.2 Option A), fixing Quinn MED-3 / Phase 7 facade gap. JS binding still deferred: napi JsMemory does not expose sink configuration (MemoryBuilder::with_sink is also skipped above). When napi sink binding lands (v0.3.0), send_batched will naturally get BatchTracker + on_batch_phase2_complete via the same BackgroundIngestorGraphHandle path."
+revisit = "v0.3.0"

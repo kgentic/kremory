@@ -186,6 +186,56 @@ pub(crate) async fn open_graph_no_llm(
     Ok((handle, graph_for_facade))
 }
 
+/// Open (or create) the libSQL database at `path` and return a raw
+/// `EngineGraphHandle` (not type-erased) alongside `Arc<TemporalGraph>`.
+///
+/// Used exclusively by `MemoryBuilder::into_future` when `.with_sink()` is
+/// configured — in that case the builder needs `Arc<EngineGraphHandle>` to
+/// pass to `BackgroundIngestorGraphHandle::new` (which holds both the
+/// `BackgroundIngestor` and the `EngineGraphHandle` delegate).
+///
+/// Two separate calls to this function open two separate libSQL connections
+/// to the same database file.  libSQL WAL mode serialises concurrent writes;
+/// safety verified empirically by Spike B + Spike C in
+/// `.ai-docs/specs/v0-2-3-followup-dual-path-consolidation-arch-spec-2026-06-15.md §6`.
+///
+/// Per arch spec §3.3 (two-Engine WAL safety note).
+pub(crate) async fn open_engine_handle(
+    path: impl AsRef<Path>,
+    llm: Arc<dyn ChatProvider>,
+    embedder: Arc<dyn DynEmbeddingProvider>,
+    embedding_dim: Option<usize>,
+    allowed_entity_types: Vec<String>,
+) -> Result<(EngineGraphHandle, Arc<TemporalGraph>)> {
+    let path_str = path
+        .as_ref()
+        .to_str()
+        .ok_or_else(|| MemoryError::Other("path contains non-UTF-8 characters".into()))?;
+
+    let resolved_dim = embedding_dim.unwrap_or(384);
+    let graph = Arc::new(
+        TemporalGraph::open_with_dim(path_str, resolved_dim)
+            .await
+            .map_err(MemoryError::Core)?,
+    );
+    let graph_for_facade = Arc::clone(&graph);
+
+    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    if !allowed_entity_types.is_empty() {
+        config_builder = config_builder.allowed_entity_types(allowed_entity_types);
+    }
+    let config = config_builder.build().map_err(MemoryError::Core)?;
+
+    let engine = Engine::new(
+        graph,
+        Arc::new(ArcChatProvider::new(llm)),
+        Arc::new(ArcEmbedder(embedder)),
+        config,
+    );
+
+    Ok((EngineGraphHandle::new(engine), graph_for_facade))
+}
+
 // ── Tier 1 shortcuts ──────────────────────────────────────────────────────────
 
 /// Env-detection: OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err.

@@ -3,12 +3,44 @@ use thiserror::Error;
 
 /// Status of a Phase 2 (per-episode enrichment) run.
 ///
-/// Per ADR D.6.3 — canonical ingest status enum.
+/// Per ADR D.6.3 + ADR-052 D5 — canonical ingest status enum.
+///
+/// ## Phase 2 state sequence (successful episode)
+///
+/// ```text
+/// Pending → Extracting → EntitiesReady → (Deduplicating) → (Invalidating) → Complete
+/// ```
+///
+/// `Deduplicating` and `Invalidating` are optional sub-phases that fire only
+/// when facts are extracted and contradictions are found/resolved, respectively.
+///
+/// ## SQL column mapping
+///
+/// The `episode_processing_status` SQL column is a 4-state subset of this enum.
+/// Use `from_sql_status` in `crate::core::sink` (crate-internal helper) to bridge SQL strings to this enum.
+/// There is NO inverse bridge; `Complete`, `Deduplicating`, and `Invalidating`
+/// have no SQL column equivalent.
+///
+/// ## `#[non_exhaustive]` — forward-compat contract
+///
+/// This attribute is load-bearing: match arms MUST include a `_` catch-all so
+/// that future variant additions remain additive (semver minor). DO NOT remove it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum IngestStatus {
     Pending,
     Extracting,
+    /// Phase 2a complete: entities are written and queryable via
+    /// `Memory::recall_entities()`. Facts extraction has not yet begun.
+    ///
+    /// Corresponds to SQL `'Verified'` in `episode_processing_status`.
+    /// `Memory::wait_for_processing` resolves when this state is reached
+    /// (SQL reaches `'Verified'`).
+    ///
+    /// Added in v0.2.3 (ADR-052 D5 — Phase 2a/2b event granularity);
+    /// re-established by the ADR-052 Gap 1 sink-callsite cause-fix after the
+    /// fb85ba8 dual-path consolidation regressed it.
+    EntitiesReady,
     Deduplicating,
     Invalidating,
     Complete,
