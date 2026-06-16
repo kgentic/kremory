@@ -383,14 +383,21 @@ pub async fn verify_batch_for_candidates(
                     libsql::params![entity_id.clone()],
                 )
                 .await
-                .map_err(|e| crate::core::error::Error::Other(anyhow::anyhow!("rowid lookup '{}': {e}", entity_id)))?;
-            if let Some(row) = rows
-                .next()
-                .await
-                .map_err(|e| crate::core::error::Error::Other(anyhow::anyhow!("rowid row '{}': {e}", entity_id)))?
-            {
-                row.get(0)
-                    .map_err(|e| crate::core::error::Error::Other(anyhow::anyhow!("rowid col '{}': {e}", entity_id)))?
+                .map_err(|e| {
+                    crate::core::error::Error::Other(anyhow::anyhow!(
+                        "rowid lookup '{}': {e}",
+                        entity_id
+                    ))
+                })?;
+            if let Some(row) = rows.next().await.map_err(|e| {
+                crate::core::error::Error::Other(anyhow::anyhow!("rowid row '{}': {e}", entity_id))
+            })? {
+                row.get(0).map_err(|e| {
+                    crate::core::error::Error::Other(anyhow::anyhow!(
+                        "rowid col '{}': {e}",
+                        entity_id
+                    ))
+                })?
             } else {
                 // Entity not yet in DB — Stage 2 ingest-time flow.
                 // rowid = -1 is a sentinel; verify_batch skips DB writes for these.
@@ -458,9 +465,7 @@ pub async fn verify_batch_for_candidates(
             }
             VerifyAction::Correct => {
                 let new_type_id = vbd.new_type_id.unwrap_or_else(|| {
-                    unreachable!(
-                        "VerifyAction::Correct must always carry new_type_id (SCOPE-001)"
-                    )
+                    unreachable!("VerifyAction::Correct must always carry new_type_id (SCOPE-001)")
                 });
                 counter!(
                     "kremory.verify_batch_for_candidates.decisions_total",
