@@ -45,7 +45,11 @@ pub use pipeline::{EntityCandidate, IngestPhase1Result, ResolvedDecision, Upsert
 ///
 /// All fields are `None` / empty by default — callers that don't have source
 /// provenance pass `SourceParams::default()` and the columns stay NULL.
-#[derive(Debug, Default, Clone)]
+///
+/// `Debug` is hand-written (not derived) because the `sink` field holds a
+/// trait object (`dyn IngestEventSink`) that is not `Debug`. The manual impl
+/// reports whether a sink is wired without requiring `Debug` on the trait.
+#[derive(Default, Clone)]
 pub struct SourceParams {
     /// Stable identifier for the originating source document or event.
     /// Caller-defined; substrate treats it as an opaque key for round-trip lookup.
@@ -88,6 +92,35 @@ pub struct SourceParams {
     /// Backs the facade `RememberRequest::skip_extraction()` builder method;
     /// default `false` preserves pre-v0.1.8 full-pipeline behavior.
     pub skip_extraction: bool,
+    /// ADR-052 Gap 1 — per-episode event sink fired synchronously at the real
+    /// extraction/edge/stage-transition call sites inside [`Engine::ingest_with`].
+    ///
+    /// This carries the **core-layer** [`IngestEventSink`](crate::core::sink::IngestEventSink)
+    /// trait (NOT the memory-layer `EnrichmentEventSink` supertrait) so the core
+    /// layer stays free of a `core → memory` dependency. The memory layer
+    /// (`engine_handle::graph_ingest_episode`) coerces its
+    /// `Arc<dyn EnrichmentEventSink>` into this `Arc<dyn IngestEventSink>` via
+    /// the supertrait `as`-cast before calling `ingest`.
+    ///
+    /// `None` (default) = no sink wired; all fire-site call sites are guarded by
+    /// `if let Some(s) = &source_params.sink`. Re-established by the ADR-052
+    /// Gap 1 sink-callsite cause-fix after the fb85ba8 consolidation regressed
+    /// the original 737e152/34fdc60 fire-sites.
+    pub sink: Option<Arc<dyn crate::core::sink::IngestEventSink>>,
+}
+
+impl std::fmt::Debug for SourceParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceParams")
+            .field("source_id", &self.source_id)
+            .field("source_uri", &self.source_uri)
+            .field("recorded_at", &self.recorded_at)
+            .field("entity_types_override", &self.entity_types_override)
+            .field("pre_pinned_facts", &self.pre_pinned_facts)
+            .field("skip_extraction", &self.skip_extraction)
+            .field("sink", &self.sink.as_ref().map(|_| "<IngestEventSink>"))
+            .finish()
+    }
 }
 
 /// Core-level pre-pinned fact passed via [`SourceParams`] (ADR-035 §5).

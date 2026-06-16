@@ -1366,17 +1366,31 @@ impl TemporalGraph {
     // === Episodic Edge Methods ===
 
     /// Insert an episodic edge (MENTIONS link from episode to entity).
+    ///
+    /// `entity_group_id` MUST be the namespace the referenced entity was stored
+    /// under (`None` ⇒ `'default'`). Migration 006 added the composite FK
+    /// `(entity_id, entity_group_id) REFERENCES entities(id, group_id)`; the
+    /// `entity_group_id` column defaults to `'default'`. Omitting the namespace
+    /// for a non-`'default'` entity makes the row reference `(entity_id,
+    /// 'default')`, for which no parent row exists — the FK then VIOLATES and the
+    /// edge silently fails to insert in namespaced mode. Threading the entity's
+    /// real namespace here lets the composite FK resolve so edges persist (and
+    /// `on_edge_added` fires) for namespaced ingests too.
     pub async fn insert_episodic_edge(
         &self,
         episode_id: i64,
         entity_id: &str,
+        entity_group_id: Option<&str>,
         role: &str,
     ) -> Result<i64> {
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
+        // None ⇒ 'default', matching the entities-table convention
+        // (`insert_entity_with_group`) so the composite FK lines up.
+        let effective_group_id = entity_group_id.unwrap_or("default");
         self.conn.execute(
-            "INSERT INTO episodic_edges (episode_id, entity_id, role, recorded_at) VALUES (?1, ?2, ?3, ?4)",
-            libsql::params![episode_id, entity_id, role, now],
+            "INSERT INTO episodic_edges (episode_id, entity_id, entity_group_id, role, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            libsql::params![episode_id, entity_id, effective_group_id, role, now],
         ).await?;
         let edge_id = self.conn.last_insert_rowid();
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
@@ -2570,7 +2584,7 @@ mod tests {
             .await
             .unwrap();
         let edge_id = g
-            .insert_episodic_edge(ep_id, "alice", "mentioned")
+            .insert_episodic_edge(ep_id, "alice", None, "mentioned")
             .await
             .unwrap();
         assert!(edge_id > 0);
@@ -3080,13 +3094,13 @@ mod tests {
         g.insert_fact("alice", "knows", None, Some("bob"), now, 0.9, None, None)
             .await
             .unwrap();
-        // insert_episodic_edge: (episode_id: i64, entity_id, role)
+        // insert_episodic_edge: (episode_id: i64, entity_id, entity_group_id, role)
         // Must have a valid episode first (FK constraint).
         let ep_id = g
             .insert_episode("test episode", now, None, None)
             .await
             .unwrap();
-        g.insert_episodic_edge(ep_id, "alice", "subject")
+        g.insert_episodic_edge(ep_id, "alice", None, "subject")
             .await
             .unwrap();
 
