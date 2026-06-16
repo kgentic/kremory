@@ -185,10 +185,7 @@ pub(super) struct AuditRowParams<'a> {
     pub(super) run_id: &'a str,
 }
 
-pub(super) async fn write_audit_row(
-    db: &libsql::Connection,
-    p: AuditRowParams<'_>,
-) -> Result<()> {
+pub(super) async fn write_audit_row(db: &libsql::Connection, p: AuditRowParams<'_>) -> Result<()> {
     db.execute(
         "INSERT INTO dream_pass4_audit \
          (entity_id, pre_type_id, post_type_id, verify_confidence, verify_model, run_id) \
