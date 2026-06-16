@@ -107,6 +107,51 @@ check_metric \
     "background\|queue_depth" \
     '"rql\.background\.queue_depth"'
 
+# ── v0.2.3 Phase 7: sink wiring metrics (Tessa §8) ──────────────────────────
+#
+# Each sink fire-site emits a triple: sink callback + metrics emit + tracing emit.
+# These checks verify the metrics + tracing halves are present in source.
+#
+# on_dedup_merge: deferred — merge logic lives in ingest_with, not wired in v0.2.3.
+
+check_metric \
+    "kremory.sink.stage_transition_total" \
+    "stage_change\|stage_transition" \
+    '"kremory\.sink\.stage_transition_total"'
+
+check_metric \
+    "kremory.sink.entity_extracted_total" \
+    "entity_extracted\|on_entity_extracted" \
+    '"kremory\.sink\.entity_extracted_total"'
+
+check_metric \
+    "kremory.sink.edge_added_total" \
+    "edge_added\|on_edge_added" \
+    '"kremory\.sink\.edge_added_total"'
+
+check_metric \
+    "kremory.sink.ingestion_error_total" \
+    "ingestion_error\|on_ingestion_error" \
+    '"kremory\.sink\.ingestion_error_total"'
+
+check_metric \
+    "kremory.sink.contradiction_total" \
+    "contradiction\|on_contradiction" \
+    '"kremory\.sink\.contradiction_total"'
+
+check_metric \
+    "kremory.sink.batch_complete_total" \
+    "batch_phase2_complete\|batch_complete" \
+    '"kremory\.sink\.batch_complete_total"'
+
+check_metric \
+    "kremory.sink.callback_duration_ms" \
+    "callback_duration\|callback.*duration" \
+    '"kremory\.sink\.callback_duration_ms"'
+
+# NOTE: kremory.sink.dedup_merge_total is deferred (on_dedup_merge not wired at v0.2.3).
+# This check is intentionally omitted. Add when on_dedup_merge lands (ADR-050 scope).
+
 echo ""
 if [[ "${FAIL}" -eq 0 ]]; then
     echo "=== PASS: all SLO metrics satisfy dual-emit invariant ==="

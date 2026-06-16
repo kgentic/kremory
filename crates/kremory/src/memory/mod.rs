@@ -29,6 +29,7 @@
 //!   batch consolidation recipe (`run_dream_phase`) + opinionated retrieval
 //!   defaults over core's hybrid search + context-block templates.
 
+pub(crate) mod background_ingestor_handle;
 pub mod dream_phase;
 pub mod engine_handle;
 pub mod events;
@@ -39,6 +40,7 @@ pub mod scheduler;
 pub mod stub;
 pub mod types;
 
+pub(crate) use background_ingestor_handle::BackgroundIngestorGraphHandle;
 pub use engine_handle::EngineGraphHandle;
 pub use graph::GraphHandle;
 pub use scheduler::{DreamSchedule, DreamSchedulerHandle};

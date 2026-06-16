@@ -262,9 +262,10 @@ async fn verify_stage_path_alpha_emits_success_counter() {
         content_type: None,
         episode_id,
         ner_entity_names: vec!["Alice".to_string(), "Bob".to_string()],
+        batch_id: None,
     };
 
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph).await;
+    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
     assert!(
         result.is_ok(),
         "Path α must return Ok; got: {:?}",
@@ -319,10 +320,11 @@ async fn verify_stage_path_beta_emits_success_counter() {
         content_type: None,
         episode_id,
         ner_entity_names: vec!["Carol".to_string(), "Globex".to_string()],
+        batch_id: None,
     };
 
     // Path β: verify_llm = None.
-    let result = run_verify_stage(&request, &extractor, None, &graph).await;
+    let result = run_verify_stage(&request, &extractor, None, &graph, None).await;
     assert!(
         result.is_ok(),
         "Path β must return Ok; got: {:?}",
@@ -370,9 +372,10 @@ async fn verify_stage_extractor_failure_emits_gliner_fail_counter() {
         content_type: None,
         episode_id,
         ner_entity_names: Vec::new(),
+        batch_id: None,
     };
 
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph).await;
+    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
     assert!(result.is_err(), "extractor failure must return Err; got Ok");
 
     let gliner_fail_total = sum_outcome_counter_any_arm(snapshotter.snapshot(), "gliner_fail");
