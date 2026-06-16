@@ -182,70 +182,74 @@ fn tracked_struct_types() -> &'static [(&'static str, &'static str)] {
 
 /// Extract `TypePrefix::method_name` for all `pub fn` in tracked impl blocks,
 /// and `StructType::field_name` for tracked struct public fields.
-/// Takes source as a `&str` to avoid holding `syn::File` (which is `!Send`).
-fn extract_substrate_symbols(src: &str) -> Vec<String> {
-    let file = syn::parse_file(src).expect("failed to parse kremory facade/mod.rs");
-
+/// Takes source strings to avoid holding `syn::File` (which is `!Send`).
+/// Accepts multiple sources so callers can pass both `facade/mod.rs` and
+/// `facade/builder.rs` after the TD-015 MemoryBuilder extraction.
+fn extract_substrate_symbols(sources: &[&str]) -> Vec<String> {
     let mut symbols: Vec<String> = Vec::new();
 
     let tracked_impls: HashMap<&str, &str> = tracked_impl_types().iter().copied().collect();
     let tracked_structs: HashMap<&str, &str> = tracked_struct_types().iter().copied().collect();
 
-    for item in &file.items {
-        match item {
-            Item::Impl(impl_block) => {
-                // Determine the self-type name. Handles plain types and generic types like
-                // `MemoryBuilder<L, E>`.
-                let type_name_owned: Option<String> = match impl_block.self_ty.as_ref() {
-                    syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
-                    _ => None,
-                };
+    for src in sources {
+        let file = syn::parse_file(src).expect("failed to parse kremory facade source file");
 
-                let Some(ref type_name) = type_name_owned else {
-                    continue;
-                };
+        for item in &file.items {
+            match item {
+                Item::Impl(impl_block) => {
+                    // Determine the self-type name. Handles plain types and generic types like
+                    // `MemoryBuilder<L, E>`.
+                    let type_name_owned: Option<String> = match impl_block.self_ty.as_ref() {
+                        syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+                        _ => None,
+                    };
 
-                let Some(&prefix) = tracked_impls.get(type_name.as_str()) else {
-                    continue;
-                };
-
-                for impl_item in &impl_block.items {
-                    let ImplItem::Fn(method) = impl_item else {
+                    let Some(ref type_name) = type_name_owned else {
                         continue;
                     };
-                    // Only `pub` visibility; skip private helpers and `pub(crate)`.
-                    if !matches!(method.vis, syn::Visibility::Public(_)) {
-                        continue;
-                    }
-                    // Skip items inside `#[cfg(test)]` impl blocks or deprecated items.
-                    if has_attr(&method.attrs, "cfg") || has_attr(&method.attrs, "deprecated") {
-                        continue;
-                    }
-                    let fn_name = method.sig.ident.to_string();
-                    symbols.push(format!("{prefix}::{fn_name}"));
-                }
-            }
 
-            Item::Struct(s) => {
-                let struct_name = s.ident.to_string();
-                let Some(&prefix) = tracked_structs.get(struct_name.as_str()) else {
-                    continue;
-                };
-                if let syn::Fields::Named(fields) = &s.fields {
-                    for field in &fields.named {
-                        if !matches!(field.vis, syn::Visibility::Public(_)) {
+                    let Some(&prefix) = tracked_impls.get(type_name.as_str()) else {
+                        continue;
+                    };
+
+                    for impl_item in &impl_block.items {
+                        let ImplItem::Fn(method) = impl_item else {
+                            continue;
+                        };
+                        // Only `pub` visibility; skip private helpers and `pub(crate)`.
+                        if !matches!(method.vis, syn::Visibility::Public(_)) {
                             continue;
                         }
-                        if let Some(ident) = &field.ident {
-                            symbols.push(format!("{prefix}::{ident}"));
+                        // Skip items inside `#[cfg(test)]` impl blocks or deprecated items.
+                        if has_attr(&method.attrs, "cfg") || has_attr(&method.attrs, "deprecated") {
+                            continue;
+                        }
+                        let fn_name = method.sig.ident.to_string();
+                        symbols.push(format!("{prefix}::{fn_name}"));
+                    }
+                }
+
+                Item::Struct(s) => {
+                    let struct_name = s.ident.to_string();
+                    let Some(&prefix) = tracked_structs.get(struct_name.as_str()) else {
+                        continue;
+                    };
+                    if let syn::Fields::Named(fields) = &s.fields {
+                        for field in &fields.named {
+                            if !matches!(field.vis, syn::Visibility::Public(_)) {
+                                continue;
+                            }
+                            if let Some(ident) = &field.ident {
+                                symbols.push(format!("{prefix}::{ident}"));
+                            }
                         }
                     }
                 }
-            }
 
-            _ => {}
+                _ => {}
+            }
         }
-    }
+    } // end for src in sources
 
     symbols
 }
@@ -354,14 +358,18 @@ fn napi_surface_matches_substrate_or_skip_list() {
 
     // Read sources as strings immediately — do NOT hold syn::File values
     // (syn::File is !Send and would cause issues in the threaded test harness).
-    let facade_src = parse_file_to_string(&root.join("crates/kremory/src/facade/mod.rs"));
+    // facade/mod.rs + facade/builder.rs both scanned: MemoryBuilder was extracted
+    // to builder.rs in TD-015; both files carry tracked impl blocks.
+    let facade_mod_src = parse_file_to_string(&root.join("crates/kremory/src/facade/mod.rs"));
+    let facade_builder_src =
+        parse_file_to_string(&root.join("crates/kremory/src/facade/builder.rs"));
     let napi_lib_src = parse_file_to_string(&root.join("crates/kremory-napi/src/lib.rs"));
     let napi_convert_src = parse_file_to_string(&root.join("crates/kremory-napi/src/convert.rs"));
     let skip_list_path = root.join("crates/kremory-napi/parity-skip.toml");
 
     let skip_list = load_skip_list(&skip_list_path);
     let napi_symbols = extract_napi_symbols(&[&napi_lib_src, &napi_convert_src]);
-    let substrate_symbols = extract_substrate_symbols(&facade_src);
+    let substrate_symbols = extract_substrate_symbols(&[&facade_mod_src, &facade_builder_src]);
 
     // Governance check: no duplicate skip-list entries.
     {
