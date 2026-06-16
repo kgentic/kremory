@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! RED-phase tests for GAP-002: `pub(crate)` promotion of three functions in
-//! `crates/kremory/src/core/dream/consistency_check.rs`.
+//! the `crates/kremory/src/core/dream/consistency_check/` module.
 //!
 //! The functions that must be promoted:
 //! - `verify_batch_schema` (line 144 in current main)
@@ -9,7 +9,7 @@
 //!
 //! Governing spec:
 //! - `kremory-v020--c6-async-gate-verify-architecture.md` §5.2 (dependency direction):
-//!   "these functions are currently module-private in `consistency_check.rs`.
+//!   "these functions are currently module-private in the `consistency_check` module.
 //!   `verify_stage.rs` requires them. Promotion MUST happen in Phase A."
 //! - Test strategy §5.4 DENT-001: "compile-test: `verify_stage.rs` imports them and
 //!   `cargo check` PASS"
@@ -33,7 +33,7 @@
 //!   2. Add re-exports under a `#[cfg(test)]` feature gate for integration test access.
 //!
 //! Since `crates/kremory/tests/` are EXTERNAL to the crate, we CANNOT directly import
-//! `pub(crate)` functions from `consistency_check.rs` here. Instead, this file tests
+//! `pub(crate)` functions from the `consistency_check` module here. Instead, this file tests
 //! the STRUCTURAL CONSEQUENCE: the spike binary `crates/kremory-eval/src/bin/spike_c6_async_gate.rs`
 //! is documented as BLOCKED on `verify_batch` being accessible. We verify this indirectly
 //! via a `cargo check` subprocess.
@@ -188,25 +188,33 @@ async fn spike_c6_async_gate_compiles_after_pub_crate_promotion() {
 // After Green phase: PASSES.
 #[test]
 fn consistency_check_source_contains_pub_crate_promotions() {
-    // Locate consistency_check.rs relative to this test file.
-    // file!() gives us the path from workspace root.
-    let source_path = {
+    // consistency_check is a module directory (split per ADR-050 §5 / TD-C close).
+    // Concatenate every `.rs` file under it so the promotion assertions match
+    // regardless of which submodule (mod/verify/audit) the primitive lives in.
+    let module_dir = {
         let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.push("src");
         p.push("core");
         p.push("dream");
-        p.push("consistency_check.rs");
+        p.push("consistency_check");
         p
     };
 
-    let source = std::fs::read_to_string(&source_path)
-        .unwrap_or_else(|e| panic!("cannot read consistency_check.rs at {:?}: {e}", source_path));
+    let source = std::fs::read_dir(&module_dir)
+        .unwrap_or_else(|e| {
+            panic!("cannot read consistency_check module dir at {module_dir:?}: {e}")
+        })
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "rs"))
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
 
     // verify_batch_schema — accepts pub(crate) or pub (Green may promote beyond pub(crate)).
     assert!(
         source.contains("pub(crate) fn verify_batch_schema")
             || source.contains("pub fn verify_batch_schema"),
-        "GAP-002 INCOMPLETE: consistency_check.rs must contain `pub(crate) fn verify_batch_schema` \
+        "GAP-002 INCOMPLETE: consistency_check module must contain `pub(crate) fn verify_batch_schema` \
          or `pub fn verify_batch_schema`.\n\
          Current content has `fn verify_batch_schema` (module-private). \
          Green phase must add `pub(crate)` or `pub` prefix."
@@ -216,7 +224,7 @@ fn consistency_check_source_contains_pub_crate_promotions() {
     assert!(
         source.contains("pub(crate) fn build_verify_messages")
             || source.contains("pub fn build_verify_messages"),
-        "GAP-002 INCOMPLETE: consistency_check.rs must contain `pub(crate) fn build_verify_messages` \
+        "GAP-002 INCOMPLETE: consistency_check module must contain `pub(crate) fn build_verify_messages` \
          or `pub fn build_verify_messages`.\n\
          Current content has `fn build_verify_messages` (module-private). \
          Green phase must add `pub(crate)` or `pub` prefix."
@@ -228,7 +236,7 @@ fn consistency_check_source_contains_pub_crate_promotions() {
             || source.contains("pub(crate) async fn verify_batch")
             || source.contains("pub fn verify_batch")
             || source.contains("pub async fn verify_batch"),
-        "GAP-002 INCOMPLETE: consistency_check.rs must contain a promoted `verify_batch` function \
+        "GAP-002 INCOMPLETE: consistency_check module must contain a promoted `verify_batch` function \
          (pub(crate) or pub, sync or async).\n\
          Locate the verify_batch invocation at line ~289 in run_consistency_check, \
          extract it to a named function, and add pub(crate) or pub prefix."
