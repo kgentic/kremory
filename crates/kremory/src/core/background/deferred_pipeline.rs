@@ -660,7 +660,19 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                     match rows.next().await {
                         Ok(Some(row)) => {
                             let cursor_val: String =
-                                row.get(0).unwrap_or_else(|_| String::new());
+                                row.get(0).unwrap_or_else(|e| {
+                                    // TD-046: do not swallow a checkpoint-column read
+                                    // failure silently. An unreadable cursor legitimately
+                                    // degrades to "no resume point", but the degradation
+                                    // must be observable (CLAUDE.md Rule 19).
+                                    tracing::warn!(
+                                        error = %e,
+                                        op_name = "verify_stage",
+                                        "kremory.worker_loop: failed to read checkpoint \
+                                         cursor column; treating as no-resume"
+                                    );
+                                    String::new()
+                                });
                             if !cursor_val.is_empty() {
                                 // Resume path: fire sink event + triple-emit.
                                 if let Some(s) = sink.as_deref() {

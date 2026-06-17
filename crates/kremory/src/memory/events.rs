@@ -81,16 +81,24 @@ pub struct BatchPhase2Complete {
 /// WILL deadlock because the callback fires from within an `async fn` run
 /// via `rt.block_on(async { … })` on the background worker runtime.
 ///
-/// # Inline-path limitation (MED-02)
+/// # Inline-path coverage (MED-02, updated v0.2.4 — ADR-052 Gap 1)
 ///
-/// **All fire-sites in v0.2.3 are on the background worker path
-/// (`BackgroundIngestor`).** The inline ingest path (`run_in_background=false`
-/// on the engine handle) bypasses the background worker entirely — a consumer
-/// who registers a sink on the inline path receives **zero** sink events.
+/// The inline ingest path (`run_in_background=false`, i.e.
+/// `Memory::remember(..).with_event_sink(..)` without `.no_wait()`) **is** sink-wired
+/// as of ADR-052 Gap 1: `engine_handle.rs` coerces the `EnrichmentEventSink` to the
+/// core `IngestEventSink` supertrait and threads it into the shared `engine.ingest()`
+/// extraction routine (`sink: core_sink`). A consumer registering a sink on the inline
+/// path therefore receives the extraction fire-sites (`on_stage_change`,
+/// `on_entity_extracted`, `on_edge_added`, `on_contradiction`, etc.) that the unified
+/// routine emits.
 ///
-/// Consumers needing sink-driven progress notifications MUST use the
-/// background (deferred) path. Inline-path sink wiring is deferred to
-/// v0.2.4+ pending a confirmed consumer use case.
+/// What the inline path does **not** receive: background-worker-lifecycle events that
+/// have no inline analogue — `on_worker_resumed` (crash-checkpoint replay) and
+/// `on_batch_phase2_complete` (batch terminal detection) fire only from the
+/// `BackgroundIngestor` worker loop. Note also the inline error-path asymmetry: on
+/// ingest failure the inline path cannot write `Failed` (no `episode_id` handle at that
+/// scope — see `engine_handle.rs`), so it emits
+/// `kremory.engine_handle.inline_ingest_fail_no_episode_id_total` instead.
 ///
 /// # `IngestStatus::EntitiesReady` vs `Complete` (ADR-052 D2/D5)
 ///
