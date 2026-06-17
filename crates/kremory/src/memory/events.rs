@@ -109,14 +109,20 @@ pub struct BatchPhase2Complete {
 /// entered.  It does NOT fire when zero facts were extracted (fast-exit
 /// path).  Fires regardless of whether contradictions are actually found.
 ///
-/// # `IngestStatus::SkippedIdempotent` — forward-compat (MED-05 / ADR-050)
+/// # `IngestStatus::SkippedIdempotent` (MED-05 / ADR-050 Phase 5, v0.2.4)
 ///
-/// The `IngestStatus` enum carries `#[non_exhaustive]`.  ADR-050
-/// (crash-safety + idempotency cluster, v0.2.4+) will add a
-/// `SkippedIdempotent` variant that fires when a duplicate episode is
-/// detected and the pipeline skips Phase 2 for that episode.  Consumers
-/// matching on `IngestStatus` MUST include a `_` catch-all arm to remain
-/// forward-compatible.
+/// The `IngestStatus` enum carries `#[non_exhaustive]`.  `SkippedIdempotent`
+/// was added in v0.2.4 (ADR-050 Phase 5) and fires via
+/// `on_stage_change(SkippedIdempotent)` each time Guard #1 in
+/// `run_verify_stage` detects a duplicate content hash — i.e., the entity
+/// was already processed in this crash-resume pass and Phase 2 is skipped.
+/// Fires once per skipped entity (NOT once per episode).
+///
+/// Consumers matching on `IngestStatus` MUST retain the `_` catch-all arm
+/// (enforced by `#[non_exhaustive]`) to stay forward-compatible with future
+/// variants.  Consumers SHOULD deduplicate `on_stage_change(Extracting)`
+/// callbacks on `(episode_id, stage)` because crash-resume re-enters
+/// `run_verify_stage` for partially-processed episodes.
 ///
 /// # `on_batch_phase2_complete` drop-before-complete contract
 ///
@@ -139,4 +145,28 @@ pub trait EnrichmentEventSink: IngestEventSink {
     fn on_community_updated(&self, community_id: &str, member_count: usize);
     /// All Phase 2 runs for a batch have reached terminal status.
     fn on_batch_phase2_complete(&self, event: BatchPhase2Complete);
+
+    /// Fires on the background worker OS thread when `worker_loop` boots and
+    /// detects a non-null `op_checkpoints` entry — indicating a prior crash.
+    ///
+    /// `from_cursor` is the serialised cursor value (opaque string; typically
+    /// an episode_id serialised to a decimal string). Consumers can use this
+    /// to log an audit trail, display a "resumed from checkpoint" banner, or
+    /// skip UI reconciliation for already-processed entities (pre-cursor
+    /// entries were already signalled before crash). Repeated crashes at the
+    /// same cursor produce repeated firings — the event is NOT deduplicated.
+    ///
+    /// **Default no-op**: This is an operational-observability event, NOT a
+    /// correctness event. Existing consumers that don't care about crash-resume
+    /// MUST NOT be forced to implement a no-op (arch spec §3.1.2, ADR-050).
+    /// This is an explicit, scoped deviation from v0.2.3's "no default impls"
+    /// policy for `IngestEventSink` correctness methods.
+    ///
+    /// **Forward-compat note (MED-05 ADR-050 idempotency)**: After v0.2.4,
+    /// sink consumers MUST deduplicate `on_stage_change(Extracting)` callbacks
+    /// on `(episode_id, stage)` because crash-resume may re-enter
+    /// `run_verify_stage` for partially-processed episodes. `on_worker_resumed`
+    /// fires once per worker boot on the resume path to signal that redelivery
+    /// is about to occur.
+    fn on_worker_resumed(&self, _from_cursor: &str, _op_name: &str) {}
 }

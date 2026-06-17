@@ -308,9 +308,7 @@ async fn production_ingest_fires_failed_on_extractor_error() {
     //    (MED-01: the previous code only fired Failed for inner-`'phases` errors;
     //    an extractor Err propagated via `?` left the sink stuck at Extracting.)
     assert!(
-        stages
-            .iter()
-            .any(|s| matches!(s, IngestStatus::Failed(_))),
+        stages.iter().any(|s| matches!(s, IngestStatus::Failed(_))),
         "expected a terminal on_stage_change(Failed(..)) after Extracting; got {stages:?}"
     );
 
@@ -324,8 +322,7 @@ async fn production_ingest_fires_failed_on_extractor_error() {
         "Extracting must precede Failed; got {stages:?}"
     );
     assert!(
-        !stages.contains(&IngestStatus::EntitiesReady)
-            && !stages.contains(&IngestStatus::Complete),
+        !stages.contains(&IngestStatus::EntitiesReady) && !stages.contains(&IngestStatus::Complete),
         "failure path must NOT fire the success terminals (EntitiesReady/Complete); got {stages:?}"
     );
 }

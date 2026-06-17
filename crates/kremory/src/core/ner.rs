@@ -712,7 +712,6 @@ pub fn ner_singleton() -> crate::core::error::Result<&'static GlinerExtractor> {
 
 #[cfg(all(test, feature = "ner"))]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::inner::{decode_logits, generate_spans, reconstruct_text, sigmoid};
     use super::GlinerExtractor;
     use crate::core::intelligence::{EntityExtractor, ExtractionContext};

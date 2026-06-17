@@ -45,6 +45,13 @@ pub enum IngestStatus {
     Invalidating,
     Complete,
     Failed(String),
+    /// Episode Phase 2 was skipped because a duplicate content hash was detected
+    /// at Guard #1 in `run_verify_stage` — the exact entity was already processed
+    /// in this pass. Fires via `on_stage_change(SkippedIdempotent)` once per
+    /// skipped entity (not once per episode).
+    ///
+    /// Added in v0.2.4 (ADR-050 Phase 5 crash-safety + idempotency sink events).
+    SkippedIdempotent,
 }
 
 /// Error kind for per-entity/edge ingestion failures during Phase 2 enrichment.

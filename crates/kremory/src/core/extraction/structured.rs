@@ -746,7 +746,6 @@ pub(crate) async fn warm_schema_caches<L: ?Sized + ChatProvider>(llm: &L, model:
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::core::extraction::schemas::{
         SCHEMA_ENTITY_LIST, SCHEMA_NUEXTRACT_RELATIONS_ONLY,

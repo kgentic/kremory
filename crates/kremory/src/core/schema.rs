@@ -697,6 +697,13 @@ impl TemporalGraph {
         // Idempotent: PRAGMA table_info gate + IF NOT EXISTS index.
         crate::core::migrations::migrate_015a_episode_processing_status(&self.conn).await?;
 
+        // ADR-050 Migration 016 (v0.2.4, Phase 1): crash-safety schema cluster.
+        // Adds dream_idempotency_keys, op_checkpoints, dream_pass_budget_usage tables
+        // and is_dream_generated columns on entities + facts.
+        // Idempotent: CREATE TABLE/INDEX IF NOT EXISTS + PRAGMA-guarded ADD COLUMN.
+        // Emergency downgrade: migrate_015b_downgrade_crash_safety_schema (not called here).
+        crate::core::migrations::migrate_016_crash_safety_schema(&self.conn).await?;
+
         Ok(())
     }
 
@@ -851,7 +858,6 @@ impl TemporalGraph {
 
 #[cfg(test)]
 mod schema_tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::TemporalGraph;
 
     /// Story #246: nested begin_immediate_if_needed is a no-op (guard.opened == false).
