@@ -730,7 +730,6 @@ fn batch_status_increment_skipped(map: &DashMap<String, BatchStatus>, batch_id: 
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::core::{
         provider::{MockChatProvider, NullEmbeddingProvider},

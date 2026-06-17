@@ -466,7 +466,9 @@ mod tests {
             .await
             .unwrap();
         graph
-            .insert_episodic_edge(1, "e1", "subject")
+            // entity_group_id=None → 'default', matching `insert_entity("e1", …)`
+            // above (no group → 'default') so the composite FK lines up (ADR-029b).
+            .insert_episodic_edge(1, "e1", None, "subject")
             .await
             .unwrap();
         graph

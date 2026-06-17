@@ -214,7 +214,6 @@ pub(crate) fn discovery_proposal_schema() -> Result<serde_json::Value, serde_jso
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     fn ok(name: &str) {

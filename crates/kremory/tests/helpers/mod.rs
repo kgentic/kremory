@@ -8,3 +8,4 @@ pub mod metrics_capture;
 pub mod mock_chat;
 pub mod ollama_adapter;
 pub mod recording_sink;
+pub mod scripted_llm;

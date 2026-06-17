@@ -15,7 +15,10 @@ use metrics;
 use crate::core::config::{ContentType, PipelineConfig};
 use crate::core::error::Result;
 
-use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
+use crate::core::provider::{
+    capability_of, ChatProvider, EmbeddingProvider, ProviderCaps, TokenCountingChatProvider,
+    TokenUsage,
+};
 use crate::core::schema::TemporalGraph;
 use crate::core::text_utils;
 
@@ -450,11 +453,42 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         // Phase E: entity reclassify pass (ADR-046 Option E, 2-arm SELECT).
         // Runs only when LLM is wired; returns 0 silently on NoLlm path.
+        //
+        // ADR-050 Phase 4 — budget tracking:
+        // The provider is wrapped in TokenCountingChatProvider for the ENTIRE
+        // duration of reclassify_all_groups, so ALL LLM calls made during the
+        // pass (reclassify + sub-calls) are counted through the decorator.
+        //
+        // SEAM VERIFIED: reclassify_all_groups<L: ChatProvider>(graph, llm: &L, opts)
+        // is the only LLM-call path reachable from run_dream_pass_sync. verify_stage
+        // LLM calls run in the background pipeline (process_deferred path), not here.
+        // Wrapping this provider captures ALL dream-pass LLM budget — no under-count.
+        //
+        // TokenCountingChatProvider: ChatProvider (via #[async_trait] impl), so
+        // &TokenCountingChatProvider satisfies the &L: ChatProvider generic bound.
         let entities_reclassified = if let Some(llm_arc) = self.llm.as_ref() {
-            let llm_ref: &L = llm_arc.as_ref();
+            // ── ADR-050 Phase 4: budget-tracking setup ────────────────────────
+            //
+            // Generate pass_run_id before the pass: same ID used for both the
+            // cooldown checkpoint (Phase 3) and the budget_usage INSERT (Phase 4).
+            // microsecond timestamp → unique per pass, human-readable in SQL.
+            let pass_run_id = format!("dream_pass_{}", Utc::now().timestamp_micros());
+
+            // Coerce Arc<L> → Arc<dyn ChatProvider> then wrap in the decorator.
+            // Arc::clone alone cannot coerce to dyn; we must clone as the concrete
+            // Arc<L> first, then cast to Arc<dyn ChatProvider> via `as`.
+            // L: ChatProvider + 'static ensures the unsized cast is valid.
+            let cloned: Arc<L> = Arc::clone(llm_arc);
+            let dyn_arc: Arc<dyn ChatProvider> = cloned as Arc<dyn ChatProvider>;
+            let counting = TokenCountingChatProvider::new(dyn_arc);
+            // Clone the accumulator handle BEFORE moving counting into the reclassify call.
+            // The budget-INSERT site reads totals from this handle after pass completes.
+            let acc_handle = counting.accumulator();
+            let model_str = counting.model().to_string();
+
             match crate::core::dream::reclassify::reclassify_all_groups(
                 &self.graph,
-                llm_ref,
+                &counting,
                 crate::core::dream::reclassify::ReclassifyOpts {
                     confidence_threshold: opts.confidence_threshold,
                     high_conf_threshold: opts.reclassify_high_conf_threshold,
@@ -463,12 +497,178 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             )
             .await
             {
-                Ok(r) => r.entities_reclassified,
+                Ok(r) => {
+                    // ── ADR-050 Phase 3 — Guard #3: cooldown-on-success ───────
+                    //
+                    // Records pass completion ONLY on success so transient
+                    // failures do NOT update the cooldown timestamp. A consumer
+                    // checking "was the last dream pass successful?" reads the
+                    // most-recent row for op_name='dream_pass_cooldown'; if no
+                    // row exists, no successful pass has run yet.
+                    //
+                    // op_run_id = microsecond timestamp → each successful run
+                    // gets its own row (INSERT OR REPLACE upserts on PK clash,
+                    // so same-microsecond duplicate is safe — idempotent).
+                    // cursor = epoch-seconds of completion (human-readable signal
+                    // of "last success at T"). updated_at same value.
+                    //
+                    // Soft-fail: cooldown write failure is logged + metered but
+                    // NOT propagated — it degrades schedule enforcement (scheduler
+                    // may fire again sooner than intended) but does NOT corrupt
+                    // data. Rule 8: the cause is a DB write failure, NOT a
+                    // dream-pass logic error.
+                    //
+                    // D7: no high-cardinality metric labels.
+                    let now_epoch = Utc::now().timestamp();
+                    let cursor_val = now_epoch.to_string();
+                    if let Err(e) = self
+                        .graph
+                        .conn
+                        .execute(
+                            "INSERT OR REPLACE INTO op_checkpoints \
+                             (op_name, op_run_id, cursor, updated_at) \
+                             VALUES ('dream_pass_cooldown', ?1, ?2, ?3)",
+                            libsql::params![pass_run_id.clone(), cursor_val, now_epoch],
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "kremory.dream.cooldown_write_fail — schedule enforcement degraded"
+                        );
+                        metrics::counter!("kremory.dream.cooldown_write_fail_total").increment(1);
+                    } else {
+                        // Phase 5 seam: on_dream_pass_complete (or equivalent) fires here
+                        // when Phase 5 sink-wiring lands for the inline dream-pass path.
+                        metrics::counter!("kremory.dream.cooldown_recorded_total").increment(1);
+                        tracing::debug!(
+                            completed_at = now_epoch,
+                            "kremory.dream.cooldown_on_success recorded"
+                        );
+                    }
+
+                    // ── ADR-050 Phase 4 — budget INSERT ───────────────────────
+                    //
+                    // Read accumulator totals after reclassify completes (all LLM
+                    // calls for this pass have already settled). Soft-fail: a budget
+                    // write failure is observable via counter + warn log but MUST NOT
+                    // propagate — budget accounting is advisory, not crash-safety.
+                    //
+                    // Schema (migrations.rs ground truth, Migration 016):
+                    //   dream_pass_budget_usage (
+                    //     pass_run_id TEXT NOT NULL,
+                    //     pass_name   TEXT NOT NULL,
+                    //     provider    TEXT NOT NULL,
+                    //     model       TEXT NOT NULL,
+                    //     tokens_input  INTEGER NOT NULL,
+                    //     tokens_output INTEGER NOT NULL,
+                    //     cost_usd_micro INTEGER,   -- nullable: NULL when rate unknown
+                    //     recorded_at INTEGER NOT NULL,
+                    //     PRIMARY KEY (pass_run_id, pass_name)
+                    //   )
+                    //
+                    // D7: provider / model are NOT metric labels (high cardinality).
+                    // Budget metric is a simple increment of cost in micro-USD.
+                    //
+                    // calls_with_usage < calls_total → backend did not report usage
+                    // for some calls (typical for local Ollama builds). The row is
+                    // still written with the partial totals so the gap is observable
+                    // via `calls_with_usage` vs `calls_total` in the accumulator log.
+                    //
+                    // Scoped block ensures MutexGuard<TokenAccumulator> is dropped
+                    // before any .await point — required for the async fn to be Send.
+                    let (tokens_input, tokens_output, calls_total, calls_with_usage) = {
+                        let acc = acc_handle
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        (
+                            acc.prompt_tokens,
+                            acc.completion_tokens,
+                            acc.calls_total,
+                            acc.calls_with_usage,
+                        )
+                        // MutexGuard drops here at end of block
+                    };
+
+                    let provider_name = detect_provider_name(&model_str);
+                    // cost_usd_micro: None = rate unknown (NULL in DB).
+                    // Anthropic Haiku rate (Claude Haiku 3.5): $0.80/M input + $4/M output
+                    //   = 800 micro_usd/M input = 0.8 micro_usd/K input tokens.
+                    // Source: https://www.anthropic.com/pricing (2026-06-16 spot check).
+                    // claude-haiku-4-* uses the same tier.
+                    // Ollama: always 0 (local inference, no API cost).
+                    // Other providers (OpenAI, unknown): NULL (rate not implemented).
+                    let cost_usd_micro = compute_dream_cost_micro(
+                        &provider_name,
+                        &model_str,
+                        tokens_input,
+                        tokens_output,
+                    );
+
+                    tracing::debug!(
+                        pass_run_id = %pass_run_id,
+                        provider = %provider_name,
+                        model = %model_str,
+                        tokens_input,
+                        tokens_output,
+                        calls_total,
+                        calls_with_usage,
+                        cost_usd_micro = ?cost_usd_micro,
+                        "kremory.dream.budget_tracking: pass complete"
+                    );
+
+                    if let Err(e) = self
+                        .graph
+                        .conn
+                        .execute(
+                            "INSERT OR REPLACE INTO dream_pass_budget_usage \
+                             (pass_run_id, pass_name, provider, model, \
+                              tokens_input, tokens_output, cost_usd_micro, recorded_at) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            libsql::params![
+                                pass_run_id.clone(),
+                                "reclassify",
+                                provider_name,
+                                model_str,
+                                tokens_input as i64,
+                                tokens_output as i64,
+                                cost_usd_micro.map(|c| c as i64),
+                                now_epoch
+                            ],
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "kremory.dream.budget_write_fail — budget accounting degraded (non-fatal)"
+                        );
+                        metrics::counter!("kremory.dream.budget_write_fail_total").increment(1);
+                    } else {
+                        // Emit budget_used counter in micro-USD (0 for Ollama,
+                        // computed value for known Anthropic models, 0 for NULL).
+                        // D7: no high-cardinality labels — provider/model stay out of metric labels.
+                        let cost_for_metric = cost_usd_micro.unwrap_or(0);
+                        metrics::counter!("rql.dream.budget_used_micro_usd")
+                            .increment(cost_for_metric);
+                        tracing::debug!(
+                            pass_run_id = %pass_run_id,
+                            tokens_input,
+                            tokens_output,
+                            cost_usd_micro = cost_for_metric,
+                            "kremory.dream.budget_usage recorded"
+                        );
+                    }
+
+                    r.entities_reclassified
+                }
                 Err(e) => {
                     // Non-fatal per E7 — surface as debug log, continue.
+                    // ADR-050 Guard #3: transient failure → cooldown NOT recorded.
+                    // ADR-050 Phase 4: reclassify failure → budget row NOT written
+                    // (partial token counts not meaningful for a failed pass).
                     tracing::warn!(
                         error = %e,
-                        "kremory.dream.reclassify_all_groups failed — skipping; dream pass unaffected"
+                        "kremory.dream.reclassify_all_groups failed — skipping; dream pass unaffected; cooldown + budget NOT recorded (transient failure)"
                     );
                     0
                 }
@@ -671,5 +871,210 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             )
             .await
         }
+    }
+}
+
+// ── ADR-050 Phase 4: budget-tracking helpers ──────────────────────────────────
+//
+// These are free functions (not methods) so they carry no generic parameter
+// and can be tested without an Engine instance.
+
+/// Detect the billing-provider name from a model string.
+///
+/// Returns a lowercase short name suitable for the `provider` column in
+/// `dream_pass_budget_usage`. Rules mirror `capability_of()` patterns but
+/// collapse to billing-entity names instead of capability tiers.
+///
+/// | Model prefix         | Returns        |
+/// |----------------------|----------------|
+/// | `claude-*`           | `"anthropic"`  |
+/// | Ollama colon pattern | `"ollama"`     |
+/// | `gpt-*` / `o1-*` …  | `"openai"`     |
+/// | Everything else      | `"unknown"`    |
+pub(crate) fn detect_provider_name(model: &str) -> String {
+    // Bedrock ARN prefixes → unknown (not directly billed via Anthropic API).
+    if model.starts_with("anthropic.claude-")
+        || model.starts_with("amazon.")
+        || model.starts_with("meta.")
+        || model.starts_with("mistral.")
+        || model.starts_with("us.")
+        || model.starts_with("eu.")
+        || model.starts_with("ap.")
+    {
+        return "unknown".to_string();
+    }
+    // Anthropic direct-API Claude models.
+    if model.starts_with("claude-") {
+        return "anthropic".to_string();
+    }
+    // OpenAI models (gpt-*, o1-*, o3-*, o4-*).
+    if model.starts_with("gpt-")
+        || model.starts_with("o1-")
+        || model.starts_with("o3-")
+        || model.starts_with("o4-")
+    {
+        return "openai".to_string();
+    }
+    // Ollama: colon-separated name:tag, or well-known bare family names.
+    // capability_of() uses the same heuristic for FormatSchema detection.
+    if capability_of(model) == ProviderCaps::FormatSchema {
+        return "ollama".to_string();
+    }
+    "unknown".to_string()
+}
+
+/// Compute cost in micro-USD for a dream pass given token counts.
+///
+/// Returns `Some(micro_usd)` when the rate is known, `None` when the model
+/// is an unknown tier (caller writes NULL to the DB column).
+///
+/// # Rate table (verified 2026-06-16)
+///
+/// | Family              | Input ($/M) | Output ($/M) |
+/// |---------------------|-------------|--------------|
+/// | claude-haiku-*      | 0.80        | 4.00         |
+/// | claude-sonnet-*     | 3.00        | 15.00        |
+/// | claude-opus-*       | 15.00       | 75.00        |
+/// | ollama (local)      | 0           | 0            |
+/// | other / unknown     | `None`      | `None`       |
+///
+/// micro_usd = (tokens / 1_000_000) × ($/M) × 1_000_000
+///           = tokens × ($/M)   (dollars cancel; result is micro-USD per token)
+/// Simplified: micro_usd = tokens_input × input_rate_per_token
+///                        + tokens_output × output_rate_per_token
+/// where rate_per_token = $/M (numerically equal to micro-USD per token).
+pub(crate) fn compute_dream_cost_micro(
+    provider: &str,
+    model: &str,
+    tokens_input: u64,
+    tokens_output: u64,
+) -> Option<u64> {
+    match provider {
+        "ollama" => Some(0),
+        "anthropic" => {
+            // Per-token cost in micro-USD = $/M (same number: $1/M = $0.000001/token
+            // = 1 micro-USD/token).
+            let (input_rate, output_rate) = anthropic_rate_per_token(model)?;
+            let cost = tokens_input
+                .saturating_mul(input_rate)
+                .saturating_add(tokens_output.saturating_mul(output_rate));
+            Some(cost)
+        }
+        _ => None,
+    }
+}
+
+/// Return (input_rate, output_rate) in micro-USD per token for known Anthropic
+/// model families. Returns `None` for unknown / future model strings so cost is
+/// stored as NULL rather than silently wrong.
+///
+/// Rates: https://www.anthropic.com/pricing (spot-checked 2026-06-16).
+/// micro-USD per token = $/M numerically (1 $/M = 1 μ$/token).
+fn anthropic_rate_per_token(model: &str) -> Option<(u64, u64)> {
+    if model.starts_with("claude-haiku-") {
+        // Haiku 3.5 / 4.x: $0.80/M in, $4.00/M out
+        Some((1, 4))
+    } else if model.starts_with("claude-sonnet-") {
+        // Sonnet 3.5 / 4.x: $3.00/M in, $15.00/M out
+        Some((3, 15))
+    } else if model.starts_with("claude-opus-") {
+        // Opus 4.x: $15.00/M in, $75.00/M out
+        Some((15, 75))
+    } else {
+        // Unknown claude-* (e.g. claude-mythos-preview) → NULL
+        None
+    }
+}
+
+#[cfg(test)]
+mod budget_helpers_tests {
+    use super::*;
+
+    #[test]
+    fn detect_provider_ollama_colon() {
+        assert_eq!(detect_provider_name("qwen2.5:14b"), "ollama");
+        assert_eq!(detect_provider_name("gemma4-e2b:latest"), "ollama");
+        assert_eq!(detect_provider_name("llama3.2:3b-instruct"), "ollama");
+    }
+
+    #[test]
+    fn detect_provider_anthropic() {
+        assert_eq!(
+            detect_provider_name("claude-haiku-4-5-20251001"),
+            "anthropic"
+        );
+        assert_eq!(detect_provider_name("claude-sonnet-4-6"), "anthropic");
+        assert_eq!(detect_provider_name("claude-opus-4-7"), "anthropic");
+        assert_eq!(detect_provider_name("claude-mythos-preview"), "anthropic");
+    }
+
+    #[test]
+    fn detect_provider_openai() {
+        assert_eq!(detect_provider_name("gpt-4.1"), "openai");
+        assert_eq!(detect_provider_name("o1-preview"), "openai");
+        assert_eq!(detect_provider_name("o3-mini"), "openai");
+    }
+
+    #[test]
+    fn detect_provider_bedrock_unknown() {
+        assert_eq!(
+            detect_provider_name("anthropic.claude-3-opus-bedrock"),
+            "unknown"
+        );
+        assert_eq!(
+            detect_provider_name("us.anthropic.claude-opus-4-7-v1:0"),
+            "unknown"
+        );
+    }
+
+    #[test]
+    fn detect_provider_unknown_fallback() {
+        assert_eq!(detect_provider_name("random-model"), "unknown");
+        assert_eq!(detect_provider_name(""), "unknown");
+    }
+
+    #[test]
+    fn compute_cost_ollama_zero() {
+        assert_eq!(
+            compute_dream_cost_micro("ollama", "qwen2.5:14b", 1000, 500),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn compute_cost_anthropic_haiku() {
+        // haiku: input rate = 1 micro_usd/token, output rate = 4 micro_usd/token
+        // 1000 input → 1000; 500 output → 2000; total 3000
+        assert_eq!(
+            compute_dream_cost_micro("anthropic", "claude-haiku-4-5-20251001", 1000, 500),
+            Some(1000 + 500 * 4)
+        );
+    }
+
+    #[test]
+    fn compute_cost_anthropic_sonnet() {
+        // sonnet: 100 input × 3 + 50 output × 15 = 300 + 750 = 1050
+        assert_eq!(
+            compute_dream_cost_micro("anthropic", "claude-sonnet-4-6", 100, 50),
+            Some(100 * 3 + 50 * 15)
+        );
+    }
+
+    #[test]
+    fn compute_cost_anthropic_unknown_model_none() {
+        // Unknown claude model → None (stored as NULL)
+        assert_eq!(
+            compute_dream_cost_micro("anthropic", "claude-mythos-preview", 100, 50),
+            None
+        );
+    }
+
+    #[test]
+    fn compute_cost_unknown_provider_none() {
+        assert_eq!(
+            compute_dream_cost_micro("unknown", "mystery-model", 100, 50),
+            None
+        );
+        assert_eq!(compute_dream_cost_micro("openai", "gpt-4.1", 100, 50), None);
     }
 }

@@ -1,25 +1,25 @@
 <!-- sprint-activate-begin -->
 ## Active Sprint
 
-**Sprint**: v0.2.3 — Sink Callsite Wiring + Event-Arch
-**Status**: ACTIVE — branch `main` @ `1a802d7`, /ship-build launching (diamond topology)
-**Spec**: `.ai-docs/specs/v0-2-3-impl-spec-2026-06-12.md` (readiness gate PASS ≥85%)
-**Arch spec**: `.ai-docs/specs/v0-2-3-sink-wiring-arch-spec-2026-06-12.md`
-**Test strategy**: `.ai-docs/test-strategy/v0-2-3-sink-wiring-test-strategy-2026-06-12.md`
-**ADR**: `adr-052-sink-callsite-wiring-and-event-arch-2026-06-12` (accepted; Vera 5 MEDs resolved; Tessa PASS)
-**Effort envelope**: 1-2 AI-days, $20-40
+**Sprint**: v0.2.4 — Dream-Pass Crash-Safety (ADR-050) — **build COMPLETE, UNPUSHED**
+**Status**: v0.2.4 implemented on branch `jimsheen/restore-session` (8 commits unpushed). Workspace GREEN (1164 tests / 0 fail; clippy `-D warnings` clean; fmt clean). **Blocked on push** — `kgentic` org GitHub Actions billing dead → no CI validation; awaiting billing restore before tag/push `v0.2.4`. **NEXT: tech-debt clearance sprint** (TD-042 Tier 2 + audit backlog) — see `.ai-docs/tech-debt/tech-debt-register.md`.
+**Spec**: `.ai-docs/specs/v0-2-4-impl-spec-2026-06-12.md` (readiness gate PASS; both compile-spikes discharged)
+**Arch spec**: `.ai-docs/specs/v0-2-4-crash-safety-arch-spec-2026-06-12.md`
+**ADR**: `adr-050-dream-pass-crash-safety-and-idempotency-2026-06-11` (SHIPPED — was DEFERRED, now done)
 
-**Last shipped — v0.2.2 (ADR-051 GLiNER-to-background unified hot path)**, tagged + pushed:
+**Last shipped — v0.2.4 (ADR-050 dream-pass crash-safety)**, committed, UNPUSHED:
 
 | Phase | Commit | Scope |
 |---|---|---|
-| Phase 1 | `05eef75` | Migration 015a — episode_processing_status column |
-| Phase 2 | `f3b8f75` | run_verify_stage owns GLiNER + verify_batch + Stage 3 write |
-| Phase 3 | `bb105e8` | worker_loop wires run_verify_stage — hot path latency lands |
-| Phase 4 | `7fbad81` | Memory::with_await_extraction + Memory::wait_for_processing |
-| Phase 5 | `1a802d7` | Observability hardening + Quinn deferred MED fold-in |
+| Groundwork | `ec766e4` | compile-spikes (`idempotency.rs` + `token_counting.rs`) + cross-crate fixes |
+| Phase 1 | `d128b09` | Migration 016 crash-safety schema + 015b downgrade |
+| Phase 3 | `85e4fce` | idempotency-key + checkpoint resume + cooldown + is_dream_generated |
+| Phase 4 | `8ec711f` | budget tracking (TokenCountingChatProvider wiring) |
+| Phase 5 | `1ec121e` | SkippedIdempotent + on_worker_resumed sink events |
 
-All 5 phases shipped with zero `#[allow]` band-aids; every Quinn finding cause-fixed.
+Quinn PASS every phase (90/93/94/96). Zero `#[allow]` band-aids added to `src/`. Plus tech-debt commits: `6fa7229`/`571c623` (rust lint conventions), `e6a0fda` (TD-042 Tier 1 — 35 redundant test allows removed).
+
+> ⚠️ **The v0.2.3 sprint detail BELOW is SUPERSEDED** (predates the v0.2.4 build). Treat as historical. The earlier "1 pre-existing fail" baseline claim is STALE — workspace is now fully green. A full Active-Sprint refresh is part of the tech-debt clearance sprint. The "Phase-boundary discipline" subsection further down remains the persistent baseline and still applies.
 
 ### v0.2.3 phase plan (per impl spec §6)
 

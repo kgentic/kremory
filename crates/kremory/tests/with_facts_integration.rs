@@ -237,11 +237,18 @@ fn with_facts_empty_vec_equivalent_to_no_facts() {
         rt.block_on(async {
             let mem = open_with_ns("empty_vec_compat").await;
 
+            // No `.skip_extraction()` here on purpose: this test asserts that
+            // `with_facts(vec![])` is behaviourally identical to NOT calling
+            // `with_facts` at all — and "not calling with_facts at all" does not
+            // skip extraction. Calling `.skip_extraction()` AND asserting
+            // `skipped == 0` (as a prior revision did) is self-contradictory.
+            // Extraction here is a no-op: the harness wires `MockChatProvider::null()`
+            // (returns "" → zero entities), so the non-skip path is safe + covers
+            // the genuine backward-compat invariant. (Rule 8 test-input fix 2026-06-16.)
             let commit = mem
                 .remember("plain content, no caller facts")
                 .with_facts(vec![])
                 .from_chat("empty-fixture")
-                .skip_extraction() // ner feature: test is not about extraction
                 .await
                 .expect("empty-vec remember should succeed");
 
