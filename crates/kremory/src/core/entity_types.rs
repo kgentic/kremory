@@ -605,7 +605,6 @@ pub async fn upsert_entity_types(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     // ── upsert_entity_types DB tests (TD-013 per-call override) ──────────────

@@ -241,7 +241,6 @@ pub async fn run_dream_phase_passes<L: ChatProvider>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
     use crate::core::entity_types::{EntityTypeRegistry, EntityTypeSpec};

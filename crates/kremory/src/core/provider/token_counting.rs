@@ -160,7 +160,6 @@ impl ChatProvider for TokenCountingChatProvider {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::core::provider::chat_msg_user;
     use autoagents_llm::chat::{ChatResponse, Usage};

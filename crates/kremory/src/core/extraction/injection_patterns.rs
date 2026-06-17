@@ -157,7 +157,6 @@ pub fn sanitize_for_verify_prompt(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use metrics_util::debugging::DebuggingRecorder;
 

@@ -445,7 +445,6 @@ async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::core::schema::TemporalGraph;
 

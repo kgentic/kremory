@@ -3693,7 +3693,6 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use libsql::Builder;
 

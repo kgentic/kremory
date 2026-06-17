@@ -564,7 +564,6 @@ pub(crate) fn hybrid_typing_schema_with_bounds(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
     use serde_json::Value;
 
