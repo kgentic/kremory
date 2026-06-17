@@ -109,14 +109,20 @@ pub struct BatchPhase2Complete {
 /// entered.  It does NOT fire when zero facts were extracted (fast-exit
 /// path).  Fires regardless of whether contradictions are actually found.
 ///
-/// # `IngestStatus::SkippedIdempotent` — forward-compat (MED-05 / ADR-050)
+/// # `IngestStatus::SkippedIdempotent` (MED-05 / ADR-050 Phase 5, v0.2.4)
 ///
-/// The `IngestStatus` enum carries `#[non_exhaustive]`.  ADR-050
-/// (crash-safety + idempotency cluster, v0.2.4+) will add a
-/// `SkippedIdempotent` variant that fires when a duplicate episode is
-/// detected and the pipeline skips Phase 2 for that episode.  Consumers
-/// matching on `IngestStatus` MUST include a `_` catch-all arm to remain
-/// forward-compatible.
+/// The `IngestStatus` enum carries `#[non_exhaustive]`.  `SkippedIdempotent`
+/// was added in v0.2.4 (ADR-050 Phase 5) and fires via
+/// `on_stage_change(SkippedIdempotent)` each time Guard #1 in
+/// `run_verify_stage` detects a duplicate content hash — i.e., the entity
+/// was already processed in this crash-resume pass and Phase 2 is skipped.
+/// Fires once per skipped entity (NOT once per episode).
+///
+/// Consumers matching on `IngestStatus` MUST retain the `_` catch-all arm
+/// (enforced by `#[non_exhaustive]`) to stay forward-compatible with future
+/// variants.  Consumers SHOULD deduplicate `on_stage_change(Extracting)`
+/// callbacks on `(episode_id, stage)` because crash-resume re-enters
+/// `run_verify_stage` for partially-processed episodes.
 ///
 /// # `on_batch_phase2_complete` drop-before-complete contract
 ///

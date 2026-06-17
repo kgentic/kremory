@@ -71,6 +71,19 @@ pub enum SinkEvent {
     /// that `on_community_updated` was wired ahead of its planned ADR-050 sprint.
     /// The test `sink_community_updated_does_not_fire_in_v023` asserts absence.
     CommunityUpdated,
+    /// `on_stage_change(IngestStatus::SkippedIdempotent)` fired.
+    ///
+    /// Added v0.2.4 (ADR-050 Phase 5): fires at Guard #1 HIT in `run_verify_stage`
+    /// when an entity's content hash matches an already-processed entry.
+    SkippedIdempotent,
+    /// `on_worker_resumed(from_cursor, op_name)` fired.
+    ///
+    /// Added v0.2.4 (ADR-050 Phase 5): fires on `worker_loop` boot when a
+    /// non-null `op_checkpoints` entry indicates a prior crash.
+    WorkerResumed {
+        from_cursor: String,
+        op_name: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +203,46 @@ impl RecordingSink {
             })
             .collect()
     }
+
+    /// Count the number of `SkippedIdempotent` events recorded.
+    ///
+    /// Added v0.2.4 (ADR-050 Phase 5): used by `adr050_phase5_sink_wiring`
+    /// to assert Guard #1 HIT fires `on_stage_change(SkippedIdempotent)`.
+    ///
+    /// `#[allow(dead_code)]` is intentional: cross-binary asymmetry —
+    /// used only by `adr050_phase5_sink_wiring.rs`.
+    #[allow(dead_code)]
+    pub fn skipped_idempotent_count(&self) -> usize {
+        self.snapshot()
+            .into_iter()
+            .filter(|e| matches!(e, SinkEvent::SkippedIdempotent))
+            .count()
+    }
+
+    /// Return all `WorkerResumed` events as `(from_cursor, op_name)` tuples.
+    ///
+    /// Added v0.2.4 (ADR-050 Phase 5): used by `adr050_phase5_sink_wiring`
+    /// to assert `on_worker_resumed` fires on checkpoint-resume boot.
+    ///
+    /// `#[allow(dead_code)]` is intentional: cross-binary asymmetry —
+    /// used only by `adr050_phase5_sink_wiring.rs`.
+    #[allow(dead_code)]
+    pub fn worker_resumed_events(&self) -> Vec<(String, String)> {
+        self.snapshot()
+            .into_iter()
+            .filter_map(|e| {
+                if let SinkEvent::WorkerResumed {
+                    from_cursor,
+                    op_name,
+                } = e
+                {
+                    Some((from_cursor, op_name))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,10 +291,20 @@ impl IngestEventSink for RecordingSink {
     }
 
     fn on_stage_change(&self, stage: IngestStatus) {
+        // For SkippedIdempotent we push the dedicated SinkEvent::SkippedIdempotent
+        // variant so that `skipped_idempotent_count()` and direct pattern-matches
+        // in tests (adr050_phase5_sink_wiring.rs) can use the typed variant rather
+        // than matching against `StageChange(IngestStatus::SkippedIdempotent)`.
+        // All other stages are recorded as SinkEvent::StageChange(stage).
+        let event = if stage == IngestStatus::SkippedIdempotent {
+            SinkEvent::SkippedIdempotent
+        } else {
+            SinkEvent::StageChange(stage)
+        };
         self.events
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .push(SinkEvent::StageChange(stage));
+            .push(event);
     }
 
     fn on_ingestion_error(&self, event: IngestionError) {
@@ -279,6 +342,18 @@ impl EnrichmentEventSink for RecordingSink {
                 batch_id: event.batch_id,
                 succeeded: event.succeeded,
                 failed: event.failed,
+            });
+    }
+
+    fn on_worker_resumed(&self, from_cursor: &str, op_name: &str) {
+        // ADR-050 Phase 5: records checkpoint-resume events for test assertions.
+        // `worker_resumed_events()` helper drains these for structured checks.
+        self.events
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(SinkEvent::WorkerResumed {
+                from_cursor: from_cursor.to_string(),
+                op_name: op_name.to_string(),
             });
     }
 }

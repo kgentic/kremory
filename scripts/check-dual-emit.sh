@@ -5,7 +5,7 @@
 # in the kremory/src tree. A metric that is only counted but never traced
 # (or vice versa) represents a gap in our dual-emit contract.
 #
-# Exit 0: all 9 metrics satisfy the dual-emit invariant.
+# Exit 0: all 18 metrics satisfy the dual-emit invariant.
 # Exit 1: one or more metrics are missing a tracing or metrics emit.
 #
 # Usage (local):
@@ -151,6 +151,29 @@ check_metric \
 
 # NOTE: kremory.sink.dedup_merge_total is deferred (on_dedup_merge not wired at v0.2.3).
 # This check is intentionally omitted. Add when on_dedup_merge lands (ADR-050 scope).
+
+# ── v0.2.4 Phase 5: dream-pass crash-resume metrics (ADR-050 §3.1) ───────────
+#
+# rql.dream.checkpoint_resume_total: fires in worker_loop on crash-resume boot.
+# rql.dream.budget_used_micro_usd: fires in dream_pass after successful budget write.
+#
+# NOTE: rql.dream.idempotency_key_check_total — spec listed but no emit site exists.
+# Phase 5 replaced the old kremory.dream.idempotency_skip_total guard with
+# kremory.sink.stage_transition_total{to="SkippedIdempotent"} (already covered above).
+# Omitted here until a new idempotency_key_check emit is wired.
+#
+# NOTE: rql.dream.consistency_check_split_invariant — spec listed but no emit site
+# exists in the consistency_check module. Omitted until wired.
+
+check_metric \
+    "rql.dream.checkpoint_resume_total" \
+    "kremory.worker_loop.*resuming\|resuming from crash checkpoint" \
+    '"rql\.dream\.checkpoint_resume_total"'
+
+check_metric \
+    "rql.dream.budget_used_micro_usd" \
+    "kremory.dream.budget_usage\|budget_used" \
+    '"rql\.dream\.budget_used_micro_usd"'
 
 echo ""
 if [[ "${FAIL}" -eq 0 ]]; then

@@ -286,19 +286,22 @@ async fn stage3_write(
 
         if already_processed {
             // Guard #1 HIT — entity already processed in this state.
-            // Phase 5 seam: `sink.on_stage_change(IngestStatus::SkippedIdempotent)`
-            // fires here in Phase 5. For now emit counter + tracing only.
+            // Phase 5 (ADR-050 §3.1.1): triple-emit — sink + counter + tracing.
             // D7: entity_rowid NOT a metric label (high cardinality).
+            if let Some(s) = sink {
+                s.on_stage_change(IngestStatus::SkippedIdempotent);
+            }
             metrics::counter!(
-                "kremory.dream.idempotency_skip_total",
-                "pass_name" => "verify_stage"
+                "kremory.sink.stage_transition_total",
+                "from" => "Extracting",
+                "to" => "SkippedIdempotent"
             )
             .increment(1);
-            tracing::debug!(
+            tracing::info!(
                 entity_id = %entity_id,
                 entity_rowid,
                 content_hash_prefix = &hash[..8],
-                "kremory.dream.idempotency_key_hit — skipping verify_stage re-write"
+                "kremory.sink.stage_transition — SkippedIdempotent (Guard #1 HIT)"
             );
             continue;
         }
