@@ -55,6 +55,7 @@ async fn count_where(conn: &libsql::Connection, table: &str, condition: &str) ->
 }
 
 /// Insert a budget row with known token counts.
+#[allow(clippy::too_many_arguments)]
 async fn insert_budget_row(
     conn: &libsql::Connection,
     pass_run_id: &str,
@@ -243,10 +244,9 @@ fn detect_provider_name_correctness() {
     //
     // See: crates/kremory/src/core/ingest/mod.rs budget_helpers_tests module
     // for assertions against: ollama colon-pattern, claude-*, gpt-*, bedrock ARNs, fallback.
-    assert!(
-        true,
-        "DoD marker — real assertions in kremory::core::ingest::budget_helpers_tests::detect_provider_*"
-    );
+    // DoD marker: real assertions in kremory::core::ingest::budget_helpers_tests::detect_provider_*.
+    // This test validates that the budget helper module compiles and links correctly.
+    // The meaningful assertions live in budget_helpers_tests (unit tests in ingest/mod.rs).
 }
 
 // ─── Test 4: compute_dream_cost_micro correctness ────────────────────────────
@@ -258,10 +258,9 @@ fn compute_dream_cost_micro_correctness() {
     // Actual assertions in `kremory::core::ingest::budget_helpers_tests::compute_cost_*`.
     // See: crates/kremory/src/core/ingest/mod.rs — covers ollama=0, haiku rate,
     // sonnet rate, unknown claude-* = None, unknown provider = None.
-    assert!(
-        true,
-        "DoD marker — real assertions in kremory::core::ingest::budget_helpers_tests::compute_cost_*"
-    );
+    // DoD marker: real assertions in kremory::core::ingest::budget_helpers_tests::compute_cost_*.
+    // This test validates that the cost calculation helper compiles and links correctly.
+    // The meaningful assertions live in budget_helpers_tests (unit tests in ingest/mod.rs).
 }
 
 // ─── Test 5: NULL cost_usd_micro is valid per schema ─────────────────────────
@@ -327,10 +326,10 @@ async fn budget_row_cost_usd_micro_nullable() {
 /// This also confirms the table schema has migrations run correctly.
 #[tokio::test]
 async fn budget_written_with_zero_tokens_on_empty_reclassify() {
-    use std::sync::Arc;
     use kremory::core::provider::{MockChatProvider, MockEmbeddingProvider};
     use kremory::memory::ChatProvider;
     use kremory::{DreamPassOpts, DynEmbeddingProvider, Memory};
+    use std::sync::Arc;
 
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let path = tmp.path().join("adr050-phase4-zero-tokens.db");
@@ -351,7 +350,10 @@ async fn budget_written_with_zero_tokens_on_empty_reclassify() {
         .run_dream_pass_sync(DreamPassOpts::default())
         .await
         .expect("run_dream_pass_sync with mock LLM");
-    assert_eq!(summary.entities_reclassified, 0, "no entities to reclassify in empty DB");
+    assert_eq!(
+        summary.entities_reclassified, 0,
+        "no entities to reclassify in empty DB"
+    );
 
     // Drop memory to release the DB file lock.
     drop(memory);
@@ -363,12 +365,7 @@ async fn budget_written_with_zero_tokens_on_empty_reclassify() {
 
     // Budget row MUST exist — the Ok arm fires even for zero reclassifications.
     // Zero-token pass: tokens_input=0, tokens_output=0, cost=0 (ollama) or NULL.
-    let count = count_where(
-        &check_graph.conn,
-        "dream_pass_budget_usage",
-        "1=1",
-    )
-    .await;
+    let count = count_where(&check_graph.conn, "dream_pass_budget_usage", "1=1").await;
     assert_eq!(
         count, 1,
         "dream_pass_budget_usage must have 1 row after dream pass \
