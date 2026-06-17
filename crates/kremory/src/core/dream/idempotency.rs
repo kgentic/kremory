@@ -38,18 +38,6 @@
 // design change tracked for the Phase 3 integration, not this spike.
 // ---------------------------------------------------------------------------
 
-// SCOPED, TEMPORAL dead-code exemption (NOT a Rule-8 band-aid): this module is
-// the Phase-3 idempotency compile-spike landed AHEAD of its consumer per the
-// impl-spec §11 readiness-gate contingency. Its only in-crate caller —
-// `core/background/verify_stage.rs::run_verify_stage` (impl-spec §3 Phase 3,
-// line 141) — does not exist yet. The functions are correct + unit-tested under
-// `cfg(test)`; the lint is a timing false-positive on the non-test lib build.
-// REMOVAL CRITERION: delete this `#![allow]` the moment Phase 3 wires
-// `content_hash` into `run_verify_stage` (per
-// feedback_plumbing_phase_dod_needs_accessor_for_clippy). Kept `pub(crate)` —
-// internal crash-safety plumbing, deliberately NOT public API.
-#![allow(dead_code)]
-
 use sha2::{Digest, Sha256};
 
 use crate::core::schema::Entity;
@@ -72,6 +60,13 @@ const NONE_SENTINEL: &str = "\u{0}none";
 ///
 /// Audit/mutable fields (`recorded_at`, `updated_at`, `access_count`) and the
 /// free-form `properties` payload are deliberately ABSENT — see module docs.
+///
+/// **Test-only**: this function exists solely to expose the canonical field list
+/// so that `canonical_view_fields_match` can assert the serialisation order
+/// matches this declaration. It has no production call site — `content_hash`
+/// calls `canonical_entity_view` directly. Gated `#[cfg(test)]` to eliminate
+/// the dead-code lint without a band-aid `#[allow]`.
+#[cfg(test)]
 pub fn canonical_entity_view_fields() -> &'static [&'static str] {
     &["id", "label", "entity_type_id", "group_id"]
 }

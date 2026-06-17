@@ -624,6 +624,80 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
         // F2: initialise token bucket from config (None = unlimited).
         let mut bucket: Option<TokenBucketState> = llm_rate_limit.map(TokenBucketState::new);
 
+        // ── ADR-050 Phase 3 — checkpoint resume ───────────────────────────────
+        //
+        // On boot: SELECT the latest op_checkpoints row for op_name='verify_stage'.
+        // A non-null row means the worker previously crashed mid-run. Fire
+        // on_worker_resumed (arch spec §3.1.2 fire-site) + triple-emit, then
+        // continue. The per-entity idempotency Guard #1 (dream_idempotency_keys)
+        // provides the actual skip logic when run_verify_stage is re-entered.
+        //
+        // op_run_id for the CURRENT run: stable UUID-style id generated once.
+        // Checkpoint writes use INSERT OR REPLACE on (op_name, op_run_id), so
+        // each new run creates its own row — we only READ the latest row here.
+        //
+        // D7: episode_id NOT a metric label (high cardinality). Cursor value
+        // goes to tracing fields only.
+        let run_id = format!(
+            "verify_stage_{}",
+            Utc::now().timestamp_micros()
+        );
+        let mut deferred_episodes_processed: u64 = 0;
+
+        {
+            let conn = &graph.graph.conn;
+            match conn
+                .query(
+                    "SELECT cursor FROM op_checkpoints \
+                     WHERE op_name = 'verify_stage' \
+                     ORDER BY updated_at DESC \
+                     LIMIT 1",
+                    libsql::params![],
+                )
+                .await
+            {
+                Ok(mut rows) => {
+                    match rows.next().await {
+                        Ok(Some(row)) => {
+                            let cursor_val: String =
+                                row.get(0).unwrap_or_else(|_| String::new());
+                            if !cursor_val.is_empty() {
+                                // Resume path: fire sink event + triple-emit.
+                                if let Some(s) = sink.as_deref() {
+                                    s.on_worker_resumed(&cursor_val, "verify_stage");
+                                }
+                                metrics::counter!(
+                                    "rql.dream.checkpoint_resume_total",
+                                    "op_name" => "verify_stage"
+                                )
+                                .increment(1);
+                                tracing::warn!(
+                                    from_cursor = %cursor_val,
+                                    op_name = "verify_stage",
+                                    "kremory.worker_loop: resuming from crash checkpoint"
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            // No checkpoint — fresh start, normal boot.
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "kremory.worker_loop: op_checkpoints row-next failed; continuing without resume"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "kremory.worker_loop: op_checkpoints SELECT failed; continuing without resume"
+                    );
+                }
+            }
+        }
+
         loop {
             if stop.load(Ordering::Acquire) {
                 // Guard was dropped — drain remaining NER items, then exit.
@@ -668,6 +742,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         metrics::gauge!("rql.background.deferred_queue_depth").set(depth as f64);
                         tracing::info!(depth, "kremory.background.deferred_queue draining");
                         let batch_id = deferred.batch_id.clone();
+                        // Capture episode_id before move into process_deferred.
+                        let episode_id_for_checkpoint = deferred.episode_id;
                         let outcome = process_deferred(
                             &graph,
                             deferred,
@@ -682,6 +758,17 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                             outcome,
                             sink.as_deref(),
                         );
+                        // ADR-050 Phase 3: write checkpoint every N=10 deferred episodes.
+                        deferred_episodes_processed += 1;
+                        if deferred_episodes_processed % CHECKPOINT_INTERVAL == 0 {
+                            write_checkpoint(
+                                &graph.graph.conn,
+                                "verify_stage",
+                                &run_id,
+                                episode_id_for_checkpoint,
+                            )
+                            .await;
+                        }
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
@@ -725,6 +812,8 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                             "kremory.background.deferred_queue drain-on-disconnect"
                         );
                         let batch_id = deferred.batch_id.clone();
+                        // Capture episode_id before move into process_deferred.
+                        let episode_id_for_checkpoint = deferred.episode_id;
                         let outcome = process_deferred(
                             &graph,
                             deferred,
@@ -739,6 +828,17 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                             outcome,
                             sink.as_deref(),
                         );
+                        // ADR-050 Phase 3: write checkpoint every N=10 deferred episodes.
+                        deferred_episodes_processed += 1;
+                        if deferred_episodes_processed % CHECKPOINT_INTERVAL == 0 {
+                            write_checkpoint(
+                                &graph.graph.conn,
+                                "verify_stage",
+                                &run_id,
+                                episode_id_for_checkpoint,
+                            )
+                            .await;
+                        }
                     }
                     break;
                 }
@@ -746,6 +846,64 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
         }
     });
 }
+
+// ---------------------------------------------------------------------------
+// ADR-050 Phase 3 — checkpoint write helper
+// ---------------------------------------------------------------------------
+
+/// Write an `op_checkpoints` row for the verify_stage worker (ADR-050 Phase 3).
+///
+/// Called every `CHECKPOINT_INTERVAL` deferred-episode completions to record
+/// the last-processed `episode_id` as the resume cursor. On crash + restart,
+/// `worker_loop` reads this row via `on_worker_resumed` and resumes processing;
+/// the per-entity `dream_idempotency_keys` guard (Guard #1) provides the
+/// actual skip logic so re-entering an already-processed episode is safe.
+///
+/// Uses `INSERT OR REPLACE` on `(op_name, op_run_id)` so each run upserts its
+/// own row. The SELECT on boot uses `ORDER BY updated_at DESC LIMIT 1` so it
+/// finds the most-recently-updated row regardless of `op_run_id`.
+///
+/// Soft-fail: checkpoint failures are logged + metered but NOT propagated —
+/// a failed checkpoint write degrades crash-safety (may re-process on next
+/// boot) but does NOT corrupt data (idempotency guard catches re-processing).
+/// D7: episode_id in tracing field only, NOT a metric label.
+async fn write_checkpoint(conn: &libsql::Connection, op_name: &str, run_id: &str, episode_id: i64) {
+    let cursor = episode_id.to_string();
+    let now_epoch = Utc::now().timestamp();
+    if let Err(e) = conn
+        .execute(
+            "INSERT OR REPLACE INTO op_checkpoints \
+             (op_name, op_run_id, cursor, updated_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            libsql::params![op_name, run_id, cursor.clone(), now_epoch],
+        )
+        .await
+    {
+        tracing::warn!(
+            error = %e,
+            op_name,
+            episode_id,
+            "kremory.dream.checkpoint_write_fail — crash-safety degraded for this run"
+        );
+        metrics::counter!(
+            "kremory.dream.checkpoint_write_fail_total",
+            "op_name" => "verify_stage"
+        )
+        .increment(1);
+    } else {
+        tracing::debug!(
+            op_name,
+            run_id,
+            cursor = %cursor,
+            "kremory.dream.checkpoint_written"
+        );
+    }
+}
+
+/// Number of deferred episodes to process between checkpoint writes.
+/// ADR-050 Phase 3: N=10 provides coarse-grained crash-safety without
+/// excessive write amplification.
+const CHECKPOINT_INTERVAL: u64 = 10;
 
 // ---------------------------------------------------------------------------
 // Batch terminal helper — called after every process_deferred completion

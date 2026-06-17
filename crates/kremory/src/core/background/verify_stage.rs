@@ -58,12 +58,13 @@ use chrono::Utc;
 use crate::core::dream::consistency_check::{
     verify_batch_for_candidates, VerifyBatchForCandidatesOpts,
 };
+use crate::core::dream::idempotency;
 use crate::core::error::{Error, IngestStatus};
 use crate::core::ingest::{EntityCandidate, ResolvedDecision};
 use crate::core::intelligence::{EntityExtractorDyn, ExtractionContext, ExtractionResult};
 use crate::core::provider::ChatProvider;
 use crate::core::resolver::normalize_name;
-use crate::core::schema::TemporalGraph;
+use crate::core::schema::{Entity, TemporalGraph};
 use crate::memory::events::EnrichmentEventSink;
 
 use super::DeferredRequest;
@@ -110,10 +111,24 @@ async fn update_episode_status(
 /// instead of the generic `&Engine<L, Emb>`, keeping `verify_stage.rs` free of
 /// type-parameter entanglement.
 ///
+/// **ADR-050 Phase 3 — idempotency key (Guard #1)**:
+/// Per entity: after `INSERT OR IGNORE INTO entities`, queries `SELECT rowid` to
+/// obtain the integer row identifier, computes `content_hash` from the canonical
+/// entity view `{id, label, entity_type_id, group_id}` (via `idempotency.rs`),
+/// and checks `dream_idempotency_keys(pass_name='verify_stage', entity_id=rowid,
+/// content_hash=hash)`. On HIT the FTS + episodic-edge + sink callbacks are
+/// skipped (entity was already processed in this state — R-10). On MISS the full
+/// write completes and the idempotency key is inserted so a future crash-resume
+/// skips correctly.
+///
+/// **ADR-050 Phase 3 — is_dream_generated**:
+/// Entities written here carry `is_dream_generated = 1` so Pass-2 reclassify
+/// (Guard anti-loop) can exclude them from its candidate-selection query.
+///
 /// `sink` receives `on_entity_extracted` and `on_edge_added("mention")` callbacks
 /// per ADR-052 Gap 1 fire-sites 2 + 3.
 ///
-/// Returns the number of entity rows persisted.
+/// Returns the number of entity rows written (idempotent-skips do NOT count).
 ///
 /// NOTE (MED-04): `entity_extracted_total{arm}` counter is emitted at the call
 /// sites in `run_verify_stage` (where `arm` is in scope) rather than inside this
@@ -128,6 +143,7 @@ async fn stage3_write(
     sink: Option<&dyn EnrichmentEventSink>,
 ) -> Result<usize, Error> {
     let now = Utc::now().to_rfc3339();
+    let now_epoch: i64 = Utc::now().timestamp();
     let mut count = 0usize;
 
     for decision in decisions {
@@ -150,13 +166,17 @@ async fn stage3_write(
             .map_err(|e| Error::Other(anyhow::anyhow!("stage3_write serialize props: {e}")))?;
 
         // INSERT OR IGNORE — first-mention-wins per ingest_with convention.
+        // ADR-050: is_dream_generated = 1 marks this row as dream-generated so
+        // Pass-2 reclassify (Guard anti-loop) can exclude it via
+        // `AND is_dream_generated = 0` (impl-spec §3 Phase 3 DoD).
         graph
             .conn
             .execute(
                 "INSERT OR IGNORE INTO entities \
                  (id, entity_type_id, properties, recorded_at, group_id, \
-                  entity_type_source, entity_type_assigned_at, ner_confidence) \
-                 VALUES (?1, ?2, ?3, ?4, 'default', 'Phase1Ner', ?4, ?5)",
+                  entity_type_source, entity_type_assigned_at, ner_confidence, \
+                  is_dream_generated) \
+                 VALUES (?1, ?2, ?3, ?4, 'default', 'Phase1Ner', ?4, ?5, 1)",
                 libsql::params![
                     entity_id.clone(),
                     entity_type_id,
@@ -172,6 +192,118 @@ async fn stage3_write(
                     entity_id
                 ))
             })?;
+
+        // ── ADR-050 Guard #1: idempotency key check ───────────────────────────
+        //
+        // Query entities.rowid — works whether the entity was just inserted (new)
+        // or already existed (INSERT OR IGNORE was a no-op). The rowid is stable
+        // for the life of the row (SQLite WITHOUT ROWID is NOT used here).
+        //
+        // impl-spec §3 Phase 3: `SELECT rowid FROM entities WHERE id = ?` then
+        // check `dream_idempotency_keys(pass_name, entity_id=rowid, content_hash)`.
+        // On HIT → skip FTS + edge + sink (entity already processed in this state).
+        // On MISS → continue write, INSERT idempotency key on success.
+        let entity_rowid: i64 = {
+            let mut rows = graph
+                .conn
+                .query(
+                    "SELECT rowid FROM entities WHERE id = ?1",
+                    libsql::params![entity_id.clone()],
+                )
+                .await
+                .map_err(|e| {
+                    Error::Other(anyhow::anyhow!(
+                        "stage3_write rowid query for '{}': {e}",
+                        entity_id
+                    ))
+                })?;
+            let row = rows
+                .next()
+                .await
+                .map_err(|e| {
+                    Error::Other(anyhow::anyhow!(
+                        "stage3_write rowid row-next for '{}': {e}",
+                        entity_id
+                    ))
+                })?
+                .ok_or_else(|| {
+                    Error::Other(anyhow::anyhow!(
+                        "stage3_write: no rowid for entity '{}' after INSERT OR IGNORE",
+                        entity_id
+                    ))
+                })?;
+            row.get(0).map_err(|e| {
+                Error::Other(anyhow::anyhow!(
+                    "stage3_write rowid get(0) for '{}': {e}",
+                    entity_id
+                ))
+            })?
+        };
+
+        // Build synthetic Entity for canonical-view hashing.
+        // group_id is always 'default' for verify_stage writes (see INSERT above).
+        // Audit/mutable fields (recorded_at, updated_at, access_count, properties)
+        // are excluded from the hash by design — R-10 invariant.
+        let synthetic = Entity {
+            id: entity_id.clone(),
+            label: candidate.name.clone(),
+            entity_type_id: u32::try_from(entity_type_id.max(0)).unwrap_or(0),
+            properties: serde_json::Value::Null,
+            recorded_at: Utc::now(),
+            updated_at: None,
+            group_id: Some("default".to_string()),
+            access_count: 0,
+        };
+        let hash = idempotency::content_hash(&synthetic);
+
+        let already_processed: bool = {
+            let mut rows = graph
+                .conn
+                .query(
+                    "SELECT completed_at FROM dream_idempotency_keys \
+                     WHERE pass_name = 'verify_stage' \
+                       AND entity_id = ?1 \
+                       AND content_hash = ?2",
+                    libsql::params![entity_rowid, hash.clone()],
+                )
+                .await
+                .map_err(|e| {
+                    Error::Other(anyhow::anyhow!(
+                        "stage3_write idempotency SELECT for rowid {}: {e}",
+                        entity_rowid
+                    ))
+                })?;
+            rows.next()
+                .await
+                .map_err(|e| {
+                    Error::Other(anyhow::anyhow!(
+                        "stage3_write idempotency row-next for rowid {}: {e}",
+                        entity_rowid
+                    ))
+                })?
+                .is_some()
+        };
+
+        if already_processed {
+            // Guard #1 HIT — entity already processed in this state.
+            // Phase 5 seam: `sink.on_stage_change(IngestStatus::SkippedIdempotent)`
+            // fires here in Phase 5. For now emit counter + tracing only.
+            // D7: entity_rowid NOT a metric label (high cardinality).
+            metrics::counter!(
+                "kremory.dream.idempotency_skip_total",
+                "pass_name" => "verify_stage"
+            )
+            .increment(1);
+            tracing::debug!(
+                entity_id = %entity_id,
+                entity_rowid,
+                content_hash_prefix = &hash[..8],
+                "kremory.dream.idempotency_key_hit — skipping verify_stage re-write"
+            );
+            continue;
+        }
+
+        // ── Guard #1 MISS: full write path ─────────────────────────────────────
 
         // ── Fire-site 2: on_entity_extracted (ADR-052 Gap 1 §3.1 row 2) ─────
         // Triple-emit: sink + counter + tracing within 5 lines.
@@ -224,6 +356,35 @@ async fn stage3_write(
             )
             .increment(1);
             tracing::debug!(episode_id, entity_id = %entity_id, predicate = "mention", "kremory.sink.edge_added");
+        }
+
+        // ── ADR-050 Guard #1: record idempotency key on success ───────────────
+        // INSERT after FTS + edge succeed. If this INSERT fails (unlikely — disk
+        // full, lock), log + continue; the entity IS written so returning Err here
+        // would misrepresent the state. Next run will re-process (no harm, no
+        // data loss — idempotency degrades gracefully to "may re-process once").
+        // D7: entity_rowid NOT a metric label.
+        if let Err(e) = graph
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO dream_idempotency_keys \
+                 (pass_name, entity_id, content_hash, completed_at) \
+                 VALUES ('verify_stage', ?1, ?2, ?3)",
+                libsql::params![entity_rowid, hash, now_epoch],
+            )
+            .await
+        {
+            tracing::warn!(
+                entity_id = %entity_id,
+                entity_rowid,
+                error = %e,
+                "kremory.dream.idempotency_key_insert_fail — entity written; key not recorded"
+            );
+            metrics::counter!(
+                "kremory.dream.idempotency_key_insert_fail_total",
+                "pass_name" => "verify_stage"
+            )
+            .increment(1);
         }
 
         metrics::counter!(
