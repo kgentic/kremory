@@ -418,6 +418,12 @@ async fn load_candidates(
     //
     // ConsumerPinned and DreamPass1 are excluded via `entity_type_source NOT IN (...)`.
     // This is structural (SQL WHERE) — not a prompt instruction. E1 satisfied.
+    //
+    // ADR-050 Phase 3 — Guard anti-loop: `AND is_dream_generated = 0` excludes
+    // entities written by Pass 4 / verify_stage (dream-generated). Without this,
+    // reclassify would re-process dream-generated entities on the next dream pass,
+    // creating a runaway loop (R-10 stop condition). Structural at SQL WHERE, not
+    // application logic — load-bearing-invariants-at-emit-not-prompt.
     let mut rows = conn
         .query(
             "SELECT id, entity_type_id, ner_confidence, entity_type_source \
@@ -427,6 +433,7 @@ async fn load_candidates(
                  OR (entity_type_source = 'Phase1Ner' AND ner_confidence < ?1) \
              ) \
              AND entity_type_source NOT IN ('ConsumerPinned', 'DreamPass1') \
+             AND is_dream_generated = 0 \
              AND group_id = ?2 \
              LIMIT ?3",
             libsql::params![threshold_f64, group_id.to_string(), limit],

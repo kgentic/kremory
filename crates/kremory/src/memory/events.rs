@@ -139,4 +139,28 @@ pub trait EnrichmentEventSink: IngestEventSink {
     fn on_community_updated(&self, community_id: &str, member_count: usize);
     /// All Phase 2 runs for a batch have reached terminal status.
     fn on_batch_phase2_complete(&self, event: BatchPhase2Complete);
+
+    /// Fires on the background worker OS thread when `worker_loop` boots and
+    /// detects a non-null `op_checkpoints` entry — indicating a prior crash.
+    ///
+    /// `from_cursor` is the serialised cursor value (opaque string; typically
+    /// an episode_id serialised to a decimal string). Consumers can use this
+    /// to log an audit trail, display a "resumed from checkpoint" banner, or
+    /// skip UI reconciliation for already-processed entities (pre-cursor
+    /// entries were already signalled before crash). Repeated crashes at the
+    /// same cursor produce repeated firings — the event is NOT deduplicated.
+    ///
+    /// **Default no-op**: This is an operational-observability event, NOT a
+    /// correctness event. Existing consumers that don't care about crash-resume
+    /// MUST NOT be forced to implement a no-op (arch spec §3.1.2, ADR-050).
+    /// This is an explicit, scoped deviation from v0.2.3's "no default impls"
+    /// policy for `IngestEventSink` correctness methods.
+    ///
+    /// **Forward-compat note (MED-05 ADR-050 idempotency)**: After v0.2.4,
+    /// sink consumers MUST deduplicate `on_stage_change(Extracting)` callbacks
+    /// on `(episode_id, stage)` because crash-resume may re-enter
+    /// `run_verify_stage` for partially-processed episodes. `on_worker_resumed`
+    /// fires once per worker boot on the resume path to signal that redelivery
+    /// is about to occur.
+    fn on_worker_resumed(&self, _from_cursor: &str, _op_name: &str) {}
 }

@@ -463,12 +463,64 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             )
             .await
             {
-                Ok(r) => r.entities_reclassified,
+                Ok(r) => {
+                    // ── ADR-050 Phase 3 — Guard #3: cooldown-on-success ───────
+                    //
+                    // Records pass completion ONLY on success so transient
+                    // failures do NOT update the cooldown timestamp. A consumer
+                    // checking "was the last dream pass successful?" reads the
+                    // most-recent row for op_name='dream_pass_cooldown'; if no
+                    // row exists, no successful pass has run yet.
+                    //
+                    // op_run_id = microsecond timestamp → each successful run
+                    // gets its own row (INSERT OR REPLACE upserts on PK clash,
+                    // so same-microsecond duplicate is safe — idempotent).
+                    // cursor = epoch-seconds of completion (human-readable signal
+                    // of "last success at T"). updated_at same value.
+                    //
+                    // Soft-fail: cooldown write failure is logged + metered but
+                    // NOT propagated — it degrades schedule enforcement (scheduler
+                    // may fire again sooner than intended) but does NOT corrupt
+                    // data. Rule 8: the cause is a DB write failure, NOT a
+                    // dream-pass logic error.
+                    //
+                    // D7: no high-cardinality metric labels.
+                    let now_epoch = Utc::now().timestamp();
+                    let cooldown_run_id = format!("dream_pass_{}", Utc::now().timestamp_micros());
+                    let cursor_val = now_epoch.to_string();
+                    if let Err(e) = self
+                        .graph
+                        .conn
+                        .execute(
+                            "INSERT OR REPLACE INTO op_checkpoints \
+                             (op_name, op_run_id, cursor, updated_at) \
+                             VALUES ('dream_pass_cooldown', ?1, ?2, ?3)",
+                            libsql::params![cooldown_run_id, cursor_val, now_epoch],
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "kremory.dream.cooldown_write_fail — schedule enforcement degraded"
+                        );
+                        metrics::counter!("kremory.dream.cooldown_write_fail_total").increment(1);
+                    } else {
+                        // Phase 5 seam: on_dream_pass_complete (or equivalent) fires here
+                        // when Phase 5 sink-wiring lands for the inline dream-pass path.
+                        metrics::counter!("kremory.dream.cooldown_recorded_total").increment(1);
+                        tracing::debug!(
+                            completed_at = now_epoch,
+                            "kremory.dream.cooldown_on_success recorded"
+                        );
+                    }
+                    r.entities_reclassified
+                }
                 Err(e) => {
                     // Non-fatal per E7 — surface as debug log, continue.
+                    // ADR-050 Guard #3: transient failure → cooldown NOT recorded.
                     tracing::warn!(
                         error = %e,
-                        "kremory.dream.reclassify_all_groups failed — skipping; dream pass unaffected"
+                        "kremory.dream.reclassify_all_groups failed — skipping; dream pass unaffected; cooldown NOT recorded (transient failure)"
                     );
                     0
                 }
