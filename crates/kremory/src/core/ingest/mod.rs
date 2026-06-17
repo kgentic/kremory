@@ -988,7 +988,6 @@ fn anthropic_rate_per_token(model: &str) -> Option<(u64, u64)> {
 
 #[cfg(test)]
 mod budget_helpers_tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]

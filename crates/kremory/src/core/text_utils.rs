@@ -525,7 +525,6 @@ pub(crate) fn compute_pmi_bigrams(text: &str, threshold: f64) -> Vec<(String, f6
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn make_existing(name: &str) -> ExtractedEntity {

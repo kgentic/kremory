@@ -131,7 +131,6 @@ fn parse_entity_line(line: &str) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     // ── parse_delimited_tuple_response ────────────────────────────────────────
