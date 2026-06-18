@@ -25,8 +25,9 @@ use crate::core::provider::{ChatProvider, EmbeddingProvider};
 use crate::memory::events::EnrichmentEventSink;
 
 use super::{
-    batch_tracker::BatchTracker, deferred_pipeline::worker_loop, IngestError, IngestRequest,
-    IngestSendError, IngestorConfig,
+    batch_tracker::BatchTracker,
+    deferred_pipeline::{worker_loop, WorkerLoopParams},
+    IngestError, IngestRequest, IngestSendError, IngestorConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -141,17 +142,17 @@ impl BackgroundIngestor {
             .name(config.thread_name.clone())
             .spawn(move || {
                 let _enter = parent_span.enter();
-                worker_loop(
+                worker_loop(WorkerLoopParams {
                     graph,
                     work_rx,
                     error_tx,
-                    queued_worker,
-                    stop_worker,
+                    queued: queued_worker,
+                    stop: stop_worker,
                     deferred_enabled,
                     llm_rate_limit,
-                    sink_for_worker,
-                    batch_tracker_for_worker,
-                );
+                    sink: sink_for_worker,
+                    batch_tracker: batch_tracker_for_worker,
+                });
             })
             .unwrap_or_else(|e| panic!("invariant: OS rejected rql-ingestor thread spawn: {e}"));
 
