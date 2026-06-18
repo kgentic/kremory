@@ -45,6 +45,18 @@ use super::{
     ChatProvider, Result,
 };
 
+/// Bundled parameters for [`GraphHandle::graph_submit_dream`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). `async_trait` counts the
+/// receiver, so the 5 declared args trip the 5-arg threshold. Borrow lives for
+/// the duration of one submit call.
+pub struct GraphSubmitDreamParams<'a> {
+    pub namespace: &'a Namespace,
+    pub provider: Arc<dyn ChatProvider>,
+    pub batch_id: Option<String>,
+    pub opts: DreamOpts,
+    pub sink: Option<Arc<dyn EnrichmentEventSink>>,
+}
+
 /// Bundled parameters for [`GraphHandle::graph_ingest_episode`] — args-as-object
 /// per TD-042 (rust-conventions §too_many_arguments). Borrows live for the
 /// duration of a single ingest call; callers construct a fresh value per call.
@@ -102,15 +114,7 @@ pub trait GraphHandle: Send + Sync {
     /// returns the existing `DreamHandle` without starting a new run.
     /// Parameter mismatch on existing key → `tracing::warn!` (not error).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
-    #[allow(clippy::too_many_arguments)]
-    async fn graph_submit_dream(
-        &self,
-        namespace: &Namespace,
-        provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        opts: DreamOpts,
-        sink: Option<Arc<dyn EnrichmentEventSink>>,
-    ) -> Result<DreamHandle>;
+    async fn graph_submit_dream(&self, params: GraphSubmitDreamParams<'_>) -> Result<DreamHandle>;
 
     /// Query Phase 3 status for a `DreamHandle` run_id.
     async fn graph_dream_status(&self, run_id: Uuid) -> Result<DreamStatus>;

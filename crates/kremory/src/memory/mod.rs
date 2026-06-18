@@ -42,7 +42,7 @@ pub mod types;
 
 pub(crate) use background_ingestor_handle::BackgroundIngestorGraphHandle;
 pub use engine_handle::EngineGraphHandle;
-pub use graph::{GraphHandle, GraphIngestEpisodeParams};
+pub use graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams};
 pub use scheduler::{DreamSchedule, DreamSchedulerHandle};
 #[cfg(any(test, feature = "test-utils"))]
 pub use stub::StubGraphHandle;
@@ -115,7 +115,13 @@ pub async fn submit_dream_phase(
     sink: Option<Arc<dyn events::EnrichmentEventSink>>,
 ) -> Result<DreamHandle> {
     graph
-        .graph_submit_dream(&namespace, provider, batch_id, opts, sink)
+        .graph_submit_dream(GraphSubmitDreamParams {
+            namespace: &namespace,
+            provider,
+            batch_id,
+            opts,
+            sink,
+        })
         .await
 }
 
@@ -729,12 +735,15 @@ mod tests {
 
         async fn graph_submit_dream(
             &self,
-            namespace: &Namespace,
-            _provider: Arc<dyn ChatProvider>,
-            batch_id: Option<String>,
-            _opts: DreamOpts,
-            _sink: Option<Arc<dyn crate::memory::events::EnrichmentEventSink>>,
+            params: GraphSubmitDreamParams<'_>,
         ) -> Result<DreamHandle> {
+            let GraphSubmitDreamParams {
+                namespace,
+                provider: _,
+                batch_id,
+                opts: _,
+                sink: _,
+            } = params;
             Ok(DreamHandle {
                 run_id: uuid::Uuid::new_v4(),
                 namespace: namespace.clone(),

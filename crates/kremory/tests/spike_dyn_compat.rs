@@ -30,7 +30,7 @@ use kremory::core::ingest::DreamPassOpts;
 use kremory::facade::DreamSummary;
 use kremory::memory::{
     events::EnrichmentEventSink,
-    graph::{GraphHandle, GraphIngestEpisodeParams},
+    graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams},
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
         DreamStatus, EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
@@ -68,14 +68,7 @@ impl GraphHandle for StubEngineGraphHandle {
         unimplemented!("spike stub")
     }
 
-    async fn graph_submit_dream(
-        &self,
-        _namespace: &Namespace,
-        _provider: Arc<dyn ChatProvider>,
-        _batch_id: Option<String>,
-        _opts: DreamOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
-    ) -> Result<DreamHandle> {
+    async fn graph_submit_dream(&self, _params: GraphSubmitDreamParams<'_>) -> Result<DreamHandle> {
         unimplemented!("spike stub")
     }
 
@@ -239,17 +232,8 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
         self.engine_handle.graph_cancel(run_id).await
     }
 
-    async fn graph_submit_dream(
-        &self,
-        namespace: &Namespace,
-        provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        opts: DreamOpts,
-        sink: Option<Arc<dyn EnrichmentEventSink>>,
-    ) -> Result<DreamHandle> {
-        self.engine_handle
-            .graph_submit_dream(namespace, provider, batch_id, opts, sink)
-            .await
+    async fn graph_submit_dream(&self, params: GraphSubmitDreamParams<'_>) -> Result<DreamHandle> {
+        self.engine_handle.graph_submit_dream(params).await
     }
 
     async fn graph_dream_status(&self, run_id: Uuid) -> Result<DreamStatus> {

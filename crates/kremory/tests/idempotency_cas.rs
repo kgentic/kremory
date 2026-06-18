@@ -15,13 +15,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dashmap::DashMap;
 use kremory::memory::{
-    events::EnrichmentEventSink,
     submit_dream_phase,
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
         DreamStatus, EpisodeCommit, IngestStatus, Namespace, RetrievedContext, SearchOpts,
     },
-    ChatProvider, GraphHandle, GraphIngestEpisodeParams,
+    ChatProvider, GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams,
 };
 use uuid::Uuid;
 
@@ -74,12 +73,15 @@ impl GraphHandle for StubIdempotentHandle {
 
     async fn graph_submit_dream(
         &self,
-        namespace: &Namespace,
-        _provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        _opts: DreamOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphSubmitDreamParams<'_>,
     ) -> kremory::memory::types::Result<DreamHandle> {
+        let GraphSubmitDreamParams {
+            namespace,
+            provider: _,
+            batch_id,
+            opts: _,
+            sink: _,
+        } = params;
         let key = (
             namespace.namespace.clone(),
             namespace.thread.clone().unwrap_or_default(),

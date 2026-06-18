@@ -39,11 +39,10 @@ use crate::core::background::{BackgroundIngestor, IngestGuard, IngestRequest, In
 use crate::core::error::IngestStatus;
 use crate::memory::engine_handle::{namespace_to_group_id, EngineGraphHandle};
 use crate::memory::{
-    events::EnrichmentEventSink,
-    graph::{GraphHandle, GraphIngestEpisodeParams},
+    graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams},
     types::{
-        BatchStatus, CancelOutcome, DreamHandle, DreamOpts, DreamPhaseResult, DreamStatus,
-        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
+        BatchStatus, CancelOutcome, DreamHandle, DreamPhaseResult, DreamStatus, EpisodeCommit,
+        MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
     },
     ChatProvider,
 };
@@ -290,18 +289,9 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
     //
     // ROUTING: EngineGraphHandle — Dream does not go through BackgroundIngestor.
 
-    async fn graph_submit_dream(
-        &self,
-        namespace: &Namespace,
-        provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        opts: DreamOpts,
-        sink: Option<Arc<dyn EnrichmentEventSink>>,
-    ) -> Result<DreamHandle> {
+    async fn graph_submit_dream(&self, params: GraphSubmitDreamParams<'_>) -> Result<DreamHandle> {
         // ROUTING: delegate to EngineGraphHandle.
-        self.engine_handle
-            .graph_submit_dream(namespace, provider, batch_id, opts, sink)
-            .await
+        self.engine_handle.graph_submit_dream(params).await
     }
 
     // ── 5. graph_dream_status ────────────────────────────────────────────────
