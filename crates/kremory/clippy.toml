@@ -2,13 +2,13 @@ too-many-arguments-threshold = 5
 
 # TD-002: module-size lint (Foundation Sprint Phase C, 2026-06-08)
 #
-# Threshold rationale (measured post-E0 split, 2026-06-08):
-#   graph.rs       = 3142 LoC  (graph DB layer — SQLite + libsql, inherently large)
-#   migrations.rs  = 2295 LoC  (SQL DDL migration chain — each migration is additive)
+# Threshold rationale (originally measured post-E0 split, 2026-06-08):
+#   graph.rs       = 3142 LoC  → SPLIT into core/graph/ module (TD-045 Wave 2, 2026-06-18)
+#   migrations.rs  = 2295 LoC  → SPLIT into migrations/ module (TD-045 Wave 1, 2026-06-18)
 #   search.rs      = 1935 LoC  (search + recall + embedding similarity — distinct concerns
-#                               consolidated for single-pass query construction)
+#                               consolidated for single-pass query construction; now largest)
 #
-# Setting 3500 means the threshold does NOT fire on any current file (largest = 3142),
+# Setting 3500 keeps headroom over the current largest file (search.rs ~1935 LoC)
 # while catching any NEW file that balloons past ~3500 LoC without a deliberate split.
 # Any file that legitimately exceeds the threshold must carry an inline
 # `#[allow(clippy::too_many_lines)]` with a comment explaining why the exception is valid
