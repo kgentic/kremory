@@ -36,12 +36,11 @@ use crate::core::ingest::{Engine, PrePinnedFact, SourceParams};
 use crate::core::provider::{ArcChatProvider, ArcEmbedder};
 use crate::core::schema::TemporalGraph;
 use crate::memory::{
-    events::EnrichmentEventSink,
-    graph::{GraphHandle, GraphIngestEpisodeParams},
+    graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams},
     types::{
-        BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
-        SourceKind, SourceRef,
+        BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamPhaseResult, DreamStatus,
+        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts, SourceKind,
+        SourceRef,
     },
     ChatProvider,
 };
@@ -471,14 +470,7 @@ impl GraphHandle for EngineGraphHandle {
 
     // ── 4. graph_submit_dream — NotImplemented (F-01 LOCKED) ────────────────
 
-    async fn graph_submit_dream(
-        &self,
-        _namespace: &Namespace,
-        _provider: Arc<dyn ChatProvider>,
-        _batch_id: Option<String>,
-        _opts: DreamOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
-    ) -> Result<DreamHandle> {
+    async fn graph_submit_dream(&self, _params: GraphSubmitDreamParams<'_>) -> Result<DreamHandle> {
         Err(MemoryError::NotImplemented {
             feature: "dream-submit",
             available_in: "v0.1.1",
@@ -738,6 +730,7 @@ mod tests {
         provider::{MockChatProvider, NullEmbeddingProvider},
         schema::TemporalGraph,
     };
+    use crate::memory::types::DreamOpts;
 
     /// Build a test `EngineGraphHandle` wired to an in-memory libSQL database.
     async fn make_handle() -> EngineGraphHandle {
@@ -791,7 +784,13 @@ mod tests {
 
         // graph_submit_dream
         let result = handle
-            .graph_submit_dream(&ns, Arc::clone(&provider), None, DreamOpts::default(), None)
+            .graph_submit_dream(GraphSubmitDreamParams {
+                namespace: &ns,
+                provider: Arc::clone(&provider),
+                batch_id: None,
+                opts: DreamOpts::default(),
+                sink: None,
+            })
             .await;
         match result {
             Err(MemoryError::NotImplemented {

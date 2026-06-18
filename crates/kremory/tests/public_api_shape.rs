@@ -13,12 +13,11 @@ use kremory::memory::{
     await_batch_enrichment, await_dream, await_enrichment, submit_dream_phase, submit_episode,
 };
 use kremory::memory::{
-    events::EnrichmentEventSink,
     types::{
         AwaitOpts, BatchStatus, DreamHandle, DreamOpts, DreamStatus, EpisodeCommit, IngestStatus,
         Namespace, SubmitOpts,
     },
-    GraphHandle, GraphIngestEpisodeParams,
+    GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams,
 };
 use uuid::Uuid;
 
@@ -73,12 +72,15 @@ impl GraphHandle for StubHandle {
 
     async fn graph_submit_dream(
         &self,
-        namespace: &Namespace,
-        _provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        _opts: DreamOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphSubmitDreamParams<'_>,
     ) -> kremory::memory::types::Result<DreamHandle> {
+        let GraphSubmitDreamParams {
+            namespace,
+            provider: _,
+            batch_id,
+            opts: _,
+            sink: _,
+        } = params;
         Ok(DreamHandle {
             run_id: Uuid::new_v4(),
             namespace: namespace.clone(),

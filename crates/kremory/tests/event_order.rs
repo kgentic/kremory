@@ -28,10 +28,10 @@ use kremory::memory::{
     events::EnrichmentEventSink,
     submit_episode,
     types::{
-        BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef, SubmitOpts,
+        BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamPhaseResult, DreamStatus,
+        EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef, SubmitOpts,
     },
-    ChatProvider, GraphHandle, GraphIngestEpisodeParams,
+    ChatProvider, GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams,
 };
 use uuid::Uuid;
 
@@ -173,12 +173,15 @@ impl GraphHandle for StubIngestingHandle {
 
     async fn graph_submit_dream(
         &self,
-        namespace: &Namespace,
-        _provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        _opts: DreamOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphSubmitDreamParams<'_>,
     ) -> kremory::memory::types::Result<DreamHandle> {
+        let GraphSubmitDreamParams {
+            namespace,
+            provider: _,
+            batch_id,
+            opts: _,
+            sink: _,
+        } = params;
         Ok(DreamHandle {
             run_id: Uuid::new_v4(),
             namespace: namespace.clone(),
@@ -483,12 +486,15 @@ async fn submit_episode_contradiction_events_reach_sink() {
         }
         async fn graph_submit_dream(
             &self,
-            namespace: &Namespace,
-            _p: Arc<dyn ChatProvider>,
-            batch_id: Option<String>,
-            _o: DreamOpts,
-            _s: Option<Arc<dyn EnrichmentEventSink>>,
+            params: GraphSubmitDreamParams<'_>,
         ) -> kremory::memory::types::Result<DreamHandle> {
+            let GraphSubmitDreamParams {
+                namespace,
+                provider: _,
+                batch_id,
+                opts: _,
+                sink: _,
+            } = params;
             Ok(DreamHandle {
                 run_id: Uuid::new_v4(),
                 namespace: namespace.clone(),
