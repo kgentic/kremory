@@ -198,7 +198,14 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                 Some(d) => {
                     match tokio::time::timeout(
                         d,
-                        try_arm(llm, arm, schema, schema_name, &messages, debug_enabled),
+                        try_arm(TryArmParams {
+                            llm,
+                            arm,
+                            schema,
+                            schema_name,
+                            messages: &messages,
+                            debug_enabled,
+                        }),
                     )
                     .await
                     {
@@ -220,7 +227,17 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                         }
                     }
                 }
-                None => try_arm(llm, arm, schema, schema_name, &messages, debug_enabled).await,
+                None => {
+                    try_arm(TryArmParams {
+                        llm,
+                        arm,
+                        schema,
+                        schema_name,
+                        messages: &messages,
+                        debug_enabled,
+                    })
+                    .await
+                }
             };
             histogram!(
                 "rql.extraction.call_ms",
@@ -292,14 +309,14 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                 let correction_msg = build_correction_message(&detail);
                                 messages.push(correction_msg);
 
-                                let retry_result = try_arm(
+                                let retry_result = try_arm(TryArmParams {
                                     llm,
                                     arm,
                                     schema,
                                     schema_name,
-                                    &messages,
+                                    messages: &messages,
                                     debug_enabled,
-                                )
+                                })
                                 .await;
 
                                 if let Ok(retry_value) = retry_result {
@@ -405,20 +422,29 @@ fn build_ladder(caps: ProviderCaps) -> Vec<FallbackArm> {
 
 // ─── Arm execution ───────────────────────────────────────────────────────────
 
-// `try_arm` is a substrate dispatch fn with 6 semantically-distinct args
-// (provider, arm selector, schema, schema_name, messages, debug flag).
-// Grouping into a context struct would require an opaque builder layer
-// solely to satisfy clippy — same precedent as `Engine::ingest_with` /
-// `Engine::ingest_deferred`. Documented exemption, not a band-aid.
-#[allow(clippy::too_many_arguments)]
-async fn try_arm<L: ?Sized + ChatProvider>(
-    llm: &L,
+/// Bundled parameters for [`try_arm`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). Holds borrows for the duration of a
+/// single arm attempt; the fallback ladder constructs a fresh value per call.
+struct TryArmParams<'a, L: ?Sized + ChatProvider> {
+    llm: &'a L,
     arm: FallbackArm,
-    schema: &Value,
+    schema: &'a Value,
     schema_name: &'static str,
-    messages: &[ChatMessage],
+    messages: &'a [ChatMessage],
     debug_enabled: bool,
+}
+
+async fn try_arm<L: ?Sized + ChatProvider>(
+    params: TryArmParams<'_, L>,
 ) -> Result<Value, ExtractionError> {
+    let TryArmParams {
+        llm,
+        arm,
+        schema,
+        schema_name,
+        messages,
+        debug_enabled,
+    } = params;
     // DelimitedTuple has its own prompt injection + parser path — handle separately.
     if arm == FallbackArm::DelimitedTuple {
         return try_delimited_tuple_arm(llm, messages).await;
