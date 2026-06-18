@@ -599,18 +599,35 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
 // After each `process_deferred` terminal, the worker increments the appropriate
 // counter and, when `is_terminal()`, fires `on_batch_phase2_complete` then
 // removes the entry.  Per impl spec §6 Phase 4 DoD item 6.
-#[allow(clippy::too_many_arguments)]
+/// Bundled parameters for [`worker_loop`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). Constructed by the caller-side
+/// `BackgroundIngestor` spawn path; fields are moved into the worker thread.
+pub(super) struct WorkerLoopParams<L: ChatProvider + 'static, Emb: EmbeddingProvider> {
+    pub(super) graph: Engine<L, Emb>,
+    pub(super) work_rx: Receiver<IngestRequest>,
+    pub(super) error_tx: SyncSender<IngestError>,
+    pub(super) queued: Arc<AtomicUsize>,
+    pub(super) stop: Arc<AtomicBool>,
+    pub(super) deferred_enabled: bool,
+    pub(super) llm_rate_limit: Option<RateLimit>,
+    pub(super) sink: Option<Arc<dyn EnrichmentEventSink>>,
+    pub(super) batch_tracker: BatchTracker,
+}
+
 pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
-    graph: Engine<L, Emb>,
-    work_rx: Receiver<IngestRequest>,
-    error_tx: SyncSender<IngestError>,
-    queued: Arc<AtomicUsize>,
-    stop: Arc<AtomicBool>,
-    deferred_enabled: bool,
-    llm_rate_limit: Option<RateLimit>,
-    sink: Option<Arc<dyn EnrichmentEventSink>>,
-    batch_tracker: BatchTracker,
+    params: WorkerLoopParams<L, Emb>,
 ) {
+    let WorkerLoopParams {
+        graph,
+        work_rx,
+        error_tx,
+        queued,
+        stop,
+        deferred_enabled,
+        llm_rate_limit,
+        sink,
+        batch_tracker,
+    } = params;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
