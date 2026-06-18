@@ -971,7 +971,6 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // extractions; absent on LLM-only paths. Best-effort — warn only.
                     if let Some(conf_val) = extracted.properties.get("confidence") {
                         if let Some(conf_f64) = conf_val.as_f64() {
-                            #[allow(clippy::cast_possible_truncation)]
                             let conf_f32 = conf_f64 as f32;
                             if let Err(e) = self
                                 .graph

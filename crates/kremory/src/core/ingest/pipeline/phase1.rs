@@ -96,7 +96,6 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         .name_to_id(&e.label)
                         .map(|id| id as i64)
                         .unwrap_or(0i64);
-                    #[allow(clippy::cast_possible_truncation)]
                     let confidence = e
                         .properties
                         .get("confidence")

@@ -423,7 +423,6 @@ fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandi
             // L-02 scope tightening: allow scoped to the f64→f32 confidence cast only.
             // `confidence` is mathematically bounded to [0.0, 1.0] so no real
             // mantissa truncation is possible; clippy can't prove the bound.
-            #[allow(clippy::cast_possible_truncation)]
             let confidence = e
                 .properties
                 .get("confidence")

@@ -317,7 +317,6 @@ impl JsMemory {
             })?;
 
         // usize → f64: safe up to 2^53; episode counts never approach that limit.
-        #[allow(clippy::cast_precision_loss)]
         Ok(updated as f64)
     }
 
@@ -337,7 +336,6 @@ impl JsMemory {
             })?;
 
         // u64 → f64: safe up to 2^53; episode update counts never approach that limit.
-        #[allow(clippy::cast_precision_loss)]
         Ok(updated as f64)
     }
 
@@ -484,7 +482,6 @@ impl JsMemory {
             .map_err(|e| napi::Error::from_reason(format!("kremory forget failed: {e}")))?;
 
         // u64 → f64: safe up to 2^53; delete counts never approach that limit.
-        #[allow(clippy::cast_precision_loss)]
         Ok(deleted as f64)
     }
 
