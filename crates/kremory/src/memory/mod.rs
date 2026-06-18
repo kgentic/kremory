@@ -221,6 +221,10 @@ pub async fn await_batch_enrichment(
     note = "Use submit_episode + EnrichmentEventSink for accurate per-episode counts"
 )]
 // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+//
+// TD-042 documented exemption: this fn is `#[deprecated]` (removal scheduled).
+// Per the treat-cause exemption precedent, args-as-object churn on dying code is
+// waste — the allow stays until the fn is removed. New code uses `submit_episode`.
 #[allow(clippy::too_many_arguments)]
 pub async fn ingest_episode(
     graph: &dyn GraphHandle,
