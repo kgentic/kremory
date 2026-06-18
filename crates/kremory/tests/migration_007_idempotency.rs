@@ -220,10 +220,21 @@ fn migration_007_pragma_gates_present_in_source() {
 
     // Resolve migrations.rs relative to the crate manifest directory.
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let migrations_src = manifest_dir.join("src/core/migrations.rs");
-
-    let content = std::fs::read_to_string(&migrations_src)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", migrations_src.display()));
+    // TD-045: migrations.rs was split into the `migrations/` module dir;
+    // concatenate every `.rs` so this source gate is location-agnostic.
+    let mig_dir = manifest_dir.join("src/core/migrations");
+    let mut content = String::new();
+    for entry in std::fs::read_dir(&mig_dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", mig_dir.display()))
+    {
+        let path = entry.expect("migrations dir entry").path();
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            content.push_str(
+                &std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display())),
+            );
+        }
+    }
 
     // Gate 1: PRAGMA table_info idempotency guard must be coded.
     assert!(
@@ -231,7 +242,7 @@ fn migration_007_pragma_gates_present_in_source() {
         "migrations.rs must contain `PRAGMA table_info('episodes')` as the migration 007 \
          idempotency gate — this gate prevents duplicate-column errors on re-run; \
          found in: {}",
-        migrations_src.display()
+        mig_dir.display()
     );
 
     // Gate 2: index DDL for `idx_episodes_source_id` must be coded.
@@ -239,7 +250,7 @@ fn migration_007_pragma_gates_present_in_source() {
         content.contains("idx_episodes_source_id"),
         "migrations.rs must contain `idx_episodes_source_id` (the CREATE INDEX DDL for \
          the new source_id column) — found in: {}",
-        migrations_src.display()
+        mig_dir.display()
     );
 }
 

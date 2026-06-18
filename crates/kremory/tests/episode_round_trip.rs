@@ -217,26 +217,41 @@ async fn migration_011_content_hash_index_exists() {
 
 // ── Static source-code gate ───────────────────────────────────────────────────
 
-/// migrations.rs must statically contain the Migration 011 function and
+/// The migrations module must statically contain the Migration 011 function and
 /// the key DDL strings that make the spec claims verifiable in CI.
+///
+/// TD-045: the former monolithic `migrations.rs` was split into the
+/// `migrations/` module directory (`mod.rs` + `defs_*.rs`). This gate now
+/// concatenates every `.rs` file in that directory so it is resilient to which
+/// `defs_*.rs` holds Migration 011.
 #[test]
 fn migration_011_source_gates_present() {
     use std::path::Path;
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let src = manifest_dir.join("src/core/migrations.rs");
-    let content = std::fs::read_to_string(&src)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", src.display()));
+    let mig_dir = manifest_dir.join("src/core/migrations");
+    let mut content = String::new();
+    for entry in std::fs::read_dir(&mig_dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", mig_dir.display()))
+    {
+        let path = entry.expect("migrations dir entry").path();
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            content.push_str(
+                &std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display())),
+            );
+        }
+    }
 
     assert!(
         content.contains("migrate_011_episodes_content_hash"),
-        "migrations.rs must define `migrate_011_episodes_content_hash`"
+        "migrations module must define `migrate_011_episodes_content_hash`"
     );
     assert!(
         content.contains("ALTER TABLE episodes ADD COLUMN content_hash TEXT"),
-        "migrations.rs must contain the content_hash ALTER TABLE DDL"
+        "migrations module must contain the content_hash ALTER TABLE DDL"
     );
     assert!(
         content.contains("idx_episodes_content_hash"),
-        "migrations.rs must contain the idx_episodes_content_hash index DDL"
+        "migrations module must contain the idx_episodes_content_hash index DDL"
     );
 }
