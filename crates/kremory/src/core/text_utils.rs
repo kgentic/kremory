@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use metrics::counter;
@@ -478,7 +478,15 @@ impl OovAuditor {
 /// PMI = log2(P(w1,w2) / (P(w1) * P(w2)))
 /// Threshold 2.0 validated in spike: high recall as multi-word boundary detector.
 /// NPMI is broken on short documents (needs 100k+ tokens) — use raw PMI only.
-#[allow(dead_code)]
+///
+/// TD-043: no production caller (only the `#[cfg(test)]` tests below) — gated to
+/// test builds instead of carrying `#[allow(dead_code)]`. Re-promote to a real
+/// `pub(crate)` if/when the OOV-PMI entity scorer (parking-lot) wires it.
+#[cfg(test)]
+#[allow(unused_imports)]
+use std::collections::HashMap;
+
+#[cfg(test)]
 pub(crate) fn compute_pmi_bigrams(text: &str, threshold: f64) -> Vec<(String, f64)> {
     let words: Vec<String> = text
         .unicode_words()
