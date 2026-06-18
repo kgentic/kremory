@@ -37,11 +37,11 @@ use crate::core::provider::{ArcChatProvider, ArcEmbedder};
 use crate::core::schema::TemporalGraph;
 use crate::memory::{
     events::EnrichmentEventSink,
-    graph::GraphHandle,
+    graph::{GraphHandle, GraphIngestEpisodeParams},
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
         DreamStatus, EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
-        SourceKind, SourceRef, StructuredFact, SubmitOpts,
+        SourceKind, SourceRef,
     },
     ChatProvider,
 };
@@ -146,15 +146,18 @@ impl GraphHandle for EngineGraphHandle {
 
     async fn graph_ingest_episode(
         &self,
-        namespace: &Namespace,
-        source_ref: &SourceRef,
-        content: &str,
-        structured_facts: &[StructuredFact],
-        _provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        opts: SubmitOpts,
-        sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphIngestEpisodeParams<'_>,
     ) -> Result<EpisodeCommit> {
+        let GraphIngestEpisodeParams {
+            namespace,
+            source_ref,
+            content,
+            structured_facts,
+            provider: _,
+            batch_id,
+            opts,
+            sink,
+        } = params;
         let group_id = namespace_to_group_id(namespace);
         let reference_time = Some(source_ref.occurred_at);
 

@@ -586,7 +586,7 @@ async fn namespace_isolation() {
     use kremory::core::schema::TemporalGraph;
     use kremory::memory::engine_handle::EngineGraphHandle;
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::GraphHandle;
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
     use kremory::{ChatProvider, DynEmbeddingProvider, Namespace};
     use metrics_util::debugging::DebuggingRecorder;
     use std::collections::HashMap;
@@ -671,31 +671,31 @@ async fn namespace_isolation() {
 
     // Write to ns-alpha — mock engine LLM returns ALPHA entity for "alpha-content" prompt
     handle
-        .graph_ingest_episode(
-            &ns_alpha,
-            &alpha_source,
-            "alpha-content about ALPHA",
-            &[],
-            Arc::clone(&noop_provider), // _provider arg is ignored by EngineGraphHandle
-            None,
-            opts.clone(),
-            None,
-        )
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns_alpha,
+            source_ref: &alpha_source,
+            content: "alpha-content about ALPHA",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider), // _provider arg is ignored by EngineGraphHandle
+            batch_id: None,
+            opts: opts.clone(),
+            sink: None,
+        })
         .await
         .expect("ns-alpha ingest OK");
 
     // Write to ns-beta — mock engine LLM returns BETA entity for "beta-content" prompt
     handle
-        .graph_ingest_episode(
-            &ns_beta,
-            &beta_source,
-            "beta-content about BETA",
-            &[],
-            Arc::clone(&noop_provider), // _provider arg is ignored by EngineGraphHandle
-            None,
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns_beta,
+            source_ref: &beta_source,
+            content: "beta-content about BETA",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider), // _provider arg is ignored by EngineGraphHandle
+            batch_id: None,
             opts,
-            None,
-        )
+            sink: None,
+        })
         .await
         .expect("ns-beta ingest OK");
 
@@ -834,7 +834,7 @@ async fn build_mock_handle_with_response(
 #[cfg(feature = "llm-integration")]
 async fn source_refs_carries_episode_kind() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::GraphHandle;
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -863,19 +863,19 @@ async fn source_refs_carries_episode_kind() {
     };
 
     handle
-        .graph_ingest_episode(
-            &ns,
-            &source,
-            "alice-conference: Alice attended the conference.",
-            &[],
-            Arc::clone(&noop_provider),
-            None,
-            SubmitOpts {
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns,
+            source_ref: &source,
+            content: "alice-conference: Alice attended the conference.",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider),
+            batch_id: None,
+            opts: SubmitOpts {
                 enrich_per_episode: true,
                 run_in_background: false,
             },
-            None,
-        )
+            sink: None,
+        })
         .await
         .expect("graph_ingest_episode OK");
 
@@ -922,7 +922,7 @@ async fn source_refs_carries_episode_kind() {
 #[cfg(feature = "llm-integration")]
 async fn rrf_single_result_scores_one() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::GraphHandle;
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -951,19 +951,19 @@ async fn rrf_single_result_scores_one() {
     };
 
     handle
-        .graph_ingest_episode(
-            &ns,
-            &source,
-            "zephyr-unique: Zephyr is a unique entity.",
-            &[],
-            Arc::clone(&noop_provider),
-            None,
-            SubmitOpts {
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns,
+            source_ref: &source,
+            content: "zephyr-unique: Zephyr is a unique entity.",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider),
+            batch_id: None,
+            opts: SubmitOpts {
                 enrich_per_episode: true,
                 run_in_background: false,
             },
-            None,
-        )
+            sink: None,
+        })
         .await
         .expect("graph_ingest_episode OK");
 
@@ -1000,7 +1000,7 @@ async fn rrf_single_result_scores_one() {
 #[cfg(feature = "llm-integration")]
 async fn standalone_entity_has_episodic_edge() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::GraphHandle;
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -1030,19 +1030,19 @@ async fn standalone_entity_has_episodic_edge() {
     };
 
     handle
-        .graph_ingest_episode(
-            &ns,
-            &source,
-            "carol-present: Carol was present.",
-            &[],
-            Arc::clone(&noop_provider),
-            None,
-            SubmitOpts {
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns,
+            source_ref: &source,
+            content: "carol-present: Carol was present.",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider),
+            batch_id: None,
+            opts: SubmitOpts {
                 enrich_per_episode: true,
                 run_in_background: false,
             },
-            None,
-        )
+            sink: None,
+        })
         .await
         .expect("graph_ingest_episode OK");
 
@@ -1090,7 +1090,7 @@ async fn standalone_entity_has_episodic_edge() {
 #[cfg(feature = "llm-integration")]
 async fn stub_entity_inserted_on_forward_reference() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::GraphHandle;
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -1120,19 +1120,19 @@ async fn stub_entity_inserted_on_forward_reference() {
     };
 
     handle
-        .graph_ingest_episode(
-            &ns,
-            &source,
-            "alice-works-with-bob: Alice works with Bob on research.",
-            &[],
-            Arc::clone(&noop_provider),
-            None,
-            SubmitOpts {
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns,
+            source_ref: &source,
+            content: "alice-works-with-bob: Alice works with Bob on research.",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider),
+            batch_id: None,
+            opts: SubmitOpts {
                 enrich_per_episode: true,
                 run_in_background: false,
             },
-            None,
-        )
+            sink: None,
+        })
         .await
         .expect("graph_ingest_episode OK");
 
@@ -1204,7 +1204,7 @@ async fn stub_entity_promoted_on_reingestion() {
     use kremory::core::schema::TemporalGraph;
     use kremory::memory::engine_handle::EngineGraphHandle;
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::GraphHandle;
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
     use kremory::Namespace;
     use std::collections::HashMap;
 
@@ -1253,47 +1253,47 @@ async fn stub_entity_promoted_on_reingestion() {
 
     // Batch 1: creates stub Bob.
     handle
-        .graph_ingest_episode(
-            &ns,
-            &SourceRef {
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns,
+            source_ref: &SourceRef {
                 kind: SourceKind::Chat,
                 id: "ep-promo-1".to_string(),
                 occurred_at: chrono::Utc::now(),
                 published_at: None,
             },
-            "alice-works-with-bob-promoted: Alice works with Bob on research.",
-            &[],
-            Arc::clone(&noop_provider),
-            None,
-            SubmitOpts {
+            content: "alice-works-with-bob-promoted: Alice works with Bob on research.",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider),
+            batch_id: None,
+            opts: SubmitOpts {
                 enrich_per_episode: true,
                 run_in_background: false,
             },
-            None,
-        )
+            sink: None,
+        })
         .await
         .expect("batch 1 ingest OK");
 
     // Batch 2: promotes Bob to a full entity.
     handle
-        .graph_ingest_episode(
-            &ns,
-            &SourceRef {
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns,
+            source_ref: &SourceRef {
                 kind: SourceKind::Chat,
                 id: "ep-promo-2".to_string(),
                 occurred_at: chrono::Utc::now(),
                 published_at: None,
             },
-            "bob-full-extraction: Bob is a researcher at Stanford.",
-            &[],
-            Arc::clone(&noop_provider),
-            None,
-            SubmitOpts {
+            content: "bob-full-extraction: Bob is a researcher at Stanford.",
+            structured_facts: &[],
+            provider: Arc::clone(&noop_provider),
+            batch_id: None,
+            opts: SubmitOpts {
                 enrich_per_episode: true,
                 run_in_background: false,
             },
-            None,
-        )
+            sink: None,
+        })
         .await
         .expect("batch 2 ingest OK");
 

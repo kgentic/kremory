@@ -30,7 +30,7 @@ use kremory::core::ingest::DreamPassOpts;
 use kremory::facade::DreamSummary;
 use kremory::memory::{
     events::EnrichmentEventSink,
-    graph::GraphHandle,
+    graph::{GraphHandle, GraphIngestEpisodeParams},
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
         DreamStatus, EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
@@ -55,14 +55,7 @@ struct StubEngineGraphHandle;
 impl GraphHandle for StubEngineGraphHandle {
     async fn graph_ingest_episode(
         &self,
-        _namespace: &Namespace,
-        _source_ref: &SourceRef,
-        _content: &str,
-        _structured_facts: &[StructuredFact],
-        _provider: Arc<dyn ChatProvider>,
-        _batch_id: Option<String>,
-        _opts: SubmitOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        _params: GraphIngestEpisodeParams<'_>,
     ) -> Result<EpisodeCommit> {
         unimplemented!("spike stub")
     }
@@ -200,15 +193,18 @@ impl Drop for BackgroundIngestorGraphHandle {
 impl GraphHandle for BackgroundIngestorGraphHandle {
     async fn graph_ingest_episode(
         &self,
-        namespace: &Namespace,
-        source_ref: &SourceRef,
-        content: &str,
-        structured_facts: &[StructuredFact],
-        provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        opts: SubmitOpts,
-        sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphIngestEpisodeParams<'_>,
     ) -> Result<EpisodeCommit> {
+        let GraphIngestEpisodeParams {
+            namespace,
+            source_ref,
+            content,
+            structured_facts,
+            provider,
+            batch_id,
+            opts,
+            sink,
+        } = params;
         if opts.run_in_background {
             // Route to BackgroundIngestor path (stub: just return a mock commit)
             // In production: self.ingestor.enqueue_req(IngestRequest { ... })
@@ -221,7 +217,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
         } else {
             // Delegate to EngineGraphHandle for inline path
             self.engine_handle
-                .graph_ingest_episode(
+                .graph_ingest_episode(GraphIngestEpisodeParams {
                     namespace,
                     source_ref,
                     content,
@@ -230,7 +226,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                     batch_id,
                     opts,
                     sink,
-                )
+                })
                 .await
         }
     }
@@ -402,19 +398,19 @@ async fn spike_a_background_ingestor_graph_handle_dyn_compat() {
         Arc::new(kremory::core::provider::MockChatProvider::null());
 
     let result = dyn_handle
-        .graph_ingest_episode(
-            &ns,
-            &source_ref,
-            "spike test content",
-            &[],
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &ns,
+            source_ref: &source_ref,
+            content: "spike test content",
+            structured_facts: &[],
             provider,
-            Some("batch-spike".to_string()),
-            SubmitOpts {
+            batch_id: Some("batch-spike".to_string()),
+            opts: SubmitOpts {
                 enrich_per_episode: false,
                 run_in_background: true,
             },
-            None,
-        )
+            sink: None,
+        })
         .await;
 
     assert!(

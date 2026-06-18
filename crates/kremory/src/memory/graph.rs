@@ -45,6 +45,20 @@ use super::{
     ChatProvider, Result,
 };
 
+/// Bundled parameters for [`GraphHandle::graph_ingest_episode`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). Borrows live for the
+/// duration of a single ingest call; callers construct a fresh value per call.
+pub struct GraphIngestEpisodeParams<'a> {
+    pub namespace: &'a Namespace,
+    pub source_ref: &'a SourceRef,
+    pub content: &'a str,
+    pub structured_facts: &'a [StructuredFact],
+    pub provider: Arc<dyn ChatProvider>,
+    pub batch_id: Option<String>,
+    pub opts: SubmitOpts,
+    pub sink: Option<Arc<dyn EnrichmentEventSink>>,
+}
+
 /// Storage-backend boundary for rqlm. Consumers implement this trait
 /// against their concrete graph storage; rqlm orchestrates over the
 /// trait object.
@@ -68,17 +82,9 @@ pub trait GraphHandle: Send + Sync {
     ///
     /// `sink` receives Phase 2 events if `enrich_per_episode = true`.
     /// `batch_id` groups this episode with others under a single caller-set string.
-    #[allow(clippy::too_many_arguments)]
     async fn graph_ingest_episode(
         &self,
-        namespace: &Namespace,
-        source_ref: &SourceRef,
-        content: &str,
-        structured_facts: &[StructuredFact],
-        provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        opts: SubmitOpts,
-        sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphIngestEpisodeParams<'_>,
     ) -> Result<EpisodeCommit>;
 
     /// Query Phase 2 status for a `run_id` returned by `graph_ingest_episode`.

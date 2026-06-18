@@ -42,7 +42,7 @@ pub mod types;
 
 pub(crate) use background_ingestor_handle::BackgroundIngestorGraphHandle;
 pub use engine_handle::EngineGraphHandle;
-pub use graph::GraphHandle;
+pub use graph::{GraphHandle, GraphIngestEpisodeParams};
 pub use scheduler::{DreamSchedule, DreamSchedulerHandle};
 #[cfg(any(test, feature = "test-utils"))]
 pub use stub::StubGraphHandle;
@@ -89,16 +89,16 @@ pub async fn submit_episode(
     sink: Option<Arc<dyn events::EnrichmentEventSink>>,
 ) -> Result<EpisodeCommit> {
     graph
-        .graph_ingest_episode(
-            &namespace,
-            &source_ref,
+        .graph_ingest_episode(GraphIngestEpisodeParams {
+            namespace: &namespace,
+            source_ref: &source_ref,
             content,
-            &structured_facts,
+            structured_facts: &structured_facts,
             provider,
             batch_id,
             opts,
             sink,
-        )
+        })
         .await
 }
 
@@ -688,15 +688,18 @@ mod tests {
     impl GraphHandle for StubGraphHandle {
         async fn graph_ingest_episode(
             &self,
-            namespace: &Namespace,
-            source_ref: &SourceRef,
-            content: &str,
-            structured_facts: &[StructuredFact],
-            _provider: Arc<dyn ChatProvider>,
-            _batch_id: Option<String>,
-            _opts: SubmitOpts,
-            _sink: Option<Arc<dyn crate::memory::events::EnrichmentEventSink>>,
+            params: GraphIngestEpisodeParams<'_>,
         ) -> Result<EpisodeCommit> {
+            let GraphIngestEpisodeParams {
+                namespace,
+                source_ref,
+                content,
+                structured_facts,
+                provider: _,
+                batch_id: _,
+                opts: _,
+                sink: _,
+            } = params;
             *self.last_ingest_namespace.lock().unwrap() = Some(namespace.clone());
             *self.last_ingest_content.lock().unwrap() = Some(content.to_string());
             *self.last_ingest_source_id.lock().unwrap() = Some(source_ref.id.clone());

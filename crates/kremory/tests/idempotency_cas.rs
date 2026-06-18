@@ -20,9 +20,8 @@ use kremory::memory::{
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
         DreamStatus, EpisodeCommit, IngestStatus, Namespace, RetrievedContext, SearchOpts,
-        SourceRef, StructuredFact, SubmitOpts,
     },
-    ChatProvider, GraphHandle,
+    ChatProvider, GraphHandle, GraphIngestEpisodeParams,
 };
 use uuid::Uuid;
 
@@ -38,15 +37,18 @@ struct StubIdempotentHandle {
 impl GraphHandle for StubIdempotentHandle {
     async fn graph_ingest_episode(
         &self,
-        _namespace: &Namespace,
-        source_ref: &SourceRef,
-        _content: &str,
-        _structured_facts: &[StructuredFact],
-        _provider: Arc<dyn ChatProvider>,
-        _batch_id: Option<String>,
-        _opts: SubmitOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphIngestEpisodeParams<'_>,
     ) -> kremory::memory::types::Result<EpisodeCommit> {
+        let GraphIngestEpisodeParams {
+            namespace: _,
+            source_ref,
+            content: _,
+            structured_facts: _,
+            provider: _,
+            batch_id: _,
+            opts: _,
+            sink: _,
+        } = params;
         Ok(EpisodeCommit {
             run_id: None,
             episode_entity_id: format!("stub:{}", source_ref.id),
