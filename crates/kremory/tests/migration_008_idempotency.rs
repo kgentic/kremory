@@ -561,43 +561,54 @@ fn migration_008_source_gates_present() {
     use std::path::Path;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let migrations_src = manifest_dir.join("src/core/migrations.rs");
-
-    let content = std::fs::read_to_string(&migrations_src)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", migrations_src.display()));
+    // TD-045: migrations.rs was split into the `migrations/` module dir;
+    // concatenate every `.rs` so this source gate is location-agnostic.
+    let mig_dir = manifest_dir.join("src/core/migrations");
+    let mut content = String::new();
+    for entry in std::fs::read_dir(&mig_dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", mig_dir.display()))
+    {
+        let path = entry.expect("migrations dir entry").path();
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            content.push_str(
+                &std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display())),
+            );
+        }
+    }
 
     assert!(
         content.contains("CREATE TABLE IF NOT EXISTS entity_types"),
         "migrations.rs must contain `CREATE TABLE IF NOT EXISTS entity_types`; \
          found in: {}",
-        migrations_src.display()
+        mig_dir.display()
     );
 
     assert!(
         content.contains("PRAGMA table_info('entities')"),
         "migrations.rs must contain `PRAGMA table_info('entities')` as the migration 008 G1 gate; \
          found in: {}",
-        migrations_src.display()
+        mig_dir.display()
     );
 
     assert!(
         content.contains("idx_entities_type_id"),
         "migrations.rs must contain `idx_entities_type_id` index DDL; \
          found in: {}",
-        migrations_src.display()
+        mig_dir.display()
     );
 
     assert!(
         content.contains("INSERT OR IGNORE INTO entity_types"),
         "migrations.rs must contain `INSERT OR IGNORE INTO entity_types` for idempotent seeding; \
          found in: {}",
-        migrations_src.display()
+        mig_dir.display()
     );
 
     assert!(
         content.contains("migrate_008_entity_types"),
         "migrations.rs must define `migrate_008_entity_types` function; \
          found in: {}",
-        migrations_src.display()
+        mig_dir.display()
     );
 }
