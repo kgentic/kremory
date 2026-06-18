@@ -570,7 +570,6 @@ pub fn episode_to_js(ep: kremory::core::schema::Episode) -> JsEpisode {
     // id: i64 → f64. Safe: i64 values from SQLite rowid fit in f64 mantissa
     // (2^53 > i64::MAX is false but rowids in practice never exceed 2^53).
     // This is the standard napi-rs pattern for i64 → JS number.
-    #[allow(clippy::cast_precision_loss)]
     let id_f64 = ep.id as f64;
 
     JsEpisode {
@@ -589,7 +588,6 @@ pub fn episode_to_js(ep: kremory::core::schema::Episode) -> JsEpisode {
 ///
 /// `usize`/`u64` → `f64` casts: safe up to 2^53 (~9 quadrillion).
 /// At practical kremory scale these counters will never approach that limit.
-#[allow(clippy::cast_precision_loss)]
 pub fn dream_summary_to_js(s: DreamSummary) -> JsDreamSummary {
     JsDreamSummary {
         communities_updated: s.communities_updated as f64,
@@ -669,7 +667,6 @@ pub fn dream_status_to_js(s: kremory::DreamStatus) -> JsDreamStatusResult {
 /// Convert a substrate `kremory::BatchStatus` to `JsBatchStatus`.
 ///
 /// `usize` → `f64` casts: safe up to 2^53 at practical memory scale.
-#[allow(clippy::cast_precision_loss)]
 pub fn batch_status_to_js(s: kremory::BatchStatus) -> JsBatchStatus {
     JsBatchStatus {
         total: s.total as f64,
