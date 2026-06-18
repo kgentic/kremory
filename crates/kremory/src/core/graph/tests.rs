@@ -68,7 +68,7 @@ async fn test_insert_fact_returns_id() {
         .await
         .unwrap();
     let id = g
-        .insert_fact("alice", "exists", None, None, Utc::now(), 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "exists", Utc::now()))
         .await
         .unwrap();
     assert!(id > 0);
@@ -82,7 +82,7 @@ async fn test_try_insert_fact_returns_some_on_fresh_insert() {
         .await
         .unwrap();
     let id = g
-        .try_insert_fact("alice", "exists", None, None, Utc::now(), 1.0, None, None)
+        .try_insert_fact(FactInsert::new("alice", "exists", Utc::now()))
         .await
         .unwrap();
     assert!(id.is_some(), "fresh insert must return Some(id)");
@@ -98,11 +98,11 @@ async fn test_try_insert_fact_returns_none_on_duplicate() {
         .unwrap();
     let t0 = Utc::now();
     let _first = g
-        .insert_fact("alice", "exists", None, None, t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "exists", t0))
         .await
         .unwrap();
     let dup = g
-        .try_insert_fact("alice", "exists", None, None, t0, 1.0, None, None)
+        .try_insert_fact(FactInsert::new("alice", "exists", t0))
         .await
         .unwrap();
     assert!(
@@ -121,17 +121,7 @@ async fn test_try_insert_fact_with_group_returns_some_on_fresh_insert() {
         .await
         .unwrap();
     let id = g
-        .try_insert_fact_with_group(
-            "alice",
-            "exists",
-            None,
-            None,
-            Utc::now(),
-            1.0,
-            None,
-            Some("g1"),
-            None,
-        )
+        .try_insert_fact_with_group(FactInsert::new("alice", "exists", Utc::now()), Some("g1"))
         .await
         .unwrap();
     assert!(id.is_some(), "fresh insert must return Some(id)");
@@ -150,23 +140,13 @@ async fn test_try_insert_fact_with_group_dedups_cross_variant() {
     let t0 = Utc::now();
     // First: insert via plain insert_fact (no group_id) — simulates LLM Phase 2.
     let _first = g
-        .insert_fact("alice", "exists", None, None, t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "exists", t0))
         .await
         .unwrap();
     // Second: try_insert_fact_with_group (with group_id) — simulates caller pin.
     // Expect None: content_hash collides regardless of group_id.
     let dup = g
-        .try_insert_fact_with_group(
-            "alice",
-            "exists",
-            None,
-            None,
-            t0,
-            1.0,
-            None,
-            Some("g1"),
-            None,
-        )
+        .try_insert_fact_with_group(FactInsert::new("alice", "exists", t0), Some("g1"))
         .await
         .unwrap();
     assert!(
@@ -185,16 +165,7 @@ async fn test_insert_fact_with_object_id() {
         .await
         .unwrap();
     let id = g
-        .insert_fact(
-            "alice",
-            "works_at",
-            Some("acme"),
-            None,
-            Utc::now(),
-            1.0,
-            None,
-            None,
-        )
+        .insert_fact(FactInsert::new("alice", "works_at", Utc::now()).object_id("acme"))
         .await
         .unwrap();
     assert!(id > 0);
@@ -212,16 +183,7 @@ async fn test_insert_fact_with_object_value() {
         .await
         .unwrap();
     let id = g
-        .insert_fact(
-            "alice",
-            "has_title",
-            None,
-            Some("PM"),
-            Utc::now(),
-            1.0,
-            None,
-            None,
-        )
+        .insert_fact(FactInsert::new("alice", "has_title", Utc::now()).object_value("PM"))
         .await
         .unwrap();
     assert!(id > 0);
@@ -240,7 +202,7 @@ async fn test_invalidate_fact() {
         .unwrap();
     let t0 = Utc::now() - Duration::days(1);
     let id = g
-        .insert_fact("alice", "has_title", None, Some("PM"), t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
         .unwrap();
     let facts_before = g.facts_at(Utc::now()).await.unwrap();
@@ -259,7 +221,7 @@ async fn test_facts_at_filters_by_valid_from() {
         .await
         .unwrap();
     let t0 = Utc::now();
-    g.insert_fact("alice", "has_title", None, Some("PM"), t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
         .unwrap();
     // query just before valid_from: should return nothing
@@ -279,7 +241,7 @@ async fn test_facts_at_excludes_expired() {
         .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
-        .insert_fact("alice", "has_title", None, Some("PM"), t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
         .unwrap();
     g.invalidate_fact(id, Utc::now() - Duration::days(1))
@@ -299,10 +261,10 @@ async fn test_entity_facts_at_filters_by_entity() {
         .await
         .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
-    g.insert_fact("alice", "has_title", None, Some("PM"), t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
         .unwrap();
-    g.insert_fact("bob", "has_title", None, Some("Eng"), t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("bob", "has_title", t0).object_value("Eng"))
         .await
         .unwrap();
     let alice_facts = g.entity_facts_at("alice", Utc::now()).await.unwrap();
@@ -319,7 +281,7 @@ async fn test_entity_history_includes_expired() {
         .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
-        .insert_fact("alice", "has_title", None, Some("PM"), t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
         .unwrap();
     g.invalidate_fact(id, Utc::now() - Duration::days(1))
@@ -353,7 +315,7 @@ async fn test_point_in_time_temporal_evolution() {
 
     // alice works_at acme from t0
     let fact1_id = g
-        .insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
 
@@ -364,18 +326,9 @@ async fn test_point_in_time_temporal_evolution() {
 
     // administratively retract acme fact at t1, add newco fact from t1
     g.invalidate_fact(fact1_id, t1).await.unwrap();
-    g.insert_fact(
-        "alice",
-        "works_at",
-        Some("newco"),
-        None,
-        t1,
-        1.0,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    g.insert_fact(FactInsert::new("alice", "works_at", t1).object_id("newco"))
+        .await
+        .unwrap();
 
     // at t1+1d: only newco fact is visible
     let facts_t1 = g.facts_at(t1 + Duration::days(1)).await.unwrap();
@@ -407,10 +360,10 @@ async fn test_get_neighbours_one_hop() {
         .await
         .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
-    g.insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
-    g.insert_fact("alice", "manages", Some("bob"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "manages", t0).object_id("bob"))
         .await
         .unwrap();
 
@@ -436,10 +389,10 @@ async fn test_get_neighbours_two_hops() {
         .await
         .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
-    g.insert_fact("alice", "manages", Some("bob"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "manages", t0).object_id("bob"))
         .await
         .unwrap();
-    g.insert_fact("bob", "works_at", Some("acme"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("bob", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
 
@@ -462,7 +415,7 @@ async fn test_get_neighbours_excludes_expired_facts() {
         .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
-        .insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
     g.invalidate_fact(id, Utc::now() - Duration::days(1))
@@ -486,7 +439,7 @@ async fn test_get_neighbours_zero_hops() {
         .await
         .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
-    g.insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
 
@@ -511,10 +464,10 @@ async fn test_to_petgraph_nodes_and_edges() {
         .await
         .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
-    g.insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
-    g.insert_fact("bob", "works_at", Some("acme"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("bob", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
 
@@ -534,7 +487,7 @@ async fn test_to_petgraph_excludes_expired() {
         .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
-        .insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
     g.invalidate_fact(id, Utc::now() - Duration::days(1))
@@ -596,7 +549,7 @@ async fn test_invalidate_fact_with_reason() {
         .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
-        .insert_fact("alice", "has_title", None, Some("PM"), t0, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
         .unwrap();
     let expired = Utc::now() - Duration::days(1);
@@ -626,21 +579,12 @@ async fn test_get_facts_by_subject_predicate() {
         .await
         .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
-    g.insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
         .unwrap();
-    g.insert_fact(
-        "alice",
-        "has_title",
-        None,
-        Some("Engineer"),
-        t0,
-        1.0,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    g.insert_fact(FactInsert::new("alice", "has_title", t0).object_value("Engineer"))
+        .await
+        .unwrap();
 
     let works_at_facts = g
         .get_facts_by_subject_predicate("alice", "works_at")
@@ -853,12 +797,16 @@ async fn insert_fact_duplicate_returns_error() {
         .unwrap();
     let t = Utc::now();
     // First insert succeeds
-    g.insert_fact("alice", "likes", None, Some("coffee"), t, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "likes", t).object_value("coffee"))
         .await
         .unwrap();
     // Second insert with same triple must return Duplicate error
     let err = g
-        .insert_fact("alice", "likes", None, Some("coffee"), t, 0.9, None, None)
+        .insert_fact(
+            FactInsert::new("alice", "likes", t)
+                .object_value("coffee")
+                .confidence(0.9),
+        )
         .await
         .unwrap_err();
     assert!(
@@ -874,11 +822,11 @@ async fn insert_fact_different_triples_both_succeed() {
         .await
         .unwrap();
     let t = Utc::now();
-    g.insert_fact("alice", "likes", None, Some("coffee"), t, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "likes", t).object_value("coffee"))
         .await
         .unwrap();
     // Different object_value → different hash → succeeds
-    g.insert_fact("alice", "likes", None, Some("tea"), t, 1.0, None, None)
+    g.insert_fact(FactInsert::new("alice", "likes", t).object_value("tea"))
         .await
         .unwrap();
 }
@@ -908,7 +856,7 @@ async fn facts_missing_embeddings_returns_all_null_embedding_facts() {
     let t = Utc::now();
     // Insert a fact with object_value only — simulates SQLite-committed, vector-not-written
     let fact_id = g
-        .insert_fact("alice", "works_at", None, Some("ACME"), t, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "works_at", t).object_value("ACME"))
         .await
         .unwrap();
 
@@ -951,7 +899,7 @@ async fn facts_missing_embeddings_includes_object_id() {
     let t = Utc::now();
     // Insert a fact with object_id (entity reference) — no object_value.
     let fact_id = g
-        .insert_fact("alice", "works_at", Some("acme"), None, t, 1.0, None, None)
+        .insert_fact(FactInsert::new("alice", "works_at", t).object_id("acme"))
         .await
         .unwrap();
 
@@ -980,7 +928,7 @@ async fn backfill_fact_embedding_is_idempotent() {
         .unwrap();
     let t = Utc::now();
     let fact_id = g
-        .insert_fact("bob", "knows", None, Some("alice"), t, 1.0, None, None)
+        .insert_fact(FactInsert::new("bob", "knows", t).object_value("alice"))
         .await
         .unwrap();
     let embedding: Vec<f32> = vec![0.2_f32; 384];
@@ -1021,14 +969,8 @@ async fn insert_fact_concurrent_dedup_exactly_one_wins() {
                 // All tasks reach the barrier before any begins — maximises race window.
                 barrier.wait().await;
                 g.insert_fact(
-                    "alice",
-                    "concurrent_pred",
-                    None,
-                    Some("same_value"),
-                    valid_from,
-                    1.0,
-                    None,
-                    None,
+                    FactInsert::new("alice", "concurrent_pred", valid_from)
+                        .object_value("same_value"),
                 )
                 .await
             })
@@ -1083,9 +1025,13 @@ async fn forget_entity_removes_entity_facts_and_edges() {
     // insert_fact: (subject_id, predicate, object_id, object_value,
     //               valid_from, confidence, source_episode_id, embedding)
     // Use object_value (not object_id) to avoid FK on entities for "bob".
-    g.insert_fact("alice", "knows", None, Some("bob"), now, 0.9, None, None)
-        .await
-        .unwrap();
+    g.insert_fact(
+        FactInsert::new("alice", "knows", now)
+            .object_value("bob")
+            .confidence(0.9),
+    )
+    .await
+    .unwrap();
     // insert_episodic_edge: (episode_id: i64, entity_id, entity_group_id, role)
     // Must have a valid episode first (FK constraint).
     let ep_id = g

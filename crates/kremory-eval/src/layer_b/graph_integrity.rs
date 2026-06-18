@@ -438,6 +438,7 @@ pub async fn run_invariants(
 mod tests {
     use super::*;
     use chrono::Utc;
+    use kremory::core::graph::FactInsert;
     use kremory::core::schema::TemporalGraph;
 
     async fn empty_graph() -> TemporalGraph {
@@ -472,16 +473,7 @@ mod tests {
             .await
             .unwrap();
         graph
-            .insert_fact(
-                "e1",
-                "works_at",
-                None,
-                Some("Acme"),
-                Utc::now(),
-                1.0,
-                None,
-                None,
-            )
+            .insert_fact(FactInsert::new("e1", "works_at", Utc::now()).object_value("Acme"))
             .await
             .unwrap();
 

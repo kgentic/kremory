@@ -13,6 +13,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use kremory::core::config::PipelineConfig;
 use kremory::core::context::ContextResult;
+use kremory::core::graph::FactInsert;
 use kremory::core::ingest::Engine;
 use kremory::core::provider::{EmbeddingProvider, MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::{Entity, TemporalGraph};
@@ -417,40 +418,25 @@ async fn test_fts_fact_retrieval() {
     // predicates become searchable.
     graph
         .insert_fact(
-            "alice",
-            "works_at",
-            Some("acme"),
-            Some("Acme Corp"),
-            now,
-            1.0,
-            None,
-            None,
+            FactInsert::new("alice", "works_at", now)
+                .object_id("acme")
+                .object_value("Acme Corp"),
         )
         .await
         .expect("insert works_at fact");
     graph
         .insert_fact(
-            "alice",
-            "leads",
-            Some("project_x"),
-            Some("Project X"),
-            now,
-            1.0,
-            None,
-            None,
+            FactInsert::new("alice", "leads", now)
+                .object_id("project_x")
+                .object_value("Project X"),
         )
         .await
         .expect("insert leads fact");
     graph
         .insert_fact(
-            "acme",
-            "sponsors",
-            Some("project_x"),
-            Some("Project X"),
-            now,
-            1.0,
-            None,
-            None,
+            FactInsert::new("acme", "sponsors", now)
+                .object_id("project_x")
+                .object_value("Project X"),
         )
         .await
         .expect("insert sponsors fact");
@@ -531,29 +517,11 @@ async fn test_contextualize_one_hop_expansion() {
         .expect("insert project_x");
 
     graph
-        .insert_fact(
-            "alice",
-            "works_at",
-            Some("acme"),
-            None,
-            now,
-            1.0,
-            None,
-            None,
-        )
+        .insert_fact(FactInsert::new("alice", "works_at", now).object_id("acme"))
         .await
         .expect("insert works_at");
     graph
-        .insert_fact(
-            "alice",
-            "leads",
-            Some("project_x"),
-            None,
-            now,
-            1.0,
-            None,
-            None,
-        )
+        .insert_fact(FactInsert::new("alice", "leads", now).object_id("project_x"))
         .await
         .expect("insert leads");
 
@@ -668,15 +636,11 @@ async fn test_fact_retrieval_benchmark() {
 
             graph
                 .insert_fact(
-                    &subj_id,
-                    "related_to",
-                    Some(&obj_id),
-                    // object_value must be non-None for FTS indexing (see graph.rs:222)
-                    Some(&fact_text),
-                    now,
-                    1.0,
-                    None,
-                    Some(&fact_emb),
+                    FactInsert::new(&subj_id, "related_to", now)
+                        .object_id(&obj_id)
+                        // object_value must be non-None for FTS indexing (see graph.rs:222)
+                        .object_value(&fact_text)
+                        .embedding(&fact_emb),
                 )
                 .await
                 .unwrap_or_else(|e| {
@@ -909,16 +873,7 @@ async fn test_retrieval_benchmark_summary() {
             let subj_id = entity_id(&window[0].name);
             let obj_id = entity_id(&window[1].name);
             graph
-                .insert_fact(
-                    &subj_id,
-                    "related_to",
-                    Some(&obj_id),
-                    None,
-                    now,
-                    1.0,
-                    None,
-                    None,
-                )
+                .insert_fact(FactInsert::new(&subj_id, "related_to", now).object_id(&obj_id))
                 .await
                 .unwrap_or_else(|e| {
                     panic!("insert_fact({subj_id} related_to {obj_id}) failed: {e}")

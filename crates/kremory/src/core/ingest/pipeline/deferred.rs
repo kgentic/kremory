@@ -10,6 +10,7 @@ use crate::core::contradiction::TwoPoolDetector;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::error::{ContradictionResolution, IngestStatus};
 use crate::core::extraction_window::ExtractionWindowSplitter;
+use crate::core::graph::FactInsert;
 use crate::core::intelligence::{
     EntityExtractor, ExtractedEntity, ExtractedFact, ExtractionContext,
 };
@@ -352,16 +353,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // triples already pre-pinned by the caller via with_facts.
             match self
                 .graph
-                .try_insert_fact(
-                    &subject_id,
-                    &fact.predicate,
-                    object_id.as_deref(),
+                .try_insert_fact(FactInsert {
+                    subject_id: &subject_id,
+                    predicate: &fact.predicate,
+                    object_id: object_id.as_deref(),
                     object_value,
-                    ref_time,
-                    fact.confidence,
-                    Some(episode_id),
-                    None,
-                )
+                    valid_from: ref_time,
+                    confidence: fact.confidence,
+                    source_episode_id: Some(episode_id),
+                    embedding: None,
+                })
                 .await
             {
                 Ok(Some(fact_id)) => {

@@ -18,6 +18,7 @@ mod semantic_tests {
 
     use kremory::core::config::PipelineConfig;
     use kremory::core::context::ContextResult;
+    use kremory::core::graph::FactInsert;
     use kremory::core::ingest::Engine;
     use kremory::core::provider::{EmbeddingProvider, MockChatProvider, OnnxEmbeddingProvider};
     use kremory::core::schema::{Entity, TemporalGraph};
@@ -446,29 +447,13 @@ mod semantic_tests {
 
         // Insert facts connecting Ria to her employer and university
         graph
-            .insert_fact(
-                "ria",
-                "works_at",
-                Some("amazon_robotics"),
-                None,
-                now,
-                1.0,
-                None,
-                None,
-            )
+            .insert_fact(FactInsert::new("ria", "works_at", now).object_id("amazon_robotics"))
             .await
             .expect("insert works_at fact");
 
         graph
             .insert_fact(
-                "ria",
-                "studied_at",
-                Some("northeastern_university"),
-                None,
-                now,
-                1.0,
-                None,
-                None,
+                FactInsert::new("ria", "studied_at", now).object_id("northeastern_university"),
             )
             .await
             .expect("insert studied_at fact");

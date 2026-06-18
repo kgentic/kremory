@@ -10,6 +10,8 @@ mod facts;
 mod namespace;
 mod queries;
 
+pub use facts::FactInsert;
+
 #[cfg(test)]
 mod tests;
 

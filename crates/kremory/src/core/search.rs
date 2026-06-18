@@ -915,6 +915,7 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::graph::FactInsert;
     use chrono::{Duration, Utc};
 
     // === effective_k clamp (Story #166) ===
@@ -997,45 +998,22 @@ mod tests {
         .await
         .unwrap();
 
-        g.insert_fact("alice", "works_at", Some("acme"), None, t0, 1.0, None, None)
+        g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
             .await
             .unwrap();
-        g.insert_fact("bob", "works_at", Some("acme"), None, t0, 1.0, None, None)
+        g.insert_fact(FactInsert::new("bob", "works_at", t0).object_id("acme"))
+            .await
+            .unwrap();
+        g.insert_fact(FactInsert::new("alice", "has_title", t0).object_value("Senior Engineer"))
+            .await
+            .unwrap();
+        g.insert_fact(FactInsert::new("bob", "has_title", t0).object_value("Sales Manager"))
             .await
             .unwrap();
         g.insert_fact(
-            "alice",
-            "has_title",
-            None,
-            Some("Senior Engineer"),
-            t0,
-            1.0,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        g.insert_fact(
-            "bob",
-            "has_title",
-            None,
-            Some("Sales Manager"),
-            t0,
-            1.0,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        g.insert_fact(
-            "alice",
-            "discussed",
-            None,
-            Some("budget allocation for Q1"),
-            t0,
-            0.9,
-            None,
-            None,
+            FactInsert::new("alice", "discussed", t0)
+                .object_value("budget allocation for Q1")
+                .confidence(0.9),
         )
         .await
         .unwrap();
@@ -1678,28 +1656,14 @@ mod tests {
             .unwrap();
 
         g.insert_fact_with_group(
-            "alice",
-            "has_title",
-            None,
-            Some("Engineer"),
-            t0,
-            1.0,
-            None,
+            FactInsert::new("alice", "has_title", t0).object_value("Engineer"),
             Some("group-a"),
-            None,
         )
         .await
         .unwrap();
         g.insert_fact_with_group(
-            "alice",
-            "has_title",
-            None,
-            Some("Manager"),
-            t0,
-            1.0,
-            None,
+            FactInsert::new("alice", "has_title", t0).object_value("Manager"),
             Some("group-b"),
-            None,
         )
         .await
         .unwrap();
