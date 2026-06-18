@@ -244,8 +244,9 @@ pub struct Memory {
     /// Category B methods (dream, recall_with_disambiguation, detect_contradictions) call
     /// `.llm_or_err("method_name")` which returns `Error::LlmRequired` at call time.
     pub(crate) llm: Option<Arc<dyn ChatProvider>>,
-    /// Stored for forward-compat (v0.1.1 will wire to real TemporalGraph::open).
-    #[allow(dead_code)]
+    /// Embedding provider — read by the dream/disambiguation paths
+    /// (`facade/dream.rs` passes `self.memory.embedder.as_ref()` into the
+    /// dream pass). TD-043: field is live, `#[allow(dead_code)]` removed.
     pub(crate) embedder: Arc<dyn DynEmbeddingProvider>,
     pub(crate) default_sink: Option<Arc<dyn EnrichmentEventSink>>,
     pub(crate) default_namespace: Option<Namespace>,
