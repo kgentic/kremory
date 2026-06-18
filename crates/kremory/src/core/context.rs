@@ -160,6 +160,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::graph::FactInsert;
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
 
@@ -182,20 +183,11 @@ mod tests {
             .unwrap();
 
         rql.graph
-            .insert_fact(
-                "alice",
-                "works_at",
-                Some("acme"),
-                None,
-                now,
-                1.0,
-                None,
-                None,
-            )
+            .insert_fact(FactInsert::new("alice", "works_at", now).object_id("acme"))
             .await
             .unwrap();
         rql.graph
-            .insert_fact("bob", "works_at", Some("acme"), None, now, 1.0, None, None)
+            .insert_fact(FactInsert::new("bob", "works_at", now).object_id("acme"))
             .await
             .unwrap();
 

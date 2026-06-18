@@ -10,6 +10,7 @@ use crate::core::contradiction::TwoPoolDetector;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
+use crate::core::graph::FactInsert;
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
     ResolutionResult,
@@ -140,15 +141,17 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 match self
                     .graph
                     .try_insert_fact_with_group(
-                        &pf.subject,
-                        &pf.predicate,
-                        pf.object_id.as_deref(),
-                        pf.object_value.as_deref(),
-                        pf.valid_from,
-                        pf.confidence,
-                        Some(episode_id),
+                        FactInsert {
+                            subject_id: &pf.subject,
+                            predicate: &pf.predicate,
+                            object_id: pf.object_id.as_deref(),
+                            object_value: pf.object_value.as_deref(),
+                            valid_from: pf.valid_from,
+                            confidence: pf.confidence,
+                            source_episode_id: Some(episode_id),
+                            embedding: None,
+                        },
                         group_id,
-                        None,
                     )
                     .await
                 {
@@ -1214,16 +1217,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // Phase 2 — the caller wins by virtue of being there first.
                 match self
                     .graph
-                    .try_insert_fact(
-                        &subject_id,
-                        &fact.predicate,
-                        object_id.as_deref(),
+                    .try_insert_fact(FactInsert {
+                        subject_id: &subject_id,
+                        predicate: &fact.predicate,
+                        object_id: object_id.as_deref(),
                         object_value,
-                        ref_time,
-                        fact.confidence,
-                        Some(episode_id),
-                        None,
-                    )
+                        valid_from: ref_time,
+                        confidence: fact.confidence,
+                        source_episode_id: Some(episode_id),
+                        embedding: None,
+                    })
                     .await
                 {
                     Ok(Some(fact_id)) => {

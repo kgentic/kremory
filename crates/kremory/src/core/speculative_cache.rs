@@ -290,6 +290,7 @@ impl SpeculativeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::graph::FactInsert;
     use crate::core::schema::TemporalGraph;
     use crate::core::search::SearchFilters;
     use chrono::{Duration as ChronoDuration, Utc};
@@ -336,7 +337,7 @@ mod tests {
             ("budget_q1", "owned_by", "dave"),
         ];
         for (s, p, o) in edges {
-            g.insert_fact(s, p, Some(o), None, t0, 1.0, None, None)
+            g.insert_fact(FactInsert::new(s, p, t0).object_id(o))
                 .await
                 .unwrap();
         }

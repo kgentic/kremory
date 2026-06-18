@@ -7,19 +7,80 @@ use crate::core::schema::{Fact, TemporalGraph};
 
 use super::{fact_content_hash, row_to_fact};
 
+/// Bundled parameters for the `insert_fact*` family — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). Construct via [`FactInsert::new`] +
+/// chainable setters. `group_id` is intentionally NOT a field: the
+/// `*_with_group` variants take it as a sibling arg so the group capability
+/// stays explicit to those methods.
+pub struct FactInsert<'a> {
+    pub subject_id: &'a str,
+    pub predicate: &'a str,
+    pub object_id: Option<&'a str>,
+    pub object_value: Option<&'a str>,
+    pub valid_from: DateTime<Utc>,
+    pub confidence: f64,
+    pub source_episode_id: Option<i64>,
+    pub embedding: Option<&'a [f32]>,
+}
+
+impl<'a> FactInsert<'a> {
+    /// Required fields; optionals default to `None`, `confidence` to `1.0`.
+    pub fn new(subject_id: &'a str, predicate: &'a str, valid_from: DateTime<Utc>) -> Self {
+        Self {
+            subject_id,
+            predicate,
+            object_id: None,
+            object_value: None,
+            valid_from,
+            confidence: 1.0,
+            source_episode_id: None,
+            embedding: None,
+        }
+    }
+
+    #[must_use]
+    pub fn object_id(mut self, object_id: &'a str) -> Self {
+        self.object_id = Some(object_id);
+        self
+    }
+
+    #[must_use]
+    pub fn object_value(mut self, object_value: &'a str) -> Self {
+        self.object_value = Some(object_value);
+        self
+    }
+
+    #[must_use]
+    pub fn confidence(mut self, confidence: f64) -> Self {
+        self.confidence = confidence;
+        self
+    }
+
+    #[must_use]
+    pub fn source_episode_id(mut self, source_episode_id: i64) -> Self {
+        self.source_episode_id = Some(source_episode_id);
+        self
+    }
+
+    #[must_use]
+    pub fn embedding(mut self, embedding: &'a [f32]) -> Self {
+        self.embedding = Some(embedding);
+        self
+    }
+}
+
 impl TemporalGraph {
-    #[allow(clippy::too_many_arguments)]
-    pub async fn insert_fact(
-        &self,
-        subject_id: &str,
-        predicate: &str,
-        object_id: Option<&str>,
-        object_value: Option<&str>,
-        valid_from: DateTime<Utc>,
-        confidence: f64,
-        source_episode_id: Option<i64>,
-        embedding: Option<&[f32]>,
-    ) -> Result<i64> {
+    pub async fn insert_fact(&self, fact: FactInsert<'_>) -> Result<i64> {
+        let FactInsert {
+            subject_id,
+            predicate,
+            object_id,
+            object_value,
+            valid_from,
+            confidence,
+            source_episode_id,
+            embedding,
+        } = fact;
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
@@ -116,31 +177,10 @@ impl TemporalGraph {
     /// without aborting the surrounding write. Mirrors the
     /// `disambiguation.rs:279` swallow pattern as a reusable helper per
     /// ADR-035 §5. Added v0.1.8.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn try_insert_fact(
-        &self,
-        subject_id: &str,
-        predicate: &str,
-        object_id: Option<&str>,
-        object_value: Option<&str>,
-        valid_from: DateTime<Utc>,
-        confidence: f64,
-        source_episode_id: Option<i64>,
-        embedding: Option<&[f32]>,
-    ) -> Result<Option<i64>> {
-        match self
-            .insert_fact(
-                subject_id,
-                predicate,
-                object_id,
-                object_value,
-                valid_from,
-                confidence,
-                source_episode_id,
-                embedding,
-            )
-            .await
-        {
+    pub async fn try_insert_fact(&self, fact: FactInsert<'_>) -> Result<Option<i64>> {
+        let subject_id = fact.subject_id;
+        let predicate = fact.predicate;
+        match self.insert_fact(fact).await {
             Ok(fact_id) => Ok(Some(fact_id)),
             Err(crate::core::error::Error::Duplicate { .. }) => {
                 metrics::counter!(
@@ -283,19 +323,21 @@ impl TemporalGraph {
     // === Episode CRUD ===
 
     /// Insert a fact with an optional group_id.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_fact_with_group(
         &self,
-        subject_id: &str,
-        predicate: &str,
-        object_id: Option<&str>,
-        object_value: Option<&str>,
-        valid_from: DateTime<Utc>,
-        confidence: f64,
-        source_episode_id: Option<i64>,
+        fact: FactInsert<'_>,
         group_id: Option<&str>,
-        embedding: Option<&[f32]>,
     ) -> Result<i64> {
+        let FactInsert {
+            subject_id,
+            predicate,
+            object_id,
+            object_value,
+            valid_from,
+            confidence,
+            source_episode_id,
+            embedding,
+        } = fact;
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
@@ -384,33 +426,14 @@ impl TemporalGraph {
     /// Sibling helper to `try_insert_fact`. Use this when the caller has a
     /// `group_id` available (e.g. resolved from a `Namespace`). Same
     /// silent-dedup semantics + counter emission. Added v0.1.8 per ADR-035 §5.
-    #[allow(clippy::too_many_arguments)]
     pub async fn try_insert_fact_with_group(
         &self,
-        subject_id: &str,
-        predicate: &str,
-        object_id: Option<&str>,
-        object_value: Option<&str>,
-        valid_from: DateTime<Utc>,
-        confidence: f64,
-        source_episode_id: Option<i64>,
+        fact: FactInsert<'_>,
         group_id: Option<&str>,
-        embedding: Option<&[f32]>,
     ) -> Result<Option<i64>> {
-        match self
-            .insert_fact_with_group(
-                subject_id,
-                predicate,
-                object_id,
-                object_value,
-                valid_from,
-                confidence,
-                source_episode_id,
-                group_id,
-                embedding,
-            )
-            .await
-        {
+        let subject_id = fact.subject_id;
+        let predicate = fact.predicate;
+        match self.insert_fact_with_group(fact, group_id).await {
             Ok(fact_id) => Ok(Some(fact_id)),
             Err(crate::core::error::Error::Duplicate { .. }) => {
                 metrics::counter!(

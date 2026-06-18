@@ -37,6 +37,7 @@ use metrics::counter;
 use tracing;
 
 use crate::core::error::Result;
+use crate::core::graph::FactInsert;
 use crate::core::provider::EmbeddingProvider;
 use crate::core::schema::TemporalGraph;
 use crate::core::search::SearchFilters;
@@ -252,15 +253,17 @@ pub async fn insert_potential_alias_fact(
     let now = Utc::now();
     let result = graph
         .insert_fact_with_group(
-            new_entity_id,
-            RESERVED_PREDICATE_POTENTIAL_ALIAS,
-            Some(existing_id),
-            None,
-            now,
-            f64::from(similarity),
-            provenance.source_episode_id,
+            FactInsert {
+                subject_id: new_entity_id,
+                predicate: RESERVED_PREDICATE_POTENTIAL_ALIAS,
+                object_id: Some(existing_id),
+                object_value: None,
+                valid_from: now,
+                confidence: f64::from(similarity),
+                source_episode_id: provenance.source_episode_id,
+                embedding: None,
+            },
             provenance.group_id,
-            None,
         )
         .await;
 
