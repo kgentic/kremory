@@ -43,7 +43,7 @@ use kremory::core::ingest::Engine;
 use kremory::core::provider::{ChatProvider, MockChatResponse, NullEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
 use kremory::memory::engine_handle::EngineGraphHandle;
-use kremory::memory::graph::GraphHandle;
+use kremory::memory::graph::{GraphHandle, GraphIngestEpisodeParams};
 use kremory::memory::types::{Namespace, SourceKind, SourceRef, SubmitOpts};
 
 // ---------------------------------------------------------------------------
@@ -217,19 +217,19 @@ async fn spike_c_background_ingestor_plus_engine_handle_concurrent() {
         // Spawn each inline call as a tokio task so they can overlap with the
         // background OS-thread writes.
         let task = tokio::spawn(async move {
-            h.graph_ingest_episode(
-                &ns,
-                &source_ref,
-                &content,
-                &[],
-                p,
-                None, // no batch_id
-                SubmitOpts {
+            h.graph_ingest_episode(GraphIngestEpisodeParams {
+                namespace: &ns,
+                source_ref: &source_ref,
+                content: &content,
+                structured_facts: &[],
+                provider: p,
+                batch_id: None,
+                opts: SubmitOpts {
                     enrich_per_episode: false, // skip LLM — just Phase 1
                     run_in_background: false,  // inline path
                 },
-                None, // no sink
-            )
+                sink: None,
+            })
             .await
         });
         inline_results.push(task);

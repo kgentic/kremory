@@ -29,10 +29,9 @@ use kremory::memory::{
     submit_episode,
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef,
-        StructuredFact, SubmitOpts,
+        DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef, SubmitOpts,
     },
-    ChatProvider, GraphHandle,
+    ChatProvider, GraphHandle, GraphIngestEpisodeParams,
 };
 use uuid::Uuid;
 
@@ -119,15 +118,18 @@ struct StubIngestingHandle;
 impl GraphHandle for StubIngestingHandle {
     async fn graph_ingest_episode(
         &self,
-        _namespace: &Namespace,
-        source_ref: &SourceRef,
-        _content: &str,
-        _structured_facts: &[StructuredFact],
-        _provider: Arc<dyn ChatProvider>,
-        _batch_id: Option<String>,
-        opts: SubmitOpts,
-        sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphIngestEpisodeParams<'_>,
     ) -> kremory::memory::types::Result<EpisodeCommit> {
+        let GraphIngestEpisodeParams {
+            namespace: _,
+            source_ref,
+            content: _,
+            structured_facts: _,
+            provider: _,
+            batch_id: _,
+            opts,
+            sink,
+        } = params;
         // Phase 1 always commits.
         let commit = EpisodeCommit {
             run_id: None,
@@ -419,15 +421,18 @@ async fn submit_episode_contradiction_events_reach_sink() {
     impl GraphHandle for ContradictingHandle {
         async fn graph_ingest_episode(
             &self,
-            _namespace: &Namespace,
-            source_ref: &SourceRef,
-            _content: &str,
-            _structured_facts: &[StructuredFact],
-            _provider: Arc<dyn ChatProvider>,
-            _batch_id: Option<String>,
-            opts: SubmitOpts,
-            sink: Option<Arc<dyn EnrichmentEventSink>>,
+            params: GraphIngestEpisodeParams<'_>,
         ) -> kremory::memory::types::Result<EpisodeCommit> {
+            let GraphIngestEpisodeParams {
+                namespace: _,
+                source_ref,
+                content: _,
+                structured_facts: _,
+                provider: _,
+                batch_id: _,
+                opts,
+                sink,
+            } = params;
             if opts.enrich_per_episode {
                 if let Some(s) = &sink {
                     s.on_stage_change(IngestStatus::Extracting);

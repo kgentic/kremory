@@ -18,7 +18,7 @@ use kremory::memory::{
         AwaitOpts, BatchStatus, DreamHandle, DreamOpts, DreamStatus, EpisodeCommit, IngestStatus,
         Namespace, SubmitOpts,
     },
-    GraphHandle,
+    GraphHandle, GraphIngestEpisodeParams,
 };
 use uuid::Uuid;
 
@@ -26,10 +26,7 @@ use uuid::Uuid;
 
 use async_trait::async_trait;
 use kremory::memory::{
-    types::{
-        CancelOutcome, CancelledPhase, DreamPhaseResult, RetrievedContext, SearchOpts, SourceRef,
-        StructuredFact,
-    },
+    types::{CancelOutcome, CancelledPhase, DreamPhaseResult, RetrievedContext, SearchOpts},
     ChatProvider,
 };
 
@@ -39,15 +36,18 @@ struct StubHandle;
 impl GraphHandle for StubHandle {
     async fn graph_ingest_episode(
         &self,
-        _namespace: &Namespace,
-        source_ref: &SourceRef,
-        _content: &str,
-        _structured_facts: &[StructuredFact],
-        _provider: Arc<dyn ChatProvider>,
-        _batch_id: Option<String>,
-        _opts: SubmitOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphIngestEpisodeParams<'_>,
     ) -> kremory::memory::types::Result<EpisodeCommit> {
+        let GraphIngestEpisodeParams {
+            namespace: _,
+            source_ref,
+            content: _,
+            structured_facts: _,
+            provider: _,
+            batch_id: _,
+            opts: _,
+            sink: _,
+        } = params;
         Ok(EpisodeCommit {
             run_id: None,
             episode_entity_id: format!("stub:{}", source_ref.id),

@@ -41,11 +41,10 @@ use crate::core::error::IngestStatus;
 #[cfg(any(test, feature = "test-utils"))]
 use super::{
     events::EnrichmentEventSink,
-    graph::GraphHandle,
+    graph::{GraphHandle, GraphIngestEpisodeParams},
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef,
-        StructuredFact, SubmitOpts,
+        DreamStatus, EpisodeCommit, Namespace, RetrievedContext, SearchOpts,
     },
     ChatProvider, Result,
 };
@@ -68,14 +67,7 @@ pub struct StubGraphHandle;
 impl GraphHandle for StubGraphHandle {
     async fn graph_ingest_episode(
         &self,
-        _namespace: &Namespace,
-        _source_ref: &SourceRef,
-        _content: &str,
-        _structured_facts: &[StructuredFact],
-        _provider: Arc<dyn ChatProvider>,
-        _batch_id: Option<String>,
-        _opts: SubmitOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        _params: GraphIngestEpisodeParams<'_>,
     ) -> Result<EpisodeCommit> {
         unimplemented!("StubGraphHandle::graph_ingest_episode — provide a concrete stub");
     }

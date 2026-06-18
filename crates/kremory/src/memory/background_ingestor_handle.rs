@@ -40,11 +40,10 @@ use crate::core::error::IngestStatus;
 use crate::memory::engine_handle::{namespace_to_group_id, EngineGraphHandle};
 use crate::memory::{
     events::EnrichmentEventSink,
-    graph::GraphHandle,
+    graph::{GraphHandle, GraphIngestEpisodeParams},
     types::{
         BatchStatus, CancelOutcome, DreamHandle, DreamOpts, DreamPhaseResult, DreamStatus,
-        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts, SourceRef,
-        StructuredFact, SubmitOpts,
+        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
     },
     ChatProvider,
 };
@@ -168,15 +167,18 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
 
     async fn graph_ingest_episode(
         &self,
-        namespace: &Namespace,
-        _source_ref: &SourceRef,
-        content: &str,
-        _structured_facts: &[StructuredFact],
-        _provider: Arc<dyn ChatProvider>,
-        batch_id: Option<String>,
-        opts: SubmitOpts,
-        _sink: Option<Arc<dyn EnrichmentEventSink>>,
+        params: GraphIngestEpisodeParams<'_>,
     ) -> Result<EpisodeCommit> {
+        let GraphIngestEpisodeParams {
+            namespace,
+            source_ref,
+            content,
+            structured_facts,
+            provider,
+            batch_id,
+            opts,
+            sink,
+        } = params;
         if opts.run_in_background {
             // Background path: route through BackgroundIngestor.
             // The OS-thread worker owns the Engine and the BatchTracker.
@@ -249,16 +251,16 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                 "graph_ingest_episode routed to EngineGraphHandle (inline)"
             );
             self.engine_handle
-                .graph_ingest_episode(
+                .graph_ingest_episode(GraphIngestEpisodeParams {
                     namespace,
-                    _source_ref,
+                    source_ref,
                     content,
-                    _structured_facts,
-                    _provider,
+                    structured_facts,
+                    provider,
                     batch_id,
                     opts,
-                    _sink,
-                )
+                    sink,
+                })
                 .await
         }
     }
