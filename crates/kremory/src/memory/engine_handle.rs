@@ -566,7 +566,11 @@ impl GraphHandle for EngineGraphHandle {
 
         let context = self
             .engine
-            .contextualize(query, Some(&group_id), limit)
+            .contextualize(crate::core::context::ContextualizeParams {
+                query,
+                group_id: Some(&group_id),
+                limit,
+            })
             .await
             .map_err(MemoryError::Core)?;
 

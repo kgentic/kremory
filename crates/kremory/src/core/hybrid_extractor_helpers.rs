@@ -23,12 +23,28 @@ pub(crate) fn filter_new_entities(
         .collect()
 }
 
+/// Bundled parameters for [`merge_entities_with_grounding`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub(crate) struct MergeEntitiesWithGroundingParams<'a> {
+    /// The base entity set; mutated and returned.
+    pub base: Vec<ExtractedEntity>,
+    /// Additional entities to merge into `base`.
+    pub additive: Vec<ExtractedEntity>,
+    /// Source text used to compute the grounding flag.
+    pub source_text: &'a str,
+    /// Grounding checker used to flag each entity.
+    pub grounding_checker: &'a dyn GroundingChecker,
+}
+
 pub(crate) fn merge_entities_with_grounding(
-    mut base: Vec<ExtractedEntity>,
-    additive: Vec<ExtractedEntity>,
-    source_text: &str,
-    grounding_checker: &dyn GroundingChecker,
+    params: MergeEntitiesWithGroundingParams<'_>,
 ) -> Vec<ExtractedEntity> {
+    let MergeEntitiesWithGroundingParams {
+        mut base,
+        additive,
+        source_text,
+        grounding_checker,
+    } = params;
     base.extend(additive);
     base.sort_by_key(|e| normalize_name(&e.name));
     base.dedup_by(|a, b| normalize_name(&a.name) == normalize_name(&b.name));

@@ -43,7 +43,7 @@
 //! ## Event sink example (Tier 2)
 //!
 //! ```rust,no_run
-//! use kremory::{EnrichmentEventSink, IngestEventSink, ContradictionDetected, BatchPhase2Complete, IngestStatus, IngestionError};
+//! use kremory::{EnrichmentEventSink, IngestEventSink, ContradictionDetected, BatchPhase2Complete, IngestStatus, IngestionError, OnEdgeAddedParams};
 //! use std::sync::Arc;
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
@@ -55,7 +55,7 @@
 //!     fn on_entity_extracted(&self, _id: &str, _name: &str) {
 //!         self.entity_count.fetch_add(1, Ordering::Relaxed);
 //!     }
-//!     fn on_edge_added(&self, _f: &str, _t: &str, _p: &str) {}
+//!     fn on_edge_added(&self, _p: OnEdgeAddedParams<'_>) {}
 //!     fn on_contradiction(&self, _e: ContradictionDetected) {}
 //!     fn on_dedup_merge(&self, _s: &str, _a: &str) {}
 //!     fn on_stage_change(&self, _s: IngestStatus) {}

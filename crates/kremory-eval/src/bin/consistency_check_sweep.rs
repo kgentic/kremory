@@ -365,7 +365,7 @@ async fn ingest_fixture(
         graph: Arc::clone(&graph),
         llm: Arc::clone(&llm),
         embedder: arc_emb,
-        config: config,
+        config,
     });
     let source_params = build_source_params();
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
@@ -378,7 +378,7 @@ async fn ingest_fixture(
                 reference_time: None,
                 group_id: None,
                 content_type: None,
-                source_params: source_params,
+                source_params,
             },
         )
         .await

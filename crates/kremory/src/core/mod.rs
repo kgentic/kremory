@@ -78,5 +78,5 @@ pub use background::{
 pub use error::{ContradictionResolution, Error, IngestStatus, IngestionErrorKind, Result};
 pub use sink::{
     ContradictionDetected, EntityId, EntityOrEdgeRef, IngestEventSink,
-    IngestionError as SinkIngestionError, SinkFact,
+    IngestionError as SinkIngestionError, OnEdgeAddedParams, SinkFact,
 };

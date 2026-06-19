@@ -108,6 +108,19 @@ pub enum DisambiguationOutcome {
 
 // ─── Core disambiguation function ────────────────────────────────────────────
 
+/// Bundled non-generic parameters for `disambiguate`, args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). The generic `embedder: &Emb` stays a
+/// lead positional argument.
+#[derive(Clone, Copy)]
+pub struct DisambiguateParams<'a> {
+    /// The newly extracted entity name to disambiguate.
+    pub entity_name: &'a str,
+    /// Optional namespace scope (`None` = global namespace, disambiguation skipped).
+    pub group_id: Option<&'a str>,
+    /// The temporal graph to search against.
+    pub graph: &'a TemporalGraph,
+}
+
 /// Disambiguate a newly extracted entity name against existing entities in the
 /// same `group_id`.
 ///
@@ -128,11 +141,14 @@ pub enum DisambiguationOutcome {
 /// - The embedder returns an empty vector (null embedder / test stub).
 /// - No existing entities found in the group.
 pub async fn disambiguate<Emb: EmbeddingProvider>(
-    entity_name: &str,
-    group_id: Option<&str>,
-    graph: &TemporalGraph,
+    params: DisambiguateParams<'_>,
     embedder: &Emb,
 ) -> Result<DisambiguationOutcome> {
+    let DisambiguateParams {
+        entity_name,
+        group_id,
+        graph,
+    } = params;
     // No-op: global namespace or empty name.
     let Some(gid) = group_id else {
         return Ok(DisambiguationOutcome::New);
@@ -247,13 +263,32 @@ pub struct AliasProvenance<'a> {
 /// Returns the new `fact_id` on success.  A `Duplicate` error from
 /// `insert_fact_with_group` is silently swallowed — the alias was already
 /// recorded in a prior ingest and does not need to be duplicated.
+/// Bundled parameters for [`insert_potential_alias_fact`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+#[derive(Clone, Copy)]
+pub struct InsertPotentialAliasFactParams<'a> {
+    /// The temporal graph to insert the alias fact into.
+    pub graph: &'a TemporalGraph,
+    /// The newly inserted entity (subject of the alias edge).
+    pub new_entity_id: &'a str,
+    /// The existing canonical entity (object of the alias edge).
+    pub existing_id: &'a str,
+    /// Cosine similarity score, stored as the fact `confidence`.
+    pub similarity: f32,
+    /// Episode + namespace provenance for the alias fact.
+    pub provenance: AliasProvenance<'a>,
+}
+
 pub async fn insert_potential_alias_fact(
-    graph: &TemporalGraph,
-    new_entity_id: &str,
-    existing_id: &str,
-    similarity: f32,
-    provenance: AliasProvenance<'_>,
+    params: InsertPotentialAliasFactParams<'_>,
 ) -> Result<Option<i64>> {
+    let InsertPotentialAliasFactParams {
+        graph,
+        new_entity_id,
+        existing_id,
+        similarity,
+        provenance,
+    } = params;
     let now = Utc::now();
     let result = graph
         .insert_fact_with_group(
@@ -527,7 +562,15 @@ mod tests {
     async fn null_embedder_returns_new() -> KResult<()> {
         let graph = TemporalGraph::open_in_memory().await?;
         let embedder = NullEmbeddingProvider { dim: 384 };
-        let outcome = disambiguate("Alice", Some("test-group"), &graph, &embedder).await?;
+        let outcome = disambiguate(
+            DisambiguateParams {
+                entity_name: "Alice",
+                group_id: Some("test-group"),
+                graph: &graph,
+            },
+            &embedder,
+        )
+        .await?;
         assert_eq!(
             outcome,
             DisambiguationOutcome::New,
@@ -540,7 +583,15 @@ mod tests {
     async fn none_group_id_returns_new() -> KResult<()> {
         let graph = TemporalGraph::open_in_memory().await?;
         let embedder = NullEmbeddingProvider { dim: 384 };
-        let outcome = disambiguate("Alice", None, &graph, &embedder).await?;
+        let outcome = disambiguate(
+            DisambiguateParams {
+                entity_name: "Alice",
+                group_id: None,
+                graph: &graph,
+            },
+            &embedder,
+        )
+        .await?;
         assert_eq!(
             outcome,
             DisambiguationOutcome::New,
@@ -553,7 +604,15 @@ mod tests {
     async fn empty_name_returns_new() -> KResult<()> {
         let graph = TemporalGraph::open_in_memory().await?;
         let embedder = NullEmbeddingProvider { dim: 384 };
-        let outcome = disambiguate("   ", Some("g"), &graph, &embedder).await?;
+        let outcome = disambiguate(
+            DisambiguateParams {
+                entity_name: "   ",
+                group_id: Some("g"),
+                graph: &graph,
+            },
+            &embedder,
+        )
+        .await?;
         assert_eq!(
             outcome,
             DisambiguationOutcome::New,

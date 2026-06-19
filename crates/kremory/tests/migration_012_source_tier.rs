@@ -526,8 +526,8 @@ async fn q04_with_facts_object_id_stamped_consumer_pinned() {
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::clone(&graph),
         llm: Arc::clone(&llm),
-        embedder: embedder,
-        config: config,
+        embedder,
+        config,
     });
 
     let extractor = LlmExtractor::new(llm);
@@ -606,8 +606,8 @@ async fn q04_with_facts_object_value_literal_no_object_stamp() {
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::clone(&graph),
         llm: Arc::clone(&llm),
-        embedder: embedder,
-        config: config,
+        embedder,
+        config,
     });
 
     let extractor = LlmExtractor::new(llm);

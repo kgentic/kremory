@@ -40,6 +40,9 @@ async fn open_graph() -> (TemporalGraph, tempfile::TempDir) {
 
 /// Insert an entity row directly for test setup.
 /// `entity_type_source`: 'Phase1Ner' | 'Phase2Llm' | 'DreamPass0' | 'DreamPass1' | 'ConsumerPinned'
+// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
+// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns.
+#[allow(clippy::too_many_arguments)]
 async fn insert_entity(
     graph: &TemporalGraph,
     id: &str,
@@ -88,6 +91,9 @@ async fn read_entity_fields(graph: &TemporalGraph, id: &str) -> (u32, String) {
 }
 
 /// Insert an entity_type into the registry for the test group.
+// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
+// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns.
+#[allow(clippy::too_many_arguments)]
 async fn insert_entity_type(graph: &TemporalGraph, id: u32, name: &str, description: &str) {
     let now = chrono::Utc::now().to_rfc3339();
     graph

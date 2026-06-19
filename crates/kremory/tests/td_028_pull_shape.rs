@@ -23,7 +23,9 @@
 use std::sync::{Arc, Mutex};
 
 use kremory::core::config::PipelineConfig;
-use kremory::core::entity_types::{label_to_id_or_register, EntityTypeRegistry, EntityTypeSpec};
+use kremory::core::entity_types::{
+    label_to_id_or_register, EntityTypeRegistry, EntityTypeSpec, LabelToIdOrRegisterParams,
+};
 use kremory::core::extraction::LlmExtractor;
 use kremory::core::ingest::{Engine, SourceParams};
 use kremory::core::intelligence::{
@@ -143,9 +145,14 @@ async fn b3_pass_0_types_visible_in_next_ingest_without_engine_rebuild() {
         .await
         .expect("load registry before Pass 0 sim");
 
-    let new_id = label_to_id_or_register(&graph.conn, "default", &registry_before, "ProductSKU")
-        .await
-        .expect("Pass 0 simulation: label_to_id_or_register must succeed");
+    let new_id = label_to_id_or_register(LabelToIdOrRegisterParams {
+        conn: &graph.conn,
+        group_id: "default",
+        registry: &registry_before,
+        label: "ProductSKU",
+    })
+    .await
+    .expect("Pass 0 simulation: label_to_id_or_register must succeed");
 
     assert!(
         new_id > 0,
@@ -223,8 +230,8 @@ async fn b2_builder_seed_populates_registry_for_custom_types() {
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::new(graph),
         llm: Arc::clone(&llm),
-        embedder: embedder,
-        config: config,
+        embedder,
+        config,
     });
 
     // Build extractor locally — engine.extractor is pub(crate), not accessible
@@ -297,8 +304,8 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::new(graph),
         llm: Arc::clone(&llm),
-        embedder: embedder,
-        config: config,
+        embedder,
+        config,
     });
     let extractor = LlmExtractor::new(Arc::clone(&llm));
 
@@ -384,8 +391,8 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
             let engine = Engine::new(kremory::core::ingest::EngineNewParams {
                 graph: Arc::new(graph),
                 llm: Arc::clone(&llm),
-                embedder: embedder,
-                config: config,
+                embedder,
+                config,
             });
             let extractor = LlmExtractor::new(Arc::clone(&llm));
 
@@ -466,8 +473,8 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
             let engine = Engine::new(kremory::core::ingest::EngineNewParams {
                 graph: Arc::new(graph),
                 llm: Arc::clone(&llm),
-                embedder: embedder,
-                config: config,
+                embedder,
+                config,
             });
             let extractor = LlmExtractor::new(Arc::clone(&llm));
 
@@ -602,8 +609,8 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::new(graph),
         llm: Arc::clone(&llm),
-        embedder: embedder,
-        config: config,
+        embedder,
+        config,
     });
 
     // Shared capture store: one Vec<String> per extract() call.
@@ -659,12 +666,12 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
             .await
             .expect("registry load before Pass 0 sim");
 
-        let new_id = label_to_id_or_register(
-            &graph_arc.conn,
-            "b3-e2e",
-            &registry_before,
-            "ProductCompany",
-        )
+        let new_id = label_to_id_or_register(LabelToIdOrRegisterParams {
+            conn: &graph_arc.conn,
+            group_id: "b3-e2e",
+            registry: &registry_before,
+            label: "ProductCompany",
+        })
         .await
         .expect("Pass 0 sim: label_to_id_or_register must succeed");
 

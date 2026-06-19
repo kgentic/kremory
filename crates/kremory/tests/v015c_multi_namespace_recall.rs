@@ -57,6 +57,9 @@ fn make_result(entity_id: &str, entity_name: &str, score: f32) -> RetrievedConte
     })
 }
 
+// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
+// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns.
+#[allow(clippy::too_many_arguments)]
 fn make_result_with_ns(
     entity_id: &str,
     entity_name: &str,

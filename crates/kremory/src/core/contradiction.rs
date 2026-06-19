@@ -12,18 +12,35 @@ use crate::core::schema::Fact;
 // Temporal Overlap
 // ---------------------------------------------------------------------------
 
+/// Bundled parameters for [`temporal_overlap`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+///
+/// Both intervals are half-open: `[start, end)` where a `None` end = +infinity.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TemporalOverlapParams<'a> {
+    /// Start of the existing interval.
+    pub existing_start: &'a DateTime<Utc>,
+    /// End of the existing interval (`None` = +infinity).
+    pub existing_end: Option<&'a DateTime<Utc>>,
+    /// Start of the new interval.
+    pub new_start: &'a DateTime<Utc>,
+    /// End of the new interval (`None` = +infinity).
+    pub new_end: Option<&'a DateTime<Utc>>,
+}
+
 /// Check if two temporal intervals overlap.
 /// Intervals are half-open: [start, end) where None end = +infinity.
 ///
 /// Two intervals [a_start, a_end) and [b_start, b_end) overlap when:
 ///   a_start < b_end AND b_start < a_end
 /// Where None end means +infinity (always satisfies the < comparison).
-pub(crate) fn temporal_overlap(
-    existing_start: &DateTime<Utc>,
-    existing_end: Option<&DateTime<Utc>>,
-    new_start: &DateTime<Utc>,
-    new_end: Option<&DateTime<Utc>>,
-) -> bool {
+pub(crate) fn temporal_overlap(params: TemporalOverlapParams<'_>) -> bool {
+    let TemporalOverlapParams {
+        existing_start,
+        existing_end,
+        new_start,
+        new_end,
+    } = params;
     // existing starts before new ends (or new has no end — +infinity)
     let a_before_b_end = new_end.is_none_or(|be| existing_start < be);
     // new starts before existing ends (or existing has no end — +infinity)
@@ -191,6 +208,19 @@ ws ::= [ \t\n]*"#;
 // TwoPoolDetector
 // ---------------------------------------------------------------------------
 
+/// Bundled parameters for [`TwoPoolDetector::detect`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub struct DetectParams<'a> {
+    /// The newly extracted fact to check.
+    pub new_fact: &'a ExtractedFact,
+    /// Facts with the same subject + predicate (already fetched by caller).
+    pub pool_a: &'a [Fact],
+    /// Semantically similar facts (already fetched by caller).
+    pub pool_b: &'a [Fact],
+    /// When the new fact becomes valid.
+    pub reference_time: &'a DateTime<Utc>,
+}
+
 /// Contradiction detector using two candidate pools and temporal overlap filtering.
 pub(crate) struct TwoPoolDetector<L: ChatProvider> {
     llm: Arc<L>,
@@ -206,22 +236,36 @@ impl<L: ChatProvider> TwoPoolDetector<L> {
     /// pool_a: facts with same subject + predicate (already fetched by caller)
     /// pool_b: semantically similar facts (already fetched by caller)
     /// reference_time: when the new fact becomes valid
-    pub async fn detect(
-        &self,
-        new_fact: &ExtractedFact,
-        pool_a: &[Fact],
-        pool_b: &[Fact],
-        reference_time: &DateTime<Utc>,
-    ) -> Result<ContradictionResult> {
+    pub async fn detect(&self, params: DetectParams<'_>) -> Result<ContradictionResult> {
+        let DetectParams {
+            new_fact,
+            pool_a,
+            pool_b,
+            reference_time,
+        } = params;
         // Filter to temporally overlapping facts only
         let overlapping_a: Vec<&Fact> = pool_a
             .iter()
-            .filter(|f| temporal_overlap(&f.valid_from, f.valid_to.as_ref(), reference_time, None))
+            .filter(|f| {
+                temporal_overlap(TemporalOverlapParams {
+                    existing_start: &f.valid_from,
+                    existing_end: f.valid_to.as_ref(),
+                    new_start: reference_time,
+                    new_end: None,
+                })
+            })
             .collect();
 
         let overlapping_b: Vec<&Fact> = pool_b
             .iter()
-            .filter(|f| temporal_overlap(&f.valid_from, f.valid_to.as_ref(), reference_time, None))
+            .filter(|f| {
+                temporal_overlap(TemporalOverlapParams {
+                    existing_start: &f.valid_from,
+                    existing_end: f.valid_to.as_ref(),
+                    new_start: reference_time,
+                    new_end: None,
+                })
+            })
             // dedup: exclude anything already in pool_a
             .filter(|f| !pool_a.iter().any(|a| a.id == f.id))
             .collect();
@@ -372,7 +416,12 @@ mod tests {
         // [t0, ∞) and [t1, ∞) — both infinite, must overlap
         let t0 = dt(-10);
         let t1 = dt(-5);
-        assert!(temporal_overlap(&t0, None, &t1, None));
+        assert!(temporal_overlap(TemporalOverlapParams {
+            existing_start: &t0,
+            existing_end: None,
+            new_start: &t1,
+            new_end: None,
+        }));
     }
 
     #[test]
@@ -382,7 +431,12 @@ mod tests {
         let t1 = dt(-10);
         let t2 = dt(-5);
         let t3 = dt(0);
-        assert!(!temporal_overlap(&t0, Some(&t1), &t2, Some(&t3)));
+        assert!(!temporal_overlap(TemporalOverlapParams {
+            existing_start: &t0,
+            existing_end: Some(&t1),
+            new_start: &t2,
+            new_end: Some(&t3),
+        }));
     }
 
     #[test]
@@ -391,7 +445,12 @@ mod tests {
         let t0 = dt(-10);
         let t1 = dt(-5);
         let t2 = dt(0);
-        assert!(!temporal_overlap(&t0, Some(&t1), &t1, Some(&t2)));
+        assert!(!temporal_overlap(TemporalOverlapParams {
+            existing_start: &t0,
+            existing_end: Some(&t1),
+            new_start: &t1,
+            new_end: Some(&t2),
+        }));
     }
 
     #[test]
@@ -401,7 +460,12 @@ mod tests {
         let t1 = dt(-10);
         let t2 = dt(-5);
         let t3 = dt(0);
-        assert!(temporal_overlap(&t0, Some(&t3), &t1, Some(&t2)));
+        assert!(temporal_overlap(TemporalOverlapParams {
+            existing_start: &t0,
+            existing_end: Some(&t3),
+            new_start: &t1,
+            new_end: Some(&t2),
+        }));
     }
 
     #[test]
@@ -411,7 +475,12 @@ mod tests {
         let t1 = dt(-10);
         let t2 = dt(-5);
         let t3 = dt(0);
-        assert!(temporal_overlap(&t0, Some(&t2), &t1, Some(&t3)));
+        assert!(temporal_overlap(TemporalOverlapParams {
+            existing_start: &t0,
+            existing_end: Some(&t2),
+            new_start: &t1,
+            new_end: Some(&t3),
+        }));
     }
 
     // ── Dual-List Prompt ──────────────────────────────────────────────────────
@@ -612,7 +681,13 @@ mod tests {
         let client = Arc::new(MockChatProvider::new(HashMap::new()));
         let detector = TwoPoolDetector::new(client);
 
-        let result = block_on(detector.detect(&new_fact, &[fact], &[], &reference)).unwrap();
+        let result = block_on(detector.detect(DetectParams {
+            new_fact: &new_fact,
+            pool_a: &[fact],
+            pool_b: &[],
+            reference_time: &reference,
+        }))
+        .unwrap();
         assert!(result.is_consistent);
         assert!(result.contradictions.is_empty());
         assert!(result.duplicates.is_empty());
@@ -631,7 +706,13 @@ mod tests {
         let client = Arc::new(MockChatProvider::new(HashMap::new()));
         let detector = TwoPoolDetector::new(client);
 
-        let result = block_on(detector.detect(&new_fact, &[fact], &[], &reference)).unwrap();
+        let result = block_on(detector.detect(DetectParams {
+            new_fact: &new_fact,
+            pool_a: &[fact],
+            pool_b: &[],
+            reference_time: &reference,
+        }))
+        .unwrap();
         assert!(result.contradictions.is_empty());
         assert_eq!(result.duplicates, vec![42i64]);
         assert!(result.is_consistent);
@@ -659,7 +740,13 @@ mod tests {
         let client = Arc::new(MockChatProvider::new(responses));
         let detector = TwoPoolDetector::new(client);
 
-        let result = block_on(detector.detect(&new_fact, &[fact], &[], &reference)).unwrap();
+        let result = block_on(detector.detect(DetectParams {
+            new_fact: &new_fact,
+            pool_a: &[fact],
+            pool_b: &[],
+            reference_time: &reference,
+        }))
+        .unwrap();
 
         // Index 1 maps to fact id 99
         assert_eq!(result.contradictions, vec![99i64]);

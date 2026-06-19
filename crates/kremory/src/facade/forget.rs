@@ -222,6 +222,10 @@ mod forget_by_source_id_tests {
 
     /// Seed: episode + entity + episodic_edge. Returns the inserted
     /// episode_id (SQLite AUTOINCREMENT).
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` seeders.
+    #[allow(clippy::too_many_arguments)]
     async fn seed_link(mem: &Memory, source_id: &str, ns: &Namespace, entity_id: &str) -> i64 {
         let tg = mem.temporal_graph.as_ref().expect("temporal_graph");
         let conn = &tg.conn;

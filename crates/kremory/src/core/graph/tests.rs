@@ -806,7 +806,7 @@ async fn lane_a_indexer_writes_null_group_id_when_folder_id_absent() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
 
     let group_id: Option<&str> = None;
-    g.insert_entity_with_group(InsertEntityWithGroupParams { id: "doc:welcome:chunk_0", entity_type_id: 0, properties: serde_json::json!({ "text": "the host application captures meetings and surfaces insights.", "source": "doc:welcome", "source_type": "document", }), group_id: group_id })
+    g.insert_entity_with_group(InsertEntityWithGroupParams { id: "doc:welcome:chunk_0", entity_type_id: 0, properties: serde_json::json!({ "text": "the host application captures meetings and surfaces insights.", "source": "doc:welcome", "source_type": "document", }), group_id })
     .await
     .unwrap();
 
@@ -1317,7 +1317,7 @@ async fn batch_forget_250_entities_deleted_cleanly() {
     let ids: Vec<String> = (0..250).map(|i| format!("ent-{i:04}")).collect();
     for id in &ids {
         g.insert_entity(InsertEntityParams {
-            id: id,
+            id,
             entity_type_id: 0,
             properties: serde_json::json!({}),
         })

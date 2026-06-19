@@ -105,18 +105,28 @@ mod inner {
         text_length: i64,
     }
 
+    /// Bundled parameters for [`encode_prompt`] — args-as-object per TD-042
+    /// (rust-conventions §too_many_arguments).
+    struct EncodePromptParams<'a> {
+        tokenizer: &'a tokenizers::Tokenizer,
+        text: &'a str,
+        entity_types: &'a [&'a str],
+        max_seq_len: usize,
+    }
+
     /// Build encoded prompts for a single text against a list of entity types.
     ///
     /// Prompt token sequence (word-level before sub-word tokenization):
     /// `<<ENT>> type1 <<ENT>> type2 ... <<ENT>> typeK <<SEP>> word1 word2 ... wordN`
     ///
     /// This mirrors gline-rs `PromptInput` + `EncodedInput` exactly.
-    fn encode_prompt(
-        tokenizer: &tokenizers::Tokenizer,
-        text: &str,
-        entity_types: &[&str],
-        max_seq_len: usize,
-    ) -> anyhow::Result<EncodedPrompt> {
+    fn encode_prompt(params: EncodePromptParams<'_>) -> anyhow::Result<EncodedPrompt> {
+        let EncodePromptParams {
+            tokenizer,
+            text,
+            entity_types,
+            max_seq_len,
+        } = params;
         // Split text into words (whitespace split — same as gline-rs RegexSplitter default).
         let text_words: Vec<&str> = text.split_whitespace().collect();
         let text_len = text_words.len();
@@ -304,7 +314,12 @@ mod inner {
         let mut encoded: Vec<EncodedPrompt> = Vec::with_capacity(batch);
 
         for text in texts {
-            let ep = encode_prompt(tokenizer, text, entity_types, MAX_SEQ_LEN)?;
+            let ep = encode_prompt(EncodePromptParams {
+                tokenizer,
+                text,
+                entity_types,
+                max_seq_len: MAX_SEQ_LEN,
+            })?;
             word_counts.push(ep.text_length as usize);
             encoded.push(ep);
         }
@@ -378,13 +393,24 @@ mod inner {
     ///
     /// For each span, we take the class with the highest sigmoid score above `threshold`.
     /// Greedy non-overlapping selection is then applied (highest score wins).
-    pub(crate) fn decode_logits(
-        logits: &ndarray::ArrayViewD<f32>,
-        batch_idx: usize,
-        spans: &[(usize, usize)],
-        num_classes: usize,
-        threshold: f32,
-    ) -> Vec<DecodedSpan> {
+    /// Bundled parameters for [`decode_logits`] — args-as-object per TD-042
+    /// (rust-conventions §too_many_arguments).
+    pub(crate) struct DecodeLogitsParams<'a> {
+        pub(crate) logits: &'a ndarray::ArrayViewD<'a, f32>,
+        pub(crate) batch_idx: usize,
+        pub(crate) spans: &'a [(usize, usize)],
+        pub(crate) num_classes: usize,
+        pub(crate) threshold: f32,
+    }
+
+    pub(crate) fn decode_logits(params: DecodeLogitsParams<'_>) -> Vec<DecodedSpan> {
+        let DecodeLogitsParams {
+            logits,
+            batch_idx,
+            spans,
+            num_classes,
+            threshold,
+        } = params;
         let shape = logits.shape();
         // GLiNER span-mode output: [batch, num_words, max_width, num_classes]
         // The span grid is row-major: span index = word * max_width + offset
@@ -589,7 +615,13 @@ mod inner {
                 let num_classes = entity_types.len();
                 let batch_spans = &spans_per_text[0];
 
-                decode_logits(&logits, 0, batch_spans, num_classes, self.threshold)
+                decode_logits(DecodeLogitsParams {
+                    logits: &logits,
+                    batch_idx: 0,
+                    spans: batch_spans,
+                    num_classes,
+                    threshold: self.threshold,
+                })
             };
 
             // Reconstruct entity text from original words.
@@ -821,7 +853,13 @@ mod tests {
         // All logits are -5.0 → sigmoid ≈ 0.007, well below threshold 0.5
         let spans = vec![(0usize, 0usize), (0, 1), (1, 1)];
         let arr = make_logits(3, 2, -5.0);
-        let result = decode_logits(&arr.view(), 0, &spans, 2, 0.5);
+        let result = decode_logits(DecodeLogitsParams {
+            logits: &arr.view(),
+            batch_idx: 0,
+            spans: &spans,
+            num_classes: 2,
+            threshold: 0.5,
+        });
         assert!(
             result.is_empty(),
             "all logits below threshold should yield no spans"
@@ -841,7 +879,13 @@ mod tests {
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, num_spans, num_classes], data).unwrap();
 
-        let result = decode_logits(&arr.view(), 0, &spans_list, num_classes, 0.5);
+        let result = decode_logits(DecodeLogitsParams {
+            logits: &arr.view(),
+            batch_idx: 0,
+            spans: &spans_list,
+            num_classes,
+            threshold: 0.5,
+        });
         assert_eq!(result.len(), 1, "should find exactly one entity span");
         assert_eq!(result[0].word_start, 0);
         assert_eq!(result[0].word_end, 0);
@@ -867,7 +911,13 @@ mod tests {
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, num_spans, num_classes], data).unwrap();
 
-        let result = decode_logits(&arr.view(), 0, &spans_list, num_classes, 0.5);
+        let result = decode_logits(DecodeLogitsParams {
+            logits: &arr.view(),
+            batch_idx: 0,
+            spans: &spans_list,
+            num_classes,
+            threshold: 0.5,
+        });
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].word_start, 1);
         assert_eq!(result[0].word_end, 2);
@@ -899,7 +949,13 @@ mod tests {
         data[idx_2_2 * num_classes] = 5.0;
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, num_spans, num_classes], data).unwrap();
-        let result = decode_logits(&arr.view(), 0, &spans_list, num_classes, 0.5);
+        let result = decode_logits(DecodeLogitsParams {
+            logits: &arr.view(),
+            batch_idx: 0,
+            spans: &spans_list,
+            num_classes,
+            threshold: 0.5,
+        });
 
         assert_eq!(
             result.len(),
@@ -930,7 +986,13 @@ mod tests {
         data[1] = 5.0; // class 1: sigmoid ~0.99
 
         let arr = ndarray::ArrayD::from_shape_vec(vec![1, 1, num_classes], data).unwrap();
-        let result = decode_logits(&arr.view(), 0, &spans_list, num_classes, 0.5);
+        let result = decode_logits(DecodeLogitsParams {
+            logits: &arr.view(),
+            batch_idx: 0,
+            spans: &spans_list,
+            num_classes,
+            threshold: 0.5,
+        });
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].class_idx, 1, "highest-scoring class should win");

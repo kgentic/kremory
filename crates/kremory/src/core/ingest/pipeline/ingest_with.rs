@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use metrics::histogram;
 
 use crate::core::config::ContentType;
-use crate::core::contradiction::TwoPoolDetector;
+use crate::core::contradiction::{DetectParams, TwoPoolDetector};
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
@@ -492,10 +492,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         .any(|s| s.name.eq_ignore_ascii_case(name));
                     if !already_registered {
                         crate::core::entity_types::label_to_id_or_register(
-                            &self.graph.conn,
-                            effective_gid,
-                            &db_registry,
-                            name,
+                            crate::core::entity_types::LabelToIdOrRegisterParams {
+                                conn: &self.graph.conn,
+                                group_id: effective_gid,
+                                registry: &db_registry,
+                                label: name,
+                            },
                         )
                         .await?;
                         new_types_seeded += 1;
@@ -831,10 +833,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // promotion is best-effort and must not abort the transaction.
                         let entity_type_id =
                             match crate::core::entity_types::label_to_id_or_register(
-                                &self.graph.conn,
-                                group_id.unwrap_or("default"),
-                                &registry,
-                                &label,
+                                crate::core::entity_types::LabelToIdOrRegisterParams {
+                                    conn: &self.graph.conn,
+                                    group_id: group_id.unwrap_or("default"),
+                                    registry: &registry,
+                                    label: &label,
+                                },
                             )
                             .await
                             {
@@ -899,7 +903,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     if let Some(s) = sink {
                         s.on_entity_extracted(&existing_id, &extracted.name);
                         if mention_ok {
-                            s.on_edge_added(&episode_id.to_string(), &existing_id, "mention");
+                            s.on_edge_added(crate::core::sink::OnEdgeAddedParams {
+                                from_entity_id: &episode_id.to_string(),
+                                to_entity_id: &existing_id,
+                                predicate: "mention",
+                            });
                         }
                     }
                     fire_entity_edge_metrics(mention_ok);
@@ -918,9 +926,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     //   PotentialAlias → insert new row AND a `potential_alias` fact edge
                     //   New           → proceed as normal (no existing match)
                     let l4_outcome = match crate::core::disambiguation::disambiguate(
-                        &extracted.name,
-                        group_id,
-                        &self.graph,
+                        crate::core::disambiguation::DisambiguateParams {
+                            entity_name: &extracted.name,
+                            group_id,
+                            graph: &self.graph,
+                        },
                         &*self.embedder,
                     )
                     .await
@@ -958,7 +968,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         if let Some(s) = sink {
                             s.on_entity_extracted(l4_existing_id, &extracted.name);
                             if mention_ok {
-                                s.on_edge_added(&episode_id.to_string(), l4_existing_id, "mention");
+                                s.on_edge_added(crate::core::sink::OnEdgeAddedParams {
+                                    from_entity_id: &episode_id.to_string(),
+                                    to_entity_id: l4_existing_id,
+                                    predicate: "mention",
+                                });
                             }
                         }
                         fire_entity_edge_metrics(mention_ok);
@@ -989,10 +1003,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // ingest failure (matches the existing insert_entity_with_group
                     // error path that breaks 'phases below).
                     let entity_type_id = match crate::core::entity_types::label_to_id_or_register(
-                        &self.graph.conn,
-                        group_id.unwrap_or("default"),
-                        &registry,
-                        &label,
+                        crate::core::entity_types::LabelToIdOrRegisterParams {
+                            conn: &self.graph.conn,
+                            group_id: group_id.unwrap_or("default"),
+                            registry: &registry,
+                            label: &label,
+                        },
                     )
                     .await
                     {
@@ -1065,13 +1081,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // `.ok()` — best-effort; duplicate alias entries are swallowed
                         // inside `insert_potential_alias_fact`.
                         crate::core::disambiguation::insert_potential_alias_fact(
-                            &self.graph,
-                            &entity_id,
-                            alias_target_id,
-                            alias_sim,
-                            crate::core::disambiguation::AliasProvenance {
-                                source_episode_id: Some(episode_id),
-                                group_id,
+                            crate::core::disambiguation::InsertPotentialAliasFactParams {
+                                graph: &self.graph,
+                                new_entity_id: &entity_id,
+                                existing_id: alias_target_id,
+                                similarity: alias_sim,
+                                provenance: crate::core::disambiguation::AliasProvenance {
+                                    source_episode_id: Some(episode_id),
+                                    group_id,
+                                },
                             },
                         )
                         .await
@@ -1096,7 +1114,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     if let Some(s) = sink {
                         s.on_entity_extracted(&entity_id, &extracted.name);
                         if mention_ok {
-                            s.on_edge_added(&episode_id.to_string(), &entity_id, "mention");
+                            s.on_edge_added(crate::core::sink::OnEdgeAddedParams {
+                                from_entity_id: &episode_id.to_string(),
+                                to_entity_id: &entity_id,
+                                predicate: "mention",
+                            });
                         }
                     }
                     fire_entity_edge_metrics(mention_ok);
@@ -1172,11 +1194,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     pool_b_hits.into_iter().map(|h| h.item).collect();
 
                 // Run contradiction detection
-                let contradiction_result =
-                    match detector.detect(fact, &pool_a, &pool_b, &ref_time).await {
-                        Ok(r) => r,
-                        Err(e) => break 'phases Err(e),
-                    };
+                let contradiction_result = match detector
+                    .detect(DetectParams {
+                        new_fact: fact,
+                        pool_a: &pool_a,
+                        pool_b: &pool_b,
+                        reference_time: &ref_time,
+                    })
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => break 'phases Err(e),
+                };
 
                 // Invalidate contradicted facts
                 for fact_id in &contradiction_result.contradictions {
@@ -1355,7 +1384,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             .is_ok();
                         if object_ok {
                             if let Some(s) = sink {
-                                s.on_edge_added(&episode_id.to_string(), obj_id, "object");
+                                s.on_edge_added(crate::core::sink::OnEdgeAddedParams {
+                                    from_entity_id: &episode_id.to_string(),
+                                    to_entity_id: obj_id,
+                                    predicate: "object",
+                                });
                             }
                             metrics::counter!(
                                 "kremory.sink.edge_added_total",

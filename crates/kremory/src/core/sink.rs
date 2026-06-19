@@ -150,6 +150,18 @@ pub struct IngestionError {
     pub is_retryable: bool,
 }
 
+/// Bundled parameters for [`IngestEventSink::on_edge_added`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+#[derive(Debug, Clone, Copy)]
+pub struct OnEdgeAddedParams<'a> {
+    /// Source entity of the new edge.
+    pub from_entity_id: &'a str,
+    /// Target entity of the new edge.
+    pub to_entity_id: &'a str,
+    /// Edge predicate (e.g. `"mention"`, `"subject"`, `"object"`).
+    pub predicate: &'a str,
+}
+
 /// Event sink for per-episode Phase 2 events.
 ///
 /// Per ADR §4.8: rqlc owns this trait because rqlc owns the Phase 2 work.
@@ -161,7 +173,7 @@ pub trait IngestEventSink: Send + Sync {
     /// A new entity was extracted or resolved during the add_episode cycle.
     fn on_entity_extracted(&self, entity_id: &str, name: &str);
     /// A new edge was added between two entities.
-    fn on_edge_added(&self, from_entity_id: &str, to_entity_id: &str, predicate: &str);
+    fn on_edge_added(&self, params: OnEdgeAddedParams<'_>);
     /// A contradiction between prior and new facts was detected and resolved.
     fn on_contradiction(&self, event: ContradictionDetected);
     /// Two entity records were merged (dedup collapse).

@@ -124,6 +124,17 @@ impl std::fmt::Debug for RecordReplayChatProvider {
     }
 }
 
+/// Bundled parameters for [`RecordReplayChatProvider::fingerprint`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+struct FingerprintParams<'a> {
+    /// Chat messages contributing to the fingerprint.
+    messages: &'a [ChatMessage],
+    /// Optional tool definitions (only the count is fingerprinted).
+    tools: Option<&'a [autoagents_llm::chat::Tool]>,
+    /// Optional structured-output schema.
+    json_schema: Option<&'a StructuredOutputFormat>,
+}
+
 impl RecordReplayChatProvider {
     /// Record mode: wrap a real provider and capture responses to `cassette_path`
     /// on [`Self::flush`]. The decorator's `model()` mirrors `inner.model()`.
@@ -200,12 +211,12 @@ impl RecordReplayChatProvider {
     /// `Sha256(model || 0x1F || json(messages) || 0x1F || json(schema) ||
     /// 0x1F || "tools:N")`, hex-encoded. Stable across Rust releases and
     /// platforms (unlike `DefaultHasher`).
-    fn fingerprint(
-        &self,
-        messages: &[ChatMessage],
-        tools: Option<&[autoagents_llm::chat::Tool]>,
-        json_schema: Option<&StructuredOutputFormat>,
-    ) -> std::result::Result<String, LLMError> {
+    fn fingerprint(&self, params: FingerprintParams<'_>) -> std::result::Result<String, LLMError> {
+        let FingerprintParams {
+            messages,
+            tools,
+            json_schema,
+        } = params;
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(self.model.as_bytes());
@@ -332,7 +343,11 @@ impl ChatProvider for RecordReplayChatProvider {
                             .to_string(),
                     )
                 })?;
-                let fp = self.fingerprint(messages, tools, json_schema.as_ref())?;
+                let fp = self.fingerprint(FingerprintParams {
+                    messages,
+                    tools,
+                    json_schema: json_schema.as_ref(),
+                })?;
                 let response = inner.chat_with_tools(messages, tools, json_schema).await?;
                 let text = response.text().unwrap_or_default();
                 {
@@ -350,7 +365,11 @@ impl ChatProvider for RecordReplayChatProvider {
                 Ok(response)
             }
             VcrMode::Replay => {
-                let fp = self.fingerprint(messages, tools, json_schema.as_ref())?;
+                let fp = self.fingerprint(FingerprintParams {
+                    messages,
+                    tools,
+                    json_schema: json_schema.as_ref(),
+                })?;
                 let mut guard = self
                     .state
                     .lock()

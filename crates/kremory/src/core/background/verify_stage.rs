@@ -379,7 +379,11 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
             .is_ok()
         {
             if let Some(s) = sink {
-                s.on_edge_added(&episode_id_str, &entity_id, "mention");
+                s.on_edge_added(crate::core::sink::OnEdgeAddedParams {
+                    from_entity_id: &episode_id_str,
+                    to_entity_id: &entity_id,
+                    predicate: "mention",
+                });
             }
             metrics::counter!(
                 "kremory.sink.edge_added_total",

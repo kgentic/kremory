@@ -373,12 +373,29 @@ impl EntityTypeRegistry {
 /// - `rql.entity_types.label_cache_hit_total` — labels found in existing registry.
 ///
 /// `group_id` is deliberately NOT a label — unbounded cardinality.
+/// Bundled parameters for [`label_to_id_or_register`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+#[derive(Debug, Clone, Copy)]
+pub struct LabelToIdOrRegisterParams<'a> {
+    /// DB connection for the slow-path case-insensitive lookup + registration.
+    pub conn: &'a libsql::Connection,
+    /// Namespace the type belongs to.
+    pub group_id: &'a str,
+    /// In-memory registry checked first on the fast path.
+    pub registry: &'a EntityTypeRegistry,
+    /// The label to resolve or register.
+    pub label: &'a str,
+}
+
 pub async fn label_to_id_or_register(
-    conn: &libsql::Connection,
-    group_id: &str,
-    registry: &EntityTypeRegistry,
-    label: &str,
+    params: LabelToIdOrRegisterParams<'_>,
 ) -> crate::core::error::Result<u32> {
+    let LabelToIdOrRegisterParams {
+        conn,
+        group_id,
+        registry,
+        label,
+    } = params;
     let trimmed = label.trim();
     // Placeholder labels always map to id=0 (catch-all).
     if trimmed.is_empty()
@@ -1196,9 +1213,14 @@ mod tests {
 
         // "Court" is now a default type (id=10); use "Statute" as a genuinely
         // novel label not present in DEFAULT_ENTITY_TYPES.
-        let new_id = label_to_id_or_register(&conn, "g1", &registry, "Statute")
-            .await
-            .expect("register novel label");
+        let new_id = label_to_id_or_register(LabelToIdOrRegisterParams {
+            conn: &conn,
+            group_id: "g1",
+            registry: &registry,
+            label: "Statute",
+        })
+        .await
+        .expect("register novel label");
 
         assert!(
             new_id > 0,
@@ -1234,12 +1256,22 @@ mod tests {
         let registry = EntityTypeRegistry::load_for_group(&conn, "g2")
             .await
             .expect("load registry");
-        let first = label_to_id_or_register(&conn, "g2", &registry, "Drug")
-            .await
-            .expect("first register");
-        let second = label_to_id_or_register(&conn, "g2", &registry, "Drug")
-            .await
-            .expect("second register");
+        let first = label_to_id_or_register(LabelToIdOrRegisterParams {
+            conn: &conn,
+            group_id: "g2",
+            registry: &registry,
+            label: "Drug",
+        })
+        .await
+        .expect("first register");
+        let second = label_to_id_or_register(LabelToIdOrRegisterParams {
+            conn: &conn,
+            group_id: "g2",
+            registry: &registry,
+            label: "Drug",
+        })
+        .await
+        .expect("second register");
 
         assert_eq!(
             first, second,
@@ -1288,14 +1320,24 @@ mod tests {
         let reg_a = std::sync::Arc::clone(&registry);
         let reg_b = std::sync::Arc::clone(&registry);
 
-        let h1 =
-            tokio::spawn(
-                async move { label_to_id_or_register(&conn_a, "g3", &reg_a, "Species").await },
-            );
-        let h2 =
-            tokio::spawn(
-                async move { label_to_id_or_register(&conn_b, "g3", &reg_b, "Species").await },
-            );
+        let h1 = tokio::spawn(async move {
+            label_to_id_or_register(LabelToIdOrRegisterParams {
+                conn: &conn_a,
+                group_id: "g3",
+                registry: &reg_a,
+                label: "Species",
+            })
+            .await
+        });
+        let h2 = tokio::spawn(async move {
+            label_to_id_or_register(LabelToIdOrRegisterParams {
+                conn: &conn_b,
+                group_id: "g3",
+                registry: &reg_b,
+                label: "Species",
+            })
+            .await
+        });
         let id1 = h1.await.expect("h1 join").expect("h1 register");
         let id2 = h2.await.expect("h2 join").expect("h2 register");
 
@@ -1336,11 +1378,16 @@ mod tests {
         for label in [
             "Entity", "ENTITY", "entity", "UNKNOWN", "unknown", "", "   ",
         ] {
-            let id = label_to_id_or_register(&conn, "g4", &registry, label)
-                .await
-                .unwrap_or_else(|e| {
-                    panic!("placeholder '{label}' must map cleanly to 0; got error: {e}")
-                });
+            let id = label_to_id_or_register(LabelToIdOrRegisterParams {
+                conn: &conn,
+                group_id: "g4",
+                registry: &registry,
+                label,
+            })
+            .await
+            .unwrap_or_else(|e| {
+                panic!("placeholder '{label}' must map cleanly to 0; got error: {e}")
+            });
             assert_eq!(
                 id, 0,
                 "placeholder label '{label}' must map to id=0 (catch-all); got {id}"

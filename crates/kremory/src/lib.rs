@@ -76,7 +76,7 @@ pub use memory::types::{
 };
 pub use memory::IngestStatus;
 // Event sinks + event types (Tier 2 consumers)
-pub use core::sink::{ContradictionDetected, IngestEventSink, IngestionError};
+pub use core::sink::{ContradictionDetected, IngestEventSink, IngestionError, OnEdgeAddedParams};
 pub use memory::events::BatchPhase2Complete;
 pub use memory::events::EnrichmentEventSink;
 // BYOM provider traits

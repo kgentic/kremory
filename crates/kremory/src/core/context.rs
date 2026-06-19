@@ -8,6 +8,18 @@ use crate::core::search::{
     FtsSearchEntitiesNoCountParams, SearchFilters, VectorSearchEntitiesNoCountParams,
 };
 
+/// Bundled parameters for [`Engine::contextualize`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+#[derive(Debug, Clone, Copy)]
+pub struct ContextualizeParams<'a> {
+    /// Free-text query to search for.
+    pub query: &'a str,
+    /// Optional namespace scope.
+    pub group_id: Option<&'a str>,
+    /// Optional result cap (defaults to `config.search.top_k`).
+    pub limit: Option<usize>,
+}
+
 /// Result of a contextualize() call: entities + facts from search + 1-hop expansion.
 #[derive(Debug)]
 pub struct ContextResult {
@@ -27,17 +39,17 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Returns entities, their connecting facts, and normalised relevance scores.
     #[tracing::instrument(
         name = "kremory.contextualize",
-        skip(self, query),
+        skip(self, params),
         fields(
             kremory.operation = "contextualize",
         )
     )]
-    pub async fn contextualize(
-        &self,
-        query: &str,
-        group_id: Option<&str>,
-        limit: Option<usize>,
-    ) -> Result<ContextResult> {
+    pub async fn contextualize(&self, params: ContextualizeParams<'_>) -> Result<ContextResult> {
+        let ContextualizeParams {
+            query,
+            group_id,
+            limit,
+        } = params;
         let limit = limit.unwrap_or(self.config.search.top_k);
 
         // Build search filters from the optional group_id
@@ -170,9 +182,19 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
 #[cfg(test)]
 mod tests {
+    use super::ContextualizeParams;
     use crate::core::graph::{FactInsert, InsertEntityParams};
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
+
+    /// Test helper: build a [`ContextualizeParams`] from the common positional shape.
+    fn ctx_params(query: &str) -> ContextualizeParams<'_> {
+        ContextualizeParams {
+            query,
+            group_id: None,
+            limit: None,
+        }
+    }
 
     /// Build a SimpleGraph and insert some test entities and facts directly.
     async fn setup_graph_with_data() -> SimpleGraph {
@@ -221,7 +243,7 @@ mod tests {
         let rql = setup_graph_with_data().await;
 
         // Searching for "alice" should return alice + her 1-hop neighbors (acme)
-        let ctx = rql.contextualize("alice", None, None).await.unwrap();
+        let ctx = rql.contextualize(ctx_params("alice")).await.unwrap();
 
         assert!(
             !ctx.entities.is_empty(),
@@ -247,7 +269,7 @@ mod tests {
 
         // A term that won't match anything in FTS or vector search
         let ctx = rql
-            .contextualize("xyzzy_nonexistent_term_42", None, None)
+            .contextualize(ctx_params("xyzzy_nonexistent_term_42"))
             .await
             .unwrap();
 
@@ -272,7 +294,14 @@ mod tests {
         // Phase 2 (Migration 009): entities_fts.label is empty — FTS searches
         // properties only.  Search for "Alice" which appears in alice's properties["name"].
         // limit=1 means at most 1 seed entity (neighbours may expand the final set).
-        let ctx = rql.contextualize("Alice", None, Some(1)).await.unwrap();
+        let ctx = rql
+            .contextualize(ContextualizeParams {
+                query: "Alice",
+                group_id: None,
+                limit: Some(1),
+            })
+            .await
+            .unwrap();
 
         // We should get no more seed entities than the limit requested
         // (neighbours may expand the set, but seed query is capped)
@@ -291,7 +320,7 @@ mod tests {
         // Phase 2 (Migration 009): entities_fts.label is empty — FTS searches
         // properties only.  Search for "Acme" which appears in acme's properties["name"].
         // 1-hop from acme should include alice and bob via works_at facts.
-        let ctx = rql.contextualize("Acme", None, None).await.unwrap();
+        let ctx = rql.contextualize(ctx_params("Acme")).await.unwrap();
 
         assert!(
             !ctx.facts.is_empty(),
@@ -311,7 +340,7 @@ mod tests {
     async fn test_context_result_has_scores_for_seed_entities() {
         let rql = setup_graph_with_data().await;
 
-        let ctx = rql.contextualize("alice", None, None).await.unwrap();
+        let ctx = rql.contextualize(ctx_params("alice")).await.unwrap();
 
         // At least one seed entity should have a score entry
         assert!(

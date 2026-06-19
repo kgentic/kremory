@@ -24,7 +24,9 @@
 use std::sync::{Arc, Mutex};
 
 use kremory::core::error::IngestStatus;
-use kremory::core::sink::{ContradictionDetected, IngestEventSink, IngestionError};
+use kremory::core::sink::{
+    ContradictionDetected, IngestEventSink, IngestionError, OnEdgeAddedParams,
+};
 use kremory::memory::events::{BatchPhase2Complete, EnrichmentEventSink};
 
 // ---------------------------------------------------------------------------
@@ -260,7 +262,12 @@ impl IngestEventSink for RecordingSink {
             });
     }
 
-    fn on_edge_added(&self, from_entity_id: &str, to_entity_id: &str, predicate: &str) {
+    fn on_edge_added(&self, params: OnEdgeAddedParams<'_>) {
+        let OnEdgeAddedParams {
+            from_entity_id,
+            to_entity_id,
+            predicate,
+        } = params;
         self.events
             .lock()
             .unwrap_or_else(|p| p.into_inner())

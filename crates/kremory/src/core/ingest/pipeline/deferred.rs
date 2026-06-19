@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use metrics::histogram;
 
 use crate::core::config::ContentType;
-use crate::core::contradiction::TwoPoolDetector;
+use crate::core::contradiction::{DetectParams, TwoPoolDetector};
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::error::{ContradictionResolution, IngestStatus};
 use crate::core::extraction_window::ExtractionWindowSplitter;
@@ -252,7 +252,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 fired_deduplicating = true;
             }
 
-            let contradiction_result = detector.detect(fact, &pool_a, &pool_b, &ref_time).await?;
+            let contradiction_result = detector
+                .detect(DetectParams {
+                    new_fact: fact,
+                    pool_a: &pool_a,
+                    pool_b: &pool_b,
+                    reference_time: &ref_time,
+                })
+                .await?;
 
             // Build combined pool for prior-fact lookup (used by on_contradiction below).
             let all_pool: Vec<&crate::core::schema::Fact> =
@@ -420,7 +427,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             .is_ok()
                         {
                             if let Some(s) = sink {
-                                s.on_edge_added(&episode_id.to_string(), &subject_id, "subject");
+                                s.on_edge_added(crate::core::sink::OnEdgeAddedParams {
+                                    from_entity_id: &episode_id.to_string(),
+                                    to_entity_id: &subject_id,
+                                    predicate: "subject",
+                                });
                             }
                             metrics::counter!(
                                 "kremory.sink.edge_added_total",
@@ -453,7 +464,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                                 .is_ok()
                             {
                                 if let Some(s) = sink {
-                                    s.on_edge_added(&episode_id.to_string(), obj_id, "object");
+                                    s.on_edge_added(crate::core::sink::OnEdgeAddedParams {
+                                        from_entity_id: &episode_id.to_string(),
+                                        to_entity_id: obj_id,
+                                        predicate: "object",
+                                    });
                                 }
                                 metrics::counter!(
                                     "kremory.sink.edge_added_total",

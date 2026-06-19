@@ -320,7 +320,7 @@ async fn sink_worker_resumed_fires_on_checkpoint_boot() {
         graph: Arc::clone(&temporal),
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
-        config: config,
+        config,
     });
 
     let ingestor_config = IngestorConfig {

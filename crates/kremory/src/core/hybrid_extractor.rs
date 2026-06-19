@@ -21,7 +21,9 @@ mod parsing;
 #[path = "hybrid_extractor_prompts.rs"]
 mod prompts;
 
-use helpers::{filter_new_entities, merge_entities_with_grounding};
+use helpers::{
+    filter_new_entities, merge_entities_with_grounding, MergeEntitiesWithGroundingParams,
+};
 use parsing::{parse_entity_list_response, parse_typed_orphans_response};
 
 use crate::core::extraction::{schemas, structured};
@@ -62,6 +64,39 @@ pub struct HybridExtractor<L: ChatProvider> {
     prompt_version: PromptVersion,
     auditor: Option<Arc<OovAuditor>>,
     grounding_checker: Arc<dyn GroundingChecker>,
+}
+
+/// Bundled parameters for [`HybridExtractor::stage2_gleaning`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+struct Stage2GleaningParams<'a> {
+    /// Source text to glean from.
+    text: &'a str,
+    /// Entities already discovered by prior stages.
+    base_entities: &'a [ExtractedEntity],
+    /// Extraction context (content type, arm budget, etc).
+    ctx: &'a ExtractionContext<'a>,
+}
+
+/// Bundled parameters for [`HybridExtractor::stage4_typing`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+struct Stage4TypingParams<'a> {
+    /// Source text used for typing context.
+    text: &'a str,
+    /// OOV orphan names to type.
+    orphans: &'a [String],
+    /// Extraction context (content type, arm budget, etc).
+    ctx: &'a ExtractionContext<'a>,
+}
+
+/// Bundled parameters for [`HybridExtractor::stage5_merge`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub struct Stage5MergeParams<'a> {
+    /// Base entity set.
+    pub base: Vec<ExtractedEntity>,
+    /// Additive entity set (gleaned / typed orphans).
+    pub additive: Vec<ExtractedEntity>,
+    /// Source text used to compute the grounding flag.
+    pub source_text: &'a str,
 }
 
 impl<L: ChatProvider> HybridExtractor<L> {
@@ -123,10 +158,13 @@ impl<L: ChatProvider> HybridExtractor<L> {
 
     async fn stage2_gleaning<'a>(
         &'a self,
-        text: &'a str,
-        base_entities: &[ExtractedEntity],
-        ctx: &'a ExtractionContext<'a>,
+        params: Stage2GleaningParams<'a>,
     ) -> Result<Vec<ExtractedEntity>> {
+        let Stage2GleaningParams {
+            text,
+            base_entities,
+            ctx,
+        } = params;
         if self.config.gleaning_rounds == 0 {
             return Ok(Vec::new());
         }
@@ -206,10 +244,9 @@ impl<L: ChatProvider> HybridExtractor<L> {
 
     async fn stage4_typing<'a>(
         &'a self,
-        text: &'a str,
-        orphans: &[String],
-        ctx: &'a ExtractionContext<'a>,
+        params: Stage4TypingParams<'a>,
     ) -> Result<Vec<ExtractedEntity>> {
+        let Stage4TypingParams { text, orphans, ctx } = params;
         if orphans.is_empty() {
             return Ok(Vec::new());
         }
@@ -243,13 +280,18 @@ impl<L: ChatProvider> HybridExtractor<L> {
         Ok(typed)
     }
 
-    pub fn stage5_merge(
-        &self,
-        base: Vec<ExtractedEntity>,
-        additive: Vec<ExtractedEntity>,
-        source_text: &str,
-    ) -> Vec<ExtractedEntity> {
-        merge_entities_with_grounding(base, additive, source_text, self.grounding_checker.as_ref())
+    pub fn stage5_merge(&self, params: Stage5MergeParams<'_>) -> Vec<ExtractedEntity> {
+        let Stage5MergeParams {
+            base,
+            additive,
+            source_text,
+        } = params;
+        merge_entities_with_grounding(MergeEntitiesWithGroundingParams {
+            base,
+            additive,
+            source_text,
+            grounding_checker: self.grounding_checker.as_ref(),
+        })
     }
 }
 
@@ -264,7 +306,13 @@ impl<L: ChatProvider> EntityExtractor for HybridExtractor<L> {
         ctx: &'a ExtractionContext<'a>,
     ) -> Result<ExtractionResult> {
         let stage1 = self.stage1_singlecall(text, ctx).await?;
-        let gleaned = self.stage2_gleaning(text, &stage1.entities, ctx).await?;
+        let gleaned = self
+            .stage2_gleaning(Stage2GleaningParams {
+                text,
+                base_entities: &stage1.entities,
+                ctx,
+            })
+            .await?;
 
         let mut base_entities = stage1.entities.clone();
         base_entities.extend(gleaned);
@@ -272,8 +320,18 @@ impl<L: ChatProvider> EntityExtractor for HybridExtractor<L> {
         base_entities.dedup_by(|a, b| normalize_name(&a.name) == normalize_name(&b.name));
 
         let orphans = self.stage3_oov_audit(text, &base_entities);
-        let typed = self.stage4_typing(text, &orphans, ctx).await?;
-        let merged_entities = self.stage5_merge(base_entities, typed, text);
+        let typed = self
+            .stage4_typing(Stage4TypingParams {
+                text,
+                orphans: &orphans,
+                ctx,
+            })
+            .await?;
+        let merged_entities = self.stage5_merge(Stage5MergeParams {
+            base: base_entities,
+            additive: typed,
+            source_text: text,
+        });
 
         Ok(ExtractionResult {
             entities: merged_entities,
@@ -289,7 +347,10 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::{ExtractionConfig, HybridExtractor};
+    use super::{
+        ExtractionConfig, HybridExtractor, Stage2GleaningParams, Stage4TypingParams,
+        Stage5MergeParams,
+    };
     use crate::core::config::ContentType;
     use crate::core::extraction::PromptVersion;
     use crate::core::grounding::TokenOverlapGroundingChecker;
@@ -317,19 +378,19 @@ mod tests {
     #[test]
     fn stage5_merge_dedups_by_normalized_name() {
         let extractor = HybridExtractor::new(Arc::new(MockChatProvider::new(HashMap::new())));
-        let merged = extractor.stage5_merge(
-            vec![ExtractedEntity {
+        let merged = extractor.stage5_merge(Stage5MergeParams {
+            base: vec![ExtractedEntity {
                 name: "Acme Corp".to_string(),
                 label: "Organisation".to_string(),
                 properties: Value::Null,
             }],
-            vec![ExtractedEntity {
+            additive: vec![ExtractedEntity {
                 name: "acme corp".to_string(),
                 label: "Organisation".to_string(),
                 properties: Value::Null,
             }],
-            "Acme Corp shipped a product.",
-        );
+            source_text: "Acme Corp shipped a product.",
+        });
 
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].name, "Acme Corp");
@@ -340,15 +401,15 @@ mod tests {
         let extractor = HybridExtractor::new(Arc::new(MockChatProvider::new(HashMap::new())))
             .with_grounding_checker(Arc::new(TokenOverlapGroundingChecker::default()));
 
-        let merged = extractor.stage5_merge(
-            vec![ExtractedEntity {
+        let merged = extractor.stage5_merge(Stage5MergeParams {
+            base: vec![ExtractedEntity {
                 name: "Alice".to_string(),
                 label: "Person".to_string(),
                 properties: Value::Null,
             }],
-            vec![],
-            "Alice spoke first.",
-        );
+            additive: vec![],
+            source_text: "Alice spoke first.",
+        });
 
         assert_eq!(merged[0].properties["grounded"], Value::Bool(true));
     }
@@ -418,11 +479,11 @@ mod tests {
             ..ExtractionContext::default()
         };
 
-        let gleaned = block_on(extractor.stage2_gleaning(
-            "Alice mentioned Mercury Bank.",
-            &base_entities,
-            &ctx,
-        ))
+        let gleaned = block_on(extractor.stage2_gleaning(Stage2GleaningParams {
+            text: "Alice mentioned Mercury Bank.",
+            base_entities: &base_entities,
+            ctx: &ctx,
+        }))
         .unwrap();
 
         assert_eq!(gleaned.len(), 1);
@@ -457,11 +518,11 @@ mod tests {
         let extractor = HybridExtractor::new(Arc::new(MockChatProvider::new(responses)));
         let ctx = ExtractionContext::default();
 
-        let typed = block_on(extractor.stage4_typing(
-            "Alice mentioned Zyntriq.",
-            &["Alice".to_string(), "Zyntriq".to_string()],
-            &ctx,
-        ))
+        let typed = block_on(extractor.stage4_typing(Stage4TypingParams {
+            text: "Alice mentioned Zyntriq.",
+            orphans: &["Alice".to_string(), "Zyntriq".to_string()],
+            ctx: &ctx,
+        }))
         .unwrap();
 
         assert_eq!(typed.len(), 2);

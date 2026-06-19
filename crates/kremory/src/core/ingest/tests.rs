@@ -28,6 +28,10 @@ impl EntityExtractor for FixedExtractor {
 
 /// Build a MockChatProvider with staged responses matching the prompt substrings
 /// used by LlmExtractor, DefaultExtractor, CascadeResolver, and TwoPoolDetector.
+// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
+// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns,
+// not test-module builders.
+#[allow(clippy::too_many_arguments)]
 fn build_mock_llm(
     entities_json: &str,
     relations_json: &str,
@@ -100,10 +104,10 @@ async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvid
     ));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     Engine::new(EngineNewParams {
-        graph: graph,
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        graph,
+        llm,
+        embedder,
+        config,
     })
 }
 
@@ -281,9 +285,9 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let rql: Engine<MockChatProvider, MockEmbeddingProvider> = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     // Extractor provides "Alice" (canonical label). Proper noun scanner will
@@ -362,9 +366,9 @@ async fn ingest_intra_batch_duplicate_dedupes_silently() {
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     // Two entities with identical names — normalize to the same id.
@@ -452,9 +456,9 @@ async fn stub_entity_inserted_on_forward_reference_lib() {
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     // Alice in entity list; Bob only referenced in facts (forward reference).
@@ -533,9 +537,9 @@ async fn stub_entity_promoted_on_reingestion_lib() {
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     // Ingest 1: Alice + forward-ref Bob → Bob becomes stub.
@@ -647,9 +651,9 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
 
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     // Use a canonical label ("Person") so the TD-012 guard does not filter
@@ -747,10 +751,10 @@ async fn engine_stores_model_string_from_llm() {
     });
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
-        graph: graph,
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        graph,
+        llm,
+        embedder,
+        config,
     });
 
     // AC8: model field must hold Some("qwen2.5:14b") — the value returned by llm.model().
@@ -777,10 +781,10 @@ async fn engine_model_is_none_when_llm_model_empty() {
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
-        graph: graph,
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        graph,
+        llm,
+        embedder,
+        config,
     });
 
     // AC8: empty model string must map to None, not Some("").
@@ -829,10 +833,10 @@ async fn engine_new_signature_unchanged_model_derived_from_llm() {
     let config = PipelineConfig::builder().build().unwrap();
     // Exactly 4 arguments to Engine::new — signature unchanged per AC7.
     let engine = Engine::new(EngineNewParams {
-        graph: graph,
+        graph,
         llm: Arc::new(NamedMock),
         embedder: Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
-        config: config,
+        config,
     });
 
     assert_eq!(
@@ -869,9 +873,9 @@ async fn ingest_persists_entity_catchall_under_l1_design() {
 
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     let extractor = FixedExtractor {
@@ -979,9 +983,9 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
     let extractor = Arc::clone(&engine.extractor);
 
@@ -1116,9 +1120,9 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
     let extractor = Arc::clone(&engine.extractor);
 
@@ -1230,9 +1234,9 @@ async fn test_ingest_with_no_override_fresh_db_extracts_zero_typed_entities() {
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
     let extractor = Arc::clone(&engine.extractor);
 
@@ -1301,9 +1305,9 @@ async fn ingest_persists_runtime_allowed_entity_label() {
 
     let engine = Engine::new(EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     // Inject an entity whose label matches the runtime config but NOT the

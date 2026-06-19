@@ -709,6 +709,10 @@ mod recall_by_source_id_tests {
     /// Direct seeding helper; bypasses the facade ingest path so the test
     /// only exercises recall_by_source_id. `recorded_at` is set to control
     /// ORDER BY ordering directly.
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` seeders.
+    #[allow(clippy::too_many_arguments)]
     async fn seed_episode(
         mem: &Memory,
         source_id: &str,
@@ -975,6 +979,10 @@ mod recall_by_source_id_tests_part2 {
             .expect("Memory must build")
     }
 
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` seeders.
+    #[allow(clippy::too_many_arguments)]
     async fn seed_episode(
         mem: &Memory,
         source_id: &str,

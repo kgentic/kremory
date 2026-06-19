@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use kremory::core::config::PipelineConfig;
-use kremory::core::context::ContextResult;
+use kremory::core::context::{ContextResult, ContextualizeParams};
 use kremory::core::graph::{FactInsert, InsertEntityParams};
 use kremory::core::ingest::Engine;
 use kremory::core::provider::{EmbeddingProvider, MockChatProvider, MockEmbeddingProvider};
@@ -598,14 +598,18 @@ async fn test_contextualize_one_hop_expansion() {
 
     let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
         Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
-            llm: llm,
-            embedder: embedder,
-            config: config,
+            graph,
+            llm,
+            embedder,
+            config,
         });
 
     let result: ContextResult = rql
-        .contextualize("alice", None, None)
+        .contextualize(ContextualizeParams {
+            query: "alice",
+            group_id: None,
+            limit: None,
+        })
         .await
         .expect("contextualize failed");
 

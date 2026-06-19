@@ -321,7 +321,7 @@ async fn open_engine(
         graph: Arc::clone(&graph),
         llm: ingest_llm,
         embedder: arc_emb,
-        config: config,
+        config,
     });
 
     Ok((graph, engine))
@@ -391,7 +391,7 @@ async fn run_one(
                 reference_time: None,
                 group_id: None,
                 content_type: None,
-                source_params: source_params,
+                source_params,
             },
         )
         .await
@@ -526,7 +526,7 @@ async fn validate_second_fixture(
                 reference_time: None,
                 group_id: None,
                 content_type: None,
-                source_params: source_params,
+                source_params,
             },
         )
         .await

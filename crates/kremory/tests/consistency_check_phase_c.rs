@@ -54,6 +54,9 @@ async fn open_graph() -> (TemporalGraph, tempfile::TempDir) {
 ///
 /// Returns the integer rowid (used for audit-table FK assertions).
 /// entity_type_source: 'Phase1Ner' | 'DreamPass4' | 'ConsumerPinned' | etc.
+// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
+// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns.
+#[allow(clippy::too_many_arguments)]
 async fn insert_entity_with_rowid(
     graph: &TemporalGraph,
     id: &str,
@@ -92,6 +95,9 @@ async fn insert_entity_with_rowid(
 }
 
 /// Insert an entity_type into the registry for 'test-group'.
+// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
+// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns.
+#[allow(clippy::too_many_arguments)]
 async fn insert_entity_type(graph: &TemporalGraph, id: i64, name: &str, description: &str) {
     let now = chrono::Utc::now().to_rfc3339();
     graph

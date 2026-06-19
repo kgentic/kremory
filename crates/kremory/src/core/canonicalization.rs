@@ -452,6 +452,10 @@ mod tests {
     // ── Helper ────────────────────────────────────────────────────────────────
 
     /// Insert an entity with a given embedding and description into `group_id`.
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` seeders.
+    #[allow(clippy::too_many_arguments)]
     async fn insert_entity_with_embedding(
         graph: &TemporalGraph,
         id: &str,

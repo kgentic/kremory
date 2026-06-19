@@ -416,6 +416,18 @@ pub(crate) struct ProcessedIngestion {
 
 // ─── Orchestration Pipeline ───────────────────────────────────────────────────
 
+/// Bundled parameters for [`IntelligencePipeline::process`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+#[allow(dead_code)]
+pub(crate) struct ProcessParams<'a> {
+    /// The text chunk to extract entities and facts from.
+    pub text: &'a str,
+    /// Existing graph entities to resolve extracted entities against.
+    pub existing_entities: &'a [Entity],
+    /// Existing graph facts to check for contradictions against.
+    pub existing_facts: &'a [Fact],
+}
+
 /// Orchestrates the intelligence pipeline: extract → resolve → contradict-check → return results.
 ///
 /// The caller is responsible for committing the results to the graph store.
@@ -443,12 +455,12 @@ impl<E: EntityExtractor, R: EntityResolver, C: ContradictionDetector>
     /// 2. For each extracted entity, resolve against existing graph entities.
     /// 3. For each extracted fact, check for contradictions with existing facts.
     /// 4. Return the processed results — the caller handles storage.
-    pub async fn process(
-        &self,
-        text: &str,
-        existing_entities: &[Entity],
-        existing_facts: &[Fact],
-    ) -> Result<ProcessedIngestion> {
+    pub async fn process(&self, params: ProcessParams<'_>) -> Result<ProcessedIngestion> {
+        let ProcessParams {
+            text,
+            existing_entities,
+            existing_facts,
+        } = params;
         let ctx = ExtractionContext::default();
         let extraction = self.extractor.extract(text, &ctx).await?;
 
@@ -521,6 +533,10 @@ mod tests {
         }
     }
 
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` builders.
+    #[allow(clippy::too_many_arguments)]
     fn make_fact(
         id: i64,
         subject_id: &str,
@@ -690,7 +706,11 @@ mod tests {
         let existing_facts = vec![make_fact(1, "alice", "works_at", Some("acme_corp"), None)];
 
         let result = pipeline
-            .process("Alice works at NewCo", &existing_entities, &existing_facts)
+            .process(ProcessParams {
+                text: "Alice works at NewCo",
+                existing_entities: &existing_entities,
+                existing_facts: &existing_facts,
+            })
             .await
             .unwrap();
 
@@ -728,7 +748,11 @@ mod tests {
             IntelligencePipeline::new(MockExtractor, MockResolver, MockContradictionDetector);
 
         let result = pipeline
-            .process("Bob manages Alice", &[], &[])
+            .process(ProcessParams {
+                text: "Bob manages Alice",
+                existing_entities: &[],
+                existing_facts: &[],
+            })
             .await
             .unwrap();
 

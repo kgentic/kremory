@@ -434,6 +434,10 @@ mod update_source_uri_tests {
     /// `#[cfg(any(test, feature = "test-utils"))]`.
     ///
     /// Returns the `group_id` used for the episode row.
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` seeders.
+    #[allow(clippy::too_many_arguments)]
     async fn seed_episode_with_source(
         mem: &Memory,
         source_id: &str,
@@ -698,6 +702,10 @@ mod update_episode_metadata_tests {
 
     /// Seed an episode row with a given `source_id` and `metadata` JSON text
     /// directly via SQL, bypassing the facade ingest path.
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` seeders.
+    #[allow(clippy::too_many_arguments)]
     async fn seed_episode_with_metadata(
         mem: &Memory,
         source_id: &str,
