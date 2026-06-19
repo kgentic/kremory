@@ -170,7 +170,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::graph::FactInsert;
+    use crate::core::graph::{FactInsert, InsertEntityParams};
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
 
@@ -180,15 +180,27 @@ mod tests {
         let now = Utc::now();
 
         rql.graph
-            .insert_entity("alice", 0, serde_json::json!({"name": "Alice"}))
+            .insert_entity(InsertEntityParams {
+                id: "alice",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Alice"}),
+            })
             .await
             .unwrap();
         rql.graph
-            .insert_entity("acme", 0, serde_json::json!({"name": "Acme"}))
+            .insert_entity(InsertEntityParams {
+                id: "acme",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Acme"}),
+            })
             .await
             .unwrap();
         rql.graph
-            .insert_entity("bob", 0, serde_json::json!({"name": "Bob"}))
+            .insert_entity(InsertEntityParams {
+                id: "bob",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Bob"}),
+            })
             .await
             .unwrap();
 

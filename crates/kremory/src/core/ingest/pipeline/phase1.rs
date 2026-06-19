@@ -2,7 +2,7 @@ use chrono::Utc;
 
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 
-use crate::core::graph::EpisodeInsert;
+use crate::core::graph::{EpisodeInsert, InsertEpisodicEdgeParams};
 use crate::core::ingest::{Engine, SourceParams};
 
 use super::types::{EntityCandidate, IngestPhase1Result, ResolvedDecision, UpsertedEntities};
@@ -212,7 +212,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // namespace for the Migration 006 composite FK to resolve.
             // `None` ⇒ `'default'`.
             self.graph
-                .insert_episodic_edge(episode_id, &entity_id, None, "mention")
+                .insert_episodic_edge(InsertEpisodicEdgeParams {
+                    episode_id,
+                    entity_id: &entity_id,
+                    entity_group_id: None,
+                    role: "mention",
+                })
                 .await
                 .ok();
 

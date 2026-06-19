@@ -7,13 +7,38 @@ use crate::core::schema::{Entity, TemporalGraph};
 
 use super::row_to_entity;
 
+/// Bundled parameters for [`TemporalGraph::insert_entity`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub struct InsertEntityParams<'a> {
+    pub id: &'a str,
+    pub entity_type_id: u32,
+    pub properties: serde_json::Value,
+}
+
+/// Bundled parameters for [`TemporalGraph::update_entity_group`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+pub struct UpdateEntityGroupParams<'a> {
+    pub id: &'a str,
+    pub group_id: Option<&'a str>,
+    pub properties: serde_json::Value,
+}
+
+/// Bundled parameters for [`TemporalGraph::reassign_entity_group_dangerous`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct ReassignEntityGroupDangerousParams<'a> {
+    pub id: &'a str,
+    pub old_group_id: &'a str,
+    pub new_group_id: Option<&'a str>,
+    pub bypass_policy: bool,
+}
+
 impl TemporalGraph {
-    pub async fn insert_entity(
-        &self,
-        id: &str,
-        entity_type_id: u32,
-        properties: serde_json::Value,
-    ) -> Result<()> {
+    pub async fn insert_entity(&self, params: InsertEntityParams<'_>) -> Result<()> {
+        let InsertEntityParams {
+            id,
+            entity_type_id,
+            properties,
+        } = params;
         let _db_start = Instant::now();
         let props_str = serde_json::to_string(&properties)?;
         let now = Utc::now().to_rfc3339();
@@ -129,12 +154,12 @@ impl TemporalGraph {
 
     /// Update an entity's group_id and properties.
     /// Used when re-indexing a file into a different scope.
-    pub async fn update_entity_group(
-        &self,
-        id: &str,
-        group_id: Option<&str>,
-        properties: serde_json::Value,
-    ) -> Result<()> {
+    pub async fn update_entity_group(&self, params: UpdateEntityGroupParams<'_>) -> Result<()> {
+        let UpdateEntityGroupParams {
+            id,
+            group_id,
+            properties,
+        } = params;
         let _db_start = Instant::now();
         let props_str = serde_json::to_string(&properties)?;
         let now = Utc::now().to_rfc3339();
@@ -172,11 +197,14 @@ impl TemporalGraph {
     /// Returns the number of rows updated.
     pub async fn reassign_entity_group_dangerous(
         &self,
-        id: &str,
-        old_group_id: &str,
-        new_group_id: Option<&str>,
-        bypass_policy: bool,
+        params: ReassignEntityGroupDangerousParams<'_>,
     ) -> Result<u64> {
+        let ReassignEntityGroupDangerousParams {
+            id,
+            old_group_id,
+            new_group_id,
+            bypass_policy,
+        } = params;
         if !bypass_policy {
             // Check source policy.
             let source_policy = self

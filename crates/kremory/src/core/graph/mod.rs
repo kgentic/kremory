@@ -10,22 +10,39 @@ mod facts;
 mod namespace;
 mod queries;
 
-pub use episodes::EpisodeInsert;
-pub use facts::FactInsert;
+pub use entities::{
+    InsertEntityParams, ReassignEntityGroupDangerousParams, UpdateEntityGroupParams,
+};
+pub use entity_groups::{
+    InsertEntityWithGroupParams, SetEntityNerConfidenceParams, UpdateEntitySourceTierParams,
+    UpsertEntityWithGroupParams,
+};
+pub use episodes::{EpisodeInsert, InsertEpisodeParams, InsertEpisodicEdgeParams};
+pub use facts::{FactInsert, InvalidateFactWithReasonParams};
 
 #[cfg(test)]
 mod tests;
+
+/// Bundled parameters for [`fact_content_hash`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub(super) struct FactContentHashParams<'a> {
+    pub subject_id: &'a str,
+    pub predicate: &'a str,
+    pub object_id: Option<&'a str>,
+    pub object_value: Option<&'a str>,
+}
 
 /// Compute a hex-encoded SHA-256 content hash for a fact triple.
 /// Hash input: `"{subject_id}\x00{predicate}\x00{object_key}"` where
 /// `object_key` is `object_id` if set, otherwise `object_value`, otherwise `""`.
 /// Story #209.
-pub(super) fn fact_content_hash(
-    subject_id: &str,
-    predicate: &str,
-    object_id: Option<&str>,
-    object_value: Option<&str>,
-) -> String {
+pub(super) fn fact_content_hash(params: FactContentHashParams<'_>) -> String {
+    let FactContentHashParams {
+        subject_id,
+        predicate,
+        object_id,
+        object_value,
+    } = params;
     let object_key = object_id.or(object_value).unwrap_or("");
     let mut hasher = Sha256::new();
     hasher.update(subject_id.as_bytes());

@@ -438,7 +438,9 @@ pub async fn run_invariants(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use kremory::core::graph::FactInsert;
+    use kremory::core::graph::{
+        FactInsert, InsertEntityParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
+    };
     use kremory::core::schema::TemporalGraph;
 
     async fn empty_graph() -> TemporalGraph {
@@ -459,17 +461,31 @@ mod tests {
     async fn graph_with_entity_and_fact_passes_orphan_check() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("e1", 0, serde_json::json!({}))
+            .insert_entity(InsertEntityParams {
+                id: "e1",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
             .await
             .unwrap();
         graph
-            .insert_episode("hello world", Utc::now(), None, None)
+            .insert_episode(InsertEpisodeParams {
+                content: "hello world",
+                timestamp: Utc::now(),
+                source_type: None,
+                metadata: None,
+            })
             .await
             .unwrap();
         graph
             // entity_group_id=None → 'default', matching `insert_entity("e1", …)`
             // above (no group → 'default') so the composite FK lines up (ADR-029b).
-            .insert_episodic_edge(1, "e1", None, "subject")
+            .insert_episodic_edge(InsertEpisodicEdgeParams {
+                episode_id: 1,
+                entity_id: "e1",
+                entity_group_id: None,
+                role: "subject",
+            })
             .await
             .unwrap();
         graph
@@ -490,7 +506,11 @@ mod tests {
     async fn orphan_entity_fails_when_not_allowed() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("isolated", 0, serde_json::json!({}))
+            .insert_entity(InsertEntityParams {
+                id: "isolated",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
             .await
             .unwrap();
         // No fact references "isolated", no episodic edge
@@ -512,7 +532,11 @@ mod tests {
     async fn orphan_entity_passes_when_allowed() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("isolated", 0, serde_json::json!({}))
+            .insert_entity(InsertEntityParams {
+                id: "isolated",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
             .await
             .unwrap();
 
@@ -536,11 +560,19 @@ mod tests {
     async fn fts_count_mismatch_fails() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("e1", 0, serde_json::json!({}))
+            .insert_entity(InsertEntityParams {
+                id: "e1",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
             .await
             .unwrap();
         graph
-            .insert_entity("e2", 0, serde_json::json!({}))
+            .insert_entity(InsertEntityParams {
+                id: "e2",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
             .await
             .unwrap();
 
@@ -617,7 +649,11 @@ mod tests {
     async fn episode_edge_missing_fails() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("e1", 0, serde_json::json!({}))
+            .insert_entity(InsertEntityParams {
+                id: "e1",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
             .await
             .unwrap();
         // No episodic edge inserted for e1
@@ -636,7 +672,11 @@ mod tests {
     async fn integrity_report_failures_method() {
         let graph = empty_graph().await;
         graph
-            .insert_entity("orphan", 0, serde_json::json!({}))
+            .insert_entity(InsertEntityParams {
+                id: "orphan",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
             .await
             .unwrap();
         // orphan + no episodic edge = 2 failures

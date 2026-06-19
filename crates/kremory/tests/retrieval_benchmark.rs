@@ -13,7 +13,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use kremory::core::config::PipelineConfig;
 use kremory::core::context::ContextResult;
-use kremory::core::graph::FactInsert;
+use kremory::core::graph::{FactInsert, InsertEntityParams};
 use kremory::core::ingest::Engine;
 use kremory::core::provider::{EmbeddingProvider, MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::{Entity, TemporalGraph};
@@ -135,7 +135,11 @@ async fn test_fts_entity_recall_all_domains() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                .insert_entity(InsertEntityParams {
+                    id: &id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": entity.name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
         }
@@ -233,7 +237,11 @@ async fn test_vector_self_retrieval() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                .insert_entity(InsertEntityParams {
+                    id: &id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": entity.name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -331,7 +339,11 @@ async fn test_hybrid_search_finds_entities() {
     for entity in &domain.entities {
         let id = entity_id(&entity.name);
         graph
-            .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+            .insert_entity(InsertEntityParams {
+                id: &id,
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": entity.name}),
+            })
             .await
             .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -414,15 +426,27 @@ async fn test_fts_fact_retrieval() {
 
     // Insert 3 entities
     graph
-        .insert_entity("alice", 0, serde_json::json!({"name": "Alice"}))
+        .insert_entity(InsertEntityParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Alice"}),
+        })
         .await
         .expect("insert alice");
     graph
-        .insert_entity("acme", 0, serde_json::json!({"name": "Acme"}))
+        .insert_entity(InsertEntityParams {
+            id: "acme",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Acme"}),
+        })
         .await
         .expect("insert acme");
     graph
-        .insert_entity("project_x", 0, serde_json::json!({"name": "Project X"}))
+        .insert_entity(InsertEntityParams {
+            id: "project_x",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Project X"}),
+        })
         .await
         .expect("insert project_x");
 
@@ -533,15 +557,27 @@ async fn test_contextualize_one_hop_expansion() {
     let now = Utc::now();
 
     graph
-        .insert_entity("alice", 0, serde_json::json!({"name": "Alice"}))
+        .insert_entity(InsertEntityParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Alice"}),
+        })
         .await
         .expect("insert alice");
     graph
-        .insert_entity("acme", 0, serde_json::json!({"name": "Acme"}))
+        .insert_entity(InsertEntityParams {
+            id: "acme",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Acme"}),
+        })
         .await
         .expect("insert acme");
     graph
-        .insert_entity("project_x", 0, serde_json::json!({"name": "Project X"}))
+        .insert_entity(InsertEntityParams {
+            id: "project_x",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Project X"}),
+        })
         .await
         .expect("insert project_x");
 
@@ -645,7 +681,11 @@ async fn test_fact_retrieval_benchmark() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                .insert_entity(InsertEntityParams {
+                    id: &id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": entity.name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
         }
@@ -895,7 +935,11 @@ async fn test_retrieval_benchmark_summary() {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                .insert_entity(InsertEntityParams {
+                    id: &id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": entity.name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 

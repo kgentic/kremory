@@ -18,7 +18,7 @@ mod semantic_tests {
 
     use kremory::core::config::PipelineConfig;
     use kremory::core::context::ContextResult;
-    use kremory::core::graph::FactInsert;
+    use kremory::core::graph::{FactInsert, InsertEntityParams};
     use kremory::core::ingest::Engine;
     use kremory::core::provider::{EmbeddingProvider, MockChatProvider, OnnxEmbeddingProvider};
     use kremory::core::schema::{Entity, TemporalGraph};
@@ -117,7 +117,11 @@ mod semantic_tests {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                .insert_entity(InsertEntityParams {
+                    id: &id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": entity.name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -209,7 +213,11 @@ mod semantic_tests {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                .insert_entity(InsertEntityParams {
+                    id: &id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": entity.name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -309,7 +317,11 @@ mod semantic_tests {
         for entity in &domain.entities {
             let id = entity_id(&entity.name);
             graph
-                .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                .insert_entity(InsertEntityParams {
+                    id: &id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": entity.name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -449,7 +461,11 @@ mod semantic_tests {
 
         for (id, name, _label) in entities {
             graph
-                .insert_entity(id, 0, serde_json::json!({"name": name}))
+                .insert_entity(InsertEntityParams {
+                    id: id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": name}),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 
@@ -563,7 +579,11 @@ mod semantic_tests {
             for entity in &domain.entities {
                 let id = entity_id(&entity.name);
                 graph
-                    .insert_entity(&id, 0, serde_json::json!({"name": entity.name}))
+                    .insert_entity(InsertEntityParams {
+                        id: &id,
+                        entity_type_id: 0,
+                        properties: serde_json::json!({"name": entity.name}),
+                    })
                     .await
                     .unwrap_or_else(|e| panic!("insert_entity({id}) failed: {e}"));
 

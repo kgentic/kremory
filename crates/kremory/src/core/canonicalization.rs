@@ -446,6 +446,7 @@ async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::graph::InsertEntityWithGroupParams;
     use crate::core::schema::TemporalGraph;
 
     // ── Helper ────────────────────────────────────────────────────────────────
@@ -461,7 +462,12 @@ mod tests {
         let props = serde_json::json!({ "name": id, "description": description });
         // entity_type_id = 0 is the "Entity" catch-all sentinel.
         graph
-            .insert_entity_with_group(id, 0u32, props, Some(group_id))
+            .insert_entity_with_group(InsertEntityWithGroupParams {
+                id,
+                entity_type_id: 0u32,
+                properties: props,
+                group_id: Some(group_id),
+            })
             .await
             .expect("insert entity");
         graph

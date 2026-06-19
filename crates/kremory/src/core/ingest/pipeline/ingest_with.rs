@@ -10,7 +10,11 @@ use crate::core::contradiction::TwoPoolDetector;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
-use crate::core::graph::{EpisodeInsert, FactInsert};
+use crate::core::graph::{
+    EpisodeInsert, FactInsert, InsertEntityParams, InsertEntityWithGroupParams,
+    InsertEpisodicEdgeParams, InvalidateFactWithReasonParams, SetEntityNerConfidenceParams,
+    UpdateEntitySourceTierParams, UpsertEntityWithGroupParams,
+};
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
     ResolutionResult,
@@ -110,7 +114,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // real production failures.
                 if let Err(e) = self
                     .graph
-                    .insert_entity(&pf.subject, 0, serde_json::json!({"stub": false}))
+                    .insert_entity(InsertEntityParams {
+                        id: &pf.subject,
+                        entity_type_id: 0,
+                        properties: serde_json::json!({"stub": false}),
+                    })
                     .await
                 {
                     if !matches!(e, crate::core::error::Error::Duplicate { .. }) {
@@ -124,7 +132,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 if let Some(ref obj_id) = pf.object_id {
                     if let Err(e) = self
                         .graph
-                        .insert_entity(obj_id, 0, serde_json::json!({"stub": false}))
+                        .insert_entity(InsertEntityParams {
+                            id: obj_id,
+                            entity_type_id: 0,
+                            properties: serde_json::json!({"stub": false}),
+                        })
                         .await
                     {
                         if !matches!(e, crate::core::error::Error::Duplicate { .. }) {
@@ -162,7 +174,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // failure is sufficient; the fact is already pinned.
                         if let Err(e) = self
                             .graph
-                            .update_entity_source_tier(&pf.subject, group_id, "ConsumerPinned")
+                            .update_entity_source_tier(UpdateEntitySourceTierParams {
+                                id: &pf.subject,
+                                group_id,
+                                source_tier: "ConsumerPinned",
+                            })
                             .await
                         {
                             tracing::warn!(
@@ -189,7 +205,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         if let Some(ref object_id) = pf.object_id {
                             match self
                                 .graph
-                                .update_entity_source_tier(object_id, group_id, "ConsumerPinned")
+                                .update_entity_source_tier(UpdateEntitySourceTierParams {
+                                    id: object_id,
+                                    group_id,
+                                    source_tier: "ConsumerPinned",
+                                })
                                 .await
                             {
                                 Ok(()) => {
@@ -694,7 +714,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         serde_json::json!({ "stub": true, "source": "forward_reference" });
                     match self
                         .graph
-                        .insert_entity_with_group(&norm_name, 0, stub_props, group_id)
+                        .insert_entity_with_group(InsertEntityWithGroupParams {
+                            id: &norm_name,
+                            entity_type_id: 0,
+                            properties: stub_props,
+                            group_id,
+                        })
                         .await
                     {
                         Ok(()) => {
@@ -811,12 +836,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // `.ok()` — promotion is best-effort; failure to promote
                         // leaves the stub row but does not abort the transaction.
                         self.graph
-                            .upsert_entity_with_group(
-                                &existing_id,
+                            .upsert_entity_with_group(UpsertEntityWithGroupParams {
+                                id: &existing_id,
                                 entity_type_id,
-                                promoted_props,
+                                properties: promoted_props,
                                 group_id,
-                            )
+                            })
                             .await
                             .ok();
                         // Stub-promotion path: a row that was previously source=stub
@@ -848,7 +873,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // must reference the same namespace or it silently FK-fails.
                     let mention_ok = self
                         .graph
-                        .insert_episodic_edge(episode_id, &existing_id, group_id, "mention")
+                        .insert_episodic_edge(InsertEpisodicEdgeParams {
+                            episode_id,
+                            entity_id: &existing_id,
+                            entity_group_id: group_id,
+                            role: "mention",
+                        })
                         .await
                         .is_ok();
                     if let Some(s) = sink {
@@ -902,7 +932,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // under `group_id`).
                         let mention_ok = self
                             .graph
-                            .insert_episodic_edge(episode_id, l4_existing_id, group_id, "mention")
+                            .insert_episodic_edge(InsertEpisodicEdgeParams {
+                                episode_id,
+                                entity_id: l4_existing_id,
+                                entity_group_id: group_id,
+                                role: "mention",
+                            })
                             .await
                             .is_ok();
                         if let Some(s) = sink {
@@ -951,12 +986,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     };
                     if let Err(e) = self
                         .graph
-                        .insert_entity_with_group(
-                            &entity_id,
+                        .insert_entity_with_group(InsertEntityWithGroupParams {
+                            id: &entity_id,
                             entity_type_id,
-                            props_with_context,
+                            properties: props_with_context,
                             group_id,
-                        )
+                        })
                         .await
                     {
                         break 'phases Err(e);
@@ -976,7 +1011,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             let conf_f32 = conf_f64 as f32;
                             if let Err(e) = self
                                 .graph
-                                .set_entity_ner_confidence(&entity_id, group_id, conf_f32)
+                                .set_entity_ner_confidence(SetEntityNerConfidenceParams {
+                                    id: &entity_id,
+                                    group_id,
+                                    confidence: conf_f32,
+                                })
                                 .await
                             {
                                 tracing::warn!(
@@ -1031,7 +1070,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // must reference the same namespace for the composite FK to resolve.
                     let mention_ok = self
                         .graph
-                        .insert_episodic_edge(episode_id, &entity_id, group_id, "mention")
+                        .insert_episodic_edge(InsertEpisodicEdgeParams {
+                            episode_id,
+                            entity_id: &entity_id,
+                            entity_group_id: group_id,
+                            role: "mention",
+                        })
                         .await
                         .is_ok();
                     if let Some(s) = sink {
@@ -1123,7 +1167,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 for fact_id in &contradiction_result.contradictions {
                     if let Err(e) = self
                         .graph
-                        .invalidate_fact_with_reason(*fact_id, Utc::now(), ref_time)
+                        .invalidate_fact_with_reason(InvalidateFactWithReasonParams {
+                            fact_id: *fact_id,
+                            expired_at: Utc::now(),
+                            invalid_at: ref_time,
+                        })
                         .await
                     {
                         break 'phases Err(e);
@@ -1282,7 +1330,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // so the edge must reference the same namespace.
                         let object_ok = self
                             .graph
-                            .insert_episodic_edge(episode_id, obj_id, group_id, "object")
+                            .insert_episodic_edge(InsertEpisodicEdgeParams {
+                                episode_id,
+                                entity_id: obj_id,
+                                entity_group_id: group_id,
+                                role: "object",
+                            })
                             .await
                             .is_ok();
                         if object_ok {

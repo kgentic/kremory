@@ -26,6 +26,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use kremory::core::config::PipelineConfig;
 use kremory::core::extraction::LlmExtractor;
+use kremory::core::graph::{
+    InsertEntityParams, InsertEntityWithGroupParams, SetEntityNerConfidenceParams,
+    UpdateEntitySourceTierParams, UpsertEntityWithGroupParams,
+};
 use kremory::core::ingest::{Engine, PrePinnedFact, SourceParams};
 use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
@@ -257,12 +261,12 @@ async fn a7_insert_entity_with_group_stamps_phase1ner() {
     let (graph, _tmp) = open_graph().await;
 
     graph
-        .insert_entity_with_group(
-            "a7-ent-001",
-            0,
-            serde_json::json!({"name": "Alice"}),
-            Some("default"),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "a7-ent-001",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Alice"}),
+            group_id: Some("default"),
+        })
         .await
         .expect("insert_entity_with_group must succeed");
 
@@ -300,7 +304,11 @@ async fn a7_insert_entity_no_group_stamps_phase1ner() {
     let (graph, _tmp) = open_graph().await;
 
     graph
-        .insert_entity("a7-nogroup-001", 0, serde_json::json!({"name": "Bob"}))
+        .insert_entity(InsertEntityParams {
+            id: "a7-nogroup-001",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Bob"}),
+        })
         .await
         .expect("insert_entity must succeed");
 
@@ -335,12 +343,12 @@ async fn a8_update_entity_source_tier_consumer_pinned() {
 
     // Insert an entity (stamps Phase1Ner).
     graph
-        .insert_entity_with_group(
-            "a8-ent-001",
-            0,
-            serde_json::json!({"name": "Acme Corp"}),
-            Some("default"),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "a8-ent-001",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Acme Corp"}),
+            group_id: Some("default"),
+        })
         .await
         .expect("insert must succeed");
 
@@ -363,7 +371,11 @@ async fn a8_update_entity_source_tier_consumer_pinned() {
 
     // Stamp ConsumerPinned.
     graph
-        .update_entity_source_tier("a8-ent-001", Some("default"), "ConsumerPinned")
+        .update_entity_source_tier(UpdateEntitySourceTierParams {
+            id: "a8-ent-001",
+            group_id: Some("default"),
+            source_tier: "ConsumerPinned",
+        })
         .await
         .expect("update_entity_source_tier must succeed");
 
@@ -396,17 +408,21 @@ async fn a8_set_entity_ner_confidence_persists() {
     let (graph, _tmp) = open_graph().await;
 
     graph
-        .insert_entity_with_group(
-            "a8-conf-001",
-            0,
-            serde_json::json!({"name": "Some Entity"}),
-            Some("default"),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "a8-conf-001",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Some Entity"}),
+            group_id: Some("default"),
+        })
         .await
         .expect("insert must succeed");
 
     graph
-        .set_entity_ner_confidence("a8-conf-001", Some("default"), 0.85_f32)
+        .set_entity_ner_confidence(SetEntityNerConfidenceParams {
+            id: "a8-conf-001",
+            group_id: Some("default"),
+            confidence: 0.85_f32,
+        })
         .await
         .expect("set_entity_ner_confidence must succeed");
 
@@ -441,28 +457,32 @@ async fn a8_upsert_preserves_consumer_pinned_tier() {
 
     // Insert entity, stamp ConsumerPinned.
     graph
-        .insert_entity_with_group(
-            "a8-upsert-001",
-            0,
-            serde_json::json!({"name": "Pinned Org"}),
-            Some("default"),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "a8-upsert-001",
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Pinned Org"}),
+            group_id: Some("default"),
+        })
         .await
         .expect("insert must succeed");
 
     graph
-        .update_entity_source_tier("a8-upsert-001", Some("default"), "ConsumerPinned")
+        .update_entity_source_tier(UpdateEntitySourceTierParams {
+            id: "a8-upsert-001",
+            group_id: Some("default"),
+            source_tier: "ConsumerPinned",
+        })
         .await
         .expect("update must succeed");
 
     // Upsert (stub-promotion path) — must NOT overwrite ConsumerPinned.
     graph
-        .upsert_entity_with_group(
-            "a8-upsert-001",
-            1,
-            serde_json::json!({"name": "Pinned Org", "context": "some context"}),
-            Some("default"),
-        )
+        .upsert_entity_with_group(UpsertEntityWithGroupParams {
+            id: "a8-upsert-001",
+            entity_type_id: 1,
+            properties: serde_json::json!({"name": "Pinned Org", "context": "some context"}),
+            group_id: Some("default"),
+        })
         .await
         .expect("upsert must succeed");
 

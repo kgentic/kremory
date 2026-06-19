@@ -14,6 +14,7 @@
 //!
 //! These tests are regression anchors for both fixes (G_v015b_22).
 
+use kremory::core::graph::{InsertEntityWithGroupParams, ReassignEntityGroupDangerousParams};
 use kremory::core::schema::TemporalGraph;
 
 /// G_v015b_22 regression: same surface name into two namespaces.
@@ -31,12 +32,7 @@ async fn spike_f2_same_name_two_namespaces() {
 
     // 1st write: ingest "Acme Corp" into namespace-A.
     let r1 = g
-        .insert_entity_with_group(
-            entity_id,
-            0,
-            serde_json::json!({"name": "Acme Corp", "context": "first mention in ns-a"}),
-            Some(ns_a),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams { id: entity_id, entity_type_id: 0, properties: serde_json::json!({"name": "Acme Corp", "context": "first mention in ns-a"}), group_id: Some(ns_a) })
         .await;
     println!("SPIKE F2 — INSERT 1 (ns-a) result: {:?}", r1);
     assert!(r1.is_ok(), "first insert should succeed");
@@ -44,12 +40,7 @@ async fn spike_f2_same_name_two_namespaces() {
     // 2nd write: same name, different namespace — must now return CrossNamespaceCollision.
     // ADR-029b §3.2 closes bypass surface #2: explicit error instead of silent merge.
     let r2 = g
-        .insert_entity_with_group(
-            entity_id,
-            0,
-            serde_json::json!({"name": "Acme Corp", "context": "second mention in ns-b"}),
-            Some(ns_b),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams { id: entity_id, entity_type_id: 0, properties: serde_json::json!({"name": "Acme Corp", "context": "second mention in ns-b"}), group_id: Some(ns_b) })
         .await;
     println!("SPIKE F2 — INSERT 2 (ns-b) result: {:?}", r2);
     assert!(
@@ -102,12 +93,12 @@ async fn spike_f2_reassign_entity_group_dangerous_overwrite() {
     let ns_a = "audit-ns-a";
     let ns_b = "tenant-b";
 
-    g.insert_entity_with_group(
-        entity_id,
-        0,
-        serde_json::json!({"name": "Acme Corp"}),
-        Some(ns_a),
-    )
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
+        id: entity_id,
+        entity_type_id: 0,
+        properties: serde_json::json!({"name": "Acme Corp"}),
+        group_id: Some(ns_a),
+    })
     .await
     .expect("seed insert into ns_a");
 
@@ -122,7 +113,12 @@ async fn spike_f2_reassign_entity_group_dangerous_overwrite() {
     // Move the entity to ns_b via bypass_policy=true (migration tooling path).
     // Production code uses bypass_policy=false and will get a policy check.
     let n = g
-        .reassign_entity_group_dangerous(entity_id, ns_a, Some(ns_b), true)
+        .reassign_entity_group_dangerous(ReassignEntityGroupDangerousParams {
+            id: entity_id,
+            old_group_id: ns_a,
+            new_group_id: Some(ns_b),
+            bypass_policy: true,
+        })
         .await
         .expect("move group");
     println!(
@@ -148,22 +144,22 @@ async fn spike_f2_second_insert_returns_cross_namespace_collision() {
 
     let entity_id = "acme corp";
 
-    g.insert_entity_with_group(
-        entity_id,
-        0,
-        serde_json::json!({"name": "Acme Corp"}),
-        Some("ns-a"),
-    )
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
+        id: entity_id,
+        entity_type_id: 0,
+        properties: serde_json::json!({"name": "Acme Corp"}),
+        group_id: Some("ns-a"),
+    })
     .await
     .expect("first insert");
 
     let err = g
-        .insert_entity_with_group(
-            entity_id,
-            0,
-            serde_json::json!({"name": "Acme Corp"}),
-            Some("ns-b"),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id: entity_id,
+            entity_type_id: 0,
+            properties: serde_json::json!({"name": "Acme Corp"}),
+            group_id: Some("ns-b"),
+        })
         .await
         .expect_err("second insert into different namespace must fail (CrossNamespaceCollision)");
 

@@ -5,6 +5,40 @@ use std::time::Instant;
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
+/// Bundled parameters for [`TemporalGraph::insert_entity_with_group`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct InsertEntityWithGroupParams<'a> {
+    pub id: &'a str,
+    pub entity_type_id: u32,
+    pub properties: serde_json::Value,
+    pub group_id: Option<&'a str>,
+}
+
+/// Bundled parameters for [`TemporalGraph::upsert_entity_with_group`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct UpsertEntityWithGroupParams<'a> {
+    pub id: &'a str,
+    pub entity_type_id: u32,
+    pub properties: serde_json::Value,
+    pub group_id: Option<&'a str>,
+}
+
+/// Bundled parameters for [`TemporalGraph::set_entity_ner_confidence`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct SetEntityNerConfidenceParams<'a> {
+    pub id: &'a str,
+    pub group_id: Option<&'a str>,
+    pub confidence: f32,
+}
+
+/// Bundled parameters for [`TemporalGraph::update_entity_source_tier`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct UpdateEntitySourceTierParams<'a> {
+    pub id: &'a str,
+    pub group_id: Option<&'a str>,
+    pub source_tier: &'a str,
+}
+
 impl TemporalGraph {
     /// Insert an entity with an optional group_id.
     /// Existing tests use `insert_entity`; this variant is for new code that needs group scoping.
@@ -20,11 +54,14 @@ impl TemporalGraph {
     /// is safer than silently sharing a row.
     pub async fn insert_entity_with_group(
         &self,
-        id: &str,
-        entity_type_id: u32,
-        properties: serde_json::Value,
-        group_id: Option<&str>,
+        params: InsertEntityWithGroupParams<'_>,
     ) -> Result<()> {
+        let InsertEntityWithGroupParams {
+            id,
+            entity_type_id,
+            properties,
+            group_id,
+        } = params;
         let _db_start = Instant::now();
         // ADR-029b: entities.group_id is NOT NULL post-migration-004. COALESCE maps
         // None → 'default' so callers using None-as-unscoped retain their semantics
@@ -132,11 +169,14 @@ impl TemporalGraph {
     /// the same name is later extracted as a proper entity.
     pub async fn upsert_entity_with_group(
         &self,
-        id: &str,
-        entity_type_id: u32,
-        properties: serde_json::Value,
-        group_id: Option<&str>,
+        params: UpsertEntityWithGroupParams<'_>,
     ) -> Result<()> {
+        let UpsertEntityWithGroupParams {
+            id,
+            entity_type_id,
+            properties,
+            group_id,
+        } = params;
         let now = Utc::now().to_rfc3339();
         let props_str = properties.to_string();
         // ADR-029b: entities.group_id is NOT NULL post-migration-004; composite PK is
@@ -207,10 +247,13 @@ impl TemporalGraph {
     /// Governing spec: migration-010-detail-spec §1.1 + ADR-045 §6 (Phase 1 GLiNER NER).
     pub async fn set_entity_ner_confidence(
         &self,
-        id: &str,
-        group_id: Option<&str>,
-        confidence: f32,
+        params: SetEntityNerConfidenceParams<'_>,
     ) -> Result<()> {
+        let SetEntityNerConfidenceParams {
+            id,
+            group_id,
+            confidence,
+        } = params;
         let effective_group_id = group_id.unwrap_or("default");
         self.conn
             .execute(
@@ -232,10 +275,13 @@ impl TemporalGraph {
     /// Governing spec: migration-010-detail-spec §1.2 + ADR-045 §3 (ConsumerPinned protection).
     pub async fn update_entity_source_tier(
         &self,
-        id: &str,
-        group_id: Option<&str>,
-        source_tier: &str,
+        params: UpdateEntitySourceTierParams<'_>,
     ) -> Result<()> {
+        let UpdateEntitySourceTierParams {
+            id,
+            group_id,
+            source_tier,
+        } = params;
         let effective_group_id = group_id.unwrap_or("default");
         let now = Utc::now().to_rfc3339();
         self.conn

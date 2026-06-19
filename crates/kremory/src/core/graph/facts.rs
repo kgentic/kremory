@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::core::error::Result;
 use crate::core::schema::{Fact, TemporalGraph};
 
-use super::{fact_content_hash, row_to_fact};
+use super::{fact_content_hash, row_to_fact, FactContentHashParams};
 
 /// Bundled parameters for the `insert_fact*` family — args-as-object per TD-042
 /// (rust-conventions §too_many_arguments). Construct via [`FactInsert::new`] +
@@ -69,6 +69,14 @@ impl<'a> FactInsert<'a> {
     }
 }
 
+/// Bundled parameters for [`TemporalGraph::invalidate_fact_with_reason`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct InvalidateFactWithReasonParams {
+    pub fact_id: i64,
+    pub expired_at: DateTime<Utc>,
+    pub invalid_at: DateTime<Utc>,
+}
+
 impl TemporalGraph {
     pub async fn insert_fact(&self, fact: FactInsert<'_>) -> Result<i64> {
         let FactInsert {
@@ -85,7 +93,12 @@ impl TemporalGraph {
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
         // Story #209: compute SHA-256 content hash for dedup
-        let hash = fact_content_hash(subject_id, predicate, object_id, object_value);
+        let hash = fact_content_hash(FactContentHashParams {
+            subject_id,
+            predicate,
+            object_id,
+            object_value,
+        });
         // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
         // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
         let guard = self.begin_immediate_if_needed().await?;
@@ -342,7 +355,12 @@ impl TemporalGraph {
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
         // Story #209: compute SHA-256 content hash for dedup
-        let hash = fact_content_hash(subject_id, predicate, object_id, object_value);
+        let hash = fact_content_hash(FactContentHashParams {
+            subject_id,
+            predicate,
+            object_id,
+            object_value,
+        });
         // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
         // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
         let guard = self.begin_immediate_if_needed().await?;
@@ -457,10 +475,13 @@ impl TemporalGraph {
     /// Invalidate a fact with both system-level (expired_at) and domain-level (invalid_at) timestamps.
     pub async fn invalidate_fact_with_reason(
         &self,
-        fact_id: i64,
-        expired_at: DateTime<Utc>,
-        invalid_at: DateTime<Utc>,
+        params: InvalidateFactWithReasonParams,
     ) -> Result<()> {
+        let InvalidateFactWithReasonParams {
+            fact_id,
+            expired_at,
+            invalid_at,
+        } = params;
         let _db_start = Instant::now();
         self.conn
             .execute(
