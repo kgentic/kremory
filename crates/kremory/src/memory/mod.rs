@@ -68,26 +68,39 @@ use uuid::Uuid;
 
 // ── D.6.4 public API surface (ADR §4.10) ─────────────────────────────────────
 
+/// Bundled parameters for [`submit_episode`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). `batch_id`: caller-set string
+/// grouping this episode with others — plain `Option<String>`, no `BatchRef`
+/// wrapper, matching universal prior art.
+pub struct SubmitEpisodeParams<'a> {
+    pub graph: &'a dyn GraphHandle,
+    pub content: &'a str,
+    pub source_ref: SourceRef,
+    pub structured_facts: Vec<StructuredFact>,
+    pub provider: Arc<dyn ChatProvider>,
+    pub namespace: Namespace,
+    pub batch_id: Option<String>,
+    pub opts: SubmitOpts,
+    pub sink: Option<Arc<dyn events::EnrichmentEventSink>>,
+}
+
 /// Submit one episode for ingest.
 ///
 /// Phase 1 (store + embed) commits synchronously. Episode searchable on return.
-/// Phase 2 (LLM enrich) controlled by `opts`.
-///
-/// `batch_id`: caller-set string grouping this episode with others.
-/// No `BatchRef` wrapper — plain `Option<String>` matching universal prior art.
+/// Phase 2 (LLM enrich) controlled by `params.opts`.
 // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
-#[allow(clippy::too_many_arguments)]
-pub async fn submit_episode(
-    graph: &dyn GraphHandle,
-    content: &str,
-    source_ref: SourceRef,
-    structured_facts: Vec<StructuredFact>,
-    provider: Arc<dyn ChatProvider>,
-    namespace: Namespace,
-    batch_id: Option<String>,
-    opts: SubmitOpts,
-    sink: Option<Arc<dyn events::EnrichmentEventSink>>,
-) -> Result<EpisodeCommit> {
+pub async fn submit_episode(params: SubmitEpisodeParams<'_>) -> Result<EpisodeCommit> {
+    let SubmitEpisodeParams {
+        graph,
+        content,
+        source_ref,
+        structured_facts,
+        provider,
+        namespace,
+        batch_id,
+        opts,
+        sink,
+    } = params;
     graph
         .graph_ingest_episode(GraphIngestEpisodeParams {
             namespace: &namespace,
@@ -234,20 +247,20 @@ pub async fn ingest_episode(
     provider: Arc<dyn ChatProvider>,
     namespace: Namespace,
 ) -> Result<IngestResult> {
-    let _commit = submit_episode(
+    let _commit = submit_episode(SubmitEpisodeParams {
         graph,
         content,
         source_ref,
         structured_facts,
         provider,
         namespace,
-        None,
-        SubmitOpts {
+        batch_id: None,
+        opts: SubmitOpts {
             enrich_per_episode: true,
             run_in_background: false,
         },
-        None,
-    )
+        sink: None,
+    })
     .await?;
     // Phase 2 ran inline (run_in_background = false). No polling needed.
     // Stub counts — callers used these for logging only; acceptable degradation.
@@ -881,17 +894,17 @@ mod tests {
             memory_type: None,
         }];
 
-        let commit = submit_episode(
-            &graph,
-            "transcript content",
+        let commit = submit_episode(SubmitEpisodeParams {
+            graph: &graph,
+            content: "transcript content",
             source_ref,
-            facts,
-            null_provider(),
-            namespace.clone(),
-            None,
-            SubmitOpts::default(),
-            None,
-        )
+            structured_facts: facts,
+            provider: null_provider(),
+            namespace: namespace.clone(),
+            batch_id: None,
+            opts: SubmitOpts::default(),
+            sink: None,
+        })
         .await
         .expect("submit_episode should succeed via stub");
 
