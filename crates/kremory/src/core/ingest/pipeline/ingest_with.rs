@@ -17,7 +17,7 @@ use crate::core::intelligence::{
 };
 use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
 use crate::core::resolver::{normalize_name, CascadeResolver, UnionFind};
-use crate::core::search::SearchFilters;
+use crate::core::search::{FtsSearchFactsParams, SearchFilters};
 
 use crate::core::ingest::helpers::extract_context_snippet;
 use crate::core::ingest::{Engine, IngestionResult, SourceParams};
@@ -1099,7 +1099,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // For pool_b, use FTS search on the predicate to find semantically related facts
                 let pool_b_hits = match self
                     .graph
-                    .fts_search_facts(&fact.predicate, 10, &SearchFilters::new())
+                    .fts_search_facts(FtsSearchFactsParams {
+                        query: &fact.predicate,
+                        limit: 10,
+                        filters: &SearchFilters::new(),
+                    })
                     .await
                 {
                     Ok(hits) => hits,

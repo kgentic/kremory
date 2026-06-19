@@ -22,7 +22,9 @@ mod semantic_tests {
     use kremory::core::ingest::Engine;
     use kremory::core::provider::{EmbeddingProvider, MockChatProvider, OnnxEmbeddingProvider};
     use kremory::core::schema::{Entity, TemporalGraph};
-    use kremory::core::search::{SearchFilters, SearchHit};
+    use kremory::core::search::{
+        HybridSearchEntitiesParams, SearchFilters, SearchHit, VectorSearchEntitiesParams,
+    };
 
     // ─── Ground truth types ───────────────────────────────────────────────────
 
@@ -146,7 +148,11 @@ mod semantic_tests {
                 .unwrap_or_else(|e| panic!("embed({}) failed: {e}", entity.name));
 
             let hits = graph
-                .vector_search_entities(&query_emb, 1, &SearchFilters::new())
+                .vector_search_entities(VectorSearchEntitiesParams {
+                    query_embedding: &query_emb,
+                    limit: 1,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("vector_search_entities({}) failed: {e}", entity.name));
 
@@ -245,7 +251,11 @@ mod semantic_tests {
                 .unwrap_or_else(|e| panic!("embed({query}) failed: {e}"));
 
             let hits = graph
-                .vector_search_entities(&query_emb, 3, &SearchFilters::new())
+                .vector_search_entities(VectorSearchEntitiesParams {
+                    query_embedding: &query_emb,
+                    limit: 3,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("vector_search_entities({query}) failed: {e}"));
 
@@ -339,12 +349,21 @@ mod semantic_tests {
                 .unwrap_or_else(|e| panic!("embed({semantic_query}) failed: {e}"));
 
             let pure_vec = graph
-                .vector_search_entities(&query_emb, 5, &SearchFilters::new())
+                .vector_search_entities(VectorSearchEntitiesParams {
+                    query_embedding: &query_emb,
+                    limit: 5,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("vector_search_entities failed: {e}"));
 
             let hybrid = graph
-                .hybrid_search_entities(fts_text, &query_emb, 5, &SearchFilters::new())
+                .hybrid_search_entities(HybridSearchEntitiesParams {
+                    query_text: fts_text,
+                    query_embedding: &query_emb,
+                    limit: 5,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("hybrid_search_entities failed: {e}"));
 
@@ -572,7 +591,11 @@ mod semantic_tests {
 
                 // Vector recall@1
                 let vec_hits = graph
-                    .vector_search_entities(&emb, 1, &SearchFilters::new())
+                    .vector_search_entities(VectorSearchEntitiesParams {
+                        query_embedding: &emb,
+                        limit: 1,
+                        filters: &SearchFilters::new(),
+                    })
                     .await
                     .unwrap_or_else(|e| {
                         panic!("vector_search_entities({}) failed: {e}", entity.name)
@@ -585,7 +608,12 @@ mod semantic_tests {
                 // Wrap in quotes for FTS5 safety with special characters
                 let fts_query = format!("\"{}\"", entity.name.replace('"', "\"\""));
                 let hybrid_hits = graph
-                    .hybrid_search_entities(&fts_query, &emb, 1, &SearchFilters::new())
+                    .hybrid_search_entities(HybridSearchEntitiesParams {
+                        query_text: &fts_query,
+                        query_embedding: &emb,
+                        limit: 1,
+                        filters: &SearchFilters::new(),
+                    })
                     .await
                     .unwrap_or_else(|e| {
                         panic!("hybrid_search_entities({}) failed: {e}", entity.name)

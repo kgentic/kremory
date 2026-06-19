@@ -17,7 +17,11 @@ use kremory::core::graph::FactInsert;
 use kremory::core::ingest::Engine;
 use kremory::core::provider::{EmbeddingProvider, MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::{Entity, TemporalGraph};
-use kremory::core::search::{SearchFilters, SearchHit};
+use kremory::core::search::{
+    FtsSearchEntitiesParams, FtsSearchFactsParams, HybridSearchEntitiesParams,
+    HybridSearchFactsParams, SearchFilters, SearchHit, VectorSearchEntitiesParams,
+    VectorSearchFactsParams,
+};
 use metrics_util::debugging::DebuggingRecorder;
 use serde::Deserialize;
 
@@ -140,7 +144,11 @@ async fn test_fts_entity_recall_all_domains() {
         for entity in &domain.entities {
             let query = fts_quote(&entity.name);
             let hits = graph
-                .fts_search_entities(&query, 10, &SearchFilters::new())
+                .fts_search_entities(FtsSearchEntitiesParams {
+                    query: &query,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("fts_search_entities({}) failed: {e}", entity.name));
 
@@ -248,7 +256,11 @@ async fn test_vector_self_retrieval() {
                 .unwrap_or_else(|e| panic!("embed({}) failed: {e}", entity.name));
 
             let hits = graph
-                .vector_search_entities(&embedding, 10, &SearchFilters::new())
+                .vector_search_entities(VectorSearchEntitiesParams {
+                    query_embedding: &embedding,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("vector_search_entities({}) failed: {e}", entity.name));
 
@@ -344,7 +356,12 @@ async fn test_hybrid_search_finds_entities() {
 
         let hybrid_text = fts_quote(&entity.name);
         let hits = graph
-            .hybrid_search_entities(&hybrid_text, &embedding, 10, &SearchFilters::new())
+            .hybrid_search_entities(HybridSearchEntitiesParams {
+                query_text: &hybrid_text,
+                query_embedding: &embedding,
+                limit: 10,
+                filters: &SearchFilters::new(),
+            })
             .await
             .unwrap_or_else(|e| panic!("hybrid_search_entities({}) failed: {e}", entity.name));
 
@@ -443,7 +460,11 @@ async fn test_fts_fact_retrieval() {
 
     // Search for "works_at" — should find the alice→acme fact
     let works_at_hits = graph
-        .fts_search_facts("works_at", 10, &SearchFilters::new())
+        .fts_search_facts(FtsSearchFactsParams {
+            query: "works_at",
+            limit: 10,
+            filters: &SearchFilters::new(),
+        })
         .await
         .expect("fts_search_facts works_at");
     assert!(
@@ -457,7 +478,11 @@ async fn test_fts_fact_retrieval() {
 
     // Search for "leads" — should find the alice→project_x fact
     let leads_hits = graph
-        .fts_search_facts("leads", 10, &SearchFilters::new())
+        .fts_search_facts(FtsSearchFactsParams {
+            query: "leads",
+            limit: 10,
+            filters: &SearchFilters::new(),
+        })
         .await
         .expect("fts_search_facts leads");
     assert!(
@@ -471,7 +496,11 @@ async fn test_fts_fact_retrieval() {
 
     // Search for "sponsors" — should find the acme→project_x fact
     let sponsors_hits = graph
-        .fts_search_facts("sponsors", 10, &SearchFilters::new())
+        .fts_search_facts(FtsSearchFactsParams {
+            query: "sponsors",
+            limit: 10,
+            filters: &SearchFilters::new(),
+        })
         .await
         .expect("fts_search_facts sponsors");
     assert!(
@@ -658,7 +687,11 @@ async fn test_fact_retrieval_benchmark() {
         for (fact_text, fact_emb) in &fact_pairs {
             // FTS: search by predicate — every fact uses "related_to" so all should match
             let fts_hits = graph
-                .fts_search_facts("related_to", 10, &SearchFilters::new())
+                .fts_search_facts(FtsSearchFactsParams {
+                    query: "related_to",
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("fts_search_facts(related_to) failed: {e}"));
             if fts_hits.iter().any(|h| h.item.predicate == "related_to") {
@@ -668,7 +701,11 @@ async fn test_fact_retrieval_benchmark() {
             // Vector: search by the original embedding — the inserted fact should be
             // among the closest results
             let vec_hits = graph
-                .vector_search_facts(fact_emb, 10, &SearchFilters::new())
+                .vector_search_facts(VectorSearchFactsParams {
+                    query_embedding: fact_emb,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("vector_search_facts({fact_text}) failed: {e}"));
             // Accept any fact with the correct predicate — the MockEmbeddingProvider
@@ -679,7 +716,12 @@ async fn test_fact_retrieval_benchmark() {
 
             // Hybrid: combines FTS predicate text with vector embedding
             let hybrid_hits = graph
-                .hybrid_search_facts("related_to", fact_emb, 10, &SearchFilters::new())
+                .hybrid_search_facts(HybridSearchFactsParams {
+                    query_text: "related_to",
+                    query_embedding: fact_emb,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("hybrid_search_facts({fact_text}) failed: {e}"));
             if hybrid_hits.iter().any(|h| h.item.predicate == "related_to") {
@@ -888,7 +930,11 @@ async fn test_retrieval_benchmark_summary() {
             // FTS recall
             let fts_query = fts_quote(&entity.name);
             let fts_hits = graph
-                .fts_search_entities(&fts_query, 10, &SearchFilters::new())
+                .fts_search_entities(FtsSearchEntitiesParams {
+                    query: &fts_query,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("fts_search_entities({}) failed: {e}", entity.name));
             if entity_in_hits(&fts_hits, &entity.name) {
@@ -901,7 +947,11 @@ async fn test_retrieval_benchmark_summary() {
                 .await
                 .unwrap_or_else(|e| panic!("embed({}) failed: {e}", entity.name));
             let vec_hits = graph
-                .vector_search_entities(&emb, 10, &SearchFilters::new())
+                .vector_search_entities(VectorSearchEntitiesParams {
+                    query_embedding: &emb,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("vector_search_entities({}) failed: {e}", entity.name));
             let expected_id = entity_id(&entity.name);
@@ -912,7 +962,12 @@ async fn test_retrieval_benchmark_summary() {
             // Hybrid recall (quote text for FTS5 safety)
             let hybrid_query = fts_quote(&entity.name);
             let hybrid_hits = graph
-                .hybrid_search_entities(&hybrid_query, &emb, 10, &SearchFilters::new())
+                .hybrid_search_entities(HybridSearchEntitiesParams {
+                    query_text: &hybrid_query,
+                    query_embedding: &emb,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await
                 .unwrap_or_else(|e| panic!("hybrid_search_entities({}) failed: {e}", entity.name));
             if entity_in_hits(&hybrid_hits, &entity.name) {

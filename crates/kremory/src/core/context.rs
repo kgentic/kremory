@@ -4,7 +4,9 @@ use crate::core::error::Result;
 use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 use crate::core::schema::{Entity, Fact};
-use crate::core::search::SearchFilters;
+use crate::core::search::{
+    FtsSearchEntitiesNoCountParams, SearchFilters, VectorSearchEntitiesNoCountParams,
+};
 
 /// Result of a contextualize() call: entities + facts from search + 1-hop expansion.
 #[derive(Debug)]
@@ -51,11 +53,19 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // access_count increments (RISK-002 — we do one increment after RRF)
         let fts_hits = self
             .graph
-            .fts_search_entities_no_count(query, limit, &filters)
+            .fts_search_entities_no_count(FtsSearchEntitiesNoCountParams {
+                query,
+                limit,
+                filters: &filters,
+            })
             .await?;
         let vector_hits = self
             .graph
-            .vector_search_entities_no_count(&query_embedding, limit, &filters)
+            .vector_search_entities_no_count(VectorSearchEntitiesNoCountParams {
+                query_embedding: &query_embedding,
+                limit,
+                filters: &filters,
+            })
             .await?;
 
         // Step 3: Reciprocal Rank Fusion (RRF) with k=60 (Bug C + NEW-004)

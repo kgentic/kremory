@@ -1,4 +1,7 @@
-too-many-arguments-threshold = 5
+# TD-042 Tier 3 (2026-06-19): lowered 5 -> 3 — functions with >3 args must use
+# an args-as-object params struct (rust-conventions §too_many_arguments). No blind
+# #[allow] in src/ (CLAUDE.md Rule 8). Test helpers may carry a documented allow.
+too-many-arguments-threshold = 3
 
 # TD-002: module-size lint (Foundation Sprint Phase C, 2026-06-08)
 #
