@@ -270,14 +270,14 @@ impl<'a> IntoFuture for DreamFireAndForget<'a> {
                 "dream",
                 "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
             )?;
-            memory::submit_dream_phase(
-                self.inner.memory.graph.as_ref(),
-                ns,
-                llm,
-                self.inner.batch_id,
+            memory::submit_dream_phase(memory::SubmitDreamPhaseParams {
+                graph: self.inner.memory.graph.as_ref(),
+                namespace: ns,
+                provider: llm,
+                batch_id: self.inner.batch_id,
                 opts,
                 sink,
-            )
+            })
             .await
         })
     }

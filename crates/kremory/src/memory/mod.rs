@@ -115,18 +115,29 @@ pub async fn submit_episode(params: SubmitEpisodeParams<'_>) -> Result<EpisodeCo
         .await
 }
 
+/// Bundled parameters for [`submit_dream_phase`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub struct SubmitDreamPhaseParams<'a> {
+    pub graph: &'a dyn GraphHandle,
+    pub namespace: Namespace,
+    pub provider: Arc<dyn ChatProvider>,
+    pub batch_id: Option<String>,
+    pub opts: DreamOpts,
+    pub sink: Option<Arc<dyn events::EnrichmentEventSink>>,
+}
+
 /// Submit a batch consolidation (dream phase). Returns immediately.
 /// Idempotent on `(scope, batch_id)` key. See ADR §2.10 for CAS semantics.
 // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
-#[allow(clippy::too_many_arguments)]
-pub async fn submit_dream_phase(
-    graph: &dyn GraphHandle,
-    namespace: Namespace,
-    provider: Arc<dyn ChatProvider>,
-    batch_id: Option<String>,
-    opts: DreamOpts,
-    sink: Option<Arc<dyn events::EnrichmentEventSink>>,
-) -> Result<DreamHandle> {
+pub async fn submit_dream_phase(params: SubmitDreamPhaseParams<'_>) -> Result<DreamHandle> {
+    let SubmitDreamPhaseParams {
+        graph,
+        namespace,
+        provider,
+        batch_id,
+        opts,
+        sink,
+    } = params;
     graph
         .graph_submit_dream(GraphSubmitDreamParams {
             namespace: &namespace,

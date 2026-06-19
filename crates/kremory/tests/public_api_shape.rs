@@ -11,7 +11,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use kremory::memory::{
     await_batch_enrichment, await_dream, await_enrichment, submit_dream_phase, submit_episode,
-    SubmitEpisodeParams,
+    SubmitDreamPhaseParams, SubmitEpisodeParams,
 };
 use kremory::memory::{
     types::{
@@ -223,14 +223,14 @@ async fn submit_dream_phase_signature_compiles() {
     let handle = StubHandle;
     let scope = Namespace::new("ws-b");
 
-    let dream = submit_dream_phase(
-        &handle,
-        scope,
-        null_provider(),
-        Some("batch-2".to_string()),
-        DreamOpts::default(),
-        None,
-    )
+    let dream = submit_dream_phase(SubmitDreamPhaseParams {
+        graph: &handle,
+        namespace: scope,
+        provider: null_provider(),
+        batch_id: Some("batch-2".to_string()),
+        opts: DreamOpts::default(),
+        sink: None,
+    })
     .await
     .expect("submit_dream_phase must succeed via stub");
 

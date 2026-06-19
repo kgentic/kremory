@@ -21,6 +21,7 @@ use kremory::memory::{
         DreamStatus, EpisodeCommit, IngestStatus, Namespace, RetrievedContext, SearchOpts,
     },
     ChatProvider, GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams,
+    SubmitDreamPhaseParams,
 };
 use uuid::Uuid;
 
@@ -212,14 +213,14 @@ async fn submit_dream_phase_idempotency_under_concurrency() {
             let s = scope.clone();
             let b = batch_id.clone();
             async move {
-                submit_dream_phase(
-                    h.as_ref(),
-                    s,
-                    null_provider(),
-                    b,
-                    DreamOpts::default(),
-                    None,
-                )
+                submit_dream_phase(SubmitDreamPhaseParams {
+                    graph: h.as_ref(),
+                    namespace: s,
+                    provider: null_provider(),
+                    batch_id: b,
+                    opts: DreamOpts::default(),
+                    sink: None,
+                })
                 .await
             }
         })
@@ -246,25 +247,25 @@ async fn submit_dream_phase_different_batch_ids_produce_different_runs() {
     let handle = StubIdempotentHandle::default();
     let scope = Namespace::new("ws-distinct");
 
-    let h1 = submit_dream_phase(
-        &handle,
-        scope.clone(),
-        null_provider(),
-        Some("batch-A".to_string()),
-        DreamOpts::default(),
-        None,
-    )
+    let h1 = submit_dream_phase(SubmitDreamPhaseParams {
+        graph: &handle,
+        namespace: scope.clone(),
+        provider: null_provider(),
+        batch_id: Some("batch-A".to_string()),
+        opts: DreamOpts::default(),
+        sink: None,
+    })
     .await
     .expect("first submit");
 
-    let h2 = submit_dream_phase(
-        &handle,
-        scope.clone(),
-        null_provider(),
-        Some("batch-B".to_string()),
-        DreamOpts::default(),
-        None,
-    )
+    let h2 = submit_dream_phase(SubmitDreamPhaseParams {
+        graph: &handle,
+        namespace: scope.clone(),
+        provider: null_provider(),
+        batch_id: Some("batch-B".to_string()),
+        opts: DreamOpts::default(),
+        sink: None,
+    })
     .await
     .expect("second submit different batch");
 
@@ -281,25 +282,25 @@ async fn submit_dream_phase_same_key_returns_existing_handle() {
     let scope = Namespace::new("ws-reuse").with_thread("thread-reuse");
     let batch_id = Some("batch-reuse".to_string());
 
-    let h1 = submit_dream_phase(
-        &handle,
-        scope.clone(),
-        null_provider(),
-        batch_id.clone(),
-        DreamOpts::default(),
-        None,
-    )
+    let h1 = submit_dream_phase(SubmitDreamPhaseParams {
+        graph: &handle,
+        namespace: scope.clone(),
+        provider: null_provider(),
+        batch_id: batch_id.clone(),
+        opts: DreamOpts::default(),
+        sink: None,
+    })
     .await
     .expect("first submit");
 
-    let h2 = submit_dream_phase(
-        &handle,
-        scope.clone(),
-        null_provider(),
+    let h2 = submit_dream_phase(SubmitDreamPhaseParams {
+        graph: &handle,
+        namespace: scope.clone(),
+        provider: null_provider(),
         batch_id,
-        DreamOpts::default(),
-        None,
-    )
+        opts: DreamOpts::default(),
+        sink: None,
+    })
     .await
     .expect("second submit same key");
 
