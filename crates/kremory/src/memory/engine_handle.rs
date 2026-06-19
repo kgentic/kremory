@@ -38,11 +38,13 @@ use crate::core::ingest::{
 use crate::core::provider::{ArcChatProvider, ArcEmbedder};
 use crate::core::schema::TemporalGraph;
 use crate::memory::{
-    graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams},
+    graph::{
+        GraphAssertEntityTypeParams, GraphHandle, GraphIngestEpisodeParams, GraphSearchParams,
+        GraphSubmitDreamParams,
+    },
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamPhaseResult, DreamStatus,
-        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts, SourceKind,
-        SourceRef,
+        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SourceKind, SourceRef,
     },
     ChatProvider,
 };
@@ -101,6 +103,15 @@ pub struct EngineGraphHandle {
     pub(crate) last_consolidated: Arc<DashMap<String, DateTime<Utc>>>,
 }
 
+/// Bundled parameters for [`EngineGraphHandle::with_config`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+pub struct WithConfigParams {
+    pub graph: Arc<TemporalGraph>,
+    pub chat: Arc<dyn ChatProvider + Send + Sync>,
+    pub embedder: Arc<dyn crate::core::provider::DynEmbeddingProvider>,
+    pub config: PipelineConfig,
+}
+
 impl EngineGraphHandle {
     /// Create a new `EngineGraphHandle` from an already-constructed `Engine`.
     ///
@@ -121,12 +132,13 @@ impl EngineGraphHandle {
 
     /// Convenience: create with a custom `PipelineConfig` (useful for tests that
     /// need to tune extraction limits without spinning up a full `MemoryBuilder`).
-    pub fn with_config(
-        graph: Arc<TemporalGraph>,
-        chat: Arc<dyn ChatProvider + Send + Sync>,
-        embedder: Arc<dyn crate::core::provider::DynEmbeddingProvider>,
-        config: PipelineConfig,
-    ) -> Self {
+    pub fn with_config(params: WithConfigParams) -> Self {
+        let WithConfigParams {
+            graph,
+            chat,
+            embedder,
+            config,
+        } = params;
         let engine = Engine::new(EngineNewParams {
             graph,
             llm: Arc::new(ArcChatProvider::new(chat)),
@@ -543,12 +555,12 @@ impl GraphHandle for EngineGraphHandle {
 
     // ── 10. graph_search ─────────────────────────────────────────────────────
 
-    async fn graph_search(
-        &self,
-        namespace: &Namespace,
-        query: &str,
-        opts: &SearchOpts,
-    ) -> Result<Vec<RetrievedContext>> {
+    async fn graph_search(&self, params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>> {
+        let GraphSearchParams {
+            namespace,
+            query,
+            opts,
+        } = params;
         let group_id = namespace_to_group_id(namespace);
         let limit = opts.limit;
 
@@ -684,10 +696,13 @@ impl GraphHandle for EngineGraphHandle {
 
     async fn graph_assert_entity_type(
         &self,
-        entity_id: &str,
-        entity_type_id: u32,
-        group_id: Option<&str>,
+        params: GraphAssertEntityTypeParams<'_>,
     ) -> Result<()> {
+        let GraphAssertEntityTypeParams {
+            entity_id,
+            entity_type_id,
+            group_id,
+        } = params;
         self.engine
             .assert_entity_type(AssertEntityTypeParams {
                 entity_id,

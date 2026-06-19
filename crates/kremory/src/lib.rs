@@ -50,7 +50,7 @@ pub use core::engine::{engine, engine_init};
 pub use facade::{
     DreamFireAndForget, DreamRequest, DreamSummary, EpisodeEntryBuilder, ForgetRequest, Memory,
     MemoryBuilder, NoEmb, NoLlm, RecallRawRequest, RecallRequest, RecallTemplate,
-    RememberBatchBuilder, RememberRequest, WithEmb, WithLlm,
+    RememberBatchBuilder, RememberRequest, WithEmb, WithLlm, WithLlmTrackedParams,
 };
 // Dream scheduler + pass API (Phase C, v0.1.1)
 pub use core::ingest::DreamPassOpts;
@@ -62,9 +62,10 @@ pub use core::dream::TypeProposal;
 pub use memory::init_telemetry;
 pub use memory::ChatProvider;
 pub use memory::{
-    ContextTemplate, DreamPhaseResult, GraphHandle, IngestResult, MemoryError, MemoryType,
-    Namespace, Result as MemoryResult, RetrievedContext, SearchOpts, SourceKind, SourceRef,
-    StructuredFact, TelemetryConfig, TelemetryHandle, TelemetryInitError,
+    ContextTemplate, DreamPhaseResult, GraphAssertEntityTypeParams, GraphHandle, GraphSearchParams,
+    IngestResult, MemoryError, MemoryType, Namespace, Result as MemoryResult, RetrievedContext,
+    RetrievedContextNewParams, SearchOpts, SourceKind, SourceRef, StructuredFact, TelemetryConfig,
+    TelemetryHandle, TelemetryInitError,
 };
 // ADR-029a (v0.1.4): namespace policy primitives.
 pub use memory::types::{ImmutabilityLevel, InvalidPolicyError, NamespacePolicy};

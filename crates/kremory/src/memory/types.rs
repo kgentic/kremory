@@ -469,21 +469,32 @@ pub struct RetrievedContext {
     pub namespace: Option<Namespace>,
 }
 
+/// Bundled parameters for [`RetrievedContext::new`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub struct RetrievedContextNewParams {
+    pub entity_id: String,
+    pub entity_name: String,
+    pub summary: String,
+    pub score: f32,
+    pub source_refs: Vec<SourceRef>,
+}
+
 impl RetrievedContext {
     /// Construct a `RetrievedContext` with the required fields. Optional fields
     /// (`incomplete`, `namespace`, future additions) default to their sensible
     /// defaults; use the `with_*` fluent setters to override.
-    pub fn new(
-        entity_id: impl Into<String>,
-        entity_name: impl Into<String>,
-        summary: impl Into<String>,
-        score: f32,
-        source_refs: Vec<SourceRef>,
-    ) -> Self {
+    pub fn new(params: RetrievedContextNewParams) -> Self {
+        let RetrievedContextNewParams {
+            entity_id,
+            entity_name,
+            summary,
+            score,
+            source_refs,
+        } = params;
         Self {
-            entity_id: entity_id.into(),
-            entity_name: entity_name.into(),
-            summary: summary.into(),
+            entity_id,
+            entity_name,
+            summary,
             score,
             source_refs,
             incomplete: false,

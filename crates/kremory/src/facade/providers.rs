@@ -49,6 +49,36 @@ pub(crate) struct GraphOpenParams {
     pub allowed_entity_types: Vec<String>,
 }
 
+/// Bundled non-generic parameters for [`open_graph`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). The `path: impl AsRef<Path>`
+/// generic stays a lead positional param.
+pub(crate) struct OpenGraphParams {
+    pub llm: Arc<dyn ChatProvider>,
+    pub embedder: Arc<dyn DynEmbeddingProvider>,
+    pub embedding_dim: Option<usize>,
+    pub allowed_entity_types: Vec<String>,
+}
+
+/// Bundled non-generic parameters for [`open_engine_handle`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). The `path: impl AsRef<Path>`
+/// generic stays a lead positional param.
+pub(crate) struct OpenEngineHandleParams {
+    pub llm: Arc<dyn ChatProvider>,
+    pub embedder: Arc<dyn DynEmbeddingProvider>,
+    pub embedding_dim: Option<usize>,
+    pub allowed_entity_types: Vec<String>,
+}
+
+/// Bundled non-generic parameters for [`build_memory_with_model`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments). The
+/// `path: impl AsRef<Path>` generic stays a lead positional param.
+struct BuildMemoryWithModelParams<'a> {
+    llm: Arc<dyn ChatProvider>,
+    embedder: Arc<dyn DynEmbeddingProvider>,
+    embedding_dim: Option<usize>,
+    model: Option<&'a str>,
+}
+
 /// Open (or create) the libSQL database at `path` and return an `Arc<dyn GraphHandle>`
 /// backed by a real `EngineGraphHandle`.
 ///
@@ -65,11 +95,14 @@ pub(crate) struct GraphOpenParams {
 /// - All Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`)
 pub(crate) async fn open_graph(
     path: impl AsRef<Path>,
-    llm: Arc<dyn ChatProvider>,
-    embedder: Arc<dyn DynEmbeddingProvider>,
-    embedding_dim: Option<usize>,
-    allowed_entity_types: Vec<String>,
+    params: OpenGraphParams,
 ) -> Result<(Arc<dyn GraphHandle>, Arc<TemporalGraph>)> {
+    let OpenGraphParams {
+        llm,
+        embedder,
+        embedding_dim,
+        allowed_entity_types,
+    } = params;
     let path_str = path
         .as_ref()
         .to_str()
@@ -204,11 +237,14 @@ pub(crate) async fn open_graph_no_llm(
 /// Per arch spec §3.3 (two-Engine WAL safety note).
 pub(crate) async fn open_engine_handle(
     path: impl AsRef<Path>,
-    llm: Arc<dyn ChatProvider>,
-    embedder: Arc<dyn DynEmbeddingProvider>,
-    embedding_dim: Option<usize>,
-    allowed_entity_types: Vec<String>,
+    params: OpenEngineHandleParams,
 ) -> Result<(EngineGraphHandle, Arc<TemporalGraph>)> {
+    let OpenEngineHandleParams {
+        llm,
+        embedder,
+        embedding_dim,
+        allowed_entity_types,
+    } = params;
     let path_str = path
         .as_ref()
         .to_str()
@@ -324,7 +360,16 @@ pub async fn with_ollama_at_model(
         EmbedderArc::<Ollama>::new(embed_provider),
     ));
 
-    build_memory_with_model(path, llm, embedder, Some(768), Some(&model_for_warmup)).await
+    build_memory_with_model(
+        path,
+        BuildMemoryWithModelParams {
+            llm,
+            embedder,
+            embedding_dim: Some(768),
+            model: Some(&model_for_warmup),
+        },
+    )
+    .await
 }
 
 /// Open with Ollama at a custom URL.
@@ -359,7 +404,16 @@ pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> R
     ));
 
     // nomic-embed-text outputs 768-dim vectors.
-    build_memory_with_model(path, llm, embedder, Some(768), Some("qwen3.5:9b-mlx")).await
+    build_memory_with_model(
+        path,
+        BuildMemoryWithModelParams {
+            llm,
+            embedder,
+            embedding_dim: Some(768),
+            model: Some("qwen3.5:9b-mlx"),
+        },
+    )
+    .await
 }
 
 /// Open with OpenAI. Requires `$OPENAI_API_KEY`.
@@ -393,7 +447,16 @@ pub async fn with_openai(path: impl AsRef<Path>) -> Result<Memory> {
     ));
 
     // text-embedding-3-small outputs 1536-dim vectors.
-    build_memory_with_model(path, llm, embedder, Some(1536), Some("gpt-4o-mini")).await
+    build_memory_with_model(
+        path,
+        BuildMemoryWithModelParams {
+            llm,
+            embedder,
+            embedding_dim: Some(1536),
+            model: Some("gpt-4o-mini"),
+        },
+    )
+    .await
 }
 
 /// Open with Anthropic. Requires `$ANTHROPIC_API_KEY`.
@@ -454,10 +517,12 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
     // (24-hour server-side schema cache) is reached at startup.
     build_memory_with_model(
         path,
-        llm,
-        embedder,
-        Some(384),
-        Some("claude-3-haiku-20240307"),
+        BuildMemoryWithModelParams {
+            llm,
+            embedder,
+            embedding_dim: Some(384),
+            model: Some("claude-3-haiku-20240307"),
+        },
     )
     .await
 }
@@ -473,11 +538,14 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
 /// warm only.
 async fn build_memory_with_model(
     path: impl AsRef<Path>,
-    llm: Arc<dyn ChatProvider>,
-    embedder: Arc<dyn DynEmbeddingProvider>,
-    embedding_dim: Option<usize>,
-    model: Option<&str>,
+    params: BuildMemoryWithModelParams<'_>,
 ) -> Result<Memory> {
+    let BuildMemoryWithModelParams {
+        llm,
+        embedder,
+        embedding_dim,
+        model,
+    } = params;
     // Initialize bundled provider rates (idempotent — second call is a no-op).
     // Errors are logged but not fatal; cost counters will skip emission with a
     // one-shot warn inside TokenTrackingChatProvider.
@@ -490,10 +558,12 @@ async fn build_memory_with_model(
 
     let (graph, temporal_graph) = open_graph(
         path.as_ref(),
-        llm.clone(),
-        embedder.clone(),
-        embedding_dim,
-        vec![],
+        OpenGraphParams {
+            llm: llm.clone(),
+            embedder: embedder.clone(),
+            embedding_dim,
+            allowed_entity_types: vec![],
+        },
     )
     .await?;
 

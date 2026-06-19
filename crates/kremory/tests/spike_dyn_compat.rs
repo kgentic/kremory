@@ -30,7 +30,10 @@ use kremory::core::ingest::DreamPassOpts;
 use kremory::facade::DreamSummary;
 use kremory::memory::{
     events::EnrichmentEventSink,
-    graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams},
+    graph::{
+        GraphAssertEntityTypeParams, GraphHandle, GraphIngestEpisodeParams, GraphSearchParams,
+        GraphSubmitDreamParams,
+    },
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
         DreamStatus, EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
@@ -95,12 +98,7 @@ impl GraphHandle for StubEngineGraphHandle {
         unimplemented!("spike stub")
     }
 
-    async fn graph_search(
-        &self,
-        _namespace: &Namespace,
-        _query: &str,
-        _opts: &SearchOpts,
-    ) -> Result<Vec<RetrievedContext>> {
+    async fn graph_search(&self, _params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>> {
         unimplemented!("spike stub")
     }
 
@@ -122,9 +120,7 @@ impl GraphHandle for StubEngineGraphHandle {
 
     async fn graph_assert_entity_type(
         &self,
-        _entity_id: &str,
-        _entity_type_id: u32,
-        _group_id: Option<&str>,
+        _params: GraphAssertEntityTypeParams<'_>,
     ) -> Result<()> {
         unimplemented!("spike stub")
     }
@@ -270,15 +266,8 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
         self.engine_handle.graph_is_consolidating(namespace).await
     }
 
-    async fn graph_search(
-        &self,
-        namespace: &Namespace,
-        query: &str,
-        opts: &SearchOpts,
-    ) -> Result<Vec<RetrievedContext>> {
-        self.engine_handle
-            .graph_search(namespace, query, opts)
-            .await
+    async fn graph_search(&self, params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>> {
+        self.engine_handle.graph_search(params).await
     }
 
     async fn graph_run_consolidation(
@@ -301,13 +290,9 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
 
     async fn graph_assert_entity_type(
         &self,
-        entity_id: &str,
-        entity_type_id: u32,
-        group_id: Option<&str>,
+        params: GraphAssertEntityTypeParams<'_>,
     ) -> Result<()> {
-        self.engine_handle
-            .graph_assert_entity_type(entity_id, entity_type_id, group_id)
-            .await
+        self.engine_handle.graph_assert_entity_type(params).await
     }
 }
 

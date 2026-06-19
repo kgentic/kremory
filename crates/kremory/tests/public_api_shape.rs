@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use async_trait::async_trait;
 use kremory::memory::{
-    types::{CancelOutcome, CancelledPhase, DreamPhaseResult, RetrievedContext, SearchOpts},
+    types::{CancelOutcome, CancelledPhase, DreamPhaseResult, RetrievedContext},
     ChatProvider,
 };
 
@@ -132,9 +132,7 @@ impl GraphHandle for StubHandle {
 
     async fn graph_search(
         &self,
-        _namespace: &Namespace,
-        _query: &str,
-        _opts: &SearchOpts,
+        _params: kremory::GraphSearchParams<'_>,
     ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
         Ok(vec![])
     }
@@ -172,9 +170,7 @@ impl GraphHandle for StubHandle {
 
     async fn graph_assert_entity_type(
         &self,
-        _entity_id: &str,
-        _entity_type_id: u32,
-        _group_id: Option<&str>,
+        _params: kremory::GraphAssertEntityTypeParams<'_>,
     ) -> kremory::memory::types::Result<()> {
         Ok(())
     }

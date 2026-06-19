@@ -102,7 +102,7 @@ use crate::memory::{
         DreamPhaseResult, DreamStatus, EpisodeCommit, Namespace, NamespacePolicy, RetrievedContext,
         SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
     },
-    ChatProvider, GraphHandle, MemoryError, Result,
+    ChatProvider, GraphAssertEntityTypeParams, GraphHandle, MemoryError, Result,
 };
 
 // ── Type-state markers ────────────────────────────────────────────────────────
@@ -1067,15 +1067,8 @@ impl Memory {
     /// # ADR reference
     ///
     /// Phase C DoD C5 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
-    pub async fn assert_entity_type(
-        &self,
-        entity_id: &str,
-        entity_type_id: u32,
-        group_id: Option<&str>,
-    ) -> Result<()> {
-        self.graph
-            .graph_assert_entity_type(entity_id, entity_type_id, group_id)
-            .await
+    pub async fn assert_entity_type(&self, params: GraphAssertEntityTypeParams<'_>) -> Result<()> {
+        self.graph.graph_assert_entity_type(params).await
     }
 
     /// Start a dream scheduler background task at runtime.
@@ -1124,4 +1117,4 @@ impl Memory {
 }
 
 mod builder;
-pub use builder::MemoryBuilder;
+pub use builder::{MemoryBuilder, WithLlmTrackedParams};

@@ -264,6 +264,16 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 }
 
+/// Bundled parameters for [`MemoryBuilder::with_llm_tracked`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). The generic `llm: L`
+/// stays a lead positional param; the two label strings are bundled here.
+pub struct WithLlmTrackedParams {
+    /// Provider label (e.g. `"openai"`, `"ollama"`) for metric/cost attribution.
+    pub provider: String,
+    /// Model label (e.g. `"gpt-4o-mini"`) for metric/cost attribution.
+    pub model: String,
+}
+
 impl MemoryBuilder<NoLlm, NoEmb> {
     /// Construct the initial builder state for `Memory::open`.
     ///
@@ -342,7 +352,13 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     /// #     L: kremory::memory::ChatProvider + Send + Sync + 'static,
     /// # {
     /// let memory = Memory::open("./agent.db")
-    ///     .with_llm_tracked("openai", "gpt-4o-mini", my_openai_client)
+    ///     .with_llm_tracked(
+    ///         kremory::WithLlmTrackedParams {
+    ///             provider: "openai".into(),
+    ///             model: "gpt-4o-mini".into(),
+    ///         },
+    ///         my_openai_client,
+    ///     )
     ///     .with_embedder(my_embedder)
     ///     .await?;
     /// # Ok(())
@@ -350,10 +366,10 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     /// ```
     pub fn with_llm_tracked<L: ChatProvider + Send + Sync + 'static>(
         self,
-        provider: impl Into<String>,
-        model: impl Into<String>,
+        params: WithLlmTrackedParams,
         llm: L,
     ) -> MemoryBuilder<WithLlm, NoEmb> {
+        let WithLlmTrackedParams { provider, model } = params;
         let tracked = TokenTrackingChatProvider::new(llm, provider, model);
         MemoryBuilder {
             path: self.path,
@@ -532,10 +548,12 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                     // Row 2: LLM only → default Llm extractor
                     providers::open_graph(
                         self.path.as_path(),
-                        llm.clone(),
-                        embedder.clone(),
-                        self.embedding_dim,
-                        self.allowed_entity_types,
+                        providers::OpenGraphParams {
+                            llm: llm.clone(),
+                            embedder: embedder.clone(),
+                            embedding_dim: self.embedding_dim,
+                            allowed_entity_types: self.allowed_entity_types,
+                        },
                     )
                     .await?
                 }
@@ -544,10 +562,12 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                     // Row 2 (no ner feature): default Llm extractor
                     providers::open_graph(
                         self.path.as_path(),
-                        llm.clone(),
-                        embedder.clone(),
-                        self.embedding_dim,
-                        self.allowed_entity_types,
+                        providers::OpenGraphParams {
+                            llm: llm.clone(),
+                            embedder: embedder.clone(),
+                            embedding_dim: self.embedding_dim,
+                            allowed_entity_types: self.allowed_entity_types,
+                        },
                     )
                     .await?
                 }
@@ -606,10 +626,12 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 // branches moved `self.allowed_entity_types`).
                 let (engine_handle, _tg2) = providers::open_engine_handle(
                     self.path.as_path(),
-                    llm.clone(),
-                    embedder.clone(),
-                    self.embedding_dim,
-                    allowed_entity_types_for_bg.clone(),
+                    providers::OpenEngineHandleParams {
+                        llm: llm.clone(),
+                        embedder: embedder.clone(),
+                        embedding_dim: self.embedding_dim,
+                        allowed_entity_types: allowed_entity_types_for_bg.clone(),
+                    },
                 )
                 .await?;
 
@@ -623,10 +645,12 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 // WAL serialises concurrent writes safely (Spike B + C, arch spec §6).
                 let (bg_engine_handle_for_ingestor, _tg3) = providers::open_engine_handle(
                     self.path.as_path(),
-                    llm.clone(),
-                    embedder.clone(),
-                    self.embedding_dim,
-                    allowed_entity_types_for_bg,
+                    providers::OpenEngineHandleParams {
+                        llm: llm.clone(),
+                        embedder: embedder.clone(),
+                        embedding_dim: self.embedding_dim,
+                        allowed_entity_types: allowed_entity_types_for_bg,
+                    },
                 )
                 .await?;
 

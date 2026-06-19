@@ -702,7 +702,13 @@ mod tests {
     // Helper: build a minimal RetrievedContext via ::new() then patch
     // entity_type_id / entity_type_name directly (within-crate access allowed).
     fn make_ctx(entity_type_id: u32, entity_type_name: &str) -> RetrievedContext {
-        let mut ctx = RetrievedContext::new("ent-1", "Alice", "summary text", 0.9_f32, vec![]);
+        let mut ctx = RetrievedContext::new(kremory::RetrievedContextNewParams {
+            entity_id: "ent-1".to_string(),
+            entity_name: "Alice".to_string(),
+            summary: "summary text".to_string(),
+            score: 0.9_f32,
+            source_refs: vec![],
+        });
         ctx.entity_type_id = entity_type_id;
         ctx.entity_type_name = entity_type_name.to_string();
         ctx

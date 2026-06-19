@@ -444,7 +444,11 @@ impl JsMemory {
         group_id: Option<String>,
     ) -> napi::Result<()> {
         self.inner
-            .assert_entity_type(&entity_id, entity_type_id, group_id.as_deref())
+            .assert_entity_type(kremory::GraphAssertEntityTypeParams {
+                entity_id: &entity_id,
+                entity_type_id,
+                group_id: group_id.as_deref(),
+            })
             .await
             .map_err(|e| {
                 napi::Error::from_reason(format!("kremory assert_entity_type failed: {e}"))

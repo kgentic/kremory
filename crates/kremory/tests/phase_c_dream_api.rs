@@ -117,9 +117,13 @@ async fn dream_api_dispatch_compiles_and_succeeds_on_stub() {
     assert!(ghosts.is_empty(), "stub returns empty ghost list");
 
     // C5: assert_entity_type dispatches.
-    mem.assert_entity_type("test-entity", 1, Some("default"))
-        .await
-        .expect("assert_entity_type on stub returns Ok");
+    mem.assert_entity_type(kremory::GraphAssertEntityTypeParams {
+        entity_id: "test-entity",
+        entity_type_id: 1,
+        group_id: Some("default"),
+    })
+    .await
+    .expect("assert_entity_type on stub returns Ok");
 }
 
 // ── C11: scheduler lifecycle — start + stop reports cancellation ─────────────

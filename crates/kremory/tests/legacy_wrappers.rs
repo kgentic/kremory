@@ -17,7 +17,7 @@ use kremory::core::error::IngestStatus;
 use kremory::memory::{
     types::{
         BatchStatus, CancelOutcome, DreamHandle, DreamPhaseResult, DreamStatus, EpisodeCommit,
-        IngestResult, Namespace, RetrievedContext, SearchOpts, SourceKind, SourceRef,
+        IngestResult, Namespace, RetrievedContext, SourceKind, SourceRef,
     },
     ChatProvider, GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams,
 };
@@ -123,9 +123,7 @@ impl GraphHandle for LegacyStub {
 
     async fn graph_search(
         &self,
-        _namespace: &Namespace,
-        _query: &str,
-        _opts: &SearchOpts,
+        _params: kremory::GraphSearchParams<'_>,
     ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
         Ok(vec![])
     }
@@ -163,9 +161,7 @@ impl GraphHandle for LegacyStub {
 
     async fn graph_assert_entity_type(
         &self,
-        _entity_id: &str,
-        _entity_type_id: u32,
-        _group_id: Option<&str>,
+        _params: kremory::GraphAssertEntityTypeParams<'_>,
     ) -> kremory::memory::types::Result<()> {
         Ok(())
     }

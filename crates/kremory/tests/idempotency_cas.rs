@@ -18,7 +18,7 @@ use kremory::memory::{
     submit_dream_phase,
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamOpts, DreamPhaseResult,
-        DreamStatus, EpisodeCommit, IngestStatus, Namespace, RetrievedContext, SearchOpts,
+        DreamStatus, EpisodeCommit, IngestStatus, Namespace, RetrievedContext,
     },
     ChatProvider, GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams,
     SubmitDreamPhaseParams,
@@ -143,9 +143,7 @@ impl GraphHandle for StubIdempotentHandle {
 
     async fn graph_search(
         &self,
-        _namespace: &Namespace,
-        _query: &str,
-        _opts: &SearchOpts,
+        _params: kremory::GraphSearchParams<'_>,
     ) -> kremory::memory::types::Result<Vec<RetrievedContext>> {
         Ok(vec![])
     }
@@ -183,9 +181,7 @@ impl GraphHandle for StubIdempotentHandle {
 
     async fn graph_assert_entity_type(
         &self,
-        _entity_id: &str,
-        _entity_type_id: u32,
-        _group_id: Option<&str>,
+        _params: kremory::GraphAssertEntityTypeParams<'_>,
     ) -> kremory::memory::types::Result<()> {
         Ok(())
     }

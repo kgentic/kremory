@@ -42,7 +42,7 @@ use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::ingest::Engine;
 use kremory::core::provider::{ChatProvider, MockChatResponse, NullEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
-use kremory::memory::engine_handle::EngineGraphHandle;
+use kremory::memory::engine_handle::{EngineGraphHandle, WithConfigParams};
 use kremory::memory::graph::{GraphHandle, GraphIngestEpisodeParams};
 use kremory::memory::types::{Namespace, SourceKind, SourceRef, SubmitOpts};
 
@@ -92,7 +92,12 @@ async fn build_engine_handle(db_path: &str) -> EngineGraphHandle {
     let null_emb: Arc<dyn kremory::core::provider::DynEmbeddingProvider> =
         Arc::new(NullEmbeddingProvider { dim: 384 });
 
-    EngineGraphHandle::with_config(temporal, chat, null_emb, config)
+    EngineGraphHandle::with_config(WithConfigParams {
+        graph: temporal,
+        chat,
+        embedder: null_emb,
+        config,
+    })
 }
 
 // ---------------------------------------------------------------------------

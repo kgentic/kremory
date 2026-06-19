@@ -41,10 +41,13 @@ use crate::core::background::{
 use crate::core::error::IngestStatus;
 use crate::memory::engine_handle::{namespace_to_group_id, EngineGraphHandle};
 use crate::memory::{
-    graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams},
+    graph::{
+        GraphAssertEntityTypeParams, GraphHandle, GraphIngestEpisodeParams, GraphSearchParams,
+        GraphSubmitDreamParams,
+    },
     types::{
         BatchStatus, CancelOutcome, DreamHandle, DreamPhaseResult, DreamStatus, EpisodeCommit,
-        MemoryError, Namespace, Result, RetrievedContext, SearchOpts,
+        MemoryError, Namespace, Result, RetrievedContext,
     },
     ChatProvider,
 };
@@ -391,16 +394,9 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
     //
     // ROUTING: EngineGraphHandle — read-only; engine handles all search.
 
-    async fn graph_search(
-        &self,
-        namespace: &Namespace,
-        query: &str,
-        opts: &SearchOpts,
-    ) -> Result<Vec<RetrievedContext>> {
+    async fn graph_search(&self, params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>> {
         // ROUTING: delegate to EngineGraphHandle.
-        self.engine_handle
-            .graph_search(namespace, query, opts)
-            .await
+        self.engine_handle.graph_search(params).await
     }
 
     // ── 11. graph_run_consolidation ──────────────────────────────────────────
@@ -445,13 +441,9 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
 
     async fn graph_assert_entity_type(
         &self,
-        entity_id: &str,
-        entity_type_id: u32,
-        group_id: Option<&str>,
+        params: GraphAssertEntityTypeParams<'_>,
     ) -> Result<()> {
         // ROUTING: delegate to EngineGraphHandle.
-        self.engine_handle
-            .graph_assert_entity_type(entity_id, entity_type_id, group_id)
-            .await
+        self.engine_handle.graph_assert_entity_type(params).await
     }
 }
