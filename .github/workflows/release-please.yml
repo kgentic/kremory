@@ -1,12 +1,13 @@
 name: release-please
 
+# CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
+# suspended. Reduced to manual `workflow_dispatch` only (no auto release PRs).
+# RESTORE when billing returns:
+#   on:
+#     push: { branches: [main] }
+#     pull_request: { branches: [main] }
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: write

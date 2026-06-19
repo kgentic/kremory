@@ -5,18 +5,16 @@ name: napi-ci
 # Gates: parity test (ADR-031 Layer 3) + cargo test + node smoke + types check.
 # Triggered on PRs touching crates/kremory-napi/** or this workflow itself.
 
+# CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
+# suspended. Reduced to manual `workflow_dispatch` only. RESTORE when billing returns:
+#   on:
+#     push:
+#       branches: [main]
+#       paths: ['crates/kremory-napi/**', 'crates/kremory/**', '.github/workflows/napi-ci.yml']
+#     pull_request:
+#       paths: ['crates/kremory-napi/**', 'crates/kremory/**', '.github/workflows/napi-ci.yml']
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'crates/kremory-napi/**'
-      - 'crates/kremory/**'
-      - '.github/workflows/napi-ci.yml'
-  pull_request:
-    paths:
-      - 'crates/kremory-napi/**'
-      - 'crates/kremory/**'
-      - '.github/workflows/napi-ci.yml'
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

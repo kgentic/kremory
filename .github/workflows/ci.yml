@@ -8,11 +8,14 @@ name: ci
 #   Gate 1 (compile) → Gate 2 (lint) → Gates 3/5/6/7 in parallel
 #   Gate 4 (bench)   — nightly + on version tag, independent schedule
 
+# CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
+# suspended (no minutes available). Reduced to manual `workflow_dispatch` only so
+# pushes/PRs don't queue failed/charged runs. RESTORE when billing returns:
+#   on:
+#     push: { branches: [main] }
+#     pull_request: { branches: [main] }
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
