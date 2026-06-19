@@ -1,270 +1,278 @@
-name: ci
-
-# Tessa 7 CI Gates — Foundation Sprint Phase C (2026-06-08)
-# Implements all 7 gates from option-e-byoe-redesign-test-strategy-2026-06-08 §8
-# and ADR-040 §4 MSRV matrix.
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ WORKFLOW FULLY DISABLED 2026-06-19 — kgentic org GitHub Actions billing   ║
+# ║ suspended, no restore expected soon. ENTIRE body commented out so NOTHING ║
+# ║ runs (no push / PR / schedule / workflow_dispatch). Not paying for CI.    ║
+# ║ RESTORE: `git revert` this commit, or strip the leading '# ' from each    ║
+# ║ line below. Original trigger config is preserved verbatim in comments.    ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 #
-# Gate order (per Tessa §8 dependency graph):
-#   Gate 1 (compile) → Gate 2 (lint) → Gates 3/5/6/7 in parallel
-#   Gate 4 (bench)   — nightly + on version tag, independent schedule
-
-# CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
-# suspended (no minutes available). Reduced to manual `workflow_dispatch` only so
-# pushes/PRs don't queue failed/charged runs. RESTORE when billing returns:
-#   on:
-#     push: { branches: [main] }
-#     pull_request: { branches: [main] }
-on:
-  workflow_dispatch:
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-  RUST_BACKTRACE: 1
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gate 1 — Compile
-# cargo build --features ner on Rust 1.86 stable
-# ──────────────────────────────────────────────────────────────────────────────
-jobs:
-  gate1-compile:
-    name: "Gate 1: compile (--features ner)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.86"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: Build workspace with ner feature
-        run: cargo build --features ner
-        working-directory: .
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gate 2 — Lint
-# cargo clippy --workspace --all-targets --features ner -- -D warnings
-# cargo fmt --check
-# ──────────────────────────────────────────────────────────────────────────────
-  gate2-lint:
-    name: "Gate 2: lint (clippy + fmt)"
-    needs: gate1-compile
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.86"
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: Clippy (workspace, all-targets, deny warnings)
-        run: cargo clippy --workspace --all-targets --features ner -- -D warnings
-      - name: Rustfmt check
-        run: cargo fmt --check
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gate 3 — Unit + Integration tests
-# cargo test --workspace --features ner
-# Excludes e2e tests (guarded by #[ignore] or e2e feature flag).
-# Ollama-dependent tests are #[ignore] — not required here.
-# ──────────────────────────────────────────────────────────────────────────────
-  gate3-test:
-    name: "Gate 3: unit + integration tests"
-    needs: gate2-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.86"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: Cargo test (workspace, ner feature)
-        run: cargo test --workspace --features ner
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gate 5 — napi binding tests
-# pnpm test from crates/kremory-napi/
-#
-# OLLAMA_HOST guard: Gate 5 smoke tests require a live Ollama instance for
-# provider-dependent tests. When OLLAMA_HOST is not set in CI, those tests
-# are skipped automatically (guarded via process.env.OLLAMA_HOST check in the
-# test files per TD-006 remediation pattern). The Gate itself always runs;
-# only the provider-dependent cases skip.
-# ──────────────────────────────────────────────────────────────────────────────
-  gate5-napi:
-    name: "Gate 5: napi binding tests"
-    needs: gate2-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.86"
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: crates/kremory-napi/pnpm-lock.yaml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: Install napi dependencies
-        working-directory: crates/kremory-napi
-        run: pnpm install --frozen-lockfile
-      - name: Build napi binary (debug)
-        working-directory: crates/kremory-napi
-        run: pnpm exec napi build --platform
-      - name: Run napi tests
-        working-directory: crates/kremory-napi
-        # OLLAMA_HOST intentionally unset — provider-dependent tests self-skip.
-        # Gate passes when all non-provider tests pass.
-        run: pnpm test
-        env:
-          # No OLLAMA_HOST — smoke tests requiring live Ollama will self-skip
-          KREMORY_SKIP_GLINER_TESTS: "1"
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gate 6 — MSRV + feature correctness (ADR-040 §4)
-# Step A: cargo +1.86 build --features ner  → expect exit 0
-# Step B: cargo +1.85 build --features ner  → expect non-zero (AFIT dyn-compat)
-# Step C: cargo build --no-default-features --features facade
-#         → expect "no method named `with_gliner`" (ner feature gate check)
-# ──────────────────────────────────────────────────────────────────────────────
-  gate6-msrv:
-    name: "Gate 6: MSRV + feature correctness"
-    needs: gate2-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust 1.86 (MSRV floor)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.86"
-      - name: Install Rust 1.85 (floor failure assertion)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: "Step A — MSRV floor build (1.86 must succeed)"
-        run: |
-          cargo +1.86 build --features ner
-          echo "PASS: Rust 1.86 build succeeded"
-      - name: "Step B — MSRV floor failure assertion (1.85 must fail)"
-        run: |
-          if cargo +1.85 build --features ner 2>&1 | grep -q "error"; then
-            echo "PASS: Rust 1.85 correctly fails to compile (AFIT dyn-compat not available)"
-          else
-            echo "FAIL: expected Rust 1.85 to fail (AFIT dyn-compat requires >= 1.86)"
-            exit 1
-          fi
-      - name: "Step C — feature gate: with_gliner absent without ner feature"
-        run: |
-          # Build kremory without ner feature — with_gliner must not exist.
-          # Grep for the specific error message emitted by rustc when a method is absent.
-          if cargo build -p kremory --no-default-features --features facade 2>&1 \
-              | grep -q "no method named \`with_gliner\`"; then
-            echo "PASS: with_gliner correctly absent when ner feature disabled"
-          else
-            # If no error at all, the method leaked outside the ner feature gate
-            BUILD_OUT=$(cargo build -p kremory --no-default-features --features facade 2>&1)
-            if echo "$BUILD_OUT" | grep -q "error"; then
-              echo "FAIL: build failed for unexpected reason:"
-              echo "$BUILD_OUT" | grep "error" | head -10
-              exit 1
-            else
-              echo "FAIL: with_gliner compiled without ner feature — feature gate is broken"
-              exit 1
-            fi
-          fi
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gate 7 — Deletion + deprecation verification
-# Step A: rg old symbol names → expect no matches (exit 1 from rg = PASS)
-# Step B: rg #[async_trait] scoped to core/ + facade/ + lib.rs → expect no matches
-#         NOTE: memory/ module intentionally excluded — async_trait still present
-#         there (out of Phase E scope; tracked separately in sprint plan).
-# ──────────────────────────────────────────────────────────────────────────────
-  gate7-deletion:
-    name: "Gate 7: deletion + deprecation verification"
-    needs: gate2-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install ripgrep
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ripgrep
-      - name: "Step A — old symbol names absent from source"
-        run: |
-          # rg returns exit 1 when no matches found — that is our PASS condition.
-          if rg "NuExtract|GraphitiStyle|HybridGliner|ProductionExtractor|KREMORY_EXTRACTOR" \
-              crates/ \
-              --glob "*.rs" \
-              --glob "*.toml" \
-              -l; then
-            echo "FAIL: deleted symbols still present in source"
-            exit 1
-          else
-            echo "PASS: no deleted symbols found"
-          fi
-      - name: "Step B — async_trait absent from core/ + facade/ + lib.rs (memory/ excluded)"
-        run: |
-          # Scoped grep: core/ + facade/ + lib.rs only.
-          # memory/ still uses async_trait (out of Phase E scope — tracked in sprint plan).
-          if rg '#\[async_trait\]' \
-              crates/kremory/src/core/ \
-              crates/kremory/src/facade/ \
-              crates/kremory/src/lib.rs \
-              --glob "*.rs"; then
-            echo "FAIL: #[async_trait] found in core/ or facade/ or lib.rs"
-            exit 1
-          else
-            echo "PASS: no #[async_trait] in scoped paths (memory/ intentionally excluded)"
-          fi
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gate 4 — Bench regression (nightly + on version tag only)
-# criterion baseline stored as CI artifact for comparison.
-#
-# NOTE: Gate 4 runs on local hardware with a consistent perf baseline until a
-# dedicated CI runner is available. The nightly schedule below is wired but
-# commented out — uncomment when a stable-perf runner is provisioned.
-# ──────────────────────────────────────────────────────────────────────────────
-  gate4-bench:
-    name: "Gate 4: bench regression (nightly/tag)"
-    # Only run on version tags or manual dispatch — not on every PR.
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.86"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: Restore criterion baselines
-        uses: actions/cache@v4
-        with:
-          path: target/criterion
-          key: criterion-baselines-${{ runner.os }}-${{ github.ref }}
-          restore-keys: |
-            criterion-baselines-${{ runner.os }}-
-      - name: Run benchmarks
-        run: cargo bench --workspace --features ner
-      - name: Save criterion baselines
-        uses: actions/upload-artifact@v4
-        with:
-          name: criterion-baselines-${{ github.sha }}
-          path: target/criterion
-          retention-days: 90
+# name: ci
+# 
+# # Tessa 7 CI Gates — Foundation Sprint Phase C (2026-06-08)
+# # Implements all 7 gates from option-e-byoe-redesign-test-strategy-2026-06-08 §8
+# # and ADR-040 §4 MSRV matrix.
+# #
+# # Gate order (per Tessa §8 dependency graph):
+# #   Gate 1 (compile) → Gate 2 (lint) → Gates 3/5/6/7 in parallel
+# #   Gate 4 (bench)   — nightly + on version tag, independent schedule
+# 
+# # CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
+# # suspended (no minutes available). Reduced to manual `workflow_dispatch` only so
+# # pushes/PRs don't queue failed/charged runs. RESTORE when billing returns:
+# #   on:
+# #     push: { branches: [main] }
+# #     pull_request: { branches: [main] }
+# on:
+#   workflow_dispatch:
+# 
+# env:
+#   CARGO_TERM_COLOR: always
+#   CARGO_INCREMENTAL: 0
+#   RUST_BACKTRACE: 1
+# 
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Gate 1 — Compile
+# # cargo build --features ner on Rust 1.86 stable
+# # ──────────────────────────────────────────────────────────────────────────────
+# jobs:
+#   gate1-compile:
+#     name: "Gate 1: compile (--features ner)"
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: "1.86"
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: ". -> target"
+#       - name: Build workspace with ner feature
+#         run: cargo build --features ner
+#         working-directory: .
+# 
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Gate 2 — Lint
+# # cargo clippy --workspace --all-targets --features ner -- -D warnings
+# # cargo fmt --check
+# # ──────────────────────────────────────────────────────────────────────────────
+#   gate2-lint:
+#     name: "Gate 2: lint (clippy + fmt)"
+#     needs: gate1-compile
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: "1.86"
+#           components: clippy, rustfmt
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: ". -> target"
+#       - name: Clippy (workspace, all-targets, deny warnings)
+#         run: cargo clippy --workspace --all-targets --features ner -- -D warnings
+#       - name: Rustfmt check
+#         run: cargo fmt --check
+# 
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Gate 3 — Unit + Integration tests
+# # cargo test --workspace --features ner
+# # Excludes e2e tests (guarded by #[ignore] or e2e feature flag).
+# # Ollama-dependent tests are #[ignore] — not required here.
+# # ──────────────────────────────────────────────────────────────────────────────
+#   gate3-test:
+#     name: "Gate 3: unit + integration tests"
+#     needs: gate2-lint
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: "1.86"
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: ". -> target"
+#       - name: Cargo test (workspace, ner feature)
+#         run: cargo test --workspace --features ner
+# 
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Gate 5 — napi binding tests
+# # pnpm test from crates/kremory-napi/
+# #
+# # OLLAMA_HOST guard: Gate 5 smoke tests require a live Ollama instance for
+# # provider-dependent tests. When OLLAMA_HOST is not set in CI, those tests
+# # are skipped automatically (guarded via process.env.OLLAMA_HOST check in the
+# # test files per TD-006 remediation pattern). The Gate itself always runs;
+# # only the provider-dependent cases skip.
+# # ──────────────────────────────────────────────────────────────────────────────
+#   gate5-napi:
+#     name: "Gate 5: napi binding tests"
+#     needs: gate2-lint
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: "1.86"
+#       - uses: pnpm/action-setup@v3
+#         with:
+#           version: 9
+#       - uses: actions/setup-node@v4
+#         with:
+#           node-version: 20
+#           cache: pnpm
+#           cache-dependency-path: crates/kremory-napi/pnpm-lock.yaml
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: ". -> target"
+#       - name: Install napi dependencies
+#         working-directory: crates/kremory-napi
+#         run: pnpm install --frozen-lockfile
+#       - name: Build napi binary (debug)
+#         working-directory: crates/kremory-napi
+#         run: pnpm exec napi build --platform
+#       - name: Run napi tests
+#         working-directory: crates/kremory-napi
+#         # OLLAMA_HOST intentionally unset — provider-dependent tests self-skip.
+#         # Gate passes when all non-provider tests pass.
+#         run: pnpm test
+#         env:
+#           # No OLLAMA_HOST — smoke tests requiring live Ollama will self-skip
+#           KREMORY_SKIP_GLINER_TESTS: "1"
+# 
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Gate 6 — MSRV + feature correctness (ADR-040 §4)
+# # Step A: cargo +1.86 build --features ner  → expect exit 0
+# # Step B: cargo +1.85 build --features ner  → expect non-zero (AFIT dyn-compat)
+# # Step C: cargo build --no-default-features --features facade
+# #         → expect "no method named `with_gliner`" (ner feature gate check)
+# # ──────────────────────────────────────────────────────────────────────────────
+#   gate6-msrv:
+#     name: "Gate 6: MSRV + feature correctness"
+#     needs: gate2-lint
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - name: Install Rust 1.86 (MSRV floor)
+#         uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: "1.86"
+#       - name: Install Rust 1.85 (floor failure assertion)
+#         uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: "1.85"
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: ". -> target"
+#       - name: "Step A — MSRV floor build (1.86 must succeed)"
+#         run: |
+#           cargo +1.86 build --features ner
+#           echo "PASS: Rust 1.86 build succeeded"
+#       - name: "Step B — MSRV floor failure assertion (1.85 must fail)"
+#         run: |
+#           if cargo +1.85 build --features ner 2>&1 | grep -q "error"; then
+#             echo "PASS: Rust 1.85 correctly fails to compile (AFIT dyn-compat not available)"
+#           else
+#             echo "FAIL: expected Rust 1.85 to fail (AFIT dyn-compat requires >= 1.86)"
+#             exit 1
+#           fi
+#       - name: "Step C — feature gate: with_gliner absent without ner feature"
+#         run: |
+#           # Build kremory without ner feature — with_gliner must not exist.
+#           # Grep for the specific error message emitted by rustc when a method is absent.
+#           if cargo build -p kremory --no-default-features --features facade 2>&1 \
+#               | grep -q "no method named \`with_gliner\`"; then
+#             echo "PASS: with_gliner correctly absent when ner feature disabled"
+#           else
+#             # If no error at all, the method leaked outside the ner feature gate
+#             BUILD_OUT=$(cargo build -p kremory --no-default-features --features facade 2>&1)
+#             if echo "$BUILD_OUT" | grep -q "error"; then
+#               echo "FAIL: build failed for unexpected reason:"
+#               echo "$BUILD_OUT" | grep "error" | head -10
+#               exit 1
+#             else
+#               echo "FAIL: with_gliner compiled without ner feature — feature gate is broken"
+#               exit 1
+#             fi
+#           fi
+# 
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Gate 7 — Deletion + deprecation verification
+# # Step A: rg old symbol names → expect no matches (exit 1 from rg = PASS)
+# # Step B: rg #[async_trait] scoped to core/ + facade/ + lib.rs → expect no matches
+# #         NOTE: memory/ module intentionally excluded — async_trait still present
+# #         there (out of Phase E scope; tracked separately in sprint plan).
+# # ──────────────────────────────────────────────────────────────────────────────
+#   gate7-deletion:
+#     name: "Gate 7: deletion + deprecation verification"
+#     needs: gate2-lint
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - name: Install ripgrep
+#         run: |
+#           sudo apt-get update -qq
+#           sudo apt-get install -y ripgrep
+#       - name: "Step A — old symbol names absent from source"
+#         run: |
+#           # rg returns exit 1 when no matches found — that is our PASS condition.
+#           if rg "NuExtract|GraphitiStyle|HybridGliner|ProductionExtractor|KREMORY_EXTRACTOR" \
+#               crates/ \
+#               --glob "*.rs" \
+#               --glob "*.toml" \
+#               -l; then
+#             echo "FAIL: deleted symbols still present in source"
+#             exit 1
+#           else
+#             echo "PASS: no deleted symbols found"
+#           fi
+#       - name: "Step B — async_trait absent from core/ + facade/ + lib.rs (memory/ excluded)"
+#         run: |
+#           # Scoped grep: core/ + facade/ + lib.rs only.
+#           # memory/ still uses async_trait (out of Phase E scope — tracked in sprint plan).
+#           if rg '#\[async_trait\]' \
+#               crates/kremory/src/core/ \
+#               crates/kremory/src/facade/ \
+#               crates/kremory/src/lib.rs \
+#               --glob "*.rs"; then
+#             echo "FAIL: #[async_trait] found in core/ or facade/ or lib.rs"
+#             exit 1
+#           else
+#             echo "PASS: no #[async_trait] in scoped paths (memory/ intentionally excluded)"
+#           fi
+# 
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Gate 4 — Bench regression (nightly + on version tag only)
+# # criterion baseline stored as CI artifact for comparison.
+# #
+# # NOTE: Gate 4 runs on local hardware with a consistent perf baseline until a
+# # dedicated CI runner is available. The nightly schedule below is wired but
+# # commented out — uncomment when a stable-perf runner is provisioned.
+# # ──────────────────────────────────────────────────────────────────────────────
+#   gate4-bench:
+#     name: "Gate 4: bench regression (nightly/tag)"
+#     # Only run on version tags or manual dispatch — not on every PR.
+#     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: "1.86"
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: ". -> target"
+#       - name: Restore criterion baselines
+#         uses: actions/cache@v4
+#         with:
+#           path: target/criterion
+#           key: criterion-baselines-${{ runner.os }}-${{ github.ref }}
+#           restore-keys: |
+#             criterion-baselines-${{ runner.os }}-
+#       - name: Run benchmarks
+#         run: cargo bench --workspace --features ner
+#       - name: Save criterion baselines
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: criterion-baselines-${{ github.sha }}
+#           path: target/criterion
+#           retention-days: 90

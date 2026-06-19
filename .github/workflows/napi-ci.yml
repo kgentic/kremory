@@ -1,118 +1,126 @@
-name: napi-ci
-
-# Per autonomous-ship-plan-overnight-2026-05-29 A11 + Vera RISK-003.
-# Cross-platform build matrix for @kgentic/kremory-node prebuilt binaries.
-# Gates: parity test (ADR-031 Layer 3) + cargo test + node smoke + types check.
-# Triggered on PRs touching crates/kremory-napi/** or this workflow itself.
-
-# CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
-# suspended. Reduced to manual `workflow_dispatch` only. RESTORE when billing returns:
-#   on:
-#     push:
-#       branches: [main]
-#       paths: ['crates/kremory-napi/**', 'crates/kremory/**', '.github/workflows/napi-ci.yml']
-#     pull_request:
-#       paths: ['crates/kremory-napi/**', 'crates/kremory/**', '.github/workflows/napi-ci.yml']
-on:
-  workflow_dispatch:
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-  RUST_BACKTRACE: 1
-
-jobs:
-  parity-gate:
-    name: ADR-031 Layer 3 parity gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-      - name: Parity test
-        run: cargo test -p kremory-napi --test api_parity --release
-
-  build-and-test:
-    name: build-${{ matrix.target }}
-    needs: parity-gate
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: true
-          - target: x86_64-apple-darwin
-            os: macos-13
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: crates/kremory-napi/pnpm-lock.yaml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-      - name: Install cross (linux aarch64)
-        if: matrix.cross
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross
-      - name: Install dependencies
-        working-directory: crates/kremory-napi
-        run: pnpm install --frozen-lockfile
-      - name: Build napi binary
-        working-directory: crates/kremory-napi
-        run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            pnpm exec napi build --platform --release --target ${{ matrix.target }} --use-cross
-          else
-            pnpm exec napi build --platform --release --target ${{ matrix.target }}
-          fi
-        shell: bash
-      - name: TypeScript types check
-        working-directory: crates/kremory-napi
-        run: pnpm test:types
-      - name: Node smoke tests (native only)
-        # Smoke tests run the compiled binary — only valid where target == host
-        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin' || matrix.target == 'x86_64-apple-darwin' || matrix.target == 'x86_64-pc-windows-msvc'
-        working-directory: crates/kremory-napi
-        run: pnpm test
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bindings-${{ matrix.target }}
-          path: crates/kremory-napi/*.node
-          if-no-files-found: error
-
-  rust-checks:
-    name: clippy + cargo test
-    needs: parity-gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-      - name: Clippy (all-targets, deny warnings)
-        run: cargo clippy -p kremory-napi --all-targets -- -D warnings
-      - name: Cargo test
-        run: cargo test -p kremory-napi
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ WORKFLOW FULLY DISABLED 2026-06-19 — kgentic org GitHub Actions billing   ║
+# ║ suspended, no restore expected soon. ENTIRE body commented out so NOTHING ║
+# ║ runs (no push / PR / schedule / workflow_dispatch). Not paying for CI.    ║
+# ║ RESTORE: `git revert` this commit, or strip the leading '# ' from each    ║
+# ║ line below. Original trigger config is preserved verbatim in comments.    ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# name: napi-ci
+# 
+# # Per autonomous-ship-plan-overnight-2026-05-29 A11 + Vera RISK-003.
+# # Cross-platform build matrix for @kgentic/kremory-node prebuilt binaries.
+# # Gates: parity test (ADR-031 Layer 3) + cargo test + node smoke + types check.
+# # Triggered on PRs touching crates/kremory-napi/** or this workflow itself.
+# 
+# # CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
+# # suspended. Reduced to manual `workflow_dispatch` only. RESTORE when billing returns:
+# #   on:
+# #     push:
+# #       branches: [main]
+# #       paths: ['crates/kremory-napi/**', 'crates/kremory/**', '.github/workflows/napi-ci.yml']
+# #     pull_request:
+# #       paths: ['crates/kremory-napi/**', 'crates/kremory/**', '.github/workflows/napi-ci.yml']
+# on:
+#   workflow_dispatch:
+# 
+# env:
+#   CARGO_TERM_COLOR: always
+#   CARGO_INCREMENTAL: 0
+#   RUST_BACKTRACE: 1
+# 
+# jobs:
+#   parity-gate:
+#     name: ADR-031 Layer 3 parity gate
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: '. -> target'
+#       - name: Parity test
+#         run: cargo test -p kremory-napi --test api_parity --release
+# 
+#   build-and-test:
+#     name: build-${{ matrix.target }}
+#     needs: parity-gate
+#     runs-on: ${{ matrix.os }}
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         include:
+#           - target: x86_64-unknown-linux-gnu
+#             os: ubuntu-latest
+#           - target: aarch64-unknown-linux-gnu
+#             os: ubuntu-latest
+#             cross: true
+#           - target: x86_64-apple-darwin
+#             os: macos-13
+#           - target: aarch64-apple-darwin
+#             os: macos-latest
+#           - target: x86_64-pc-windows-msvc
+#             os: windows-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#         with:
+#           targets: ${{ matrix.target }}
+#       - uses: pnpm/action-setup@v3
+#         with:
+#           version: 9
+#       - uses: actions/setup-node@v4
+#         with:
+#           node-version: 20
+#           cache: pnpm
+#           cache-dependency-path: crates/kremory-napi/pnpm-lock.yaml
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: '. -> target'
+#       - name: Install cross (linux aarch64)
+#         if: matrix.cross
+#         run: |
+#           cargo install cross --git https://github.com/cross-rs/cross
+#       - name: Install dependencies
+#         working-directory: crates/kremory-napi
+#         run: pnpm install --frozen-lockfile
+#       - name: Build napi binary
+#         working-directory: crates/kremory-napi
+#         run: |
+#           if [ "${{ matrix.cross }}" = "true" ]; then
+#             pnpm exec napi build --platform --release --target ${{ matrix.target }} --use-cross
+#           else
+#             pnpm exec napi build --platform --release --target ${{ matrix.target }}
+#           fi
+#         shell: bash
+#       - name: TypeScript types check
+#         working-directory: crates/kremory-napi
+#         run: pnpm test:types
+#       - name: Node smoke tests (native only)
+#         # Smoke tests run the compiled binary — only valid where target == host
+#         if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin' || matrix.target == 'x86_64-apple-darwin' || matrix.target == 'x86_64-pc-windows-msvc'
+#         working-directory: crates/kremory-napi
+#         run: pnpm test
+#       - name: Upload artifact
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: bindings-${{ matrix.target }}
+#           path: crates/kremory-napi/*.node
+#           if-no-files-found: error
+# 
+#   rust-checks:
+#     name: clippy + cargo test
+#     needs: parity-gate
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-toolchain@stable
+#         with:
+#           components: clippy
+#       - uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: '. -> target'
+#       - name: Clippy (all-targets, deny warnings)
+#         run: cargo clippy -p kremory-napi --all-targets -- -D warnings
+#       - name: Cargo test
+#         run: cargo test -p kremory-napi

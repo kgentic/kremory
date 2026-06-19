@@ -1,50 +1,58 @@
-name: release-please
-
-# CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
-# suspended. Reduced to manual `workflow_dispatch` only (no auto release PRs).
-# RESTORE when billing returns:
-#   on:
-#     push: { branches: [main] }
-#     pull_request: { branches: [main] }
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: write
-  pull-requests: write
-
-jobs:
-  release-please:
-    runs-on: ubuntu-latest
-    # Only run the release PR step on push to main, not on PRs.
-    if: github.event_name == 'push'
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
-        with:
-          release-type: rust
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  # Cargo publish dry-run: runs on every PR to main so regressions are caught early.
-  #
-  # NOTE: `continue-on-error: true` while kremory depends on an AA fork branch
-  # (autoagents-llm via [patch.crates-io] git source). `cargo publish` ignores
-  # patches by design — strict crates.io resolution. Re-enable as REQUIRED gate
-  # once upstream AA merges PR #237 (ChatProvider::model() accessor) and a new
-  # AA release tag lets us drop the patch.
-  publish-dry-run:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: cargo publish dry-run (kremory)
-        # Verifies no path deps or wildcard versions sneak in.
-        # Expected to fail until AA upstream PR #237 merges + releases.
-        run: cargo publish --dry-run -p kremory
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ WORKFLOW FULLY DISABLED 2026-06-19 — kgentic org GitHub Actions billing   ║
+# ║ suspended, no restore expected soon. ENTIRE body commented out so NOTHING ║
+# ║ runs (no push / PR / schedule / workflow_dispatch). Not paying for CI.    ║
+# ║ RESTORE: `git revert` this commit, or strip the leading '# ' from each    ║
+# ║ line below. Original trigger config is preserved verbatim in comments.    ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# name: release-please
+# 
+# # CI auto-triggers DISABLED 2026-06-19 — kgentic org GitHub Actions billing
+# # suspended. Reduced to manual `workflow_dispatch` only (no auto release PRs).
+# # RESTORE when billing returns:
+# #   on:
+# #     push: { branches: [main] }
+# #     pull_request: { branches: [main] }
+# on:
+#   workflow_dispatch:
+# 
+# permissions:
+#   contents: write
+#   pull-requests: write
+# 
+# jobs:
+#   release-please:
+#     runs-on: ubuntu-latest
+#     # Only run the release PR step on push to main, not on PRs.
+#     if: github.event_name == 'push'
+#     outputs:
+#       release_created: ${{ steps.release.outputs.release_created }}
+#       tag_name: ${{ steps.release.outputs.tag_name }}
+#     steps:
+#       - uses: googleapis/release-please-action@v4
+#         id: release
+#         with:
+#           release-type: rust
+#           token: ${{ secrets.GITHUB_TOKEN }}
+# 
+#   # Cargo publish dry-run: runs on every PR to main so regressions are caught early.
+#   #
+#   # NOTE: `continue-on-error: true` while kremory depends on an AA fork branch
+#   # (autoagents-llm via [patch.crates-io] git source). `cargo publish` ignores
+#   # patches by design — strict crates.io resolution. Re-enable as REQUIRED gate
+#   # once upstream AA merges PR #237 (ChatProvider::model() accessor) and a new
+#   # AA release tag lets us drop the patch.
+#   publish-dry-run:
+#     runs-on: ubuntu-latest
+#     continue-on-error: true
+#     steps:
+#       - uses: actions/checkout@v4
+# 
+#       - name: Install Rust stable
+#         uses: dtolnay/rust-toolchain@stable
+# 
+#       - name: cargo publish dry-run (kremory)
+#         # Verifies no path deps or wildcard versions sneak in.
+#         # Expected to fail until AA upstream PR #237 merges + releases.
+#         run: cargo publish --dry-run -p kremory

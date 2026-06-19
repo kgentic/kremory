@@ -4,7 +4,7 @@
 **Sprint**: Tech-Debt Clearance (post-v0.2.4) — **near-complete, UNPUSHED**
 **Branch**: `jimsheen/tech-debt-clearance` (off `main`) — **30 commits ahead of `origin/main`, ALL UNPUSHED.** Bundles the v0.2.4 build (ADR-050 crash-safety, shipped) + the clearance backlog.
 **Status**: Workspace GREEN — `cargo test --workspace` **1164 / 0 fail**; `clippy --workspace --all-targets -D warnings` GREEN **and** `--all-features` GREEN; `fmt` clean. Register: `.ai-docs/tech-debt/tech-debt-register.md`.
-**Blocked on push** — `kgentic` org GitHub Actions billing suspended → CI auto-triggers DISABLED (`workflow_dispatch`-only on `ci`/`napi-ci`/`release-please`, inline dated RESTORE notes in each). Awaiting billing restore; **user confirms `v0.2.4` tag BEFORE any push** (no autonomous push/tag — irreversible HITL gate).
+**Blocked on push** — `kgentic` org GitHub Actions billing suspended (no restore expected soon) → **all 4 workflows FULLY COMMENTED OUT** (`ci`/`napi-ci`/`release-please`/`eval-canary` — entire bodies commented, 0 active lines, nothing runs by any trigger; RESTORE header + `git revert` on each). Not paying for CI. **User confirms `v0.2.4` tag BEFORE any push** (no autonomous push/tag — irreversible HITL gate).
 
 **Clearance backlog state (per register):**
 
