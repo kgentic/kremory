@@ -22,7 +22,9 @@ async fn anthropic_verify_oneshot_dumps_raw_response() {
 
     use autoagents_llm::backends::anthropic::Anthropic;
     use autoagents_llm::builder::LLMBuilder;
-    use kremory::core::dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts};
+    use kremory::core::dream::consistency_check::{
+        run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+    };
     use kremory::core::provider::{ArcChatProvider, DeterministicEmbeddingProvider};
     use kremory::core::schema::TemporalGraph;
     use kremory::DynEmbeddingProvider;
@@ -96,9 +98,16 @@ async fn anthropic_verify_oneshot_dumps_raw_response() {
     eprintln!("[ONESHOT] Invoking run_consistency_check with anthropic + 1 entity...");
     eprintln!("========================================\n");
 
-    let summary = run_consistency_check(&graph.conn, &*embedder, &llm_wrapped, opts)
-        .await
-        .expect("run_consistency_check must succeed");
+    let summary = run_consistency_check(
+        &graph.conn,
+        RunConsistencyCheckParams {
+            embedder: &*embedder,
+            llm: &llm_wrapped,
+            opts,
+        },
+    )
+    .await
+    .expect("run_consistency_check must succeed");
 
     eprintln!("\n========================================");
     eprintln!("[ONESHOT] Summary: {summary:?}");

@@ -24,10 +24,7 @@ use metrics::{counter, histogram};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::core::{
-    error::Result,
-    provider::{ChatProvider, DynEmbeddingProvider},
-};
+use crate::core::{error::Result, provider::ChatProvider};
 
 // ─── Confidence gate (T2.2 — basket #83 gbrain C1 pattern) ────────────────────
 
@@ -362,13 +359,19 @@ pub async fn verify_batch(
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
+// `RunConsistencyCheckParams` is defined in `audit.rs` (re-exported below) to
+// keep this module under the TD-C 500-LoC guard (ADR-050 §5).
+
 /// Run Dream Pass 4 consistency check (ADR-047).
 pub async fn run_consistency_check(
     db: &libsql::Connection,
-    embedder: &dyn DynEmbeddingProvider,
-    llm: &dyn ChatProvider,
-    opts: ConsistencyCheckOpts,
+    params: RunConsistencyCheckParams<'_>,
 ) -> Result<ConsistencyCheckSummary> {
+    let RunConsistencyCheckParams {
+        embedder,
+        llm,
+        opts,
+    } = params;
     let mut summary = ConsistencyCheckSummary::default();
     let tau = opts.embed_prefilter_threshold;
     let run_id = Uuid::new_v4().to_string();
@@ -469,8 +472,10 @@ pub async fn run_consistency_check(
 
 // ─── verify_batch_for_candidates (GAP-003) — lives in verify.rs ─────────────
 
+pub use audit::RunConsistencyCheckParams;
 pub use verify::{
-    verify_batch_for_candidates, VerifyBatchForCandidatesOpts, VerifyBatchForCandidatesResult,
+    verify_batch_for_candidates, VerifyBatchForCandidatesOpts, VerifyBatchForCandidatesParams,
+    VerifyBatchForCandidatesResult,
 };
 
 /// Build the LLM messages for a verify batch (ADR-047 §3).

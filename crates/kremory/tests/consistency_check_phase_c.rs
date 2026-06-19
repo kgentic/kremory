@@ -415,7 +415,9 @@ fn c5_confirm_reject_modify_schema_strict_deserialization() {
 /// Failure mode without fix: run_consistency_check doesn't exist → compile error.
 #[tokio::test]
 async fn c6_cap_overflow_guard_drops_excess() {
-    use kremory::core::dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts};
+    use kremory::core::dream::consistency_check::{
+        run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+    };
     use kremory::core::provider::DeterministicEmbeddingProvider;
 
     let (graph, _tmp) = open_graph().await;
@@ -460,9 +462,16 @@ async fn c6_cap_overflow_guard_drops_excess() {
         dry_run: false,
     };
 
-    let summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)
-        .await
-        .expect("C6: run_consistency_check must succeed");
+    let summary = run_consistency_check(
+        &graph.conn,
+        RunConsistencyCheckParams {
+            embedder: &embedder,
+            llm: &mock,
+            opts,
+        },
+    )
+    .await
+    .expect("C6: run_consistency_check must succeed");
 
     assert_eq!(
         summary.cap_overflow_dropped, 50,
@@ -495,7 +504,9 @@ async fn c6_cap_overflow_guard_drops_excess() {
 /// Failure mode without fix: run_consistency_check doesn't exist → compile error.
 #[tokio::test]
 async fn c7_observability_counters_increment_on_right_paths() {
-    use kremory::core::dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts};
+    use kremory::core::dream::consistency_check::{
+        run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+    };
     use kremory::core::provider::DeterministicEmbeddingProvider;
     use metrics_util::debugging::DebuggingRecorder;
 
@@ -553,9 +564,16 @@ async fn c7_observability_counters_increment_on_right_paths() {
         dry_run: false,
     };
 
-    let _summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)
-        .await
-        .expect("C7: run_consistency_check must succeed");
+    let _summary = run_consistency_check(
+        &graph.conn,
+        RunConsistencyCheckParams {
+            embedder: &embedder,
+            llm: &mock,
+            opts,
+        },
+    )
+    .await
+    .expect("C7: run_consistency_check must succeed");
 
     let snapshot = snapshotter.snapshot().into_vec();
 
@@ -612,7 +630,9 @@ async fn c7_observability_counters_increment_on_right_paths() {
 /// Failure mode without fix: run_consistency_check doesn't exist → compile error.
 #[tokio::test]
 async fn c8_run_consistency_check_orchestrates_full_flow() {
-    use kremory::core::dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts};
+    use kremory::core::dream::consistency_check::{
+        run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+    };
     use kremory::core::provider::DeterministicEmbeddingProvider;
 
     let (graph, _tmp) = open_graph().await;
@@ -661,9 +681,16 @@ async fn c8_run_consistency_check_orchestrates_full_flow() {
         dry_run: false,
     };
 
-    let summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)
-        .await
-        .expect("C8: run_consistency_check must succeed");
+    let summary = run_consistency_check(
+        &graph.conn,
+        RunConsistencyCheckParams {
+            embedder: &embedder,
+            llm: &mock,
+            opts,
+        },
+    )
+    .await
+    .expect("C8: run_consistency_check must succeed");
 
     assert_eq!(
         summary.confirmed, 1,
@@ -711,7 +738,9 @@ async fn c8_run_consistency_check_orchestrates_full_flow() {
 /// Also fails if audit row is not written (the assertion on SELECT count fails).
 #[tokio::test]
 async fn c9_audit_row_written_per_corrected_action() {
-    use kremory::core::dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts};
+    use kremory::core::dream::consistency_check::{
+        run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+    };
     use kremory::core::provider::DeterministicEmbeddingProvider;
 
     let (graph, _tmp) = open_graph().await;
@@ -750,9 +779,16 @@ async fn c9_audit_row_written_per_corrected_action() {
         dry_run: false,
     };
 
-    let summary = run_consistency_check(&graph.conn, &embedder, &mock, opts)
-        .await
-        .expect("C9: run_consistency_check must succeed");
+    let summary = run_consistency_check(
+        &graph.conn,
+        RunConsistencyCheckParams {
+            embedder: &embedder,
+            llm: &mock,
+            opts,
+        },
+    )
+    .await
+    .expect("C9: run_consistency_check must succeed");
 
     assert_eq!(
         summary.corrected, 1,
@@ -823,7 +859,9 @@ async fn c9_audit_row_written_per_corrected_action() {
 async fn c10_real_llm_schema_parses_100_percent() {
     use autoagents_llm::backends::ollama::Ollama;
     use autoagents_llm::builder::LLMBuilder;
-    use kremory::core::dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts};
+    use kremory::core::dream::consistency_check::{
+        run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+    };
     use kremory::core::provider::DeterministicEmbeddingProvider;
 
     let base_url =
@@ -871,7 +909,15 @@ async fn c10_real_llm_schema_parses_100_percent() {
             dry_run: false,
         };
 
-        let result = run_consistency_check(&graph.conn, &embedder, llm.as_ref(), opts).await;
+        let result = run_consistency_check(
+            &graph.conn,
+            RunConsistencyCheckParams {
+                embedder: &embedder,
+                llm: llm.as_ref(),
+                opts,
+            },
+        )
+        .await;
 
         match result {
             Ok(summary) => {

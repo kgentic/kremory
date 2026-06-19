@@ -56,7 +56,7 @@ use std::time::Instant;
 use chrono::Utc;
 
 use crate::core::dream::consistency_check::{
-    verify_batch_for_candidates, VerifyBatchForCandidatesOpts,
+    verify_batch_for_candidates, VerifyBatchForCandidatesOpts, VerifyBatchForCandidatesParams,
 };
 use crate::core::dream::idempotency;
 use crate::core::error::{Error, IngestStatus};
@@ -661,10 +661,12 @@ pub async fn run_verify_stage<'a>(
             let vb_start = Instant::now();
             let vb_result = verify_batch_for_candidates(
                 conn,
-                &candidates,
-                &request.text,
-                llm,
-                VerifyBatchForCandidatesOpts::default(),
+                VerifyBatchForCandidatesParams {
+                    candidates: &candidates,
+                    source_episode_text: &request.text,
+                    llm,
+                    opts: VerifyBatchForCandidatesOpts::default(),
+                },
             )
             .await;
 

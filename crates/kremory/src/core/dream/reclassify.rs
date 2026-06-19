@@ -158,18 +158,34 @@ impl Default for ReclassifyOpts {
 /// Called by `mem.dream()` after Pass 0 (type discovery) and before Pass 3
 /// (canonicalise). Satisfies DoD E7 pass ordering.
 ///
-/// Parameters:
+/// Bundled non-generic parameters for [`reclassify`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). The generic `llm: &L` stays a lead
+/// positional param (brief rule 4); the remaining args bundle here.
+///
+/// Fields:
 /// - `conn` — open SQLite connection
 /// - `group_id` — the namespace (equals `namespace_to_group_id(&ns)`)
-/// - `llm` — the chat provider
 /// - `opts` — tuning knobs (thresholds + batch size)
 #[doc(hidden)]
+pub struct ReclassifyParams<'a> {
+    pub conn: &'a libsql::Connection,
+    pub group_id: &'a str,
+    pub opts: ReclassifyOpts,
+}
+
+/// Reclassify entities matching the two-arm SELECT for `group_id`.
+///
+/// `llm` — the chat provider (generic lead positional param).
+#[doc(hidden)]
 pub async fn reclassify<L: ChatProvider>(
-    conn: &libsql::Connection,
-    group_id: &str,
     llm: &L,
-    opts: ReclassifyOpts,
+    params: ReclassifyParams<'_>,
 ) -> Result<ReclassifyResult> {
+    let ReclassifyParams {
+        conn,
+        group_id,
+        opts,
+    } = params;
     let confidence_threshold = opts.confidence_threshold;
     let high_conf_threshold = opts.high_conf_threshold;
     let max_batch_size = opts.max_batch_size;
@@ -185,7 +201,13 @@ pub async fn reclassify<L: ChatProvider>(
 
     // ── Step 2: Two-arm SELECT ────────────────────────────────────────────────
 
-    let candidates = load_candidates(conn, group_id, confidence_threshold, max_batch_size).await?;
+    let candidates = load_candidates(LoadCandidatesParams {
+        conn,
+        group_id,
+        confidence_threshold,
+        max_batch_size,
+    })
+    .await?;
     if candidates.is_empty() {
         tracing::debug!(
             target: "kremory::dream::reclassify",
@@ -334,13 +356,13 @@ pub async fn reclassify<L: ChatProvider>(
         if high_conf {
             // High-confidence path: stamp DreamPass1 + update type_id (E3, E5).
             // DreamPass1 entities are structurally excluded from next cycle's SELECT (E5).
-            apply_reclassify_high_conf(
+            apply_reclassify_high_conf(ApplyReclassifyParams {
                 conn,
                 group_id,
-                &decision.entity_id,
-                decision.entity_type_id,
-                &now,
-            )
+                entity_id: &decision.entity_id,
+                new_type_id: decision.entity_type_id,
+                now: &now,
+            })
             .await?;
             counter!(
                 "kremory.dream.reclassify_source_tier_written_total",
@@ -349,13 +371,13 @@ pub async fn reclassify<L: ChatProvider>(
             .increment(1);
         } else {
             // Low-confidence path: update type_id only; preserve existing source tier (E3).
-            apply_reclassify_low_conf(
+            apply_reclassify_low_conf(ApplyReclassifyParams {
                 conn,
                 group_id,
-                &decision.entity_id,
-                decision.entity_type_id,
-                &now,
-            )
+                entity_id: &decision.entity_id,
+                new_type_id: decision.entity_type_id,
+                now: &now,
+            })
             .await?;
             counter!(
                 "kremory.dream.reclassify_source_tier_written_total",
@@ -404,12 +426,22 @@ pub async fn reclassify<L: ChatProvider>(
 ///
 /// Both exclusions are SQL-level, not post-fetch filter — the invariant is enforced
 /// at emit (the SELECT), not in application logic.
-async fn load_candidates(
-    conn: &libsql::Connection,
-    group_id: &str,
+/// Bundled parameters for [`load_candidates`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct LoadCandidatesParams<'a> {
+    conn: &'a libsql::Connection,
+    group_id: &'a str,
     confidence_threshold: f32,
     max_batch_size: usize,
-) -> Result<Vec<Candidate>> {
+}
+
+async fn load_candidates(params: LoadCandidatesParams<'_>) -> Result<Vec<Candidate>> {
+    let LoadCandidatesParams {
+        conn,
+        group_id,
+        confidence_threshold,
+        max_batch_size,
+    } = params;
     let threshold_f64 = confidence_threshold as f64;
     let limit = max_batch_size as i64;
 
@@ -567,13 +599,25 @@ async fn count_rows_with_one_param(
 ///
 /// Re-re-type protection is structural: DreamPass1 is excluded from the next
 /// cycle's SELECT at SQL WHERE level (E5).
-async fn apply_reclassify_high_conf(
-    conn: &libsql::Connection,
-    group_id: &str,
-    entity_id: &str,
+/// Bundled parameters for [`apply_reclassify_high_conf`] and
+/// [`apply_reclassify_low_conf`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct ApplyReclassifyParams<'a> {
+    conn: &'a libsql::Connection,
+    group_id: &'a str,
+    entity_id: &'a str,
     new_type_id: u32,
-    now: &str,
-) -> Result<()> {
+    now: &'a str,
+}
+
+async fn apply_reclassify_high_conf(params: ApplyReclassifyParams<'_>) -> Result<()> {
+    let ApplyReclassifyParams {
+        conn,
+        group_id,
+        entity_id,
+        new_type_id,
+        now,
+    } = params;
     conn.execute(
         "UPDATE entities \
          SET entity_type_id = ?1, \
@@ -600,13 +644,14 @@ async fn apply_reclassify_high_conf(
 
 /// Low-confidence UPDATE: set new type_id only; `entity_type_source` preserved (E3).
 /// `entity_id` is preserved across UPDATE per ADR-046 §3 (E4).
-async fn apply_reclassify_low_conf(
-    conn: &libsql::Connection,
-    group_id: &str,
-    entity_id: &str,
-    new_type_id: u32,
-    now: &str,
-) -> Result<()> {
+async fn apply_reclassify_low_conf(params: ApplyReclassifyParams<'_>) -> Result<()> {
+    let ApplyReclassifyParams {
+        conn,
+        group_id,
+        entity_id,
+        new_type_id,
+        now,
+    } = params;
     conn.execute(
         "UPDATE entities \
          SET entity_type_id = ?1, \
@@ -742,7 +787,16 @@ pub async fn reclassify_all_groups<L: ChatProvider>(
 
     let mut total = ReclassifyResult::default();
     for gid in &group_ids {
-        match reclassify(conn, gid, llm, opts).await {
+        match reclassify(
+            llm,
+            ReclassifyParams {
+                conn,
+                group_id: gid,
+                opts,
+            },
+        )
+        .await
+        {
             Ok(r) => {
                 total.entities_reclassified += r.entities_reclassified;
                 total.warnings.extend(r.warnings);
