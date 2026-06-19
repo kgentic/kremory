@@ -36,7 +36,7 @@ mod helpers;
 use helpers::recording_sink::{RecordingSink, SinkEvent};
 
 use kremory::core::background::batch_tracker::BatchProgress;
-use kremory::core::background::verify_stage::run_verify_stage;
+use kremory::core::background::verify_stage::{run_verify_stage, RunVerifyStageParams};
 use kremory::core::background::DeferredRequest;
 use kremory::core::error::{Error, IngestStatus, IngestionErrorKind};
 use kremory::core::intelligence::{
@@ -263,7 +263,14 @@ async fn sink_none_does_not_panic() {
     };
 
     // sink = None: must not panic, must return Ok
-    let result = run_verify_stage(&request, &extractor, None, &graph, None).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: None,
+        graph: &graph,
+        sink: None,
+    })
+    .await;
     assert!(result.is_ok(), "sink=None must not panic; got {result:?}");
 }
 
@@ -396,13 +403,13 @@ async fn sink_entity_extracted_fires_per_entity() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    let result = run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await;
     assert!(
         result.is_ok(),
@@ -475,13 +482,13 @@ async fn sink_edge_added_fires_per_episodic_link() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    let result = run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await;
     assert!(
         result.is_ok(),
@@ -541,7 +548,14 @@ async fn sink_ingestion_error_fires_on_verify_fail() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    let result = run_verify_stage(&request, &extractor, None, &graph, Some(sink_ref)).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: None,
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
+    .await;
     assert!(
         result.is_err(),
         "MockExtractorFails must produce Err; got Ok"
@@ -613,13 +627,13 @@ async fn sink_entities_ready_fires_before_complete() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     // Phase 2a: run_verify_stage fires Extracting → EntitiesReady on success.
-    let result = run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await;
     assert!(
         result.is_ok(),
@@ -720,13 +734,13 @@ async fn sink_entity_extracted_emits_counter() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    let result = run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await;
     assert!(
         result.is_ok(),
@@ -798,13 +812,13 @@ async fn sink_stage_transition_emits_counter() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await
     .expect("run_verify_stage must succeed");
 
@@ -870,13 +884,13 @@ async fn sink_callback_duration_emits_histogram() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await
     .expect("run_verify_stage must succeed");
 
@@ -939,13 +953,13 @@ async fn sink_community_updated_does_not_fire_in_v023() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await
     .expect("run_verify_stage must succeed");
 
@@ -995,7 +1009,14 @@ async fn sink_extract_fail_does_not_fire_entities_ready() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    let result = run_verify_stage(&request, &extractor, None, &graph, Some(sink_ref)).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: None,
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
+    .await;
     assert!(result.is_err(), "MockExtractorFails must produce Err");
 
     let stage_events = sink.stage_events();
@@ -1056,13 +1077,13 @@ async fn sink_verify_stage_does_not_fire_pending() {
     let sink = RecordingSink::new();
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
-    run_verify_stage(
-        &request,
-        &extractor,
-        Some(&verify_llm),
-        &graph,
-        Some(sink_ref),
-    )
+    run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: Some(sink_ref),
+    })
     .await
     .expect("run_verify_stage must succeed");
 

@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
 use autoagents_llm::error::LLMError;
-use kremory::core::background::verify_stage::run_verify_stage;
+use kremory::core::background::verify_stage::{run_verify_stage, RunVerifyStageParams};
 use kremory::core::background::{BackgroundIngestor, DeferredRequest, IngestorConfig};
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
@@ -200,8 +200,8 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
     let sink = RecordingSink::new();
 
     // ── First run: MISS path — entity written + idempotency key written ────────
-    let first_result = run_verify_stage(
-        &DeferredRequest {
+    let first_result = run_verify_stage(RunVerifyStageParams {
+        request: &DeferredRequest {
             text: "Alice works at Acme Corp.".to_string(),
             reference_time: None,
             group_id: None,
@@ -210,11 +210,11 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
             ner_entity_names: vec!["Alice".to_string()],
             batch_id: None,
         },
-        &extractor,
-        None,
-        &graph,
-        Some(&sink),
-    )
+        extractor: &extractor,
+        verify_llm: None,
+        graph: &graph,
+        sink: Some(&sink),
+    })
     .await;
     assert!(
         first_result.is_ok(),
@@ -242,8 +242,8 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
     // succeeds cleanly — idempotency HIT is on the entity, not the episode.
     let episode_id_2 = insert_pending_episode(&graph.conn, "Alice works at Acme Corp.").await;
 
-    let second_result = run_verify_stage(
-        &DeferredRequest {
+    let second_result = run_verify_stage(RunVerifyStageParams {
+        request: &DeferredRequest {
             text: "Alice works at Acme Corp.".to_string(),
             reference_time: None,
             group_id: None,
@@ -252,11 +252,11 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
             ner_entity_names: vec!["Alice".to_string()],
             batch_id: None,
         },
-        &extractor,
-        None,
-        &graph,
-        Some(&sink),
-    )
+        extractor: &extractor,
+        verify_llm: None,
+        graph: &graph,
+        sink: Some(&sink),
+    })
     .await;
     assert!(
         second_result.is_ok(),

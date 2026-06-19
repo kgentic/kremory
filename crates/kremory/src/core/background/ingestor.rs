@@ -81,6 +81,19 @@ pub(super) struct Inner {
 /// [`IngestorConfig::with_sink`].  When set, the sink receives callbacks at each
 /// pipeline stage on the background worker OS thread (D4 thread-context contract).
 /// All existing code paths remain unaffected when `sink` is `None`.
+/// Bundled (non-generic) parameters for [`BackgroundIngestor::send`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments). The generic
+/// `text: impl Into<String>` stays a lead positional param on `send`.
+///
+/// `Default` yields all-`None` (equivalent to the prior `send(text, None, None,
+/// None)` shorthand) — use `SendParams::default()` for a plain enqueue.
+#[derive(Debug, Clone, Default)]
+pub struct SendParams {
+    pub reference_time: Option<DateTime<Utc>>,
+    pub group_id: Option<String>,
+    pub content_type: Option<ContentType>,
+}
+
 #[derive(Clone)]
 pub struct BackgroundIngestor {
     pub(super) inner: Arc<Inner>,
@@ -179,13 +192,12 @@ impl BackgroundIngestor {
     ///
     /// Returns `Err(IngestSendError::Full)` when the channel is at capacity and
     /// `Err(IngestSendError::Disconnected)` when the worker thread has exited.
-    pub fn send(
-        &self,
-        text: impl Into<String>,
-        reference_time: Option<DateTime<Utc>>,
-        group_id: Option<String>,
-        content_type: Option<ContentType>,
-    ) -> Result<(), IngestSendError> {
+    pub fn send(&self, text: impl Into<String>, params: SendParams) -> Result<(), IngestSendError> {
+        let SendParams {
+            reference_time,
+            group_id,
+            content_type,
+        } = params;
         self.enqueue_req(IngestRequest {
             text: text.into(),
             reference_time,

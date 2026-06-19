@@ -72,17 +72,28 @@ use super::DeferredRequest;
 
 // ─── State transition helper ───────────────────────────────────────────────────
 
+/// Bundled parameters for [`update_episode_status`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct UpdateEpisodeStatusParams<'a> {
+    conn: &'a libsql::Connection,
+    episode_id: i64,
+    status: &'a str,
+    from: &'a str,
+    to: &'a str,
+}
+
 /// Write `UPDATE episodes SET episode_processing_status = ?` for a given episode id.
 ///
 /// The single authoritative write path for status transitions (ADR-051 state machine).
 /// Emits `kremory.episode.processing_status_transition_total{from, to}` counter.
-async fn update_episode_status(
-    conn: &libsql::Connection,
-    episode_id: i64,
-    status: &str,
-    from: &str,
-    to: &str,
-) -> Result<(), Error> {
+async fn update_episode_status(params: UpdateEpisodeStatusParams<'_>) -> Result<(), Error> {
+    let UpdateEpisodeStatusParams {
+        conn,
+        episode_id,
+        status,
+        from,
+        to,
+    } = params;
     conn.execute(
         "UPDATE episodes SET episode_processing_status = ?1 WHERE id = ?2",
         libsql::params![status, episode_id],
@@ -105,6 +116,16 @@ async fn update_episode_status(
 }
 
 // ─── Stage 3 write helper ──────────────────────────────────────────────────────
+
+/// Bundled parameters for [`stage3_write`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct Stage3WriteParams<'a> {
+    graph: &'a TemporalGraph,
+    episode_id: i64,
+    candidates: &'a [EntityCandidate],
+    decisions: &'a [ResolvedDecision],
+    sink: Option<&'a dyn EnrichmentEventSink>,
+}
 
 /// Write entity rows and episodic edges for the given verify decisions.
 ///
@@ -136,13 +157,14 @@ async fn update_episode_status(
 /// function, to keep the argument count within the 5-arg clippy limit. The sink
 /// `on_entity_extracted` callback fires here; the labelled metric fires per-entity
 /// at the call site via a separate accumulator after `stage3_write` returns.
-async fn stage3_write(
-    graph: &TemporalGraph,
-    episode_id: i64,
-    candidates: &[EntityCandidate],
-    decisions: &[ResolvedDecision],
-    sink: Option<&dyn EnrichmentEventSink>,
-) -> Result<usize, Error> {
+async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
+    let Stage3WriteParams {
+        graph,
+        episode_id,
+        candidates,
+        decisions,
+        sink,
+    } = params;
     let now = Utc::now().to_rfc3339();
     let now_epoch: i64 = Utc::now().timestamp();
     let mut count = 0usize;
@@ -478,14 +500,26 @@ fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandi
 ///
 /// `pub` + `#[doc(hidden)]` per MNT-002 pattern: integration tests in
 /// `tests/verify_stage_integration.rs` call this directly under `feature = "test-utils"`.
+/// Bundled parameters for [`run_verify_stage`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
 #[doc(hidden)]
-pub async fn run_verify_stage<'a>(
-    request: &'a DeferredRequest,
-    extractor: &'a dyn EntityExtractorDyn,
-    verify_llm: Option<&'a dyn ChatProvider>,
-    graph: &'a TemporalGraph,
-    sink: Option<&'a dyn EnrichmentEventSink>,
-) -> Result<usize, Error> {
+pub struct RunVerifyStageParams<'a> {
+    pub request: &'a DeferredRequest,
+    pub extractor: &'a dyn EntityExtractorDyn,
+    pub verify_llm: Option<&'a dyn ChatProvider>,
+    pub graph: &'a TemporalGraph,
+    pub sink: Option<&'a dyn EnrichmentEventSink>,
+}
+
+#[doc(hidden)]
+pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize, Error> {
+    let RunVerifyStageParams {
+        request,
+        extractor,
+        verify_llm,
+        graph,
+        sink,
+    } = params;
     let total_start = Instant::now();
     let arm = if verify_llm.is_some() {
         "gliner"
@@ -511,13 +545,13 @@ pub async fn run_verify_stage<'a>(
     // effort-Failed-write pattern used on every other error path. If the Failed
     // write ALSO fails (DB unrecoverable), we can't progress further — log + return
     // the original error.
-    if let Err(e) = update_episode_status(
+    if let Err(e) = update_episode_status(UpdateEpisodeStatusParams {
         conn,
-        request.episode_id,
-        "Extracting",
-        "Pending",
-        "Extracting",
-    )
+        episode_id: request.episode_id,
+        status: "Extracting",
+        from: "Pending",
+        to: "Extracting",
+    })
     .await
     {
         tracing::error!(
@@ -534,8 +568,14 @@ pub async fn run_verify_stage<'a>(
         .increment(1);
         // Best-effort Failed write — if this also fails the DB is in worse trouble
         // than this code path can resolve; the original error is what callers see.
-        let _ =
-            update_episode_status(conn, request.episode_id, "Failed", "Pending", "Failed").await;
+        let _ = update_episode_status(UpdateEpisodeStatusParams {
+            conn,
+            episode_id: request.episode_id,
+            status: "Failed",
+            from: "Pending",
+            to: "Failed",
+        })
+        .await;
         // ── Fire-site 5a: on_stage_change(Failed) — status_transition_fail arm ─
         // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" label is bounded enum)
         // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
@@ -618,9 +658,14 @@ pub async fn run_verify_stage<'a>(
                 "kremory.verify_stage.extract_fail"
             );
             // Failed write BEFORE propagating — state machine invariant.
-            let _ =
-                update_episode_status(conn, request.episode_id, "Failed", "Extracting", "Failed")
-                    .await;
+            let _ = update_episode_status(UpdateEpisodeStatusParams {
+                conn,
+                episode_id: request.episode_id,
+                status: "Failed",
+                from: "Extracting",
+                to: "Failed",
+            })
+            .await;
             // ── Fire-site 5b: on_stage_change(Failed) — extract_fail arm ────────
             // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" is bounded enum)
             // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
@@ -689,13 +734,13 @@ pub async fn run_verify_stage<'a>(
                         error = %e,
                         "kremory.verify_stage.verify_batch_fail"
                     );
-                    let _ = update_episode_status(
+                    let _ = update_episode_status(UpdateEpisodeStatusParams {
                         conn,
-                        request.episode_id,
-                        "Failed",
-                        "Extracting",
-                        "Failed",
-                    )
+                        episode_id: request.episode_id,
+                        status: "Failed",
+                        from: "Extracting",
+                        to: "Failed",
+                    })
                     .await;
                     // ── Fire-site 5c: on_stage_change(Failed) — verify_fail arm ──
                     // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
@@ -728,13 +773,13 @@ pub async fn run_verify_stage<'a>(
             };
 
             let w3_start = Instant::now();
-            let write_result = stage3_write(
+            let write_result = stage3_write(Stage3WriteParams {
                 graph,
-                request.episode_id,
-                &candidates,
-                &vb_result.decisions,
+                episode_id: request.episode_id,
+                candidates: &candidates,
+                decisions: &vb_result.decisions,
                 sink,
-            )
+            })
             .await;
 
             let w3_elapsed_ms = w3_start.elapsed().as_secs_f64() * 1000.0;
@@ -767,13 +812,13 @@ pub async fn run_verify_stage<'a>(
                         error = %e,
                         "kremory.verify_stage.stage3_write_fail"
                     );
-                    let _ = update_episode_status(
+                    let _ = update_episode_status(UpdateEpisodeStatusParams {
                         conn,
-                        request.episode_id,
-                        "Failed",
-                        "Extracting",
-                        "Failed",
-                    )
+                        episode_id: request.episode_id,
+                        status: "Failed",
+                        from: "Extracting",
+                        to: "Failed",
+                    })
                     .await;
                     // ── Fire-site 5d: on_stage_change(Failed) — write_fail (Path α) ─
                     // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
@@ -816,8 +861,14 @@ pub async fn run_verify_stage<'a>(
                 .collect();
 
             let w3_start = Instant::now();
-            let write_result =
-                stage3_write(graph, request.episode_id, &candidates, &decisions, sink).await;
+            let write_result = stage3_write(Stage3WriteParams {
+                graph,
+                episode_id: request.episode_id,
+                candidates: &candidates,
+                decisions: &decisions,
+                sink,
+            })
+            .await;
 
             let w3_elapsed_ms = w3_start.elapsed().as_secs_f64() * 1000.0;
             metrics::histogram!("kremory.verify_stage.duration_ms", "arm" => "stage3_write")
@@ -848,13 +899,13 @@ pub async fn run_verify_stage<'a>(
                         error = %e,
                         "kremory.verify_stage.stage3_write_fail"
                     );
-                    let _ = update_episode_status(
+                    let _ = update_episode_status(UpdateEpisodeStatusParams {
                         conn,
-                        request.episode_id,
-                        "Failed",
-                        "Extracting",
-                        "Failed",
-                    )
+                        episode_id: request.episode_id,
+                        status: "Failed",
+                        from: "Extracting",
+                        to: "Failed",
+                    })
                     .await;
                     // ── Fire-site 5d: on_stage_change(Failed) — write_fail (Path β) ─
                     // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
@@ -889,13 +940,13 @@ pub async fn run_verify_stage<'a>(
     };
 
     // ── Extracting → Verified ──────────────────────────────────────────────────
-    if let Err(e) = update_episode_status(
+    if let Err(e) = update_episode_status(UpdateEpisodeStatusParams {
         conn,
-        request.episode_id,
-        "Verified",
-        "Extracting",
-        "Verified",
-    )
+        episode_id: request.episode_id,
+        status: "Verified",
+        from: "Extracting",
+        to: "Verified",
+    })
     .await
     {
         // Status update failure does NOT undo already-written entities.

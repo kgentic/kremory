@@ -30,7 +30,7 @@ pub mod ingestor;
 pub mod verify_stage;
 
 pub use batch_tracker::BatchTracker;
-pub use ingestor::{BackgroundIngestor, IngestGuard};
+pub use ingestor::{BackgroundIngestor, IngestGuard, SendParams};
 // Quinn MED-02 fix: no re-export of run_verify_stage. The stub is Phase B
 // internal scaffolding (ADR-049 §Decision 6 mandate); Phase B will call it via
 // `super::verify_stage::run_verify_stage` from deferred_pipeline. Re-export here

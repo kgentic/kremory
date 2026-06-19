@@ -35,7 +35,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::core::background::{BackgroundIngestor, IngestGuard, IngestRequest, IngestSendError};
+use crate::core::background::{
+    BackgroundIngestor, IngestGuard, IngestRequest, IngestSendError, SendParams,
+};
 use crate::core::error::IngestStatus;
 use crate::memory::engine_handle::{namespace_to_group_id, EngineGraphHandle};
 use crate::memory::{
@@ -209,7 +211,13 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
             } else {
                 // Un-batched background path (no BatchTracker; no batch callback).
                 self.ingestor
-                    .send(text, None, group_id, None)
+                    .send(
+                        text,
+                        SendParams {
+                            group_id,
+                            ..SendParams::default()
+                        },
+                    )
                     .map_err(ingest_send_err_to_memory_err)?
             };
 
