@@ -10,6 +10,7 @@ mod facts;
 mod namespace;
 mod queries;
 
+pub use episodes::EpisodeInsert;
 pub use facts::FactInsert;
 
 #[cfg(test)]

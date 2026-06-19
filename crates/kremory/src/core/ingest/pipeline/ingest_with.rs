@@ -10,7 +10,7 @@ use crate::core::contradiction::TwoPoolDetector;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
-use crate::core::graph::FactInsert;
+use crate::core::graph::{EpisodeInsert, FactInsert};
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
     ResolutionResult,
@@ -73,20 +73,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // 1. Store episode (namespace-scoped via group_id).
         //    source_id / source_uri / recorded_at from SourceParams are written to the
         //    Migration 007 columns so that recall_by_source_id can find this episode.
+        let mut episode = EpisodeInsert::new(text, ref_time).source_type("ingest");
+        if let Some(source_id) = source_params.source_id.as_deref() {
+            episode = episode.source_id(source_id);
+        }
+        if let Some(source_uri) = source_params.source_uri.as_deref() {
+            episode = episode.source_uri(source_uri);
+        }
+        if let Some(recorded_at) = source_params.recorded_at {
+            episode = episode.recorded_at(recorded_at);
+        }
         let episode_id = self
             .graph
-            .insert_episode_with_group(
-                text,
-                ref_time,
-                Some("ingest"),
-                None,
-                group_id,
-                None,
-                None,
-                source_params.source_id.as_deref(),
-                source_params.source_uri.as_deref(),
-                source_params.recorded_at,
-            )
+            .insert_episode_with_group(episode, group_id)
             .await?;
 
         // 1b. ADR-035 §5 Option A — Pin caller-pre-extracted facts BEFORE Phase 2 LLM.
