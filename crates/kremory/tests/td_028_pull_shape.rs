@@ -220,7 +220,12 @@ async fn b2_builder_seed_populates_registry_for_custom_types() {
     // NullEmbeddingProvider uses struct-literal construction (no ::new method).
     // Use the default 384 dim which matches PipelineConfig's EmbeddingDim default.
     let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
-    let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::new(graph),
+        llm: Arc::clone(&llm),
+        embedder: embedder,
+        config: config,
+    });
 
     // Build extractor locally — engine.extractor is pub(crate), not accessible
     // from integration tests. LlmExtractor::new(llm) is the same construction
@@ -231,11 +236,13 @@ async fn b2_builder_seed_populates_registry_for_custom_types() {
     let result = engine
         .ingest_with(
             &extractor,
-            "The court reviewed the statute.",
-            None,
-            Some("legal"),
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "The court reviewed the statute.",
+                reference_time: None,
+                group_id: Some("legal"),
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest_with must succeed");
@@ -287,18 +294,25 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
 
     let llm = Arc::new(null_mock_llm());
     let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
-    let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::new(graph),
+        llm: Arc::clone(&llm),
+        embedder: embedder,
+        config: config,
+    });
     let extractor = LlmExtractor::new(Arc::clone(&llm));
 
     // First ingest.
     engine
         .ingest_with(
             &extractor,
-            "First document about courts.",
-            None,
-            Some("legal2"),
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "First document about courts.",
+                reference_time: None,
+                group_id: Some("legal2"),
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("first ingest_with must succeed");
@@ -310,11 +324,13 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
     engine
         .ingest_with(
             &extractor,
-            "Second document about statutes.",
-            None,
-            Some("legal2"),
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "Second document about statutes.",
+                reference_time: None,
+                group_id: Some("legal2"),
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("second ingest_with must succeed");
@@ -365,17 +381,24 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
 
             let llm = Arc::new(null_mock_llm());
             let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
-            let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+            let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+                graph: Arc::new(graph),
+                llm: Arc::clone(&llm),
+                embedder: embedder,
+                config: config,
+            });
             let extractor = LlmExtractor::new(Arc::clone(&llm));
 
             engine
                 .ingest_with(
                     &extractor,
-                    "Document for builder-seed counter test.",
-                    None,
-                    Some("b5-seed-ns"),
-                    None,
-                    SourceParams::default(),
+                    kremory::core::ingest::IngestWithParams {
+                        text: "Document for builder-seed counter test.",
+                        reference_time: None,
+                        group_id: Some("b5-seed-ns"),
+                        content_type: None,
+                        source_params: SourceParams::default(),
+                    },
                 )
                 .await
                 .expect("ingest_with (builder-seed path) must succeed");
@@ -440,7 +463,12 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
 
             let llm = Arc::new(null_mock_llm());
             let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
-            let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+            let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+                graph: Arc::new(graph),
+                llm: Arc::clone(&llm),
+                embedder: embedder,
+                config: config,
+            });
             let extractor = LlmExtractor::new(Arc::clone(&llm));
 
             // Supply entity_types_override — this puts the pipeline on the
@@ -458,11 +486,13 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
             engine
                 .ingest_with(
                     &extractor,
-                    "Document for override-path counter test.",
-                    None,
-                    Some("b5-override-ns"),
-                    None,
-                    src,
+                    kremory::core::ingest::IngestWithParams {
+                        text: "Document for override-path counter test.",
+                        reference_time: None,
+                        group_id: Some("b5-override-ns"),
+                        content_type: None,
+                        source_params: src,
+                    },
                 )
                 .await
                 .expect("ingest_with (override path) must succeed");
@@ -569,7 +599,12 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
 
     let llm = Arc::new(null_mock_llm());
     let embedder = Arc::new(NullEmbeddingProvider { dim: 384 });
-    let engine = Engine::new(Arc::new(graph), Arc::clone(&llm), embedder, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::new(graph),
+        llm: Arc::clone(&llm),
+        embedder: embedder,
+        config: config,
+    });
 
     // Shared capture store: one Vec<String> per extract() call.
     let captured: Arc<Mutex<Vec<Vec<String>>>> = Arc::new(Mutex::new(Vec::new()));
@@ -581,11 +616,13 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
     engine
         .ingest_with(
             &extractor,
-            "alice works at some startup",
-            None,
-            Some("b3-e2e"),
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "alice works at some startup",
+                reference_time: None,
+                group_id: Some("b3-e2e"),
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("first ingest_with must succeed");
@@ -644,11 +681,13 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
     engine
         .ingest_with(
             &extractor,
-            "AcmeCorp builds product software",
-            None,
-            Some("b3-e2e"),
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "AcmeCorp builds product software",
+                reference_time: None,
+                group_id: Some("b3-e2e"),
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("second ingest_with must succeed");

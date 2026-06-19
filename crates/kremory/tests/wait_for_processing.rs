@@ -163,12 +163,12 @@ async fn wait_for_processing_blocks_until_extraction_complete() {
         .build()
         .expect("PipelineConfig build");
 
-    let engine = Engine::new(
-        Arc::clone(temporal),
-        Arc::new(EmptyArrayLlmClient),
-        null_emb,
-        config,
-    );
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(temporal),
+        llm: Arc::new(EmptyArrayLlmClient),
+        embedder: null_emb,
+        config: config,
+    });
 
     let ingestor_config = IngestorConfig {
         deferred_extraction_enabled: true,

@@ -116,7 +116,12 @@ async fn phase1_returns_episode_id_no_candidates() {
     let config = PipelineConfig::builder()
         .build()
         .expect("default PipelineConfig");
-    let engine = Engine::new(Arc::clone(&graph), null_llm(), null_embedder(), config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: null_llm(),
+        embedder: null_embedder(),
+        config: config,
+    });
 
     let episode_count_before = count_table_rows(&graph.conn, "episodes").await;
     let entity_count_before = count_table_rows(&graph.conn, "entities").await;
@@ -173,7 +178,12 @@ async fn write_verified_entities_writes_entities_per_decision() {
     let config = PipelineConfig::builder()
         .build()
         .expect("default PipelineConfig");
-    let engine = Engine::new(Arc::clone(&graph), null_llm(), null_embedder(), config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: null_llm(),
+        embedder: null_embedder(),
+        config: config,
+    });
 
     // Insert an episode manually so write_verified_entities has a valid episode_id FK.
     let now = chrono::Utc::now().to_rfc3339();
@@ -227,7 +237,11 @@ async fn write_verified_entities_writes_entities_per_decision() {
 
     // This call MUST NOT exist on current main — compile error expected.
     engine
-        .write_verified_entities(episode_id, &candidates, &decisions)
+        .write_verified_entities(kremory::core::ingest::WriteVerifiedEntitiesParams {
+            episode_id: episode_id,
+            candidates: &candidates,
+            decisions: &decisions,
+        })
         .await
         .expect("write_verified_entities must succeed");
 
@@ -352,17 +366,24 @@ async fn legacy_engine_ingest_still_works() {
     // LlmExtractor is `pub` — accessible from integration tests.
     // Clone the llm Arc before moving it into Engine::new.
     let extractor = LlmExtractor::new(Arc::clone(&llm));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // This call uses the EXISTING ingest_with API — must not break.
     let result: IngestionResult = engine
         .ingest_with(
             &extractor,
-            "Alice works at Acme Corp on the project.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "Alice works at Acme Corp on the project.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest_with must still succeed after GAP-001 split");

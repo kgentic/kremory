@@ -167,12 +167,12 @@ async fn build_ingestor_with_sink(
 
     let null_emb: Arc<NullEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
 
-    let engine = Engine::new(
-        Arc::clone(&temporal),
-        Arc::new(EmptyArrayLlmClient),
-        null_emb,
-        config,
-    );
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&temporal),
+        llm: Arc::new(EmptyArrayLlmClient),
+        embedder: null_emb,
+        config: config,
+    });
 
     let ingestor_config = IngestorConfig {
         deferred_extraction_enabled: true,
@@ -554,12 +554,12 @@ async fn sink_batch_complete_counts_failed_episodes() {
         .expect("PipelineConfig build");
 
     let null_emb: Arc<NullEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
-    let engine = Engine::new(
-        Arc::clone(&temporal),
-        Arc::new(AlwaysFailLlmClient),
-        null_emb,
-        config,
-    );
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&temporal),
+        llm: Arc::new(AlwaysFailLlmClient),
+        embedder: null_emb,
+        config: config,
+    });
 
     let sink = RecordingSink::new();
     let sink_clone = sink.clone();

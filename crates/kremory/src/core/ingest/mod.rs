@@ -44,6 +44,11 @@ pub use helpers::SimpleGraph;
 // tests and verify_stage can reference them.
 pub use pipeline::{EntityCandidate, IngestPhase1Result, ResolvedDecision, UpsertedEntities};
 
+// Args-as-object params structs for the pipeline `impl Engine` methods (TD-042).
+// Re-exported here so consumers reach them at `kremory::core::ingest::*`
+// alongside `Engine` and `SourceParams`.
+pub use pipeline::{IngestDeferredParams, IngestWithParams, WriteVerifiedEntitiesParams};
+
 /// Optional source provenance fields forwarded to the `episodes` table
 /// (Migration 007 columns: source_id, source_uri, recorded_at).
 ///
@@ -257,6 +262,63 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     pub(crate) dream_lock: Arc<Mutex<()>>,
 }
 
+/// Bundled parameters for [`Engine::new`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). Generic over the provider params
+/// because every field is provider-typed (`Arc<L>` / `Arc<Emb>`).
+pub struct EngineNewParams<L: ChatProvider, Emb: EmbeddingProvider> {
+    pub graph: Arc<TemporalGraph>,
+    pub llm: Arc<L>,
+    pub embedder: Arc<Emb>,
+    pub config: PipelineConfig,
+}
+
+/// Bundled parameters for [`Engine::with_extractor`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub(crate) struct EngineWithExtractorParams<L: ChatProvider, Emb: EmbeddingProvider> {
+    pub graph: Arc<TemporalGraph>,
+    pub llm: Arc<L>,
+    pub embedder: Arc<Emb>,
+    pub config: PipelineConfig,
+    pub extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
+}
+
+/// Bundled parameters for [`Engine::with_custom_extractor_no_llm`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub(crate) struct EngineWithCustomExtractorNoLlmParams<L: ChatProvider, Emb: EmbeddingProvider> {
+    pub graph: Arc<TemporalGraph>,
+    pub embedder: Arc<Emb>,
+    pub config: PipelineConfig,
+    pub extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
+}
+
+/// Bundled parameters for [`Engine::ingest_document`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub struct IngestDocumentParams<'a> {
+    pub source: &'a str,
+    pub title: &'a str,
+    pub text: &'a str,
+}
+
+/// Bundled parameters for [`Engine::assert_entity_type`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub struct AssertEntityTypeParams<'a> {
+    pub entity_id: &'a str,
+    /// Currently unused by the storage layer (Phase C DoD C5 future-compat);
+    /// see [`Engine::assert_entity_type`] doc.
+    pub entity_type_id: u32,
+    pub group_id: Option<&'a str>,
+}
+
+/// Bundled parameters for [`Engine::ingest`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub struct IngestParams<'a> {
+    pub text: &'a str,
+    pub reference_time: Option<DateTime<Utc>>,
+    pub group_id: Option<&'a str>,
+    pub content_type: Option<ContentType>,
+    pub source_params: SourceParams,
+}
+
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Create a new `Engine` wrapping a `TemporalGraph`.
     ///
@@ -271,12 +333,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Returns `Err` if `ExtractorKind::GlinerLlm` is requested and the
     /// GLiNER weights fail to load (e.g. no network on first run + no
     /// hf-hub cache).
-    pub fn new(
-        graph: Arc<TemporalGraph>,
-        llm: Arc<L>,
-        embedder: Arc<Emb>,
-        config: PipelineConfig,
-    ) -> Self {
+    pub fn new(params: EngineNewParams<L, Emb>) -> Self {
+        let EngineNewParams {
+            graph,
+            llm,
+            embedder,
+            config,
+        } = params;
         let m = llm.model().trim().to_string();
         let model = if m.is_empty() { None } else { Some(m) };
         let extractor = Arc::new(crate::core::extraction::factory::ExtractorKind::Llm(
@@ -300,13 +363,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// is combined with `.with_llm()` — the caller selects the extractor variant
     /// explicitly while the LLM is still available for Category B pipeline steps
     /// (CascadeResolver, TwoPoolDetector).
-    pub(crate) fn with_extractor(
-        graph: Arc<TemporalGraph>,
-        llm: Arc<L>,
-        embedder: Arc<Emb>,
-        config: PipelineConfig,
-        extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
-    ) -> Self {
+    pub(crate) fn with_extractor(params: EngineWithExtractorParams<L, Emb>) -> Self {
+        let EngineWithExtractorParams {
+            graph,
+            llm,
+            embedder,
+            config,
+            extractor,
+        } = params;
         let m = llm.model().trim().to_string();
         let model = if m.is_empty() { None } else { Some(m) };
         Self {
@@ -329,11 +393,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// return `Error::LlmRequired` at call time — the caller is responsible for
     /// ensuring those paths are not reached, or for handling the error.
     pub(crate) fn with_custom_extractor_no_llm(
-        graph: Arc<TemporalGraph>,
-        embedder: Arc<Emb>,
-        config: PipelineConfig,
-        extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
+        params: EngineWithCustomExtractorNoLlmParams<L, Emb>,
     ) -> Self {
+        let EngineWithCustomExtractorNoLlmParams {
+            graph,
+            embedder,
+            config,
+            extractor,
+        } = params;
         Self {
             graph,
             llm: None,
@@ -383,10 +450,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ///   3. Run the intelligence pipeline (entity extraction, resolution, contradiction)
     pub async fn ingest_document(
         &self,
-        source: &str,
-        title: &str,
-        text: &str,
+        params: IngestDocumentParams<'_>,
     ) -> Result<IngestionResult> {
+        let IngestDocumentParams {
+            source,
+            title,
+            text,
+        } = params;
         // 1. Store the document as a searchable entity.
         // Documents use entity_type_id=0 (catch-all); the title is stored in properties.
         let properties = serde_json::json!({ "text": text, "title": title });
@@ -406,13 +476,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         // 3. Run the intelligence pipeline on the document content.
         let doc_text = format!("# {title}\n\n{text}");
-        self.ingest(
-            &doc_text,
-            None,
-            None,
-            Some(ContentType::Document),
-            SourceParams::default(),
-        )
+        self.ingest(IngestParams {
+            text: &doc_text,
+            reference_time: None,
+            group_id: None,
+            content_type: Some(ContentType::Document),
+            source_params: SourceParams::default(),
+        })
         .await
     }
 
@@ -605,12 +675,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // claude-haiku-4-* uses the same tier.
                     // Ollama: always 0 (local inference, no API cost).
                     // Other providers (OpenAI, unknown): NULL (rate not implemented).
-                    let cost_usd_micro = compute_dream_cost_micro(
-                        &provider_name,
-                        &model_str,
+                    let cost_usd_micro = compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                        provider: &provider_name,
+                        model: &model_str,
                         tokens_input,
                         tokens_output,
-                    );
+                    });
 
                     tracing::debug!(
                         pass_run_id = %pass_run_id,
@@ -813,12 +883,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// # ADR reference
     ///
     /// ADR-045 §3 (ConsumerPinned protection); Phase C DoD C5.
-    pub async fn assert_entity_type(
-        &self,
-        entity_id: &str,
-        _entity_type_id: u32,
-        group_id: Option<&str>,
-    ) -> Result<()> {
+    pub async fn assert_entity_type(&self, params: AssertEntityTypeParams<'_>) -> Result<()> {
+        let AssertEntityTypeParams {
+            entity_id,
+            entity_type_id: _entity_type_id,
+            group_id,
+        } = params;
         self.graph
             .update_entity_source_tier(UpdateEntitySourceTierParams {
                 id: entity_id,
@@ -839,18 +909,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Full pipeline: text → chunk → extract → resolve → contradict → store.
     /// Uses `NuExtractExtractor` (unified extraction template). For alternative extractors,
     /// use `ingest_with()`.
-    // 7 args (threshold 5): text + reference_time + group_id + content_type + source_params
-    // + sink + episode_content_warn_threshold are all orthogonal call-context parameters
-    // that cannot be merged into a single typed struct without an opaque builder layer.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn ingest(
-        &self,
-        text: &str,
-        reference_time: Option<DateTime<Utc>>,
-        group_id: Option<&str>,
-        content_type: Option<ContentType>,
-        source_params: SourceParams,
-    ) -> Result<IngestionResult> {
+    pub async fn ingest(&self, params: IngestParams<'_>) -> Result<IngestionResult> {
+        let IngestParams {
+            text,
+            reference_time,
+            group_id,
+            content_type,
+            source_params,
+        } = params;
         #[cfg(feature = "ner")]
         {
             // MNT-001: use the process-wide singleton from ner::ner_singleton() so
@@ -861,11 +927,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             return self
                 .ingest_with(
                     extractor,
-                    text,
-                    reference_time,
-                    group_id,
-                    content_type,
-                    source_params,
+                    crate::core::ingest::IngestWithParams {
+                        text,
+                        reference_time,
+                        group_id,
+                        content_type,
+                        source_params,
+                    },
                 )
                 .await;
         }
@@ -874,11 +942,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             let extractor = Arc::clone(&self.extractor);
             self.ingest_with(
                 &extractor,
-                text,
-                reference_time,
-                group_id,
-                content_type,
-                source_params,
+                crate::core::ingest::IngestWithParams {
+                    text,
+                    reference_time,
+                    group_id,
+                    content_type,
+                    source_params,
+                },
             )
             .await
         }
@@ -954,12 +1024,22 @@ pub(crate) fn detect_provider_name(model: &str) -> String {
 /// Simplified: micro_usd = tokens_input × input_rate_per_token
 ///                        + tokens_output × output_rate_per_token
 /// where rate_per_token = $/M (numerically equal to micro-USD per token).
-pub(crate) fn compute_dream_cost_micro(
-    provider: &str,
-    model: &str,
-    tokens_input: u64,
-    tokens_output: u64,
-) -> Option<u64> {
+/// Bundled parameters for [`compute_dream_cost_micro`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub(crate) struct ComputeDreamCostMicroParams<'a> {
+    pub provider: &'a str,
+    pub model: &'a str,
+    pub tokens_input: u64,
+    pub tokens_output: u64,
+}
+
+pub(crate) fn compute_dream_cost_micro(params: ComputeDreamCostMicroParams<'_>) -> Option<u64> {
+    let ComputeDreamCostMicroParams {
+        provider,
+        model,
+        tokens_input,
+        tokens_output,
+    } = params;
     match provider {
         "ollama" => Some(0),
         "anthropic" => {
@@ -1047,7 +1127,12 @@ mod budget_helpers_tests {
     #[test]
     fn compute_cost_ollama_zero() {
         assert_eq!(
-            compute_dream_cost_micro("ollama", "qwen2.5:14b", 1000, 500),
+            compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                provider: "ollama",
+                model: "qwen2.5:14b",
+                tokens_input: 1000,
+                tokens_output: 500,
+            }),
             Some(0)
         );
     }
@@ -1057,7 +1142,12 @@ mod budget_helpers_tests {
         // haiku: input rate = 1 micro_usd/token, output rate = 4 micro_usd/token
         // 1000 input → 1000; 500 output → 2000; total 3000
         assert_eq!(
-            compute_dream_cost_micro("anthropic", "claude-haiku-4-5-20251001", 1000, 500),
+            compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                provider: "anthropic",
+                model: "claude-haiku-4-5-20251001",
+                tokens_input: 1000,
+                tokens_output: 500,
+            }),
             Some(1000 + 500 * 4)
         );
     }
@@ -1066,7 +1156,12 @@ mod budget_helpers_tests {
     fn compute_cost_anthropic_sonnet() {
         // sonnet: 100 input × 3 + 50 output × 15 = 300 + 750 = 1050
         assert_eq!(
-            compute_dream_cost_micro("anthropic", "claude-sonnet-4-6", 100, 50),
+            compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                provider: "anthropic",
+                model: "claude-sonnet-4-6",
+                tokens_input: 100,
+                tokens_output: 50,
+            }),
             Some(100 * 3 + 50 * 15)
         );
     }
@@ -1075,7 +1170,12 @@ mod budget_helpers_tests {
     fn compute_cost_anthropic_unknown_model_none() {
         // Unknown claude model → None (stored as NULL)
         assert_eq!(
-            compute_dream_cost_micro("anthropic", "claude-mythos-preview", 100, 50),
+            compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                provider: "anthropic",
+                model: "claude-mythos-preview",
+                tokens_input: 100,
+                tokens_output: 50,
+            }),
             None
         );
     }
@@ -1083,9 +1183,22 @@ mod budget_helpers_tests {
     #[test]
     fn compute_cost_unknown_provider_none() {
         assert_eq!(
-            compute_dream_cost_micro("unknown", "mystery-model", 100, 50),
+            compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                provider: "unknown",
+                model: "mystery-model",
+                tokens_input: 100,
+                tokens_output: 50,
+            }),
             None
         );
-        assert_eq!(compute_dream_cost_micro("openai", "gpt-4.1", 100, 50), None);
+        assert_eq!(
+            compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                provider: "openai",
+                model: "gpt-4.1",
+                tokens_input: 100,
+                tokens_output: 50,
+            }),
+            None
+        );
     }
 }

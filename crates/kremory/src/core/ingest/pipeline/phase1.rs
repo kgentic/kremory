@@ -12,6 +12,17 @@ use super::types::{EntityCandidate, IngestPhase1Result, ResolvedDecision, Upsert
 #[cfg(feature = "ner")]
 use crate::core::intelligence::EntityExtractor;
 
+/// Bundled parameters for [`Engine::write_verified_entities`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+pub struct WriteVerifiedEntitiesParams<'a> {
+    /// FK linking entities to their source episode (from Phase 1).
+    pub episode_id: i64,
+    /// NER candidates produced by `ingest_phase1_ner`.
+    pub candidates: &'a [EntityCandidate],
+    /// Verify decisions, one per relevant candidate.
+    pub decisions: &'a [ResolvedDecision],
+}
+
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Phase 1 ingest: store episode + run NER, return candidates.
     ///
@@ -136,10 +147,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     // Phase A: pub so integration tests (external crates) can call it.
     pub async fn write_verified_entities(
         &self,
-        episode_id: i64,
-        candidates: &[EntityCandidate],
-        decisions: &[ResolvedDecision],
+        params: WriteVerifiedEntitiesParams<'_>,
     ) -> crate::core::error::Result<UpsertedEntities> {
+        let WriteVerifiedEntitiesParams {
+            episode_id,
+            candidates,
+            decisions,
+        } = params;
         use crate::core::resolver::normalize_name;
 
         let now = Utc::now().to_rfc3339();

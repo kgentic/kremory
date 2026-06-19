@@ -597,7 +597,12 @@ async fn test_contextualize_one_hop_expansion() {
         .expect("PipelineConfig build");
 
     let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
-        Engine::new(graph, llm, embedder, config);
+        Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: graph,
+            llm: llm,
+            embedder: embedder,
+            config: config,
+        });
 
     let result: ContextResult = rql
         .contextualize("alice", None, None)

@@ -19,7 +19,7 @@ use crate::memory::events::BatchPhase2Complete;
 use chrono::Utc;
 
 use crate::core::error::{IngestStatus, IngestionErrorKind};
-use crate::core::ingest::{Engine, SourceParams};
+use crate::core::ingest::{Engine, IngestDeferredParams, SourceParams};
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 use crate::core::sink::{IngestEventSink, IngestionError};
 use crate::memory::events::EnrichmentEventSink;
@@ -422,18 +422,18 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
     // ── Step 3: ingest_deferred — LLM fact/relationship extraction ─────────────
     let fact_start = std::time::Instant::now();
     match graph
-        .ingest_deferred(
-            &req.text,
-            req.reference_time,
-            req.group_id.as_deref(),
-            req.content_type,
-            req.episode_id,
-            &req.ner_entity_names,
+        .ingest_deferred(IngestDeferredParams {
+            text: &req.text,
+            reference_time: req.reference_time,
+            group_id: req.group_id.as_deref(),
+            content_type: req.content_type,
+            episode_id: req.episode_id,
+            ner_entity_names: &req.ner_entity_names,
             // Coerce EnrichmentEventSink (supertrait) → &dyn IngestEventSink for
             // ingest_deferred's inner callbacks (Phase 3c fire-sites).
             // ADR-052 Gap 1 — sink propagation through the deferred pipeline.
-            sink.map(|s| s as &dyn IngestEventSink),
-        )
+            sink: sink.map(|s| s as &dyn IngestEventSink),
+        })
         .await
     {
         Ok(facts_extracted) => {

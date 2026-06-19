@@ -497,7 +497,12 @@ mod semantic_tests {
             .build()
             .expect("PipelineConfig::build");
         let rql: Engine<MockChatProvider, OnnxEmbeddingProvider> =
-            Engine::new(graph, Arc::new(MockChatProvider::null()), embedder, config);
+            Engine::new(kremory::core::ingest::EngineNewParams {
+                graph: graph,
+                llm: Arc::new(MockChatProvider::null()),
+                embedder: embedder,
+                config: config,
+            });
 
         // contextualize() uses FTS — "Ria" in the label should match.
         let ctx: ContextResult = rql

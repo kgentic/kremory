@@ -22,7 +22,9 @@ use autoagents_llm::{
 
 use crate::core::chat_tracking::TokenTrackingChatProvider;
 use crate::core::config::PipelineConfig;
-use crate::core::ingest::Engine;
+use crate::core::ingest::{
+    Engine, EngineNewParams, EngineWithCustomExtractorNoLlmParams, EngineWithExtractorParams,
+};
 use crate::core::provider::{
     ArcChatProvider, ArcEmbedder, DeterministicEmbeddingProvider, DynEmbeddingProvider,
 };
@@ -87,12 +89,12 @@ pub(crate) async fn open_graph(
     }
     let config = config_builder.build().map_err(MemoryError::Core)?;
 
-    let engine = Engine::new(
+    let engine = Engine::new(EngineNewParams {
         graph,
-        Arc::new(ArcChatProvider::new(llm)),
-        Arc::new(ArcEmbedder(embedder)),
+        llm: Arc::new(ArcChatProvider::new(llm)),
+        embedder: Arc::new(ArcEmbedder(embedder)),
         config,
-    );
+    });
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
     Ok((handle, graph_for_facade))
@@ -129,13 +131,13 @@ pub(crate) async fn open_graph_with_extractor(
     let config = config_builder.build().map_err(MemoryError::Core)?;
 
     let arc_llm = Arc::new(ArcChatProvider::new(llm));
-    let engine = Engine::with_extractor(
+    let engine = Engine::with_extractor(EngineWithExtractorParams {
         graph,
-        arc_llm,
-        Arc::new(ArcEmbedder(params.embedder)),
+        llm: arc_llm,
+        embedder: Arc::new(ArcEmbedder(params.embedder)),
         config,
-        Arc::new(extractor_kind),
-    );
+        extractor: Arc::new(extractor_kind),
+    });
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
     Ok((handle, graph_for_facade))
@@ -175,12 +177,12 @@ pub(crate) async fn open_graph_no_llm(
     let extractor_kind = Arc::new(crate::core::extraction::factory::ExtractorKind::Custom(
         custom_extractor,
     ));
-    let engine = Engine::with_custom_extractor_no_llm(
+    let engine = Engine::with_custom_extractor_no_llm(EngineWithCustomExtractorNoLlmParams {
         graph,
-        Arc::new(ArcEmbedder(params.embedder)),
+        embedder: Arc::new(ArcEmbedder(params.embedder)),
         config,
-        extractor_kind,
-    );
+        extractor: extractor_kind,
+    });
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
     Ok((handle, graph_for_facade))
@@ -226,12 +228,12 @@ pub(crate) async fn open_engine_handle(
     }
     let config = config_builder.build().map_err(MemoryError::Core)?;
 
-    let engine = Engine::new(
+    let engine = Engine::new(EngineNewParams {
         graph,
-        Arc::new(ArcChatProvider::new(llm)),
-        Arc::new(ArcEmbedder(embedder)),
+        llm: Arc::new(ArcChatProvider::new(llm)),
+        embedder: Arc::new(ArcEmbedder(embedder)),
         config,
-    );
+    });
 
     Ok((EngineGraphHandle::new(engine), graph_for_facade))
 }

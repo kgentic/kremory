@@ -99,7 +99,12 @@ async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvid
         "[]",
     ));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    Engine::new(graph, llm, embedder, config)
+    Engine::new(EngineNewParams {
+        graph: graph,
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    })
 }
 
 #[tokio::test]
@@ -115,13 +120,13 @@ async fn test_simple_graph_open() {
 async fn test_ingest_creates_episode() {
     let rql = make_engine_with_mock().await;
     let result = rql
-        .ingest(
-            "Alice works at Acme",
-            None,
-            None,
-            None,
-            SourceParams::default(),
-        )
+        .ingest(IngestParams {
+            text: "Alice works at Acme",
+            reference_time: None,
+            group_id: None,
+            content_type: None,
+            source_params: SourceParams::default(),
+        })
         .await
         .unwrap();
     assert!(
@@ -137,11 +142,13 @@ async fn test_ingest_creates_entities_and_facts() {
     let result = rql
         .ingest_with(
             &extractor,
-            "Alice works at Acme",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Alice works at Acme",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .unwrap();
@@ -174,11 +181,13 @@ async fn test_ingest_creates_episodic_edges() {
     let result = rql
         .ingest_with(
             &extractor,
-            "Alice works at Acme",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Alice works at Acme",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .unwrap();
@@ -210,11 +219,13 @@ async fn test_ingest_returns_result_with_correct_counts() {
     let result = rql
         .ingest_with(
             &extractor,
-            "Alice works at Acme",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Alice works at Acme",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .unwrap();
@@ -230,13 +241,13 @@ async fn test_ingest_returns_result_with_correct_counts() {
 #[tokio::test]
 async fn test_ingest_entities_stored_in_graph() {
     let rql = make_engine_with_mock().await;
-    rql.ingest(
-        "Alice works at Acme",
-        None,
-        None,
-        None,
-        SourceParams::default(),
-    )
+    rql.ingest(IngestParams {
+        text: "Alice works at Acme",
+        reference_time: None,
+        group_id: None,
+        content_type: None,
+        source_params: SourceParams::default(),
+    })
     .await
     .unwrap();
 
@@ -268,8 +279,12 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
     let config = PipelineConfig::builder().build().unwrap();
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
-        Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let rql: Engine<MockChatProvider, MockEmbeddingProvider> = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // Extractor provides "Alice" (canonical label). Proper noun scanner will
     // detect "Zenith Dynamics" but assign label="Entity" (placeholder).
@@ -284,11 +299,13 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
     let result = rql
         .ingest_with(
             &extractor,
-            "Alice discussed the proposal with Zenith Dynamics executives.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Alice discussed the proposal with Zenith Dynamics executives.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .unwrap();
@@ -343,7 +360,12 @@ async fn ingest_intra_batch_duplicate_dedupes_silently() {
     let config = PipelineConfig::builder().build().expect("config");
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // Two entities with identical names — normalize to the same id.
     let extractor = FixedExtractor {
@@ -364,11 +386,13 @@ async fn ingest_intra_batch_duplicate_dedupes_silently() {
     let result = engine
         .ingest_with(
             &extractor,
-            "Alice Corp is a company.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Alice Corp is a company.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("dup-name batch must succeed (soft-dedup post-v0.1.4)");
@@ -426,7 +450,12 @@ async fn stub_entity_inserted_on_forward_reference_lib() {
     let config = PipelineConfig::builder().build().expect("config");
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // Alice in entity list; Bob only referenced in facts (forward reference).
     let extractor = FixedExtractorWithFacts {
@@ -447,11 +476,13 @@ async fn stub_entity_inserted_on_forward_reference_lib() {
     let result = engine
         .ingest_with(
             &extractor,
-            "Alice works with Bob on research.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Alice works with Bob on research.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest_with OK");
@@ -500,7 +531,12 @@ async fn stub_entity_promoted_on_reingestion_lib() {
     let config = PipelineConfig::builder().build().expect("config");
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // Ingest 1: Alice + forward-ref Bob → Bob becomes stub.
     let extractor_1 = FixedExtractorWithFacts {
@@ -520,11 +556,13 @@ async fn stub_entity_promoted_on_reingestion_lib() {
     let r1 = engine
         .ingest_with(
             &extractor_1,
-            "Alice works with Bob.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Alice works with Bob.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest 1 OK");
@@ -561,11 +599,13 @@ async fn stub_entity_promoted_on_reingestion_lib() {
     engine
         .ingest_with(
             &extractor_2,
-            "Bob is a researcher at Stanford.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "Bob is a researcher at Stanford.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest 2 OK");
@@ -605,7 +645,12 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
 
     let before_count = graph.list_entities().await.expect("list").len();
 
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // Use a canonical label ("Person") so the TD-012 guard does not filter
     // these out before the dedup logic runs.  The test invariant is dedup,
@@ -628,11 +673,13 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
     let result = engine
         .ingest_with(
             &extractor,
-            "two duplicates submitted in single batch.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "two duplicates submitted in single batch.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("dup-name batch must succeed (soft-dedup post-v0.1.4)");
@@ -699,7 +746,12 @@ async fn engine_stores_model_string_from_llm() {
         model_str: "qwen2.5:14b",
     });
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(graph, llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: graph,
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // AC8: model field must hold Some("qwen2.5:14b") — the value returned by llm.model().
     assert_eq!(
@@ -724,7 +776,12 @@ async fn engine_model_is_none_when_llm_model_empty() {
     let config = PipelineConfig::builder().build().unwrap();
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(graph, llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: graph,
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // AC8: empty model string must map to None, not Some("").
     assert_eq!(
@@ -771,12 +828,12 @@ async fn engine_new_signature_unchanged_model_derived_from_llm() {
     let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
     let config = PipelineConfig::builder().build().unwrap();
     // Exactly 4 arguments to Engine::new — signature unchanged per AC7.
-    let engine = Engine::new(
-        graph,
-        Arc::new(NamedMock),
-        Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
-        config,
-    );
+    let engine = Engine::new(EngineNewParams {
+        graph: graph,
+        llm: Arc::new(NamedMock),
+        embedder: Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
+        config: config,
+    });
 
     assert_eq!(
         engine.model.as_deref(),
@@ -810,7 +867,12 @@ async fn ingest_persists_entity_catchall_under_l1_design() {
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
 
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     let extractor = FixedExtractor {
         entities: vec![
@@ -830,11 +892,13 @@ async fn ingest_persists_entity_catchall_under_l1_design() {
     let result = engine
         .ingest_with(
             &extractor,
-            "test text for L1 catch-all persistence.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "test text for L1 catch-all persistence.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest must succeed");
@@ -913,7 +977,12 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
         "[]",
     ));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
     let extractor = Arc::clone(&engine.extractor);
 
     let override_specs = vec![
@@ -938,13 +1007,15 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
     let r1 = engine
         .ingest_with(
             &extractor,
-            "Alice works at Acme",
-            None,
-            Some("fresh"),
-            None,
-            SourceParams {
-                entity_types_override: Some(override_specs.clone()),
-                ..SourceParams::default()
+            IngestWithParams {
+                text: "Alice works at Acme",
+                reference_time: None,
+                group_id: Some("fresh"),
+                content_type: None,
+                source_params: SourceParams {
+                    entity_types_override: Some(override_specs.clone()),
+                    ..SourceParams::default()
+                },
             },
         )
         .await
@@ -1043,7 +1114,12 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
     );
     let llm = Arc::new(MockChatProvider::new(mock_map));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
     let extractor = Arc::clone(&engine.extractor);
 
     // Override with a type list that includes CustomType(5) — not in the DB.
@@ -1063,13 +1139,15 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
     let _ = engine
         .ingest_with(
             &extractor,
-            "WidgetCo is a company.",
-            None,
-            Some("g1"),
-            None,
-            SourceParams {
-                entity_types_override: Some(override_specs),
-                ..SourceParams::default()
+            IngestWithParams {
+                text: "WidgetCo is a company.",
+                reference_time: None,
+                group_id: Some("g1"),
+                content_type: None,
+                source_params: SourceParams {
+                    entity_types_override: Some(override_specs),
+                    ..SourceParams::default()
+                },
             },
         )
         .await
@@ -1150,19 +1228,26 @@ async fn test_ingest_with_no_override_fresh_db_extracts_zero_typed_entities() {
         "[]",
     ));
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
     let extractor = Arc::clone(&engine.extractor);
 
     let result = engine
         .ingest_with(
             &extractor,
-            "Alice works at Acme",
-            None,
-            Some("g_fresh"),
-            None,
-            SourceParams {
-                entity_types_override: None,
-                ..SourceParams::default()
+            IngestWithParams {
+                text: "Alice works at Acme",
+                reference_time: None,
+                group_id: Some("g_fresh"),
+                content_type: None,
+                source_params: SourceParams {
+                    entity_types_override: None,
+                    ..SourceParams::default()
+                },
             },
         )
         .await
@@ -1214,7 +1299,12 @@ async fn ingest_persists_runtime_allowed_entity_label() {
     let llm = Arc::new(MockChatProvider::null());
     let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
 
-    let engine = Engine::new(Arc::clone(&graph), llm, embedder, config);
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // Inject an entity whose label matches the runtime config but NOT the
     // compile-time allowlist. Without the M5 fix this is silently rejected.
@@ -1229,11 +1319,13 @@ async fn ingest_persists_runtime_allowed_entity_label() {
     let result = engine
         .ingest_with(
             &extractor,
-            "some text mentioning a runtime-allowed entity type.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            IngestWithParams {
+                text: "some text mentioning a runtime-allowed entity type.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest must succeed");

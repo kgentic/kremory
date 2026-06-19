@@ -141,8 +141,12 @@ async fn add_episode_returns_before_gliner_fires() {
 
     let dim = config.embedding_dim.0;
     let embedder = Arc::new(kremory::core::provider::NullEmbeddingProvider { dim });
-    let graph =
-        kremory::core::ingest::Engine::new(temporal, Arc::new(recording_llm), embedder, config);
+    let graph = kremory::core::ingest::Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: Arc::new(recording_llm),
+        embedder: embedder,
+        config: config,
+    });
 
     let ingestor_config = IngestorConfig {
         deferred_extraction_enabled: true,

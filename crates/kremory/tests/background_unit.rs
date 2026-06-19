@@ -131,12 +131,12 @@ async fn graph_with_llm<L: ChatProvider + 'static>(
         .build()
         .expect("config build failed");
     let dim = config.embedding_dim.0;
-    kremory::core::ingest::Engine::new(
-        temporal,
-        Arc::new(llm),
-        Arc::new(NullEmbeddingProvider { dim }),
-        config,
-    )
+    kremory::core::ingest::Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: Arc::new(llm),
+        embedder: Arc::new(NullEmbeddingProvider { dim }),
+        config: config,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -282,12 +282,12 @@ async fn errors_are_observable() {
         .build()
         .expect("config build failed");
     let dim = config.embedding_dim.0;
-    let graph = kremory::core::ingest::Engine::new(
-        temporal,
-        Arc::new(FailingLlmClient),
-        Arc::new(NullEmbeddingProvider { dim }),
-        config,
-    );
+    let graph = kremory::core::ingest::Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: Arc::new(FailingLlmClient),
+        embedder: Arc::new(NullEmbeddingProvider { dim }),
+        config: config,
+    });
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
     ingestor
         .send("this will fail", None, None, None)

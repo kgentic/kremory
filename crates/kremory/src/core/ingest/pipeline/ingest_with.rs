@@ -48,14 +48,26 @@ fn fire_entity_edge_metrics(mention_ok: bool) {
     }
 }
 
+/// Bundled call-context parameters for [`Engine::ingest_with`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). The generic `extractor: &E`
+/// stays a lead positional param (brief rule 4); these are the non-generic args.
+pub struct IngestWithParams<'a> {
+    pub text: &'a str,
+    pub reference_time: Option<DateTime<Utc>>,
+    pub group_id: Option<&'a str>,
+    pub content_type: Option<ContentType>,
+    pub source_params: SourceParams,
+}
+
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Full pipeline with a caller-supplied extractor.
     /// Any type implementing `EntityExtractor` can be used (DefaultExtractor, NuExtractExtractor, etc.).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
-    #[allow(clippy::too_many_arguments)]
+    // Generic `extractor: &E` stays a lead positional param (TD-042 brief rule 4);
+    // the remaining call-context args are bundled into `IngestWithParams`.
     #[tracing::instrument(
         name = "kremory.ingest",
-        skip(self, extractor, text),
+        skip(self, extractor, params),
         fields(
             kremory.operation = "ingest",
         )
@@ -63,12 +75,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     pub async fn ingest_with<E: EntityExtractor>(
         &self,
         extractor: &E,
-        text: &str,
-        reference_time: Option<DateTime<Utc>>,
-        group_id: Option<&str>,
-        content_type: Option<ContentType>,
-        source_params: SourceParams,
+        params: IngestWithParams<'_>,
     ) -> crate::core::error::Result<IngestionResult> {
+        let IngestWithParams {
+            text,
+            reference_time,
+            group_id,
+            content_type,
+            source_params,
+        } = params;
         let ingest_start = Instant::now();
         let ref_time = reference_time.unwrap_or_else(Utc::now);
         let content_type = content_type.unwrap_or(ContentType::Text);

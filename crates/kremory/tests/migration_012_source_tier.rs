@@ -523,7 +523,12 @@ async fn q04_with_facts_object_id_stamped_consumer_pinned() {
     let config = PipelineConfig::builder()
         .build()
         .expect("PipelineConfig default must succeed");
-    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), embedder, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: Arc::clone(&llm),
+        embedder: embedder,
+        config: config,
+    });
 
     let extractor = LlmExtractor::new(llm);
 
@@ -548,11 +553,13 @@ async fn q04_with_facts_object_id_stamped_consumer_pinned() {
     engine
         .ingest_with(
             &extractor,
-            "Q-04 symmetric ConsumerPinned test episode.",
-            None,
-            Some("default"),
-            None,
-            params,
+            kremory::core::ingest::IngestWithParams {
+                text: "Q-04 symmetric ConsumerPinned test episode.",
+                reference_time: None,
+                group_id: Some("default"),
+                content_type: None,
+                source_params: params,
+            },
         )
         .await
         .expect("ingest_with with object_id fact must succeed");
@@ -596,7 +603,12 @@ async fn q04_with_facts_object_value_literal_no_object_stamp() {
     let config = PipelineConfig::builder()
         .build()
         .expect("PipelineConfig default must succeed");
-    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), embedder, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: Arc::clone(&llm),
+        embedder: embedder,
+        config: config,
+    });
 
     let extractor = LlmExtractor::new(llm);
 
@@ -616,11 +628,13 @@ async fn q04_with_facts_object_value_literal_no_object_stamp() {
     engine
         .ingest_with(
             &extractor,
-            "Q-04 literal object_value — no object entity should be created.",
-            None,
-            Some("default"),
-            None,
-            params,
+            kremory::core::ingest::IngestWithParams {
+                text: "Q-04 literal object_value — no object entity should be created.",
+                reference_time: None,
+                group_id: Some("default"),
+                content_type: None,
+                source_params: params,
+            },
         )
         .await
         .expect("ingest_with with literal object_value must succeed");

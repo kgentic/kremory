@@ -130,17 +130,24 @@ async fn td_012_no_placeholder_labels_in_fixture_extraction() {
         .expect("PipelineConfig default");
 
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
-    let engine = Engine::new(Arc::clone(&graph), llm, Arc::new(emb), config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: Arc::new(emb),
+        config: config,
+    });
 
     // Run ingest on the fixture.
     let result = engine
         .ingest_with(
             &extractor,
-            &fixture_text,
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: &fixture_text,
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest of mock_interview fixture must succeed");

@@ -264,7 +264,12 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             .expect("PipelineConfig default")
     };
 
-    let engine = Engine::new(Arc::clone(&graph), llm.clone(), Arc::new(emb), config); // Phase E: Engine::new is infallible (was Result)
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm.clone(),
+        embedder: Arc::new(emb),
+        config: config,
+    }); // Phase E: Engine::new is infallible (was Result)
 
     // TD-021: KREMORY_BENCH_EXTRA_TYPES allows passing additional entity types
     // (comma-separated, e.g. "Court,Drug,Species") on top of the 10 defaults so
@@ -326,7 +331,16 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             let hybrid = kremory::core::extraction::GlinerLlmExtractor::new(Arc::clone(&llm))
                 .expect("GlinerLlmExtractor::new — needs GLiNER model + LLM");
             engine
-                .ingest_with(&hybrid, &fixture_text, None, None, None, source_params)
+                .ingest_with(
+                    &hybrid,
+                    kremory::core::ingest::IngestWithParams {
+                        text: &fixture_text,
+                        reference_time: None,
+                        group_id: None,
+                        content_type: None,
+                        source_params: source_params,
+                    },
+                )
                 .await
         }
         #[cfg(not(feature = "ner"))]
@@ -343,7 +357,16 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             let gliner = kremory::core::ner::GlinerExtractor::new()
                 .expect("GlinerExtractor::new — downloads ~650MB INT8 model from HF on first use");
             engine
-                .ingest_with(&gliner, &fixture_text, None, None, None, source_params)
+                .ingest_with(
+                    &gliner,
+                    kremory::core::ingest::IngestWithParams {
+                        text: &fixture_text,
+                        reference_time: None,
+                        group_id: None,
+                        content_type: None,
+                        source_params: source_params,
+                    },
+                )
                 .await
         }
         #[cfg(not(feature = "ner"))]
@@ -356,7 +379,16 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     } else {
         let extractor = DefaultExtractor::new(Arc::clone(&llm));
         engine
-            .ingest_with(&extractor, &fixture_text, None, None, None, source_params)
+            .ingest_with(
+                &extractor,
+                kremory::core::ingest::IngestWithParams {
+                    text: &fixture_text,
+                    reference_time: None,
+                    group_id: None,
+                    content_type: None,
+                    source_params: source_params,
+                },
+            )
             .await
     };
 
@@ -668,16 +700,23 @@ async fn label_precision_haiku_on_mock_interview() {
         .expect("PipelineConfig default");
 
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
-    let engine = Engine::new(Arc::clone(&graph), llm, Arc::new(emb), config); // Phase E: Engine::new is infallible (was Result)
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: llm,
+        embedder: Arc::new(emb),
+        config: config,
+    }); // Phase E: Engine::new is infallible (was Result)
 
     let ingest_result = engine
         .ingest_with(
             &extractor,
-            &fixture_text,
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: &fixture_text,
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest of mock_interview fixture must succeed");

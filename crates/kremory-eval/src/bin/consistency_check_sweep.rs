@@ -361,12 +361,26 @@ async fn ingest_fixture(
     let dyn_emb: Arc<dyn kremory::DynEmbeddingProvider> =
         Arc::clone(&embedder) as Arc<dyn kremory::DynEmbeddingProvider>;
     let arc_emb = Arc::new(kremory::ArcEmbedder(dyn_emb));
-    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), arc_emb, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: Arc::clone(&llm),
+        embedder: arc_emb,
+        config: config,
+    });
     let source_params = build_source_params();
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
 
     engine
-        .ingest_with(&extractor, fixture_text, None, None, None, source_params)
+        .ingest_with(
+            &extractor,
+            kremory::core::ingest::IngestWithParams {
+                text: fixture_text,
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: source_params,
+            },
+        )
         .await
         .context("ingest_with failed")?;
 

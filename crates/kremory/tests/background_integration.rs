@@ -189,7 +189,12 @@ async fn background_ingestor_contradiction_round_trip() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = Engine::new(temporal, llm, embedder, config);
+    let graph = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
 
     // Ingestor config: tiny channel — only 2 slots needed
     let ingestor_config = IngestorConfig {
@@ -265,7 +270,12 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = Engine::new(temporal, Arc::clone(&llm), embedder, config);
+    let graph = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: Arc::clone(&llm),
+        embedder: embedder,
+        config: config,
+    });
 
     // Use LlmExtractor explicitly so the scripted LLM responses are consumed
     // regardless of whether the `ner` feature is enabled (which would otherwise
@@ -276,11 +286,13 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     let result1 = graph
         .ingest_with(
             &extractor,
-            "the app needs to go live friday",
-            Some(Utc::now()),
-            None,
-            None,
-            kremory::core::ingest::SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "the app needs to go live friday",
+                reference_time: Some(Utc::now()),
+                group_id: None,
+                content_type: None,
+                source_params: kremory::core::ingest::SourceParams::default(),
+            },
         )
         .await
         .expect("ingest utterance 1 failed");
@@ -301,11 +313,13 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     let result2 = graph
         .ingest_with(
             &extractor,
-            "actually can we deploy on monday instead",
-            Some(Utc::now()),
-            None,
-            None,
-            kremory::core::ingest::SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "actually can we deploy on monday instead",
+                reference_time: Some(Utc::now()),
+                group_id: None,
+                content_type: None,
+                source_params: kremory::core::ingest::SourceParams::default(),
+            },
         )
         .await
         .expect("ingest utterance 2 failed");
@@ -441,7 +455,12 @@ async fn deferred_extraction_invoked_after_successful_ner() {
     let queue_handle = Arc::clone(&scripted_llm.queue);
 
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
-    let graph = Engine::new(temporal, Arc::new(scripted_llm), embedder, config);
+    let graph = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: Arc::new(scripted_llm),
+        embedder: embedder,
+        config: config,
+    });
 
     let ingestor_config = IngestorConfig {
         deferred_extraction_enabled: true,
@@ -513,7 +532,12 @@ async fn background_ingestor_drains_without_errors() {
     let llm = Arc::new(build_scripted_llm());
     let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
 
-    let graph = Engine::new(temporal, llm, embedder, config);
+    let graph = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: llm,
+        embedder: embedder,
+        config: config,
+    });
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 
     ingestor
