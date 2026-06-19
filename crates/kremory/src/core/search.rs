@@ -40,6 +40,104 @@ fn sanitise_fts5_query(raw: &str) -> Option<String> {
     }
 }
 
+/// Bundled parameters for [`TemporalGraph::fts_search_entities`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+pub struct FtsSearchEntitiesParams<'a> {
+    pub query: &'a str,
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::fts_search_entities_no_count`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub(crate) struct FtsSearchEntitiesNoCountParams<'a> {
+    pub query: &'a str,
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::fts_search_facts`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+pub struct FtsSearchFactsParams<'a> {
+    pub query: &'a str,
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::vector_search_entities`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct VectorSearchEntitiesParams<'a> {
+    pub query_embedding: &'a [f32],
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::vector_search_entities_no_count`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub(crate) struct VectorSearchEntitiesNoCountParams<'a> {
+    pub query_embedding: &'a [f32],
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::vector_search_with_index`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+struct VectorSearchWithIndexParams<'a> {
+    vec_str: &'a str,
+    limit: usize,
+    filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::vector_search_brute_force`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+struct VectorSearchBruteForceParams<'a> {
+    vec_str: &'a str,
+    limit: usize,
+    filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::hybrid_search_entities`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct HybridSearchEntitiesParams<'a> {
+    pub query_text: &'a str,
+    pub query_embedding: &'a [f32],
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::vector_search_facts`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct VectorSearchFactsParams<'a> {
+    pub query_embedding: &'a [f32],
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::vector_search_facts_with_index`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+struct VectorSearchFactsWithIndexParams<'a> {
+    vec_str: &'a str,
+    limit: usize,
+    filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::vector_search_facts_brute_force`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+struct VectorSearchFactsBruteForceParams<'a> {
+    vec_str: &'a str,
+    limit: usize,
+    filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::hybrid_search_facts`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct HybridSearchFactsParams<'a> {
+    pub query_text: &'a str,
+    pub query_embedding: &'a [f32],
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
 impl TemporalGraph {
     /// Increment `access_count` for a batch of entity IDs (Story #247).
     ///
@@ -76,12 +174,19 @@ impl TemporalGraph {
     /// Returns entities ranked by BM25 relevance, scoped by `filters.group_ids`.
     pub async fn fts_search_entities(
         &self,
-        query: &str,
-        limit: usize,
-        filters: &SearchFilters,
+        params: FtsSearchEntitiesParams<'_>,
     ) -> Result<Vec<SearchHit<Entity>>> {
+        let FtsSearchEntitiesParams {
+            query,
+            limit,
+            filters,
+        } = params;
         let hits = self
-            .fts_search_entities_no_count(query, limit, filters)
+            .fts_search_entities_no_count(FtsSearchEntitiesNoCountParams {
+                query,
+                limit,
+                filters,
+            })
             .await?;
         // Story #247: increment access_count for every returned entity.
         let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
@@ -95,10 +200,13 @@ impl TemporalGraph {
     /// and vector paths surface the same entity).
     pub(crate) async fn fts_search_entities_no_count(
         &self,
-        query: &str,
-        limit: usize,
-        filters: &SearchFilters,
+        params: FtsSearchEntitiesNoCountParams<'_>,
     ) -> Result<Vec<SearchHit<Entity>>> {
+        let FtsSearchEntitiesNoCountParams {
+            query,
+            limit,
+            filters,
+        } = params;
         let _search_start = Instant::now();
         let safe_query = match sanitise_fts5_query(query) {
             Some(q) => q,
@@ -155,10 +263,13 @@ impl TemporalGraph {
     /// Scoped by `filters.group_ids`.
     pub async fn fts_search_facts(
         &self,
-        query: &str,
-        limit: usize,
-        filters: &SearchFilters,
+        params: FtsSearchFactsParams<'_>,
     ) -> Result<Vec<SearchHit<Fact>>> {
+        let FtsSearchFactsParams {
+            query,
+            limit,
+            filters,
+        } = params;
         let _search_start = Instant::now();
         let safe_query = match sanitise_fts5_query(query) {
             Some(q) => q,
@@ -217,12 +328,19 @@ impl TemporalGraph {
     /// Scoped by `filters.group_ids`.
     pub async fn vector_search_entities(
         &self,
-        query_embedding: &[f32],
-        limit: usize,
-        filters: &SearchFilters,
+        params: VectorSearchEntitiesParams<'_>,
     ) -> Result<Vec<SearchHit<Entity>>> {
+        let VectorSearchEntitiesParams {
+            query_embedding,
+            limit,
+            filters,
+        } = params;
         let hits = self
-            .vector_search_entities_no_count(query_embedding, limit, filters)
+            .vector_search_entities_no_count(VectorSearchEntitiesNoCountParams {
+                query_embedding,
+                limit,
+                filters,
+            })
             .await?;
         // Story #247: increment access_count for every returned entity.
         let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
@@ -236,10 +354,13 @@ impl TemporalGraph {
     /// and vector paths surface the same entity).
     pub(crate) async fn vector_search_entities_no_count(
         &self,
-        query_embedding: &[f32],
-        limit: usize,
-        filters: &SearchFilters,
+        params: VectorSearchEntitiesNoCountParams<'_>,
     ) -> Result<Vec<SearchHit<Entity>>> {
+        let VectorSearchEntitiesNoCountParams {
+            query_embedding,
+            limit,
+            filters,
+        } = params;
         let _search_start = Instant::now();
         let vec_str = format!(
             "[{}]",
@@ -252,15 +373,23 @@ impl TemporalGraph {
 
         // Try DiskANN index first (vector_top_k)
         let result = self
-            .vector_search_with_index(&vec_str, limit, filters)
+            .vector_search_with_index(VectorSearchWithIndexParams {
+                vec_str: &vec_str,
+                limit,
+                filters,
+            })
             .await;
 
         let hits = match result {
             Ok(hits) => hits,
             Err(_) => {
                 // Fall back to brute-force cosine distance
-                self.vector_search_brute_force(&vec_str, limit, filters)
-                    .await?
+                self.vector_search_brute_force(VectorSearchBruteForceParams {
+                    vec_str: &vec_str,
+                    limit,
+                    filters,
+                })
+                .await?
             }
         };
         let hits_count = hits.len();
@@ -273,10 +402,13 @@ impl TemporalGraph {
 
     async fn vector_search_with_index(
         &self,
-        vec_str: &str,
-        limit: usize,
-        filters: &SearchFilters,
+        params: VectorSearchWithIndexParams<'_>,
     ) -> anyhow::Result<Vec<SearchHit<Entity>>> {
+        let VectorSearchWithIndexParams {
+            vec_str,
+            limit,
+            filters,
+        } = params;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
 
@@ -321,10 +453,13 @@ impl TemporalGraph {
 
     async fn vector_search_brute_force(
         &self,
-        vec_str: &str,
-        limit: usize,
-        filters: &SearchFilters,
+        params: VectorSearchBruteForceParams<'_>,
     ) -> anyhow::Result<Vec<SearchHit<Entity>>> {
+        let VectorSearchBruteForceParams {
+            vec_str,
+            limit,
+            filters,
+        } = params;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit).
         // Table is aliased as "e" in the query, so use "e" here.
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
@@ -372,11 +507,14 @@ impl TemporalGraph {
     /// Scoped by `filters.group_ids`.
     pub async fn hybrid_search_entities(
         &self,
-        query_text: &str,
-        query_embedding: &[f32],
-        limit: usize,
-        filters: &SearchFilters,
+        params: HybridSearchEntitiesParams<'_>,
     ) -> Result<Vec<SearchHit<Entity>>> {
+        let HybridSearchEntitiesParams {
+            query_text,
+            query_embedding,
+            limit,
+            filters,
+        } = params;
         let _search_start = Instant::now();
         // Fetch more candidates from each source than the final limit
         // to give fusion enough data to work with
@@ -384,10 +522,18 @@ impl TemporalGraph {
 
         // Run both searches with the same filters
         let vector_hits = self
-            .vector_search_entities(query_embedding, fetch_limit, filters)
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding,
+                limit: fetch_limit,
+                filters,
+            })
             .await?;
         let fts_hits = self
-            .fts_search_entities(query_text, fetch_limit, filters)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: query_text,
+                limit: fetch_limit,
+                filters,
+            })
             .await?;
 
         // Fuse with RRF
@@ -409,10 +555,13 @@ impl TemporalGraph {
     /// Scoped by `filters.group_ids`.
     pub async fn vector_search_facts(
         &self,
-        query_embedding: &[f32],
-        limit: usize,
-        filters: &SearchFilters,
+        params: VectorSearchFactsParams<'_>,
     ) -> Result<Vec<SearchHit<Fact>>> {
+        let VectorSearchFactsParams {
+            query_embedding,
+            limit,
+            filters,
+        } = params;
         let _search_start = Instant::now();
         let vec_str = format!(
             "[{}]",
@@ -425,15 +574,23 @@ impl TemporalGraph {
 
         // Try DiskANN index first (vector_top_k)
         let result = self
-            .vector_search_facts_with_index(&vec_str, limit, filters)
+            .vector_search_facts_with_index(VectorSearchFactsWithIndexParams {
+                vec_str: &vec_str,
+                limit,
+                filters,
+            })
             .await;
 
         let hits = match result {
             Ok(hits) => hits,
             Err(_) => {
                 // Fall back to brute-force cosine distance
-                self.vector_search_facts_brute_force(&vec_str, limit, filters)
-                    .await?
+                self.vector_search_facts_brute_force(VectorSearchFactsBruteForceParams {
+                    vec_str: &vec_str,
+                    limit,
+                    filters,
+                })
+                .await?
             }
         };
         let hits_count = hits.len();
@@ -446,10 +603,13 @@ impl TemporalGraph {
 
     async fn vector_search_facts_with_index(
         &self,
-        vec_str: &str,
-        limit: usize,
-        filters: &SearchFilters,
+        params: VectorSearchFactsWithIndexParams<'_>,
     ) -> anyhow::Result<Vec<SearchHit<Fact>>> {
+        let VectorSearchFactsWithIndexParams {
+            vec_str,
+            limit,
+            filters,
+        } = params;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "f", 3);
 
@@ -493,10 +653,13 @@ impl TemporalGraph {
 
     async fn vector_search_facts_brute_force(
         &self,
-        vec_str: &str,
-        limit: usize,
-        filters: &SearchFilters,
+        params: VectorSearchFactsBruteForceParams<'_>,
     ) -> anyhow::Result<Vec<SearchHit<Fact>>> {
+        let VectorSearchFactsBruteForceParams {
+            vec_str,
+            limit,
+            filters,
+        } = params;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "facts", 3);
 
@@ -544,11 +707,14 @@ impl TemporalGraph {
     /// Scoped by `filters.group_ids`.
     pub async fn hybrid_search_facts(
         &self,
-        query_text: &str,
-        query_embedding: &[f32],
-        limit: usize,
-        filters: &SearchFilters,
+        params: HybridSearchFactsParams<'_>,
     ) -> Result<Vec<SearchHit<Fact>>> {
+        let HybridSearchFactsParams {
+            query_text,
+            query_embedding,
+            limit,
+            filters,
+        } = params;
         let _search_start = Instant::now();
         // Fetch more candidates from each source than the final limit
         // to give fusion enough data to work with
@@ -556,10 +722,18 @@ impl TemporalGraph {
 
         // Run both searches with the same filters
         let vector_hits = self
-            .vector_search_facts(query_embedding, fetch_limit, filters)
+            .vector_search_facts(VectorSearchFactsParams {
+                query_embedding,
+                limit: fetch_limit,
+                filters,
+            })
             .await?;
         let fts_hits = self
-            .fts_search_facts(query_text, fetch_limit, filters)
+            .fts_search_facts(FtsSearchFactsParams {
+                query: query_text,
+                limit: fetch_limit,
+                filters,
+            })
             .await?;
 
         // Fuse with RRF
@@ -1028,7 +1202,11 @@ mod tests {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_entities("platform", 10, &no_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "platform",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1048,7 +1226,11 @@ mod tests {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_entities("engineer", 10, &no_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "engineer",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert!(
@@ -1063,7 +1245,11 @@ mod tests {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_entities("nonexistent_term_xyz", 10, &no_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "nonexistent_term_xyz",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(hits.len(), 0);
@@ -1077,7 +1263,14 @@ mod tests {
         // Label is no longer in FTS after Phase 2 (entities.label column dropped).
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g.fts_search_entities("role", 1, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "role",
+                limit: 1,
+                filters: &no_filter,
+            })
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1, "limit should cap results");
     }
 
@@ -1131,7 +1324,11 @@ mod tests {
         let no_filter = SearchFilters::new();
         // This query contains apostrophes and commas — previously crashed FTS5
         let hits = g
-            .fts_search_entities("Alice's work at Acme, Inc.", 10, &no_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "Alice's work at Acme, Inc.",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         // Should not crash; may or may not find results depending on data
@@ -1143,7 +1340,11 @@ mod tests {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_facts("It's a test, isn't it?", 10, &no_filter)
+            .fts_search_facts(FtsSearchFactsParams {
+                query: "It's a test, isn't it?",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert!(hits.len() <= 10);
@@ -1154,7 +1355,11 @@ mod tests {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_facts("Engineer", 10, &no_filter)
+            .fts_search_facts(FtsSearchFactsParams {
+                query: "Engineer",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert!(
@@ -1169,7 +1374,11 @@ mod tests {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
         let hits = g
-            .fts_search_facts("has_title", 10, &no_filter)
+            .fts_search_facts(FtsSearchFactsParams {
+                query: "has_title",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(hits.len(), 2, "should find 2 has_title facts");
@@ -1184,7 +1393,14 @@ mod tests {
         let budget_fact = facts.iter().find(|f| f.predicate == "discussed").unwrap();
         g.invalidate_fact(budget_fact.id, Utc::now()).await.unwrap();
 
-        let hits = g.fts_search_facts("budget", 10, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_facts(FtsSearchFactsParams {
+                query: "budget",
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 0, "expired facts should not appear in search");
     }
 
@@ -1192,7 +1408,14 @@ mod tests {
     async fn test_fts_search_facts_ranking() {
         let g = setup_graph_with_data().await;
         let no_filter = SearchFilters::new();
-        let hits = g.fts_search_facts("budget", 10, &no_filter).await.unwrap();
+        let hits = g
+            .fts_search_facts(FtsSearchFactsParams {
+                query: "budget",
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .unwrap();
         assert!(!hits.is_empty());
         // Results should be ordered by rank (ascending, since BM25 rank is negative)
         for i in 1..hits.len() {
@@ -1236,7 +1459,11 @@ mod tests {
 
         // Search with alice's embedding — should find alice first, acme second (similar), bob last
         let hits = g
-            .vector_search_entities(&alice_emb, 10, &no_filter)
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &alice_emb,
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(hits.len(), 3, "should find all 3 entities with embeddings");
@@ -1270,7 +1497,14 @@ mod tests {
             .await
             .unwrap();
 
-        let hits = g.vector_search_entities(&emb, 2, &no_filter).await.unwrap();
+        let hits = g
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &emb,
+                limit: 2,
+                filters: &no_filter,
+            })
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 2, "limit should cap results to 2");
     }
 
@@ -1281,7 +1515,11 @@ mod tests {
         // No entities, no embeddings
         let emb = make_embedding(1.0);
         let hits = g
-            .vector_search_entities(&emb, 10, &no_filter)
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &emb,
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(hits.len(), 0);
@@ -1304,7 +1542,11 @@ mod tests {
         // no_emb has no embedding set
 
         let hits = g
-            .vector_search_entities(&emb, 10, &no_filter)
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &emb,
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(hits.len(), 1, "should only find entities with embeddings");
@@ -1331,7 +1573,11 @@ mod tests {
         g.set_entity_embedding("far", &far_emb).await.unwrap();
 
         let hits = g
-            .vector_search_entities(&query, 10, &no_filter)
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &query,
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(hits.len(), 2);
@@ -1369,7 +1615,12 @@ mod tests {
         // Search for "engineer" with alice's embedding
         // Alice should rank highest: matches both FTS ("engineer" in properties) AND vector (own embedding)
         let hits = g
-            .hybrid_search_entities("engineer", &alice_emb, 10, &no_filter)
+            .hybrid_search_entities(HybridSearchEntitiesParams {
+                query_text: "engineer",
+                query_embedding: &alice_emb,
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert!(!hits.is_empty(), "hybrid search should return results");
@@ -1404,7 +1655,12 @@ mod tests {
             .unwrap(); // similar to query but won't match "engineer" FTS
 
         let hits = g
-            .hybrid_search_entities("engineer", &query_emb, 10, &no_filter)
+            .hybrid_search_entities(HybridSearchEntitiesParams {
+                query_text: "engineer",
+                query_embedding: &query_emb,
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
 
@@ -1441,7 +1697,12 @@ mod tests {
             .unwrap();
 
         let hits = g
-            .hybrid_search_entities("Person", &emb, 2, &no_filter)
+            .hybrid_search_entities(HybridSearchEntitiesParams {
+                query_text: "Person",
+                query_embedding: &emb,
+                limit: 2,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(hits.len(), 2, "limit should cap hybrid results");
@@ -1460,7 +1721,12 @@ mod tests {
             .unwrap();
 
         let hits = g
-            .hybrid_search_entities("Person", &make_embedding(1.0), 10, &no_filter)
+            .hybrid_search_entities(HybridSearchEntitiesParams {
+                query_text: "Person",
+                query_embedding: &make_embedding(1.0),
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         for hit in &hits {
@@ -1520,7 +1786,11 @@ mod tests {
         // No filter: all 4 employee entities (search on properties term, not label).
         let no_filter = SearchFilters::new();
         let all = g
-            .fts_search_entities("employee", 10, &no_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "employee",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(all.len(), 4, "no filter should return all entities");
@@ -1528,7 +1798,11 @@ mod tests {
         // Filter to group-a: alice + carol only (dave is in 'default', not 'group-a').
         let group_a = SearchFilters::for_group("group-a");
         let hits_a = g
-            .fts_search_entities("employee", 10, &group_a)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "employee",
+                limit: 10,
+                filters: &group_a,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1547,7 +1821,11 @@ mod tests {
         // Filter to group-b: bob only.
         let group_b = SearchFilters::for_group("group-b");
         let hits_b = g
-            .fts_search_entities("employee", 10, &group_b)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "employee",
+                limit: 10,
+                filters: &group_b,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1561,7 +1839,11 @@ mod tests {
         // Filter to 'default': dave only.
         let group_default = SearchFilters::for_group("default");
         let hits_default = g
-            .fts_search_entities("employee", 10, &group_default)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "employee",
+                limit: 10,
+                filters: &group_default,
+            })
             .await
             .unwrap();
         assert_eq!(hits_default.len(), 1, "'default' should return only dave");
@@ -1570,7 +1852,11 @@ mod tests {
         // Filter to non-existent group: empty (no workspace-wide entities post-ADR-029b).
         let group_x = SearchFilters::for_group("group-x");
         let hits_x = g
-            .fts_search_entities("employee", 10, &group_x)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "employee",
+                limit: 10,
+                filters: &group_x,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1606,7 +1892,14 @@ mod tests {
         .unwrap();
 
         let filters = SearchFilters::for_groups(vec!["g1".into(), "g3".into()]);
-        let hits = g.fts_search_entities("member", 10, &filters).await.unwrap();
+        let hits = g
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "member",
+                limit: 10,
+                filters: &filters,
+            })
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 2);
         let ids: Vec<&str> = hits.iter().map(|h| h.item.id.as_str()).collect();
         assert!(ids.contains(&"alice"));
@@ -1633,14 +1926,25 @@ mod tests {
         // No filter: both
         let no_filter = SearchFilters::new();
         let all = g
-            .vector_search_entities(&emb, 10, &no_filter)
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &emb,
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(all.len(), 2);
 
         // Filter to group-a: alice only
         let group_a = SearchFilters::for_group("group-a");
-        let hits = g.vector_search_entities(&emb, 10, &group_a).await.unwrap();
+        let hits = g
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &emb,
+                limit: 10,
+                filters: &group_a,
+            })
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].item.id, "alice");
         assert_eq!(hits[0].item.group_id.as_deref(), Some("group-a"));
@@ -1671,14 +1975,25 @@ mod tests {
         // No filter: both facts
         let no_filter = SearchFilters::new();
         let all = g
-            .fts_search_facts("has_title", 10, &no_filter)
+            .fts_search_facts(FtsSearchFactsParams {
+                query: "has_title",
+                limit: 10,
+                filters: &no_filter,
+            })
             .await
             .unwrap();
         assert_eq!(all.len(), 2);
 
         // Filter to group-a: 1 fact
         let group_a = SearchFilters::for_group("group-a");
-        let hits = g.fts_search_facts("has_title", 10, &group_a).await.unwrap();
+        let hits = g
+            .fts_search_facts(FtsSearchFactsParams {
+                query: "has_title",
+                limit: 10,
+                filters: &group_a,
+            })
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].item.object_value.as_deref(), Some("Engineer"));
     }
@@ -1702,7 +2017,11 @@ mod tests {
         // Chat queries with space scope — should NOT find it
         let space_filter = SearchFilters::for_group("space-abc");
         let hits = g
-            .fts_search_entities("price", 10, &space_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "price",
+                limit: 10,
+                filters: &space_filter,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1722,7 +2041,11 @@ mod tests {
 
         // Now chat queries with space scope — SHOULD find it
         let hits = g
-            .fts_search_entities("price", 10, &space_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "price",
+                limit: 10,
+                filters: &space_filter,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1736,7 +2059,11 @@ mod tests {
         // Old group should NOT find it
         let old_filter = SearchFilters::for_group("default");
         let old_hits = g
-            .fts_search_entities("price", 10, &old_filter)
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "price",
+                limit: 10,
+                filters: &old_filter,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1775,14 +2102,22 @@ mod tests {
 
         // Unscoped search → both entities found.
         let all = g
-            .fts_search_entities("revenue", 10, &SearchFilters::new())
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "revenue",
+                limit: 10,
+                filters: &SearchFilters::new(),
+            })
             .await
             .unwrap();
         assert_eq!(all.len(), 2, "unscoped should return both entities");
 
         // Scoped search for 'default' → only kb_doc (it lives in 'default').
         let default_scoped = g
-            .fts_search_entities("revenue", 10, &SearchFilters::for_group("default"))
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "revenue",
+                limit: 10,
+                filters: &SearchFilters::for_group("default"),
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1798,7 +2133,11 @@ mod tests {
 
         // Scoped search for 'space-1' → only scoped_doc.
         let space_scoped = g
-            .fts_search_entities("revenue", 10, &SearchFilters::for_group("space-1"))
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "revenue",
+                limit: 10,
+                filters: &SearchFilters::for_group("space-1"),
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -1839,7 +2178,11 @@ mod tests {
 
         // First search — must return the entity and increment access_count to 1.
         let hits = g
-            .fts_search_entities("kremory_ac_probe_term_unique", 10, &SearchFilters::new())
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "kremory_ac_probe_term_unique",
+                limit: 10,
+                filters: &SearchFilters::new(),
+            })
             .await
             .unwrap();
         assert!(!hits.is_empty(), "first search must return the entity");
@@ -1851,7 +2194,11 @@ mod tests {
 
         // Second search — must increment to 2.
         let hits2 = g
-            .fts_search_entities("kremory_ac_probe_term_unique", 10, &SearchFilters::new())
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "kremory_ac_probe_term_unique",
+                limit: 10,
+                filters: &SearchFilters::new(),
+            })
             .await
             .unwrap();
         assert!(!hits2.is_empty(), "second search must return the entity");
@@ -1886,7 +2233,11 @@ mod tests {
 
         // Empty group_ids → no filter → both returned.
         let results = g
-            .fts_search_entities("alpha", 10, &SearchFilters::new())
+            .fts_search_entities(FtsSearchEntitiesParams {
+                query: "alpha",
+                limit: 10,
+                filters: &SearchFilters::new(),
+            })
             .await
             .unwrap();
         assert_eq!(

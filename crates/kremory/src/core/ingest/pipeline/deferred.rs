@@ -16,7 +16,7 @@ use crate::core::intelligence::{
 };
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 use crate::core::resolver::normalize_name;
-use crate::core::search::SearchFilters;
+use crate::core::search::{FtsSearchFactsParams, SearchFilters};
 use crate::core::sink::{ContradictionDetected, EntityId, IngestEventSink, SinkFact};
 
 use crate::core::ingest::Engine;
@@ -203,7 +203,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
             let pool_b_hits = self
                 .graph
-                .fts_search_facts(&fact.predicate, 10, &SearchFilters::new())
+                .fts_search_facts(FtsSearchFactsParams {
+                    query: &fact.predicate,
+                    limit: 10,
+                    filters: &SearchFilters::new(),
+                })
                 .await?;
             let pool_b: Vec<crate::core::schema::Fact> =
                 pool_b_hits.into_iter().map(|h| h.item).collect();

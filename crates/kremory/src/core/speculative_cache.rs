@@ -292,7 +292,7 @@ mod tests {
     use super::*;
     use crate::core::graph::FactInsert;
     use crate::core::schema::TemporalGraph;
-    use crate::core::search::SearchFilters;
+    use crate::core::search::{SearchFilters, VectorSearchEntitiesParams};
     use chrono::{Duration as ChronoDuration, Utc};
     use std::time::Duration;
 
@@ -707,7 +707,11 @@ mod tests {
         // Cold search
         let cold_start = Instant::now();
         let _cold_results = g
-            .vector_search_entities(&emb(1.0), 5, &SearchFilters::new())
+            .vector_search_entities(VectorSearchEntitiesParams {
+                query_embedding: &emb(1.0),
+                limit: 5,
+                filters: &SearchFilters::new(),
+            })
             .await
             .unwrap();
         let cold_duration = cold_start.elapsed();

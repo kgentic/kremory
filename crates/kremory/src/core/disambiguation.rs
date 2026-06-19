@@ -40,7 +40,7 @@ use crate::core::error::Result;
 use crate::core::graph::FactInsert;
 use crate::core::provider::EmbeddingProvider;
 use crate::core::schema::TemporalGraph;
-use crate::core::search::SearchFilters;
+use crate::core::search::{SearchFilters, VectorSearchEntitiesNoCountParams};
 
 // ─── Threshold constants ──────────────────────────────────────────────────────
 
@@ -157,7 +157,11 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
     // a read-only probe, not a recall event.
     let filters = SearchFilters::for_group(gid);
     let hits = graph
-        .vector_search_entities_no_count(&embedding, 1, &filters)
+        .vector_search_entities_no_count(VectorSearchEntitiesNoCountParams {
+            query_embedding: &embedding,
+            limit: 1,
+            filters: &filters,
+        })
         .await?;
 
     let Some(top_hit) = hits.into_iter().next() else {
