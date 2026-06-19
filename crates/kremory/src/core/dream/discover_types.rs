@@ -294,15 +294,15 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                     ));
                     anti_redundancy::emit_gate_skipped();
                     // Fall through to acceptance (can't gate without embedding)
-                    accept_proposal(
+                    accept_proposal(AcceptProposalParams {
                         conn,
                         group_id,
-                        &model_str,
-                        &proposal,
-                        &catch_alls,
-                        None,
-                        &mut result,
-                    )
+                        model_str: &model_str,
+                        proposal: &proposal,
+                        catch_alls: &catch_alls,
+                        desc_emb_and_embedder: None,
+                        result: &mut result,
+                    })
                     .await?;
                     continue;
                 }
@@ -321,15 +321,15 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         proposal.name
                     ));
                     anti_redundancy::emit_gate_skipped();
-                    accept_proposal(
+                    accept_proposal(AcceptProposalParams {
                         conn,
                         group_id,
-                        &model_str,
-                        &proposal,
-                        &catch_alls,
-                        None,
-                        &mut result,
-                    )
+                        model_str: &model_str,
+                        proposal: &proposal,
+                        catch_alls: &catch_alls,
+                        desc_emb_and_embedder: None,
+                        result: &mut result,
+                    })
                     .await?;
                     continue;
                 }
@@ -348,29 +348,29 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                     continue;
                 }
                 GateOutcome::Pass => {
-                    accept_proposal(
+                    accept_proposal(AcceptProposalParams {
                         conn,
                         group_id,
-                        &model_str,
-                        &proposal,
-                        &catch_alls,
-                        Some((&desc_emb, emb)),
-                        &mut result,
-                    )
+                        model_str: &model_str,
+                        proposal: &proposal,
+                        catch_alls: &catch_alls,
+                        desc_emb_and_embedder: Some((&desc_emb, emb)),
+                        result: &mut result,
+                    })
                     .await?;
                 }
             }
         } else {
             // Degraded mode: gate skipped, accept directly
-            accept_proposal(
+            accept_proposal(AcceptProposalParams {
                 conn,
                 group_id,
-                &model_str,
-                &proposal,
-                &catch_alls,
-                None,
-                &mut result,
-            )
+                model_str: &model_str,
+                proposal: &proposal,
+                catch_alls: &catch_alls,
+                desc_emb_and_embedder: None,
+                result: &mut result,
+            })
             .await?;
         }
     }
@@ -384,20 +384,32 @@ pub(crate) async fn discover_types<L: ChatProvider>(
 ///
 /// Uses Migration 014's provenance columns (`discovered_at`, `discovered_by`,
 /// `evidence_count`, `confidence`).
-// 7 params: conn, group_id, model_str, proposal, catch_alls, desc_emb_and_embedder, result.
-// Grouping into a context struct would require an opaque builder layer solely to satisfy
-// clippy — same precedent as extraction/structured.rs:try_arm.  Documented exemption.
-#[allow(clippy::too_many_arguments)]
-async fn accept_proposal(
-    conn: &libsql::Connection,
-    group_id: &str,
-    model_str: &str,
-    proposal: &TypeProposal,
-    catch_alls: &[CatchAllEntity],
-    // (proposal_desc_embedding, embedder) — None = degraded mode
-    desc_emb_and_embedder: Option<(&[f32], &dyn DynEmbeddingProvider)>,
-    result: &mut DiscoveryResult,
-) -> Result<()> {
+///
+/// Bundled parameters for [`accept_proposal`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments). Same precedent as
+/// `extraction/structured.rs:TryArmParams`. A plain field-literal struct (all
+/// fields required) — no builder layer needed.
+struct AcceptProposalParams<'a> {
+    conn: &'a libsql::Connection,
+    group_id: &'a str,
+    model_str: &'a str,
+    proposal: &'a TypeProposal,
+    catch_alls: &'a [CatchAllEntity],
+    /// (proposal_desc_embedding, embedder) — `None` = degraded mode.
+    desc_emb_and_embedder: Option<(&'a [f32], &'a dyn DynEmbeddingProvider)>,
+    result: &'a mut DiscoveryResult,
+}
+
+async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
+    let AcceptProposalParams {
+        conn,
+        group_id,
+        model_str,
+        proposal,
+        catch_alls,
+        desc_emb_and_embedder,
+        result,
+    } = params;
     let now = Utc::now().to_rfc3339();
     let discovered_by = format!("dream:llm:{model_str}");
 
@@ -496,8 +508,16 @@ async fn accept_proposal(
     // (accepted type's name is the only signal).
 
     let retyped_count = if let Some((desc_emb, emb)) = desc_emb_and_embedder {
-        retype_evidence_by_similarity(conn, group_id, catch_alls, new_id, desc_emb, emb, &now)
-            .await?
+        retype_evidence_by_similarity(RetypeBySimilarityParams {
+            conn,
+            group_id,
+            catch_alls,
+            new_type_id: new_id,
+            type_desc_emb: desc_emb,
+            emb,
+            now: &now,
+        })
+        .await?
     } else {
         retype_evidence_all(conn, group_id, catch_alls, new_id, &now).await?
     };
@@ -515,19 +535,30 @@ async fn accept_proposal(
     Ok(())
 }
 
-/// Retype evidence entities with cosine ≥ 0.75 similarity to the type description.
-// 7 params: conn, group_id, catch_alls, new_type_id, type_desc_emb, emb, now.
-// Same documented exemption as accept_proposal above.
-#[allow(clippy::too_many_arguments)]
-async fn retype_evidence_by_similarity(
-    conn: &libsql::Connection,
-    group_id: &str,
-    catch_alls: &[CatchAllEntity],
+/// Bundled parameters for [`retype_evidence_by_similarity`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). Same precedent as
+/// `AcceptProposalParams` above.
+struct RetypeBySimilarityParams<'a> {
+    conn: &'a libsql::Connection,
+    group_id: &'a str,
+    catch_alls: &'a [CatchAllEntity],
     new_type_id: u32,
-    type_desc_emb: &[f32],
-    emb: &dyn DynEmbeddingProvider,
-    now: &str,
-) -> Result<usize> {
+    type_desc_emb: &'a [f32],
+    emb: &'a dyn DynEmbeddingProvider,
+    now: &'a str,
+}
+
+/// Retype evidence entities with cosine ≥ 0.75 similarity to the type description.
+async fn retype_evidence_by_similarity(params: RetypeBySimilarityParams<'_>) -> Result<usize> {
+    let RetypeBySimilarityParams {
+        conn,
+        group_id,
+        catch_alls,
+        new_type_id,
+        type_desc_emb,
+        emb,
+        now,
+    } = params;
     let mut count = 0usize;
     for entity in catch_alls {
         // Embed the entity's stored ID (which is the normalised name)
