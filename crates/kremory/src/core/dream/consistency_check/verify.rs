@@ -13,7 +13,7 @@ use metrics::{counter, histogram};
 use crate::core::error::Result;
 
 use super::{
-    audit::{apply_correction, write_audit_row, AuditRowParams},
+    audit::{apply_correction, write_audit_row, ApplyCorrectionParams, AuditRowParams},
     verify_batch_schema, VerifyAction, VerifyBatch, VerifyBatchCounts, VerifyBatchDecision,
     VerifyBatchOutcome, VerifyBatchParams, VerifyDecision, MIN_VERIFY_CONFIDENCE,
 };
@@ -214,7 +214,15 @@ pub(super) async fn verify_batch(
                 // still returned in VerifyBatchOutcome so the caller can preview
                 // what would have changed.
                 if candidate.rowid > 0 && !params.dry_run {
-                    apply_correction(db, candidate, new_type_id, &now).await?;
+                    apply_correction(
+                        db,
+                        ApplyCorrectionParams {
+                            candidate,
+                            new_type_id,
+                            now: &now,
+                        },
+                    )
+                    .await?;
                     let audit = AuditRowParams {
                         entity_rowid: candidate.rowid,
                         pre_type_id: candidate.entity_type_id,
@@ -301,6 +309,16 @@ pub struct VerifyBatchForCandidatesResult {
     pub decisions: Vec<crate::core::ingest::ResolvedDecision>,
 }
 
+/// Bundled parameters for [`verify_batch_for_candidates`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). `db` stays a lead positional
+/// param (receiver-like dep, mirrors `verify_batch(db, params)` precedent).
+pub struct VerifyBatchForCandidatesParams<'a> {
+    pub candidates: &'a [crate::core::ingest::EntityCandidate],
+    pub source_episode_text: &'a str,
+    pub llm: &'a dyn crate::core::provider::ChatProvider,
+    pub opts: VerifyBatchForCandidatesOpts,
+}
+
 /// Run the LLM verify call on the provided `candidates` directly.
 ///
 /// Per C6 spec §5.2 — Stage 2 MUST invoke `verify_batch` directly to avoid
@@ -334,13 +352,17 @@ pub struct VerifyBatchForCandidatesResult {
 /// - `kremory.verify_batch_for_candidates.decisions_total{variant}`
 pub async fn verify_batch_for_candidates(
     db: &libsql::Connection,
-    candidates: &[crate::core::ingest::EntityCandidate],
-    source_episode_text: &str,
-    llm: &dyn crate::core::provider::ChatProvider,
-    opts: VerifyBatchForCandidatesOpts,
+    params: VerifyBatchForCandidatesParams<'_>,
 ) -> crate::core::error::Result<VerifyBatchForCandidatesResult> {
     use crate::core::ingest::ResolvedDecision;
     use crate::core::resolver::normalize_name;
+
+    let VerifyBatchForCandidatesParams {
+        candidates,
+        source_episode_text,
+        llm,
+        opts,
+    } = params;
 
     counter!("kremory.verify_batch_for_candidates.invoked_total").increment(1);
 

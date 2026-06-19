@@ -44,7 +44,9 @@ use serde::Deserialize;
 use kremory::{
     core::{
         config::PipelineConfig,
-        dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts},
+        dream::consistency_check::{
+            run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+        },
         entity_types::{EntityTypeSpec, DEFAULT_ENTITY_TYPES},
         error::{Error as KremoryCoreError, Result as KremoryCoreResult},
         extraction::DefaultExtractor,
@@ -438,10 +440,16 @@ async fn run_sweep_for_tau(
         dry_run: false,
     };
 
-    let summary =
-        run_consistency_check(&scratch_graph.conn, arc_embedder.as_ref(), verify_llm, opts)
-            .await
-            .context("run_consistency_check failed")?;
+    let summary = run_consistency_check(
+        &scratch_graph.conn,
+        RunConsistencyCheckParams {
+            embedder: arc_embedder.as_ref(),
+            llm: verify_llm,
+            opts,
+        },
+    )
+    .await
+    .context("run_consistency_check failed")?;
 
     // Post-precision.
     let post_entities = query_entities(&scratch_graph.conn)
@@ -530,9 +538,16 @@ async fn run_risk001_gate(
         dry_run: false,
     };
 
-    let summary = run_consistency_check(&graph.conn, arc_embedder.as_ref(), verify_llm, opts)
-        .await
-        .context("risk001 run_consistency_check")?;
+    let summary = run_consistency_check(
+        &graph.conn,
+        RunConsistencyCheckParams {
+            embedder: arc_embedder.as_ref(),
+            llm: verify_llm,
+            opts,
+        },
+    )
+    .await
+    .context("risk001 run_consistency_check")?;
 
     eprintln!(
         "[risk001] consistency_check: scanned={} flagged={} corrected={} confirmed={} uncertain={}",

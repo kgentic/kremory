@@ -72,7 +72,9 @@ use serde::Deserialize;
 use kremory::{
     core::{
         config::PipelineConfig,
-        dream::consistency_check::{run_consistency_check, ConsistencyCheckOpts},
+        dream::consistency_check::{
+            run_consistency_check, ConsistencyCheckOpts, RunConsistencyCheckParams,
+        },
         entity_types::{EntityTypeSpec, DEFAULT_ENTITY_TYPES},
         error::{Error as KremoryCoreError, Result as KremoryCoreResult},
         extraction::DefaultExtractor,
@@ -417,9 +419,11 @@ async fn run_one(
     let verify_start = Instant::now();
     let summary = run_consistency_check(
         &graph.conn,
-        arc_embedder.as_ref(),
-        verify_llm.as_ref(),
-        verify_opts,
+        RunConsistencyCheckParams {
+            embedder: arc_embedder.as_ref(),
+            llm: verify_llm.as_ref(),
+            opts: verify_opts,
+        },
     )
     .await
     .context("run_consistency_check (Stage 2 sim) failed")?;
@@ -517,13 +521,15 @@ async fn validate_second_fixture(
 
     let summary = run_consistency_check(
         &graph.conn,
-        arc_embedder.as_ref(),
-        verify_llm.as_ref(),
-        ConsistencyCheckOpts {
-            embed_prefilter_threshold: 2.0, // DENT-001 workaround: τ=2.0 forces verify all
-            max_candidates_per_run: Some(50),
-            verify_model_override: None,
-            dry_run: false,
+        RunConsistencyCheckParams {
+            embedder: arc_embedder.as_ref(),
+            llm: verify_llm.as_ref(),
+            opts: ConsistencyCheckOpts {
+                embed_prefilter_threshold: 2.0, // DENT-001 workaround: τ=2.0 forces verify all
+                max_candidates_per_run: Some(50),
+                verify_model_override: None,
+                dry_run: false,
+            },
         },
     )
     .await

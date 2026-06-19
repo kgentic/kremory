@@ -13,9 +13,21 @@
 //! (ADR-050 §5).
 
 use crate::core::error::{Error, Result};
-use crate::core::provider::{chat_msg_system, chat_msg_user, ChatMessage};
+use crate::core::provider::{
+    chat_msg_system, chat_msg_user, ChatMessage, ChatProvider, DynEmbeddingProvider,
+};
 
-use super::CandidateRow;
+use super::{CandidateRow, ConsistencyCheckOpts};
+
+/// Bundled parameters for [`super::run_consistency_check`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). `db` stays a lead positional
+/// param (receiver-like dep, mirrors `verify_batch(db, params)` precedent).
+/// Defined here (not `mod.rs`) to keep `mod.rs` under the TD-C 500-LoC guard.
+pub struct RunConsistencyCheckParams<'a> {
+    pub embedder: &'a dyn DynEmbeddingProvider,
+    pub llm: &'a dyn ChatProvider,
+    pub opts: ConsistencyCheckOpts,
+}
 
 // ─── DB read helpers ──────────────────────────────────────────────────────────
 
@@ -153,12 +165,23 @@ pub(super) async fn load_source_episode(
 
 // ─── DB write helpers ─────────────────────────────────────────────────────────
 
+/// Bundled parameters for [`apply_correction`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub(super) struct ApplyCorrectionParams<'a> {
+    pub(super) candidate: &'a CandidateRow,
+    pub(super) new_type_id: i64,
+    pub(super) now: &'a str,
+}
+
 pub(super) async fn apply_correction(
     db: &libsql::Connection,
-    candidate: &CandidateRow,
-    new_type_id: i64,
-    now: &str,
+    params: ApplyCorrectionParams<'_>,
 ) -> Result<()> {
+    let ApplyCorrectionParams {
+        candidate,
+        new_type_id,
+        now,
+    } = params;
     db.execute(
         "UPDATE entities SET entity_type_id = ?1, entity_type_source = 'DreamPass4', \
          entity_type_assigned_at = ?2, updated_at = ?2 WHERE rowid = ?3",

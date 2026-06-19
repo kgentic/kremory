@@ -54,6 +54,16 @@ pub(crate) enum GateOutcome {
 pub(crate) const DESC_COSINE_THRESHOLD: f32 = 0.85;
 pub(crate) const NAME_COSINE_THRESHOLD: f32 = 0.70;
 
+/// Bundled parameters for [`check_proposal`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub(crate) struct CheckProposalParams<'a> {
+    pub(crate) proposal_desc_emb: &'a [f32],
+    pub(crate) proposal_name_emb: &'a [f32],
+    pub(crate) existing_type_embeddings: &'a [(EntityTypeSpec, Vec<f32>, Vec<f32>)],
+    pub(crate) namespace: &'a str,
+    pub(crate) model: &'a str,
+}
+
 /// Check a single proposal against all existing types via cosine similarity.
 ///
 /// Returns [`GateOutcome::Redundant`] if the proposal description embedding is
@@ -65,13 +75,14 @@ pub(crate) const NAME_COSINE_THRESHOLD: f32 = 0.70;
 /// rejection — built-in observability per [[observability-first-class]].
 ///
 /// `namespace` is the group_id string used as the `namespace` metrics label.
-pub(crate) fn check_proposal(
-    proposal_desc_emb: &[f32],
-    proposal_name_emb: &[f32],
-    existing_type_embeddings: &[(EntityTypeSpec, Vec<f32>, Vec<f32>)],
-    namespace: &str,
-    model: &str,
-) -> GateOutcome {
+pub(crate) fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
+    let CheckProposalParams {
+        proposal_desc_emb,
+        proposal_name_emb,
+        existing_type_embeddings,
+        namespace,
+        model,
+    } = params;
     for (spec, desc_emb, name_emb) in existing_type_embeddings {
         // Primary gate: description-pair cosine ≥ 0.85
         let desc_sim = cosine(proposal_desc_emb, desc_emb);
@@ -186,7 +197,13 @@ mod tests {
         // Proposal embeddings at completely different dims
         let desc = unit_vec(4, 2);
         let name = unit_vec(4, 3);
-        let outcome = check_proposal(&desc, &name, &existing, "test_ns", "test_model");
+        let outcome = check_proposal(CheckProposalParams {
+            proposal_desc_emb: &desc,
+            proposal_name_emb: &name,
+            existing_type_embeddings: &existing,
+            namespace: "test_ns",
+            model: "test_model",
+        });
         assert_eq!(outcome, GateOutcome::Pass);
     }
 
@@ -198,7 +215,13 @@ mod tests {
             desc_vec.clone(), // same description embedding — cosine = 1.0
             unit_vec(4, 1),
         )];
-        let outcome = check_proposal(&desc_vec, &unit_vec(4, 3), &existing, "ns", "m");
+        let outcome = check_proposal(CheckProposalParams {
+            proposal_desc_emb: &desc_vec,
+            proposal_name_emb: &unit_vec(4, 3),
+            existing_type_embeddings: &existing,
+            namespace: "ns",
+            model: "m",
+        });
         match outcome {
             GateOutcome::Redundant { existing_name } => assert_eq!(existing_name, "Person"),
             other => panic!("expected Redundant, got {other:?}"),
@@ -214,7 +237,13 @@ mod tests {
             name_vec.clone(),
         )];
         // Proposal name is identical to existing name embedding → cosine = 1.0 ≥ 0.70
-        let outcome = check_proposal(&unit_vec(4, 2), &name_vec, &existing, "ns", "m");
+        let outcome = check_proposal(CheckProposalParams {
+            proposal_desc_emb: &unit_vec(4, 2),
+            proposal_name_emb: &name_vec,
+            existing_type_embeddings: &existing,
+            namespace: "ns",
+            model: "m",
+        });
         match outcome {
             GateOutcome::Redundant { existing_name } => assert_eq!(existing_name, "Organisation"),
             other => panic!("expected Redundant, got {other:?}"),
@@ -225,7 +254,13 @@ mod tests {
     fn gate_passes_with_empty_existing_types() {
         let desc = unit_vec(4, 0);
         let name = unit_vec(4, 1);
-        let outcome = check_proposal(&desc, &name, &[], "ns", "m");
+        let outcome = check_proposal(CheckProposalParams {
+            proposal_desc_emb: &desc,
+            proposal_name_emb: &name,
+            existing_type_embeddings: &[],
+            namespace: "ns",
+            model: "m",
+        });
         assert_eq!(outcome, GateOutcome::Pass);
     }
 }

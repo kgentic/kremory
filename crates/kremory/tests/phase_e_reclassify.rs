@@ -21,6 +21,7 @@
 //!      entities_reclassified_total.
 //! E10 — Real-LLM smoke test `#[ignore]` using `gemma4-e2b:latest`.
 
+use kremory::core::dream::reclassify::ReclassifyParams;
 use kremory::core::schema::TemporalGraph;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -187,13 +188,15 @@ async fn e1_catch_all_arm_includes_zero_type_id_only() {
     );
 
     let result = kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -246,13 +249,15 @@ async fn e1_low_confidence_arm_selects_phase1ner_below_threshold() {
     );
 
     let result = kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -287,13 +292,15 @@ async fn e3_high_confidence_stamps_dreampass1() {
     );
 
     kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -320,13 +327,15 @@ async fn e3_low_confidence_preserves_source_tier() {
     );
 
     kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -356,13 +365,15 @@ async fn e4_entity_id_preserved_after_reclassify() {
     ));
 
     kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -399,13 +410,15 @@ async fn e5_dreampass1_excluded_from_next_cycle() {
         r#"{"decisions": [{"entity_id": "retype-protected", "entity_type_id": 1, "confidence": 0.85}]}"#,
     );
     kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock1,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -422,13 +435,15 @@ async fn e5_dreampass1_excluded_from_next_cycle() {
         r#"{"decisions": [{"entity_id": "retype-protected", "entity_type_id": 2, "confidence": 0.9}]}"#,
     );
     let result2 = kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock2,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -466,26 +481,30 @@ async fn e6_idempotent_two_runs_converge() {
     let decision = r#"{"decisions": [{"entity_id": "idempotent-entity", "entity_type_id": 1, "confidence": 0.9}]}"#;
 
     let r1 = kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &MockLlm::new(decision),
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
     .expect("first pass must succeed");
 
     let r2 = kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &MockLlm::new(decision),
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -609,13 +628,15 @@ async fn e9_observability_counters_fire() {
     );
 
     kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await
@@ -678,13 +699,15 @@ async fn e9_parse_fail_counter_fires_on_garbage_response() {
     let mock = MockLlm::new(r#"{"decisions": "this_is_not_an_array"}"#);
 
     let result = kremory::core::dream::reclassify::reclassify(
-        &graph.conn,
-        "test-group",
         &mock,
-        kremory::core::dream::reclassify::ReclassifyOpts {
-            confidence_threshold: 0.5,
-            high_conf_threshold: 0.7,
-            max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
         },
     )
     .await

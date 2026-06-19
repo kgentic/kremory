@@ -43,6 +43,7 @@ use kremory::core::dream::consistency_check::{
     // These imports WILL fail to compile until GAP-003 Green phase implements them:
     verify_batch_for_candidates,
     VerifyBatchForCandidatesOpts,
+    VerifyBatchForCandidatesParams,
     VerifyBatchForCandidatesResult,
 };
 use kremory::core::ingest::EntityCandidate;
@@ -171,10 +172,12 @@ async fn dream_phase_compat_processes_only_provided() {
 
     let result: VerifyBatchForCandidatesResult = verify_batch_for_candidates(
         &graph.conn,
-        &candidates,
-        "Alice works at Acme Corp in London.",
-        llm.as_ref(),
-        opts,
+        VerifyBatchForCandidatesParams {
+            candidates: &candidates,
+            source_episode_text: "Alice works at Acme Corp in London.",
+            llm: llm.as_ref(),
+            opts,
+        },
     )
     .await
     .expect("verify_batch_for_candidates must succeed");
@@ -284,10 +287,12 @@ async fn dream_phase_compat_respects_provided_candidates_not_db_entities() {
 
     let result: VerifyBatchForCandidatesResult = verify_batch_for_candidates(
         &graph.conn,
-        &three_candidates,
-        "Background entities test source episode text.",
-        llm.as_ref(),
-        opts,
+        VerifyBatchForCandidatesParams {
+            candidates: &three_candidates,
+            source_episode_text: "Background entities test source episode text.",
+            llm: llm.as_ref(),
+            opts,
+        },
     )
     .await
     .expect("verify_batch_for_candidates must succeed");
@@ -390,10 +395,12 @@ async fn verify_batch_for_candidates_pre_write_flow() {
 
     let result: VerifyBatchForCandidatesResult = verify_batch_for_candidates(
         &graph.conn,
-        &candidates,
-        "Alice works at Acme Corp. SomeAmbiguousThing was nearby.",
-        llm.as_ref(),
-        opts,
+        VerifyBatchForCandidatesParams {
+            candidates: &candidates,
+            source_episode_text: "Alice works at Acme Corp. SomeAmbiguousThing was nearby.",
+            llm: llm.as_ref(),
+            opts,
+        },
     )
     .await
     .expect("verify_batch_for_candidates must succeed even with entities not in DB");

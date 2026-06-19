@@ -141,11 +141,13 @@ impl<'a> DreamRequest<'a> {
                     })
                     .unwrap_or(crate::core::dream::discover_types::MAX_PROPOSALS);
                 match crate::core::dream::discover_types::discover_types(
-                    &tg.conn,
-                    &group_id,
                     &arc_llm,
-                    embedder_ref,
-                    pass0_max,
+                    crate::core::dream::discover_types::DiscoverTypesParams {
+                        conn: &tg.conn,
+                        group_id: &group_id,
+                        embedder: embedder_ref,
+                        max_proposals: pass0_max,
+                    },
                 )
                 .await
                 {
@@ -204,7 +206,12 @@ impl<'a> DreamRequest<'a> {
                 // Full per-pass tuning via DreamPassOpts is available on the Engine path;
                 // the DreamRequest path uses sensible defaults until DreamOpts is extended.
                 match crate::core::dream::reclassify::reclassify(
-                    &tg.conn, &group_id, &arc_llm, pass2_opts,
+                    &arc_llm,
+                    crate::core::dream::reclassify::ReclassifyParams {
+                        conn: &tg.conn,
+                        group_id: &group_id,
+                        opts: pass2_opts,
+                    },
                 )
                 .await
                 {

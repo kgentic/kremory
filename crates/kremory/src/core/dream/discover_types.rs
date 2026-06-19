@@ -88,19 +88,35 @@ const EVIDENCE_RETYPE_COSINE: f32 = 0.75;
 /// Called by `mem.dream()` when `include_type_discovery = true` (D6).
 /// Can also be called standalone via the escape-hatch `mem.discover_types()` (ADR-037 §4.2).
 ///
-/// Parameters:
+/// Bundled non-generic parameters for [`discover_types`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). The generic `llm: &L` stays a
+/// lead positional param (brief rule 4); the remaining args bundle here.
+///
+/// Fields:
 /// - `conn` — open SQLite connection
 /// - `group_id` — the namespace (equals `namespace_to_group_id(&ns)`)
-/// - `llm` — the chat provider
 /// - `embedder` — `None` = degraded mode (anti-redundancy gate skipped)
 /// - `max_proposals` — caller can override; defaults to [`MAX_PROPOSALS`]
+pub(crate) struct DiscoverTypesParams<'a> {
+    pub(crate) conn: &'a libsql::Connection,
+    pub(crate) group_id: &'a str,
+    pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
+    pub(crate) max_proposals: usize,
+}
+
+/// Discover new entity types from catch-all entities in `group_id`.
+///
+/// `llm` — the chat provider (generic lead positional param).
 pub(crate) async fn discover_types<L: ChatProvider>(
-    conn: &libsql::Connection,
-    group_id: &str,
     llm: &L,
-    embedder: Option<&dyn DynEmbeddingProvider>,
-    max_proposals: usize,
+    params: DiscoverTypesParams<'_>,
 ) -> Result<DiscoveryResult> {
+    let DiscoverTypesParams {
+        conn,
+        group_id,
+        embedder,
+        max_proposals,
+    } = params;
     let mut result = DiscoveryResult::default();
 
     // ── Step 1: Load catch-all entities ──────────────────────────────────────
@@ -335,13 +351,13 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                 }
             };
 
-            match anti_redundancy::check_proposal(
-                &desc_emb,
-                &name_emb,
-                &existing_embeddings,
-                group_id,
-                &model_str,
-            ) {
+            match anti_redundancy::check_proposal(anti_redundancy::CheckProposalParams {
+                proposal_desc_emb: &desc_emb,
+                proposal_name_emb: &name_emb,
+                existing_type_embeddings: &existing_embeddings,
+                namespace: group_id,
+                model: &model_str,
+            }) {
                 GateOutcome::Redundant { existing_name } => {
                     let reason = format!("redundant_with:{existing_name}");
                     result.types_rejected.push((proposal, reason));
@@ -519,7 +535,14 @@ async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
         })
         .await?
     } else {
-        retype_evidence_all(conn, group_id, catch_alls, new_id, &now).await?
+        retype_evidence_all(RetypeAllParams {
+            conn,
+            group_id,
+            catch_alls,
+            new_type_id: new_id,
+            now: &now,
+        })
+        .await?
     };
 
     if retyped_count > 0 {
@@ -568,35 +591,71 @@ async fn retype_evidence_by_similarity(params: RetypeBySimilarityParams<'_>) -> 
         };
         let sim = anti_redundancy::cosine(&entity_name_emb, type_desc_emb);
         if sim >= EVIDENCE_RETYPE_COSINE {
-            retype_entity(conn, group_id, &entity.id, new_type_id, now).await?;
+            retype_entity(RetypeEntityParams {
+                conn,
+                group_id,
+                entity_id: &entity.id,
+                new_type_id,
+                now,
+            })
+            .await?;
             count += 1;
         }
     }
     Ok(count)
 }
 
-/// Retype all evidence catch-all entities (degraded mode: no embedder).
-async fn retype_evidence_all(
-    conn: &libsql::Connection,
-    group_id: &str,
-    catch_alls: &[CatchAllEntity],
+/// Bundled parameters for [`retype_evidence_all`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct RetypeAllParams<'a> {
+    conn: &'a libsql::Connection,
+    group_id: &'a str,
+    catch_alls: &'a [CatchAllEntity],
     new_type_id: u32,
-    now: &str,
-) -> Result<usize> {
+    now: &'a str,
+}
+
+/// Retype all evidence catch-all entities (degraded mode: no embedder).
+async fn retype_evidence_all(params: RetypeAllParams<'_>) -> Result<usize> {
+    let RetypeAllParams {
+        conn,
+        group_id,
+        catch_alls,
+        new_type_id,
+        now,
+    } = params;
     for entity in catch_alls {
-        retype_entity(conn, group_id, &entity.id, new_type_id, now).await?;
+        retype_entity(RetypeEntityParams {
+            conn,
+            group_id,
+            entity_id: &entity.id,
+            new_type_id,
+            now,
+        })
+        .await?;
     }
     Ok(catch_alls.len())
 }
 
-/// Update a single entity's type to `new_type_id` with DreamPass0 provenance (D4).
-async fn retype_entity(
-    conn: &libsql::Connection,
-    group_id: &str,
-    entity_id: &str,
+/// Bundled parameters for [`retype_entity`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct RetypeEntityParams<'a> {
+    conn: &'a libsql::Connection,
+    group_id: &'a str,
+    entity_id: &'a str,
     new_type_id: u32,
-    now: &str,
-) -> Result<()> {
+    now: &'a str,
+}
+
+/// Update a single entity's type to `new_type_id` with DreamPass0 provenance (D4).
+async fn retype_entity(params: RetypeEntityParams<'_>) -> Result<()> {
+    let RetypeEntityParams {
+        conn,
+        group_id,
+        entity_id,
+        new_type_id,
+        now,
+    } = params;
     conn.execute(
         "UPDATE entities \
          SET entity_type_id = ?1, \
