@@ -290,7 +290,7 @@ impl SpeculativeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::graph::FactInsert;
+    use crate::core::graph::{FactInsert, InsertEntityParams};
     use crate::core::schema::TemporalGraph;
     use crate::core::search::{SearchFilters, VectorSearchEntitiesParams};
     use chrono::{Duration as ChronoDuration, Utc};
@@ -321,9 +321,13 @@ mod tests {
             "startup_x",
             "budget_q1",
         ] {
-            g.insert_entity(id, 0, serde_json::json!({"name": id}))
-                .await
-                .unwrap();
+            g.insert_entity(InsertEntityParams {
+                id,
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": id}),
+            })
+            .await
+            .unwrap();
         }
 
         let edges = vec![

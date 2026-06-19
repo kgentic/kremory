@@ -28,6 +28,7 @@ use kremory::core::disambiguation::{
     disambiguate, DisambiguationOutcome, L4_MERGE_THRESHOLD, L4_POTENTIAL_ALIAS_THRESHOLD,
 };
 use kremory::core::error::Result as KResult;
+use kremory::core::graph::InsertEntityWithGroupParams;
 use kremory::core::provider::EmbeddingProvider;
 use kremory::core::schema::TemporalGraph;
 use metrics_util::debugging::DebuggingRecorder;
@@ -68,7 +69,12 @@ fn make_rt() -> tokio::runtime::Runtime {
 async fn seed_entity(graph: &TemporalGraph, id: &str, group_id: &str, embedding: &[f32]) {
     let props = serde_json::json!({ "name": id, "description": id });
     graph
-        .insert_entity_with_group(id, 0u32, props, Some(group_id))
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id: id,
+            entity_type_id: 0u32,
+            properties: props,
+            group_id: Some(group_id),
+        })
         .await
         .expect("insert entity");
     graph

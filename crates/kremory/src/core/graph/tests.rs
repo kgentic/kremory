@@ -7,9 +7,13 @@ use chrono::Duration;
 #[tokio::test]
 async fn test_insert_and_get_entity() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({"role": "engineer"}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({"role": "engineer"}),
+    })
+    .await
+    .unwrap();
     let entity = g.get_entity("alice").await.unwrap().unwrap();
     assert_eq!(entity.id, "alice");
     // entity_type_id=0 (catch-all) → label resolves to "Entity" via LEFT JOIN COALESCE.
@@ -29,9 +33,13 @@ async fn test_get_nonexistent_entity_returns_none() {
 #[tokio::test]
 async fn test_update_entity_properties() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({"role": "engineer"}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({"role": "engineer"}),
+    })
+    .await
+    .unwrap();
     g.update_entity("alice", serde_json::json!({"role": "manager"}))
         .await
         .unwrap();
@@ -43,15 +51,27 @@ async fn test_update_entity_properties() {
 #[tokio::test]
 async fn test_list_entities() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("bob", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "bob",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let entities = g.list_entities().await.unwrap();
     assert_eq!(entities.len(), 3);
     let mut ids: Vec<&str> = entities.iter().map(|e| e.id.as_str()).collect();
@@ -64,9 +84,13 @@ async fn test_list_entities() {
 #[tokio::test]
 async fn test_insert_fact_returns_id() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let id = g
         .insert_fact(FactInsert::new("alice", "exists", Utc::now()))
         .await
@@ -78,9 +102,13 @@ async fn test_insert_fact_returns_id() {
 #[tokio::test]
 async fn test_try_insert_fact_returns_some_on_fresh_insert() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let id = g
         .try_insert_fact(FactInsert::new("alice", "exists", Utc::now()))
         .await
@@ -93,9 +121,13 @@ async fn test_try_insert_fact_returns_some_on_fresh_insert() {
 #[tokio::test]
 async fn test_try_insert_fact_returns_none_on_duplicate() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now();
     let _first = g
         .insert_fact(FactInsert::new("alice", "exists", t0))
@@ -117,9 +149,13 @@ async fn test_try_insert_fact_with_group_returns_some_on_fresh_insert() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
     // Entities are global (FK on entity id only, not (id, group_id)) — pattern
     // mirrors search.rs:1700 + 1704 successful with_group tests.
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let id = g
         .try_insert_fact_with_group(FactInsert::new("alice", "exists", Utc::now()), Some("g1"))
         .await
@@ -134,9 +170,13 @@ async fn test_try_insert_fact_with_group_returns_some_on_fresh_insert() {
 #[tokio::test]
 async fn test_try_insert_fact_with_group_dedups_cross_variant() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now();
     // First: insert via plain insert_fact (no group_id) — simulates LLM Phase 2.
     let _first = g
@@ -158,12 +198,20 @@ async fn test_try_insert_fact_with_group_dedups_cross_variant() {
 #[tokio::test]
 async fn test_insert_fact_with_object_id() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let id = g
         .insert_fact(FactInsert::new("alice", "works_at", Utc::now()).object_id("acme"))
         .await
@@ -179,9 +227,13 @@ async fn test_insert_fact_with_object_id() {
 #[tokio::test]
 async fn test_insert_fact_with_object_value() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let id = g
         .insert_fact(FactInsert::new("alice", "has_title", Utc::now()).object_value("PM"))
         .await
@@ -197,9 +249,13 @@ async fn test_insert_fact_with_object_value() {
 #[tokio::test]
 async fn test_invalidate_fact() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::days(1);
     let id = g
         .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
@@ -217,9 +273,13 @@ async fn test_invalidate_fact() {
 #[tokio::test]
 async fn test_facts_at_filters_by_valid_from() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now();
     g.insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
@@ -236,9 +296,13 @@ async fn test_facts_at_filters_by_valid_from() {
 #[tokio::test]
 async fn test_facts_at_excludes_expired() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
         .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
@@ -254,12 +318,20 @@ async fn test_facts_at_excludes_expired() {
 #[tokio::test]
 async fn test_entity_facts_at_filters_by_entity() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("bob", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "bob",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
     g.insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
         .await
@@ -276,9 +348,13 @@ async fn test_entity_facts_at_filters_by_entity() {
 #[tokio::test]
 async fn test_entity_history_includes_expired() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
         .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
@@ -300,15 +376,27 @@ async fn test_entity_history_includes_expired() {
 #[tokio::test]
 async fn test_point_in_time_temporal_evolution() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("newco", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "newco",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
 
     let t0 = Utc::now() - Duration::days(10);
     let t1 = Utc::now() - Duration::days(5);
@@ -350,15 +438,27 @@ async fn test_point_in_time_temporal_evolution() {
 #[tokio::test]
 async fn test_get_neighbours_one_hop() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("bob", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "bob",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
     g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
@@ -379,15 +479,27 @@ async fn test_get_neighbours_one_hop() {
 #[tokio::test]
 async fn test_get_neighbours_two_hops() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("bob", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "bob",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
     g.insert_fact(FactInsert::new("alice", "manages", t0).object_id("bob"))
         .await
@@ -407,12 +519,20 @@ async fn test_get_neighbours_two_hops() {
 #[tokio::test]
 async fn test_get_neighbours_excludes_expired_facts() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
         .insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
@@ -432,12 +552,20 @@ async fn test_get_neighbours_excludes_expired_facts() {
 #[tokio::test]
 async fn test_get_neighbours_zero_hops() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
     g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
@@ -454,15 +582,27 @@ async fn test_get_neighbours_zero_hops() {
 #[tokio::test]
 async fn test_to_petgraph_nodes_and_edges() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("bob", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "bob",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
     g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
@@ -479,12 +619,20 @@ async fn test_to_petgraph_nodes_and_edges() {
 #[tokio::test]
 async fn test_to_petgraph_excludes_expired() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
         .insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
@@ -505,12 +653,12 @@ async fn test_to_petgraph_excludes_expired() {
 async fn test_insert_episode() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
     let id = g
-        .insert_episode(
-            "Alice joined the meeting.",
-            Utc::now(),
-            Some("transcript"),
-            Some(serde_json::json!({"speaker": "alice"})),
-        )
+        .insert_episode(InsertEpisodeParams {
+            content: "Alice joined the meeting.",
+            timestamp: Utc::now(),
+            source_type: Some("transcript"),
+            metadata: Some(serde_json::json!({"speaker": "alice"})),
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -521,15 +669,29 @@ async fn test_insert_episode() {
 #[tokio::test]
 async fn test_insert_episodic_edge() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let ep_id = g
-        .insert_episode("Alice joined.", Utc::now(), Some("transcript"), None)
+        .insert_episode(InsertEpisodeParams {
+            content: "Alice joined.",
+            timestamp: Utc::now(),
+            source_type: Some("transcript"),
+            metadata: None,
+        })
         .await
         .unwrap();
     let edge_id = g
-        .insert_episodic_edge(ep_id, "alice", None, "mentioned")
+        .insert_episodic_edge(InsertEpisodicEdgeParams {
+            episode_id: ep_id,
+            entity_id: "alice",
+            entity_group_id: None,
+            role: "mentioned",
+        })
         .await
         .unwrap();
     assert!(edge_id > 0);
@@ -544,9 +706,13 @@ async fn test_insert_episodic_edge() {
 #[tokio::test]
 async fn test_invalidate_fact_with_reason() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::days(2);
     let id = g
         .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
@@ -554,9 +720,13 @@ async fn test_invalidate_fact_with_reason() {
         .unwrap();
     let expired = Utc::now() - Duration::days(1);
     let invalid = Utc::now() - Duration::hours(12);
-    g.invalidate_fact_with_reason(id, expired, invalid)
-        .await
-        .unwrap();
+    g.invalidate_fact_with_reason(InvalidateFactWithReasonParams {
+        fact_id: id,
+        expired_at: expired,
+        invalid_at: invalid,
+    })
+    .await
+    .unwrap();
 
     // Fact should now be absent from active facts
     let facts = g.facts_at(Utc::now()).await.unwrap();
@@ -572,12 +742,20 @@ async fn test_invalidate_fact_with_reason() {
 #[tokio::test]
 async fn test_get_facts_by_subject_predicate() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t0 = Utc::now() - Duration::hours(1);
     g.insert_fact(FactInsert::new("alice", "works_at", t0).object_id("acme"))
         .await
@@ -604,12 +782,12 @@ async fn test_get_facts_by_subject_predicate() {
 #[tokio::test]
 async fn test_insert_entity_with_group() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity_with_group(
-        "alice",
-        0,
-        serde_json::json!({"name": "Alice"}),
-        Some("group-abc"),
-    )
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({"name": "Alice"}),
+        group_id: Some("group-abc"),
+    })
     .await
     .unwrap();
 
@@ -628,16 +806,7 @@ async fn lane_a_indexer_writes_null_group_id_when_folder_id_absent() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
 
     let group_id: Option<&str> = None;
-    g.insert_entity_with_group(
-        "doc:welcome:chunk_0",
-        0,
-        serde_json::json!({
-            "text": "the host application captures meetings and surfaces insights.",
-            "source": "doc:welcome",
-            "source_type": "document",
-        }),
-        group_id,
-    )
+    g.insert_entity_with_group(InsertEntityWithGroupParams { id: "doc:welcome:chunk_0", entity_type_id: 0, properties: serde_json::json!({ "text": "the host application captures meetings and surfaces insights.", "source": "doc:welcome", "source_type": "document", }), group_id: group_id })
     .await
     .unwrap();
 
@@ -656,12 +825,12 @@ async fn test_update_entity_group_changes_scope() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
 
     // Insert entity in group-a
-    g.insert_entity_with_group(
-        "doc_chunk_0",
-        0,
-        serde_json::json!({"text": "original content"}),
-        Some("group-a"),
-    )
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
+        id: "doc_chunk_0",
+        entity_type_id: 0,
+        properties: serde_json::json!({"text": "original content"}),
+        group_id: Some("group-a"),
+    })
     .await
     .unwrap();
 
@@ -669,11 +838,11 @@ async fn test_update_entity_group_changes_scope() {
     assert_eq!(entity.group_id.as_deref(), Some("group-a"));
 
     // Re-scope to group-b with updated properties
-    g.update_entity_group(
-        "doc_chunk_0",
-        Some("group-b"),
-        serde_json::json!({"text": "updated content"}),
-    )
+    g.update_entity_group(UpdateEntityGroupParams {
+        id: "doc_chunk_0",
+        group_id: Some("group-b"),
+        properties: serde_json::json!({"text": "updated content"}),
+    })
     .await
     .unwrap();
 
@@ -690,13 +859,22 @@ async fn test_update_entity_group_to_none() {
     // Passing None to update_entity_group maps to 'default' (not NULL).
     let g = TemporalGraph::open_in_memory().await.unwrap();
 
-    g.insert_entity_with_group("e1", 0, serde_json::json!({}), Some("scoped"))
-        .await
-        .unwrap();
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
+        id: "e1",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+        group_id: Some("scoped"),
+    })
+    .await
+    .unwrap();
 
-    g.update_entity_group("e1", None, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.update_entity_group(UpdateEntityGroupParams {
+        id: "e1",
+        group_id: None,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
 
     let entity = g.get_entity("e1").await.unwrap().unwrap();
     // None maps to 'default' — entity is now in the default namespace.
@@ -724,7 +902,11 @@ async fn insert_entity_rolls_back_entities_row_when_fts_fails() {
         .expect("DROP TABLE entities_fts must succeed on fresh in-memory DB");
 
     let result = g
-        .insert_entity("test-atomic-1", 0, serde_json::json!({"text": "hello"}))
+        .insert_entity(InsertEntityParams {
+            id: "test-atomic-1",
+            entity_type_id: 0,
+            properties: serde_json::json!({"text": "hello"}),
+        })
         .await;
     assert!(
         result.is_err(),
@@ -759,12 +941,12 @@ async fn insert_entity_with_group_rolls_back_entities_row_when_fts_fails() {
         .expect("DROP TABLE entities_fts must succeed on fresh in-memory DB");
 
     let result = g
-        .insert_entity_with_group(
-            "test-atomic-grp-1",
-            0,
-            serde_json::json!({"text": "hello"}),
-            Some("grp-a"),
-        )
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "test-atomic-grp-1",
+            entity_type_id: 0,
+            properties: serde_json::json!({"text": "hello"}),
+            group_id: Some("grp-a"),
+        })
         .await;
     assert!(
         result.is_err(),
@@ -792,9 +974,13 @@ async fn insert_entity_with_group_rolls_back_entities_row_when_fts_fails() {
 #[tokio::test]
 async fn insert_fact_duplicate_returns_error() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t = Utc::now();
     // First insert succeeds
     g.insert_fact(FactInsert::new("alice", "likes", t).object_value("coffee"))
@@ -818,9 +1004,13 @@ async fn insert_fact_duplicate_returns_error() {
 #[tokio::test]
 async fn insert_fact_different_triples_both_succeed() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t = Utc::now();
     g.insert_fact(FactInsert::new("alice", "likes", t).object_value("coffee"))
         .await
@@ -833,10 +1023,25 @@ async fn insert_fact_different_triples_both_succeed() {
 
 #[tokio::test]
 async fn fact_content_hash_deterministic() {
-    let h1 = fact_content_hash("alice", "likes", None, Some("coffee"));
-    let h2 = fact_content_hash("alice", "likes", None, Some("coffee"));
+    let h1 = fact_content_hash(FactContentHashParams {
+        subject_id: "alice",
+        predicate: "likes",
+        object_id: None,
+        object_value: Some("coffee"),
+    });
+    let h2 = fact_content_hash(FactContentHashParams {
+        subject_id: "alice",
+        predicate: "likes",
+        object_id: None,
+        object_value: Some("coffee"),
+    });
     assert_eq!(h1, h2, "hash must be deterministic");
-    let h3 = fact_content_hash("alice", "likes", None, Some("tea"));
+    let h3 = fact_content_hash(FactContentHashParams {
+        subject_id: "alice",
+        predicate: "likes",
+        object_id: None,
+        object_value: Some("tea"),
+    });
     assert_ne!(h1, h3, "different facts must have different hashes");
     // SHA-256 produces 64 hex chars
     assert_eq!(h1.len(), 64);
@@ -850,9 +1055,13 @@ async fn fact_content_hash_deterministic() {
 #[tokio::test]
 async fn facts_missing_embeddings_returns_all_null_embedding_facts() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t = Utc::now();
     // Insert a fact with object_value only — simulates SQLite-committed, vector-not-written
     let fact_id = g
@@ -890,12 +1099,20 @@ async fn facts_missing_embeddings_returns_all_null_embedding_facts() {
 #[tokio::test]
 async fn facts_missing_embeddings_includes_object_id() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
-    g.insert_entity("acme", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t = Utc::now();
     // Insert a fact with object_id (entity reference) — no object_value.
     let fact_id = g
@@ -923,9 +1140,13 @@ async fn facts_missing_embeddings_includes_object_id() {
 #[tokio::test]
 async fn backfill_fact_embedding_is_idempotent() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    g.insert_entity("bob", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "bob",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let t = Utc::now();
     let fact_id = g
         .insert_fact(FactInsert::new("bob", "knows", t).object_value("alice"))
@@ -954,9 +1175,13 @@ async fn insert_fact_concurrent_dedup_exactly_one_wins() {
     const N: usize = 4;
 
     let g = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
 
     let barrier = Arc::new(Barrier::new(N));
     let valid_from = Utc::now();
@@ -1018,9 +1243,13 @@ async fn forget_entity_removes_entity_facts_and_edges() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
 
     // Insert entity + fact + episodic edge referencing it.
-    g.insert_entity("alice", 0, serde_json::json!({}))
-        .await
-        .unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
     let now = chrono::Utc::now();
     // insert_fact: (subject_id, predicate, object_id, object_value,
     //               valid_from, confidence, source_episode_id, embedding)
@@ -1035,12 +1264,22 @@ async fn forget_entity_removes_entity_facts_and_edges() {
     // insert_episodic_edge: (episode_id: i64, entity_id, entity_group_id, role)
     // Must have a valid episode first (FK constraint).
     let ep_id = g
-        .insert_episode("test episode", now, None, None)
+        .insert_episode(InsertEpisodeParams {
+            content: "test episode",
+            timestamp: now,
+            source_type: None,
+            metadata: None,
+        })
         .await
         .unwrap();
-    g.insert_episodic_edge(ep_id, "alice", None, "subject")
-        .await
-        .unwrap();
+    g.insert_episodic_edge(InsertEpisodicEdgeParams {
+        episode_id: ep_id,
+        entity_id: "alice",
+        entity_group_id: None,
+        role: "subject",
+    })
+    .await
+    .unwrap();
 
     // Verify setup.
     assert!(g.get_entity("alice").await.unwrap().is_some());
@@ -1077,7 +1316,13 @@ async fn batch_forget_250_entities_deleted_cleanly() {
     // Insert 250 entities.
     let ids: Vec<String> = (0..250).map(|i| format!("ent-{i:04}")).collect();
     for id in &ids {
-        g.insert_entity(id, 0, serde_json::json!({})).await.unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: id,
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
     }
 
     // Verify setup.
@@ -1108,9 +1353,14 @@ async fn upsert_entity_with_group_inserts_then_updates() {
     let g = TemporalGraph::open(&db).await.expect("open");
 
     // First call inserts (entity_type_id=0 = catch-all).
-    g.upsert_entity_with_group("alice", 0, serde_json::json!({"context": "v1"}), None)
-        .await
-        .expect("first upsert");
+    g.upsert_entity_with_group(UpsertEntityWithGroupParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({"context": "v1"}),
+        group_id: None,
+    })
+    .await
+    .expect("first upsert");
 
     // After Phase 2 (Migration 009), entities.label is gone.
     // Verify via entity_type_id + properties columns.
@@ -1130,9 +1380,14 @@ async fn upsert_entity_with_group_inserts_then_updates() {
 
     // Second call updates in place — same id, no duplicate row.
     // entity_type_id changes from 0 to 1 to verify ON CONFLICT updates it.
-    g.upsert_entity_with_group("alice", 1, serde_json::json!({"context": "v2"}), None)
-        .await
-        .expect("second upsert");
+    g.upsert_entity_with_group(UpsertEntityWithGroupParams {
+        id: "alice",
+        entity_type_id: 1,
+        properties: serde_json::json!({"context": "v2"}),
+        group_id: None,
+    })
+    .await
+    .expect("second upsert");
 
     let mut count_rows = g
         .conn

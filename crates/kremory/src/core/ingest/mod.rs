@@ -14,6 +14,7 @@ use metrics;
 
 use crate::core::config::{ContentType, PipelineConfig};
 use crate::core::error::Result;
+use crate::core::graph::{InsertEntityParams, UpdateEntitySourceTierParams};
 
 use crate::core::provider::{
     capability_of, ChatProvider, EmbeddingProvider, ProviderCaps, TokenCountingChatProvider,
@@ -389,7 +390,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // 1. Store the document as a searchable entity.
         // Documents use entity_type_id=0 (catch-all); the title is stored in properties.
         let properties = serde_json::json!({ "text": text, "title": title });
-        self.graph.insert_entity(source, 0, properties).await?;
+        self.graph
+            .insert_entity(InsertEntityParams {
+                id: source,
+                entity_type_id: 0,
+                properties,
+            })
+            .await?;
         metrics::counter!("rql.ingest.entity_persisted_total", "source" => "source_anchor")
             .increment(1);
 
@@ -813,7 +820,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         group_id: Option<&str>,
     ) -> Result<()> {
         self.graph
-            .update_entity_source_tier(entity_id, group_id, "ConsumerPinned")
+            .update_entity_source_tier(UpdateEntitySourceTierParams {
+                id: entity_id,
+                group_id,
+                source_tier: "ConsumerPinned",
+            })
             .await?;
 
         tracing::debug!(

@@ -84,14 +84,34 @@ impl<'a> EpisodeInsert<'a> {
     }
 }
 
+/// Bundled parameters for [`TemporalGraph::insert_episode`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). Distinct from [`EpisodeInsert`]
+/// (the builder for the `_with_group` variant) — this is the minimal four-column
+/// insert path.
+pub struct InsertEpisodeParams<'a> {
+    pub content: &'a str,
+    pub timestamp: DateTime<Utc>,
+    pub source_type: Option<&'a str>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Bundled parameters for [`TemporalGraph::insert_episodic_edge`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+pub struct InsertEpisodicEdgeParams<'a> {
+    pub episode_id: i64,
+    pub entity_id: &'a str,
+    pub entity_group_id: Option<&'a str>,
+    pub role: &'a str,
+}
+
 impl TemporalGraph {
-    pub async fn insert_episode(
-        &self,
-        content: &str,
-        timestamp: DateTime<Utc>,
-        source_type: Option<&str>,
-        metadata: Option<serde_json::Value>,
-    ) -> Result<i64> {
+    pub async fn insert_episode(&self, params: InsertEpisodeParams<'_>) -> Result<i64> {
+        let InsertEpisodeParams {
+            content,
+            timestamp,
+            source_type,
+            metadata,
+        } = params;
         let _db_start = Instant::now();
         let ts_str = timestamp.to_rfc3339();
         let meta_str = metadata.as_ref().map(serde_json::to_string).transpose()?;
@@ -198,13 +218,13 @@ impl TemporalGraph {
     /// edge silently fails to insert in namespaced mode. Threading the entity's
     /// real namespace here lets the composite FK resolve so edges persist (and
     /// `on_edge_added` fires) for namespaced ingests too.
-    pub async fn insert_episodic_edge(
-        &self,
-        episode_id: i64,
-        entity_id: &str,
-        entity_group_id: Option<&str>,
-        role: &str,
-    ) -> Result<i64> {
+    pub async fn insert_episodic_edge(&self, params: InsertEpisodicEdgeParams<'_>) -> Result<i64> {
+        let InsertEpisodicEdgeParams {
+            episode_id,
+            entity_id,
+            entity_group_id,
+            role,
+        } = params;
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         // None ⇒ 'default', matching the entities-table convention

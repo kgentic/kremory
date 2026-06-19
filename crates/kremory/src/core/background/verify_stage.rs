@@ -60,6 +60,7 @@ use crate::core::dream::consistency_check::{
 };
 use crate::core::dream::idempotency;
 use crate::core::error::{Error, IngestStatus};
+use crate::core::graph::InsertEpisodicEdgeParams;
 use crate::core::ingest::{EntityCandidate, ResolvedDecision};
 use crate::core::intelligence::{EntityExtractorDyn, ExtractionContext, ExtractionResult};
 use crate::core::provider::ChatProvider;
@@ -346,7 +347,12 @@ async fn stage3_write(
         // D7: episode_id/entity_id in tracing fields only, NOT metric labels.
         let episode_id_str = episode_id.to_string();
         if graph
-            .insert_episodic_edge(episode_id, &entity_id, None, "mention")
+            .insert_episodic_edge(InsertEpisodicEdgeParams {
+                episode_id,
+                entity_id: &entity_id,
+                entity_group_id: None,
+                role: "mention",
+            })
             .await
             .is_ok()
         {

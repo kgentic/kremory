@@ -1089,7 +1089,9 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::graph::FactInsert;
+    use crate::core::graph::{
+        FactInsert, InsertEntityParams, InsertEntityWithGroupParams, UpdateEntityGroupParams,
+    };
     use chrono::{Duration, Utc};
 
     // === effective_k clamp (Story #166) ===
@@ -1143,32 +1145,32 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let t0 = Utc::now() - Duration::hours(1);
 
-        g.insert_entity(
-            "alice",
-            0,
-            serde_json::json!({"role": "engineer", "department": "platform"}),
-        )
+        g.insert_entity(InsertEntityParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "engineer", "department": "platform"}),
+        })
         .await
         .unwrap();
-        g.insert_entity(
-            "bob",
-            0,
-            serde_json::json!({"role": "manager", "department": "sales"}),
-        )
+        g.insert_entity(InsertEntityParams {
+            id: "bob",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "manager", "department": "sales"}),
+        })
         .await
         .unwrap();
-        g.insert_entity(
-            "acme",
-            0,
-            serde_json::json!({"industry": "technology", "size": "startup"}),
-        )
+        g.insert_entity(InsertEntityParams {
+            id: "acme",
+            entity_type_id: 0,
+            properties: serde_json::json!({"industry": "technology", "size": "startup"}),
+        })
         .await
         .unwrap();
-        g.insert_entity(
-            "budget_2025",
-            0,
-            serde_json::json!({"title": "Q1 Budget Review"}),
-        )
+        g.insert_entity(InsertEntityParams {
+            id: "budget_2025",
+            entity_type_id: 0,
+            properties: serde_json::json!({"title": "Q1 Budget Review"}),
+        })
         .await
         .unwrap();
 
@@ -1438,15 +1440,27 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("alice", 0, serde_json::json!({"role": "engineer"}))
-            .await
-            .unwrap();
-        g.insert_entity("bob", 0, serde_json::json!({"role": "manager"}))
-            .await
-            .unwrap();
-        g.insert_entity("acme", 0, serde_json::json!({"industry": "tech"}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "engineer"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "bob",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "manager"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "acme",
+            entity_type_id: 0,
+            properties: serde_json::json!({"industry": "tech"}),
+        })
+        .await
+        .unwrap();
 
         // Set embeddings — alice and acme get similar embeddings, bob gets different
         let alice_emb = make_embedding(1.0);
@@ -1478,15 +1492,27 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("a", 0, serde_json::json!({}))
-            .await
-            .unwrap();
-        g.insert_entity("b", 0, serde_json::json!({}))
-            .await
-            .unwrap();
-        g.insert_entity("c", 0, serde_json::json!({}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "a",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "b",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "c",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
 
         let emb = make_embedding(1.0);
         g.set_entity_embedding("a", &emb).await.unwrap();
@@ -1530,12 +1556,20 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("with_emb", 0, serde_json::json!({}))
-            .await
-            .unwrap();
-        g.insert_entity("no_emb", 0, serde_json::json!({}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "with_emb",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "no_emb",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
 
         let emb = make_embedding(1.0);
         g.set_entity_embedding("with_emb", &emb).await.unwrap();
@@ -1558,12 +1592,20 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("close", 0, serde_json::json!({}))
-            .await
-            .unwrap();
-        g.insert_entity("far", 0, serde_json::json!({}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "close",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "far",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
 
         let query = make_embedding(1.0);
         let close_emb = make_embedding(1.05); // very similar
@@ -1594,15 +1636,27 @@ mod tests {
         let no_filter = SearchFilters::new();
 
         // Create entities with both text and embeddings
-        g.insert_entity("alice", 0, serde_json::json!({"role": "engineer"}))
-            .await
-            .unwrap();
-        g.insert_entity("bob", 0, serde_json::json!({"role": "manager"}))
-            .await
-            .unwrap();
-        g.insert_entity("acme", 0, serde_json::json!({"industry": "technology"}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "engineer"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "bob",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "manager"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "acme",
+            entity_type_id: 0,
+            properties: serde_json::json!({"industry": "technology"}),
+        })
+        .await
+        .unwrap();
 
         let alice_emb = make_embedding(1.0);
         let bob_emb = make_embedding(5.0);
@@ -1635,15 +1689,27 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("both_match", 0, serde_json::json!({"role": "engineer"}))
-            .await
-            .unwrap();
-        g.insert_entity("fts_only", 0, serde_json::json!({"role": "engineer"}))
-            .await
-            .unwrap();
-        g.insert_entity("vec_only", 0, serde_json::json!({"industry": "finance"}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "both_match",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "engineer"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "fts_only",
+            entity_type_id: 0,
+            properties: serde_json::json!({"role": "engineer"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "vec_only",
+            entity_type_id: 0,
+            properties: serde_json::json!({"industry": "finance"}),
+        })
+        .await
+        .unwrap();
 
         let query_emb = make_embedding(1.0);
         g.set_entity_embedding("both_match", &make_embedding(1.01))
@@ -1677,15 +1743,27 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let no_filter = SearchFilters::new();
 
-        g.insert_entity("a", 0, serde_json::json!({"x": "y"}))
-            .await
-            .unwrap();
-        g.insert_entity("b", 0, serde_json::json!({"x": "y"}))
-            .await
-            .unwrap();
-        g.insert_entity("c", 0, serde_json::json!({"x": "y"}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "a",
+            entity_type_id: 0,
+            properties: serde_json::json!({"x": "y"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "b",
+            entity_type_id: 0,
+            properties: serde_json::json!({"x": "y"}),
+        })
+        .await
+        .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "c",
+            entity_type_id: 0,
+            properties: serde_json::json!({"x": "y"}),
+        })
+        .await
+        .unwrap();
 
         let emb = make_embedding(1.0);
         g.set_entity_embedding("a", &emb).await.unwrap();
@@ -1749,37 +1827,37 @@ mod tests {
         // All entities share "employee" in their properties so FTS matches all 4;
         // label is no longer in FTS (Phase 2 dropped entities.label column —
         // entity types are resolved via JOIN on entity_types at query time).
-        g.insert_entity_with_group(
-            "alice",
-            0,
-            serde_json::json!({"category": "employee", "role": "engineer"}),
-            Some("group-a"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({"category": "employee", "role": "engineer"}),
+            group_id: Some("group-a"),
+        })
         .await
         .unwrap();
-        g.insert_entity_with_group(
-            "bob",
-            0,
-            serde_json::json!({"category": "employee", "role": "manager"}),
-            Some("group-b"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "bob",
+            entity_type_id: 0,
+            properties: serde_json::json!({"category": "employee", "role": "manager"}),
+            group_id: Some("group-b"),
+        })
         .await
         .unwrap();
-        g.insert_entity_with_group(
-            "carol",
-            0,
-            serde_json::json!({"category": "employee", "role": "designer"}),
-            Some("group-a"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "carol",
+            entity_type_id: 0,
+            properties: serde_json::json!({"category": "employee", "role": "designer"}),
+            group_id: Some("group-a"),
+        })
         .await
         .unwrap();
         // dave: None → 'default' post-ADR-029b (no longer NULL = workspace-wide).
-        g.insert_entity_with_group(
-            "dave",
-            0,
-            serde_json::json!({"category": "employee", "role": "analyst"}),
-            None,
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "dave",
+            entity_type_id: 0,
+            properties: serde_json::json!({"category": "employee", "role": "analyst"}),
+            group_id: None,
+        })
         .await
         .unwrap();
 
@@ -1871,23 +1949,28 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // "member" is a common term in all properties — label no longer in FTS after Phase 2.
-        g.insert_entity_with_group(
-            "alice",
-            0,
-            serde_json::json!({"kind": "member"}),
-            Some("g1"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({"kind": "member"}),
+            group_id: Some("g1"),
+        })
         .await
         .unwrap();
-        g.insert_entity_with_group("bob", 0, serde_json::json!({"kind": "member"}), Some("g2"))
-            .await
-            .unwrap();
-        g.insert_entity_with_group(
-            "carol",
-            0,
-            serde_json::json!({"kind": "member"}),
-            Some("g3"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "bob",
+            entity_type_id: 0,
+            properties: serde_json::json!({"kind": "member"}),
+            group_id: Some("g2"),
+        })
+        .await
+        .unwrap();
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "carol",
+            entity_type_id: 0,
+            properties: serde_json::json!({"kind": "member"}),
+            group_id: Some("g3"),
+        })
         .await
         .unwrap();
 
@@ -1910,12 +1993,22 @@ mod tests {
     async fn test_vector_search_entities_filters_by_group_id() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        g.insert_entity_with_group("alice", 0, serde_json::json!({}), Some("group-a"))
-            .await
-            .unwrap();
-        g.insert_entity_with_group("bob", 0, serde_json::json!({}), Some("group-b"))
-            .await
-            .unwrap();
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+            group_id: Some("group-a"),
+        })
+        .await
+        .unwrap();
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "bob",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+            group_id: Some("group-b"),
+        })
+        .await
+        .unwrap();
 
         let emb = make_embedding(1.0);
         g.set_entity_embedding("alice", &emb).await.unwrap();
@@ -1955,9 +2048,13 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let t0 = Utc::now() - Duration::hours(1);
 
-        g.insert_entity("alice", 0, serde_json::json!({}))
-            .await
-            .unwrap();
+        g.insert_entity(InsertEntityParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
 
         g.insert_fact_with_group(
             FactInsert::new("alice", "has_title", t0).object_value("Engineer"),
@@ -2005,12 +2102,12 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // Simulate file indexed at workspace level (group_id = "default")
-        g.insert_entity_with_group(
-            "pricing_chunk_0",
-            0,
-            serde_json::json!({"text": "Full Build price £3,000 + VAT"}),
-            Some("default"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "pricing_chunk_0",
+            entity_type_id: 0,
+            properties: serde_json::json!({"text": "Full Build price £3,000 + VAT"}),
+            group_id: Some("default"),
+        })
         .await
         .unwrap();
 
@@ -2031,11 +2128,11 @@ mod tests {
         );
 
         // Re-scope entity to space-abc (simulates update_entity_group fix)
-        g.update_entity_group(
-            "pricing_chunk_0",
-            Some("space-abc"),
-            serde_json::json!({"text": "Full Build price £3,000 + VAT"}),
-        )
+        g.update_entity_group(UpdateEntityGroupParams {
+            id: "pricing_chunk_0",
+            group_id: Some("space-abc"),
+            properties: serde_json::json!({"text": "Full Build price £3,000 + VAT"}),
+        })
         .await
         .unwrap();
 
@@ -2082,21 +2179,21 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // Insert entity WITHOUT group_id — maps to 'default' post-ADR-029b.
-        g.insert_entity(
-            "kb_doc",
-            0,
-            serde_json::json!({ "text": "revenue targets" }),
-        )
+        g.insert_entity(InsertEntityParams {
+            id: "kb_doc",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "text": "revenue targets" }),
+        })
         .await
         .unwrap();
 
         // Insert entity WITH group_id — scoped to space-1.
-        g.insert_entity_with_group(
-            "scoped_doc",
-            0,
-            serde_json::json!({ "text": "revenue analysis" }),
-            Some("space-1"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "scoped_doc",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "text": "revenue analysis" }),
+            group_id: Some("space-1"),
+        })
         .await
         .unwrap();
 
@@ -2161,11 +2258,11 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // Insert entity with a unique label so FTS will return it deterministically.
-        g.insert_entity(
-            "ac_entity_1",
-            0,
-            serde_json::json!({ "text": "kremory_ac_probe_term_unique" }),
-        )
+        g.insert_entity(InsertEntityParams {
+            id: "ac_entity_1",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "text": "kremory_ac_probe_term_unique" }),
+        })
         .await
         .unwrap();
 
@@ -2214,20 +2311,20 @@ mod tests {
     async fn test_empty_group_ids_returns_all() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        g.insert_entity_with_group(
-            "doc_a",
-            0,
-            serde_json::json!({ "text": "alpha project" }),
-            Some("group-1"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "doc_a",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "text": "alpha project" }),
+            group_id: Some("group-1"),
+        })
         .await
         .unwrap();
-        g.insert_entity_with_group(
-            "doc_b",
-            0,
-            serde_json::json!({ "text": "alpha budget" }),
-            Some("group-2"),
-        )
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "doc_b",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "text": "alpha budget" }),
+            group_id: Some("group-2"),
+        })
         .await
         .unwrap();
 

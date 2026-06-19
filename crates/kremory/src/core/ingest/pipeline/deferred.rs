@@ -10,7 +10,7 @@ use crate::core::contradiction::TwoPoolDetector;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::error::{ContradictionResolution, IngestStatus};
 use crate::core::extraction_window::ExtractionWindowSplitter;
-use crate::core::graph::FactInsert;
+use crate::core::graph::{FactInsert, InsertEpisodicEdgeParams, InvalidateFactWithReasonParams};
 use crate::core::intelligence::{
     EntityExtractor, ExtractedEntity, ExtractedFact, ExtractionContext,
 };
@@ -273,7 +273,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 }
 
                 self.graph
-                    .invalidate_fact_with_reason(*fact_id, Utc::now(), ref_time)
+                    .invalidate_fact_with_reason(InvalidateFactWithReasonParams {
+                        fact_id: *fact_id,
+                        expired_at: Utc::now(),
+                        invalid_at: ref_time,
+                    })
                     .await?;
 
                 // ── Fire-site 4: on_contradiction ────────────────────────────────
@@ -392,7 +396,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // must reference the same namespace for the composite FK to resolve.
                         if self
                             .graph
-                            .insert_episodic_edge(episode_id, &subject_id, group_id, "subject")
+                            .insert_episodic_edge(InsertEpisodicEdgeParams {
+                                episode_id,
+                                entity_id: &subject_id,
+                                entity_group_id: group_id,
+                                role: "subject",
+                            })
                             .await
                             .is_ok()
                         {
@@ -420,7 +429,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             // Migration 006: thread `group_id` for composite-FK parity.
                             if self
                                 .graph
-                                .insert_episodic_edge(episode_id, obj_id, group_id, "object")
+                                .insert_episodic_edge(InsertEpisodicEdgeParams {
+                                    episode_id,
+                                    entity_id: obj_id,
+                                    entity_group_id: group_id,
+                                    role: "object",
+                                })
                                 .await
                                 .is_ok()
                             {

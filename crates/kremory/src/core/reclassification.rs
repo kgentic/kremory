@@ -244,6 +244,7 @@ mod tests {
 
     use super::*;
     use crate::core::entity_types::{EntityTypeRegistry, EntityTypeSpec};
+    use crate::core::graph::InsertEntityWithGroupParams;
     use crate::core::provider::MockChatProvider;
     use crate::core::schema::{Entity, Episode, TemporalGraph};
     use chrono::Utc;
@@ -353,12 +354,12 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         // Seed entity row with entity_type_id=0.
         graph
-            .insert_entity_with_group(
-                "test-entity",
-                0,
-                serde_json::json!({"name": "Alice", "description": "A software engineer."}),
-                Some("test-group"),
-            )
+            .insert_entity_with_group(InsertEntityWithGroupParams {
+                id: "test-entity",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Alice", "description": "A software engineer."}),
+                group_id: Some("test-group"),
+            })
             .await
             .expect("insert entity");
 
@@ -393,12 +394,12 @@ mod tests {
     async fn t4_out_of_range_id_returns_none_and_no_db_update() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         graph
-            .insert_entity_with_group(
-                "test-entity",
-                0,
-                serde_json::json!({"name": "Alice"}),
-                Some("test-group"),
-            )
+            .insert_entity_with_group(InsertEntityWithGroupParams {
+                id: "test-entity",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Alice"}),
+                group_id: Some("test-group"),
+            })
             .await
             .expect("insert entity");
 
