@@ -1,25 +1,27 @@
 <!-- sprint-activate-begin -->
 ## Active Sprint
 
-**Sprint**: v0.2.4 — Dream-Pass Crash-Safety (ADR-050) — **build COMPLETE, UNPUSHED**
-**Status**: v0.2.4 implemented on branch `jimsheen/restore-session` (8 commits unpushed). Workspace GREEN (1164 tests / 0 fail; clippy `-D warnings` clean; fmt clean). **Blocked on push** — `kgentic` org GitHub Actions billing dead → no CI validation; awaiting billing restore before tag/push `v0.2.4`. **NEXT: tech-debt clearance sprint** (TD-042 Tier 2 + audit backlog) — see `.ai-docs/tech-debt/tech-debt-register.md`.
-**Spec**: `.ai-docs/specs/v0-2-4-impl-spec-2026-06-12.md` (readiness gate PASS; both compile-spikes discharged)
-**Arch spec**: `.ai-docs/specs/v0-2-4-crash-safety-arch-spec-2026-06-12.md`
-**ADR**: `adr-050-dream-pass-crash-safety-and-idempotency-2026-06-11` (SHIPPED — was DEFERRED, now done)
+**Sprint**: Tech-Debt Clearance (post-v0.2.4) — **near-complete, UNPUSHED**
+**Branch**: `jimsheen/tech-debt-clearance` (off `main`) — **30 commits ahead of `origin/main`, ALL UNPUSHED.** Bundles the v0.2.4 build (ADR-050 crash-safety, shipped) + the clearance backlog.
+**Status**: Workspace GREEN — `cargo test --workspace` **1164 / 0 fail**; `clippy --workspace --all-targets -D warnings` GREEN **and** `--all-features` GREEN; `fmt` clean. Register: `.ai-docs/tech-debt/tech-debt-register.md`.
+**Blocked on push** — `kgentic` org GitHub Actions billing suspended → CI auto-triggers DISABLED (`workflow_dispatch`-only on `ci`/`napi-ci`/`release-please`, inline dated RESTORE notes in each). Awaiting billing restore; **user confirms `v0.2.4` tag BEFORE any push** (no autonomous push/tag — irreversible HITL gate).
 
-**Last shipped — v0.2.4 (ADR-050 dream-pass crash-safety)**, committed, UNPUSHED:
+**Clearance backlog state (per register):**
 
-| Phase | Commit | Scope |
+| TD | What | Status |
 |---|---|---|
-| Groundwork | `ec766e4` | compile-spikes (`idempotency.rs` + `token_counting.rs`) + cross-crate fixes |
-| Phase 1 | `d128b09` | Migration 016 crash-safety schema + 015b downgrade |
-| Phase 3 | `85e4fce` | idempotency-key + checkpoint resume + cooldown + is_dream_generated |
-| Phase 4 | `8ec711f` | budget tracking (TokenCountingChatProvider wiring) |
-| Phase 5 | `1ec121e` | SkippedIdempotent + on_worker_resumed sink events |
+| **TD-044** | doc-vs-code drift (ADR-051 signature, CLAUDE.md) | ✅ CLOSED `ffa7fa3` |
+| **TD-042** | clippy-allows Tier 1+2+3 — threshold 5→3, ~77 fns → args-as-object params structs (7 sequential foreground waves) | ✅ **CLOSED 2026-06-19** `d8180e5`→`c485419` (+`e6a0fda` Tier 1) |
+| **TD-046** | observability gaps (stale doc + silent cursor fallback log) | ✅ CLOSED `5d37e69` |
+| **TD-043** | dead_code triage | ⏳ PARTIAL `a1be838`/`d2ddf2c` — `graph.rs:43 parse_dt_opt` folds into TD-045 Wave 2 |
+| **TD-045** | god-file splits (4 files >500 LoC) | ⏳ PARTIAL `107614d` — `migrations.rs`+`provider/mod.rs` done; **`graph.rs` (3240) + `ingest/pipeline.rs` (2141) PENDING Wave 2** |
+| hygiene | close TD-036/037, de-dup TD-037/TD-038 id-collisions | ⏳ PENDING |
 
-Quinn PASS every phase (90/93/94/96). Zero `#[allow]` band-aids added to `src/`. Plus tech-debt commits: `6fa7229`/`571c623` (rust lint conventions), `e6a0fda` (TD-042 Tier 1 — 35 redundant test allows removed).
+**v0.2.4 build** (ADR-050 dream-pass crash-safety, also in the 30 unpushed): groundwork `ec766e4`, Phase 1 `d128b09`, Phase 3 `85e4fce`, Phase 4 `8ec711f`, Phase 5 `1ec121e`. Quinn PASS every phase (90/93/94/96). Zero `#[allow]` band-aids in `src/`. Spec `.ai-docs/specs/v0-2-4-impl-spec-2026-06-12.md`; ADR `adr-050-dream-pass-crash-safety-and-idempotency-2026-06-11` (SHIPPED).
 
-> ⚠️ **The v0.2.3 sprint detail BELOW is SUPERSEDED** (predates the v0.2.4 build). Treat as historical. The earlier "1 pre-existing fail" baseline claim is STALE — workspace is now fully green. A full Active-Sprint refresh is part of the tech-debt clearance sprint. The "Phase-boundary discipline" subsection further down remains the persistent baseline and still applies.
+**Gate lesson (load-bearing for next clearance work)**: global clippy threshold changes must gate **both** `--all-targets` AND `--all-features` — cfg-gated code (e.g. `ner.rs` under `--features ner`) is invisible to default-features clippy (memory `feedback_gate_all_features_for_global_clippy_changes`). Whole-program-coupled refactors (args-as-object) run **sequential + foreground only** — background agents zombie on machine-sleep and race the orchestrator (memory `feedback_background_agents_zombie_on_machine_sleep`). **TD-045 large-file splitting is NOT TD-042** — keep distinct.
+
+> ⚠️ **The v0.2.3 / v0.2.4 phase detail BELOW is HISTORICAL** (predates this clearance sprint). The "1 pre-existing fail" baseline claim is STALE — workspace is now fully green (1164/0). The "Phase-boundary discipline" subsection further down remains the persistent baseline and still applies.
 
 ### v0.2.3 phase plan (per impl spec §6)
 
