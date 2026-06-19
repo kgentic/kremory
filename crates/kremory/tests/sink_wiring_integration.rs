@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex};
 
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
 use autoagents_llm::error::LLMError;
-use kremory::core::background::{BackgroundIngestor, IngestorConfig};
+use kremory::core::background::{BackgroundIngestor, IngestorConfig, SendParams};
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::error::IngestStatus;
@@ -274,7 +274,10 @@ async fn sink_stage_changes_fire_in_order() {
     let (ingestor, guard) = build_ingestor_with_arc_sink("stage-order", sink_clone).await;
 
     ingestor
-        .send("the board approved the revised timeline", None, None, None)
+        .send(
+            "the board approved the revised timeline",
+            SendParams::default(),
+        )
         .expect("send must not fail");
 
     drain_and_shutdown(ingestor, guard).await;
@@ -367,9 +370,7 @@ async fn sink_complete_fires_after_fact_extraction() {
     ingestor
         .send(
             "results were reported during the review session",
-            None,
-            None,
-            None,
+            SendParams::default(),
         )
         .expect("send must not fail");
 
@@ -660,9 +661,7 @@ async fn sink_thread_context_is_background_worker() {
     ingestor
         .send(
             "the background thread context is being verified here",
-            None,
-            None,
-            None,
+            SendParams::default(),
         )
         .expect("send must not fail");
 
@@ -740,9 +739,7 @@ async fn sink_ingestion_error_fires_on_ner_fail() {
     ingestor
         .send(
             "verify pending stage fires from process item",
-            None,
-            None,
-            None,
+            SendParams::default(),
         )
         .expect("send must not fail");
 
@@ -795,9 +792,7 @@ async fn sink_community_updated_does_not_fire_l3() {
     ingestor
         .send(
             "full pipeline community updated sentinel test",
-            None,
-            None,
-            None,
+            SendParams::default(),
         )
         .expect("send must not fail");
 
@@ -991,9 +986,7 @@ async fn sink_drain_errors_empty_on_success() {
     ingestor
         .send(
             "verify no errors emitted on successful sink-wired ingest",
-            None,
-            None,
-            None,
+            SendParams::default(),
         )
         .expect("send must not fail");
 
@@ -1284,7 +1277,7 @@ async fn sink_unbatched_send_does_not_fire_batch_complete() {
     // Send 3 episodes WITHOUT a batch_id.
     for i in 0..3usize {
         ingestor
-            .send(format!("unbatched episode {i}"), None, None, None)
+            .send(format!("unbatched episode {i}"), SendParams::default())
             .expect("send ok");
     }
 

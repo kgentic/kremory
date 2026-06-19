@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
 use autoagents_llm::error::LLMError;
-use kremory::core::background::{BackgroundIngestor, IngestorConfig};
+use kremory::core::background::{BackgroundIngestor, IngestorConfig, SendParams};
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::error::Error as CoreError;
@@ -178,7 +178,7 @@ async fn wait_for_processing_blocks_until_extraction_complete() {
 
     // Send one episode — returns immediately (fire-and-forget).
     ingestor
-        .send("Alice met Bob at the Acme summit.", None, None, None)
+        .send("Alice met Bob at the Acme summit.", SendParams::default())
         .expect("send must not fail");
 
     // Targeted SELECT just to discover the rowid (NOT the API under test).

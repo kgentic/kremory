@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use kremory::core::background::verify_stage::run_verify_stage;
+use kremory::core::background::verify_stage::{run_verify_stage, RunVerifyStageParams};
 use kremory::core::background::DeferredRequest;
 use kremory::core::error::Error;
 use kremory::core::intelligence::{
@@ -254,7 +254,14 @@ async fn run_verify_stage_path_alpha_writes_entities_and_transitions_status_to_v
         batch_id: None,
     };
 
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: None,
+    })
+    .await;
 
     assert!(
         result.is_ok(),
@@ -325,7 +332,14 @@ async fn run_verify_stage_path_beta_writes_entities_and_transitions_status_to_ve
     };
 
     // Path β: verify_llm = None.
-    let result = run_verify_stage(&request, &extractor, None, &graph, None).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: None,
+        graph: &graph,
+        sink: None,
+    })
+    .await;
 
     assert!(
         result.is_ok(),
@@ -386,7 +400,14 @@ async fn run_verify_stage_failure_transitions_status_to_failed() {
     };
 
     // Path α with a failing extractor.
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: None,
+    })
+    .await;
 
     assert!(
         result.is_err(),

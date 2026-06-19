@@ -36,7 +36,7 @@ use std::sync::Arc;
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
 use autoagents_llm::error::LLMError;
 use chrono::Utc;
-use kremory::core::background::{BackgroundIngestor, IngestGuard, IngestorConfig};
+use kremory::core::background::{BackgroundIngestor, IngestGuard, IngestorConfig, SendParams};
 use kremory::core::config::{ContentType, PipelineConfig};
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::ingest::Engine;
@@ -180,9 +180,11 @@ async fn spike_c_background_ingestor_plus_engine_handle_concurrent() {
     for i in 0..5_usize {
         let result = ingestor.send(
             format!("Spike C background episode {i}: concurrent with EngineGraphHandle"),
-            None,                              // reference_time
-            Some("spike-c-group".to_string()), // group_id
-            Some(ContentType::Text),           // content_type
+            SendParams {
+                reference_time: None,
+                group_id: Some("spike-c-group".to_string()),
+                content_type: Some(ContentType::Text),
+            },
         );
         if let Err(e) = result {
             bg_send_errors.push(format!("bg{i}: {e:?}"));

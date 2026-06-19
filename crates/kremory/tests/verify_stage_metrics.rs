@@ -29,7 +29,7 @@
 //! - ALWAYS MOCK: `EntityExtractorDyn` — `MockExtractorReturnsEntities` / `MockExtractorFails`
 //! - ALWAYS MOCK: `ChatProvider` for verify_llm — `MockChatProvider` with scripted confirm JSON
 
-use kremory::core::background::verify_stage::run_verify_stage;
+use kremory::core::background::verify_stage::{run_verify_stage, RunVerifyStageParams};
 use kremory::core::background::DeferredRequest;
 use kremory::core::error::Error;
 use kremory::core::intelligence::{
@@ -265,7 +265,14 @@ async fn verify_stage_path_alpha_emits_success_counter() {
         batch_id: None,
     };
 
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: None,
+    })
+    .await;
     assert!(
         result.is_ok(),
         "Path α must return Ok; got: {:?}",
@@ -324,7 +331,14 @@ async fn verify_stage_path_beta_emits_success_counter() {
     };
 
     // Path β: verify_llm = None.
-    let result = run_verify_stage(&request, &extractor, None, &graph, None).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: None,
+        graph: &graph,
+        sink: None,
+    })
+    .await;
     assert!(
         result.is_ok(),
         "Path β must return Ok; got: {:?}",
@@ -375,7 +389,14 @@ async fn verify_stage_extractor_failure_emits_gliner_fail_counter() {
         batch_id: None,
     };
 
-    let result = run_verify_stage(&request, &extractor, Some(&verify_llm), &graph, None).await;
+    let result = run_verify_stage(RunVerifyStageParams {
+        request: &request,
+        extractor: &extractor,
+        verify_llm: Some(&verify_llm),
+        graph: &graph,
+        sink: None,
+    })
+    .await;
     assert!(result.is_err(), "extractor failure must return Err; got Ok");
 
     let gliner_fail_total = sum_outcome_counter_any_arm(snapshotter.snapshot(), "gliner_fail");

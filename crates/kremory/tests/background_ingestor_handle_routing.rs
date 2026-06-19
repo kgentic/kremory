@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
 use autoagents_llm::error::LLMError;
-use kremory::core::background::{BackgroundIngestor, IngestorConfig};
+use kremory::core::background::{BackgroundIngestor, IngestorConfig, SendParams};
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::ingest::Engine;
@@ -172,7 +172,7 @@ async fn background_ingestor_handle_routes_unbatched_no_batch_complete() {
 
     // Un-batched send: no batch_id → no BatchComplete should fire.
     ingestor
-        .send("unbatched episode", None, None, None)
+        .send("unbatched episode", SendParams::default())
         .expect("send ok");
 
     drain_and_shutdown(ingestor, guard).await;

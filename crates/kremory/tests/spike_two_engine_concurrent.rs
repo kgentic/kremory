@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
 use autoagents_llm::error::LLMError;
-use kremory::core::background::{BackgroundIngestor, IngestorConfig};
+use kremory::core::background::{BackgroundIngestor, IngestorConfig, SendParams};
 use kremory::core::config::{ContentType, PipelineConfig};
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::ingest::Engine;
@@ -138,9 +138,11 @@ async fn spike_b_two_engine_concurrent_wal_safety() {
     for i in 0..5 {
         let result = ingestor_a.send(
             format!("Episode A{i}: concurrent writes to libSQL WAL from two Engine instances"),
-            None,                              // reference_time
-            Some("spike-b-group".to_string()), // group_id
-            Some(ContentType::Text),           // content_type
+            SendParams {
+                reference_time: None,
+                group_id: Some("spike-b-group".to_string()),
+                content_type: Some(ContentType::Text),
+            },
         );
         if let Err(e) = result {
             send_errors_a.push(format!("A{i}: {e:?}"));
@@ -151,9 +153,11 @@ async fn spike_b_two_engine_concurrent_wal_safety() {
     for i in 0..5 {
         let result = ingestor_b.send(
             format!("Episode B{i}: libSQL WAL concurrency under two separate Engine instances"),
-            None,                              // reference_time
-            Some("spike-b-group".to_string()), // group_id
-            Some(ContentType::Text),           // content_type
+            SendParams {
+                reference_time: None,
+                group_id: Some("spike-b-group".to_string()),
+                content_type: Some(ContentType::Text),
+            },
         );
         if let Err(e) = result {
             send_errors_b.push(format!("B{i}: {e:?}"));

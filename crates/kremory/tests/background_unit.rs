@@ -14,7 +14,7 @@ use std::sync::Arc;
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
 use autoagents_llm::error::LLMError;
 use kremory::core::background::{
-    BackgroundIngestor, IngestError, IngestErrorKind, IngestSendError, IngestorConfig,
+    BackgroundIngestor, IngestError, IngestErrorKind, IngestSendError, IngestorConfig, SendParams,
 };
 use kremory::core::ingest::SimpleGraph;
 use kremory::core::provider::ChatProvider;
@@ -147,7 +147,7 @@ async fn graph_with_llm<L: ChatProvider + 'static>(
 async fn send_and_drain() {
     let (ingestor, guard) = simple_ingestor().await;
     ingestor
-        .send("Alice works at Acme", None, None, None)
+        .send("Alice works at Acme", SendParams::default())
         .expect("send should succeed");
     drop(ingestor);
     guard.shutdown();
@@ -164,11 +164,11 @@ async fn queue_full_returns_error() {
     };
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     ingestor
-        .send("first item", None, None, None)
+        .send("first item", SendParams::default())
         .expect("first send should succeed");
     let mut got_full = false;
     for _ in 0..20 {
-        match ingestor.send("overflow item", None, None, None) {
+        match ingestor.send("overflow item", SendParams::default()) {
             Err(IngestSendError::Full(_)) => {
                 got_full = true;
                 break;
@@ -187,7 +187,7 @@ async fn shutdown_drains_queue() {
     let (ingestor, guard) = simple_ingestor().await;
     for i in 0..5_u8 {
         ingestor
-            .send(format!("item {i}"), None, None, None)
+            .send(format!("item {i}"), SendParams::default())
             .expect("send should succeed");
     }
     drop(ingestor);
@@ -199,10 +199,10 @@ async fn clone_shares_worker() {
     let (ingestor, guard) = simple_ingestor().await;
     let clone = ingestor.clone();
     ingestor
-        .send("from original", None, None, None)
+        .send("from original", SendParams::default())
         .expect("send from original should succeed");
     clone
-        .send("from clone", None, None, None)
+        .send("from clone", SendParams::default())
         .expect("send from clone should succeed");
     drop(ingestor);
     drop(clone);
@@ -214,7 +214,7 @@ async fn guard_shutdown_does_not_deadlock_with_live_clone() {
     let (ingestor, guard) = simple_ingestor().await;
     let clone = ingestor.clone();
     ingestor
-        .send("before shutdown", None, None, None)
+        .send("before shutdown", SendParams::default())
         .expect("send should succeed");
     let join = tokio::task::spawn_blocking(move || {
         guard.shutdown();
@@ -224,7 +224,7 @@ async fn guard_shutdown_does_not_deadlock_with_live_clone() {
         result.is_ok(),
         "guard.shutdown() deadlocked — stop flag not working"
     );
-    let send_result = clone.send("after shutdown", None, None, None);
+    let send_result = clone.send("after shutdown", SendParams::default());
     assert!(
         matches!(send_result, Err(IngestSendError::Disconnected)),
         "expected Disconnected after worker exit, got: {send_result:?}"
@@ -246,10 +246,10 @@ async fn deferred_disabled_processes_without_error() {
     };
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     ingestor
-        .send("Alice works at Acme Corp", None, None, None)
+        .send("Alice works at Acme Corp", SendParams::default())
         .expect("send should succeed");
     ingestor
-        .send("Bob manages Alice", None, None, None)
+        .send("Bob manages Alice", SendParams::default())
         .expect("send should succeed");
     drop(ingestor);
     guard.shutdown();
@@ -259,7 +259,7 @@ async fn deferred_disabled_processes_without_error() {
 async fn deferred_enabled_drains_without_panic() {
     let (ingestor, guard) = simple_ingestor().await;
     ingestor
-        .send("Alice works at Acme Corp", None, None, None)
+        .send("Alice works at Acme Corp", SendParams::default())
         .expect("send should succeed");
     drop(ingestor);
     guard.shutdown();
@@ -290,7 +290,7 @@ async fn errors_are_observable() {
     });
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
     ingestor
-        .send("this will fail", None, None, None)
+        .send("this will fail", SendParams::default())
         .expect("send should succeed");
     let mut errors = Vec::new();
     for _ in 0..50 {
@@ -322,7 +322,7 @@ async fn deferred_request_created_after_successful_ingest() {
     };
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     ingestor
-        .send("Alice works at Acme Corp", None, None, None)
+        .send("Alice works at Acme Corp", SendParams::default())
         .expect("send should succeed");
     for _ in 0..50 {
         if call_counter.load(Ordering::SeqCst) >= 2 {
@@ -360,7 +360,7 @@ async fn deferred_disabled_makes_no_deferred_llm_calls() {
     };
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     ingestor
-        .send("Alice works at Acme Corp", None, None, None)
+        .send("Alice works at Acme Corp", SendParams::default())
         .expect("send should succeed");
     drop(ingestor);
     tokio::task::spawn_blocking(move || guard.shutdown())
@@ -391,9 +391,7 @@ async fn deferred_queue_does_not_block_subsequent_ner_items() {
         ingestor
             .send(
                 format!("item number {i} about entity person"),
-                None,
-                None,
-                None,
+                SendParams::default(),
             )
             .expect("send should succeed");
     }
@@ -427,7 +425,7 @@ async fn deferred_extraction_errors_do_not_crash_worker() {
     };
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     ingestor
-        .send("Alice works at Acme Corp", None, None, None)
+        .send("Alice works at Acme Corp", SendParams::default())
         .expect("send should succeed");
     let mut deferred_errors: Vec<IngestError> = Vec::new();
     for _ in 0..50 {
@@ -483,7 +481,7 @@ async fn deferred_config_disabled_skips_queue() {
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     for i in 0..N {
         ingestor
-            .send(format!("entity record {i}"), None, None, None)
+            .send(format!("entity record {i}"), SendParams::default())
             .expect("send should succeed");
     }
     drop(ingestor);
@@ -510,7 +508,7 @@ async fn deferred_queue_drains_on_sender_disconnect() {
     };
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     ingestor
-        .send("Alice meets Bob at Acme HQ", None, None, None)
+        .send("Alice meets Bob at Acme HQ", SendParams::default())
         .expect("send should succeed");
     let mut deferred_errors: Vec<IngestError> = Vec::new();
     for _ in 0..50 {
@@ -551,7 +549,7 @@ async fn deferred_metrics_code_paths_execute() {
     };
     let (ingestor, guard) = BackgroundIngestor::new(graph, config);
     ingestor
-        .send("Alice leads the Acme project", None, None, None)
+        .send("Alice leads the Acme project", SendParams::default())
         .expect("send should succeed");
     for _ in 0..50 {
         if call_counter.load(Ordering::SeqCst) >= 2 {

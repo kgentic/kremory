@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::Utc;
-use kremory::core::background::{BackgroundIngestor, IngestorConfig};
+use kremory::core::background::{BackgroundIngestor, IngestorConfig, SendParams};
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
 use kremory::core::extraction::LlmExtractor;
@@ -208,9 +208,10 @@ async fn background_ingestor_contradiction_round_trip() {
     ingestor
         .send(
             "the app needs to go live friday",
-            Some(Utc::now()),
-            None,
-            None,
+            SendParams {
+                reference_time: Some(Utc::now()),
+                ..SendParams::default()
+            },
         )
         .expect("send utterance 1 should succeed");
 
@@ -218,9 +219,10 @@ async fn background_ingestor_contradiction_round_trip() {
     ingestor
         .send(
             "actually can we deploy on monday instead",
-            Some(Utc::now()),
-            None,
-            None,
+            SendParams {
+                reference_time: Some(Utc::now()),
+                ..SendParams::default()
+            },
         )
         .expect("send utterance 2 should succeed");
 
@@ -469,7 +471,13 @@ async fn deferred_extraction_invoked_after_successful_ner() {
     let (ingestor, guard) = BackgroundIngestor::new(graph, ingestor_config);
 
     ingestor
-        .send("Alice works at Acme Corp", Some(Utc::now()), None, None)
+        .send(
+            "Alice works at Acme Corp",
+            SendParams {
+                reference_time: Some(Utc::now()),
+                ..SendParams::default()
+            },
+        )
         .expect("send should succeed");
 
     // Poll for errors while the ingestor is alive — we want to catch any
@@ -543,17 +551,19 @@ async fn background_ingestor_drains_without_errors() {
     ingestor
         .send(
             "the app needs to go live friday",
-            Some(Utc::now()),
-            None,
-            None,
+            SendParams {
+                reference_time: Some(Utc::now()),
+                ..SendParams::default()
+            },
         )
         .expect("send utterance 1 should succeed");
     ingestor
         .send(
             "actually can we deploy on monday instead",
-            Some(Utc::now()),
-            None,
-            None,
+            SendParams {
+                reference_time: Some(Utc::now()),
+                ..SendParams::default()
+            },
         )
         .expect("send utterance 2 should succeed");
 

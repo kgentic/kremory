@@ -46,13 +46,26 @@ use super::{
 ///
 /// Returns `Some(DeferredRequest)` when Phase 2 should be enqueued, or `None`
 /// on error (error already forwarded to `error_tx`).
+/// Bundled (non-generic) parameters for [`process_item`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). The generic `graph` receiver
+/// stays a lead positional param.
+pub(super) struct ProcessItemParams<'a> {
+    pub req: IngestRequest,
+    pub error_tx: &'a SyncSender<IngestError>,
+    pub deferred_enabled: bool,
+    pub sink: Option<&'a dyn EnrichmentEventSink>,
+}
+
 pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
-    req: IngestRequest,
-    error_tx: &SyncSender<IngestError>,
-    deferred_enabled: bool,
-    sink: Option<&dyn EnrichmentEventSink>,
+    params: ProcessItemParams<'_>,
 ) -> Option<DeferredRequest> {
+    let ProcessItemParams {
+        req,
+        error_tx,
+        deferred_enabled,
+        sink,
+    } = params;
     // ── Fire-site 1: on_stage_change(Pending) — entry, before NER call ──────────
     // ADR-052 Gap 1 §3.1 row 1 — triple-emit (ADR-2026-05-20 D1).
     // Phase 5: callback_duration_ms wraps sink call (G7 slow-consumer detection).
@@ -232,13 +245,26 @@ pub(super) enum DeferredOutcome {
     Failed,
 }
 
+/// Bundled (non-generic) parameters for [`process_deferred`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). The generic `graph`
+/// receiver stays a lead positional param.
+pub(super) struct ProcessDeferredParams<'a> {
+    pub req: DeferredRequest,
+    pub error_tx: &'a SyncSender<IngestError>,
+    pub bucket: &'a mut Option<TokenBucketState>,
+    pub sink: Option<&'a dyn EnrichmentEventSink>,
+}
+
 pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
     graph: &Engine<L, Emb>,
-    req: DeferredRequest,
-    error_tx: &SyncSender<IngestError>,
-    bucket: &mut Option<TokenBucketState>,
-    sink: Option<&dyn EnrichmentEventSink>,
+    params: ProcessDeferredParams<'_>,
 ) -> DeferredOutcome {
+    let ProcessDeferredParams {
+        req,
+        error_tx,
+        bucket,
+        sink,
+    } = params;
     let episode_id = req.episode_id;
     let ns = req.group_id.as_deref().unwrap_or("default");
 
@@ -263,8 +289,14 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                     .llm
                     .as_ref()
                     .map(|l| l.as_ref() as &dyn crate::core::provider::ChatProvider);
-                super::verify_stage::run_verify_stage(&req, gliner, verify_llm, &graph.graph, sink)
-                    .await
+                super::verify_stage::run_verify_stage(super::verify_stage::RunVerifyStageParams {
+                    request: &req,
+                    extractor: gliner,
+                    verify_llm,
+                    graph: &graph.graph,
+                    sink,
+                })
+                .await
             }
             Err(e) => {
                 metrics::counter!(
@@ -287,7 +319,14 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
         // Path β: engine.extractor is an LLM extractor; no separate verify LLM needed.
         let extractor_ref: &dyn crate::core::intelligence::EntityExtractorDyn =
             graph.extractor.as_ref();
-        super::verify_stage::run_verify_stage(&req, extractor_ref, None, &graph.graph, sink).await
+        super::verify_stage::run_verify_stage(super::verify_stage::RunVerifyStageParams {
+            request: &req,
+            extractor: extractor_ref,
+            verify_llm: None,
+            graph: &graph.graph,
+            sink,
+        })
+        .await
     };
 
     let verify_elapsed_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
@@ -734,7 +773,15 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                 while let Ok(req) = work_rx.try_recv() {
                     queued.fetch_sub(1, Ordering::Relaxed);
                     if let Some(deferred) =
-                        process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                        process_item(
+                            &graph,
+                            ProcessItemParams {
+                                req,
+                                error_tx: &error_tx,
+                                deferred_enabled,
+                                sink: sink.as_deref(),
+                            },
+                        )
                             .await
                     {
                         deferred_queue.push_back(deferred);
@@ -754,7 +801,15 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                     let ner_depth = queued.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
                     metrics::gauge!("rql.background.queue_depth").set(ner_depth as f64);
                     if let Some(deferred) =
-                        process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                        process_item(
+                            &graph,
+                            ProcessItemParams {
+                                req,
+                                error_tx: &error_tx,
+                                deferred_enabled,
+                                sink: sink.as_deref(),
+                            },
+                        )
                             .await
                     {
                         deferred_queue.push_back(deferred);
@@ -775,27 +830,29 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         let episode_id_for_checkpoint = deferred.episode_id;
                         let outcome = process_deferred(
                             &graph,
-                            deferred,
-                            &error_tx,
-                            &mut bucket,
-                            sink.as_deref(),
+                            ProcessDeferredParams {
+                                req: deferred,
+                                error_tx: &error_tx,
+                                bucket: &mut bucket,
+                                sink: sink.as_deref(),
+                            },
                         )
                         .await;
-                        fire_batch_complete_if_terminal(
-                            &batch_tracker,
+                        fire_batch_complete_if_terminal(FireBatchCompleteIfTerminalParams {
+                            batch_tracker: &batch_tracker,
                             batch_id,
                             outcome,
-                            sink.as_deref(),
-                        );
+                            sink: sink.as_deref(),
+                        });
                         // ADR-050 Phase 3: write checkpoint every N=10 deferred episodes.
                         deferred_episodes_processed += 1;
                         if deferred_episodes_processed % CHECKPOINT_INTERVAL == 0 {
-                            write_checkpoint(
-                                &graph.graph.conn,
-                                "verify_stage",
-                                &run_id,
-                                episode_id_for_checkpoint,
-                            )
+                            write_checkpoint(WriteCheckpointParams {
+                                conn: &graph.graph.conn,
+                                op_name: "verify_stage",
+                                run_id: &run_id,
+                                episode_id: episode_id_for_checkpoint,
+                            })
                             .await;
                         }
                     }
@@ -806,7 +863,15 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                     while let Ok(req) = work_rx.try_recv() {
                         queued.fetch_sub(1, Ordering::Relaxed);
                         if let Some(deferred) =
-                            process_item(&graph, req, &error_tx, deferred_enabled, sink.as_deref())
+                            process_item(
+                            &graph,
+                            ProcessItemParams {
+                                req,
+                                error_tx: &error_tx,
+                                deferred_enabled,
+                                sink: sink.as_deref(),
+                            },
+                        )
                                 .await
                         {
                             deferred_queue.push_back(deferred);
@@ -845,27 +910,29 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
                         let episode_id_for_checkpoint = deferred.episode_id;
                         let outcome = process_deferred(
                             &graph,
-                            deferred,
-                            &error_tx,
-                            &mut bucket,
-                            sink.as_deref(),
+                            ProcessDeferredParams {
+                                req: deferred,
+                                error_tx: &error_tx,
+                                bucket: &mut bucket,
+                                sink: sink.as_deref(),
+                            },
                         )
                         .await;
-                        fire_batch_complete_if_terminal(
-                            &batch_tracker,
+                        fire_batch_complete_if_terminal(FireBatchCompleteIfTerminalParams {
+                            batch_tracker: &batch_tracker,
                             batch_id,
                             outcome,
-                            sink.as_deref(),
-                        );
+                            sink: sink.as_deref(),
+                        });
                         // ADR-050 Phase 3: write checkpoint every N=10 deferred episodes.
                         deferred_episodes_processed += 1;
                         if deferred_episodes_processed % CHECKPOINT_INTERVAL == 0 {
-                            write_checkpoint(
-                                &graph.graph.conn,
-                                "verify_stage",
-                                &run_id,
-                                episode_id_for_checkpoint,
-                            )
+                            write_checkpoint(WriteCheckpointParams {
+                                conn: &graph.graph.conn,
+                                op_name: "verify_stage",
+                                run_id: &run_id,
+                                episode_id: episode_id_for_checkpoint,
+                            })
                             .await;
                         }
                     }
@@ -896,7 +963,22 @@ pub(super) fn worker_loop<L: ChatProvider + 'static, Emb: EmbeddingProvider>(
 /// a failed checkpoint write degrades crash-safety (may re-process on next
 /// boot) but does NOT corrupt data (idempotency guard catches re-processing).
 /// D7: episode_id in tracing field only, NOT a metric label.
-async fn write_checkpoint(conn: &libsql::Connection, op_name: &str, run_id: &str, episode_id: i64) {
+/// Bundled parameters for [`write_checkpoint`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct WriteCheckpointParams<'a> {
+    conn: &'a libsql::Connection,
+    op_name: &'a str,
+    run_id: &'a str,
+    episode_id: i64,
+}
+
+async fn write_checkpoint(params: WriteCheckpointParams<'_>) {
+    let WriteCheckpointParams {
+        conn,
+        op_name,
+        run_id,
+        episode_id,
+    } = params;
     let cursor = episode_id.to_string();
     let now_epoch = Utc::now().timestamp();
     if let Err(e) = conn
@@ -954,12 +1036,22 @@ const CHECKPOINT_INTERVAL: u64 = 10;
 /// `outcome` is a bounded three-value string and IS allowed as a metric label.
 ///
 /// Per impl spec §6 Phase 4 DoD item 6.
-fn fire_batch_complete_if_terminal(
-    batch_tracker: &BatchTracker,
+/// Bundled parameters for [`fire_batch_complete_if_terminal`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments).
+struct FireBatchCompleteIfTerminalParams<'a> {
+    batch_tracker: &'a BatchTracker,
     batch_id: Option<String>,
     outcome: DeferredOutcome,
-    sink: Option<&dyn EnrichmentEventSink>,
-) {
+    sink: Option<&'a dyn EnrichmentEventSink>,
+}
+
+fn fire_batch_complete_if_terminal(params: FireBatchCompleteIfTerminalParams<'_>) {
+    let FireBatchCompleteIfTerminalParams {
+        batch_tracker,
+        batch_id,
+        outcome,
+        sink,
+    } = params;
     let Some(bid) = batch_id else {
         return; // No batch tracking for this episode.
     };
