@@ -217,7 +217,16 @@ where
             let hybrid = GlinerLlmExtractor::new(Arc::clone(&llm))
                 .expect("GlinerLlmExtractor::new — needs GLiNER model + LLM");
             engine
-                .ingest_with(&hybrid, &fixture_text, None, None, None, source_params)
+                .ingest_with(
+                    &hybrid,
+                    kremory::core::ingest::IngestWithParams {
+                        text: &fixture_text,
+                        reference_time: None,
+                        group_id: None,
+                        content_type: None,
+                        source_params: source_params,
+                    },
+                )
                 .await
                 .unwrap_or_else(|e| panic!("PRE-dream ingest of {fixture_key} failed: {e}"))
         }
@@ -226,7 +235,16 @@ where
     } else {
         let extractor = DefaultExtractor::new(Arc::clone(&llm));
         engine
-            .ingest_with(&extractor, &fixture_text, None, None, None, source_params)
+            .ingest_with(
+                &extractor,
+                kremory::core::ingest::IngestWithParams {
+                    text: &fixture_text,
+                    reference_time: None,
+                    group_id: None,
+                    content_type: None,
+                    source_params: source_params,
+                },
+            )
             .await
             .unwrap_or_else(|e| panic!("PRE-dream ingest of {fixture_key} failed: {e}"))
     };
@@ -481,12 +499,12 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
                 .expect("PipelineConfig default")
         };
 
-        let engine_mock = Engine::new(
-            Arc::clone(&graph_mock),
-            Arc::clone(&llm),
-            Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb))),
-            config_mock,
-        );
+        let engine_mock = Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: Arc::clone(&graph_mock),
+            llm: Arc::clone(&llm),
+            embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb))),
+            config: config_mock,
+        });
 
         let result_mock = measure_pre_post(MeasureArgs {
             engine: &engine_mock,
@@ -569,12 +587,12 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
                 .expect("PipelineConfig legal default")
         };
 
-        let engine_legal = Engine::new(
-            Arc::clone(&graph_legal),
-            Arc::clone(&llm),
-            Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb))),
-            config_legal,
-        );
+        let engine_legal = Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: Arc::clone(&graph_legal),
+            llm: Arc::clone(&llm),
+            embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb))),
+            config: config_legal,
+        });
 
         let result_legal = measure_pre_post(MeasureArgs {
             engine: &engine_legal,
@@ -717,12 +735,12 @@ async fn phase_g_cloud_llm_gate() {
             .build()
             .expect("PipelineConfig cloud default");
 
-        let engine = Engine::new(
-            Arc::clone(&graph),
-            Arc::clone(&llm),
-            Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
-            config,
-        );
+        let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: Arc::clone(&graph),
+            llm: Arc::clone(&llm),
+            embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
+            config: config,
+        });
 
         // Cloud provider uses DefaultExtractor (no GLiNER hybrid — cloud inference only).
         let result = measure_pre_post(MeasureArgs {
@@ -777,12 +795,12 @@ async fn phase_g_cloud_llm_gate() {
             .build()
             .expect("PipelineConfig cloud legal default");
 
-        let engine = Engine::new(
-            Arc::clone(&graph),
-            Arc::clone(&llm),
-            Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
-            config,
-        );
+        let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: Arc::clone(&graph),
+            llm: Arc::clone(&llm),
+            embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
+            config: config,
+        });
 
         let result = measure_pre_post(MeasureArgs {
             engine: &engine,

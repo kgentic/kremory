@@ -96,16 +96,21 @@ three business days after the API merge to run the full regression suite.";
                 .expect("failed to open in-memory TemporalGraph"),
         );
 
-        let rql = Engine::new(graph, Arc::new(llm), Arc::new(embedder), config);
+        let rql = Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: graph,
+            llm: Arc::new(llm),
+            embedder: Arc::new(embedder),
+            config: config,
+        });
 
         let result = rql
-            .ingest(
-                MEETING_TRANSCRIPT,
-                None,
-                None,
-                None,
-                kremory::core::ingest::SourceParams::default(),
-            )
+            .ingest(kremory::core::ingest::IngestParams {
+                text: MEETING_TRANSCRIPT,
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: kremory::core::ingest::SourceParams::default(),
+            })
             .await
             .expect("ingest() returned an error");
 
@@ -386,17 +391,24 @@ three business days after the API merge to run the full regression suite.";
                 .expect("failed to open in-memory TemporalGraph"),
         );
 
-        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: graph,
+            llm: llm.clone(),
+            embedder: Arc::new(embedder),
+            config: config,
+        });
 
         let extractor = NuExtractExtractor::new(llm);
         let result = rql
             .ingest_with(
                 &extractor,
-                MEETING_TRANSCRIPT,
-                None,
-                None,
-                None,
-                kremory::core::ingest::SourceParams::default(),
+                kremory::core::ingest::IngestWithParams {
+                    text: MEETING_TRANSCRIPT,
+                    reference_time: None,
+                    group_id: None,
+                    content_type: None,
+                    source_params: kremory::core::ingest::SourceParams::default(),
+                },
             )
             .await
             .expect("ingest_with(NuExtract) returned an error");

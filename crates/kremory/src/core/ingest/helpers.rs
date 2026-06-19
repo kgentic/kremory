@@ -14,7 +14,7 @@ use crate::core::provider::{MockChatProvider, NullEmbeddingProvider};
 use crate::core::schema::TemporalGraph;
 
 #[cfg(any(test, feature = "test-utils"))]
-use super::Engine;
+use super::{Engine, EngineNewParams};
 
 #[cfg(any(test, feature = "test-utils"))]
 use crate::core::config::PipelineConfig;
@@ -77,13 +77,13 @@ impl SimpleGraph {
     pub async fn open_in_memory_simple() -> Result<Self> {
         let graph = Arc::new(TemporalGraph::open_in_memory().await?);
         let config = PipelineConfig::builder().build()?;
-        Ok(Self::new(
+        Ok(Self::new(EngineNewParams {
             graph,
-            Arc::new(MockChatProvider::null()),
-            Arc::new(NullEmbeddingProvider {
+            llm: Arc::new(MockChatProvider::null()),
+            embedder: Arc::new(NullEmbeddingProvider {
                 dim: config.embedding_dim.0,
             }),
             config,
-        ))
+        }))
     }
 }

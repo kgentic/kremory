@@ -21,6 +21,18 @@ use crate::core::sink::{ContradictionDetected, EntityId, IngestEventSink, SinkFa
 
 use crate::core::ingest::Engine;
 
+/// Bundled parameters for [`Engine::ingest_deferred`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+pub struct IngestDeferredParams<'a> {
+    pub text: &'a str,
+    pub reference_time: Option<DateTime<Utc>>,
+    pub group_id: Option<&'a str>,
+    pub content_type: Option<ContentType>,
+    pub episode_id: i64,
+    pub ner_entity_names: &'a [String],
+    pub sink: Option<&'a dyn IngestEventSink>,
+}
+
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Phase 2 deferred LLM fact extraction.
     ///
@@ -41,17 +53,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// `on_edge_added` after each episodic edge insert (subject + object sites).
     /// Per ADR-052 §3.1 rows 90–94 (Phase 3c fire-site catalogue).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
-    #[allow(clippy::too_many_arguments)]
     pub async fn ingest_deferred(
         &self,
-        text: &str,
-        reference_time: Option<DateTime<Utc>>,
-        group_id: Option<&str>,
-        content_type: Option<ContentType>,
-        episode_id: i64,
-        ner_entity_names: &[String],
-        sink: Option<&dyn IngestEventSink>,
+        params: IngestDeferredParams<'_>,
     ) -> crate::core::error::Result<usize> {
+        let IngestDeferredParams {
+            text,
+            reference_time,
+            group_id,
+            content_type,
+            episode_id,
+            ner_entity_names,
+            sink,
+        } = params;
         // TD-019 Gap 2: phase2_ms — deferred relationship extraction latency,
         // distinct from phase1_ms (user-facing sync work).
         let phase2_start = Instant::now();

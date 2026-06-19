@@ -317,7 +317,12 @@ async fn open_engine(
     let dyn_emb: Arc<dyn kremory::DynEmbeddingProvider> =
         Arc::clone(&embedder) as Arc<dyn kremory::DynEmbeddingProvider>;
     let arc_emb = Arc::new(kremory::ArcEmbedder(dyn_emb));
-    let engine = Engine::new(Arc::clone(&graph), ingest_llm, arc_emb, config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: ingest_llm,
+        embedder: arc_emb,
+        config: config,
+    });
 
     Ok((graph, engine))
 }
@@ -379,7 +384,16 @@ async fn run_one(
     // Phase A spec gap GAP-001 below.
     let hot_start = Instant::now();
     engine
-        .ingest_with(&extractor, fixture_text, None, None, None, source_params)
+        .ingest_with(
+            &extractor,
+            kremory::core::ingest::IngestWithParams {
+                text: fixture_text,
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: source_params,
+            },
+        )
         .await
         .context("ingest_with failed")?;
     let hot_path_ms = hot_start.elapsed().as_millis() as u64;
@@ -505,7 +519,16 @@ async fn validate_second_fixture(
     let source_params = SourceParams::default(); // no entity type overrides for mock_interview
 
     engine
-        .ingest_with(&extractor, fixture_text, None, None, None, source_params)
+        .ingest_with(
+            &extractor,
+            kremory::core::ingest::IngestWithParams {
+                text: fixture_text,
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: source_params,
+            },
+        )
         .await
         .context("mock_interview ingest")?;
 

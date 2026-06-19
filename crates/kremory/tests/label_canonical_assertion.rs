@@ -90,7 +90,12 @@ async fn build_engine(
         .build()
         .expect("PipelineConfig default");
 
-    let engine = Engine::new(Arc::clone(&graph), Arc::clone(&llm), Arc::new(emb), config);
+    let engine = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: Arc::clone(&llm),
+        embedder: Arc::new(emb),
+        config: config,
+    });
     (engine, llm, graph)
 }
 
@@ -122,11 +127,13 @@ async fn label_field_populated_with_canonical_type() {
     let result = engine
         .ingest_with(
             &extractor,
-            "Alice works at OpenAI in San Francisco.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
+            kremory::core::ingest::IngestWithParams {
+                text: "Alice works at OpenAI in San Francisco.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
         )
         .await
         .expect("ingest must succeed");
@@ -193,14 +200,7 @@ async fn all_entity_labels_canonical_on_org_location_text() {
 
     let extractor = DefaultExtractor::new(llm);
     let result = engine
-        .ingest_with(
-            &extractor,
-            "Priya works at Google DeepMind in London and collaborates with teams in Singapore.",
-            None,
-            None,
-            None,
-            SourceParams::default(),
-        )
+        .ingest_with(&extractor, kremory::core::ingest::IngestWithParams { text: "Priya works at Google DeepMind in London and collaborates with teams in Singapore.", reference_time: None, group_id: None, content_type: None, source_params: SourceParams::default() })
         .await
         .expect("ingest must succeed");
 

@@ -32,7 +32,9 @@ use uuid::Uuid;
 
 use crate::core::config::PipelineConfig;
 use crate::core::error::IngestStatus;
-use crate::core::ingest::{Engine, PrePinnedFact, SourceParams};
+use crate::core::ingest::{
+    AssertEntityTypeParams, Engine, EngineNewParams, PrePinnedFact, SourceParams,
+};
 use crate::core::provider::{ArcChatProvider, ArcEmbedder};
 use crate::core::schema::TemporalGraph;
 use crate::memory::{
@@ -125,12 +127,12 @@ impl EngineGraphHandle {
         embedder: Arc<dyn crate::core::provider::DynEmbeddingProvider>,
         config: PipelineConfig,
     ) -> Self {
-        let engine = Engine::new(
+        let engine = Engine::new(EngineNewParams {
             graph,
-            Arc::new(ArcChatProvider::new(chat)),
-            Arc::new(ArcEmbedder(embedder)),
+            llm: Arc::new(ArcChatProvider::new(chat)),
+            embedder: Arc::new(ArcEmbedder(embedder)),
             config,
-        );
+        });
         Self::new(engine)
     }
 }
@@ -246,13 +248,13 @@ impl GraphHandle for EngineGraphHandle {
                     sink: core_sink_owned,
                 };
                 match engine
-                    .ingest(
-                        &content_owned,
+                    .ingest(crate::core::ingest::IngestParams {
+                        text: &content_owned,
                         reference_time,
-                        Some(&group_id_owned),
-                        None,
-                        sp,
-                    )
+                        group_id: Some(&group_id_owned),
+                        content_type: None,
+                        source_params: sp,
+                    })
                     .await
                 {
                     Ok(_) => {
@@ -322,12 +324,12 @@ impl GraphHandle for EngineGraphHandle {
         // similar through Engine::ingest's error variant.
         let ingest_result = match self
             .engine
-            .ingest(
-                content,
+            .ingest(crate::core::ingest::IngestParams {
+                text: content,
                 reference_time,
-                Some(&group_id),
-                None,
-                SourceParams {
+                group_id: Some(&group_id),
+                content_type: None,
+                source_params: SourceParams {
                     source_id: Some(source_ref.id.clone()),
                     source_uri: None,
                     recorded_at: Some(source_ref.occurred_at),
@@ -341,7 +343,7 @@ impl GraphHandle for EngineGraphHandle {
                     // `core_sink` is still owned here (last use).
                     sink: core_sink,
                 },
-            )
+            })
             .await
         {
             Ok(r) => r,
@@ -687,7 +689,11 @@ impl GraphHandle for EngineGraphHandle {
         group_id: Option<&str>,
     ) -> Result<()> {
         self.engine
-            .assert_entity_type(entity_id, entity_type_id, group_id)
+            .assert_entity_type(AssertEntityTypeParams {
+                entity_id,
+                entity_type_id,
+                group_id,
+            })
             .await
             .map_err(MemoryError::Core)
     }
@@ -746,12 +752,12 @@ mod tests {
         let config = PipelineConfig::builder()
             .build()
             .expect("default PipelineConfig");
-        let engine = Engine::new(
+        let engine = Engine::new(EngineNewParams {
             graph,
-            Arc::new(ArcChatProvider::new(chat)),
-            Arc::new(ArcEmbedder(embedder)),
+            llm: Arc::new(ArcChatProvider::new(chat)),
+            embedder: Arc::new(ArcEmbedder(embedder)),
             config,
-        );
+        });
         EngineGraphHandle::new(engine)
     }
 

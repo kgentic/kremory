@@ -287,18 +287,25 @@ mod domain_tests {
                 .await
                 .expect("failed to open graph"),
         );
-        let rql = Engine::new(graph, llm.clone(), Arc::new(embedder), config);
+        let rql = Engine::new(kremory::core::ingest::EngineNewParams {
+            graph: graph,
+            llm: llm.clone(),
+            embedder: Arc::new(embedder),
+            config: config,
+        });
         let extractor = NuExtractExtractor::new(llm);
 
         let start = Instant::now();
         let result = rql
             .ingest_with(
                 &extractor,
-                &transcript,
-                None,
-                None,
-                Some(fixture.content_type.clone()),
-                kremory::core::ingest::SourceParams::default(),
+                kremory::core::ingest::IngestWithParams {
+                    text: &transcript,
+                    reference_time: None,
+                    group_id: None,
+                    content_type: Some(fixture.content_type.clone()),
+                    source_params: kremory::core::ingest::SourceParams::default(),
+                },
             )
             .await
             .expect("ingest_with() failed");

@@ -8,4 +8,7 @@ mod ingest_with;
 mod phase1;
 mod types;
 
+pub use deferred::IngestDeferredParams;
+pub use ingest_with::IngestWithParams;
+pub use phase1::WriteVerifiedEntitiesParams;
 pub use types::{EntityCandidate, IngestPhase1Result, ResolvedDecision, UpsertedEntities};
