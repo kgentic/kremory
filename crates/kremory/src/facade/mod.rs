@@ -449,20 +449,20 @@ impl Memory {
             published_at: None,
         };
 
-        memory::submit_episode(
-            self.graph.as_ref(),
-            &text.into(),
+        memory::submit_episode(memory::SubmitEpisodeParams {
+            graph: self.graph.as_ref(),
+            content: &text.into(),
             source_ref,
-            vec![],
-            self.llm_or_stub(),
-            ns,
-            Some(batch_id),
-            SubmitOpts {
+            structured_facts: vec![],
+            provider: self.llm_or_stub(),
+            namespace: ns,
+            batch_id: Some(batch_id),
+            opts: SubmitOpts {
                 enrich_per_episode: true,
                 run_in_background: true,
             },
             sink,
-        )
+        })
         .await
     }
 

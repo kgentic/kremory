@@ -11,6 +11,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use kremory::memory::{
     await_batch_enrichment, await_dream, await_enrichment, submit_dream_phase, submit_episode,
+    SubmitEpisodeParams,
 };
 use kremory::memory::{
     types::{
@@ -199,17 +200,17 @@ async fn submit_episode_signature_compiles() {
         occurred_at: Utc::now(),
         published_at: None,
     };
-    let commit = submit_episode(
-        &handle,
-        "hello world",
+    let commit = submit_episode(SubmitEpisodeParams {
+        graph: &handle,
+        content: "hello world",
         source_ref,
-        vec![],
-        null_provider(),
-        scope,
-        Some("batch-1".to_string()),
-        SubmitOpts::default(),
-        None,
-    )
+        structured_facts: vec![],
+        provider: null_provider(),
+        namespace: scope,
+        batch_id: Some("batch-1".to_string()),
+        opts: SubmitOpts::default(),
+        sink: None,
+    })
     .await
     .expect("submit_episode must succeed via stub");
 

@@ -32,6 +32,7 @@ use kremory::memory::{
         EpisodeCommit, Namespace, RetrievedContext, SearchOpts, SourceRef, SubmitOpts,
     },
     ChatProvider, GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams,
+    SubmitEpisodeParams,
 };
 use uuid::Uuid;
 
@@ -308,20 +309,20 @@ async fn submit_episode_with_enrich_emits_events_in_order() {
         published_at: None,
     };
 
-    let commit = submit_episode(
-        &handle,
-        "meeting transcript about Alice and Bob",
+    let commit = submit_episode(SubmitEpisodeParams {
+        graph: &handle,
+        content: "meeting transcript about Alice and Bob",
         source_ref,
-        vec![],
-        null_provider(),
-        scope,
-        None,
-        SubmitOpts {
+        structured_facts: vec![],
+        provider: null_provider(),
+        namespace: scope,
+        batch_id: None,
+        opts: SubmitOpts {
             enrich_per_episode: true,
             run_in_background: false,
         },
-        Some(Arc::clone(&sink) as Arc<dyn EnrichmentEventSink>),
-    )
+        sink: Some(Arc::clone(&sink) as Arc<dyn EnrichmentEventSink>),
+    })
     .await
     .expect("submit_episode should succeed");
 
@@ -355,17 +356,17 @@ async fn submit_episode_without_enrich_emits_no_events() {
         published_at: None,
     };
 
-    let commit = submit_episode(
-        &handle,
-        "content without enrichment",
+    let commit = submit_episode(SubmitEpisodeParams {
+        graph: &handle,
+        content: "content without enrichment",
         source_ref,
-        vec![],
-        null_provider(),
-        scope,
-        None,
-        SubmitOpts::default(), // enrich_per_episode = false
-        Some(Arc::clone(&sink) as Arc<dyn EnrichmentEventSink>),
-    )
+        structured_facts: vec![],
+        provider: null_provider(),
+        namespace: scope,
+        batch_id: None,
+        opts: SubmitOpts::default(), // enrich_per_episode = false
+        sink: Some(Arc::clone(&sink) as Arc<dyn EnrichmentEventSink>),
+    })
     .await
     .expect("submit_episode should succeed");
 
@@ -392,20 +393,20 @@ async fn submit_episode_without_sink_completes() {
         published_at: None,
     };
 
-    let commit = submit_episode(
-        &handle,
-        "chat message",
+    let commit = submit_episode(SubmitEpisodeParams {
+        graph: &handle,
+        content: "chat message",
         source_ref,
-        vec![],
-        null_provider(),
-        scope,
-        None,
-        SubmitOpts {
+        structured_facts: vec![],
+        provider: null_provider(),
+        namespace: scope,
+        batch_id: None,
+        opts: SubmitOpts {
             enrich_per_episode: true,
             run_in_background: false,
         },
-        None, // no sink
-    )
+        sink: None, // no sink
+    })
     .await
     .expect("submit_episode with no sink should succeed");
 
@@ -596,20 +597,20 @@ async fn submit_episode_contradiction_events_reach_sink() {
         published_at: None,
     };
 
-    submit_episode(
-        &handle,
-        "doc with contradictory facts",
+    submit_episode(SubmitEpisodeParams {
+        graph: &handle,
+        content: "doc with contradictory facts",
         source_ref,
-        vec![],
-        null_provider(),
-        scope,
-        None,
-        SubmitOpts {
+        structured_facts: vec![],
+        provider: null_provider(),
+        namespace: scope,
+        batch_id: None,
+        opts: SubmitOpts {
             enrich_per_episode: true,
             run_in_background: false,
         },
-        Some(Arc::clone(&sink) as Arc<dyn EnrichmentEventSink>),
-    )
+        sink: Some(Arc::clone(&sink) as Arc<dyn EnrichmentEventSink>),
+    })
     .await
     .expect("submit with contradiction stub");
 

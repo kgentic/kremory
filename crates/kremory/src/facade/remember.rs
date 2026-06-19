@@ -187,17 +187,17 @@ impl<'a> RememberRequest<'a> {
         // the namespace before the first write.
         self.memory.ensure_namespace_policy(&ns).await?;
 
-        let commit = memory::submit_episode(
-            self.memory.graph.as_ref(),
-            &self.content,
+        let commit = memory::submit_episode(memory::SubmitEpisodeParams {
+            graph: self.memory.graph.as_ref(),
+            content: &self.content,
             source_ref,
-            self.facts,
-            self.memory.llm_or_stub(),
-            ns,
-            None,
+            structured_facts: self.facts,
+            provider: self.memory.llm_or_stub(),
+            namespace: ns,
+            batch_id: None,
             opts,
             sink,
-        )
+        })
         .await?;
 
         // ADR-051 Phase 4: opt-in synchronous-extraction ergonomics.
@@ -324,20 +324,20 @@ impl<'a> RememberBatchBuilder<'a> {
             });
             // ADR-029a lazy population.
             self.memory.ensure_namespace_policy(&ns).await?;
-            let commit = memory::submit_episode(
-                self.memory.graph.as_ref(),
-                &ep.content,
+            let commit = memory::submit_episode(memory::SubmitEpisodeParams {
+                graph: self.memory.graph.as_ref(),
+                content: &ep.content,
                 source_ref,
-                ep.facts,
-                self.memory.llm_or_stub(),
-                ns,
-                self.batch_id.clone(),
-                SubmitOpts {
+                structured_facts: ep.facts,
+                provider: self.memory.llm_or_stub(),
+                namespace: ns,
+                batch_id: self.batch_id.clone(),
+                opts: SubmitOpts {
                     enrich_per_episode: true,
                     run_in_background: false,
                 },
                 sink,
-            )
+            })
             .await?;
             commits.push(commit);
         }
