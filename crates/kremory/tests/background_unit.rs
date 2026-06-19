@@ -135,7 +135,7 @@ async fn graph_with_llm<L: ChatProvider + 'static>(
         graph: temporal,
         llm: Arc::new(llm),
         embedder: Arc::new(NullEmbeddingProvider { dim }),
-        config: config,
+        config,
     })
 }
 
@@ -286,7 +286,7 @@ async fn errors_are_observable() {
         graph: temporal,
         llm: Arc::new(FailingLlmClient),
         embedder: Arc::new(NullEmbeddingProvider { dim }),
-        config: config,
+        config,
     });
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
     ingestor

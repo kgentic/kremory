@@ -167,7 +167,7 @@ async fn wait_for_processing_blocks_until_extraction_complete() {
         graph: Arc::clone(temporal),
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
-        config: config,
+        config,
     });
 
     let ingestor_config = IngestorConfig {

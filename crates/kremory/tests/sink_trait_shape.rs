@@ -4,7 +4,9 @@
 /// Tests that verify the IngestEventSink and EnrichmentEventSink traits
 /// compile correctly and can be implemented by a stub.
 use kremory::core::error::{ContradictionResolution, IngestionErrorKind};
-use kremory::core::sink::{ContradictionDetected, EntityId, IngestEventSink, IngestionError};
+use kremory::core::sink::{
+    ContradictionDetected, EntityId, IngestEventSink, IngestionError, OnEdgeAddedParams,
+};
 use kremory::memory::events::{BatchPhase2Complete, EnrichmentEventSink};
 
 /// Minimal stub that implements IngestEventSink for compile-time verification.
@@ -30,7 +32,12 @@ impl IngestEventSink for StubIngestSink {
             .unwrap()
             .push(format!("entity:{entity_id}:{name}"));
     }
-    fn on_edge_added(&self, from: &str, to: &str, predicate: &str) {
+    fn on_edge_added(&self, params: OnEdgeAddedParams<'_>) {
+        let OnEdgeAddedParams {
+            from_entity_id: from,
+            to_entity_id: to,
+            predicate,
+        } = params;
         self.events
             .lock()
             .unwrap()
@@ -78,8 +85,8 @@ impl IngestEventSink for StubEnrichmentSink {
     fn on_entity_extracted(&self, entity_id: &str, name: &str) {
         self.inner.on_entity_extracted(entity_id, name);
     }
-    fn on_edge_added(&self, from: &str, to: &str, predicate: &str) {
-        self.inner.on_edge_added(from, to, predicate);
+    fn on_edge_added(&self, params: OnEdgeAddedParams<'_>) {
+        self.inner.on_edge_added(params);
     }
     fn on_contradiction(&self, event: ContradictionDetected) {
         self.inner.on_contradiction(event);
@@ -117,7 +124,11 @@ fn ingest_event_sink_stub_compiles_and_records_events() {
     let sink = StubIngestSink::new();
 
     sink.on_entity_extracted("ent-1", "Alice");
-    sink.on_edge_added("ent-1", "ent-2", "knows");
+    sink.on_edge_added(OnEdgeAddedParams {
+        from_entity_id: "ent-1",
+        to_entity_id: "ent-2",
+        predicate: "knows",
+    });
     sink.on_dedup_merge("ent-1", "ent-3");
     sink.on_contradiction(ContradictionDetected {
         entity_id: EntityId("ent-1".to_string()),

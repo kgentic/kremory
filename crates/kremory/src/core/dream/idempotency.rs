@@ -116,6 +116,10 @@ mod tests {
     use super::*;
     use chrono::{TimeZone as _, Utc};
 
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` builders.
+    #[allow(clippy::too_many_arguments)]
     fn entity(id: &str, label: &str, type_id: u32, group: Option<&str>) -> Entity {
         Entity {
             id: id.to_string(),

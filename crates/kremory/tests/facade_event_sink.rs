@@ -9,7 +9,7 @@
 
 use kremory::{
     BatchPhase2Complete, ContradictionDetected, DynEmbeddingProvider, EnrichmentEventSink,
-    IngestEventSink, IngestStatus, IngestionError, Memory, Namespace,
+    IngestEventSink, IngestStatus, IngestionError, Memory, Namespace, OnEdgeAddedParams,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -28,7 +28,7 @@ impl IngestEventSink for CountingSink {
     fn on_entity_extracted(&self, _id: &str, _name: &str) {
         self.entity_count.fetch_add(1, Ordering::Relaxed);
     }
-    fn on_edge_added(&self, _f: &str, _t: &str, _p: &str) {}
+    fn on_edge_added(&self, _p: OnEdgeAddedParams<'_>) {}
     fn on_contradiction(&self, _e: ContradictionDetected) {}
     fn on_dedup_merge(&self, _s: &str, _a: &str) {}
     fn on_stage_change(&self, _s: IngestStatus) {}

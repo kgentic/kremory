@@ -125,10 +125,10 @@ async fn make_ingestor_with_sink(
     let null_emb: Arc<NullEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
 
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
-        graph: graph,
+        graph,
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
-        config: config,
+        config,
     });
 
     let ingestor_config = IngestorConfig {

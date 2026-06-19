@@ -120,7 +120,7 @@ async fn phase1_returns_episode_id_no_candidates() {
         graph: Arc::clone(&graph),
         llm: null_llm(),
         embedder: null_embedder(),
-        config: config,
+        config,
     });
 
     let episode_count_before = count_table_rows(&graph.conn, "episodes").await;
@@ -182,7 +182,7 @@ async fn write_verified_entities_writes_entities_per_decision() {
         graph: Arc::clone(&graph),
         llm: null_llm(),
         embedder: null_embedder(),
-        config: config,
+        config,
     });
 
     // Insert an episode manually so write_verified_entities has a valid episode_id FK.
@@ -238,7 +238,7 @@ async fn write_verified_entities_writes_entities_per_decision() {
     // This call MUST NOT exist on current main — compile error expected.
     engine
         .write_verified_entities(kremory::core::ingest::WriteVerifiedEntitiesParams {
-            episode_id: episode_id,
+            episode_id,
             candidates: &candidates,
             decisions: &decisions,
         })
@@ -368,9 +368,9 @@ async fn legacy_engine_ingest_still_works() {
     let extractor = LlmExtractor::new(Arc::clone(&llm));
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
-        embedder: embedder,
-        config: config,
+        llm,
+        embedder,
+        config,
     });
 
     // This call uses the EXISTING ingest_with API — must not break.

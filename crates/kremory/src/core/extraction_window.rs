@@ -236,6 +236,10 @@ mod tests {
         }
     }
 
+    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // production fns, not `#[cfg(test)]` builders.
+    #[allow(clippy::too_many_arguments)]
     fn config_with_overlap(
         min: usize,
         max: usize,

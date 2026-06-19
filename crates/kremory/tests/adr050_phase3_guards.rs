@@ -65,6 +65,11 @@ async fn seed_entity_types(conn: &libsql::Connection) {
 /// Insert a minimal entity row.
 ///
 /// `label` was dropped in Migration 009 — not included here.
+// Test helper: positional args mirror the raw SQL column list 1:1, which keeps
+// the seed call-sites readable. Rule-5 exempt per clippy.toml (test helpers may
+// carry a documented too_many_arguments allow); TD-042 args-as-object targets
+// `src/` production fns, not local test seeders.
+#[allow(clippy::too_many_arguments)]
 async fn insert_entity_raw(
     conn: &libsql::Connection,
     id: &str,

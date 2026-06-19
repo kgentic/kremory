@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use kremory::core::error::{ContradictionResolution, IngestStatus};
 use kremory::core::sink::{
-    ContradictionDetected, EntityId, IngestEventSink, IngestionError, SinkFact,
+    ContradictionDetected, EntityId, IngestEventSink, IngestionError, OnEdgeAddedParams, SinkFact,
 };
 use kremory::memory::{
     events::EnrichmentEventSink,
@@ -57,7 +57,12 @@ impl IngestEventSink for MockIngestSink {
             .push(format!("entity_extracted:{entity_id}:{name}"));
     }
 
-    fn on_edge_added(&self, from: &str, to: &str, predicate: &str) {
+    fn on_edge_added(&self, params: OnEdgeAddedParams<'_>) {
+        let OnEdgeAddedParams {
+            from_entity_id: from,
+            to_entity_id: to,
+            predicate,
+        } = params;
         self.events
             .lock()
             .unwrap()
@@ -147,7 +152,11 @@ impl GraphHandle for StubIngestingHandle {
                 s.on_stage_change(IngestStatus::Extracting);
                 // Simulate one entity + one edge extracted.
                 s.on_entity_extracted("ent-stub-1", "Alice");
-                s.on_edge_added("ent-stub-1", "ent-stub-2", "knows");
+                s.on_edge_added(OnEdgeAddedParams {
+                    from_entity_id: "ent-stub-1",
+                    to_entity_id: "ent-stub-2",
+                    predicate: "knows",
+                });
                 s.on_stage_change(IngestStatus::Deduplicating);
                 s.on_stage_change(IngestStatus::Invalidating);
                 s.on_stage_change(IngestStatus::Complete);

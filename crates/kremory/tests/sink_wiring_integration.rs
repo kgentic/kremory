@@ -112,7 +112,7 @@ impl kremory::core::sink::IngestEventSink for ThreadNameCapturingSink {
         }
     }
     fn on_entity_extracted(&self, _entity_id: &str, _name: &str) {}
-    fn on_edge_added(&self, _from: &str, _to: &str, _predicate: &str) {}
+    fn on_edge_added(&self, _params: kremory::core::sink::OnEdgeAddedParams<'_>) {}
     fn on_contradiction(&self, _event: kremory::core::sink::ContradictionDetected) {}
     fn on_dedup_merge(&self, _surviving_id: &str, _absorbed_id: &str) {}
     fn on_ingestion_error(&self, _event: kremory::core::sink::IngestionError) {}
@@ -171,7 +171,7 @@ async fn build_ingestor_with_sink(
         graph: Arc::clone(&temporal),
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
-        config: config,
+        config,
     });
 
     let ingestor_config = IngestorConfig {
@@ -559,7 +559,7 @@ async fn sink_batch_complete_counts_failed_episodes() {
         graph: Arc::clone(&temporal),
         llm: Arc::new(AlwaysFailLlmClient),
         embedder: null_emb,
-        config: config,
+        config,
     });
 
     let sink = RecordingSink::new();

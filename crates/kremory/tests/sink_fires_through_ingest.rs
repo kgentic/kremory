@@ -31,7 +31,9 @@ use kremory::core::intelligence::{
     EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult,
 };
 use kremory::core::provider::MockChatProvider;
-use kremory::core::sink::{ContradictionDetected, IngestEventSink, IngestionError};
+use kremory::core::sink::{
+    ContradictionDetected, IngestEventSink, IngestionError, OnEdgeAddedParams,
+};
 use kremory::memory::events::{BatchPhase2Complete, EnrichmentEventSink};
 use kremory::{DynEmbeddingProvider, Memory, Namespace};
 
@@ -51,7 +53,12 @@ impl IngestEventSink for CapturingSink {
             .unwrap()
             .push((entity_id.to_owned(), name.to_owned()));
     }
-    fn on_edge_added(&self, from: &str, to: &str, predicate: &str) {
+    fn on_edge_added(&self, params: OnEdgeAddedParams<'_>) {
+        let OnEdgeAddedParams {
+            from_entity_id: from,
+            to_entity_id: to,
+            predicate,
+        } = params;
         self.edges
             .lock()
             .unwrap()

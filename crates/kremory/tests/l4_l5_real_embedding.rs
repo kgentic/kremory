@@ -25,7 +25,8 @@
 
 use kremory::core::canonicalization::{canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD};
 use kremory::core::disambiguation::{
-    disambiguate, DisambiguationOutcome, L4_MERGE_THRESHOLD, L4_POTENTIAL_ALIAS_THRESHOLD,
+    disambiguate, DisambiguateParams, DisambiguationOutcome, L4_MERGE_THRESHOLD,
+    L4_POTENTIAL_ALIAS_THRESHOLD,
 };
 use kremory::core::error::Result as KResult;
 use kremory::core::graph::InsertEntityWithGroupParams;
@@ -66,11 +67,14 @@ fn make_rt() -> tokio::runtime::Runtime {
 }
 
 /// Insert an entity into `group_id` with the given embedding vector.
+// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
+// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns.
+#[allow(clippy::too_many_arguments)]
 async fn seed_entity(graph: &TemporalGraph, id: &str, group_id: &str, embedding: &[f32]) {
     let props = serde_json::json!({ "name": id, "description": id });
     graph
         .insert_entity_with_group(InsertEntityWithGroupParams {
-            id: id,
+            id,
             entity_type_id: 0u32,
             properties: props,
             group_id: Some(group_id),
@@ -131,9 +135,16 @@ fn l4_disambiguate_merge_on_high_similarity_real_embedding() {
             // θ = 1.4° → cos ≈ 0.9997, well above the 0.95 merge threshold.
             let theta: f32 = 1.4_f32.to_radians();
             let embedder = FixedVectorEmbedder::new(rotated_unit(theta));
-            disambiguate("similar entity", Some(group), &graph, &embedder)
-                .await
-                .expect("disambiguate must succeed")
+            disambiguate(
+                DisambiguateParams {
+                    entity_name: "similar entity",
+                    group_id: Some(group),
+                    graph: &graph,
+                },
+                &embedder,
+            )
+            .await
+            .expect("disambiguate must succeed")
         })
     });
 
@@ -192,9 +203,16 @@ fn l4_disambiguate_potential_alias_on_moderate_similarity_real_embedding() {
             query_vec[1] = 0.6;
 
             let embedder = FixedVectorEmbedder::new(query_vec);
-            disambiguate("alias entity", Some(group), &graph, &embedder)
-                .await
-                .expect("disambiguate must succeed")
+            disambiguate(
+                DisambiguateParams {
+                    entity_name: "alias entity",
+                    group_id: Some(group),
+                    graph: &graph,
+                },
+                &embedder,
+            )
+            .await
+            .expect("disambiguate must succeed")
         })
     });
 
@@ -253,9 +271,16 @@ fn l4_disambiguate_new_on_low_similarity_real_embedding() {
 
             // axis 1 is orthogonal to axis 0 → cosine similarity = 0.0
             let embedder = FixedVectorEmbedder::new(axis_unit(1));
-            disambiguate("brand new entity", Some(group), &graph, &embedder)
-                .await
-                .expect("disambiguate must succeed")
+            disambiguate(
+                DisambiguateParams {
+                    entity_name: "brand new entity",
+                    group_id: Some(group),
+                    graph: &graph,
+                },
+                &embedder,
+            )
+            .await
+            .expect("disambiguate must succeed")
         })
     });
 

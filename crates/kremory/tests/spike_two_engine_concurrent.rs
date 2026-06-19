@@ -91,7 +91,7 @@ async fn build_engine_ingestor(
         graph: Arc::clone(&temporal),
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
-        config: config,
+        config,
     });
 
     let ingestor_config = IngestorConfig {

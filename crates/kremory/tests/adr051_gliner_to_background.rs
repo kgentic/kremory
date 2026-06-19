@@ -144,8 +144,8 @@ async fn add_episode_returns_before_gliner_fires() {
     let graph = kremory::core::ingest::Engine::new(kremory::core::ingest::EngineNewParams {
         graph: temporal,
         llm: Arc::new(recording_llm),
-        embedder: embedder,
-        config: config,
+        embedder,
+        config,
     });
 
     let ingestor_config = IngestorConfig {

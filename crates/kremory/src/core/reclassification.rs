@@ -74,6 +74,20 @@ struct ReclassifyResponse {
 
 // ─── Core reclassification function ──────────────────────────────────────────
 
+/// Bundled non-generic parameters for `reclassify_entity_type_in_dream_phase`,
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments). The generic
+/// `llm: &L` stays a lead positional argument.
+pub struct ReclassifyEntityTypeParams<'a> {
+    /// The temporal graph to update on a successful reclassification.
+    pub graph: &'a TemporalGraph,
+    /// The entity to reclassify (must currently be `entity_type_id=0`).
+    pub entity: &'a Entity,
+    /// Episodes providing context for the reclassification LLM call.
+    pub related_episodes: &'a [Episode],
+    /// Registry used to validate the LLM-emitted candidate type id.
+    pub registry: &'a EntityTypeRegistry,
+}
+
 /// Attempt to reclassify a single entity from `entity_type_id=0` to a concrete
 /// registered type using accumulated episode context.
 ///
@@ -83,12 +97,15 @@ struct ReclassifyResponse {
 /// - `Ok(None)` — entity already typed, too few episodes, or LLM returned id=0.
 /// - `Err(_)` — DB or LLM error.
 pub async fn reclassify_entity_type_in_dream_phase<L: ChatProvider>(
-    graph: &TemporalGraph,
     llm: &L,
-    entity: &Entity,
-    related_episodes: &[Episode],
-    registry: &EntityTypeRegistry,
+    params: ReclassifyEntityTypeParams<'_>,
 ) -> Result<Option<u32>> {
+    let ReclassifyEntityTypeParams {
+        graph,
+        entity,
+        related_episodes,
+        registry,
+    } = params;
     // Guard 1: already typed — nothing to do. Distinct from insufficient_episodes:
     // this is a no-op (entity had concrete type before L7 ever needed to run),
     // not active throttling of L7. Strategy reasoning requires the distinction.
@@ -181,6 +198,18 @@ pub struct DreamPhaseReport {
 
 // ─── Dream-phase orchestrator ─────────────────────────────────────────────────
 
+/// Bundled non-generic parameters for `run_dream_phase_passes`, args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). The generic `llm: &L` stays
+/// a lead positional argument.
+pub struct RunDreamPhasePassesParams<'a> {
+    /// The temporal graph the dream-phase passes operate on.
+    pub graph: &'a TemporalGraph,
+    /// The namespace to process.
+    pub group_id: &'a str,
+    /// Registry used by the reclassification pass.
+    pub registry: &'a EntityTypeRegistry,
+}
+
 /// Run the three L7 dream-phase passes for a single `group_id`.
 ///
 /// Pass order:
@@ -195,11 +224,14 @@ pub struct DreamPhaseReport {
 /// It operates directly on a `TemporalGraph` reference, keeping it testable without
 /// the full async `Engine` infrastructure.
 pub async fn run_dream_phase_passes<L: ChatProvider>(
-    graph: &TemporalGraph,
-    group_id: &str,
     llm: &L,
-    registry: &EntityTypeRegistry,
+    params: RunDreamPhasePassesParams<'_>,
 ) -> Result<DreamPhaseReport> {
+    let RunDreamPhasePassesParams {
+        graph,
+        group_id,
+        registry,
+    } = params;
     // Pass 1: resolve pending aliases.
     let aliases_resolved = resolve_pending_aliases(graph, group_id).await?;
 
@@ -216,9 +248,16 @@ pub async fn run_dream_phase_passes<L: ChatProvider>(
     let mut entities_reclassified = 0usize;
     for entity in &entities {
         if entity.entity_type_id == 0 {
-            let outcome =
-                reclassify_entity_type_in_dream_phase(graph, llm, entity, &episodes, registry)
-                    .await?;
+            let outcome = reclassify_entity_type_in_dream_phase(
+                llm,
+                ReclassifyEntityTypeParams {
+                    graph,
+                    entity,
+                    related_episodes: &episodes,
+                    registry,
+                },
+            )
+            .await?;
             if outcome.is_some() {
                 entities_reclassified += 1;
             }
@@ -317,10 +356,17 @@ mod tests {
         let episodes = make_episodes(5);
         let registry = make_registry();
 
-        let result =
-            reclassify_entity_type_in_dream_phase(&graph, &llm, &entity, &episodes, &registry)
-                .await
-                .expect("reclassify");
+        let result = reclassify_entity_type_in_dream_phase(
+            &llm,
+            ReclassifyEntityTypeParams {
+                graph: &graph,
+                entity: &entity,
+                related_episodes: &episodes,
+                registry: &registry,
+            },
+        )
+        .await
+        .expect("reclassify");
         assert!(
             result.is_none(),
             "entity already typed (id=1) must return None"
@@ -337,10 +383,17 @@ mod tests {
         let episodes = make_episodes(2); // below minimum
         let registry = make_registry();
 
-        let result =
-            reclassify_entity_type_in_dream_phase(&graph, &llm, &entity, &episodes, &registry)
-                .await
-                .expect("reclassify");
+        let result = reclassify_entity_type_in_dream_phase(
+            &llm,
+            ReclassifyEntityTypeParams {
+                graph: &graph,
+                entity: &entity,
+                related_episodes: &episodes,
+                registry: &registry,
+            },
+        )
+        .await
+        .expect("reclassify");
         assert!(
             result.is_none(),
             "fewer than L7_RECLASSIFY_MIN_EPISODES episodes must return None"
@@ -369,10 +422,17 @@ mod tests {
         let episodes = make_episodes(3); // meets minimum
         let registry = make_registry();
 
-        let result =
-            reclassify_entity_type_in_dream_phase(&graph, &llm, &entity, &episodes, &registry)
-                .await
-                .expect("reclassify");
+        let result = reclassify_entity_type_in_dream_phase(
+            &llm,
+            ReclassifyEntityTypeParams {
+                graph: &graph,
+                entity: &entity,
+                related_episodes: &episodes,
+                registry: &registry,
+            },
+        )
+        .await
+        .expect("reclassify");
 
         assert_eq!(result, Some(1), "valid LLM id=1 must return Some(1)");
 
@@ -409,10 +469,17 @@ mod tests {
         let episodes = make_episodes(5);
         let registry = make_registry(); // max id = 2
 
-        let result =
-            reclassify_entity_type_in_dream_phase(&graph, &llm, &entity, &episodes, &registry)
-                .await
-                .expect("reclassify");
+        let result = reclassify_entity_type_in_dream_phase(
+            &llm,
+            ReclassifyEntityTypeParams {
+                graph: &graph,
+                entity: &entity,
+                related_episodes: &episodes,
+                registry: &registry,
+            },
+        )
+        .await
+        .expect("reclassify");
 
         assert!(
             result.is_none(),

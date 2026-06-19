@@ -17,7 +17,7 @@ mod semantic_tests {
     use serde::Deserialize;
 
     use kremory::core::config::PipelineConfig;
-    use kremory::core::context::ContextResult;
+    use kremory::core::context::{ContextResult, ContextualizeParams};
     use kremory::core::graph::{FactInsert, InsertEntityParams};
     use kremory::core::ingest::Engine;
     use kremory::core::provider::{EmbeddingProvider, MockChatProvider, OnnxEmbeddingProvider};
@@ -506,7 +506,11 @@ mod semantic_tests {
 
         // contextualize() uses FTS — "Ria" in the label should match.
         let ctx: ContextResult = rql
-            .contextualize("Ria", None, None)
+            .contextualize(ContextualizeParams {
+                query: "Ria",
+                group_id: None,
+                limit: None,
+            })
             .await
             .expect("contextualize failed");
 
