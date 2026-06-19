@@ -8,6 +8,82 @@ use crate::core::schema::{Episode, EpisodicEdge, TemporalGraph};
 
 use super::parse_dt;
 
+/// Bundled parameters for [`TemporalGraph::insert_episode_with_group`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments). Construct
+/// via [`EpisodeInsert::new`] + chainable setters. `group_id` is intentionally
+/// NOT a field: the `*_with_group` variant takes it as a sibling arg so the
+/// namespace capability stays explicit to that method (mirrors `FactInsert`).
+pub struct EpisodeInsert<'a> {
+    pub content: &'a str,
+    pub timestamp: DateTime<Utc>,
+    pub source_type: Option<&'a str>,
+    pub metadata: Option<serde_json::Value>,
+    pub saga_id: Option<&'a str>,
+    pub sequence_number: Option<i64>,
+    pub source_id: Option<&'a str>,
+    pub source_uri: Option<&'a str>,
+    pub recorded_at: Option<DateTime<Utc>>,
+}
+
+impl<'a> EpisodeInsert<'a> {
+    /// Required fields; every optional defaults to `None`.
+    pub fn new(content: &'a str, timestamp: DateTime<Utc>) -> Self {
+        Self {
+            content,
+            timestamp,
+            source_type: None,
+            metadata: None,
+            saga_id: None,
+            sequence_number: None,
+            source_id: None,
+            source_uri: None,
+            recorded_at: None,
+        }
+    }
+
+    #[must_use]
+    pub fn source_type(mut self, source_type: &'a str) -> Self {
+        self.source_type = Some(source_type);
+        self
+    }
+
+    #[must_use]
+    pub fn metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
+    #[must_use]
+    pub fn saga_id(mut self, saga_id: &'a str) -> Self {
+        self.saga_id = Some(saga_id);
+        self
+    }
+
+    #[must_use]
+    pub fn sequence_number(mut self, sequence_number: i64) -> Self {
+        self.sequence_number = Some(sequence_number);
+        self
+    }
+
+    #[must_use]
+    pub fn source_id(mut self, source_id: &'a str) -> Self {
+        self.source_id = Some(source_id);
+        self
+    }
+
+    #[must_use]
+    pub fn source_uri(mut self, source_uri: &'a str) -> Self {
+        self.source_uri = Some(source_uri);
+        self
+    }
+
+    #[must_use]
+    pub fn recorded_at(mut self, recorded_at: DateTime<Utc>) -> Self {
+        self.recorded_at = Some(recorded_at);
+        self
+    }
+}
+
 impl TemporalGraph {
     pub async fn insert_episode(
         &self,
@@ -43,20 +119,26 @@ impl TemporalGraph {
 
     /// Insert an episode with optional group_id, saga_id, sequence_number,
     /// source_id, source_uri, and recorded_at (Migration 007 columns).
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// `group_id` is a sibling arg (not an [`EpisodeInsert`] field) so the
+    /// namespace capability stays explicit to this method — mirrors
+    /// `insert_fact_with_group`.
     pub async fn insert_episode_with_group(
         &self,
-        content: &str,
-        timestamp: DateTime<Utc>,
-        source_type: Option<&str>,
-        metadata: Option<serde_json::Value>,
+        episode: EpisodeInsert<'_>,
         group_id: Option<&str>,
-        saga_id: Option<&str>,
-        sequence_number: Option<i64>,
-        source_id: Option<&str>,
-        source_uri: Option<&str>,
-        recorded_at: Option<DateTime<Utc>>,
     ) -> Result<i64> {
+        let EpisodeInsert {
+            content,
+            timestamp,
+            source_type,
+            metadata,
+            saga_id,
+            sequence_number,
+            source_id,
+            source_uri,
+            recorded_at,
+        } = episode;
         let _db_start = Instant::now();
         let ts_str = timestamp.to_rfc3339();
         let meta_str = metadata.as_ref().map(serde_json::to_string).transpose()?;

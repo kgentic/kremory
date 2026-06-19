@@ -2,6 +2,7 @@ use chrono::Utc;
 
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 
+use crate::core::graph::EpisodeInsert;
 use crate::core::ingest::{Engine, SourceParams};
 
 use super::types::{EntityCandidate, IngestPhase1Result, ResolvedDecision, UpsertedEntities};
@@ -37,21 +38,17 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let ref_time = Utc::now();
 
         // 1. Insert episode row — same path as ingest_with Step 1.
-        let episode_id = self
-            .graph
-            .insert_episode_with_group(
-                text,
-                ref_time,
-                Some("ingest_phase1_ner"),
-                None,
-                None,
-                None,
-                None,
-                source_params.source_id.as_deref(),
-                source_params.source_uri.as_deref(),
-                source_params.recorded_at,
-            )
-            .await?;
+        let mut episode = EpisodeInsert::new(text, ref_time).source_type("ingest_phase1_ner");
+        if let Some(source_id) = source_params.source_id.as_deref() {
+            episode = episode.source_id(source_id);
+        }
+        if let Some(source_uri) = source_params.source_uri.as_deref() {
+            episode = episode.source_uri(source_uri);
+        }
+        if let Some(recorded_at) = source_params.recorded_at {
+            episode = episode.recorded_at(recorded_at);
+        }
+        let episode_id = self.graph.insert_episode_with_group(episode, None).await?;
 
         // 2. NER only — no LLM, no entity writes.
         //    When the `ner` feature is active, run GLiNER to obtain span candidates.
