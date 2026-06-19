@@ -41,8 +41,11 @@ pub mod stub;
 pub mod types;
 
 pub(crate) use background_ingestor_handle::BackgroundIngestorGraphHandle;
-pub use engine_handle::EngineGraphHandle;
-pub use graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams};
+pub use engine_handle::{EngineGraphHandle, WithConfigParams};
+pub use graph::{
+    GraphAssertEntityTypeParams, GraphHandle, GraphIngestEpisodeParams, GraphSearchParams,
+    GraphSubmitDreamParams,
+};
 pub use scheduler::{DreamSchedule, DreamSchedulerHandle};
 #[cfg(any(test, feature = "test-utils"))]
 pub use stub::StubGraphHandle;
@@ -50,7 +53,8 @@ pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
     DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, ImmutabilityLevel, IngestResult,
     InvalidPolicyError, MemoryError, MemoryType, Namespace, NamespacePolicy, Result,
-    RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
+    RetrievedContext, RetrievedContextNewParams, SearchOpts, SourceKind, SourceRef, StructuredFact,
+    SubmitOpts,
 };
 // IngestStatus lives in core::error but is part of the memory API surface.
 pub use crate::core::error::IngestStatus;
@@ -297,14 +301,24 @@ pub async fn run_dream_phase(
     graph.graph_run_consolidation(&namespace, provider).await
 }
 
+/// Bundled parameters for [`search`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+pub struct SearchParams<'a> {
+    pub graph: &'a dyn GraphHandle,
+    pub query: &'a str,
+    pub namespace: Namespace,
+    pub opts: SearchOpts,
+}
+
 /// Query the graph with memory's opinionated retrieval defaults. Thin
 /// orchestration wrapper over [`GraphHandle::graph_search`].
-pub async fn search(
-    graph: &dyn GraphHandle,
-    query: &str,
-    namespace: Namespace,
-    opts: SearchOpts,
-) -> Result<Vec<RetrievedContext>> {
+pub async fn search(params: SearchParams<'_>) -> Result<Vec<RetrievedContext>> {
+    let SearchParams {
+        graph,
+        query,
+        namespace,
+        opts,
+    } = params;
     // Story #318: `as_of` is reserved for bi-temporal point-in-time queries;
     // not yet implemented in v0.1.0. Log a warning so callers know their
     // filter is being ignored rather than silently mis-applied.
@@ -315,7 +329,13 @@ pub async fn search(
              field ignored — returning current-state results"
         );
     }
-    graph.graph_search(&namespace, query, &opts).await
+    graph
+        .graph_search(GraphSearchParams {
+            namespace: &namespace,
+            query,
+            opts: &opts,
+        })
+        .await
 }
 
 /// Render `results` into the final string handed to the LLM, per the
@@ -810,10 +830,13 @@ mod tests {
 
         async fn graph_search(
             &self,
-            namespace: &Namespace,
-            query: &str,
-            opts: &SearchOpts,
+            params: GraphSearchParams<'_>,
         ) -> Result<Vec<RetrievedContext>> {
+            let GraphSearchParams {
+                namespace,
+                query,
+                opts,
+            } = params;
             *self.last_search_namespace.lock().unwrap() = Some(namespace.clone());
             *self.last_search_query.lock().unwrap() = Some(query.to_string());
             *self.last_search_limit.lock().unwrap() = opts.limit;
@@ -869,9 +892,7 @@ mod tests {
 
         async fn graph_assert_entity_type(
             &self,
-            _entity_id: &str,
-            _entity_type_id: u32,
-            _group_id: Option<&str>,
+            _params: GraphAssertEntityTypeParams<'_>,
         ) -> Result<()> {
             Ok(())
         }
@@ -945,9 +966,14 @@ mod tests {
             source_kind: Some(SourceKind::Document),
         };
 
-        let hits = search(&graph, "go-live", namespace.clone(), opts)
-            .await
-            .expect("search delegates cleanly");
+        let hits = search(SearchParams {
+            graph: &graph,
+            query: "go-live",
+            namespace: namespace.clone(),
+            opts,
+        })
+        .await
+        .expect("search delegates cleanly");
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entity_id, "ent-stub");
@@ -1039,8 +1065,13 @@ mod tests {
             source_kind: None,
         };
         // Should not panic; warn is emitted internally, results still returned
-        let _hits = search(&graph, "test", namespace, opts)
-            .await
-            .expect("as_of warn path must not fail");
+        let _hits = search(SearchParams {
+            graph: &graph,
+            query: "test",
+            namespace,
+            opts,
+        })
+        .await
+        .expect("as_of warn path must not fail");
     }
 }

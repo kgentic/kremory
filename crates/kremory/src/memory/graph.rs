@@ -71,6 +71,26 @@ pub struct GraphIngestEpisodeParams<'a> {
     pub sink: Option<Arc<dyn EnrichmentEventSink>>,
 }
 
+/// Bundled parameters for [`GraphHandle::graph_assert_entity_type`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// `async_trait` counts the receiver, so the 4 declared args trip the 3-arg
+/// threshold. Borrow lives for the duration of one assert call.
+pub struct GraphAssertEntityTypeParams<'a> {
+    pub entity_id: &'a str,
+    pub entity_type_id: u32,
+    pub group_id: Option<&'a str>,
+}
+
+/// Bundled parameters for [`GraphHandle::graph_search`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments). `async_trait` counts the
+/// receiver, so the 4 declared args trip the 3-arg threshold. Borrows live for
+/// the duration of one search call.
+pub struct GraphSearchParams<'a> {
+    pub namespace: &'a Namespace,
+    pub query: &'a str,
+    pub opts: &'a SearchOpts,
+}
+
 /// Storage-backend boundary for rqlm. Consumers implement this trait
 /// against their concrete graph storage; rqlm orchestrates over the
 /// trait object.
@@ -140,12 +160,7 @@ pub trait GraphHandle: Send + Sync {
     // ── Search (from D.0a — signature unchanged) ─────────────────────────────
 
     /// Hybrid retrieval over the scoped graph.
-    async fn graph_search(
-        &self,
-        namespace: &Namespace,
-        query: &str,
-        opts: &SearchOpts,
-    ) -> Result<Vec<RetrievedContext>>;
+    async fn graph_search(&self, params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>>;
 
     // ── Legacy consolidation (from D.0a — retained for backwards compat) ─────
     //
@@ -194,10 +209,6 @@ pub trait GraphHandle: Send + Sync {
     /// # ADR reference
     ///
     /// ADR-045 §3; Phase C DoD C5.
-    async fn graph_assert_entity_type(
-        &self,
-        entity_id: &str,
-        entity_type_id: u32,
-        group_id: Option<&str>,
-    ) -> Result<()>;
+    async fn graph_assert_entity_type(&self, params: GraphAssertEntityTypeParams<'_>)
+        -> Result<()>;
 }

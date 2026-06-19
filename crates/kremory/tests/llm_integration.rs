@@ -584,9 +584,9 @@ async fn namespace_isolation() {
     use kremory::core::config::PipelineConfig;
     use kremory::core::provider::{DeterministicEmbeddingProvider, MockChatProvider};
     use kremory::core::schema::TemporalGraph;
-    use kremory::memory::engine_handle::EngineGraphHandle;
+    use kremory::memory::engine_handle::{EngineGraphHandle, WithConfigParams};
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams, GraphSearchParams};
     use kremory::{ChatProvider, DynEmbeddingProvider, Namespace};
     use metrics_util::debugging::DebuggingRecorder;
     use std::collections::HashMap;
@@ -645,8 +645,12 @@ async fn namespace_isolation() {
         .build()
         .expect("PipelineConfig default");
 
-    let handle =
-        EngineGraphHandle::with_config(Arc::clone(&graph), Arc::clone(&mock_llm), embedder, config);
+    let handle = EngineGraphHandle::with_config(WithConfigParams {
+        graph: Arc::clone(&graph),
+        chat: Arc::clone(&mock_llm),
+        embedder,
+        config,
+    });
 
     let ns_alpha = Namespace::new("ns-alpha");
     let ns_beta = Namespace::new("ns-beta");
@@ -701,15 +705,15 @@ async fn namespace_isolation() {
 
     // Query ns-beta for "ALPHA" — must NOT surface ns-alpha entities
     let beta_results = handle
-        .graph_search(
-            &ns_beta,
-            "ALPHA",
-            &SearchOpts {
+        .graph_search(GraphSearchParams {
+            namespace: &ns_beta,
+            query: "ALPHA",
+            opts: &SearchOpts {
                 limit: Some(20),
                 as_of: None,
                 source_kind: None,
             },
-        )
+        })
         .await
         .expect("graph_search ns-beta OK");
 
@@ -797,7 +801,7 @@ async fn build_mock_handle_with_response(
     use kremory::core::config::PipelineConfig;
     use kremory::core::provider::{DeterministicEmbeddingProvider, MockChatProvider};
     use kremory::core::schema::TemporalGraph;
-    use kremory::memory::engine_handle::EngineGraphHandle;
+    use kremory::memory::engine_handle::{EngineGraphHandle, WithConfigParams};
     use std::collections::HashMap;
 
     let mut responses: HashMap<String, String> = HashMap::new();
@@ -819,8 +823,12 @@ async fn build_mock_handle_with_response(
     let config = PipelineConfig::builder()
         .build()
         .expect("PipelineConfig::default");
-    let handle =
-        EngineGraphHandle::with_config(Arc::clone(&graph), Arc::clone(&mock_llm), embedder, config);
+    let handle = EngineGraphHandle::with_config(WithConfigParams {
+        graph: Arc::clone(&graph),
+        chat: Arc::clone(&mock_llm),
+        embedder,
+        config,
+    });
     (handle, graph)
 }
 
@@ -834,7 +842,7 @@ async fn build_mock_handle_with_response(
 #[cfg(feature = "llm-integration")]
 async fn source_refs_carries_episode_kind() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams, GraphSearchParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -880,15 +888,15 @@ async fn source_refs_carries_episode_kind() {
         .expect("graph_ingest_episode OK");
 
     let results = handle
-        .graph_search(
-            &ns,
-            "Alice",
-            &SearchOpts {
+        .graph_search(GraphSearchParams {
+            namespace: &ns,
+            query: "Alice",
+            opts: &SearchOpts {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
             },
-        )
+        })
         .await
         .expect("graph_search OK");
 
@@ -922,7 +930,7 @@ async fn source_refs_carries_episode_kind() {
 #[cfg(feature = "llm-integration")]
 async fn rrf_single_result_scores_one() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams, GraphSearchParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -968,15 +976,15 @@ async fn rrf_single_result_scores_one() {
         .expect("graph_ingest_episode OK");
 
     let results = handle
-        .graph_search(
-            &ns,
-            "Zephyr",
-            &SearchOpts {
+        .graph_search(GraphSearchParams {
+            namespace: &ns,
+            query: "Zephyr",
+            opts: &SearchOpts {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
             },
-        )
+        })
         .await
         .expect("graph_search OK");
 
@@ -1000,7 +1008,7 @@ async fn rrf_single_result_scores_one() {
 #[cfg(feature = "llm-integration")]
 async fn standalone_entity_has_episodic_edge() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams, GraphSearchParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -1047,15 +1055,15 @@ async fn standalone_entity_has_episodic_edge() {
         .expect("graph_ingest_episode OK");
 
     let results = handle
-        .graph_search(
-            &ns,
-            "Carol",
-            &SearchOpts {
+        .graph_search(GraphSearchParams {
+            namespace: &ns,
+            query: "Carol",
+            opts: &SearchOpts {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
             },
-        )
+        })
         .await
         .expect("graph_search OK");
 
@@ -1090,7 +1098,7 @@ async fn standalone_entity_has_episodic_edge() {
 #[cfg(feature = "llm-integration")]
 async fn stub_entity_inserted_on_forward_reference() {
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams, GraphSearchParams};
     use kremory::Namespace;
 
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
@@ -1138,15 +1146,15 @@ async fn stub_entity_inserted_on_forward_reference() {
 
     // Bob should appear in recall; incomplete must be true (stub entity).
     let results = handle
-        .graph_search(
-            &ns,
-            "Bob",
-            &SearchOpts {
+        .graph_search(GraphSearchParams {
+            namespace: &ns,
+            query: "Bob",
+            opts: &SearchOpts {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
             },
-        )
+        })
         .await
         .expect("graph_search OK");
 
@@ -1163,15 +1171,15 @@ async fn stub_entity_inserted_on_forward_reference() {
     }
     // Also verify Alice was recalled (non-stub entity must be indexed).
     let alice_results = handle
-        .graph_search(
-            &ns,
-            "Alice",
-            &SearchOpts {
+        .graph_search(GraphSearchParams {
+            namespace: &ns,
+            query: "Alice",
+            opts: &SearchOpts {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
             },
-        )
+        })
         .await
         .expect("graph_search for Alice OK");
     assert!(
@@ -1202,9 +1210,9 @@ async fn stub_entity_promoted_on_reingestion() {
     use kremory::core::config::PipelineConfig;
     use kremory::core::provider::{DeterministicEmbeddingProvider, MockChatProvider};
     use kremory::core::schema::TemporalGraph;
-    use kremory::memory::engine_handle::EngineGraphHandle;
+    use kremory::memory::engine_handle::{EngineGraphHandle, WithConfigParams};
     use kremory::memory::types::{SearchOpts, SourceKind, SourceRef, SubmitOpts};
-    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams};
+    use kremory::memory::{GraphHandle, GraphIngestEpisodeParams, GraphSearchParams};
     use kremory::Namespace;
     use std::collections::HashMap;
 
@@ -1245,8 +1253,12 @@ async fn stub_entity_promoted_on_reingestion() {
     let config = PipelineConfig::builder()
         .build()
         .expect("PipelineConfig::default");
-    let handle =
-        EngineGraphHandle::with_config(Arc::clone(&graph), Arc::clone(&mock_llm), embedder, config);
+    let handle = EngineGraphHandle::with_config(WithConfigParams {
+        graph: Arc::clone(&graph),
+        chat: Arc::clone(&mock_llm),
+        embedder,
+        config,
+    });
 
     let noop_provider: Arc<dyn kremory::memory::ChatProvider> = Arc::new(MockChatProvider::null());
     let ns = Namespace::new("g-v011-promoted");
@@ -1299,15 +1311,15 @@ async fn stub_entity_promoted_on_reingestion() {
 
     // After promotion, Bob must be recalled with incomplete=false.
     let results = handle
-        .graph_search(
-            &ns,
-            "Bob",
-            &SearchOpts {
+        .graph_search(GraphSearchParams {
+            namespace: &ns,
+            query: "Bob",
+            opts: &SearchOpts {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
             },
-        )
+        })
         .await
         .expect("graph_search OK");
 
@@ -1436,7 +1448,13 @@ async fn with_llm_tracked_emits_chat_metrics() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let mem = Memory::open(tmp.path().join("g_v012_8.db"))
-        .with_llm_tracked("test-provider", "test-model", mock_llm)
+        .with_llm_tracked(
+            kremory::WithLlmTrackedParams {
+                provider: "test-provider".to_string(),
+                model: "test-model".to_string(),
+            },
+            mock_llm,
+        )
         .with_embedder(embedder)
         .default_namespace(Namespace::new("g-v012-8"))
         .await
@@ -1498,7 +1516,13 @@ async fn tier_1_with_ollama_auto_emits_chat_metrics() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let mem = Memory::open(tmp.path().join("g_v012_9.db"))
-        .with_llm_tracked("ollama", "llama3.2:3b", mock_llm)
+        .with_llm_tracked(
+            kremory::WithLlmTrackedParams {
+                provider: "ollama".to_string(),
+                model: "llama3.2:3b".to_string(),
+            },
+            mock_llm,
+        )
         .with_embedder(embedder)
         .default_namespace(Namespace::new("g-v012-9"))
         .await

@@ -11,7 +11,8 @@ use chrono::Utc;
 use kremory::core::error::Error as CoreError;
 use kremory::memory::{context_block, ContextTemplate};
 use kremory::{
-    DynEmbeddingProvider, Memory, MemoryError, Namespace, RetrievedContext, SourceKind, SourceRef,
+    DynEmbeddingProvider, Memory, MemoryError, Namespace, RetrievedContext,
+    RetrievedContextNewParams, SourceKind, SourceRef,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -47,13 +48,13 @@ fn make_source_ref() -> SourceRef {
 }
 
 fn make_result(entity_id: &str, entity_name: &str, score: f32) -> RetrievedContext {
-    RetrievedContext::new(
-        entity_id,
-        entity_name,
-        format!("Summary for {entity_name}"),
+    RetrievedContext::new(RetrievedContextNewParams {
+        entity_id: entity_id.to_string(),
+        entity_name: entity_name.to_string(),
+        summary: format!("Summary for {entity_name}"),
         score,
-        vec![make_source_ref()],
-    )
+        source_refs: vec![make_source_ref()],
+    })
 }
 
 fn make_result_with_ns(

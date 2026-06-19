@@ -56,13 +56,26 @@ pub struct RecallRequest<'a> {
 /// promoting them to a SQL pre-filter via `json_extract(...)` requires
 /// extending the substrate trait + an index opportunity is scheduled for
 /// v0.1.7. Post-filter is correct + traceable here.
-async fn apply_metadata_post_filter(
-    memory: &Memory,
-    namespace: &Namespace,
+/// Bundled parameters for [`apply_metadata_post_filter`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+struct MetadataPostFilterParams<'a> {
+    memory: &'a Memory,
+    namespace: &'a Namespace,
     results: Vec<RetrievedContext>,
-    metadata_filters: &[(String, serde_json::Value)],
-    metadata_filters_in: &[(String, Vec<serde_json::Value>)],
+    metadata_filters: &'a [(String, serde_json::Value)],
+    metadata_filters_in: &'a [(String, Vec<serde_json::Value>)],
+}
+
+async fn apply_metadata_post_filter(
+    params: MetadataPostFilterParams<'_>,
 ) -> Result<Vec<RetrievedContext>> {
+    let MetadataPostFilterParams {
+        memory,
+        namespace,
+        results,
+        metadata_filters,
+        metadata_filters_in,
+    } = params;
     if metadata_filters.is_empty() && metadata_filters_in.is_empty() {
         return Ok(results);
     }
@@ -440,19 +453,24 @@ impl<'a> RecallRequest<'a> {
             namespace = %ns.namespace,
         );
         let _enter = span.enter();
-        let mut results = memory::search(self.memory.graph.as_ref(), &self.query, ns.clone(), opts)
-            .await?
-            .into_iter()
-            .map(|r| r.with_namespace(ns.clone()))
-            .collect::<Vec<_>>();
+        let mut results = memory::search(memory::SearchParams {
+            graph: self.memory.graph.as_ref(),
+            query: &self.query,
+            namespace: ns.clone(),
+            opts,
+        })
+        .await?
+        .into_iter()
+        .map(|r| r.with_namespace(ns.clone()))
+        .collect::<Vec<_>>();
         // G6 — apply metadata post-filter before template rendering.
-        results = apply_metadata_post_filter(
-            self.memory,
-            &ns,
+        results = apply_metadata_post_filter(MetadataPostFilterParams {
+            memory: self.memory,
+            namespace: &ns,
             results,
-            &self.metadata_filters,
-            &self.metadata_filters_in,
-        )
+            metadata_filters: &self.metadata_filters,
+            metadata_filters_in: &self.metadata_filters_in,
+        })
         .await?;
         Ok(memory::context_block(&results, template.into()))
     }
@@ -511,20 +529,26 @@ impl<'a> RecallRequest<'a> {
                 );
                 let _enter = span.enter();
                 memory.ensure_namespace_policy(&ns).await?;
-                let hits = memory::search(memory.graph.as_ref(), &query, ns.clone(), opts).await?;
+                let hits = memory::search(memory::SearchParams {
+                    graph: memory.graph.as_ref(),
+                    query: &query,
+                    namespace: ns.clone(),
+                    opts,
+                })
+                .await?;
                 let attributed: Vec<RetrievedContext> = hits
                     .into_iter()
                     .map(|r| r.with_namespace(ns.clone()))
                     .collect();
                 // G6 — Quinn C1: filters must apply per-namespace (entity_id
                 // scoping requires the namespace's own conn lookup).
-                let filtered = apply_metadata_post_filter(
+                let filtered = apply_metadata_post_filter(MetadataPostFilterParams {
                     memory,
-                    &ns,
-                    attributed,
-                    &metadata_filters,
-                    &metadata_filters_in,
-                )
+                    namespace: &ns,
+                    results: attributed,
+                    metadata_filters: &metadata_filters,
+                    metadata_filters_in: &metadata_filters_in,
+                })
                 .await?;
                 Ok::<Vec<RetrievedContext>, MemoryError>(filtered)
             });
@@ -634,20 +658,24 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
                 namespace = %ns.namespace,
             );
             let _enter = span.enter();
-            let results: Vec<RetrievedContext> =
-                memory::search(inner.memory.graph.as_ref(), &inner.query, ns.clone(), opts)
-                    .await?
-                    .into_iter()
-                    .map(|r| r.with_namespace(ns.clone()))
-                    .collect();
+            let results: Vec<RetrievedContext> = memory::search(memory::SearchParams {
+                graph: inner.memory.graph.as_ref(),
+                query: &inner.query,
+                namespace: ns.clone(),
+                opts,
+            })
+            .await?
+            .into_iter()
+            .map(|r| r.with_namespace(ns.clone()))
+            .collect();
             // G6 — apply metadata post-filter before returning.
-            let filtered = apply_metadata_post_filter(
-                inner.memory,
-                &ns,
+            let filtered = apply_metadata_post_filter(MetadataPostFilterParams {
+                memory: inner.memory,
+                namespace: &ns,
                 results,
-                &inner.metadata_filters,
-                &inner.metadata_filters_in,
-            )
+                metadata_filters: &inner.metadata_filters,
+                metadata_filters_in: &inner.metadata_filters_in,
+            })
             .await?;
             Ok(filtered)
         })

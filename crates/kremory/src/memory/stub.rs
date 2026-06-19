@@ -40,10 +40,13 @@ use crate::core::error::IngestStatus;
 
 #[cfg(any(test, feature = "test-utils"))]
 use super::{
-    graph::{GraphHandle, GraphIngestEpisodeParams, GraphSubmitDreamParams},
+    graph::{
+        GraphAssertEntityTypeParams, GraphHandle, GraphIngestEpisodeParams, GraphSearchParams,
+        GraphSubmitDreamParams,
+    },
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamPhaseResult, DreamStatus,
-        EpisodeCommit, Namespace, RetrievedContext, SearchOpts,
+        EpisodeCommit, Namespace, RetrievedContext,
     },
     ChatProvider, Result,
 };
@@ -108,12 +111,7 @@ impl GraphHandle for StubGraphHandle {
         unimplemented!("StubGraphHandle::graph_is_consolidating — provide a concrete stub");
     }
 
-    async fn graph_search(
-        &self,
-        _namespace: &Namespace,
-        _query: &str,
-        _opts: &SearchOpts,
-    ) -> Result<Vec<RetrievedContext>> {
+    async fn graph_search(&self, _params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>> {
         unimplemented!("StubGraphHandle::graph_search — provide a concrete stub");
     }
 
@@ -138,9 +136,7 @@ impl GraphHandle for StubGraphHandle {
 
     async fn graph_assert_entity_type(
         &self,
-        _entity_id: &str,
-        _entity_type_id: u32,
-        _group_id: Option<&str>,
+        _params: GraphAssertEntityTypeParams<'_>,
     ) -> Result<()> {
         unimplemented!("StubGraphHandle::graph_assert_entity_type — provide a concrete stub");
     }

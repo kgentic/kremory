@@ -12,35 +12,36 @@
 
 use chrono::{TimeZone, Utc};
 use kremory::memory::{
-    context_block, ContextTemplate, MemoryError, RetrievedContext, SourceKind, SourceRef,
+    context_block, ContextTemplate, MemoryError, RetrievedContext, RetrievedContextNewParams,
+    SourceKind, SourceRef,
 };
 
 fn sample_results() -> Vec<RetrievedContext> {
     vec![
-        RetrievedContext::new(
-            "ent-1",
-            "Roadmap Decision",
-            "Q3 priorities locked: extraction quality first.",
-            0.92,
-            vec![SourceRef {
+        RetrievedContext::new(RetrievedContextNewParams {
+            entity_id: "ent-1".to_string(),
+            entity_name: "Roadmap Decision".to_string(),
+            summary: "Q3 priorities locked: extraction quality first.".to_string(),
+            score: 0.92,
+            source_refs: vec![SourceRef {
                 kind: SourceKind::Meeting,
                 id: "mtg-001".into(),
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 17, 14, 0, 0).unwrap(),
                 published_at: None,
             }],
-        ),
-        RetrievedContext::new(
-            "ent-2",
-            "Migration framework spec",
-            "Backup-before-migrate; rollback via restore.",
-            0.81,
-            vec![SourceRef {
+        }),
+        RetrievedContext::new(RetrievedContextNewParams {
+            entity_id: "ent-2".to_string(),
+            entity_name: "Migration framework spec".to_string(),
+            summary: "Backup-before-migrate; rollback via restore.".to_string(),
+            score: 0.81,
+            source_refs: vec![SourceRef {
                 kind: SourceKind::Document,
                 id: "doc-007".into(),
                 occurred_at: Utc.with_ymd_and_hms(2026, 5, 18, 9, 30, 0).unwrap(),
                 published_at: None,
             }],
-        ),
+        }),
     ]
 }
 
