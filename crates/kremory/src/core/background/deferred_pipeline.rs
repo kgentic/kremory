@@ -295,6 +295,10 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                     verify_llm,
                     graph: &graph.graph,
                     sink,
+                    // ADR-051: GLiNER is closed-vocab — forward the configured
+                    // entity types so the deferred path doesn't reject on empty.
+                    allowed_entity_types: &graph.config.allowed_entity_types,
+                    excluded_entity_types: &graph.config.excluded_entity_types,
                 })
                 .await
             }
@@ -325,6 +329,10 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             verify_llm: None,
             graph: &graph.graph,
             sink,
+            // LLM extractor is open-vocab so this is a no-op here, but forward the
+            // configured types for parity with the ner arm (ADR-051).
+            allowed_entity_types: &graph.config.allowed_entity_types,
+            excluded_entity_types: &graph.config.excluded_entity_types,
         })
         .await
     };

@@ -368,10 +368,10 @@ mod model_comparison_tests {
                 .expect("failed to open graph"),
         );
         let rql = Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
+            graph,
             llm: llm.clone(),
             embedder: Arc::new(embedder),
-            config: config,
+            config,
         });
         let extractor = NuExtractExtractor::new(llm);
 
@@ -425,10 +425,10 @@ mod model_comparison_tests {
                 .expect("failed to open graph"),
         );
         let rql = Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
+            graph,
             llm: llm.clone(),
             embedder: Arc::new(embedder),
-            config: config,
+            config,
         });
         let extractor = DefaultExtractor::new(llm);
 
@@ -482,10 +482,10 @@ mod model_comparison_tests {
                 .expect("failed to open graph"),
         );
         let rql = Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
+            graph,
             llm: llm.clone(),
             embedder: Arc::new(embedder),
-            config: config,
+            config,
         });
         let extractor = DefaultExtractor::new(llm);
 
@@ -539,10 +539,10 @@ mod model_comparison_tests {
                 .expect("failed to open graph"),
         );
         let rql = Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
+            graph,
             llm: llm.clone(),
             embedder: Arc::new(embedder),
-            config: config,
+            config,
         });
         let extractor = GroundedNuExtractExtractor::new(llm);
 

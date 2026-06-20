@@ -94,7 +94,7 @@ async fn build_engine(
         graph: Arc::clone(&graph),
         llm: Arc::clone(&llm),
         embedder: Arc::new(emb),
-        config: config,
+        config,
     });
     (engine, llm, graph)
 }

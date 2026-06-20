@@ -264,6 +264,8 @@ async fn sink_none_does_not_panic() {
 
     // sink = None: must not panic, must return Ok
     let result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: None,
@@ -404,6 +406,8 @@ async fn sink_entity_extracted_fires_per_entity() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     let result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),
@@ -483,6 +487,8 @@ async fn sink_edge_added_fires_per_episodic_link() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     let result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),
@@ -549,6 +555,8 @@ async fn sink_ingestion_error_fires_on_verify_fail() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     let result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: None,
@@ -628,6 +636,8 @@ async fn sink_entities_ready_fires_before_complete() {
 
     // Phase 2a: run_verify_stage fires Extracting → EntitiesReady on success.
     let result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),
@@ -735,6 +745,8 @@ async fn sink_entity_extracted_emits_counter() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     let result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),
@@ -813,6 +825,8 @@ async fn sink_stage_transition_emits_counter() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),
@@ -885,6 +899,8 @@ async fn sink_callback_duration_emits_histogram() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),
@@ -954,6 +970,8 @@ async fn sink_community_updated_does_not_fire_in_v023() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),
@@ -1010,6 +1028,8 @@ async fn sink_extract_fail_does_not_fire_entities_ready() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     let result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: None,
@@ -1078,6 +1098,8 @@ async fn sink_verify_stage_does_not_fire_pending() {
     let sink_ref = &sink as &dyn kremory::memory::events::EnrichmentEventSink;
 
     run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &request,
         extractor: &extractor,
         verify_llm: Some(&verify_llm),

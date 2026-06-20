@@ -89,6 +89,45 @@ async fn drain_and_shutdown(
         .expect("guard.shutdown() panicked");
 }
 
+/// Deterministic drain for `succeeded`-asserting batch tests.
+///
+/// A fixed sleep (`drain_and_shutdown`) races the Phase-2 drain: `IngestGuard`
+/// drop sets the stop flag BEFORE joining, so any deferred work still in flight
+/// is interrupted and the batch fires `BatchComplete { succeeded: 0 }`. The
+/// 300ms grace is enough for the non-`ner` path (`EmptyArrayLlmClient` returns
+/// `"[]"` instantly) but NOT under the `ner` feature, where ADR-051 routes
+/// GLiNER extraction through the deferred queue and the model load alone exceeds
+/// 300ms.
+///
+/// Instead of a fixed sleep, drop the ingestor (closing the channel so the
+/// worker drains primary → deferred naturally) and poll the sink until the
+/// batch's terminal `BatchComplete` is recorded, THEN shut down. The worker is
+/// never stopped mid-drain, so the count is correct under both feature configs.
+async fn drain_until_batch_complete(
+    // (ingestor, guard) bundled into one param: they always travel together and
+    // keeping them separate would push this helper to 4 args, over the
+    // too-many-arguments threshold of 3 (TD-042). No `#[allow]` band-aid.
+    handles: (BackgroundIngestor, kremory::core::background::IngestGuard),
+    sink: &RecordingSink,
+    batch_id: &str,
+) {
+    let (ingestor, guard) = handles;
+    drop(ingestor);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let fired = sink.snapshot().iter().any(
+            |e| matches!(e, SinkEvent::BatchComplete { batch_id: bid, .. } if bid == batch_id),
+        );
+        if fired || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    tokio::task::spawn_blocking(move || guard.shutdown())
+        .await
+        .expect("guard.shutdown() panicked");
+}
+
 /// Build a real `BackgroundIngestor` against a temp file libSQL DB with sink wired.
 ///
 /// Mirrors `build_ingestor_with_sink` in `sink_wiring_integration.rs` — uses
@@ -202,7 +241,7 @@ async fn background_ingestor_handle_batched_send_fires_batch_complete() {
         .send_batched("single batched episode", "routing-test-batch-1".to_string())
         .expect("send_batched ok");
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_batch_complete((ingestor, guard), &sink, "routing-test-batch-1").await;
 
     let events = sink.snapshot();
     let found = events.iter().any(|e| {
@@ -240,7 +279,7 @@ async fn background_ingestor_handle_batch_accumulates_to_single_complete() {
             .expect("send_batched ok");
     }
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_batch_complete((ingestor, guard), &sink, &batch_id).await;
 
     let events = sink.snapshot();
 

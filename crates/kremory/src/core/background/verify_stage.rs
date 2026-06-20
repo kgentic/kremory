@@ -513,6 +513,15 @@ pub struct RunVerifyStageParams<'a> {
     pub verify_llm: Option<&'a dyn ChatProvider>,
     pub graph: &'a TemporalGraph,
     pub sink: Option<&'a dyn EnrichmentEventSink>,
+    /// Entity-type vocabulary forwarded into the extraction context. Sourced
+    /// from the live `PipelineConfig` at the deferred call site. REQUIRED for the
+    /// `ner` (GLiNER) arm — a closed-vocabulary model that rejects an empty list
+    /// (ner.rs §extract). Previously this stage built `ExtractionContext::default()`
+    /// (empty), silently dropping the configured types and failing GLiNER on the
+    /// deferred path; LLM extraction (non-`ner`) is open-vocab so was unaffected.
+    pub allowed_entity_types: &'a [String],
+    /// Entity labels that must never be extracted, forwarded into the context.
+    pub excluded_entity_types: &'a [String],
 }
 
 #[doc(hidden)]
@@ -523,6 +532,8 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
         verify_llm,
         graph,
         sink,
+        allowed_entity_types,
+        excluded_entity_types,
     } = params;
     let total_start = Instant::now();
     let arm = if verify_llm.is_some() {
@@ -637,7 +648,16 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
     );
 
     // ── Extract candidates ─────────────────────────────────────────────────────
-    let ctx = ExtractionContext::default();
+    // ADR-051: forward the configured entity-type vocabulary into the context.
+    // The `ner` (GLiNER) arm is closed-vocabulary and rejects an empty
+    // `allowed_entity_types`; building `::default()` here silently dropped the
+    // configured types on the deferred path (caught by `--all-features
+    // --all-targets`, which is the first run that exercised the ner deferred path).
+    let ctx = ExtractionContext {
+        allowed_entity_types,
+        excluded_entity_types,
+        ..ExtractionContext::default()
+    };
     let extract_start = Instant::now();
 
     let extraction_result = extractor.extract_dyn(&request.text, &ctx).await;

@@ -462,7 +462,7 @@ mod semantic_tests {
         for (id, name, _label) in entities {
             graph
                 .insert_entity(InsertEntityParams {
-                    id: id,
+                    id,
                     entity_type_id: 0,
                     properties: serde_json::json!({"name": name}),
                 })
@@ -498,10 +498,10 @@ mod semantic_tests {
             .expect("PipelineConfig::build");
         let rql: Engine<MockChatProvider, OnnxEmbeddingProvider> =
             Engine::new(kremory::core::ingest::EngineNewParams {
-                graph: graph,
+                graph,
                 llm: Arc::new(MockChatProvider::null()),
-                embedder: embedder,
-                config: config,
+                embedder,
+                config,
             });
 
         // contextualize() uses FTS — "Ria" in the label should match.
