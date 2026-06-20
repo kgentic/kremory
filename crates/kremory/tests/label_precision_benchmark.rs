@@ -268,7 +268,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
         graph: Arc::clone(&graph),
         llm: llm.clone(),
         embedder: Arc::new(emb),
-        config: config,
+        config,
     }); // Phase E: Engine::new is infallible (was Result)
 
     // TD-021: KREMORY_BENCH_EXTRA_TYPES allows passing additional entity types
@@ -338,7 +338,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
                         reference_time: None,
                         group_id: None,
                         content_type: None,
-                        source_params: source_params,
+                        source_params,
                     },
                 )
                 .await
@@ -364,7 +364,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
                         reference_time: None,
                         group_id: None,
                         content_type: None,
-                        source_params: source_params,
+                        source_params,
                     },
                 )
                 .await
@@ -386,7 +386,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
                     reference_time: None,
                     group_id: None,
                     content_type: None,
-                    source_params: source_params,
+                    source_params,
                 },
             )
             .await
@@ -702,9 +702,9 @@ async fn label_precision_haiku_on_mock_interview() {
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
+        llm,
         embedder: Arc::new(emb),
-        config: config,
+        config,
     }); // Phase E: Engine::new is infallible (was Result)
 
     let ingest_result = engine

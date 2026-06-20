@@ -8,15 +8,24 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+// The mock ChatProvider clients below are consumed only by the
+// `#[cfg(not(feature = "ner"))]` deferred-pipeline tests; under `ner` the whole
+// mock-LLM surface is compiled out, so its exclusive imports (Arc + atomics) are
+// gated to match.
+#[cfg(not(feature = "ner"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(not(feature = "ner"))]
 use std::sync::Arc;
 
+#[cfg(not(feature = "ner"))]
 use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
+#[cfg(not(feature = "ner"))]
 use autoagents_llm::error::LLMError;
-use kremory::core::background::{
-    BackgroundIngestor, IngestError, IngestErrorKind, IngestSendError, IngestorConfig, SendParams,
-};
+use kremory::core::background::{BackgroundIngestor, IngestSendError, IngestorConfig, SendParams};
+#[cfg(not(feature = "ner"))]
+use kremory::core::background::{IngestError, IngestErrorKind};
 use kremory::core::ingest::SimpleGraph;
+#[cfg(not(feature = "ner"))]
 use kremory::core::provider::ChatProvider;
 
 // ---------------------------------------------------------------------------
@@ -24,9 +33,11 @@ use kremory::core::provider::ChatProvider;
 // ---------------------------------------------------------------------------
 
 /// A ChatProvider that always returns an LLMError.
+#[cfg(not(feature = "ner"))]
 #[derive(Debug, Clone)]
 struct FailingLlmClient;
 
+#[cfg(not(feature = "ner"))]
 #[async_trait::async_trait]
 impl ChatProvider for FailingLlmClient {
     async fn chat_with_tools(
@@ -40,11 +51,13 @@ impl ChatProvider for FailingLlmClient {
 }
 
 /// A ChatProvider that counts every chat call.
+#[cfg(not(feature = "ner"))]
 #[derive(Debug, Clone)]
 struct CountingLlmClient {
     calls: Arc<AtomicUsize>,
 }
 
+#[cfg(not(feature = "ner"))]
 impl CountingLlmClient {
     fn new() -> (Self, Arc<AtomicUsize>) {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -57,6 +70,7 @@ impl CountingLlmClient {
     }
 }
 
+#[cfg(not(feature = "ner"))]
 #[async_trait::async_trait]
 impl ChatProvider for CountingLlmClient {
     async fn chat_with_tools(
@@ -73,11 +87,13 @@ impl ChatProvider for CountingLlmClient {
 }
 
 /// A ChatProvider that succeeds once then always fails (NER ok, deferred fails).
+#[cfg(not(feature = "ner"))]
 #[derive(Debug, Clone)]
 struct FailAfterFirstLlmClient {
     call_count: Arc<AtomicUsize>,
 }
 
+#[cfg(not(feature = "ner"))]
 impl FailAfterFirstLlmClient {
     fn new() -> Self {
         Self {
@@ -86,6 +102,7 @@ impl FailAfterFirstLlmClient {
     }
 }
 
+#[cfg(not(feature = "ner"))]
 #[async_trait::async_trait]
 impl ChatProvider for FailAfterFirstLlmClient {
     async fn chat_with_tools(
@@ -116,6 +133,7 @@ async fn simple_ingestor() -> (BackgroundIngestor, kremory::core::background::In
     BackgroundIngestor::new(graph, IngestorConfig::default())
 }
 
+#[cfg(not(feature = "ner"))]
 async fn graph_with_llm<L: ChatProvider + 'static>(
     llm: L,
 ) -> kremory::core::ingest::Engine<L, kremory::core::provider::NullEmbeddingProvider> {

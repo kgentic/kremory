@@ -132,9 +132,9 @@ async fn td_012_no_placeholder_labels_in_fixture_extraction() {
     let extractor = DefaultExtractor::new(Arc::clone(&llm));
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::clone(&graph),
-        llm: llm,
+        llm,
         embedder: Arc::new(emb),
-        config: config,
+        config,
     });
 
     // Run ingest on the fixture.

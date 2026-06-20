@@ -97,10 +97,10 @@ three business days after the API merge to run the full regression suite.";
         );
 
         let rql = Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
+            graph,
             llm: Arc::new(llm),
             embedder: Arc::new(embedder),
-            config: config,
+            config,
         });
 
         let result = rql
@@ -392,10 +392,10 @@ three business days after the API merge to run the full regression suite.";
         );
 
         let rql = Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
+            graph,
             llm: llm.clone(),
             embedder: Arc::new(embedder),
-            config: config,
+            config,
         });
 
         let extractor = NuExtractExtractor::new(llm);

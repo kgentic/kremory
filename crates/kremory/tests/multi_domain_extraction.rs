@@ -288,10 +288,10 @@ mod domain_tests {
                 .expect("failed to open graph"),
         );
         let rql = Engine::new(kremory::core::ingest::EngineNewParams {
-            graph: graph,
+            graph,
             llm: llm.clone(),
             embedder: Arc::new(embedder),
-            config: config,
+            config,
         });
         let extractor = NuExtractExtractor::new(llm);
 

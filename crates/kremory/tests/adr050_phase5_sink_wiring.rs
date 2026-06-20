@@ -201,6 +201,8 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
 
     // ── First run: MISS path — entity written + idempotency key written ────────
     let first_result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &DeferredRequest {
             text: "Alice works at Acme Corp.".to_string(),
             reference_time: None,
@@ -243,6 +245,8 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
     let episode_id_2 = insert_pending_episode(&graph.conn, "Alice works at Acme Corp.").await;
 
     let second_result = run_verify_stage(RunVerifyStageParams {
+        allowed_entity_types: &[],
+        excluded_entity_types: &[],
         request: &DeferredRequest {
             text: "Alice works at Acme Corp.".to_string(),
             reference_time: None,

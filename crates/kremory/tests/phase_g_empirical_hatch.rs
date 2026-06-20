@@ -224,7 +224,7 @@ where
                         reference_time: None,
                         group_id: None,
                         content_type: None,
-                        source_params: source_params,
+                        source_params,
                     },
                 )
                 .await
@@ -242,7 +242,7 @@ where
                     reference_time: None,
                     group_id: None,
                     content_type: None,
-                    source_params: source_params,
+                    source_params,
                 },
             )
             .await
@@ -739,7 +739,7 @@ async fn phase_g_cloud_llm_gate() {
             graph: Arc::clone(&graph),
             llm: Arc::clone(&llm),
             embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
-            config: config,
+            config,
         });
 
         // Cloud provider uses DefaultExtractor (no GLiNER hybrid — cloud inference only).
@@ -799,7 +799,7 @@ async fn phase_g_cloud_llm_gate() {
             graph: Arc::clone(&graph),
             llm: Arc::clone(&llm),
             embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
-            config: config,
+            config,
         });
 
         let result = measure_pre_post(MeasureArgs {
