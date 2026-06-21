@@ -1448,13 +1448,8 @@ async fn with_llm_tracked_emits_chat_metrics() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let mem = Memory::open(tmp.path().join("g_v012_8.db"))
-        .with_llm_tracked(
-            kremory::WithLlmTrackedParams {
-                provider: "test-provider".to_string(),
-                model: "test-model".to_string(),
-            },
-            mock_llm,
-        )
+        .with_llm(Arc::new(mock_llm))
+        .with_token_tracking("test-provider", "test-model")
         .with_embedder(embedder)
         .default_namespace(Namespace::new("g-v012-8"))
         .await
@@ -1516,13 +1511,8 @@ async fn tier_1_with_ollama_auto_emits_chat_metrics() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let mem = Memory::open(tmp.path().join("g_v012_9.db"))
-        .with_llm_tracked(
-            kremory::WithLlmTrackedParams {
-                provider: "ollama".to_string(),
-                model: "llama3.2:3b".to_string(),
-            },
-            mock_llm,
-        )
+        .with_llm(Arc::new(mock_llm))
+        .with_token_tracking("ollama", "llama3.2:3b")
         .with_embedder(embedder)
         .default_namespace(Namespace::new("g-v012-9"))
         .await

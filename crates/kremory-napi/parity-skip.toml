@@ -430,6 +430,11 @@ reason = "Builder method variant; same rationale as with_llm"
 revisit = "v0.2.0"
 
 [[skip]]
+symbol = "MemoryBuilder::with_token_tracking"
+reason = "Builder observability knob (F3, ADR adr-memory-builder-tracking-as-knob); Tier-2 builder wiring deferred, same rationale as with_llm"
+revisit = "v0.2.0"
+
+[[skip]]
 symbol = "MemoryBuilder::with_embedder"
 reason = "Builder method; Tier-2 builder wiring deferred per ADR-030 Form B"
 revisit = "v0.2.0"
