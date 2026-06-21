@@ -61,7 +61,8 @@ pub struct IngestWithParams<'a> {
 
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Full pipeline with a caller-supplied extractor.
-    /// Any type implementing `EntityExtractor` can be used (DefaultExtractor, NuExtractExtractor, etc.).
+    /// Any type implementing `EntityExtractor` can be used (a built-in extractor
+    /// or a custom BYOE impl).
     // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
     // Generic `extractor: &E` stays a lead positional param (TD-042 brief rule 4);
     // the remaining call-context args are bundled into `IngestWithParams`.

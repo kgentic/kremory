@@ -384,7 +384,17 @@ impl Memory {
         }
     }
 
-    /// Bulk-ingest multiple episodes in a single batch.
+    /// Bulk-ingest multiple episodes in a single batch (F6).
+    ///
+    /// This is the **inline** batch path: each entry supports per-entry
+    /// `.in_namespace(...)`, and ingestion runs through the standard
+    /// `EngineGraphHandle`. Use this when you have several episodes to add and
+    /// want per-entry control.
+    ///
+    /// For the **background** path that routes through `BackgroundIngestor` and
+    /// fires `on_batch_phase2_complete` on a configured sink, use
+    /// [`send_batched`](Self::send_batched) instead (requires a
+    /// `default_namespace`; no per-entry namespace override).
     #[must_use = "RememberBatchBuilder must be .await-ed"]
     pub fn remember_batch(&self) -> RememberBatchBuilder<'_> {
         RememberBatchBuilder {
@@ -758,10 +768,12 @@ impl Memory {
 
     /// Flush any pending writes and close the memory handle.
     ///
-    /// At v0.1.0 this is a no-op stub. v0.1.1 will add WAL flush semantics.
-    /// Callers should call this at shutdown to future-proof their code.
+    /// Currently a no-op: kremory uses libSQL WAL with autocommit, so there are
+    /// no buffered writes to flush at v0.2.x. Retained as a forward-compatible
+    /// shutdown hook — call it at shutdown so your code is ready if explicit
+    /// flush semantics are added later (F9).
     pub async fn close(&self) -> Result<()> {
-        // v0.1.0: no-op. WAL flush deferred to v0.1.1.
+        // No-op: WAL autocommit means no pending writes to flush at v0.2.x.
         Ok(())
     }
 
