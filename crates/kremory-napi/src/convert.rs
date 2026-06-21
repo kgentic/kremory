@@ -28,16 +28,10 @@ pub struct GlinerConfigJs {
     pub threshold: Option<f64>,
 }
 
-// GlinerConfig is gated behind the `ner` cargo feature in the substrate.
-// The From impl is only valid when that feature is compiled in.
-#[cfg(feature = "ner")]
-impl From<GlinerConfigJs> for kremory::core::extraction::GlinerConfig {
-    fn from(_js: GlinerConfigJs) -> Self {
-        // GlinerConfig fields are private (reserved per ADR-039 §A6); use Default.
-        // When public knobs are added, map _js.threshold / _js.model_path here.
-        kremory::core::extraction::GlinerConfig::default()
-    }
-}
+// (F2) `From<GlinerConfigJs> for GlinerConfig` removed — `with_gliner()` no longer
+// takes a config arg, so the conversion had no caller (dead code). GlinerConfigJs
+// is retained as the JS-side enable-signal (presence of `opts.gliner`). Restore a
+// mapping here if/when GlinerConfig gains public tuning knobs (ADR-039 §A6).
 
 /// Options for `Memory.open` — live napi/cdylib build (Shape B, ADR-039 Part 10).
 ///
