@@ -5,7 +5,7 @@
 //!   json_repair       — JSON repair utilities
 //!   parsers           — domain parsers (entities, facts, relation names)
 //!   graphiti          — LlmExtractor (3-stage LLM, Graphiti-quality prompts)
-//!   default_extractor — DefaultExtractor (integer-ID L1 path)
+//!   default_extractor — IntegerIdLlmExtractor (integer-ID L1 path)
 //!   nuextract         — removed (tombstone module)
 //!   single_call       — SingleCallExtractor (free-discovery single pass)
 //!   programmatic      — ProgrammaticFirstExtractor (candidates-first)
@@ -44,7 +44,7 @@ pub(crate) mod single_call;
 // via `kremory::core::extraction::*`. These must be `pub`, not `pub(crate)`.
 
 // Extractors — pub so integration tests can name them
-pub use default_extractor::DefaultExtractor;
+pub use default_extractor::IntegerIdLlmExtractor;
 pub use graphiti::LlmExtractor;
 pub use programmatic::ProgrammaticFirstExtractor;
 pub use single_call::{PromptVersion, SingleCallExtractor};
@@ -150,7 +150,7 @@ mod tests {
             },
         ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
-        let extractor = DefaultExtractor::new(mock);
+        let extractor = IntegerIdLlmExtractor::new(mock);
         let ctx = ExtractionContext {
             registry_specs: &specs,
             ..ExtractionContext::default()
@@ -209,7 +209,7 @@ mod tests {
             },
         ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
-        let extractor = DefaultExtractor::new(mock);
+        let extractor = IntegerIdLlmExtractor::new(mock);
         let ctx = ExtractionContext {
             registry_specs: &specs,
             ..ExtractionContext::default()
@@ -244,7 +244,7 @@ mod tests {
             },
         ];
         let mock = Arc::new(staged_mock(stage1, stage2, stage3));
-        let extractor = DefaultExtractor::new(mock);
+        let extractor = IntegerIdLlmExtractor::new(mock);
 
         let excluded = vec!["StopWord".to_string()];
         let ctx = ExtractionContext {
@@ -270,7 +270,7 @@ mod tests {
     fn test_empty_llm_response_graceful() {
         // Mock returns empty arrays for all stages.
         let mock = Arc::new(staged_mock("[]", "[]", "[]"));
-        let extractor = DefaultExtractor::new(mock);
+        let extractor = IntegerIdLlmExtractor::new(mock);
         let ctx = ExtractionContext::default();
         let result = block_on(extractor.extract("Some text with no matches", &ctx));
 
@@ -287,7 +287,7 @@ mod tests {
     fn test_malformed_llm_response_graceful() {
         // Mock returns malformed JSON that should be gracefully degraded.
         let mock = Arc::new(staged_mock("not valid json {{{", "also bad", "broken"));
-        let extractor = DefaultExtractor::new(mock);
+        let extractor = IntegerIdLlmExtractor::new(mock);
         let ctx = ExtractionContext::default();
         let result = block_on(extractor.extract("Some text", &ctx));
 
@@ -577,7 +577,7 @@ mod tests {
                 },
             ];
             let mock = Arc::new(staged_mock(stage1, stage2, stage3));
-            let extractor = DefaultExtractor::new(mock);
+            let extractor = IntegerIdLlmExtractor::new(mock);
             let ctx = ExtractionContext {
                 registry_specs: &specs,
                 ..ExtractionContext::default()
@@ -626,7 +626,7 @@ mod tests {
 
         metrics::with_local_recorder(&recorder, || {
             let mock = Arc::new(staged_mock("not valid json {{{", "also bad", "broken"));
-            let extractor = DefaultExtractor::new(mock);
+            let extractor = IntegerIdLlmExtractor::new(mock);
             let ctx = ExtractionContext::default();
             let _result = block_on(extractor.extract("Some text", &ctx)).unwrap();
 

@@ -6,7 +6,7 @@
 //!
 //! This test uses a kremory-eval fixture (mock_interview.txt) — a realistic
 //! multi-speaker transcript containing Person/Organisation/Location entities.
-//! It runs the DefaultExtractor with a real Ollama LLM and asserts that:
+//! It runs the IntegerIdLlmExtractor with a real Ollama LLM and asserts that:
 //!
 //!   1. At least 3 entities are extracted (non-trivial extraction).
 //!   2. No entity carries the placeholder label "Entity" or "UNKNOWN".
@@ -51,7 +51,7 @@ use autoagents_llm::backends::ollama::Ollama;
 use autoagents_llm::builder::LLMBuilder;
 use autoagents_llm::embedding::EmbeddingBuilder;
 use kremory::core::config::PipelineConfig;
-use kremory::core::extraction::{is_canonical_entity_type, DefaultExtractor};
+use kremory::core::extraction::{is_canonical_entity_type, IntegerIdLlmExtractor};
 use kremory::core::ingest::{Engine, SourceParams};
 use kremory::core::schema::TemporalGraph;
 
@@ -129,7 +129,7 @@ async fn td_012_no_placeholder_labels_in_fixture_extraction() {
         .build()
         .expect("PipelineConfig default");
 
-    let extractor = DefaultExtractor::new(Arc::clone(&llm));
+    let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::clone(&graph),
         llm,

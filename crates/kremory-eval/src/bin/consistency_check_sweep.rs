@@ -49,7 +49,7 @@ use kremory::{
         },
         entity_types::{EntityTypeSpec, DEFAULT_ENTITY_TYPES},
         error::{Error as KremoryCoreError, Result as KremoryCoreResult},
-        extraction::DefaultExtractor,
+        extraction::IntegerIdLlmExtractor,
         ingest::{Engine, SourceParams},
         schema::TemporalGraph,
     },
@@ -368,7 +368,7 @@ async fn ingest_fixture(
         config,
     });
     let source_params = build_source_params();
-    let extractor = DefaultExtractor::new(Arc::clone(&llm));
+    let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
 
     engine
         .ingest_with(

@@ -34,7 +34,7 @@ use autoagents_llm::backends::ollama::Ollama;
 use autoagents_llm::builder::LLMBuilder;
 use autoagents_llm::embedding::EmbeddingBuilder;
 use kremory::core::config::PipelineConfig;
-use kremory::core::extraction::{is_canonical_entity_type, DefaultExtractor};
+use kremory::core::extraction::{is_canonical_entity_type, IntegerIdLlmExtractor};
 use kremory::core::ingest::{Engine, SourceParams};
 use kremory::core::schema::TemporalGraph;
 
@@ -123,7 +123,7 @@ async fn label_field_populated_with_canonical_type() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (engine, llm, graph) = build_engine(&dir).await;
 
-    let extractor = DefaultExtractor::new(llm);
+    let extractor = IntegerIdLlmExtractor::new(llm);
     let result = engine
         .ingest_with(
             &extractor,
@@ -198,7 +198,7 @@ async fn all_entity_labels_canonical_on_org_location_text() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (engine, llm, graph) = build_engine(&dir).await;
 
-    let extractor = DefaultExtractor::new(llm);
+    let extractor = IntegerIdLlmExtractor::new(llm);
     let result = engine
         .ingest_with(&extractor, kremory::core::ingest::IngestWithParams { text: "Priya works at Google DeepMind in London and collaborates with teams in Singapore.", reference_time: None, group_id: None, content_type: None, source_params: SourceParams::default() })
         .await

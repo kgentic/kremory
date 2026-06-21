@@ -30,7 +30,9 @@ mod spike {
     use super::common::build_llm;
     use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::config::ContentType;
-    use kremory::core::extraction::{DefaultExtractor, GraphitiStyleExtractor, NuExtractExtractor};
+    use kremory::core::extraction::{
+        GraphitiStyleExtractor, IntegerIdLlmExtractor, NuExtractExtractor,
+    };
     use kremory::core::intelligence::{EntityExtractor, ExtractionContext, ExtractionResult};
 
     struct Fixture {
@@ -181,7 +183,7 @@ mod spike {
                 ex.extract(&transcript, &ctx).await
             }
             ExtractorKind::Default3Stage => {
-                let ex = DefaultExtractor::new(llm);
+                let ex = IntegerIdLlmExtractor::new(llm);
                 ex.extract(&transcript, &ctx).await
             }
         };

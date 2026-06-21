@@ -253,7 +253,7 @@ pub(crate) fn default_confidence() -> f64 {
     1.0
 }
 
-/// Entity array as emitted by the DefaultExtractor (stage 1).
+/// Entity array as emitted by the IntegerIdLlmExtractor (stage 1).
 ///
 /// `label` uses `deser_string_or_array` to tolerate LLMs (e.g. qwen2.5:14b) that
 /// emit `"label": ["Person"]` instead of `"label": "Person"`.
@@ -343,7 +343,7 @@ pub(crate) struct HybridTypingWrapper {
     pub(crate) typings: Vec<RawHybridTyping>,
 }
 
-/// Fact triplet as emitted by the DefaultExtractor (stage 3).
+/// Fact triplet as emitted by the IntegerIdLlmExtractor (stage 3).
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct RawFact {
     #[serde(default)]

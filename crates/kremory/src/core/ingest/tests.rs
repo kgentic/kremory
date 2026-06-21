@@ -27,7 +27,7 @@ impl EntityExtractor for FixedExtractor {
 }
 
 /// Build a MockChatProvider with staged responses matching the prompt substrings
-/// used by LlmExtractor, DefaultExtractor, CascadeResolver, and TwoPoolDetector.
+/// used by LlmExtractor, IntegerIdLlmExtractor, CascadeResolver, and TwoPoolDetector.
 // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
 // too_many_arguments allow); TD-042 args-as-object targets `src/` production fns,
 // not test-module builders.
@@ -55,17 +55,17 @@ fn build_mock_llm(
         r#"[{"subject":"Alice","predicate":"works_at","object":"Acme","is_entity_ref":true,"confidence":0.95}]"#.to_string(),
     );
 
-    // ── DefaultExtractor stage 1: entity extraction prompt ends with this substring ──
+    // ── IntegerIdLlmExtractor stage 1: entity extraction prompt ends with this substring ──
     map.insert(
         "Output a JSON array of objects with \"name\" and \"label\" fields.".to_string(),
         entities_json.to_string(),
     );
-    // DefaultExtractor stage 2: relation names prompt ends with this substring
+    // IntegerIdLlmExtractor stage 2: relation names prompt ends with this substring
     map.insert(
         "Output a JSON array of relationship name strings.".to_string(),
         relations_json.to_string(),
     );
-    // DefaultExtractor stage 3: triplet extraction prompt ends with this substring
+    // IntegerIdLlmExtractor stage 3: triplet extraction prompt ends with this substring
     map.insert(
         "Output a concise JSON array of objects with".to_string(),
         triplets_json.to_string(),

@@ -5,7 +5,7 @@
 
 /// Spike: Candidate A — Unified LLM extraction + proper noun safety net
 ///
-/// Tests the selected architecture: single LLM call (DefaultExtractor 3-stage)
+/// Tests the selected architecture: single LLM call (IntegerIdLlmExtractor 3-stage)
 /// followed by scan_proper_nouns() as a recall patch. Measures:
 ///   - LLM-only recall
 ///   - LLM + safety net recall (delta)
@@ -28,7 +28,7 @@ mod spike {
 
     use super::common::build_llm;
     use kremory::core::config::ContentType;
-    use kremory::core::extraction::DefaultExtractor;
+    use kremory::core::extraction::IntegerIdLlmExtractor;
     use kremory::core::intelligence::{
         EntityExtractor, ExtractedEntity, ExtractionContext, ExtractionResult,
     };
@@ -196,7 +196,7 @@ mod spike {
         );
         eprintln!("SPIKE: Candidate A — Unified LLM + Proper Noun Safety Net");
         eprintln!("Model: {model_path}");
-        eprintln!("Extractor: DefaultExtractor::unconstrained (3-stage)");
+        eprintln!("Extractor: IntegerIdLlmExtractor::unconstrained (3-stage)");
         eprintln!("Safety net: scan_proper_nouns() post-LLM");
         eprintln!("Vocab: closed defaults + Entity catch-all");
         eprintln!(
@@ -242,7 +242,7 @@ mod spike {
 
             // Phase 1: LLM extraction
             let llm_start = Instant::now();
-            let extractor = DefaultExtractor::new(llm.clone());
+            let extractor = IntegerIdLlmExtractor::new(llm.clone());
             let llm_result = extractor.extract(&text, &ctx).await;
             let llm_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
 

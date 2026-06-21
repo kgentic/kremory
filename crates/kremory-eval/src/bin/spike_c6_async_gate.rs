@@ -77,7 +77,7 @@ use kremory::{
         },
         entity_types::{EntityTypeSpec, DEFAULT_ENTITY_TYPES},
         error::{Error as KremoryCoreError, Result as KremoryCoreResult},
-        extraction::DefaultExtractor,
+        extraction::IntegerIdLlmExtractor,
         ingest::{Engine, SourceParams},
         schema::TemporalGraph,
     },
@@ -374,7 +374,7 @@ async fn run_one(
         .await
         .context("open_engine")?;
 
-    let extractor = DefaultExtractor::new(Arc::clone(&ingest_llm));
+    let extractor = IntegerIdLlmExtractor::new(Arc::clone(&ingest_llm));
     let source_params = build_source_params();
 
     // ── Phase 1 + Phase 2 ingest (hot path proxy) ───────────────────────────
@@ -515,7 +515,7 @@ async fn validate_second_fixture(
     let (graph, engine) =
         open_engine(db_path, Arc::clone(&ingest_llm), Arc::clone(&embedder)).await?;
 
-    let extractor = DefaultExtractor::new(Arc::clone(&ingest_llm));
+    let extractor = IntegerIdLlmExtractor::new(Arc::clone(&ingest_llm));
     let source_params = SourceParams::default(); // no entity type overrides for mock_interview
 
     engine

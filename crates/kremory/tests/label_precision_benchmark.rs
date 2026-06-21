@@ -33,7 +33,7 @@ use autoagents_llm::backends::ollama::Ollama;
 use autoagents_llm::builder::LLMBuilder;
 use autoagents_llm::embedding::EmbeddingBuilder;
 use kremory::core::config::PipelineConfig;
-use kremory::core::extraction::{is_canonical_entity_type, DefaultExtractor};
+use kremory::core::extraction::{is_canonical_entity_type, IntegerIdLlmExtractor};
 use kremory::core::ingest::{Engine, SourceParams};
 use kremory::core::schema::TemporalGraph;
 use serde::Deserialize;
@@ -321,7 +321,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     };
 
     // Run extraction with one of:
-    //   - DefaultExtractor (LLM, default)
+    //   - IntegerIdLlmExtractor (LLM, default)
     //   - GlinerExtractor (TD-022 GLiNER only, KREMORY_BENCH_USE_GLINER=1)
     //   - GlinerLlmExtractor (TD-023 GLiNER + 1 LLM typing call, KREMORY_BENCH_USE_HYBRID=1)
     let ingest_result = if use_hybrid {
@@ -377,7 +377,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             )
         }
     } else {
-        let extractor = DefaultExtractor::new(Arc::clone(&llm));
+        let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
         engine
             .ingest_with(
                 &extractor,
@@ -699,7 +699,7 @@ async fn label_precision_haiku_on_mock_interview() {
         .build()
         .expect("PipelineConfig default");
 
-    let extractor = DefaultExtractor::new(Arc::clone(&llm));
+    let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
     let engine = Engine::new(kremory::core::ingest::EngineNewParams {
         graph: Arc::clone(&graph),
         llm,
