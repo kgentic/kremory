@@ -495,6 +495,22 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 }));
             }
 
+            // F1 (ADR adr-memory-builder-gliner-allowlist-fail-loud): GLiNER is a
+            // closed-vocabulary model — an empty allowed_entity_types (the builder
+            // default) makes GlinerExtractor reject ALL candidates → silent zero
+            // extraction. This was the one quiet cell in an otherwise loud-at-build
+            // matrix. Fail loud, naming the fix (llm-output-parse-loudly: never
+            // silently default-to-nothing).
+            #[cfg(feature = "ner")]
+            if self.use_gliner && self.allowed_entity_types.is_empty() {
+                return Err(MemoryError::Core(CoreError::BuilderConflict {
+                    detail: "GLiNER needs an entity-type allowlist; call \
+                             .allowed_entity_types(DEFAULT_ENTITY_TYPES…) — an empty \
+                             list rejects all candidates (silent zero extraction)"
+                        .into(),
+                }));
+            }
+
             // Row 2: LLM only → Llm extractor (default open_graph path)
             // Row 3: LLM + gliner → GlinerLlm extractor
             // Row 5/6 (with LLM): custom extractor wins, LLM still available

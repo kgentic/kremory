@@ -319,15 +319,17 @@ pub async fn search(params: SearchParams<'_>) -> Result<Vec<RetrievedContext>> {
         namespace,
         opts,
     } = params;
-    // Story #318: `as_of` is reserved for bi-temporal point-in-time queries;
-    // not yet implemented in v0.1.0. Log a warning so callers know their
-    // filter is being ignored rather than silently mis-applied.
+    // F4 (ADR adr-memory-builder-as-of-fail-loud / DENT-001): `as_of` point-in-time
+    // recall is declared but not yet implemented in SQL. Previously this silently
+    // no-op'd (warn + current-state results) — the worst footgun on a bi-temporal
+    // engine. Fail loud HERE at the consumption point so the guard covers BOTH the
+    // `.as_of()` setter AND the `.opts(SearchOpts{as_of})` escape hatch (one guard,
+    // not one of N setters — load-bearing-invariants-at-emit-not-prompt). Real SQL
+    // impl is parked as tech-debt; until then the surface must not lie.
     if opts.as_of.is_some() {
-        tracing::warn!(
-            as_of = ?opts.as_of,
-            "kremory.search.as_of: point-in-time filter not implemented in v0.1.0; \
-             field ignored — returning current-state results"
-        );
+        return Err(MemoryError::Core(crate::core::error::Error::Unsupported {
+            feature: "as_of point-in-time recall",
+        }));
     }
     graph
         .graph_search(GraphSearchParams {
@@ -1052,10 +1054,14 @@ mod tests {
         assert_eq!(resolved_fallback, now);
     }
 
-    /// Story #318 AC: search() emits tracing::warn! when opts.as_of is Some.
-    /// This test verifies the code path compiles and executes without panic.
+    /// F4 (ADR adr-memory-builder-as-of-fail-loud): search() FAILS LOUD when
+    /// opts.as_of is Some — point-in-time recall is declared-but-unimplemented,
+    /// so a silent no-op (the old Story #318 warn-only behaviour) is replaced by
+    /// `Err(Error::Unsupported)`. Rewritten (not deleted) from
+    /// `as_of_emits_v010_warn` per treat-cause-not-symptom: the test now asserts
+    /// the corrected behaviour rather than locking the footgun.
     #[tokio::test]
-    async fn as_of_emits_v010_warn() {
+    async fn as_of_errors_unsupported() {
         use chrono::Utc;
         let graph = StubGraphHandle::default();
         let namespace = Namespace::new("ws-as-of");
@@ -1064,14 +1070,18 @@ mod tests {
             as_of: Some(Utc::now()),
             source_kind: None,
         };
-        // Should not panic; warn is emitted internally, results still returned
-        let _hits = search(SearchParams {
+        let result = search(SearchParams {
             graph: &graph,
             query: "test",
             namespace,
             opts,
         })
-        .await
-        .expect("as_of warn path must not fail");
+        .await;
+        match result {
+            Err(MemoryError::Core(crate::core::error::Error::Unsupported { feature })) => {
+                assert_eq!(feature, "as_of point-in-time recall");
+            }
+            other => panic!("as_of must fail loud with Error::Unsupported, got: {other:?}"),
+        }
     }
 }

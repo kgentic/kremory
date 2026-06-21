@@ -168,3 +168,32 @@ async fn row3_gliner_without_llm_returns_err() {
         "expected BuilderConflict about GLiNER needing LLM, got: {detail}"
     );
 }
+
+// ── F1 (ner-gated): gliner + LLM but EMPTY allowed_entity_types → Err ─────────
+//
+// ADR adr-memory-builder-gliner-allowlist-fail-loud. GLiNER is closed-vocabulary;
+// an empty allowlist (the builder default) silently rejects ALL candidates. The
+// build() guard fires BEFORE GlinerLlmExtractor::new, so this test does not load
+// the ~650MB model.
+
+#[cfg(feature = "ner")]
+#[tokio::test]
+async fn gliner_empty_allowlist_errs_at_build() {
+    let result = Memory::open(unique_db("gliner_empty_allowlist"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_gliner(kremory::core::extraction::GlinerConfig::default())
+        // deliberately NO .allowed_entity_types(...) — the default empty list
+        .await;
+
+    let Err(err) = result else {
+        panic!("gliner + empty allowlist must fail loud (silent zero extraction otherwise)");
+    };
+    let detail = err.to_string();
+    assert!(
+        detail.contains("allowlist")
+            || detail.contains("rejects all")
+            || detail.contains("BuilderConflict"),
+        "expected BuilderConflict about empty entity-type allowlist, got: {detail}"
+    );
+}
