@@ -254,6 +254,16 @@ pub enum Error {
     )]
     ContradictionOverflow { count: usize, ceiling: usize },
 
+    // ── Unsupported feature (DX hardening, F4 / ADR as-of-fail-loud) ──────────
+    /// A surfaced API knob was invoked for a capability that is declared but not
+    /// yet implemented, so the call would otherwise silently no-op. `feature`
+    /// names the capability (e.g. "as_of point-in-time recall"). Fail-loud
+    /// replaces silent no-op: callers learn at call time rather than shipping
+    /// code that believes the filter applied. Enforced at the consumption point
+    /// (e.g. `memory::search`) so it covers every setter path, not one of N.
+    #[error("unsupported feature: {feature} is not yet implemented")]
+    Unsupported { feature: &'static str },
+
     // ── ADR-029c multi-namespace recall (v0.1.5) ─────────────────────────────
     /// Both `in_namespace` and `in_namespaces` were set on the same
     /// `RecallRequest`. These selectors are mutually exclusive — use one or
