@@ -1051,7 +1051,7 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
     // NOTE: entity_type_id flow-through assertions are validated by
     // label_precision_benchmark (live qwen2.5:14b) — the mock extraction
     // path here cannot reproduce the real registry → L3 validation flow
-    // because the JSON mock format does not match NuExtractExtractor's
+    // because the JSON mock format does not match the default extractor's
     // parser. The substrate invariant covered by THIS test is the
     // registry-population side (override → upsert → DB has rows).
 

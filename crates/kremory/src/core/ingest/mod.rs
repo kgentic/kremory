@@ -907,8 +907,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     }
 
     /// Full pipeline: text → chunk → extract → resolve → contradict → store.
-    /// Uses `NuExtractExtractor` (unified extraction template). For alternative extractors,
-    /// use `ingest_with()`.
+    /// Uses the engine's configured `EntityExtractor`. For a caller-supplied
+    /// extractor, use `ingest_with()`.
     pub async fn ingest(&self, params: IngestParams<'_>) -> Result<IngestionResult> {
         let IngestParams {
             text,
