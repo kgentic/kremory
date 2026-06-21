@@ -99,6 +99,11 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Keep callbacks fast (sub-millisecond ideal, sub-100 ms absolute ceiling).
     ///
     /// Refs: ADR-052 Gap 1; impl spec §3 Phase 2 `Memory::with_sink` DoD item.
+    #[deprecated(
+        since = "0.2.5",
+        note = "use `.with_event_sink(Arc::new(sink))` — one stem for sink wiring \
+                per F7 / spec memory-builder-dx-hardening-2026-06-20. Removed in a later breaking release."
+    )]
     pub fn with_sink(mut self, sink: impl EnrichmentEventSink + Send + Sync + 'static) -> Self {
         self.default_sink = Some(Arc::new(sink));
         self
@@ -264,6 +269,59 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 }
 
+// ── Token-tracking knob (F3 / ADR adr-memory-builder-tracking-as-knob) ────────
+
+impl<E> MemoryBuilder<WithLlm, E> {
+    /// Wrap the configured LLM in token + cost tracking instrumentation.
+    ///
+    /// Composable-knob form of the (deprecated) `with_llm_tracked`: configure the
+    /// provider once via [`with_llm`](MemoryBuilder::with_llm), then add
+    /// observability as a separate step — one mental model, one arg shape. Emits
+    /// `kremory_core_tokens_total`, `kremory_core_cost_usd_total`, and
+    /// `kremory_core_chat_duration_seconds`. The `provider` / `model` labels must
+    /// match `monitoring/provider-rates.toml` for cost counters to be non-zero.
+    ///
+    /// `provider` / `model` are metric-attribution labels (e.g. `"openai"`,
+    /// `"gpt-4o-mini"`).
+    ///
+    /// # Call once
+    ///
+    /// Wraps the *current* LLM; calling twice nests trackers (double-counts).
+    /// Wire `with_llm(...).with_token_tracking(...)` exactly once.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kremory::Memory;
+    /// # async fn ex(
+    /// #     my_llm: std::sync::Arc<dyn kremory::memory::ChatProvider>,
+    /// #     my_embedder: std::sync::Arc<dyn kremory::DynEmbeddingProvider>,
+    /// # ) -> kremory::memory::Result<()> {
+    /// let memory = Memory::open("./agent.db")
+    ///     .with_llm(my_llm)
+    ///     .with_token_tracking("openai", "gpt-4o-mini")
+    ///     .with_embedder(my_embedder)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_token_tracking(
+        mut self,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        if let Some(llm) = self.llm.take() {
+            let wrapped = TokenTrackingChatProvider::new(
+                crate::core::provider::ArcChatProvider::new(llm),
+                provider,
+                model,
+            );
+            self.llm = Some(Arc::new(wrapped));
+        }
+        self
+    }
+}
+
 /// Bundled parameters for [`MemoryBuilder::with_llm_tracked`] — args-as-object
 /// per TD-042 (rust-conventions §too_many_arguments). The generic `llm: L`
 /// stays a lead positional param; the two label strings are bundled here.
@@ -364,6 +422,11 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        since = "0.2.5",
+        note = "use `with_llm(llm).with_token_tracking(provider, model)` — composable knob \
+                per ADR adr-memory-builder-tracking-as-knob. Removed in a later breaking release."
+    )]
     pub fn with_llm_tracked<L: ChatProvider + Send + Sync + 'static>(
         self,
         params: WithLlmTrackedParams,
