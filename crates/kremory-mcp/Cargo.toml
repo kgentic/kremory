@@ -8,12 +8,22 @@ edition = "2021"
 #
 # Per ADR-Phase-D.0 §"rqlm-mcp tool surface" + master plan §3 D.4: this
 # crate is the bridge between MCP clients (e.g. aidocs in
-# kgentic-marketplace) and the kremory SDK. Lives in this workspace because
-# it depends on path = "../kremory".
+# kgentic-marketplace) and the kremory SDK.
 #
-# D.4 (this slice) ships the SCAFFOLD: tool registration, JSON parameter
-# shapes, error contract pins. Handler BODIES return "pending D.4b" errors
-# until kremory::memory's D.2b lands the real RqlGraph<L, Emb> wiring.
+# STATUS (verified 2026-06-21 — see TD-048): the 4 tool handlers
+# (kremory_ingest_episode / kremory_run_dream_phase / kremory_search /
+# kremory_context_block) are FULLY WIRED to real kremory::memory functions —
+# NOT "pending D.4b" stubs (the earlier comment here was stale doc-rot).
+#
+# It does NOT build while workspace-EXCLUDED: Cargo `[patch.crates-io]`
+# (root Cargo.toml redirects autoagents-llm → git AutoAgents@main, which carries
+# ChatProvider::model()) applies ONLY to the workspace it is declared in.
+# Excluded → this crate resolves crates.io autoagents-llm 0.3.7 (no .model())
+# → `kremory` lib fails to compile (E0599/E0407, 25 errors). The remaining
+# "D.4b" work is therefore a workspace-MEMBERSHIP step, not handler work:
+# re-add `crates/kremory-mcp` to root `members` so it inherits the patch +
+# shared lock, then run /quality-gate. (SamplingChatProvider / harness-sampled
+# mode lands here too — see adr-harness-sampled-llm-via-mcp-sampling.)
 
 [lib]
 name = "kremory_mcp"
