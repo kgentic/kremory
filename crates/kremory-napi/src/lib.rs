@@ -917,15 +917,16 @@ async fn open_with_js_embedder(
     if let Some(handle) = extractor_handle {
         builder =
             builder.with_extractor(Arc::new(bridge::ExternalExtractorJs::from_handle(handle)));
-    } else if let Some(cfg) = gliner_cfg {
+    } else if gliner_cfg.is_some() {
         // GLiNER requires ner feature; already checked in open().
+        // F2: with_gliner() takes no arg (GlinerConfig had no public fields) — the
+        // presence of opts.gliner is the enable signal; its contents are unused.
         #[cfg(feature = "ner")]
         {
-            builder = builder.with_gliner(cfg.into());
+            builder = builder.with_gliner();
         }
         #[cfg(not(feature = "ner"))]
         {
-            let _ = cfg;
             return Err(napi::Error::from_reason(
                 "KremoryError::FeatureDisabled('ner'): opts.gliner requires --features ner",
             ));

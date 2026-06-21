@@ -43,12 +43,15 @@ use crate::core::provider::{chat_msg_user, ChatProvider};
 
 /// Builder-time configuration for the GLiNER candidate-generation extractor.
 ///
-/// Currently has no public knobs — reserved for future tuning fields such as
-/// threshold, model path, batch size per ADR-039 §A6 deferred architecture
-/// path X. Consumers pass `GlinerConfig::default()` to `with_gliner()` to
-/// preserve the spec'd signature shape while leaving the knob surface forward-
-/// compatible.
+/// **Hidden (F2):** `with_gliner()` is now a no-arg knob, so this type has no
+/// constructor or consumer. Kept (not deleted) as the ADR-039 §A6 forward-compat
+/// placeholder + the `kremory-napi` `GlinerConfigJs` doc-mirror target. When real
+/// tuning fields land (threshold, model path, batch size), un-hide this and add a
+/// `with_gliner_config(GlinerConfig)` knob — both non-breaking. `#[doc(hidden)]`
+/// keeps it off the consumer-visible surface so F2's "do-nothing config" smell is
+/// fully removed.
 #[cfg(feature = "ner")]
+#[doc(hidden)]
 #[derive(Debug, Default, Clone)]
 pub struct GlinerConfig {
     // Reserved for future tuning knobs (threshold, model path, batch size).

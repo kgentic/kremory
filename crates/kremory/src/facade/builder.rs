@@ -168,10 +168,13 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Without `.with_llm()`, the builder errors at build time — GLiNER candidate-gen
     /// still requires one LLM call for entity-type classification.
     ///
-    /// `_config` is reserved for future tuning knobs (threshold, model path, batch size)
-    /// per ADR-039 §A6 deferred architecture path X. Currently has no public fields.
+    /// Takes no argument (F2): `GlinerConfig` had no public fields, so requiring
+    /// it was a do-nothing parameter that forced consumers to construct a useless
+    /// value. When real tuning knobs are added later (threshold, model path,
+    /// batch size per ADR-039 §A6), a separate `with_gliner_config(GlinerConfig)`
+    /// knob will be added non-breakingly.
     #[cfg(feature = "ner")]
-    pub fn with_gliner(mut self, _config: crate::core::extraction::GlinerConfig) -> Self {
+    pub fn with_gliner(mut self) -> Self {
         self.use_gliner = true;
         self
     }
