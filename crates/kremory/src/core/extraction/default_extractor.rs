@@ -20,19 +20,19 @@ use crate::core::intelligence::{
 };
 use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
 
-// ─── DefaultExtractor ─────────────────────────────────────────────────────────
+// ─── IntegerIdLlmExtractor ─────────────────────────────────────────────────────────
 
-pub struct DefaultExtractor<L: ChatProvider> {
+pub struct IntegerIdLlmExtractor<L: ChatProvider> {
     llm: Arc<L>,
 }
 
-impl<L: ChatProvider> DefaultExtractor<L> {
+impl<L: ChatProvider> IntegerIdLlmExtractor<L> {
     pub fn new(llm: Arc<L>) -> Self {
         Self { llm }
     }
 }
 
-impl<L: ChatProvider> EntityExtractor for DefaultExtractor<L> {
+impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
     fn name(&self) -> &'static str {
         "default"
     }

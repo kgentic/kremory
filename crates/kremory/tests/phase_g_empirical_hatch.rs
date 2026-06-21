@@ -47,7 +47,7 @@ use autoagents_llm::builder::LLMBuilder;
 use autoagents_llm::embedding::EmbeddingBuilder;
 use kremory::core::config::PipelineConfig;
 use kremory::core::entity_types::DEFAULT_ENTITY_TYPES;
-use kremory::core::extraction::{is_canonical_entity_type, DefaultExtractor};
+use kremory::core::extraction::{is_canonical_entity_type, IntegerIdLlmExtractor};
 use kremory::core::ingest::{DreamPassOpts, Engine, SourceParams};
 use kremory::core::schema::TemporalGraph;
 use serde::Deserialize;
@@ -233,7 +233,7 @@ where
         #[cfg(not(feature = "ner"))]
         panic!("KREMORY_BENCH_USE_HYBRID=1 requires --features ner")
     } else {
-        let extractor = DefaultExtractor::new(Arc::clone(&llm));
+        let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
         engine
             .ingest_with(
                 &extractor,
@@ -431,7 +431,7 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
         .unwrap_or(false);
     if !use_hybrid {
         eprintln!(
-            "INFO: KREMORY_BENCH_USE_HYBRID not set — running DefaultExtractor (LLM-only). \
+            "INFO: KREMORY_BENCH_USE_HYBRID not set — running IntegerIdLlmExtractor (LLM-only). \
              G2 thresholds assume hybrid+ner config. Set KREMORY_BENCH_USE_HYBRID=1 --features ner for production config."
         );
     }
@@ -742,7 +742,7 @@ async fn phase_g_cloud_llm_gate() {
             config,
         });
 
-        // Cloud provider uses DefaultExtractor (no GLiNER hybrid — cloud inference only).
+        // Cloud provider uses IntegerIdLlmExtractor (no GLiNER hybrid — cloud inference only).
         let result = measure_pre_post(MeasureArgs {
             engine: &engine,
             llm: Arc::clone(&llm),
@@ -750,7 +750,7 @@ async fn phase_g_cloud_llm_gate() {
             fixture_key: "mock_interview",
             provider_label: &provider_label,
             pre_threshold: mock_pre_threshold,
-            use_hybrid: false, // cloud = DefaultExtractor (no hybrid)
+            use_hybrid: false, // cloud = IntegerIdLlmExtractor (no hybrid)
         })
         .await;
 

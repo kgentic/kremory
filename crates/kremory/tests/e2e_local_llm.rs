@@ -155,7 +155,7 @@ three business days after the API merge to run the full regression suite.";
             })
             .collect();
         // Engine::ingest() uses NuExtractExtractor which emits a single
-        // "nuextract" stage timing.  DefaultExtractor (3-stage) emits 3; that
+        // "nuextract" stage timing.  IntegerIdLlmExtractor (3-stage) emits 3; that
         // path is exercised by model_comparison and spike_hybrid_extractor.
         assert_eq!(
             stage_timings.len(),

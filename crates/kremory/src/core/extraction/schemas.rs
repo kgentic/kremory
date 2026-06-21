@@ -155,7 +155,7 @@ pub(crate) enum FallbackArm {
 
 // ─── Canonical schema statics (§3.3) ─────────────────────────────────────────
 
-/// Schema for entity-list responses (DefaultExtractor stage 1, Graphiti stage 1).
+/// Schema for entity-list responses (IntegerIdLlmExtractor stage 1, Graphiti stage 1).
 /// Root object with `items: [RawEntitySimple]`.
 pub(crate) static SCHEMA_ENTITY_LIST: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(EntityListWrapper)).unwrap_or_else(|e| {
@@ -234,7 +234,7 @@ pub(crate) fn entity_list_schema_with_label_enum(
     schema
 }
 
-/// Schema for relationship-type-name lists (DefaultExtractor stage 2).
+/// Schema for relationship-type-name lists (IntegerIdLlmExtractor stage 2).
 /// Root object with `items: [String]`.
 pub(crate) static SCHEMA_REL_TYPE_LIST: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(RelTypeListWrapper)).unwrap_or_else(|e| {
@@ -242,7 +242,7 @@ pub(crate) static SCHEMA_REL_TYPE_LIST: LazyLock<Value> = LazyLock::new(|| {
     })
 });
 
-/// Schema for triplet lists (DefaultExtractor stage 3).
+/// Schema for triplet lists (IntegerIdLlmExtractor stage 3).
 /// Root object with `items: [RawFact]`.
 pub(crate) static SCHEMA_TRIPLET_LIST: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(TripletListWrapper)).unwrap_or_else(|e| {

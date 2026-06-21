@@ -32,7 +32,7 @@ mod model_comparison_tests {
     use autoagents_llamacpp::LlamaCppProvider;
     use kremory::core::config::{ContentType, PipelineConfig};
     use kremory::core::extraction::{
-        DefaultExtractor, GroundedNuExtractExtractor, NuExtractExtractor,
+        GroundedNuExtractExtractor, IntegerIdLlmExtractor, NuExtractExtractor,
     };
     use kremory::core::ingest::Engine;
     use kremory::core::provider::NullEmbeddingProvider;
@@ -430,7 +430,7 @@ mod model_comparison_tests {
             embedder: Arc::new(embedder),
             config,
         });
-        let extractor = DefaultExtractor::new(llm);
+        let extractor = IntegerIdLlmExtractor::new(llm);
 
         let start = Instant::now();
         let result = rql
@@ -487,7 +487,7 @@ mod model_comparison_tests {
             embedder: Arc::new(embedder),
             config,
         });
-        let extractor = DefaultExtractor::new(llm);
+        let extractor = IntegerIdLlmExtractor::new(llm);
 
         let start = Instant::now();
         let result = rql

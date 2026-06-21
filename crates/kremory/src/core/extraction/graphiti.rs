@@ -262,9 +262,9 @@ Examples:
 - {{\"subject\": \"Alice\", \"predicate\": \"joined_in\", \"object\": \"Q2 2025\", \"is_entity_ref\": false, \"confidence\": 0.8}}")
 }
 
-// ─── Prompt builders (used by DefaultExtractor + tests) ──────────────────────
+// ─── Prompt builders (used by IntegerIdLlmExtractor + tests) ──────────────────────
 
-/// Build entity extraction prompt for the 3-stage DefaultExtractor pipeline.
+/// Build entity extraction prompt for the 3-stage IntegerIdLlmExtractor pipeline.
 pub(crate) fn build_entity_prompt(
     text: &str,
     allowed_types: &[String],
@@ -284,7 +284,7 @@ pub(crate) fn build_entity_prompt(
     )
 }
 
-/// Build relationship-type-names prompt for the 3-stage DefaultExtractor pipeline.
+/// Build relationship-type-names prompt for the 3-stage IntegerIdLlmExtractor pipeline.
 pub(crate) fn build_relation_names_prompt(
     text: &str,
     entities: &[ExtractedEntity],
@@ -308,7 +308,7 @@ pub(crate) fn build_relation_names_prompt(
     )
 }
 
-/// Build full-triplet prompt for the 3-stage DefaultExtractor pipeline.
+/// Build full-triplet prompt for the 3-stage IntegerIdLlmExtractor pipeline.
 pub(crate) fn build_triplet_prompt(
     text: &str,
     entities: &[ExtractedEntity],
