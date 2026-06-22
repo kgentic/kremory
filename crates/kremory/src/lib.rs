@@ -40,6 +40,10 @@ pub mod memory;
 
 // Convenience re-exports from core
 pub use core::error::{Error as CoreError, Result as CoreResult};
+// Custom entity-type seed registry (custom-entity-type-registry spec §5.2).
+pub use core::entity_types::{
+    EntityTypeSpec, NamespaceRegistrationError, NamespaceSeed, SeedOutcome,
+};
 pub use core::{
     BackgroundIngestor, IngestError, IngestErrorKind, IngestGuard, IngestSendError, IngestorConfig,
 };

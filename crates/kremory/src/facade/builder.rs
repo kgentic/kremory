@@ -59,6 +59,12 @@ pub struct MemoryBuilder<L, E> {
     /// `GlinerExtractor` rejects all entities — callers that activate the `ner`
     /// feature MUST supply this via [`MemoryBuilder::allowed_entity_types`].
     allowed_entity_types: Vec<String>,
+    /// Seed instruction for the DEFAULT namespace's entity-type registry,
+    /// applied at `.await` (build time) via the same catch-all + apply path as
+    /// `Memory::register_namespace_with_seed` (spec §5.2.3). Default
+    /// `NamespaceSeed::Default`. Builder-only — consumed at build; NOT stored on
+    /// `Memory`.
+    seed_registry: crate::core::entity_types::NamespaceSeed,
     /// Automatic dream-pass scheduling policy.
     /// Default: `DreamSchedule::Off` (no background task).
     dream_schedule: crate::memory::scheduler::DreamSchedule,
@@ -283,6 +289,30 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Seed the DEFAULT namespace's entity-type registry at open time
+    /// (spec custom-entity-type-registry §5.2.3).
+    ///
+    /// Applied during `.await` using the same catch-all injection + D9/D9a
+    /// apply path as [`Memory::register_namespace_with_seed`]. Only takes effect
+    /// when the default namespace has no `entity_types` rows (first open);
+    /// subsequent opens are idempotent no-ops (`Default`/`Augment`) or — for a
+    /// `Replace` whose taxonomy diverges from existing rows — a build error.
+    ///
+    /// Default: `NamespaceSeed::Default` (the standard `DEFAULT_ENTITY_TYPES`).
+    ///
+    /// # Two-knob interaction with `allowed_entity_types` (§5.12)
+    ///
+    /// Under the `ner` feature, when a `Replace`/`Augment` seed is supplied AND
+    /// [`allowed_entity_types`](Self::allowed_entity_types) was NOT explicitly
+    /// set, the extractor's allow-filter is DERIVED from the seed's type names
+    /// (every seeded name except the id=0 catch-all) and a one-time
+    /// `tracing::info!` records the derivation. An explicit `allowed_entity_types`
+    /// always wins.
+    pub fn with_seed_registry(mut self, seed: crate::core::entity_types::NamespaceSeed) -> Self {
+        self.seed_registry = seed;
+        self
+    }
+
     /// Opt-in to synchronous-extraction ergonomics: when `true`,
     /// `Memory::remember(...).await` blocks until the ADR-051 background worker
     /// has transitioned the episode to `Verified` (returns `Ok(())`) or
@@ -399,6 +429,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: false,
             allowed_entity_types: vec![],
+            seed_registry: crate::core::entity_types::NamespaceSeed::Default,
             dream_schedule: crate::memory::scheduler::DreamSchedule::Off,
             await_extraction: false,
             await_extraction_timeout: Duration::from_secs(60),
@@ -426,6 +457,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
@@ -497,6 +529,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
@@ -526,6 +559,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
@@ -560,6 +594,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
@@ -569,12 +604,91 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     }
 }
 
+/// §5.12 two-knob trap: when a `Replace`/`Augment` seed is supplied under the
+/// `ner` feature AND `allowed_entity_types` was not explicitly set, derive the
+/// filter from the seed's type names (every seeded name except the id=0
+/// catch-all) so the GLiNER allow-filter agrees with the seeded registry. An
+/// explicit `allowed_entity_types` always wins. Emits a one-time `tracing::info!`.
+///
+/// Without the `ner` feature there is no GLiNER allow-filter, so this is a
+/// no-op — but it always consumes `&mut self` so the caller's `mut self`
+/// binding is used in every cfg (no `#[allow(unused_mut)]` needed).
+fn derive_allowed_from_seed_if_unset<L, E>(builder: &mut MemoryBuilder<L, E>) {
+    // Without `ner` the param is unused; borrow it so neither `builder` nor the
+    // call site's `mut self` triggers an unused warning (no `#[allow]`).
+    #[cfg(not(feature = "ner"))]
+    let _ = &mut *builder;
+    #[cfg(feature = "ner")]
+    {
+        use crate::core::entity_types::NamespaceSeed;
+        if !builder.allowed_entity_types.is_empty() {
+            return; // explicit filter wins
+        }
+        let specs: &[crate::core::entity_types::EntityTypeSpec] = match &builder.seed_registry {
+            NamespaceSeed::Replace(s) | NamespaceSeed::Augment(s) => s,
+            NamespaceSeed::Default => return,
+        };
+        let derived: Vec<String> = specs
+            .iter()
+            .filter(|s| s.id != 0)
+            .map(|s| s.name.clone())
+            .collect();
+        if derived.is_empty() {
+            return;
+        }
+        tracing::info!(
+            target: "kremory.facade.builder",
+            derived_count = derived.len(),
+            "kremory.namespace.allowed_entity_types_derived_from_seed: deriving GLiNER \
+             allow-filter from seed type names (§5.12) — allowed_entity_types was unset"
+        );
+        builder.allowed_entity_types = derived;
+    }
+}
+
+/// Apply the builder's `seed_registry` to the DEFAULT namespace at build time
+/// (spec §5.2.3), inside a `BEGIN IMMEDIATE` txn on `tg`. The default-namespace
+/// group_id is `default_namespace`'s key when set, else `"default"` (the
+/// facade's implicit default). Errors are surfaced as `MemoryError` — a
+/// divergent `Replace` on an already-populated default namespace fails the build
+/// loud (D9), consistent with `register_namespace_with_seed`.
+async fn apply_builder_seed(
+    tg: &crate::core::schema::TemporalGraph,
+    default_namespace: Option<&Namespace>,
+    seed: &crate::core::entity_types::NamespaceSeed,
+) -> Result<()> {
+    let group_id = match default_namespace {
+        Some(ns) => crate::memory::engine_handle::namespace_to_group_id(ns),
+        None => "default".to_string(),
+    };
+    let guard = tg
+        .begin_immediate_if_needed()
+        .await
+        .map_err(MemoryError::Core)?;
+    let result = crate::core::entity_types::apply_namespace_seed(&tg.conn, &group_id, seed).await;
+    match &result {
+        Ok(_) => guard.commit().await.map_err(MemoryError::Core)?,
+        Err(_) => guard.rollback().await.map_err(MemoryError::Core)?,
+    }
+    result.map(|_| ()).map_err(|e| match e {
+        crate::core::entity_types::NamespaceRegistrationError::Store(core) => {
+            MemoryError::Core(core)
+        }
+        other => MemoryError::Other(other.to_string()),
+    })
+}
+
 impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
     type Output = Result<Memory>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
 
-    fn into_future(self) -> Self::IntoFuture {
+    fn into_future(mut self) -> Self::IntoFuture {
         Box::pin(async move {
+            // §5.12 — derive the ner allow-filter from the seed when unset.
+            // `derive_allowed_from_seed_if_unset` is a no-op without `ner` but
+            // always consumes `&mut self`, so `mut self` is used in every cfg.
+            derive_allowed_from_seed_if_unset(&mut self);
+
             // Initialize provider rates (idempotent). Errors are logged but not
             // fatal — cost counters will skip emission with a one-shot warn.
             if let Some(ref custom_path) = self.provider_rates_path {
@@ -845,6 +959,21 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 }
             };
 
+            // §5.2.3 — apply the builder seed to the default namespace at open.
+            // Skip when `Default` (preserves byte-identical existing behaviour;
+            // lazy `ensure_default_types_seeded` still fires on first ingest).
+            if !matches!(
+                self.seed_registry,
+                crate::core::entity_types::NamespaceSeed::Default
+            ) {
+                apply_builder_seed(
+                    &temporal_graph,
+                    self.default_namespace.as_ref(),
+                    &self.seed_registry,
+                )
+                .await?;
+            }
+
             Ok(Memory {
                 graph,
                 llm: Some(llm),
@@ -866,8 +995,13 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
     type Output = Result<Memory>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
 
-    fn into_future(self) -> Self::IntoFuture {
+    fn into_future(mut self) -> Self::IntoFuture {
         Box::pin(async move {
+            // §5.12 — derive the ner allow-filter from the seed when unset.
+            // `derive_allowed_from_seed_if_unset` is a no-op without `ner` but
+            // always consumes `&mut self`, so `mut self` is used in every cfg.
+            derive_allowed_from_seed_if_unset(&mut self);
+
             // Row 4: gliner set but no LLM → Err
             #[cfg(feature = "ner")]
             if self.use_gliner && self.custom_extractor.is_none() {
@@ -914,6 +1048,19 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
             )
             .await?;
 
+            // §5.2.3 — apply the builder seed to the default namespace at open.
+            if !matches!(
+                self.seed_registry,
+                crate::core::entity_types::NamespaceSeed::Default
+            ) {
+                apply_builder_seed(
+                    &temporal_graph,
+                    self.default_namespace.as_ref(),
+                    &self.seed_registry,
+                )
+                .await?;
+            }
+
             Ok(Memory {
                 graph,
                 llm: None,
@@ -928,5 +1075,97 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                 await_extraction_timeout: self.await_extraction_timeout,
             })
         })
+    }
+}
+
+// ── §5.12 two-knob derivation tests (T10) ───────────────────────────────────
+//
+// T10 verifies the `ner`-gated `with_seed_registry` → `allowed_entity_types`
+// derivation (spec §5.13). It tests `derive_allowed_from_seed_if_unset`
+// directly — the deterministic apply path the builder runs at
+// `IntoFuture::into_future` — so it needs no GLiNER model download. The
+// derivation only has observable effect under the `ner` feature (without it the
+// allow-filter is a no-op), so the whole module is `ner`-gated.
+#[cfg(all(test, feature = "ner"))]
+mod ner_seed_derivation_tests {
+    use super::*;
+    use crate::core::entity_types::{EntityTypeSpec, NamespaceSeed};
+
+    fn spec(id: u32, name: &str) -> EntityTypeSpec {
+        EntityTypeSpec {
+            id,
+            name: name.to_string(),
+            description: format!("{name} description."),
+        }
+    }
+
+    fn base_builder() -> MemoryBuilder<NoLlm, NoEmb> {
+        MemoryBuilder::new_open(std::path::PathBuf::from(":memory:"))
+    }
+
+    /// T10 — `with_seed_registry(Replace(..))` with `allowed_entity_types` unset
+    /// derives the allow-filter from the seed's type names (id=0 catch-all
+    /// excluded).
+    #[test]
+    fn t10_replace_seed_derives_allow_filter_when_unset() {
+        let mut builder = base_builder().with_seed_registry(NamespaceSeed::Replace(vec![
+            spec(11, "Court"),
+            spec(12, "Judge"),
+        ]));
+        assert!(
+            builder.allowed_entity_types.is_empty(),
+            "precondition: allow-filter unset before derivation"
+        );
+        derive_allowed_from_seed_if_unset(&mut builder);
+        let mut derived = builder.allowed_entity_types.clone();
+        derived.sort();
+        assert_eq!(
+            derived,
+            vec!["Court".to_string(), "Judge".to_string()],
+            "allow-filter must be derived from seed names, catch-all excluded"
+        );
+    }
+
+    /// T10 — `Augment(..)` seed likewise derives from its custom names (the
+    /// id=0 catch-all is never derived).
+    #[test]
+    fn t10_augment_seed_derives_custom_names_only() {
+        let mut builder = base_builder().with_seed_registry(NamespaceSeed::Augment(vec![
+            spec(11, "Court"),
+            spec(0, "Entity"),
+        ]));
+        derive_allowed_from_seed_if_unset(&mut builder);
+        assert_eq!(
+            builder.allowed_entity_types,
+            vec!["Court".to_string()],
+            "Augment must derive only the custom names; id=0 catch-all excluded"
+        );
+    }
+
+    /// T10 — an explicit `allowed_entity_types` ALWAYS wins; the seed-derived
+    /// filter must not overwrite it.
+    #[test]
+    fn t10_explicit_allow_filter_wins_over_seed_derivation() {
+        let mut builder = base_builder()
+            .allowed_entity_types(vec!["Person".to_string()])
+            .with_seed_registry(NamespaceSeed::Replace(vec![spec(11, "Court")]));
+        derive_allowed_from_seed_if_unset(&mut builder);
+        assert_eq!(
+            builder.allowed_entity_types,
+            vec!["Person".to_string()],
+            "explicit allowed_entity_types must win over seed derivation"
+        );
+    }
+
+    /// T10 — a `Default` seed derives nothing (status quo; allow-filter stays
+    /// unset for the consumer/feature to supply).
+    #[test]
+    fn t10_default_seed_derives_nothing() {
+        let mut builder = base_builder().with_seed_registry(NamespaceSeed::Default);
+        derive_allowed_from_seed_if_unset(&mut builder);
+        assert!(
+            builder.allowed_entity_types.is_empty(),
+            "Default seed must not derive an allow-filter"
+        );
     }
 }
