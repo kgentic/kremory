@@ -881,6 +881,125 @@ impl Memory {
         outcome
     }
 
+    /// Register a namespace policy + seed its entity-type registry in one atomic
+    /// operation (spec custom-entity-type-registry §5.2.2).
+    ///
+    /// Seeds the namespace's `entity_types` table per the `seed` instruction,
+    /// and registers the (default) namespace policy — both inside the SAME
+    /// `BEGIN IMMEDIATE` transaction (no TOCTOU window between policy write and
+    /// seed write; §5.8 invariant).
+    ///
+    /// # Semantics (D9 / D9a — brownfield safety)
+    ///
+    /// | namespace state         | `Default` / `Augment` | `Replace`                              |
+    /// |-------------------------|-----------------------|----------------------------------------|
+    /// | no rows (fresh)         | seed → `Seeded`       | seed → `Seeded`                        |
+    /// | has rows, seed MATCHES  | `AlreadySeeded`       | `AlreadySeeded` (D9a, idempotent boot) |
+    /// | has rows, seed DIFFERS  | `AlreadySeeded`       | `Err(AlreadyPopulated { group_id })`   |
+    ///
+    /// - id=0 "Entity" catch-all is ALWAYS present after a successful call.
+    /// - `Replace` NEVER mutates a populated namespace — it fails loud with NO
+    ///   DB write, so existing entities' `entity_type_id` can never be orphaned
+    ///   (ASMP-003). To add types to an already-populated namespace use
+    ///   [`assert_entity_type`](Self::assert_entity_type) (the sanctioned
+    ///   incremental-add path).
+    ///
+    /// This is the PREFERRED startup pattern for domain-specific namespaces:
+    /// call at startup BEFORE the first `remember()` for the target namespace.
+    /// The existing [`register_namespace`](Self::register_namespace) remains for
+    /// callers that want the default seed.
+    pub async fn register_namespace_with_seed(
+        &self,
+        namespace: Namespace,
+        seed: crate::core::entity_types::NamespaceSeed,
+    ) -> std::result::Result<
+        crate::core::entity_types::SeedOutcome,
+        crate::core::entity_types::NamespaceRegistrationError,
+    > {
+        use crate::core::entity_types::NamespaceRegistrationError;
+
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            NamespaceRegistrationError::Store(CoreError::Other(anyhow::anyhow!(
+                "Memory::register_namespace_with_seed requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+            )))
+        })?;
+
+        let policy = namespace.policy.clone().unwrap_or_default();
+        policy
+            .validate()
+            .map_err(|e| NamespaceRegistrationError::Store(CoreError::InvalidPolicy(e)))?;
+
+        let group_id = namespace_to_group_id(&namespace);
+        let is_non_default = policy != NamespacePolicy::default();
+
+        // Single BEGIN IMMEDIATE wrapping: namespace policy write + seed
+        // application. Presence check + seed live inside this txn (no TOCTOU).
+        let guard = tg
+            .begin_immediate_if_needed()
+            .await
+            .map_err(NamespaceRegistrationError::Store)?;
+
+        let outcome: std::result::Result<
+            crate::core::entity_types::SeedOutcome,
+            NamespaceRegistrationError,
+        > = async {
+            // Policy: INSERT-or-compare (mirrors register_namespace).
+            let stored = tg
+                .get_namespace_policy(&group_id)
+                .await
+                .map_err(NamespaceRegistrationError::Store)?;
+            match stored {
+                Some(existing) if existing == policy => {}
+                Some(existing) => {
+                    return Err(NamespaceRegistrationError::Store(
+                        CoreError::NamespacePolicyImmutable {
+                            namespace: group_id.clone(),
+                            stored: existing,
+                            attempted: policy.clone(),
+                        },
+                    ));
+                }
+                None => {
+                    tg.set_namespace_policy(&group_id, &policy)
+                        .await
+                        .map_err(NamespaceRegistrationError::Store)?;
+                }
+            }
+
+            // Seed (D9 / D9a) inside the same txn.
+            crate::core::entity_types::apply_namespace_seed(&tg.conn, &group_id, &seed).await
+        }
+        .await;
+
+        match &outcome {
+            Ok(_) => {
+                guard
+                    .commit()
+                    .await
+                    .map_err(NamespaceRegistrationError::Store)?;
+            }
+            Err(_) => {
+                guard
+                    .rollback()
+                    .await
+                    .map_err(NamespaceRegistrationError::Store)?;
+            }
+        }
+
+        if outcome.is_ok() && is_non_default {
+            tracing::warn!(
+                target: "kremory.namespace",
+                group_id = %group_id,
+                policy = ?policy,
+                "kremory.namespace.policy_declared: POLICY DECLARED BUT NOT \
+                 ENFORCED at v0.1.4 — enforcement lands v0.1.5+ per ADR-029b."
+            );
+        }
+
+        outcome
+    }
+
     /// Monotonically upgrade a namespace's immutability from `Mutable` to
     /// `AppendOnly` (ADR-029b Decision 5).
     ///

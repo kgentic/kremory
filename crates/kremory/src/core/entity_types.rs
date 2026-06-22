@@ -135,7 +135,7 @@ pub async fn ensure_default_types_seeded(
 ///
 /// Mirrors one row from `entity_types(group_id, id, name, description)`.
 /// id=0 is the "Entity" catch-all sentinel; all user-defined types are id ≥ 1.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityTypeSpec {
     /// Integer ID within this namespace. id=0 = "Entity" catch-all.
     pub id: u32,
@@ -143,6 +143,192 @@ pub struct EntityTypeSpec {
     pub name: String,
     /// Anti-junk description used in extraction prompts.
     pub description: String,
+}
+
+/// Canonical id=0 "Entity" catch-all spec (description matches the
+/// `DEFAULT_ENTITY_TYPES[0]` row). Injected unconditionally by
+/// [`NamespaceSeed::ensure_catch_all`] before any seed write so id=0 is always
+/// a valid `validate_or_fallback` target (spec §5.8 invariant; structural, not
+/// prompt-based).
+fn catch_all_spec() -> EntityTypeSpec {
+    let (id, name, description) = DEFAULT_ENTITY_TYPES[0];
+    EntityTypeSpec {
+        id,
+        name: name.to_string(),
+        description: description.to_string(),
+    }
+}
+
+/// Outcome of a successful namespace seed application (spec §5.2.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeedOutcome {
+    /// Seed was applied (namespace was fresh — zero rows before the call).
+    /// `rows_written` counts the seed specs written (post catch-all injection).
+    Seeded {
+        /// Number of `entity_types` rows written by this seed call.
+        rows_written: usize,
+    },
+    /// Namespace already had rows; no DB write occurred. Returned for
+    /// `Default`/`Augment` on a populated namespace, and for `Replace` on a
+    /// populated namespace whose rows EQUAL the seed (D9a match-aware idempotency).
+    AlreadySeeded,
+}
+
+/// Typed error for namespace seeding (spec §5.2.2; folds ASMP-004 — no raw
+/// libsql leakage at the registration boundary).
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum NamespaceRegistrationError {
+    /// A `Replace` seed was requested on a namespace that already has
+    /// `entity_types` rows whose taxonomy DIFFERS from the seed. `Replace` is
+    /// greenfield-only (D9): use `Augment` / `assert_entity_type`, open a fresh
+    /// namespace, or await the deferred `migrate_namespace_taxonomy` op (§5.11).
+    #[error(
+        "namespace '{group_id}' already populated — Replace is greenfield-only (D9); \
+         use Augment / assert_entity_type, a fresh namespace, or migrate_namespace_taxonomy"
+    )]
+    AlreadyPopulated {
+        /// The fully-qualified namespace key the seed targeted.
+        group_id: String,
+    },
+    /// Two specs in the seed share an id (pre-write validation,
+    /// `ensure_no_id_collision`). Caught before any DB write — no partial apply.
+    #[error("seed for namespace '{group_id}' has a duplicate entity-type id={id}")]
+    IdCollision {
+        /// The namespace the seed targeted.
+        group_id: String,
+        /// The colliding id.
+        id: u32,
+    },
+    /// Two specs in the seed share a name (pre-write validation,
+    /// `ensure_no_id_collision`). Caught before any DB write — no partial apply.
+    #[error("seed for namespace '{group_id}' has a duplicate entity-type name='{name}'")]
+    NameCollision {
+        /// The namespace the seed targeted.
+        group_id: String,
+        /// The colliding name.
+        name: String,
+    },
+    /// Underlying store error (wraps the libsql/IO error as a `CoreError`).
+    #[error("namespace seed store error: {0}")]
+    Store(#[from] crate::core::error::Error),
+}
+
+/// Seed instruction for a namespace's entity-type registry (spec §5.2.1).
+///
+/// Applied at registration time (`register_namespace_with_seed`) or build time
+/// (`with_seed_registry`, default namespace). The id=0 "Entity" catch-all is
+/// ALWAYS guaranteed via [`ensure_catch_all`](NamespaceSeed::ensure_catch_all) —
+/// the engine injects it even when `Replace` omits it.
+///
+/// This is a data enum (the seed VALUE), not a strategy-dispatch enum.
+#[derive(Debug, Clone, Default)]
+pub enum NamespaceSeed {
+    /// Use the default `DEFAULT_ENTITY_TYPES` vocabulary. Status quo.
+    #[default]
+    Default,
+    /// Seed with `specs` in ADDITION to the defaults (consumer ids should be
+    /// ≥ 11; defaults occupy 0–10). Brownfield-safe at fresh registration.
+    Augment(Vec<EntityTypeSpec>),
+    /// Seed with ONLY `specs` — replaces the defaults entirely. id=0 "Entity"
+    /// is injected by the engine if absent.
+    ///
+    /// GREENFIELD-ONLY (D9): on a populated namespace whose rows DIFFER, this
+    /// fails loud (`NamespaceRegistrationError::AlreadyPopulated`) with NO DB
+    /// write. On a populated namespace whose rows EQUAL the seed, it is
+    /// idempotent (D9a). On a fresh namespace it seeds exactly `specs`.
+    Replace(Vec<EntityTypeSpec>),
+}
+
+impl NamespaceSeed {
+    /// Ensure the id=0 "Entity" catch-all is present, prepending it when absent
+    /// (spec §5.2.1 / §5.8). Idempotent: a no-op when a spec with id=0 already
+    /// exists. Called unconditionally inside the seed-application path before
+    /// any DB write.
+    pub fn ensure_catch_all(specs: &mut Vec<EntityTypeSpec>) {
+        if specs.iter().any(|s| s.id == 0) {
+            return;
+        }
+        specs.insert(0, catch_all_spec());
+    }
+
+    /// Pre-validate a seed's specs for id and name collisions (spec §5.4),
+    /// BEFORE any DB write. Returns `Err` on the first collision — fail loud,
+    /// no partial apply. Name comparison is case-insensitive to mirror the
+    /// `label_to_id_or_register` near-duplicate convergence.
+    pub fn ensure_no_id_collision(
+        group_id: &str,
+        specs: &[EntityTypeSpec],
+    ) -> std::result::Result<(), NamespaceRegistrationError> {
+        let mut seen_ids: Vec<u32> = Vec::with_capacity(specs.len());
+        let mut seen_names: Vec<String> = Vec::with_capacity(specs.len());
+        for spec in specs {
+            if seen_ids.contains(&spec.id) {
+                return Err(NamespaceRegistrationError::IdCollision {
+                    group_id: group_id.to_string(),
+                    id: spec.id,
+                });
+            }
+            let lower = spec.name.to_ascii_lowercase();
+            if seen_names.contains(&lower) {
+                return Err(NamespaceRegistrationError::NameCollision {
+                    group_id: group_id.to_string(),
+                    name: spec.name.clone(),
+                });
+            }
+            seen_ids.push(spec.id);
+            seen_names.push(lower);
+        }
+        Ok(())
+    }
+
+    /// Resolve this seed to the concrete `Vec<EntityTypeSpec>` to apply on a
+    /// FRESH namespace, with the catch-all injected and collisions pre-checked.
+    ///
+    /// - `Default` → the full `DEFAULT_ENTITY_TYPES` vocabulary.
+    /// - `Augment(specs)` → defaults + `specs` (deduplicated by id; `specs` win).
+    /// - `Replace(specs)` → only `specs` (+ catch-all if absent).
+    ///
+    /// `mode_label` returns the metric label for `seed_applied_total{mode}`.
+    pub(crate) fn resolve_specs(
+        &self,
+        group_id: &str,
+    ) -> std::result::Result<(Vec<EntityTypeSpec>, &'static str), NamespaceRegistrationError> {
+        let (mut specs, mode) = match self {
+            NamespaceSeed::Default => (default_specs(), "default"),
+            NamespaceSeed::Augment(extra) => {
+                Self::ensure_no_id_collision(group_id, extra)?;
+                let mut combined = default_specs();
+                for spec in extra {
+                    // Augment: extra specs override a default sharing the same id.
+                    if let Some(existing) = combined.iter_mut().find(|s| s.id == spec.id) {
+                        *existing = spec.clone();
+                    } else {
+                        combined.push(spec.clone());
+                    }
+                }
+                (combined, "augment")
+            }
+            NamespaceSeed::Replace(specs) => {
+                Self::ensure_no_id_collision(group_id, specs)?;
+                (specs.clone(), "replace")
+            }
+        };
+        Self::ensure_catch_all(&mut specs);
+        Ok((specs, mode))
+    }
+}
+
+/// The `DEFAULT_ENTITY_TYPES` vocabulary materialised as owned specs.
+fn default_specs() -> Vec<EntityTypeSpec> {
+    DEFAULT_ENTITY_TYPES
+        .iter()
+        .map(|(id, name, description)| EntityTypeSpec {
+            id: *id,
+            name: name.to_string(),
+            description: description.to_string(),
+        })
+        .collect()
 }
 
 /// Per-namespace entity type registry.
@@ -616,6 +802,181 @@ pub async fn upsert_entity_types(
         inserted += 1;
     }
     Ok(inserted)
+}
+
+/// Apply a [`NamespaceSeed`] to `group_id` (spec §5.2.2 — D9 / D9a logic).
+///
+/// **The caller MUST hold an open `BEGIN IMMEDIATE` transaction** on `conn`
+/// (the facade wraps this with the namespace-policy write in ONE txn so there is
+/// no TOCTOU window between the presence check and the write — §5.8 invariant).
+///
+/// Semantics:
+/// - Fresh namespace (zero rows): seed exactly the resolved specs → `Seeded`.
+/// - Populated + `Default`/`Augment`: no write → `AlreadySeeded`.
+/// - Populated + `Replace` whose rows EQUAL the seed (id/name/description set,
+///   catch-all-aware): no write → `AlreadySeeded` (D9a).
+/// - Populated + `Replace` whose rows DIFFER: `Err(AlreadyPopulated)`, NO write
+///   (D9 — existing `entity_type_id`s can never be orphaned; ASMP-003).
+///
+/// id=0 "Entity" catch-all is always present in the resolved specs (§5.8).
+/// Emits the §5.10 seed observability counters.
+pub async fn apply_namespace_seed(
+    conn: &libsql::Connection,
+    group_id: &str,
+    seed: &NamespaceSeed,
+) -> std::result::Result<SeedOutcome, NamespaceRegistrationError> {
+    // Resolve specs (pre-write collision check + catch-all injection inside).
+    let had_catch_all = seed_has_catch_all(seed);
+    let (resolved, mode) = seed.resolve_specs(group_id)?;
+    if !had_catch_all {
+        counter!(
+            "kremory.namespace.seed_catch_all_injected_total",
+            "group_id" => group_id.to_string()
+        )
+        .increment(1);
+    }
+
+    // Presence check INSIDE the caller's BEGIN IMMEDIATE txn (no TOCTOU).
+    let existing = load_specs_in_txn(conn, group_id).await?;
+
+    if !existing.is_empty() {
+        // Populated namespace.
+        match seed {
+            NamespaceSeed::Replace(_) => {
+                if specs_equal(&existing, &resolved) {
+                    // D9a — match-aware idempotency: identical taxonomy → quiet.
+                    counter!(
+                        "kremory.namespace.seed_skipped_already_seeded_total",
+                        "group_id" => group_id.to_string()
+                    )
+                    .increment(1);
+                    return Ok(SeedOutcome::AlreadySeeded);
+                }
+                // D9 — divergent Replace on a populated namespace fails loud, NO write.
+                return Err(NamespaceRegistrationError::AlreadyPopulated {
+                    group_id: group_id.to_string(),
+                });
+            }
+            NamespaceSeed::Default | NamespaceSeed::Augment(_) => {
+                // Idempotent open: preserve existing taxonomy, no write.
+                counter!(
+                    "kremory.namespace.seed_skipped_already_seeded_total",
+                    "group_id" => group_id.to_string()
+                )
+                .increment(1);
+                return Ok(SeedOutcome::AlreadySeeded);
+            }
+        }
+    }
+
+    // Fresh namespace: write the resolved specs.
+    let mut rows_written = 0usize;
+    for spec in &resolved {
+        conn.execute(
+            "INSERT OR IGNORE INTO entity_types (group_id, id, name, description) \
+             VALUES (?1, ?2, ?3, ?4)",
+            libsql::params![
+                group_id,
+                spec.id as i64,
+                spec.name.clone(),
+                spec.description.clone()
+            ],
+        )
+        .await
+        .map_err(|e| {
+            NamespaceRegistrationError::Store(crate::core::error::Error::Other(anyhow::anyhow!(
+                "apply_namespace_seed insert failed (id={}, group_id={group_id}): {e}",
+                spec.id
+            )))
+        })?;
+        rows_written += 1;
+    }
+
+    counter!(
+        "kremory.namespace.seed_applied_total",
+        "group_id" => group_id.to_string(),
+        "mode" => mode,
+        "types_count" => rows_written.to_string()
+    )
+    .increment(1);
+
+    Ok(SeedOutcome::Seeded { rows_written })
+}
+
+/// Whether the seed's specs already carry an id=0 catch-all (so the injected
+/// counter only fires when one was actually synthesised). `Default` always has
+/// id=0 in `DEFAULT_ENTITY_TYPES`; `Augment` carries the defaults too.
+fn seed_has_catch_all(seed: &NamespaceSeed) -> bool {
+    match seed {
+        NamespaceSeed::Default | NamespaceSeed::Augment(_) => true,
+        NamespaceSeed::Replace(specs) => specs.iter().any(|s| s.id == 0),
+    }
+}
+
+/// Load the full `entity_types` slice for `group_id` as owned specs, used for
+/// the D9a match-aware compare. Runs on the caller's (possibly in-txn) `conn`.
+async fn load_specs_in_txn(
+    conn: &libsql::Connection,
+    group_id: &str,
+) -> std::result::Result<Vec<EntityTypeSpec>, NamespaceRegistrationError> {
+    let mut rows = conn
+        .query(
+            "SELECT id, name, description FROM entity_types WHERE group_id = ?1 ORDER BY id ASC",
+            libsql::params![group_id],
+        )
+        .await
+        .map_err(|e| {
+            NamespaceRegistrationError::Store(crate::core::error::Error::Other(anyhow::anyhow!(
+                "apply_namespace_seed presence query failed for group_id={group_id}: {e}"
+            )))
+        })?;
+    let mut specs = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| {
+        NamespaceRegistrationError::Store(crate::core::error::Error::Other(anyhow::anyhow!(
+            "apply_namespace_seed presence row read failed: {e}"
+        )))
+    })? {
+        let id: i64 = row.get(0).map_err(|e| {
+            NamespaceRegistrationError::Store(crate::core::error::Error::Other(anyhow::anyhow!(
+                "apply_namespace_seed id read failed: {e}"
+            )))
+        })?;
+        if id < 0 {
+            continue;
+        }
+        let name: String = row.get(1).map_err(|e| {
+            NamespaceRegistrationError::Store(crate::core::error::Error::Other(anyhow::anyhow!(
+                "apply_namespace_seed name read failed: {e}"
+            )))
+        })?;
+        let description: String = row.get(2).map_err(|e| {
+            NamespaceRegistrationError::Store(crate::core::error::Error::Other(anyhow::anyhow!(
+                "apply_namespace_seed description read failed: {e}"
+            )))
+        })?;
+        specs.push(EntityTypeSpec {
+            id: id as u32,
+            name,
+            description,
+        });
+    }
+    Ok(specs)
+}
+
+/// Compare two spec sets for D9a match-aware idempotency: same id/name/description
+/// set, order-independent. Both inputs come from id-ascending sources.
+fn specs_equal(a: &[EntityTypeSpec], b: &[EntityTypeSpec]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut a_sorted: Vec<&EntityTypeSpec> = a.iter().collect();
+    let mut b_sorted: Vec<&EntityTypeSpec> = b.iter().collect();
+    a_sorted.sort_by_key(|s| s.id);
+    b_sorted.sort_by_key(|s| s.id);
+    a_sorted
+        .iter()
+        .zip(b_sorted.iter())
+        .all(|(x, y)| x.id == y.id && x.name == y.name && x.description == y.description)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1401,5 +1762,323 @@ mod tests {
             "placeholder labels must NOT add rows; expected {} got {count_after}",
             DEFAULT_ENTITY_TYPES.len()
         );
+    }
+
+    // ── Custom entity-type seed registry (spec §5.13 T1–T9, T11) ────────────
+    //
+    // Deterministic, no live LLM. Covers ensure_catch_all / ensure_no_id_collision
+    // (unit) and apply_namespace_seed (in-process integration over a migrated
+    // in-memory connection). T10 (builder + ner allow-filter derivation) lives in
+    // tests/seed_registry_ner.rs (needs the builder + the `ner` feature).
+
+    fn spec(id: u32, name: &str) -> EntityTypeSpec {
+        EntityTypeSpec {
+            id,
+            name: name.to_string(),
+            description: format!("{name} description."),
+        }
+    }
+
+    /// Load the rows for a group as id-ascending specs (for snapshot asserts).
+    async fn load_rows(conn: &libsql::Connection, group_id: &str) -> Vec<EntityTypeSpec> {
+        load_specs_in_txn(conn, group_id)
+            .await
+            .expect("load_specs_in_txn")
+    }
+
+    /// T1 — `ensure_catch_all` injects id=0 "Entity" when a Replace seed omits it.
+    #[test]
+    fn t1_ensure_catch_all_injects_when_absent() {
+        let mut specs = vec![spec(11, "Court"), spec(12, "Judge")];
+        NamespaceSeed::ensure_catch_all(&mut specs);
+        assert!(
+            specs.iter().any(|s| s.id == 0 && s.name == "Entity"),
+            "ensure_catch_all must inject id=0 'Entity' when absent"
+        );
+        // Prepended at index 0.
+        assert_eq!(specs[0].id, 0, "catch-all must be prepended at index 0");
+        assert_eq!(specs.len(), 3, "court + judge + injected catch-all = 3");
+    }
+
+    /// T2 — `ensure_catch_all` is a no-op when id=0 is already present.
+    #[test]
+    fn t2_ensure_catch_all_noop_when_present() {
+        let mut specs = vec![spec(0, "Entity"), spec(11, "Court")];
+        let before = specs.clone();
+        NamespaceSeed::ensure_catch_all(&mut specs);
+        assert_eq!(
+            specs, before,
+            "ensure_catch_all must be a no-op when id=0 already present"
+        );
+        assert_eq!(specs.iter().filter(|s| s.id == 0).count(), 1);
+    }
+
+    /// T3 — `ensure_no_id_collision` returns `Err(IdCollision)` on duplicate id.
+    #[test]
+    fn t3_ensure_no_id_collision_dup_id() {
+        let specs = vec![spec(11, "Court"), spec(11, "Tribunal")];
+        let err = NamespaceSeed::ensure_no_id_collision("legal", &specs)
+            .expect_err("duplicate id must error");
+        match err {
+            NamespaceRegistrationError::IdCollision { group_id, id } => {
+                assert_eq!(group_id, "legal");
+                assert_eq!(id, 11);
+            }
+            other => panic!("expected IdCollision, got {other:?}"),
+        }
+    }
+
+    /// T4 — `ensure_no_id_collision` returns `Err(NameCollision)` on duplicate name.
+    #[test]
+    fn t4_ensure_no_id_collision_dup_name() {
+        let specs = vec![spec(11, "Court"), spec(12, "court")]; // case-insensitive
+        let err = NamespaceSeed::ensure_no_id_collision("legal", &specs)
+            .expect_err("duplicate name must error");
+        match err {
+            NamespaceRegistrationError::NameCollision { group_id, name } => {
+                assert_eq!(group_id, "legal");
+                assert_eq!(name, "court");
+            }
+            other => panic!("expected NameCollision, got {other:?}"),
+        }
+    }
+
+    /// T3b — IdCollision is caught BEFORE any DB write (no partial apply).
+    #[tokio::test]
+    async fn t3b_id_collision_no_db_write() {
+        let conn = open_migrated_conn().await;
+        let seed = NamespaceSeed::Replace(vec![spec(11, "Court"), spec(11, "Tribunal")]);
+        let err = apply_namespace_seed(&conn, "legal", &seed)
+            .await
+            .expect_err("collision must error");
+        assert!(matches!(
+            err,
+            NamespaceRegistrationError::IdCollision { .. }
+        ));
+        assert_eq!(
+            count_rows(&conn, "legal").await,
+            0,
+            "no rows must be written when a collision is detected"
+        );
+    }
+
+    /// T5 — `Replace` on a FRESH namespace → `Seeded`, exactly the seeded rows
+    /// (+ injected catch-all) present.
+    #[tokio::test]
+    async fn t5_replace_fresh_namespace_seeded() {
+        let conn = open_migrated_conn().await;
+        let seed = NamespaceSeed::Replace(vec![spec(11, "Court"), spec(12, "Judge")]);
+        let outcome = apply_namespace_seed(&conn, "legal", &seed)
+            .await
+            .expect("replace on fresh namespace");
+        match outcome {
+            SeedOutcome::Seeded { rows_written } => assert_eq!(rows_written, 3),
+            other => panic!("expected Seeded, got {other:?}"),
+        }
+        let rows = load_rows(&conn, "legal").await;
+        let ids: Vec<u32> = rows.iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec![0, 11, 12], "catch-all + Court + Judge");
+        assert!(
+            rows.iter().any(|s| s.id == 0 && s.name == "Entity"),
+            "catch-all must be present after Replace"
+        );
+    }
+
+    /// T6 (load-bearing, D9 / ASMP-003 regression) — `Replace` on a POPULATED
+    /// namespace with a DIFFERENT taxonomy → `Err(AlreadyPopulated)`, and the
+    /// table is BYTE-IDENTICAL before/after (no DB write, no orphaning).
+    #[tokio::test]
+    async fn t6_replace_populated_divergent_fails_loud_no_write() {
+        let conn = open_migrated_conn().await;
+        // Seed once (fresh).
+        apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Replace(vec![spec(11, "Court"), spec(12, "Judge")]),
+        )
+        .await
+        .expect("initial seed");
+        let snapshot_before = load_rows(&conn, "legal").await;
+
+        // Divergent Replace must fail loud with no write.
+        let err = apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Replace(vec![spec(11, "Drug"), spec(12, "Condition")]),
+        )
+        .await
+        .expect_err("divergent Replace on populated namespace must fail loud");
+        match err {
+            NamespaceRegistrationError::AlreadyPopulated { group_id } => {
+                assert_eq!(group_id, "legal");
+            }
+            other => panic!("expected AlreadyPopulated, got {other:?}"),
+        }
+
+        let snapshot_after = load_rows(&conn, "legal").await;
+        assert_eq!(
+            snapshot_before, snapshot_after,
+            "table must be byte-identical after a refused Replace (ASMP-003 no orphaning)"
+        );
+    }
+
+    /// T7 — `Augment` on a fresh namespace → defaults (0–10) + custom (≥11) all present.
+    ///
+    /// Custom names MUST avoid the `DEFAULT_ENTITY_TYPES` vocabulary: "Court" is
+    /// already default id=10, and Augment carries the defaults, so a custom
+    /// `(11, "Court")` would be dropped by the `UNIQUE(group_id, name)`
+    /// constraint via `INSERT OR IGNORE`. "Statute" / "Judge" are non-default.
+    #[tokio::test]
+    async fn t7_augment_fresh_namespace_defaults_plus_custom() {
+        let conn = open_migrated_conn().await;
+        let seed = NamespaceSeed::Augment(vec![spec(11, "Statute"), spec(12, "Judge")]);
+        apply_namespace_seed(&conn, "legal", &seed)
+            .await
+            .expect("augment on fresh namespace");
+        let rows = load_rows(&conn, "legal").await;
+        // All defaults present.
+        for (id, name, _) in DEFAULT_ENTITY_TYPES {
+            assert!(
+                rows.iter().any(|s| s.id == *id && &s.name == name),
+                "default id={id} '{name}' must be present after Augment"
+            );
+        }
+        // Custom present.
+        assert!(rows.iter().any(|s| s.id == 11 && s.name == "Statute"));
+        assert!(rows.iter().any(|s| s.id == 12 && s.name == "Judge"));
+        assert_eq!(rows.len(), DEFAULT_ENTITY_TYPES.len() + 2);
+    }
+
+    /// T8 — `AlreadySeeded` (not error) for `Default`/`Augment` on a populated ns.
+    #[tokio::test]
+    async fn t8_default_augment_populated_already_seeded() {
+        let conn = open_migrated_conn().await;
+        // Populate via a fresh Replace.
+        apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Replace(vec![spec(11, "Court")]),
+        )
+        .await
+        .expect("initial seed");
+        let snapshot = load_rows(&conn, "legal").await;
+
+        // Default on populated → AlreadySeeded, no write.
+        let d = apply_namespace_seed(&conn, "legal", &NamespaceSeed::Default)
+            .await
+            .expect("default on populated");
+        assert_eq!(d, SeedOutcome::AlreadySeeded);
+
+        // Augment on populated → AlreadySeeded, no write (the seed call is
+        // idempotent; assert_entity_type is the incremental path).
+        let a = apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Augment(vec![spec(99, "Witness")]),
+        )
+        .await
+        .expect("augment on populated");
+        assert_eq!(a, SeedOutcome::AlreadySeeded);
+
+        assert_eq!(
+            load_rows(&conn, "legal").await,
+            snapshot,
+            "Default/Augment on populated must not mutate the table"
+        );
+    }
+
+    /// T9 — `apply_namespace_seed` makes no partial write when the apply path
+    /// refuses. A divergent Replace on a populated namespace (D9) writes zero
+    /// rows — the all-or-nothing boundary. The atomic policy+seed rollback is
+    /// covered at the facade layer (tests/seed_registry.rs).
+    #[tokio::test]
+    async fn t9_no_partial_write_on_refusal() {
+        let conn = open_migrated_conn().await;
+        apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Replace(vec![spec(11, "Court")]),
+        )
+        .await
+        .expect("initial seed");
+        let before = count_rows(&conn, "legal").await;
+        let _ = apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Replace(vec![spec(11, "Drug"), spec(12, "Condition")]),
+        )
+        .await;
+        assert_eq!(
+            count_rows(&conn, "legal").await,
+            before,
+            "a refused Replace must add zero rows"
+        );
+    }
+
+    /// T11 (load-bearing, D9a match-aware idempotency) — `Replace(seed)` on a
+    /// populated namespace whose rows EQUAL `seed` → `AlreadySeeded` (no write);
+    /// whose rows DIFFER → `Err(AlreadyPopulated)`. Proves the idempotent-boot
+    /// pattern is safe yet a genuine taxonomy change fails loud.
+    #[tokio::test]
+    async fn t11_replace_match_aware_idempotency() {
+        let conn = open_migrated_conn().await;
+        let seed = NamespaceSeed::Replace(vec![spec(11, "Court"), spec(12, "Judge")]);
+
+        // First boot: fresh → Seeded.
+        let first = apply_namespace_seed(&conn, "legal", &seed)
+            .await
+            .expect("first boot seeds");
+        assert!(matches!(first, SeedOutcome::Seeded { .. }));
+        let snapshot = load_rows(&conn, "legal").await;
+
+        // Second boot, IDENTICAL seed → AlreadySeeded, no write (D9a).
+        let second = apply_namespace_seed(&conn, "legal", &seed)
+            .await
+            .expect("identical re-seed is idempotent");
+        assert_eq!(
+            second,
+            SeedOutcome::AlreadySeeded,
+            "identical Replace on every boot must be safe (D9a)"
+        );
+        assert_eq!(
+            load_rows(&conn, "legal").await,
+            snapshot,
+            "identical re-seed must not mutate the table"
+        );
+
+        // Divergent seed → loud failure (D9).
+        let divergent = NamespaceSeed::Replace(vec![spec(11, "Court"), spec(12, "Magistrate")]);
+        let err = apply_namespace_seed(&conn, "legal", &divergent)
+            .await
+            .expect_err("a genuine taxonomy change must fail loud");
+        assert!(matches!(
+            err,
+            NamespaceRegistrationError::AlreadyPopulated { .. }
+        ));
+    }
+
+    /// T11b — D9a equality is catch-all-aware: a Replace that omits id=0 but is
+    /// otherwise identical to existing rows (which include the injected catch-all)
+    /// still matches → `AlreadySeeded`.
+    #[tokio::test]
+    async fn t11b_match_aware_catch_all_injected() {
+        let conn = open_migrated_conn().await;
+        // First seed omits catch-all; engine injects id=0.
+        apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Replace(vec![spec(11, "Court")]),
+        )
+        .await
+        .expect("first seed");
+        // Re-seed, again omitting id=0 — resolved specs match (catch-all injected).
+        let outcome = apply_namespace_seed(
+            &conn,
+            "legal",
+            &NamespaceSeed::Replace(vec![spec(11, "Court")]),
+        )
+        .await
+        .expect("re-seed");
+        assert_eq!(outcome, SeedOutcome::AlreadySeeded);
     }
 }
