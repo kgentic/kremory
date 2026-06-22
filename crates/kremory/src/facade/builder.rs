@@ -29,6 +29,10 @@ use crate::memory::{
 pub struct MemoryBuilder<L, E> {
     path: std::path::PathBuf,
     llm: Option<Arc<dyn ChatProvider>>,
+    /// Optional dedicated dream-phase LLM (TD-052b). `None` (default) → dream
+    /// re-uses the `with_llm` provider. Threaded unchanged across every
+    /// type-state transition. Does NOT change type-state.
+    dream_llm: Option<Arc<dyn ChatProvider>>,
     embedder: Option<Arc<dyn DynEmbeddingProvider>>,
     default_sink: Option<Arc<dyn EnrichmentEventSink>>,
     default_namespace: Option<Namespace>,
@@ -239,6 +243,46 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Supply a **distinct** LLM provider for the dream consolidation phase.
+    ///
+    /// Dream Pass 0 (type discovery) benefits from a deferred-*quality* model
+    /// (e.g. `gemma4:e4b`) even when the interactive ingest path uses a fast
+    /// model (e.g. `gemma4-e2b:latest`) wired via [`with_llm`](Self::with_llm).
+    /// See TD-052b: the interactive model proposes the placeholder `"..."` in
+    /// Pass 0 → silent zero-discovery; the deferred model proposes → accepts →
+    /// retypes.
+    ///
+    /// **Additive + backward-compatible**: when unset, dream falls back to the
+    /// [`with_llm`](Self::with_llm) provider — behaviour is unchanged for every
+    /// existing consumer. Available in any type-state (mirrors
+    /// [`with_dream_schedule`](Self::with_dream_schedule)). BYOM (ADR-002): the
+    /// provider is supplied by the consumer; kremory bundles none.
+    ///
+    /// Composable-knob (not a strategy enum): dream-time selection picks
+    /// behaviour from which provider knobs are set — see TD-052b §4 compat
+    /// matrix.
+    ///
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # async fn ex(
+    /// #     main: Arc<dyn kremory::memory::ChatProvider>,
+    /// #     dream: Arc<dyn kremory::memory::ChatProvider>,
+    /// #     embedder: Arc<dyn kremory::memory::DynEmbeddingProvider>,
+    /// # ) -> Result<(), kremory::Error> {
+    /// let memory = kremory::Memory::open(":memory:")
+    ///     .with_llm(main)
+    ///     .with_dream_llm(dream)
+    ///     .with_embedder(embedder)
+    ///     .await?;
+    /// # let _ = memory;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_dream_llm(mut self, llm: Arc<dyn ChatProvider>) -> Self {
+        self.dream_llm = Some(llm);
+        self
+    }
+
     /// Opt-in to synchronous-extraction ergonomics: when `true`,
     /// `Memory::remember(...).await` blocks until the ADR-051 background worker
     /// has transitioned the episode to `Verified` (returns `Ok(())`) or
@@ -344,6 +388,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         Self {
             path,
             llm: None,
+            dream_llm: None,
             embedder: None,
             default_sink: None,
             default_namespace: None,
@@ -370,6 +415,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
             llm: Some(llm),
+            dream_llm: self.dream_llm,
             embedder: self.embedder,
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -440,6 +486,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
             llm: Some(Arc::new(tracked) as Arc<dyn ChatProvider>),
+            dream_llm: self.dream_llm,
             embedder: self.embedder,
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -468,6 +515,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
             llm: self.llm,
+            dream_llm: self.dream_llm,
             embedder: Some(emb),
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -501,6 +549,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
             llm: self.llm,
+            dream_llm: self.dream_llm,
             embedder: Some(emb),
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -799,6 +848,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
             Ok(Memory {
                 graph,
                 llm: Some(llm),
+                dream_llm: self.dream_llm,
                 embedder,
                 default_sink: self.default_sink,
                 default_namespace: self.default_namespace,
@@ -867,6 +917,7 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
             Ok(Memory {
                 graph,
                 llm: None,
+                dream_llm: self.dream_llm,
                 embedder,
                 default_sink: self.default_sink,
                 default_namespace: self.default_namespace,

@@ -197,3 +197,47 @@ async fn gliner_empty_allowlist_errs_at_build() {
         "expected BuilderConflict about empty entity-type allowlist, got: {detail}"
     );
 }
+
+// ── TD-052b — `with_dream_llm` public surface (spec §8 T2, §4 row 2 / row 3) ──
+//
+// Governing spec: `.ai-docs/specs/td-052b-dream-llm-slot-spec-2026-06-22.md`.
+// These cover the PUBLIC builder surface (method shape + build success). The
+// dream-time provider SELECTION (which slot is invoked) is covered by in-crate
+// unit tests on `dream_llm_or_main` (facade/mod.rs) where the `pub(crate)`
+// accessor + the role counter are reachable.
+
+/// T2 — `with_dream_llm` exists, returns the same type-state, and builds a
+/// `Memory` on the WithLlm path (compat matrix row 2: main + dream set).
+#[tokio::test]
+async fn td052b_with_dream_llm_builds_on_with_llm_path() {
+    let main: Arc<dyn kremory::memory::ChatProvider> = null_llm();
+    let dream: Arc<dyn kremory::memory::ChatProvider> = null_llm();
+
+    let mem = Memory::open(unique_db("td052b_row2"))
+        .with_llm(main)
+        .with_dream_llm(dream)
+        .with_embedder(null_embedder())
+        .await
+        .expect("row 2: with_llm + with_dream_llm should build");
+
+    drop(mem);
+}
+
+/// T6 row 3 — `with_dream_llm` is callable on the NoLlm builder (it lives on
+/// `impl<L,E>`), so a custom-extractor build can carry a dedicated dream model
+/// with no main LLM. The build MUST succeed (§4.1: purely additive, no new
+/// build-time conflict).
+#[tokio::test]
+async fn td052b_row3_no_main_llm_custom_extractor_plus_dream_llm_builds() {
+    let ext = Arc::new(NullExtractor);
+    let dream: Arc<dyn kremory::memory::ChatProvider> = null_llm();
+
+    let mem = Memory::open(unique_db("td052b_row3"))
+        .with_extractor(ext)
+        .with_dream_llm(dream)
+        .with_embedder(null_embedder())
+        .await
+        .expect("row 3: custom extractor + dream_llm (no main LLM) should build");
+
+    drop(mem);
+}

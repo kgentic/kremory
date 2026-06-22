@@ -244,6 +244,9 @@ pub struct Memory {
     /// Category B methods (dream, recall_with_disambiguation, detect_contradictions) call
     /// `.llm_or_err("method_name")` which returns `Error::LlmRequired` at call time.
     pub(crate) llm: Option<Arc<dyn ChatProvider>>,
+    /// Optional dedicated dream-phase LLM (TD-052b). `Some` → `dream()` uses it;
+    /// `None` → dream falls back to `self.llm` via `dream_llm_or_main`.
+    pub(crate) dream_llm: Option<Arc<dyn ChatProvider>>,
     /// Embedding provider — read by the dream/disambiguation paths
     /// (`facade/dream.rs` passes `self.memory.embedder.as_ref()` into the
     /// dream pass). TD-043: field is live, `#[allow(dead_code)]` removed.
@@ -1026,6 +1029,53 @@ impl Memory {
         })
     }
 
+    /// Return the dream-phase LLM: the dedicated `with_dream_llm` provider when
+    /// set, else delegate to [`llm_or_err`](Self::llm_or_err) (the `with_llm`
+    /// provider, or `Err(LlmRequired)` when neither is wired).
+    ///
+    /// Backward-compat is **structural** (load-bearing-invariants-at-emit, TD-052b
+    /// §3.3): when `dream_llm` is `None`, this is byte-for-byte the prior
+    /// `llm_or_err("dream", …)` behaviour — same provider, same error, same metric.
+    ///
+    /// Emits `kremory.dream.llm_role_selected_total{model_role}` on **every** call
+    /// (TD-052b §6). The counter measures role-selection *attempts*, not realised
+    /// successes — the `interactive` arm increments before `llm_or_err`, so on the
+    /// no-provider row it counts an attempt that then errors `LlmRequired`. The
+    /// authoritative dream-failure signal remains
+    /// `kremory.llm_required_total{method="dream"}`.
+    pub(crate) fn dream_llm_or_main(
+        &self,
+        method: &'static str,
+        hint: &'static str,
+    ) -> Result<Arc<dyn ChatProvider>> {
+        match &self.dream_llm {
+            Some(llm) => {
+                tracing::debug!(
+                    target: "kremory.facade.dream",
+                    model_role = "dream",
+                    "dream phase using dedicated dream_llm provider (TD-052b)"
+                );
+                metrics::counter!(
+                    "kremory.dream.llm_role_selected_total",
+                    "model_role" => "dream"
+                )
+                .increment(1);
+                Ok(Arc::clone(llm))
+            }
+            None => {
+                // Fallback: identical to prior behaviour. Emit the role counter so
+                // dashboards can attribute dream calls to the shared interactive
+                // provider; llm_or_err still owns the LlmRequired warn+counter.
+                metrics::counter!(
+                    "kremory.dream.llm_role_selected_total",
+                    "model_role" => "interactive"
+                )
+                .increment(1);
+                self.llm_or_err(method, hint)
+            }
+        }
+    }
+
     /// Return the wired LLM, or a no-op stub when no LLM was configured.
     ///
     /// Used by Category A methods (remember, remember_batch) that pass a
@@ -1130,3 +1180,290 @@ impl Memory {
 
 mod builder;
 pub use builder::{MemoryBuilder, WithLlmTrackedParams};
+
+#[cfg(test)]
+mod dream_llm_slot_tests {
+    //! TD-052b — per-phase dream model slot (`with_dream_llm`).
+    //!
+    //! Governing spec: `.ai-docs/specs/td-052b-dream-llm-slot-spec-2026-06-22.md`.
+    //! These in-crate tests exercise the `pub(crate)` `dream_llm_or_main`
+    //! accessor + the `kremory.dream.llm_role_selected_total{model_role}`
+    //! counter (§3.3 / §6) — surfaces unreachable from an integration test.
+    //! Public-surface build tests live in `tests/memory_builder_compat_matrix.rs`.
+
+    use super::*;
+    use crate::core::provider::MockEmbeddingProvider;
+    use crate::memory::ChatProvider;
+    use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
+    use autoagents_llm::error::LLMError;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Call-counting `ChatProvider`: records how many times `chat_with_tools`
+    /// fired, so a test can assert WHICH slot the dream phase invoked. Returns
+    /// an empty response (the dream fan-out tolerates empty proposals).
+    #[derive(Debug)]
+    struct CountingProvider {
+        calls: Arc<AtomicUsize>,
+        tag: &'static str,
+    }
+
+    impl CountingProvider {
+        fn new(tag: &'static str) -> (Arc<Self>, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            (
+                Arc::new(Self {
+                    calls: Arc::clone(&calls),
+                    tag,
+                }),
+                calls,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for CountingProvider {
+        async fn chat_with_tools(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[Tool]>,
+            _json_schema: Option<StructuredOutputFormat>,
+        ) -> std::result::Result<Box<dyn ChatResponse>, LLMError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(EmptyResponse))
+        }
+
+        fn model(&self) -> &str {
+            self.tag
+        }
+    }
+
+    #[derive(Debug)]
+    struct EmptyResponse;
+
+    impl std::fmt::Display for EmptyResponse {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "")
+        }
+    }
+
+    impl ChatResponse for EmptyResponse {
+        fn text(&self) -> Option<String> {
+            None
+        }
+        fn tool_calls(&self) -> Option<Vec<autoagents_llm::ToolCall>> {
+            None
+        }
+    }
+
+    fn null_embedder() -> Arc<dyn DynEmbeddingProvider> {
+        Arc::new(MockEmbeddingProvider::new(64))
+    }
+
+    async fn build_with(
+        llm: Option<Arc<dyn ChatProvider>>,
+        dream_llm: Option<Arc<dyn ChatProvider>>,
+    ) -> Memory {
+        // Build via the real builder so the field threads through the same
+        // construction path production uses. NoLlm builds require an extractor;
+        // use the LLM path when a main LLM is present, else a null extractor.
+        match llm {
+            Some(main) => {
+                let mut b = Memory::open(":memory:").with_llm(main);
+                if let Some(d) = dream_llm {
+                    b = b.with_dream_llm(d);
+                }
+                b.with_embedder(null_embedder())
+                    .await
+                    .expect("build WithLlm")
+            }
+            None => {
+                let mut b = Memory::open(":memory:")
+                    .with_extractor(Arc::new(crate::core::intelligence::MockExtractor));
+                if let Some(d) = dream_llm {
+                    b = b.with_dream_llm(d);
+                }
+                b.with_embedder(null_embedder())
+                    .await
+                    .expect("build NoLlm + extractor")
+            }
+        }
+    }
+
+    /// T3 — `dream_llm = None` → `dream_llm_or_main` returns the SAME `Arc` as
+    /// `llm_or_err` (structural fallback, byte-for-byte prior behaviour).
+    #[tokio::test]
+    async fn t3_accessor_falls_back_to_main_when_dream_unset() {
+        let (main, _) = CountingProvider::new("MAIN");
+        let main: Arc<dyn ChatProvider> = main;
+        let mem = build_with(Some(Arc::clone(&main)), None).await;
+
+        let via_dream = mem
+            .dream_llm_or_main("dream", "hint")
+            .expect("main is wired");
+        let via_main = mem.llm_or_err("dream", "hint").expect("main is wired");
+        assert!(
+            Arc::ptr_eq(&via_dream, &via_main),
+            "with dream_llm=None, dream_llm_or_main must return the same Arc as llm_or_err"
+        );
+    }
+
+    /// T3 — `dream_llm = Some(D)` → `dream_llm_or_main` returns D, distinct from
+    /// the main provider.
+    #[tokio::test]
+    async fn t3_accessor_returns_dream_provider_when_set() {
+        let (main, _) = CountingProvider::new("MAIN");
+        let (dream, _) = CountingProvider::new("DREAM");
+        let main: Arc<dyn ChatProvider> = main;
+        let dream: Arc<dyn ChatProvider> = dream;
+        let mem = build_with(Some(Arc::clone(&main)), Some(Arc::clone(&dream))).await;
+
+        let selected = mem
+            .dream_llm_or_main("dream", "hint")
+            .expect("dream provider wired");
+        assert!(
+            Arc::ptr_eq(&selected, &dream),
+            "dream_llm_or_main must return the dedicated dream provider"
+        );
+        assert!(
+            !Arc::ptr_eq(&selected, &main),
+            "dream_llm_or_main must NOT return the main provider when dream_llm is set"
+        );
+    }
+
+    /// T6 row 4 — neither main nor dream wired → `dream_llm_or_main` errors
+    /// `LlmRequired` exactly as the prior `llm_or_err` path (unchanged).
+    #[tokio::test]
+    async fn t6_row4_neither_provider_errors_llm_required() {
+        let mem = build_with(None, None).await;
+        let result = mem.dream_llm_or_main("dream", "hint");
+        let Err(err) = result else {
+            panic!("no provider wired → dream_llm_or_main must error LlmRequired");
+        };
+        assert!(
+            matches!(
+                err,
+                MemoryError::Core(CoreError::LlmRequired {
+                    method: "dream",
+                    ..
+                })
+            ),
+            "expected LlmRequired{{method=\"dream\"}}, got: {err:?}"
+        );
+    }
+
+    /// T5 — a real blocking `dream()` routes through the DREAM slot, never MAIN.
+    ///
+    /// `dream()` calls `dream_llm_or_main` (dream.rs:95) — selecting the dedicated
+    /// dream provider and emitting `model_role="dream"` — BEFORE the substrate's
+    /// `graph_run_consolidation`. At this substrate version the sync consolidation
+    /// path returns `NotImplemented` (engine_handle.rs), so the dream provider's
+    /// `chat_with_tools` is never reached; per spec §6 the **role counter is the
+    /// authoritative routing proof**, and `MAIN.calls == 0` proves the main slot is
+    /// never used for the dream phase. We tolerate the `NotImplemented` substrate
+    /// error — the routing under test has already happened by then.
+    #[test]
+    fn t5_dream_invokes_dream_provider_not_main() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let (main, main_calls) = CountingProvider::new("MAIN");
+        let (dream, dream_calls) = CountingProvider::new("DREAM");
+        let main: Arc<dyn ChatProvider> = main;
+        let dream: Arc<dyn ChatProvider> = dream;
+
+        metrics::with_local_recorder(&recorder, || {
+            rt.block_on(async {
+                let mem = build_with(Some(main), Some(dream)).await;
+                // Routes through dream_llm_or_main → DREAM slot. The substrate
+                // consolidation may be NotImplemented at this version; the
+                // routing (provider selection + role counter) fires regardless.
+                match mem.dream().in_namespace(Namespace::new("default")).await {
+                    Ok(_) => {}
+                    Err(MemoryError::NotImplemented { .. }) => {}
+                    Err(other) => panic!("unexpected dream error: {other:?}"),
+                }
+            });
+        });
+
+        assert_eq!(
+            main_calls.load(Ordering::SeqCst),
+            0,
+            "the MAIN provider must NEVER be invoked by the dream phase when a dedicated dream_llm is set"
+        );
+        // dream_calls may be 0 (empty graph) — the role counter is the
+        // authoritative routing proof.
+        let _ = dream_calls;
+
+        let snapshot = snapshotter.snapshot();
+        let dream_role_total: u64 = snapshot
+            .into_vec()
+            .into_iter()
+            .filter(|(k, _, _, _)| {
+                k.key().name() == "kremory.dream.llm_role_selected_total"
+                    && k.key()
+                        .labels()
+                        .any(|l| l.key() == "model_role" && l.value() == "dream")
+            })
+            .map(|(_, _, _, v)| match v {
+                DebugValue::Counter(c) => c,
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            dream_role_total >= 1,
+            "dream pass with dream_llm=Some must increment llm_role_selected_total{{model_role=\"dream\"}}"
+        );
+    }
+
+    /// T7 — the `interactive` role counter fires when dream falls back to the
+    /// main provider (dream_llm unset, main set).
+    #[test]
+    fn t7_interactive_role_counter_on_fallback() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let (main, _) = CountingProvider::new("MAIN");
+        let main: Arc<dyn ChatProvider> = main;
+
+        metrics::with_local_recorder(&recorder, || {
+            rt.block_on(async {
+                let mem = build_with(Some(main), None).await;
+                let _ = mem.dream_llm_or_main("dream", "hint");
+            });
+        });
+
+        let snapshot = snapshotter.snapshot();
+        let interactive_total: u64 = snapshot
+            .into_vec()
+            .into_iter()
+            .filter(|(k, _, _, _)| {
+                k.key().name() == "kremory.dream.llm_role_selected_total"
+                    && k.key()
+                        .labels()
+                        .any(|l| l.key() == "model_role" && l.value() == "interactive")
+            })
+            .map(|(_, _, _, v)| match v {
+                DebugValue::Counter(c) => c,
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            interactive_total >= 1,
+            "fallback dream resolution (dream_llm=None) must increment llm_role_selected_total{{model_role=\"interactive\"}}"
+        );
+    }
+}
