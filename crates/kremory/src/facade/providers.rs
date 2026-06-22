@@ -589,6 +589,11 @@ async fn build_memory_with_model(
     Ok(Memory {
         graph,
         llm: Some(llm),
+        // Tier-1 shortcuts are one-provider convenience constructors; a separate
+        // dream model is a two-provider configuration only the `MemoryBuilder`
+        // chain exposes. `None` → dream falls back to the main provider,
+        // byte-for-byte unchanged behaviour (TD-052b §2.3a).
+        dream_llm: None,
         embedder,
         default_sink: None,
         default_namespace: None,
