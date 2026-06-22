@@ -391,6 +391,48 @@ pub(crate) async fn discover_types<L: ChatProvider>(
         }
     }
 
+    // ── Fail-loud on silent zero-discovery (TD-052 fix) ───────────────────────
+    //
+    // We only reach here with a NON-EMPTY catch-all bucket (empty buckets and
+    // empty clusters early-returned above), so `types_accepted.is_empty()` here
+    // means discovery *engaged but produced nothing usable* — model too weak
+    // (e.g. interactive-tier gemma4-e2b emits placeholder names that the shape
+    // validator rejects) or prompt drift. Previously this was SILENT: the
+    // DreamSummary looked identical to "nothing to discover". Pass-0 is
+    // non-fatal, so we WARN (never abort): a counter + a tracing::warn! + a
+    // consumer-visible `DiscoveryResult.warnings` entry. See ADR-037 §6 +
+    // [[project_dream_discovery_needs_deferred_quality_model]].
+    if result.types_accepted.is_empty() {
+        counter!(
+            "kremory.dream.discovery_yielded_zero_total",
+            "model" => model_str.clone(),
+            "namespace" => group_id.to_string()
+        )
+        .increment(1);
+        let msg = format!(
+            "type discovery yielded ZERO accepted types from {} catch-all \
+             entit{} ({} proposed, {} rejected) using model '{}' — the model may \
+             be under-powered for discovery (the interactive-tier gemma4-e2b emits \
+             placeholder names the validator rejects); wire the deferred quality \
+             model (e.g. gemma4:e4b) for the dream phase",
+            catch_alls.len(),
+            if catch_alls.len() == 1 { "y" } else { "ies" },
+            result.types_proposed.len(),
+            result.types_rejected.len(),
+            model_str,
+        );
+        tracing::warn!(
+            target: "kremory::dream::discover_types",
+            group_id = %group_id,
+            model = %model_str,
+            catch_all_count = catch_alls.len(),
+            proposed = result.types_proposed.len(),
+            rejected = result.types_rejected.len(),
+            "{msg}"
+        );
+        result.warnings.push(msg);
+    }
+
     Ok(result)
 }
 
@@ -1086,6 +1128,90 @@ mod td050_full_workflow_tests {
         assert_eq!(
             checked, 3,
             "all 3 entities present and retyped — none left at id=0"
+        );
+    }
+
+    /// TD-052 fail-loud: when discovery engages on a non-empty catch-all bucket
+    /// but accepts ZERO types (here the scripted proposal is a `"..."` placeholder
+    /// the shape validator rejects — the exact gemma4-e2b real-world failure), the
+    /// result must carry a loud, consumer-visible warning, NOT silently look like
+    /// "nothing to discover". Evidence must NOT be retyped.
+    #[tokio::test]
+    async fn discover_types_warns_loud_when_all_proposals_rejected() {
+        let graph = TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory");
+        let conn = graph.conn.clone();
+        ensure_default_types_seeded(&conn, "med")
+            .await
+            .expect("seed defaults 0..=10");
+
+        let now = Utc::now().to_rfc3339();
+        for id in ["aspirin", "ibuprofen", "paracetamol"] {
+            conn.execute(
+                "INSERT INTO entities (id, entity_type_id, recorded_at, group_id) \
+                 VALUES (?1, 0, ?2, ?3)",
+                libsql::params![id.to_string(), now.clone(), "med".to_string()],
+            )
+            .await
+            .expect("insert catch-all entity");
+        }
+
+        // Scripted placeholder name — rejected by the validator (ellipsis_placeholder).
+        let llm = ScriptedProposalProvider {
+            json: r#"{"proposals":[{"name":"...","description":"x","justification":"y"}]}"#
+                .to_string(),
+        };
+
+        let result = discover_types(
+            &llm,
+            DiscoverTypesParams {
+                conn: &conn,
+                group_id: "med",
+                embedder: None,
+                max_proposals: 3,
+            },
+        )
+        .await
+        .expect("discover_types must succeed (zero-discovery is non-fatal)");
+
+        assert_eq!(result.types_proposed.len(), 1, "one proposal seen");
+        assert!(
+            result.types_accepted.is_empty(),
+            "the '...' placeholder must be rejected → zero accepted"
+        );
+        assert_eq!(result.types_rejected.len(), 1, "one rejection");
+        assert_eq!(
+            result.entities_retyped, 0,
+            "nothing accepted → nothing retyped"
+        );
+
+        // The load-bearing assertion: zero-discovery is LOUD, not silent.
+        assert!(
+            result.warnings.iter().any(|w| w.contains("ZERO accepted")),
+            "a non-empty catch-all bucket yielding zero accepted types must emit a \
+             consumer-visible warning; warnings={:?}",
+            result.warnings
+        );
+
+        // Evidence untouched — still catch-all.
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM entities WHERE group_id = 'med' AND entity_type_id = 0",
+                (),
+            )
+            .await
+            .expect("count");
+        let still_catch_all: i64 = rows
+            .next()
+            .await
+            .expect("row")
+            .expect("count row")
+            .get::<i64>(0)
+            .expect("count col");
+        assert_eq!(
+            still_catch_all, 3,
+            "all 3 entities remain catch-all when discovery accepts nothing"
         );
     }
 }
