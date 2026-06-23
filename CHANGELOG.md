@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-06-23
+
+### Breaking Changes
+
+1. **`MemoryBuilder::with_gliner()` now takes no argument.** The `GlinerConfig`
+   placeholder parameter introduced in 0.2.0 has been removed — the method is now
+   `with_gliner()`. Replace `with_gliner(GlinerConfig::default())` with `with_gliner()`.
+2. **`DefaultExtractor` renamed to `IntegerIdLlmExtractor`** (`kremory::core::extraction`).
+   The old name carried a dead "Default" qualifier. Update any explicit references.
+3. **`MemoryBuilder::with_sink` and `with_llm_tracked` deprecated** — superseded by
+   composable token-tracking knob (`with_llm_tracked_by(provider, model)`) and the
+   ingest-sink pattern from ADR-052. Compile warnings emitted; removal targeted v0.4.
+
+### Added
+
+- **`mem.dream()` now returns `Ok(DreamSummary)` — F-01 retired (ADR-007).** The
+  `NotImplemented` short-circuit is gone. `dream()` executes Pass-0 (type discovery) and
+  Pass-2 (relationship extraction) via the real dream pipeline. Phase-3 consolidation
+  fields (`communities_updated`, `cross_episode_merges`, `supersessions_recorded`,
+  `facts_archived`) are honest zeros pending Phase-3 implementation.
+- **`MemoryBuilder::with_dream_llm(llm)` — per-phase dream model slot (TD-052b).**
+  Wire a dedicated `ChatProvider` for dream phases separate from the main ingest LLM.
+  Falls back to the main LLM when not set. Enables quality/speed trade-off: use a large
+  deferred model for dream, a fast model for interactive ingest.
+- **Custom per-namespace entity-type seed registry (T1-T11).** `Memory::seed_entity_types`
+  allows callers to seed a namespace's entity vocabulary before ingest. Prevents the
+  anti-redundancy check from discarding types that should always be present.
+- **`SkippedIdempotent` + `on_worker_resumed` sink events (ADR-050 v0.2.4 Phase 5).**
+  Background workers now emit `SkippedIdempotent` when a dream pass is skipped due to
+  idempotency and `on_worker_resumed` when a deferred queue drains after a restart.
+- **`fail_loud` on silent zero-discovery (TD-052a).** `dream()` now returns
+  `Err(ZeroDiscovery)` instead of `Ok(DreamSummary { types_discovered: 0 })` when
+  Pass-0 finds no new entity types and the namespace has eligible episodes. Prevents
+  silent model misconfiguration (e.g. interactive model routed to deferred-quality slot).
+- **Dream crash-safety + idempotency (ADR-050).** Dream-pass runs are now crash-safe:
+  partial runs resume from the last committed checkpoint on next open. Idempotency key
+  is episode-content-hash × pass-number; re-running the same pass on the same content
+  is a no-op with `SkippedIdempotent` emitted.
+
+### Fixed
+
+- **TD-051: composite PK allocation bug in Pass-0 `accept_proposal`.** New entity types
+  discovered during dream were allocated with `id = 0` (missing explicit allocation),
+  violating the composite PK `(id, group_id)` constraint on first multi-type dream run.
+- **TD-046: silent cursor fallback now logged.** The search cursor fallback path
+  (triggered when the primary cursor yields no results) was silent; now emits a
+  `tracing::debug!` event on `kremory.search.cursor_fallback`. Stale MED-02
+  observability doc corrected.
+- **TD-044: doc-vs-code drift.** ADR-051 function signatures + CLAUDE.md active sprint
+  section reconciled with the shipped implementation.
+- **NER `allowed_entity_types` plumbed into deferred verify stage.** GLiNER candidates
+  were not filtered by the namespace's entity-type allowlist in the background verify
+  pass; they are now.
+- **GLiNER empty-allowlist fails loud.** Calling `with_gliner()` and then ingesting
+  into a namespace with zero registered entity types now returns
+  `Err(EmptyEntityTypeAllowlist)` rather than silently producing zero entities.
+- **`as_of` fail-loud.** `recall().as_of(ts)` with a future timestamp now returns
+  `Err(AsOfInFuture { requested, now })` instead of silently returning empty results.
+
+### Changed
+
+- **Large internal modules split** (TD-045). `core/graph.rs` (3240 LoC) and
+  `core/ingest/pipeline.rs` (2141 LoC) split into sub-modules. No public API change.
+- **~77 internal functions converted to params structs** (TD-042). Functions with ≥3
+  arguments that previously took positional args now use named params structs (e.g.
+  `EpisodeInsert`, `FactInsert`, `GraphIngestEpisodeParams`). Internal cross-crate
+  callers (`kremory-admin`, `kremory-mcp`, `kremory-eval`) must update call sites.
+  Public facade surface unchanged.
+- **CI workflows fully commented out.** `ci`, `napi-ci`, `release-please`, and
+  `eval-canary` workflows are fully commented (zero active lines) due to kgentic
+  Actions billing suspension. No CI runs on push. Restore via `git revert` on the
+  workflow files.
+
+### Known Limitations
+
+- `with_facts_empty_vec_equivalent_to_no_facts` — pre-existing test failure; the
+  empty-vec skip path incorrectly increments the `skip_extraction` counter. Scheduled
+  for TD-013 follow-up.
+- `napi_surface_matches_substrate_or_skip_list` — parity-skip.toml at 103 entries >
+  100-entry sanity cap. Binding-layer parity work deferred while substrate evolves.
+- Phase-3 consolidation (communities, cross-episode merges, supersessions) — not yet
+  implemented; `DreamSummary` Phase-3 fields are honest zeros.
+
+### Refs
+
+- ADR-050 (dream crash-safety + idempotency), ADR-007 (F-01 retirement),
+  TD-042 (clippy/args-as-object), TD-045 (god-file splits), TD-046 (observability),
+  TD-051 (Pass-0 PK fix), TD-052a/b (zero-discovery + dream model slot).
+
+---
+
 ## [0.2.0] - 2026-06-09
 
 ### Breaking Changes
