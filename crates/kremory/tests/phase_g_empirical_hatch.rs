@@ -175,6 +175,7 @@ async fn measure_pre_post<L>(args: MeasureArgs<'_, L>) -> FixtureRunResult
 where
     L: kremory::memory::ChatProvider + 'static,
 {
+    #[cfg(feature = "ner")]
     use kremory::core::extraction::GlinerLlmExtractor;
 
     let MeasureArgs {
