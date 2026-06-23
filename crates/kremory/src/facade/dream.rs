@@ -89,16 +89,16 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
-        // Use legacy synchronous path: run_dream_phase → DreamPhaseResult → DreamSummary
-        // This is the correct substrate call for blocking dream at v0.1.0.
         // dream() is a Category B method (ADR-041) — requires LLM; returns LlmRequired on NoLlm.
+        // Phase-3 consolidation (communities/merges/supersessions/archival) is not yet
+        // implemented — those fields in DreamSummary are honest zeros until Phase-3 ships
+        // (see ADR-007 retirement). Pass-0 and Pass-2 populate the real fields below.
         let llm = self.memory.dream_llm_or_main(
             "dream",
             "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
         )?;
-        #[allow(deprecated)]
-        let mut result =
-            memory::run_dream_phase(self.memory.graph.as_ref(), ns.clone(), llm.clone()).await?;
+        let dream_start = std::time::Instant::now();
+        let mut result = memory::DreamPhaseResult::default();
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
         let _ = sink;
@@ -173,8 +173,9 @@ impl<'a> DreamRequest<'a> {
         // ADR-046 Option E — Dream Pass 2: reclassify.
         // Runs AFTER Pass 0 so newly discovered types (from Pass 0) are available in
         // the entity type registry for the reclassify LLM prompt.
-        // Pass ordering per DoD E7: Pass 0 commits → Pass 2 (reclassify) → Pass 3 (canonicalize).
-        // Pass 3 (canonicalize) is handled by `run_dream_phase` above (legacy path).
+        // Pass ordering per DoD E7: Pass 0 commits → Pass 2 (reclassify) → Pass 3 (consolidation).
+        // Pass 3 (consolidation) is not yet implemented — consolidation fields in DreamSummary
+        // are honest zeros until Phase-3 consolidation ships (see ADR-007 retirement).
         {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
@@ -221,9 +222,10 @@ impl<'a> DreamRequest<'a> {
                         // we accumulate it separately and fold into DreamSummary after From.
                         let reclassified = reclassify_result.entities_reclassified;
                         result.dream_warnings.extend(reclassify_result.warnings);
-                        // Convert result → summary, then set reclassified count (E8).
+                        // Convert result → summary, then set reclassified count (E8) and timing.
                         let mut summary = DreamSummary::from(result);
                         summary.entities_reclassified = reclassified;
+                        summary.duration_ms = dream_start.elapsed().as_millis() as u64;
                         return Ok(summary);
                     }
                     Err(e) => {
@@ -241,7 +243,9 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
-        Ok(DreamSummary::from(result))
+        let mut summary = DreamSummary::from(result);
+        summary.duration_ms = dream_start.elapsed().as_millis() as u64;
+        Ok(summary)
     }
 }
 

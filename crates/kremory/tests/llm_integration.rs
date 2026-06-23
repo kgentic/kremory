@@ -500,21 +500,24 @@ async fn recall_ranks_alice_episodes_above_unrelated() {
     );
 }
 
-// ── LLM.2.5 — Dream phase returns NotImplemented (F-01 LOCKED) ───────────────
+// ── LLM.2.5 — Dream phase returns Ok(DreamSummary) (F-01 retired) ───────────────
 
 /// LLM.2.5 — Submit 5 episodes about Alice/Bob/project Gamma, then call
-/// `mem.dream()`. Assert that it returns `Err(MemoryError::NotImplemented)`
-/// per F-01 contract (ADR-007 §3). This is an integration-level smoke test
-/// verifying the typed-error contract holds end-to-end after real ingest.
+/// `mem.dream()`. Verifies `Ok(DreamSummary)` with real Pass-0/Pass-2
+/// output and honest-zero Phase-3 consolidation fields.
 ///
-/// Dream consolidation ships in v0.1.1. This test guards against accidental
-/// silent-Ok or panic regressions at the facade level.
+/// Per `adr-mem-dream-canonical-supersede-f01-2026-06-22`: `mem.dream()` is the
+/// canonical blocking dream API. F-01 (NotImplemented) is retired. Pass-0 and
+/// Pass-2 populate `types_discovered` + `entities_reclassified`; the four
+/// consolidation fields (`communities_updated`, `cross_episode_merges`,
+/// `supersessions_recorded`, `facts_archived`) are honest zeros until Phase-3
+/// consolidation ships (ADR-007 retirement).
 ///
 /// `#[ignore]`: requires live Ollama with a JSON-capable chat model (default: `gemma4-e2b:latest`) + nomic-embed-text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 #[cfg(feature = "llm-integration")]
-async fn dream_phase_not_implemented() {
+async fn dream_phase_returns_ok_summary() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mem = build_mem(&dir, "test-llm-2-5")
         .await
@@ -535,32 +538,33 @@ async fn dream_phase_not_implemented() {
             .unwrap_or_else(|e| panic!("episode {i} must succeed: {e}"));
     }
 
-    // F-01 contract: dream() must return Err(NotImplemented) — not Ok, not panic.
-    let result = mem.dream().await;
-    match result {
-        Err(kremory::memory::MemoryError::NotImplemented {
-            feature,
-            available_in,
-            adr_ref,
-        }) => {
-            assert!(
-                !feature.is_empty(),
-                "NotImplemented.feature must be non-empty"
-            );
-            assert!(
-                available_in.contains("v0.1.1"),
-                "NotImplemented.available_in must reference v0.1.1; got: {available_in}"
-            );
-            assert!(
-                adr_ref.contains("ADR-007"),
-                "NotImplemented.adr_ref must reference ADR-007; got: {adr_ref}"
-            );
-        }
-        Err(other) => panic!("dream() must return Err(NotImplemented) per F-01; got: {other:?}"),
-        Ok(summary) => {
-            panic!("dream() must return Err(NotImplemented) per F-01; got Ok: {summary:?}")
-        }
-    }
+    let summary = mem
+        .dream()
+        .await
+        .expect("dream() must return Ok after F-01 retirement");
+
+    // Honest-zeros lock: Phase-3 consolidation fields must be 0.
+    assert_eq!(
+        summary.communities_updated, 0,
+        "communities_updated must be 0 — Phase-3 consolidation not yet implemented"
+    );
+    assert_eq!(
+        summary.cross_episode_merges, 0,
+        "cross_episode_merges must be 0 — Phase-3 consolidation not yet implemented"
+    );
+    assert_eq!(
+        summary.supersessions_recorded, 0,
+        "supersessions_recorded must be 0 — Phase-3 consolidation not yet implemented"
+    );
+    assert_eq!(
+        summary.facts_archived, 0,
+        "facts_archived must be 0 — Phase-3 consolidation not yet implemented"
+    );
+    // Real-work fields: don't assert > 0 (stochastic; mirror E10 no-panic stance).
+    // The pass itself not panicking + honest-zeros is the contract under test.
+    let _ = summary.types_discovered;
+    let _ = summary.entities_reclassified;
+    let _ = summary.duration_ms;
 }
 
 // ── G_NS — Namespace isolation: entities in ns-alpha must not bleed into ns-beta ─

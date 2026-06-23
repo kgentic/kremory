@@ -273,8 +273,8 @@ impl<L, E> MemoryBuilder<L, E> {
     /// # async fn ex(
     /// #     main: Arc<dyn kremory::memory::ChatProvider>,
     /// #     dream: Arc<dyn kremory::memory::ChatProvider>,
-    /// #     embedder: Arc<dyn kremory::memory::DynEmbeddingProvider>,
-    /// # ) -> Result<(), kremory::Error> {
+    /// #     embedder: Arc<dyn kremory::DynEmbeddingProvider>,
+    /// # ) -> kremory::memory::Result<()> {
     /// let memory = kremory::Memory::open(":memory:")
     ///     .with_llm(main)
     ///     .with_dream_llm(dream)
