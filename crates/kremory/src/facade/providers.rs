@@ -337,7 +337,7 @@ pub async fn with_ollama_at_model(
     let chat_provider: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&url)
         .model(model.clone())
-        .timeout_seconds(10)
+        .timeout_seconds(120)
         .build()
         .map_err(|e| MemoryError::Other(format!("Ollama chat provider error: {e}")))?;
 
@@ -383,7 +383,7 @@ pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> R
     let chat_provider: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&url)
         .model("qwen3.5:9b-mlx")
-        .timeout_seconds(10)
+        .timeout_seconds(120)
         .build()
         .map_err(|e| MemoryError::Other(format!("Ollama chat provider error: {e}")))?;
 
@@ -426,7 +426,7 @@ pub async fn with_openai(path: impl AsRef<Path>) -> Result<Memory> {
     let chat_provider: Arc<OpenAI> = LLMBuilder::<OpenAI>::new()
         .api_key(&key)
         .model("gpt-4o-mini")
-        .timeout_seconds(10)
+        .timeout_seconds(120)
         .build()
         .map_err(|e| MemoryError::Other(format!("OpenAI chat provider error: {e}")))?;
 
@@ -490,7 +490,7 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
     let chat_provider: Arc<Anthropic> = LLMBuilder::<Anthropic>::new()
         .api_key(&key)
         .model("claude-haiku-4-5-20251001")
-        .timeout_seconds(10)
+        .timeout_seconds(120)
         .build()
         .map_err(|e| MemoryError::Other(format!("Anthropic chat provider error: {e}")))?;
 

@@ -4,10 +4,24 @@
 
 Pure Rust agent memory engine. Single binary. No server process. No subscription required to ship.
 
-```toml
-[dependencies]
-kremory = "0.1"
-```
+### Installing (pre-crates.io)
+
+> **v0.3.0 is not yet on crates.io.** It depends on a `ChatProvider::model()` accessor that is
+> merged into `autoagents-llm`'s `main` but not yet published past `0.3.7`. Until upstream cuts
+> `0.3.8`, depend on the git tag **and** add the `[patch.crates-io]` stanza — without the patch,
+> kremory will not compile (`method not found: model()`):
+>
+> ```toml
+> [dependencies]
+> kremory = { git = "https://github.com/kgentic/kremory", tag = "kremory-v0.3.0" }
+>
+> # Required until autoagents-llm publishes a release > 0.3.7 with the model() accessor.
+> # rev-pinned for reproducibility (a bare branch = "main" moves under you between builds).
+> [patch.crates-io]
+> autoagents-llm = { git = "https://github.com/liquidos-ai/AutoAgents.git", rev = "9781a48b095f60c70c4a8eb29e624183d5c674c5" }
+> ```
+>
+> Once upstream publishes, this collapses to a one-liner: `kremory = "0.3"`.
 
 ---
 
@@ -91,16 +105,46 @@ Tier 3 — Substrate composition (advanced)
 
 ## BYOM — Bring Your Own Model
 
-kremory never bundles an embedding model. The `EmbeddingProvider` trait is the only embedding interface:
+kremory never bundles an embedding model. The `EmbeddingProvider` trait is the only embedding interface — a single `embed` method that takes one text and returns its vector. It uses RPITIT (`impl Future`), so **no `#[async_trait]` is needed**:
 
 ```rust
-#[async_trait::async_trait]
-pub trait EmbeddingProvider: Send + Sync {
-    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError>;
-    fn dimensions(&self) -> usize;
+use kremory::{CoreResult, EmbeddingProvider};
+use std::future::Future;
+
+struct MyEmbedder;
+
+impl EmbeddingProvider for MyEmbedder {
+    fn embed<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> impl Future<Output = CoreResult<Vec<f32>>> + Send + 'a {
+        async move {
+            // call your model here; return the embedding vector
+            Ok(vec![/* … */])
+        }
+    }
+
+    // Optional: report server-side token usage if your backend exposes it.
     fn last_usage_tokens(&self) -> Option<u64> { None }
 }
 ```
+
+> **Tip:** if clippy's `manual_async_fn` fires on the body, either capture any `Copy`
+> fields into locals *before* the `async move` block (the pattern kremory's own
+> embedder impls use) or write the method as a plain `async fn embed`.
+
+The full trait (`kremory::EmbeddingProvider`):
+
+```rust
+pub trait EmbeddingProvider: Send + Sync {
+    fn embed<'a>(&'a self, text: &'a str)
+        -> impl Future<Output = CoreResult<Vec<f32>>> + Send + 'a;
+    fn last_usage_tokens(&self) -> Option<u64> { None }
+    // `into_dyn(self) -> Arc<dyn DynEmbeddingProvider>` is provided by default.
+}
+```
+
+Wire it via `.with_embedder(MyEmbedder.into_dyn())` (or `Arc::new(MyEmbedder)`). **The embedding dimension is not read from the trait** — it defaults to `384`, so if your vectors are a different size, declare it: `.embedding_dim(768)`.
 
 Wire any provider — OpenAI, Ollama, local GGUF, sentence-transformers via HTTP, anything. Your API keys, your inference costs, your data.
 
@@ -116,9 +160,34 @@ kremory ships **no LLM or embedding weights**. The one exception is GLiNER: if y
 
 Threshold tunable via `KREMORY_GLINER_THRESHOLD` (default `0.5`). Lower → higher recall, more noise candidates.
 
-### Recommended model defaults
+### Recommended model
 
-The `with_ollama` Tier-1 convenience constructor uses **`qwen3.5:9b-mlx`** as the default chat model (MLX backend on Apple Silicon for 1.83× speedup over GGUF). Override via `with_ollama_at_model(url, Some("model-name"), path)` when the default isn't pulled or MLX is unavailable.
+**Use `gemma4:e4b` for everything.** It's the best quality/speed balance in the local-Ollama
+ladder (90% extraction precision) and is already the default for the dream/consolidation phase.
+Pull it once:
+
+```text
+ollama pull gemma4:e4b
+```
+
+**Each phase can run its own model if you want.** kremory uses a chat model on three surfaces —
+interactive extraction, the `with_ollama` convenience constructor, and the nightly
+dream/type-discovery pass — and you can wire a different LLM to each. A common split is a fast
+model for interactive ingest and a higher-precision model for the deferred dream pass:
+
+| Model | Precision | Wall-clock | Good for |
+|---|---|---|---|
+| `gemma4:e4b` | 90% | ~378s | **Recommended default — all phases** |
+| `gemma4-e2b:latest` | 80% | ~37-54s | Fast interactive ingest, if latency matters more than precision |
+| `qwen2.5:14b` | retest | ~268s | Legacy fallback |
+
+The single source of truth for the empirical ladder is `tests/llm_integration.rs:1-30`. Set the
+chat model via `OLLAMA_CHAT_MODEL`, `with_ollama_at_model(url, Some("gemma4:e4b"), path)`, or by
+wiring your own provider through `with_llm`.
+
+> The `with_ollama` shortcut still wires `qwen3.5:9b-mlx` by default (MLX speedup on Apple
+> Silicon); pass `with_ollama_at_model(url, Some("gemma4:e4b"), path)` to follow the
+> recommendation above.
 
 For extraction precision specifically, empirically tested models (post-TD-013 parser fixes, 2026-06-04 — see `tests/llm_integration.rs:7-30` for the full ladder):
 
