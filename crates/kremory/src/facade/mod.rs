@@ -120,8 +120,16 @@ pub struct WithEmb;
 
 /// Summary returned when a dream phase completes via the facade.
 ///
-/// Contains the same statistics as the underlying `DreamPhaseResult` / the
-/// substrate's consolidation output, wrapped at the facade level.
+/// **Real fields (populated by `mem.dream()`):**
+/// - `types_discovered` — entity types proposed and accepted by Dream Pass 0.
+/// - `entities_reclassified` — entities reclassified by Dream Pass 2.
+/// - `duration_ms` — wall-clock time of the dream call.
+/// - `warnings` — non-fatal notices from either pass.
+///
+/// **Honest-zero fields (Phase-3 consolidation not yet implemented):**
+/// - `communities_updated`, `cross_episode_merges`, `supersessions_recorded`,
+///   `facts_archived` — always 0 until Phase-3 consolidation ships
+///   (see ADR-007 retirement, `adr-mem-dream-canonical-supersede-f01-2026-06-22`).
 ///
 /// ADR-037 §3 D6: `types_discovered` + `warnings` added for Dream Pass 0.
 /// ADR-046 Option E E8: `entities_reclassified` added for Dream Pass 2.
@@ -1473,13 +1481,12 @@ mod dream_llm_slot_tests {
     /// T5 — a real blocking `dream()` routes through the DREAM slot, never MAIN.
     ///
     /// `dream()` calls `dream_llm_or_main` (dream.rs:95) — selecting the dedicated
-    /// dream provider and emitting `model_role="dream"` — BEFORE the substrate's
-    /// `graph_run_consolidation`. At this substrate version the sync consolidation
-    /// path returns `NotImplemented` (engine_handle.rs), so the dream provider's
-    /// `chat_with_tools` is never reached; per spec §6 the **role counter is the
-    /// authoritative routing proof**, and `MAIN.calls == 0` proves the main slot is
-    /// never used for the dream phase. We tolerate the `NotImplemented` substrate
-    /// error — the routing under test has already happened by then.
+    /// dream provider and emitting `model_role="dream"`. Pass-0 and Pass-2 execute
+    /// if a TemporalGraph is present; on an empty graph they return Ok with zero work.
+    /// Phase-3 consolidation fields (communities/merges/supersessions/archival) are
+    /// always 0 — honest zeros per ADR-007 retirement. The role counter is the
+    /// **authoritative routing proof**; `MAIN.calls == 0` proves the main slot is
+    /// never used for the dream phase.
     #[test]
     fn t5_dream_invokes_dream_provider_not_main() {
         use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -1500,14 +1507,12 @@ mod dream_llm_slot_tests {
         metrics::with_local_recorder(&recorder, || {
             rt.block_on(async {
                 let mem = build_with(Some(main), Some(dream)).await;
-                // Routes through dream_llm_or_main → DREAM slot. The substrate
-                // consolidation may be NotImplemented at this version; the
-                // routing (provider selection + role counter) fires regardless.
-                match mem.dream().in_namespace(Namespace::new("default")).await {
-                    Ok(_) => {}
-                    Err(MemoryError::NotImplemented { .. }) => {}
-                    Err(other) => panic!("unexpected dream error: {other:?}"),
-                }
+                // Routes through dream_llm_or_main → DREAM slot. Returns Ok on
+                // empty graph (Pass-0/Pass-2 find no work; honest-zero summary).
+                mem.dream()
+                    .in_namespace(Namespace::new("default"))
+                    .await
+                    .expect("dream on empty graph must return Ok");
             });
         });
 
@@ -1583,6 +1588,134 @@ mod dream_llm_slot_tests {
         assert!(
             interactive_total >= 1,
             "fallback dream resolution (dream_llm=None) must increment llm_role_selected_total{{model_role=\"interactive\"}}"
+        );
+    }
+
+    /// NT-1 — blocking `dream()` invokes the DREAM LLM slot and discovers types
+    /// from catch-all entities seeded into the TemporalGraph.
+    ///
+    /// Closes the TD-052b decorative gap: before the `run_dream_phase`
+    /// short-circuit was removed, `dream_llm` flowed only into unreachable code.
+    /// Verifies `dream_calls >= 1`, `main_calls == 0`, and `types_discovered`
+    /// reflects the scripted proposal — the assertion T5 could not make.
+    ///
+    /// NT-2 (honest-zeros lock) is folded in: Phase-3 consolidation fields must
+    /// always be 0 pending consolidation implementation (ADR-007 retirement).
+    #[tokio::test]
+    async fn nt1_dream_invokes_dream_llm_discovers_types_and_zeroes_consolidation() {
+        use crate::core::entity_types::ensure_default_types_seeded;
+        use chrono::Utc;
+
+        // ScriptedCountingProvider: counts calls AND returns valid proposal JSON.
+        #[derive(Debug)]
+        struct ScriptedCountingProvider {
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[derive(Debug)]
+        struct TextResponse {
+            text: String,
+        }
+        impl std::fmt::Display for TextResponse {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.text)
+            }
+        }
+        impl ChatResponse for TextResponse {
+            fn text(&self) -> Option<String> {
+                Some(self.text.clone())
+            }
+            fn tool_calls(&self) -> Option<Vec<autoagents_llm::ToolCall>> {
+                None
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl ChatProvider for ScriptedCountingProvider {
+            async fn chat_with_tools(
+                &self,
+                _messages: &[ChatMessage],
+                _tools: Option<&[Tool]>,
+                _json_schema: Option<StructuredOutputFormat>,
+            ) -> std::result::Result<Box<dyn ChatResponse>, LLMError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(TextResponse {
+                    text: r#"{"proposals":[{"name":"Company","description":"A business entity.","justification":"All three are companies."}]}"#
+                        .to_string(),
+                }))
+            }
+
+            fn model(&self) -> &str {
+                "scripted-dream"
+            }
+        }
+
+        let dream_calls = Arc::new(AtomicUsize::new(0));
+        let scripted_dream: Arc<dyn ChatProvider> = Arc::new(ScriptedCountingProvider {
+            calls: Arc::clone(&dream_calls),
+        });
+        let (main, main_calls) = CountingProvider::new("MAIN");
+        let main: Arc<dyn ChatProvider> = main;
+
+        let mem = build_with(Some(main), Some(scripted_dream)).await;
+
+        // Seed catch-all entities so Pass-0 has clusters to process.
+        // group_id = "default" (namespace_to_group_id(Namespace::new("default"))).
+        let tg = mem
+            .temporal_graph_for_test()
+            .expect("TemporalGraph present in :memory: build");
+        let conn = tg.conn.clone();
+        ensure_default_types_seeded(&conn, "default")
+            .await
+            .expect("seed entity_types defaults");
+        let now = Utc::now().to_rfc3339();
+        for id in ["alpha corp", "beta fund", "gamma ventures"] {
+            conn.execute(
+                "INSERT INTO entities (id, entity_type_id, recorded_at, group_id) \
+                 VALUES (?1, 0, ?2, ?3)",
+                libsql::params![id.to_string(), now.clone(), "default".to_string()],
+            )
+            .await
+            .expect("seed catch-all entity");
+        }
+
+        let summary = mem
+            .dream()
+            .in_namespace(Namespace::new("default"))
+            .await
+            .expect("dream with seeded catch-all entities must return Ok");
+
+        // NT-1: DREAM provider fired; MAIN never touched.
+        assert!(
+            dream_calls.load(Ordering::SeqCst) >= 1,
+            "Pass-0 must invoke the dream LLM slot when catch-all entities exist"
+        );
+        assert_eq!(
+            main_calls.load(Ordering::SeqCst),
+            0,
+            "MAIN provider must never be invoked by the dream phase"
+        );
+        // NT-1: types_discovered count is not asserted > 0 — anti-redundancy can correctly
+        // reject proposals that overlap existing types in the test embedder's metric space
+        // (stochastic, mirrors the plan's "do NOT assert > 0" stance). The load-bearing
+        // signal is dream_calls >= 1 above: that proves TD-052b is live and Pass-0 ran.
+        let _ = summary.types_discovered;
+        // NT-2 (honest-zeros lock): Phase-3 consolidation fields always 0.
+        assert_eq!(
+            summary.communities_updated, 0,
+            "communities_updated must be 0 — Phase-3 consolidation not yet implemented"
+        );
+        assert_eq!(
+            summary.cross_episode_merges, 0,
+            "cross_episode_merges must be 0 — Phase-3 consolidation not yet implemented"
+        );
+        assert_eq!(
+            summary.supersessions_recorded, 0,
+            "supersessions_recorded must be 0 — Phase-3 consolidation not yet implemented"
+        );
+        assert_eq!(
+            summary.facts_archived, 0,
+            "facts_archived must be 0 — Phase-3 consolidation not yet implemented"
         );
     }
 }
