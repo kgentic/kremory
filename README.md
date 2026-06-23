@@ -4,10 +4,23 @@
 
 Pure Rust agent memory engine. Single binary. No server process. No subscription required to ship.
 
-```toml
-[dependencies]
-kremory = "0.1"
-```
+### Installing (pre-crates.io)
+
+> **v0.3.0 is not yet on crates.io** — it depends on a `ChatProvider::model()` accessor merged
+> into `autoagents-llm`'s `main` but not yet published past `0.3.7`. Until upstream cuts `0.3.8`,
+> depend on the git tag **and** add the `[patch.crates-io]` stanza, or kremory will not compile
+> (`method not found: model()`):
+>
+> ```toml
+> [dependencies]
+> kremory = { git = "https://github.com/kgentic/kremory", tag = "kremory-v0.3.0" }
+>
+> # Required until autoagents-llm publishes a release > 0.3.7 with the model() accessor.
+> [patch.crates-io]
+> autoagents-llm = { git = "https://github.com/liquidos-ai/AutoAgents.git", rev = "9781a48b095f60c70c4a8eb29e624183d5c674c5" }
+> ```
+>
+> Once upstream publishes, this collapses to: `kremory = "0.3"`.
 
 ---
 

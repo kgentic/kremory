@@ -37,5 +37,9 @@ debug = 1
 # containing these merges (crates.io max = 0.3.7, 2026-03-25). Remove once
 # upstream publishes a version > 0.3.7 that includes both PRs.
 # Blocks cargo publish.
+#
+# NOTE: this workspace is reproducible via Cargo.lock, so `branch = "main"` is
+# fine here. Fresh consumers have no lock — the published install recipe in
+# README.md rev-pins instead (a bare branch ref drifts between lockless builds).
 [patch.crates-io]
 autoagents-llm = { git = "https://github.com/liquidos-ai/AutoAgents.git", branch = "main" }
