@@ -332,7 +332,8 @@ impl Memory {
     }
 
     /// Open with Ollama running at `http://localhost:11434`.
-    /// Models: `llama3.2` (chat) + `nomic-embed-text` (embeddings).
+    /// Models: `gemma4:e4b` (chat, reasoning disabled) + `nomic-embed-text` (embeddings).
+    /// See [`providers::with_ollama`] for the benchmark rationale + lighter alternatives.
     pub async fn with_ollama(path: impl AsRef<Path>) -> Result<Self> {
         providers::with_ollama(path).await
     }

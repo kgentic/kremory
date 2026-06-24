@@ -6,20 +6,25 @@
 //!
 //! # Chat model selection
 //!
-//! Set `OLLAMA_CHAT_MODEL` env var (default: `gemma4-e2b:latest` —
-//! interactive default per empirical ladder below). Override to
-//! `gemma4:e4b` for benchmark-gate runs requiring 90% precision.
+//! Set `OLLAMA_CHAT_MODEL` to the model under test. For thinking-capable models
+//! set `KREMORY_BENCH_THINK=false` to disable reasoning (kremory's `with_ollama`
+//! does this in production — see `facade/providers.rs`).
 //!
-//! ## Empirical ladder (label_precision_benchmark, mock_interview.txt, 2026-06-04
-//! post TD-013 parser fixes — strip serde defaults + name shape validator):
+//! ## Empirical ladder — kremory benchmark 2026-06-24 (Apple Silicon M4 Max,
+//! mock_interview.txt = 10 ground-truth entities; reproduce via
+//! `scripts/model-benchmark/`). Latency is M4-Max-only; precision/recall/F1 are
+//! hardware-independent. `prec`=correct/extracted, `recall`=found/expected.
 //!
-//! | Model                       | Tag form (required) | Precision | Wall-clock | Phase fit          |
-//! |-----------------------------|---------------------|-----------|------------|---------------------|
-//! | `gemma4:e4b`                | `gemma4:e4b`        | 90%       | ~378s      | Phase 2 (deferred)  |
-//! | `gemma4-e2b`                | `gemma4-e2b:latest` | 80%       | ~37-54s    | Phase 1 / fast UX   |
-//! | `gemma4:26b`                | `gemma4:26b`        | 90%       | ~1728s     | NOT recommended     |
-//! | `qwen2.5:14b`               | `qwen2.5:14b`       | retest    | ~268s      | legacy fallback     |
-//! | `llama3.2:3b` / `llama3.1:8b` | various           | retest    | TBD        | bring-your-own      |
+//! | Model (registry tag) | think | F1    | recall | prec | slowest call | fits 30s | size  | tier               |
+//! |----------------------|-------|-------|--------|------|--------------|----------|-------|--------------------|
+//! | `gemma4:e4b`         | false | 84    | 90%    | 82%  | ~16s         | yes      | 9.6GB | DEFAULT (best)     |
+//! | `qwen2.5:14b`        | n/a   | 78-82 | 70%    | ~94% | 29-50s       | NO       | 9.0GB | deferred/quality   |
+//! | `qwen2.5:7b`         | n/a   | 77-82 | 70%    | 86%  | 11s (28s p)  | yes      | 4.7GB | light alternative  |
+//! | `qwen3.5:9b`         | false | 75    | 90%    | 64%  | ~24s         | yes      | 6.6GB | thinking-ON FAILS  |
+//! | `llama3.2:3b`        | n/a   | 70    | 70%    | 70%  | ~20s         | yes      | 2.0GB | small              |
+//! | `qwen2.5:3b`         | n/a   | 54    | 70%    | 44%  | ~6s          | yes      | 1.9GB | small/noisy        |
+//! | `gemma4-e2b:latest`  | n/a   | 0     | 0%     | 0%   | —            | —        | 3.1GB | UNUSABLE (0 ents)  |
+//! | `*-mlx` (any)        | —     | —     | —      | —    | —            | —        | —     | AVOID (Apple-only) |
 //!
 //! ## Rationale (model choice is QUALITY knob, not latency knob)
 //!

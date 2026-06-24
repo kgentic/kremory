@@ -4,24 +4,16 @@
 
 Pure Rust agent memory engine. Single binary. No server process. No subscription required to ship.
 
-### Installing (pre-crates.io)
+## Install
 
-> **v0.3.0 is not yet on crates.io.** It depends on a `ChatProvider::model()` accessor that is
-> merged into `autoagents-llm`'s `main` but not yet published past `0.3.7`. Until upstream cuts
-> `0.3.8`, depend on the git tag **and** add the `[patch.crates-io]` stanza — without the patch,
-> kremory will not compile (`method not found: model()`):
->
-> ```toml
-> [dependencies]
-> kremory = { git = "https://github.com/kgentic/kremory", tag = "kremory-v0.3.0" }
->
-> # Required until autoagents-llm publishes a release > 0.3.7 with the model() accessor.
-> # rev-pinned for reproducibility (a bare branch = "main" moves under you between builds).
-> [patch.crates-io]
-> autoagents-llm = { git = "https://github.com/liquidos-ai/AutoAgents.git", rev = "9781a48b095f60c70c4a8eb29e624183d5c674c5" }
-> ```
->
-> Once upstream publishes, this collapses to a one-liner: `kremory = "0.3"`.
+```toml
+[dependencies]
+kremory = "0.3"
+```
+
+That's it — no git dependency, no `[patch.crates-io]` stanza. kremory builds against the
+published `autoagents-llm` (the model id flows as plain data, not a trait accessor). No model
+weights are bundled; bring your own LLM + embedder (see [BYOM](#byom--bring-your-own-model)).
 
 ---
 
@@ -30,24 +22,28 @@ Pure Rust agent memory engine. Single binary. No server process. No subscription
 ```rust
 use kremory::{Memory, Namespace};
 
-// Auto-detect provider from environment:
-//   OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err
-let mem = Memory::auto("./agent.db")
-    .default_namespace(Namespace::new("user-jim"))
+// Auto-detect provider from env: OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err
+let mem = Memory::auto("./agent.db").await?;
+let ns = Namespace::new("user-jim");
+
+// Ingest — a namespace is required (pass per-call as shown, or set a default
+// via the Memory::open builder's .default_namespace(..)).
+mem.remember("User prefers concise replies")
+    .in_namespace(ns.clone())
     .await?;
 
-// Ingest — blocks until Phase 2 enrichment done (~500ms typical)
-mem.remember("User prefers concise replies").await?;
-
 // Recall — returns prompt-ready text
-let context: String = mem.recall("what does user prefer?").await?;
+let context: String = mem
+    .recall("what does the user prefer?")
+    .in_namespace(ns.clone())
+    .await?;
 
-// Dream (consolidation) — blocks until done
+// Dream (consolidation)
 let summary = mem.dream().await?;
 println!("communities updated: {}", summary.communities_updated);
 
 // Forget (GDPR-style delete)
-let deleted = mem.forget().execute().await?;
+let deleted: u64 = mem.forget().in_namespace(ns).execute().await?;
 
 // Close (flush WAL)
 mem.close().await?;
@@ -148,57 +144,56 @@ Wire it via `.with_embedder(MyEmbedder.into_dyn())` (or `Arc::new(MyEmbedder)`).
 
 Wire any provider — OpenAI, Ollama, local GGUF, sentence-transformers via HTTP, anything. Your API keys, your inference costs, your data.
 
-Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays under 1MB published. See [ADR-002](../../.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
+Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays under 1MB published. See [ADR-002](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
 
 ### What about GLiNER? (when you opt into NER)
 
-kremory ships **no LLM or embedding weights**. The one exception is GLiNER: if you enable the `ner` cargo feature **and** route extraction through the TD-023 hybrid path (`KREMORY_EXTRACTOR=hybrid`), kremory auto-downloads the `onnx-community/gliner_large-v2.1` INT8 model (~650 MB) from HuggingFace Hub on first use. The model is cached locally by `hf-hub` thereafter — subsequent runs are offline.
+kremory ships **no LLM or embedding weights**. The one exception is GLiNER: if you enable the `ner` cargo feature **and** wire the hybrid extractor via the builder (`.with_gliner()` together with `.with_llm(...)`), kremory auto-downloads the `onnx-community/gliner_large-v2.1` INT8 model (~650 MB) from HuggingFace Hub on first use, cached locally by `hf-hub` thereafter (subsequent runs are offline).
 
-- **Default build** (no `ner` feature): no download, no GLiNER. The `NuExtract` (pure-LLM) extractor handles entity extraction via your BYOM LLM.
-- **`--features ner` + `KREMORY_EXTRACTOR=hybrid`**: GLiNER downloads on first use. Empirically the highest-precision extractor (TD-023: 100% mock_interview / 93.8% legal_deposition).
-- **No env opt-out yet**: if you enable `ner` and call the hybrid path, the download fires. A `KREMORY_GLINER_OFFLINE=1` opt-out is a tracked follow-up.
+- **Default build** (no `ner` feature): no download, no GLiNER. The default LLM extractor handles entity extraction via your BYOM LLM.
+- **`--features ner` + `.with_gliner()` + `.with_llm(...)`**: GLiNER candidates + one LLM typing call (the hybrid extractor) — empirically the highest-precision path (100% mock_interview / 93.8% legal_deposition).
 
 Threshold tunable via `KREMORY_GLINER_THRESHOLD` (default `0.5`). Lower → higher recall, more noise candidates.
 
-### Recommended model
+### Recommended local models (Ollama)
 
-**Use `gemma4:e4b` for everything.** It's the best quality/speed balance in the local-Ollama
-ladder (90% extraction precision) and is already the default for the dream/consolidation phase.
-Pull it once:
+Benchmarked on **Apple Silicon M4 Max** (2026-06-24, `mock_interview` fixture). **Latency is
+M4-Max-only; precision/recall are hardware-independent** (same GGUF weights → same quality
+anywhere). Reproduce with
+[`scripts/model-benchmark/`](https://github.com/kgentic/kremory/blob/main/scripts/model-benchmark/README.md).
+
+| Model | think | F1 | recall | slowest call | fits 30s budget | size | role |
+|---|---|---|---|---|---|---|---|
+| **`gemma4:e4b`** | `false` | **84** | **90%** | ~16s | yes | 9.6GB | **`with_ollama` default — best** |
+| `qwen2.5:7b` | — | 79 | 70% | ~11s | yes | 4.7GB | lighter alternative |
+| `qwen2.5:14b` | — | 82 | 70% | 29–50s | no | 9.0GB | deferred / quality only |
+| `gemma4:e4b` | on | 75 | 90% | 44s | no | 9.6GB | reasoning HURTS extraction |
+
+`Memory::with_ollama` defaults to **`gemma4:e4b` with reasoning disabled** (`think:false`) — the
+best extraction quality that still fits the inline 30s budget. kremory extraction is
+structured-output, not reasoning: leaving thinking *on* is both slower (44s/call) and *worse*
+(F1 75). Pull the two models once:
 
 ```text
 ollama pull gemma4:e4b
+ollama pull nomic-embed-text   # embeddings, 768-dim
 ```
 
-**Each phase can run its own model if you want.** kremory uses a chat model on three surfaces —
-interactive extraction, the `with_ollama` convenience constructor, and the nightly
-dream/type-discovery pass — and you can wire a different LLM to each. A common split is a fast
-model for interactive ingest and a higher-precision model for the deferred dream pass:
+Prefer a smaller footprint? Wire the lighter model explicitly:
 
-| Model | Precision | Wall-clock | Good for |
-|---|---|---|---|
-| `gemma4:e4b` | 90% | ~378s | **Recommended default — all phases** |
-| `gemma4-e2b:latest` | 80% | ~37-54s | Fast interactive ingest, if latency matters more than precision |
-| `qwen2.5:14b` | retest | ~268s | Legacy fallback |
+```rust
+let mem = Memory::with_ollama_at_model(
+    "http://localhost:11434",
+    Some("qwen2.5:7b".into()),   // 4.7GB, F1 ~79
+    "./agent.db",
+).await?;
+```
 
-The single source of truth for the empirical ladder is `tests/llm_integration.rs:1-30`. Set the
-chat model via `OLLAMA_CHAT_MODEL`, `with_ollama_at_model(url, Some("gemma4:e4b"), path)`, or by
-wiring your own provider through `with_llm`.
-
-> The `with_ollama` shortcut still wires `qwen3.5:9b-mlx` by default (MLX speedup on Apple
-> Silicon); pass `with_ollama_at_model(url, Some("gemma4:e4b"), path)` to follow the
-> recommendation above.
-
-For extraction precision specifically, empirically tested models (post-TD-013 parser fixes, 2026-06-04 — see `tests/llm_integration.rs:7-30` for the full ladder):
-
-| Model | Precision | Wall-clock | Use case |
-|---|---|---|---|
-| `gemma4:e4b` | 90% | ~378s | Deferred / batch quality |
-| `gemma4-e2b:latest` | 80% | ~37s | Interactive / fast UX |
-| `qwen2.5:14b` | retest | ~268s | Legacy fallback |
-| `gemma4:26b` | 90% but emits junk | ~1728s | **NOT recommended** (shape-validator can't reject all garbage) |
-
-**Note on tag form**: `gemma4-e2b:latest` requires the explicit `:latest` tag — bare `gemma4-e2b` routes through the PromptOnly arm instead of FormatSchema and returns empty results. Capability classifier footgun tracked as a v0.1.x follow-up.
+Or set any model via `OLLAMA_CHAT_MODEL`, or wire your own provider through `with_llm`. The
+empirical ladder's source of truth is
+[`tests/llm_integration.rs`](https://github.com/kgentic/kremory/blob/main/crates/kremory/tests/llm_integration.rs).
+Avoid `*-mlx` tags (Apple-Silicon-only — not portable) and `gemma4:26b` (emits junk the
+validator can't reject).
 
 For embedding, `nomic-embed-text` (Ollama, 768-dim) is the kremory-tested default.
 
@@ -216,7 +211,7 @@ Every fact in kremory carries two independent time dimensions:
 
 This enables: **"What did the agent know at time X if asked at time Y?"**
 
-See [ADR-003](../../.ai-docs/adrs/rql/adr-003-bitemporal-audit-compliance-2026-05-22.md).
+See [ADR-003](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-003-bitemporal-audit-compliance-2026-05-22.md).
 
 ---
 
@@ -248,7 +243,7 @@ let ctx = mem.recall("user preferences")
 
 ## Full API reference
 
-See [docs/api.md](../../docs/api.md) for the complete reference covering all 12 sections:
+See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for the complete reference covering all 12 sections:
 
 1. Quickstart
 2. Customizing the LLM/embedder
@@ -282,7 +277,7 @@ kremory emits structured metrics + tracing spans for every LLM and embedding cal
 **Optional OTLP export** — enable the `otel` cargo feature:
 
 ```toml
-kremory = { version = "0.1", features = ["otel"] }
+kremory = { version = "0.3", features = ["otel"] }
 ```
 
 ```rust
@@ -303,7 +298,7 @@ let mem = Memory::open("./agent.db")
     .await?;
 ```
 
-See [docs/observability.md](../../docs/observability.md) for full metric catalog, label schema, cardinality discipline, and dashboard examples.
+See [docs/observability.md](https://github.com/kgentic/kremory/blob/main/docs/observability.md) for full metric catalog, label schema, cardinality discipline, and dashboard examples.
 
 ---
 
@@ -315,7 +310,7 @@ libSQL (Turso-compatible). Defaults to a local embedded file — no server proce
 
 ## Compared to alternatives
 
-See [docs/comparison.md](../../docs/comparison.md) for the full matrix.
+See [docs/comparison.md](https://github.com/kgentic/kremory/blob/main/docs/comparison.md) for the full matrix.
 
 ---
 

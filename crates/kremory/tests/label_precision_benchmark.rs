@@ -187,13 +187,23 @@ async fn label_precision_gte_0_75_on_mock_interview() {
     // kremory-napi default ("1h") so the model stays loaded across chunks.
     // See `crates/kremory-napi/src/bridge.rs:312-323` for the canonical comment.
     let keep_alive = std::env::var("OLLAMA_KEEP_ALIVE").unwrap_or_else(|_| "1h".to_string());
-    let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
+    // KREMORY_BENCH_THINK=false → .think(false): thinking-capable models
+    // (gemma4:e4b, qwen3.5:9b) skip reasoning so they can be measured against
+    // the inline 30s extraction budget. Unset → model's native behaviour.
+    // autoagents-llm 0.3.7 Ollama backend sends this as `/api/chat` `think`.
+    let think_off = std::env::var("KREMORY_BENCH_THINK")
+        .map(|v| v.eq_ignore_ascii_case("false") || v == "0")
+        .unwrap_or(false);
+    let mut llm_builder = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)
         .model(chat_model)
         .timeout_seconds(90)
-        .keep_alive(keep_alive)
-        .build()
-        .expect("Ollama LLM builder");
+        .keep_alive(keep_alive);
+    if think_off {
+        eprintln!("label_precision_benchmark: KREMORY_BENCH_THINK=false → .think(false) (reasoning disabled)");
+        llm_builder = llm_builder.think(false);
+    }
+    let llm: Arc<Ollama> = llm_builder.build().expect("Ollama LLM builder");
 
     let raw_emb: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
         .base_url(&base_url)
@@ -511,6 +521,104 @@ async fn label_precision_gte_0_75_on_mock_interview() {
             .filter(|(_, label)| !is_canonical_entity_type(label))
             .collect();
         eprintln!("  non-canonical entities: {placeholders:?}");
+    }
+
+    // ── ENRICHED CLASSIFICATION METRICS (2026-06-24 model-benchmark spike) ──
+    // The legacy `label_precision` above is RECALL (matched_expected / total_expected).
+    // Compute the full correctness surface from the extracted-vs-expected sets
+    // (zero extra LLM cost) and emit a structured per-model JSON report when
+    // KREMORY_BENCH_REPORT=<path> is set, so the sweep can collate richly.
+    fn fuzzy_name(a: &str, b: &str) -> bool {
+        let (a, b) = (a.to_lowercase(), b.to_lowercase());
+        a.contains(&b) || b.contains(&a)
+    }
+    let recall = precision; // existing metric, correctly named
+                            // True precision: of EXTRACTED entities, how many fuzzy-name-match some
+                            // expected AND carry that expected's exact label.
+    let correct_extracted = extracted
+        .iter()
+        .filter(|(en, el)| {
+            expected
+                .iter()
+                .any(|(xn, xl)| fuzzy_name(en, xn) && el.to_lowercase() == xl.to_lowercase())
+        })
+        .count();
+    let total_extracted = extracted.len();
+    let true_precision = if total_extracted == 0 {
+        0.0
+    } else {
+        correct_extracted as f64 / total_extracted as f64
+    };
+    let f1 = if (true_precision + recall) == 0.0 {
+        0.0
+    } else {
+        2.0 * true_precision * recall / (true_precision + recall)
+    };
+    // Over-extraction: extracted entities with NO fuzzy-name match to any expected.
+    let over_extraction = extracted
+        .iter()
+        .filter(|(en, _)| !expected.iter().any(|(xn, _)| fuzzy_name(en, xn)))
+        .count();
+    // Per-label confusion: for each expected entity → correct / wrong:<got> / missed.
+    let mut confusion: Vec<(String, String, String)> = Vec::new();
+    for (xn, xl) in &expected {
+        let got = extracted.iter().find(|(en, _)| fuzzy_name(en, xn));
+        let outcome = match got {
+            None => "missed".to_string(),
+            Some((_, el)) if el.to_lowercase() == xl.to_lowercase() => "correct".to_string(),
+            Some((_, el)) => format!("wrong:{el}"),
+        };
+        confusion.push((xn.clone(), xl.clone(), outcome));
+    }
+    let facts = result.inserted_fact_ids.len();
+    let min_rel = domain.min_relationships;
+
+    eprintln!("── ENRICHED METRICS ──");
+    eprintln!(
+        "  recall={:.1}% precision={:.1}% f1={:.1}% (correct {}/{} extracted; {}/{} expected found)",
+        recall * 100.0,
+        true_precision * 100.0,
+        f1 * 100.0,
+        correct_extracted,
+        total_extracted,
+        matched,
+        total
+    );
+    eprintln!(
+        "  over_extraction={over_extraction} placeholder={placeholder_count} facts={facts} (min_relationships={min_rel})"
+    );
+    eprintln!("  confusion:");
+    for (n, el, o) in &confusion {
+        eprintln!("    {n} [{el}] → {o}");
+    }
+
+    if let Ok(report_path) = std::env::var("KREMORY_BENCH_REPORT") {
+        let model_name = std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_default();
+        let report = serde_json::json!({
+            "model": model_name,
+            "domain": domain_key,
+            "think_off": std::env::var("KREMORY_BENCH_THINK").map(|v| v.eq_ignore_ascii_case("false") || v == "0").unwrap_or(false),
+            "recall": recall,
+            "precision": true_precision,
+            "f1": f1,
+            "matched_expected": matched,
+            "total_expected": total,
+            "correct_extracted": correct_extracted,
+            "total_extracted": total_extracted,
+            "over_extraction": over_extraction,
+            "placeholder_count": placeholder_count,
+            "facts": facts,
+            "min_relationships": min_rel,
+            "confusion": confusion.iter().map(|(n, el, o)| serde_json::json!({"name": n, "expected": el, "outcome": o})).collect::<Vec<_>>(),
+            "extracted": extracted.iter().map(|(n, l)| serde_json::json!({"name": n, "label": l})).collect::<Vec<_>>(),
+        });
+        if let Some(parent) = std::path::Path::new(&report_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::write(&report_path, serde_json::to_string_pretty(&report).unwrap()) {
+            Ok(()) => eprintln!("  report → {report_path}"),
+            Err(e) => eprintln!("  WARN: failed to write report {report_path}: {e}"),
+        }
     }
 
     // PHASE 1 DIAGNOSTIC DUMP (2026-06-03)

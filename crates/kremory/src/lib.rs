@@ -16,14 +16,23 @@
 //!
 //! # Quick start
 //!
+//! Mirrors the README Quickstart — kept compile-verified so it can't silently drift.
+//!
 //! ```rust,no_run
 //! use kremory::{Memory, Namespace};
 //! # async fn ex() -> kremory::memory::Result<()> {
-//! // Env-detected provider (OLLAMA_HOST or OPENAI_API_KEY):
-//! let mem = Memory::auto("./agent.db")
+//! // Env-detected provider (OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY):
+//! let mem = Memory::auto("./agent.db").await?;
+//! let ns = Namespace::new("user-jim");
+//! // A namespace is required — pass per-call (or set a Memory::open builder default).
+//! mem.remember("User prefers concise replies")
+//!     .in_namespace(ns.clone())
 //!     .await?;
-//! mem.remember("User prefers concise replies").await?;
-//! let context = mem.recall("what does user prefer?").await?;
+//! let context: String = mem
+//!     .recall("what does the user prefer?")
+//!     .in_namespace(ns)
+//!     .await?;
+//! # let _ = context;
 //! # Ok(())
 //! # }
 //! ```

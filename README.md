@@ -4,23 +4,15 @@
 
 Pure Rust agent memory engine. Single binary. No server process. No subscription required to ship.
 
-### Installing (pre-crates.io)
+## Install
 
-> **v0.3.0 is not yet on crates.io** — it depends on a `ChatProvider::model()` accessor merged
-> into `autoagents-llm`'s `main` but not yet published past `0.3.7`. Until upstream cuts `0.3.8`,
-> depend on the git tag **and** add the `[patch.crates-io]` stanza, or kremory will not compile
-> (`method not found: model()`):
->
-> ```toml
-> [dependencies]
-> kremory = { git = "https://github.com/kgentic/kremory", tag = "kremory-v0.3.0" }
->
-> # Required until autoagents-llm publishes a release > 0.3.7 with the model() accessor.
-> [patch.crates-io]
-> autoagents-llm = { git = "https://github.com/liquidos-ai/AutoAgents.git", rev = "9781a48b095f60c70c4a8eb29e624183d5c674c5" }
-> ```
->
-> Once upstream publishes, this collapses to: `kremory = "0.3"`.
+```toml
+[dependencies]
+kremory = "0.3"
+```
+
+No git dependency, no `[patch.crates-io]` stanza — kremory builds against the published
+`autoagents-llm`. No model weights bundled; bring your own LLM + embedder.
 
 ---
 
@@ -29,17 +21,20 @@ Pure Rust agent memory engine. Single binary. No server process. No subscription
 ```rust
 use kremory::{Memory, Namespace};
 
-// Auto-detect provider from environment:
-//   OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err
-let mem = Memory::auto("./agent.db")
-    .default_namespace(Namespace::new("user-jim"))
+// Auto-detect provider from env: OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err
+let mem = Memory::auto("./agent.db").await?;
+let ns = Namespace::new("user-jim");
+
+// Ingest — a namespace is required (per-call here, or a builder default)
+mem.remember("User prefers concise replies")
+    .in_namespace(ns.clone())
     .await?;
 
-// Ingest — blocks until Phase 2 enrichment done
-mem.remember("User prefers concise replies").await?;
-
 // Recall — returns prompt-ready text
-let context: String = mem.recall("what does user prefer?").await?;
+let context: String = mem
+    .recall("what does the user prefer?")
+    .in_namespace(ns)
+    .await?;
 
 // Close (flush WAL)
 mem.close().await?;
@@ -52,7 +47,7 @@ No model bundled. No server process. No API key required to ship.
 ## Why kremory
 
 - **Embeddable, not a service.** One `cargo add`. No subprocess. No container. No API key required to ship. The SQLite of agent memory.
-- **BYOM — Bring Your Own Model.** kremory never bundles an LLM or embedding model. Wire your own `Arc<dyn EmbeddingProvider>` and `Arc<dyn ChatProvider>` — OpenAI, Anthropic, Ollama, local GGUF, anything. Your costs, your keys, your data. _Caveat: enabling the optional `ner` cargo feature + routing through `KREMORY_EXTRACTOR=hybrid` auto-downloads `onnx-community/gliner_large-v2.1` (~650 MB, INT8, HF Hub-cached) on first use. Default builds use the pure-LLM `NuExtract` path — no download. See [crate README](crates/kremory/README.md#what-about-gliner-when-you-opt-into-ner)._
+- **BYOM — Bring Your Own Model.** kremory never bundles an LLM or embedding model. Wire your own `Arc<dyn EmbeddingProvider>` and `Arc<dyn ChatProvider>` — OpenAI, Anthropic, Ollama, local GGUF, anything. Your costs, your keys, your data. _Caveat: enabling the optional `ner` cargo feature + wiring the hybrid extractor (`.with_gliner()` + `.with_llm(...)`) auto-downloads `onnx-community/gliner_large-v2.1` (~650 MB, INT8, HF Hub-cached) on first use. Default builds use the pure-LLM extractor — no download. See [crate README](crates/kremory/README.md#what-about-gliner-when-you-opt-into-ner)._
 - **Two-clock temporal model.** Every fact carries `recorded_at` (when the system learned it — immutable) and `valid_from`/`valid_to` (when it was true in the world — mutable). Audit-grade history with no data loss.
 - **First-class observability.** Token counters, cumulative USD cost gauges, duration histograms, OpenTelemetry GenAI SemConv spans — emitted automatically when you wire BYOM providers via Tier 1 shortcuts or `with_llm_tracked` builder. Optional OTLP exporter behind the `otel` cargo feature.
 
