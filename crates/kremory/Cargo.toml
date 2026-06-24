@@ -1,14 +1,32 @@
 [package]
 name = "kremory"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.86"
 license = "Apache-2.0"
 description = "Bi-temporal knowledge graph engine + agent memory orchestration in pure Rust"
 repository = "https://github.com/kgentic/kremory"
 homepage = "https://kremory.dev"
+readme = "README.md"
 keywords = ["agent", "memory", "knowledge-graph", "bi-temporal", "embedding"]
 categories = ["database", "data-structures"]
+# Allowlist what ships to crates.io — keeps internal .ai-docs/, logs/, tests/,
+# examples/, monitoring/* (except the include_str! rates asset), etc. OUT of the
+# published package (0.3.0 shipped ~181 internal files for lack of this).
+# `monitoring/provider-rates.toml` is a COMPILE-TIME asset (core/rates.rs include_str!).
+include = [
+    "src/**/*.rs",
+    "monitoring/provider-rates.toml",
+    "README.md",
+    "CHANGELOG.md",
+    "Cargo.toml",
+]
+
+# docs.rs builds the public API surface with all stable features + the docsrs cfg
+# so feature-gated items (otel, ner) render. Excludes unstable surfaces by design.
+[package.metadata.docs.rs]
+features = ["otel"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 # Explicit empty default — prevents `--all-features` CI builds from silently

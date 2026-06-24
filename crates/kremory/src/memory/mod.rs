@@ -4,13 +4,6 @@
 //! plus the scoping types in `types`. Internal orchestration modules added
 //! in D.2 stay `pub(crate)`; external consumers use the 4 entry points only.
 //!
-//! ## Greenfield contract
-//!
-//! D.1b ships scaffolding only. The 4 public functions return
-//! `MemoryError::NotImplemented { .. }` until D.2's TDD lane lands the real
-//! implementations. This keeps the public surface visible to downstream
-//! consumers (the-host-application, kremory-mcp) while the implementation is built.
-//!
 //! ## BYOM contract
 //!
 //! `ChatProvider` is the canonical LLM abstraction across all kremory layers.

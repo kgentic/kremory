@@ -155,7 +155,7 @@ impl<L, E> MemoryBuilder<L, E> {
     /// # ) -> kremory::memory::Result<()> {
     /// let memory = Memory::open("./agent.db")
     ///     .with_llm(my_llm)
-    ///     .with_model_id("gemma4-e2b:latest")
+    ///     .with_model_id("qwen2.5:7b")
     ///     .with_embedder(my_embedder)
     ///     .await?;
     /// # Ok(())
@@ -294,7 +294,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Dream Pass 0 (type discovery) benefits from a deferred-*quality* model
     /// (e.g. `gemma4:e4b`) even when the interactive ingest path uses a fast
-    /// model (e.g. `gemma4-e2b:latest`) wired via [`with_llm`](Self::with_llm).
+    /// model (e.g. `qwen2.5:7b`) wired via [`with_llm`](Self::with_llm).
     /// See TD-052b: the interactive model proposes the placeholder `"..."` in
     /// Pass 0 → silent zero-discovery; the deferred model proposes → accepts →
     /// retypes.

@@ -318,40 +318,51 @@ pub async fn auto(path: impl AsRef<Path>) -> Result<Memory> {
 
 /// Open with Ollama at `http://localhost:11434`.
 ///
-/// Chat model: `qwen3.5:9b-mlx` · Embedding model: `nomic-embed-text`.
+/// Chat model: `gemma4:e4b` (reasoning disabled) · Embedding model: `nomic-embed-text`.
 ///
-/// Default chat model upgraded from llama3.2 to qwen3.5:9b-mlx per DAG
-/// MLX bench (2026-05-30, M4 Max): qwen3.5:9b-mlx delivered 20.1 tok/s
-/// (1.83× faster than qwen3:14b GGUF baseline; 3.4× on ReAct loops) with
-/// tool-calling acc 1.00 and ReAct acc 1.00. Reference:
-/// `~/Documents/Projects/DAG/.ai-docs/research/model-bench-2026-05-30-qwen-mlx-vs-gguf.md`
-/// Requires `ollama pull qwen3.5:9b-mlx` (Ollama 0.24+ with MLX backend).
+/// Default chosen by kremory's own benchmark (2026-06-24, Apple Silicon M4 Max;
+/// reproduce via `scripts/model-benchmark/`): `gemma4:e4b` with `think:false`
+/// gives the best extraction that fits the inline 30s budget — F1 84% / recall
+/// 90% / slowest call ~16s. (With thinking ON the same model is ~44s/call and
+/// LOWER quality, F1 75 — kremory extraction is structured-output, not reasoning.)
+/// Lighter alternative: `with_ollama_at_model(.., Some("qwen2.5:7b".into()), ..)`
+/// — 4.7GB, F1 79, recall 70. Latency figures are M4-Max-only; precision/recall
+/// are hardware-independent.
 ///
-/// Requires a running Ollama server. If no Ollama is available at runtime, the
-/// first `.remember()` or `.recall()` call will return a network error.
+/// Requires `ollama pull gemma4:e4b` + `ollama pull nomic-embed-text`, and a
+/// running Ollama server (Ollama 0.24+). If no Ollama is available at runtime,
+/// the first `.remember()` / `.recall()` call returns a network error.
 pub async fn with_ollama(path: impl AsRef<Path>) -> Result<Memory> {
     with_ollama_at("http://localhost:11434", path).await
 }
 
 /// Open with Ollama at a custom URL and optional custom chat model.
 ///
-/// When `model` is `None`, the default `qwen3.5:9b-mlx` is used. Pass
-/// `Some("qwen2.5:14b")` (or any other pulled GGUF model) to override —
-/// useful when the default MLX model is unavailable, the host doesn't
-/// support MLX, or `/api/chat` hangs on MLX subprocess (Ollama issues
-/// #15334 + #15258).
+/// When `model` is `None`, the default `gemma4:e4b` (reasoning disabled) is used.
+/// Pass e.g. `Some("qwen2.5:7b".into())` for a lighter footprint, or any other
+/// pulled model. Reasoning is disabled (`think:false`) and `keep_alive` is held
+/// at 1h on all models opened this way (see below).
 pub async fn with_ollama_at_model(
     url: impl Into<String>,
     model: Option<String>,
     path: impl AsRef<Path>,
 ) -> Result<Memory> {
     let url: String = url.into();
-    let model: String = model.unwrap_or_else(|| "qwen3.5:9b-mlx".to_string());
+    let model: String = model.unwrap_or_else(|| "gemma4:e4b".to_string());
 
+    // .think(false): kremory extraction is structured-output, not reasoning.
+    // Disabling thinking on capable models (gemma4:e4b, qwen3.5:9b) BOTH raises
+    // extraction quality AND keeps per-call latency inside the inline budget
+    // (kremory benchmark 2026-06-24, M4 Max: gemma4:e4b 44s/F1 75 thinking-on →
+    // 16s/F1 84 think:false). No-op on non-thinking models.
+    // .keep_alive("1h"): avoids per-call model-unload thrash on multi-chunk
+    // ingest (autoagents-llm defaults keep_alive="0"; TD-024).
     let chat_provider: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&url)
         .model(model.clone())
         .timeout_seconds(120)
+        .keep_alive("1h")
+        .think(false)
         .build()
         .map_err(|e| MemoryError::Other(format!("Ollama chat provider error: {e}")))?;
 
@@ -388,16 +399,23 @@ pub async fn with_ollama_at_model(
 
 /// Open with Ollama at a custom URL.
 ///
-/// Chat model: `qwen3.5:9b-mlx` · Embedding model: `nomic-embed-text` (dim=768).
+/// Chat model: `gemma4:e4b` (reasoning disabled, `keep_alive=1h`) · Embedding
+/// model: `nomic-embed-text` (dim=768). See [`with_ollama`] for the benchmark
+/// rationale + the lighter `qwen2.5:7b` alternative.
 pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> Result<Memory> {
     let url: String = url.into();
 
-    // MLX-backed default per DAG 2026-05-30 bench. 8.9 GB model; fits comfortably
-    // in 36GB unified memory; Metal acceleration via Ollama MLX backend.
+    // Default per kremory's own benchmark (2026-06-24, M4 Max; scripts/model-benchmark):
+    // gemma4:e4b + think:false is the best extraction model that fits the inline
+    // 30s budget (F1 84% / recall 90% / slowest call ~16s). think:false also
+    // RAISES quality here (thinking-on: 44s/call, F1 75). keep_alive("1h")
+    // avoids per-call unload thrash on multi-chunk ingest (TD-024).
     let chat_provider: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&url)
-        .model("qwen3.5:9b-mlx")
+        .model("gemma4:e4b")
         .timeout_seconds(120)
+        .keep_alive("1h")
+        .think(false)
         .build()
         .map_err(|e| MemoryError::Other(format!("Ollama chat provider error: {e}")))?;
 
@@ -411,7 +429,7 @@ pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> R
     let llm: Arc<dyn ChatProvider> = Arc::new(TokenTrackingChatProvider::new(
         ArcChatProvider::new(arc_llm),
         "ollama",
-        "qwen3.5:9b-mlx",
+        "gemma4:e4b",
     ));
     let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(AutoagentsEmbedderAdapter::new(
         EmbedderArc::<Ollama>::new(embed_provider),
@@ -424,7 +442,7 @@ pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> R
             llm,
             embedder,
             embedding_dim: Some(768),
-            model: Some("qwen3.5:9b-mlx"),
+            model: Some("gemma4:e4b"),
         },
     )
     .await
