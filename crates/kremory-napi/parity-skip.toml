@@ -435,6 +435,26 @@ reason = "Builder observability knob (F3, ADR adr-memory-builder-tracking-as-kno
 revisit = "v0.2.0"
 
 [[skip]]
+symbol = "MemoryBuilder::with_model_id"
+reason = "Builder method (Option-1 2026-06-23): consumer-supplied model id for capability detection. Tier-2 builder wiring deferred, same rationale as with_llm. JS surface (openMemory) would expose it as an optional model_id param when Tier-2 binding lands."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_dream_llm"
+reason = "Builder method (TD-052b): per-phase dream-pass model slot. Tier-2 builder wiring deferred, same rationale as with_llm — the dream LLM is a substrate-side knob; JS binding lands with the broader builder surface."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_seed_registry"
+reason = "Builder method (seed-registry T1-T11): custom per-namespace entity-type seed. Tier-2 builder wiring deferred, same rationale as with_embedder; seed registries are configured substrate-side before the JS binding is constructed."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::register_namespace_with_seed"
+reason = "Runtime method (seed-registry T1-T11): registers a namespace with a custom entity-type seed. Tier-2 binding deferred per substrate-first posture; the JS surface will mirror it once the seed-registry API stabilises."
+revisit = "v0.2.0"
+
+[[skip]]
 symbol = "MemoryBuilder::with_embedder"
 reason = "Builder method; Tier-2 builder wiring deferred per ADR-030 Form B"
 revisit = "v0.2.0"

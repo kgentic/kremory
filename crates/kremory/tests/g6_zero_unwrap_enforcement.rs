@@ -86,7 +86,28 @@ fn test_cargo_toml_has_deny_lints() {
 ///     `panic!("invariant: …")` and/or `?` propagation.
 ///
 /// The test captures stderr so the output appears in `cargo test` when it fails.
+///
+/// ## Why `#[ignore]` by default (2026-06-24)
+///
+/// This test spawns `cargo clippy -p kremory --all-features` — a full
+/// all-features clippy compile that takes ~219s and emits zero output while it
+/// runs, dominating the default `cargo test` wall-clock and making the suite
+/// look hung. It is **redundant** in the default unit-test tier: the
+/// zero-unwrap invariant is already enforced two other ways —
+///   1. `crates/kremory/Cargo.toml` `[lints.clippy] unwrap_used/expect_used =
+///      "deny"` + `[lints.rust] warnings = "deny"` (the build itself cannot
+///      compile a violation), and
+///   2. the standalone `/quality-gate` clippy run
+///      (`clippy --workspace --all-targets --all-features -D warnings`).
+///
+/// It is therefore routed to on-demand: run it via `cargo test -p kremory
+/// --ignored` or the quality gate. This is NOT suppression of a failing test —
+/// the test passes; the sibling `test_cargo_toml_has_deny_lints` (a fast
+/// file-read assertion) keeps running in the default tier as the cheap proxy.
 #[test]
+#[ignore = "spawns a ~219s `cargo clippy --all-features` subprocess; invariant \
+            already enforced by Cargo.toml [lints] deny + quality-gate clippy. \
+            Run with `cargo test -p kremory --ignored` or the quality gate."]
 fn test_clippy_unwrap_expect_clean() {
     // Resolve the workspace root from CARGO_MANIFEST_DIR (crates/kremory → ../../)
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
