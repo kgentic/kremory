@@ -32,6 +32,8 @@
 
 mod helpers;
 
+static DB_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 use helpers::recording_sink::{RecordingSink, SinkEvent};
 
 use std::sync::{Arc, Mutex};
@@ -147,7 +149,8 @@ async fn build_ingestor_with_sink(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let db_path = tmp_dir.join(format!("kremory-sink-wiring-int-{db_tag}-{nanos}.db"));
+    let seq = DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let db_path = tmp_dir.join(format!("kremory-sink-wiring-int-{db_tag}-{nanos}-{seq}.db"));
 
     let temporal = Arc::new(
         TemporalGraph::open(db_path.to_str().expect("utf-8 path"))
@@ -172,6 +175,7 @@ async fn build_ingestor_with_sink(
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
         config,
+        model: None,
     });
 
     let ingestor_config = IngestorConfig {
@@ -536,7 +540,10 @@ async fn sink_batch_complete_counts_failed_episodes() {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let db_path = tmp_dir.join(format!("kremory-sink-wiring-int-batch-mixed-{nanos}.db"));
+    let seq = DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let db_path = tmp_dir.join(format!(
+        "kremory-sink-wiring-int-batch-mixed-{nanos}-{seq}.db"
+    ));
 
     let temporal = Arc::new(
         TemporalGraph::open(db_path.to_str().expect("utf-8 path"))
@@ -560,6 +567,7 @@ async fn sink_batch_complete_counts_failed_episodes() {
         llm: Arc::new(AlwaysFailLlmClient),
         embedder: null_emb,
         config,
+        model: None,
     });
 
     let sink = RecordingSink::new();

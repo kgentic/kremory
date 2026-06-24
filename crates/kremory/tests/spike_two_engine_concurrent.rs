@@ -92,6 +92,7 @@ async fn build_engine_ingestor(
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
         config,
+        model: None,
     });
 
     let ingestor_config = IngestorConfig {
@@ -116,13 +117,15 @@ async fn build_engine_ingestor(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn spike_b_two_engine_concurrent_wal_safety() {
     // ── Setup: single DB path shared by both engines ──────────────────────────
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp_dir = std::env::temp_dir();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let db_path = tmp_dir
-        .join(format!("kremory-spike-b-two-engine-{nanos}.db"))
+        .join(format!("kremory-spike-b-two-engine-{nanos}-{seq}.db"))
         .to_str()
         .expect("utf-8 path")
         .to_string();
