@@ -77,13 +77,22 @@ fn remember_batch_chain_compiles() {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    // Collision-proof unique path. A nanosecond timestamp alone is NOT unique:
+    // tests run in parallel threads within this binary, and two calls landing in
+    // the same nanosecond produced the SAME path → two tests opened one DB file
+    // and raced its migrations (migrate_004 `drop_old_entities` → "no such table:
+    // entities"). The monotonic process-wide counter guarantees a distinct file
+    // per call regardless of clock resolution.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "kremory_facade_remember_{}_{}.db",
+        "kremory_facade_remember_{}_{}_{}.db",
         tag,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
-            .unwrap_or(0)
+            .unwrap_or(0),
+        seq
     ))
 }
 

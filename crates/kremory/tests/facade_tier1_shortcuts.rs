@@ -93,12 +93,15 @@ async fn auto_without_any_provider_env_errors() {
 /// `Memory` returned from Tier 1 shortcut is Clone.
 #[tokio::test]
 async fn tier1_memory_is_clone() {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let db = std::env::temp_dir().join(format!(
-        "kremory_tier1_memory_is_clone_{}.db",
+        "kremory_tier1_memory_is_clone_{}_{}.db",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
-            .unwrap_or(0)
+            .unwrap_or(0),
+        seq
     ));
     let mem = Memory::with_ollama(db).await.expect("should succeed");
     let _clone = mem.clone();

@@ -10,13 +10,16 @@ use std::sync::Arc;
 /// Unique per-call DB path. Tests run in parallel; sharing a single path
 /// caused intermittent `database is locked` flakes.
 fn unique_db_path(tag: &str) -> std::path::PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "kremory_facade_open_{}_{}.db",
+        "kremory_facade_open_{}_{}_{}.db",
         tag,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
-            .unwrap_or(0)
+            .unwrap_or(0),
+        seq
     ))
 }
 
