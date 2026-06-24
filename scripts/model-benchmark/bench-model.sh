@@ -22,6 +22,10 @@ DOMAIN="${2:-mock_interview}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(git -C "$DIR" rev-parse --show-toplevel)"
 OUT="${BENCH_OUT:-$REPO/.ai-docs/research/local-model-benchmark-2026-06-24}"
+# Resolve OUT to absolute: KREMORY_BENCH_REPORT is consumed by the `cargo test`
+# process whose CWD is the CRATE dir, not this script's CWD — a relative OUT
+# would split reports (crate dir) from logs (this script's CWD). Make it absolute.
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
 LOGDIR="$OUT/logs"; mkdir -p "$LOGDIR" "$OUT/reports"
 OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
 
