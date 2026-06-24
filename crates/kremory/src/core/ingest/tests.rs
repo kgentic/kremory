@@ -217,6 +217,103 @@ async fn test_ingest_creates_episodic_edges() {
     );
 }
 
+/// Invariant (new, this fix): an entity appears in an episode AT MOST ONCE —
+/// ≤1 presence edge per (episode_id, entity_id). An extracted entity that is
+/// ALSO a fact object must NOT receive both a "mention" edge (entity loop) and
+/// an "object" edge (fact loop). Governing: ADR-052 §3.1 fire-sites; the
+/// duplicate was discovered via the published-crate new-user e2e (recall
+/// rendered the same source episode twice). RED before the disjoint-writer fix.
+#[tokio::test]
+async fn episodic_edge_extracted_object_not_duplicated() {
+    let base = make_engine_with_mock().await;
+    // Acme is BOTH an extracted entity AND the object of the fact → the dup case.
+    let extractor = FixedExtractorWithFacts {
+        entities: vec![
+            ExtractedEntity {
+                label: "Person".to_string(),
+                name: "Alice".to_string(),
+                properties: serde_json::json!({"name": "Alice"}),
+            },
+            ExtractedEntity {
+                label: "Organisation".to_string(),
+                name: "Acme".to_string(),
+                properties: serde_json::json!({"name": "Acme"}),
+            },
+        ],
+        facts: vec![ExtractedFact {
+            subject: "Alice".to_string(),
+            predicate: "works_at".to_string(),
+            object: "Acme".to_string(),
+            is_entity_ref: true,
+            confidence: 0.95,
+        }],
+    };
+    base.ingest_with(
+        &extractor,
+        IngestWithParams {
+            text: "Alice works at Acme",
+            reference_time: None,
+            group_id: None,
+            content_type: None,
+            source_params: SourceParams::default(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let edges = base.graph.episodic_edges_for_entity("acme").await.unwrap();
+    assert_eq!(
+        edges.len(),
+        1,
+        "acme is extracted (mention) AND a fact object — must have exactly ONE \
+         presence edge, not a mention+object duplicate; got {edges:?}"
+    );
+}
+
+/// Companion guard: deleting/over-tightening the object-edge writer must NOT
+/// orphan STUB objects. When the fact object is NOT an extracted entity, the
+/// fact loop is its SOLE presence source (the pre-scan creates the stub entity
+/// but writes no episodic edge). This must keep passing after the fix.
+#[tokio::test]
+async fn episodic_edge_stub_object_still_linked() {
+    let base = make_engine_with_mock().await;
+    // Acme is NOT extracted → forward-reference stub; only the fact loop links it.
+    let extractor = FixedExtractorWithFacts {
+        entities: vec![ExtractedEntity {
+            label: "Person".to_string(),
+            name: "Alice".to_string(),
+            properties: serde_json::json!({"name": "Alice"}),
+        }],
+        facts: vec![ExtractedFact {
+            subject: "Alice".to_string(),
+            predicate: "works_at".to_string(),
+            object: "Acme".to_string(),
+            is_entity_ref: true,
+            confidence: 0.95,
+        }],
+    };
+    base.ingest_with(
+        &extractor,
+        IngestWithParams {
+            text: "Alice works at Acme",
+            reference_time: None,
+            group_id: None,
+            content_type: None,
+            source_params: SourceParams::default(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let edges = base.graph.episodic_edges_for_entity("acme").await.unwrap();
+    assert_eq!(
+        edges.len(),
+        1,
+        "acme is a stub (not extracted) — the fact loop is its sole presence \
+         source, so it must have exactly ONE episodic edge; got {edges:?}"
+    );
+}
+
 #[tokio::test]
 async fn test_ingest_returns_result_with_correct_counts() {
     let rql = make_engine_with_mock().await;

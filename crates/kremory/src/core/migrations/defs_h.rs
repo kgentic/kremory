@@ -379,3 +379,63 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
     );
     Ok(())
 }
+
+// ─── Migration 017 ─────────────────────────────────────────────────────────
+
+/// Migration 017: enforce the presence-uniqueness invariant on `episodic_edges`
+/// — an entity appears in an episode AT MOST ONCE, i.e. ≤1 row per
+/// `(episode_id, entity_id, entity_group_id)`.
+///
+/// Before this migration there was no structural constraint, so two writers that
+/// each asserted presence (the entity-loop "mention" edge and the fact-loop
+/// "object" edge) could both persist a row for the same pair — surfacing as a
+/// duplicate context line in recall (the "appears twice" bug). The `role` column
+/// is write-only metadata (no production reader consumes it), so presence
+/// uniqueness is keyed on the pair, NOT on role.
+///
+/// Idempotent + safe on already-shipped dbs (kremory ≤ 0.3.1 had no constraint
+/// and may already hold duplicate rows):
+///   1. DELETE keeps `MIN(id)` per group — on the inline path that is the
+///      entity-loop "mention" edge (written before the fact-loop "object" edge),
+///      so the surviving row matches first-writer-wins semantics. No-op on a
+///      clean db.
+///   2. `CREATE UNIQUE INDEX IF NOT EXISTS` is re-runnable. The dedup in step 1
+///      guarantees it cannot fail on a db that already contains duplicates.
+pub(crate) async fn migrate_017_episodic_edges_presence_unique(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_017 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // 1. Collapse pre-existing duplicate presence edges (keep MIN(id) per pair).
+    conn.execute(
+        "DELETE FROM episodic_edges \
+         WHERE id NOT IN ( \
+             SELECT MIN(id) FROM episodic_edges \
+             GROUP BY episode_id, entity_id, entity_group_id \
+         )",
+        (),
+    )
+    .await
+    .map_err(step("dedup"))?;
+
+    // 2. Install the structural invariant.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodic_edges_presence_unique \
+         ON episodic_edges(episode_id, entity_id, entity_group_id)",
+        (),
+    )
+    .await
+    .map_err(step("create_unique_index"))?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_017: presence-uniqueness index installed on episodic_edges"
+    );
+    Ok(())
+}

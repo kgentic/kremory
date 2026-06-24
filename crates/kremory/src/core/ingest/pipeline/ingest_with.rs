@@ -766,6 +766,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 }
             }
 
+            // Resolved entity ids that received a "mention" presence edge in the
+            // entity loop below. Populated at EACH of the three mention-write
+            // sites (merge/promote-stub, L4-merge, new-insert) immediately after a
+            // successful insert — NOT at a single consolidated point, because the
+            // L4-merge branch `continue`s and would skip a consolidated insert
+            // (Quinn F-01). The fact loop consults this to keep presence
+            // single-owned: an extracted entity already linked here MUST NOT also
+            // receive an "object" edge (the duplicate `(episode_id, entity_id)`
+            // bug). Keyed on the RESOLVED id (post merge/alias) so it is robust to
+            // disambiguation, unlike a surface-name set. ADR-052 §3.1 fire-sites.
+            let mut entity_loop_ids: HashSet<String> = HashSet::new();
+
             // ── Phase 1: entity loop (Bug B snippet + Bug A episodic_edge) ──────────
             for extracted in &all_entities {
                 // TD-013 Phase 8 finalizes Vera M1: the TD-012 over-rejection guard
@@ -915,6 +927,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
                     fire_entity_edge_metrics(mention_ok);
                     tracing::debug!(entity_id = %existing_id, name = %extracted.name, episode_id, via = "merged", "kremory.sink.entity_extracted");
+                    if mention_ok {
+                        entity_loop_ids.insert(existing_id.clone());
+                    }
 
                     existing_id
                 } else {
@@ -980,6 +995,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         }
                         fire_entity_edge_metrics(mention_ok);
                         tracing::debug!(entity_id = %l4_existing_id, name = %extracted.name, episode_id, via = "l4_merge", "kremory.sink.entity_extracted");
+                        if mention_ok {
+                            entity_loop_ids.insert(l4_existing_id.clone());
+                        }
                         name_to_id.insert(norm, l4_existing_id.clone());
                         // Skip the rest of the else block — entity_id is the existing one.
                         // SAFETY: the outer `let entity_id = if ... { ... } else { ... };`
@@ -1126,6 +1144,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
                     fire_entity_edge_metrics(mention_ok);
                     tracing::debug!(entity_id = %entity_id, name = %extracted.name, episode_id, via = "insert_new", "kremory.sink.entity_extracted");
+                    if mention_ok {
+                        entity_loop_ids.insert(entity_id.clone());
+                    }
 
                     upserted_entities.push(entity_id.clone());
                     entity_id
@@ -1363,13 +1384,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
                 }
 
-                // Bug A: subject-side episodic edge is now written in the entity loop
-                // (role="mention"), guaranteeing coverage for all extracted entities
-                // regardless of whether they appear in facts.
-                // The object-side episodic edge is retained here to handle fact objects
-                // that are stubs or entities not present in the current extraction batch.
+                // Bug A: subject-side episodic edge is written in the entity loop
+                // (role="mention"), guaranteeing presence coverage for all extracted
+                // entities regardless of whether they appear in facts.
+                // The object-side episodic edge is the SOLE presence source for fact
+                // objects that are stubs / forward references (the pre-scan inserts
+                // the stub entity but writes no edge). It must therefore fire ONLY
+                // when the object did NOT already receive a "mention" edge above —
+                // otherwise an extracted-entity-that-is-also-a-fact-object gets a
+                // duplicate (episode_id, entity_id) presence edge (the recall
+                // double-render bug). Keyed on the resolved obj_id so merge/alias
+                // resolution is honoured.
                 if let Some(ref obj_id) = object_id {
-                    if name_to_id.contains_key(&normalize_name(&fact.object)) {
+                    if !entity_loop_ids.contains(obj_id.as_str()) {
                         // ADR-052 Gap 1 fire-site: on_edge_added("object"). Fires on Ok
                         // only (insert error is soft `.ok()` precedent). D7: ids in
                         // tracing fields only, NOT metric labels. Migration 006: thread
