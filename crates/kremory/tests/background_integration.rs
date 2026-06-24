@@ -194,6 +194,7 @@ async fn background_ingestor_contradiction_round_trip() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // Ingestor config: tiny channel — only 2 slots needed
@@ -277,6 +278,7 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
         llm: Arc::clone(&llm),
         embedder,
         config,
+        model: None,
     });
 
     // Use LlmExtractor explicitly so the scripted LLM responses are consumed
@@ -462,6 +464,7 @@ async fn deferred_extraction_invoked_after_successful_ner() {
         llm: Arc::new(scripted_llm),
         embedder,
         config,
+        model: None,
     });
 
     let ingestor_config = IngestorConfig {
@@ -545,6 +548,7 @@ async fn background_ingestor_drains_without_errors() {
         llm,
         embedder,
         config,
+        model: None,
     });
     let (ingestor, guard) = BackgroundIngestor::new(graph, IngestorConfig::default());
 

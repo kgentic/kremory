@@ -91,7 +91,6 @@ pub struct TokenCountingChatProvider {
 impl std::fmt::Debug for TokenCountingChatProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TokenCountingChatProvider")
-            .field("model", &self.inner.model())
             .field("totals", &self.totals())
             .finish()
     }
@@ -149,13 +148,10 @@ impl ChatProvider for TokenCountingChatProvider {
         Ok(response)
     }
 
-    // Delegate model() to the inner provider so the wrapped string still reaches
-    // `capability_of()` at the StructuredCallBuilder boundary (same reason
-    // ArcChatProvider delegates — TD-013 F1). Without this the trait default ""
-    // collapses Ollama models to PromptOnly.
-    fn model(&self) -> &str {
-        self.inner.model()
-    }
+    // Option-1 (2026-06-23): the `ChatProvider::model()` override is removed.
+    // Token-counting carries no model knowledge — the model string flows from the
+    // builder via `Engine.model` / `ExtractionContext.model`, not via wrapper-chain
+    // delegation.
 }
 
 #[cfg(test)]
@@ -168,7 +164,6 @@ mod tests {
     /// (`None` to simulate a backend that does not report tokens).
     #[derive(Debug)]
     struct StubProvider {
-        model: String,
         usage: Option<Usage>,
     }
 
@@ -207,9 +202,6 @@ mod tests {
                 usage: self.usage.clone(),
             }))
         }
-        fn model(&self) -> &str {
-            &self.model
-        }
     }
 
     fn usage(prompt: u32, completion: u32) -> Usage {
@@ -225,7 +217,6 @@ mod tests {
     #[tokio::test]
     async fn accumulates_usage_across_calls() {
         let stub = Arc::new(StubProvider {
-            model: "gemma4-e2b:latest".to_string(),
             usage: Some(usage(10, 5)),
         });
         let decorator = TokenCountingChatProvider::new(stub);
@@ -248,10 +239,7 @@ mod tests {
     async fn counts_calls_without_usage_separately() {
         // A backend that reports no usage still increments calls_total, NOT
         // calls_with_usage — so under-counting is observable, not silent.
-        let stub = Arc::new(StubProvider {
-            model: "ollama-no-usage".to_string(),
-            usage: None,
-        });
+        let stub = Arc::new(StubProvider { usage: None });
         let decorator = TokenCountingChatProvider::new(stub);
         let msgs = vec![chat_msg_user("hi")];
         decorator
@@ -268,7 +256,6 @@ mod tests {
     async fn accumulator_handle_observes_writes() {
         // The budget-INSERT site holds a cloned handle and reads totals later.
         let stub = Arc::new(StubProvider {
-            model: "m".to_string(),
             usage: Some(usage(7, 3)),
         });
         let decorator = TokenCountingChatProvider::new(stub);
@@ -286,28 +273,13 @@ mod tests {
         assert_eq!(snapshot.as_token_usage().total(), 10);
     }
 
-    #[tokio::test]
-    async fn model_delegates_not_default_empty() {
-        let stub = Arc::new(StubProvider {
-            model: "gemma4-e2b:latest".to_string(),
-            usage: None,
-        });
-        let decorator = TokenCountingChatProvider::new(stub);
-        assert_eq!(decorator.model(), "gemma4-e2b:latest");
-        assert_ne!(decorator.model(), "");
-    }
-
     /// Compile-level proof the decorator binds in the `Arc<dyn ChatProvider>`
     /// position (Send + Sync) — the dream-pass worker thread requires it.
     #[tokio::test]
     async fn decorator_is_send_sync_as_dyn() {
-        let stub = Arc::new(StubProvider {
-            model: "m".to_string(),
-            usage: None,
-        });
+        let stub = Arc::new(StubProvider { usage: None });
         let provider: Arc<dyn ChatProvider> = Arc::new(TokenCountingChatProvider::new(stub));
         fn assert_send_sync<T: Send + Sync>(_t: &T) {}
         assert_send_sync(&provider);
-        assert_eq!(provider.model(), "m");
     }
 }

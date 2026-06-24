@@ -28,18 +28,15 @@ panic = "abort"
 opt-level = 0
 debug = 1
 
-# Redirect all autoagents-llm 0.3.x deps (including transitive via
-# autoagents-llamacpp) to upstream main, which now carries:
-#   - Anthropic output_config wire-up (PR #236, merged 2026-06-03)
-#   - ChatProvider::model() accessor (PR #237, merged 2026-06-04)
+# Option-1 (2026-06-23): the `[patch.crates-io]` redirect of `autoagents-llm` to
+# upstream `main` has been REMOVED. kremory no longer depends on the unreleased
+# `ChatProvider::model()` accessor (PR #237) — the model string is now consumer-
+# supplied data threaded from the builder (see the Option-1 integration-points
+# doc). kremory therefore builds against published `autoagents-llm 0.3.7`, the
+# patch is gone, and `cargo publish` is unblocked.
 #
-# Git source (not crates.io) because upstream has not yet cut a release
-# containing these merges (crates.io max = 0.3.7, 2026-03-25). Remove once
-# upstream publishes a version > 0.3.7 that includes both PRs.
-# Blocks cargo publish.
-#
-# NOTE: this workspace is reproducible via Cargo.lock, so `branch = "main"` is
-# fine here. Fresh consumers have no lock — the published install recipe in
-# README.md rev-pins instead (a bare branch ref drifts between lockless builds).
-[patch.crates-io]
-autoagents-llm = { git = "https://github.com/liquidos-ai/AutoAgents.git", branch = "main" }
+# Known 0.3.7 limitation: Anthropic native structured output (`output_config`,
+# PR #236) is not in 0.3.7 — Anthropic falls back to the prompt-only ladder.
+# Ollama (the primary/tested path) is unaffected. Re-evaluate if/when upstream
+# cuts a release > 0.3.7 carrying PR #236 (additive — does NOT reintroduce the
+# `model()` dependency).

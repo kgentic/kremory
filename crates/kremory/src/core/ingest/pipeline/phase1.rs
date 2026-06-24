@@ -93,6 +93,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 registry_specs: registry.specs(),
                 existing_graph_entities: &[],
                 arm_budget_ms: self.config.extraction_arm_budget_ms,
+                model: self.model.as_deref(),
             };
             let extraction = gliner.extract(text, &ctx).await?;
             extraction

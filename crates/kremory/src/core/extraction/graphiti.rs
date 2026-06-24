@@ -78,7 +78,7 @@ impl<L: ChatProvider> EntityExtractor for LlmExtractor<L> {
             "EntityListIntegerId",
         )
         .messages(graphiti_s1_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
@@ -121,7 +121,7 @@ impl<L: ChatProvider> EntityExtractor for LlmExtractor<L> {
             "TripletList",
         )
         .messages(graphiti_s2_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await

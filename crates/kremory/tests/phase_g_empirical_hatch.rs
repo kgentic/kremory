@@ -505,6 +505,7 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
             llm: Arc::clone(&llm),
             embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb))),
             config: config_mock,
+            model: None,
         });
 
         let result_mock = measure_pre_post(MeasureArgs {
@@ -593,6 +594,7 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
             llm: Arc::clone(&llm),
             embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb))),
             config: config_legal,
+            model: None,
         });
 
         let result_legal = measure_pre_post(MeasureArgs {
@@ -741,6 +743,7 @@ async fn phase_g_cloud_llm_gate() {
             llm: Arc::clone(&llm),
             embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
             config,
+            model: None,
         });
 
         // Cloud provider uses IntegerIdLlmExtractor (no GLiNER hybrid — cloud inference only).
@@ -801,6 +804,7 @@ async fn phase_g_cloud_llm_gate() {
             llm: Arc::clone(&llm),
             embedder: Arc::new(OllamaEmbedderAdapter(Arc::clone(&raw_emb_arc))),
             config,
+            model: None,
         });
 
         let result = measure_pre_post(MeasureArgs {

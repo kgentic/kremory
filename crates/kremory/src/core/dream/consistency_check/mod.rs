@@ -375,10 +375,10 @@ pub async fn run_consistency_check(
     let mut summary = ConsistencyCheckSummary::default();
     let tau = opts.embed_prefilter_threshold;
     let run_id = Uuid::new_v4().to_string();
-    let verify_model = opts
-        .verify_model_override
-        .clone()
-        .unwrap_or_else(|| llm.model().to_string());
+    // Option-1 (2026-06-23): no longer read `llm.model()`. The model is the
+    // consumer-supplied `verify_model_override` (set by the dream entry point
+    // from the Engine model, or by the consumer directly). Empty → `PromptOnly`.
+    let verify_model = opts.verify_model_override.clone().unwrap_or_default();
 
     let type_map = audit::load_type_registry(db).await?;
     let candidates = audit::load_candidates(db).await?;

@@ -47,6 +47,9 @@ pub(crate) struct GraphOpenParams {
     pub embedder: Arc<dyn DynEmbeddingProvider>,
     pub embedding_dim: Option<usize>,
     pub allowed_entity_types: Vec<String>,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
+    /// `Engine`; `None` → capability detection falls to `PromptOnly`.
+    pub model: Option<String>,
 }
 
 /// Bundled non-generic parameters for [`open_graph`] — args-as-object per
@@ -57,6 +60,9 @@ pub(crate) struct OpenGraphParams {
     pub embedder: Arc<dyn DynEmbeddingProvider>,
     pub embedding_dim: Option<usize>,
     pub allowed_entity_types: Vec<String>,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
+    /// `Engine`; `None` → capability detection falls to `PromptOnly`.
+    pub model: Option<String>,
 }
 
 /// Bundled non-generic parameters for [`open_engine_handle`] — args-as-object
@@ -67,6 +73,9 @@ pub(crate) struct OpenEngineHandleParams {
     pub embedder: Arc<dyn DynEmbeddingProvider>,
     pub embedding_dim: Option<usize>,
     pub allowed_entity_types: Vec<String>,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
+    /// `Engine`; `None` → capability detection falls to `PromptOnly`.
+    pub model: Option<String>,
 }
 
 /// Bundled non-generic parameters for [`build_memory_with_model`] —
@@ -102,6 +111,7 @@ pub(crate) async fn open_graph(
         embedder,
         embedding_dim,
         allowed_entity_types,
+        model,
     } = params;
     let path_str = path
         .as_ref()
@@ -127,6 +137,7 @@ pub(crate) async fn open_graph(
         llm: Arc::new(ArcChatProvider::new(llm)),
         embedder: Arc::new(ArcEmbedder(embedder)),
         config,
+        model,
     });
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
@@ -170,6 +181,7 @@ pub(crate) async fn open_graph_with_extractor(
         embedder: Arc::new(ArcEmbedder(params.embedder)),
         config,
         extractor: Arc::new(extractor_kind),
+        model: params.model,
     });
 
     let handle: Arc<dyn GraphHandle> = Arc::new(EngineGraphHandle::new(engine));
@@ -244,6 +256,7 @@ pub(crate) async fn open_engine_handle(
         embedder,
         embedding_dim,
         allowed_entity_types,
+        model,
     } = params;
     let path_str = path
         .as_ref()
@@ -269,6 +282,7 @@ pub(crate) async fn open_engine_handle(
         llm: Arc::new(ArcChatProvider::new(llm)),
         embedder: Arc::new(ArcEmbedder(embedder)),
         config,
+        model,
     });
 
     Ok((EngineGraphHandle::new(engine), graph_for_facade))
@@ -563,6 +577,10 @@ async fn build_memory_with_model(
             embedder: embedder.clone(),
             embedding_dim,
             allowed_entity_types: vec![],
+            // Tier-1 shortcuts know the concrete model string — thread it so
+            // capability detection reaches the provider-native schema arm
+            // (Option-1, 2026-06-23).
+            model: model.map(str::to_owned),
         },
     )
     .await?;

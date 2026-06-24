@@ -187,7 +187,7 @@ impl<L: ChatProvider + 'static> EntityExtractor for GlinerLlmExtractor<L> {
         // free-form-with-defense pattern. Net effect: small-model parses
         // recover ~80% of the time at the row level, and FormatSchema's
         // semantic degradation is avoided.
-        let model_name = self.llm.model().to_string();
+        let model_name = ctx.model().to_string();
         let value = StructuredCallBuilder::new(self.llm.as_ref(), &schema, "HybridTyping")
             .messages(messages)
             .model(&model_name)

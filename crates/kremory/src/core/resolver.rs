@@ -203,6 +203,11 @@ pub(crate) struct CascadeResolver<L: ChatProvider> {
     llm: Arc<L>,
     minhash_config: MinHashConfig,
     entropy_config: EntropyConfig,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Set by the
+    /// Engine via [`with_model`](Self::with_model) at construction — NOT read off
+    /// `llm.model()`. Drives capability detection + metric labels for the
+    /// resolution-verdict call. `None`/empty → `PromptOnly`.
+    model: Option<String>,
 }
 
 impl<L: ChatProvider> CascadeResolver<L> {
@@ -215,7 +220,15 @@ impl<L: ChatProvider> CascadeResolver<L> {
             llm,
             minhash_config,
             entropy_config,
+            model: None,
         }
+    }
+
+    /// Set the consumer-supplied model identifier (Option-1). Chainable; the
+    /// Engine calls this with `self.model.clone()` at construction.
+    pub(crate) fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model;
+        self
     }
 }
 
@@ -272,7 +285,7 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
             "ResolutionVerdict",
         )
         .messages(resolution_msgs)
-        .model(self.llm.model())
+        .model(self.model.as_deref().unwrap_or(""))
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;

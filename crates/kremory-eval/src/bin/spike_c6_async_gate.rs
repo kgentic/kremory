@@ -322,6 +322,7 @@ async fn open_engine(
         llm: ingest_llm,
         embedder: arc_emb,
         config,
+        model: None,
     });
 
     Ok((graph, engine))

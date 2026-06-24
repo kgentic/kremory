@@ -269,6 +269,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
         llm: llm.clone(),
         embedder: Arc::new(emb),
         config,
+        model: None,
     }); // Phase E: Engine::new is infallible (was Result)
 
     // TD-021: KREMORY_BENCH_EXTRA_TYPES allows passing additional entity types
@@ -705,6 +706,7 @@ async fn label_precision_haiku_on_mock_interview() {
         llm,
         embedder: Arc::new(emb),
         config,
+        model: None,
     }); // Phase E: Engine::new is infallible (was Result)
 
     let ingest_result = engine

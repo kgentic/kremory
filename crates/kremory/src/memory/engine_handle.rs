@@ -144,6 +144,8 @@ impl EngineGraphHandle {
             llm: Arc::new(ArcChatProvider::new(chat)),
             embedder: Arc::new(ArcEmbedder(embedder)),
             config,
+            // Test-convenience constructor — no model id (Option-1).
+            model: None,
         });
         Self::new(engine)
     }
@@ -776,6 +778,7 @@ mod tests {
             llm: Arc::new(ArcChatProvider::new(chat)),
             embedder: Arc::new(ArcEmbedder(embedder)),
             config,
+            model: None,
         });
         EngineGraphHandle::new(engine)
     }

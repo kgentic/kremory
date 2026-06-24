@@ -296,11 +296,10 @@ mod aa_adoption_green {
 mod record_replay {
     use super::*;
 
-    /// A minimal stub `ChatProvider` whose `model()` is configurable and
-    /// whose `chat_with_tools` returns a fixed scripted response. No Ollama.
+    /// A minimal stub `ChatProvider` whose `chat_with_tools` returns a fixed
+    /// scripted response. No Ollama.
     #[derive(Debug)]
     struct StubProvider {
-        model: String,
         response: String,
     }
 
@@ -318,10 +317,6 @@ mod record_replay {
             Ok(Box::new(MockChatResponse {
                 text: self.response.clone(),
             }))
-        }
-
-        fn model(&self) -> &str {
-            &self.model
         }
     }
 
@@ -341,12 +336,12 @@ mod record_replay {
     async fn record_then_replay_round_trips() {
         let cassette = temp_cassette_path("round_trip");
         let stub = Arc::new(StubProvider {
-            model: "gemma4-e2b:latest".to_string(),
             response: r#"{"entities":[{"name":"Alice","entity_type_id":1}]}"#.to_string(),
         });
 
         // Record
-        let recorder = RecordReplayChatProvider::record(stub.clone(), cassette.clone());
+        let recorder =
+            RecordReplayChatProvider::record(stub.clone(), cassette.clone(), "gemma4-e2b:latest");
         let msgs = vec![chat_msg_user("Alice met Bob in Boston.")];
         let recorded = recorder
             .chat_with_tools(&msgs, None, None)
@@ -379,10 +374,10 @@ mod record_replay {
     async fn replay_miss_is_loud_error() {
         let cassette = temp_cassette_path("miss");
         let stub = Arc::new(StubProvider {
-            model: "gemma4-e2b:latest".to_string(),
             response: "recorded".to_string(),
         });
-        let recorder = RecordReplayChatProvider::record(stub, cassette.clone());
+        let recorder =
+            RecordReplayChatProvider::record(stub, cassette.clone(), "gemma4-e2b:latest");
         let recorded_msgs = vec![chat_msg_user("this exact request was recorded")];
         recorder
             .chat_with_tools(&recorded_msgs, None, None)
@@ -410,31 +405,35 @@ mod record_replay {
         let _ = std::fs::remove_file(&cassette);
     }
 
-    /// (c) `model()` returns the inner/cassette model, NOT the trait default
-    /// `""`. Spec §3.4 ASMP-002 / §9 P2 DoD.
+    /// (c) `model_id()` returns the caller-supplied/cassette model, NOT empty.
+    /// Spec §3.4 ASMP-002 / §9 P2 DoD.
     #[tokio::test]
     async fn model_delegation_not_default_empty() {
         let cassette = temp_cassette_path("model");
         let stub = Arc::new(StubProvider {
-            model: "gemma4-e2b:latest".to_string(),
             response: "x".to_string(),
         });
 
-        // Record + Passthrough delegate to inner.model().
-        let recorder = RecordReplayChatProvider::record(stub.clone(), cassette.clone());
-        assert_eq!(recorder.model(), "gemma4-e2b:latest");
-        let pass = RecordReplayChatProvider::passthrough(stub.clone());
-        assert_eq!(pass.model(), "gemma4-e2b:latest");
+        // Record + Passthrough return the caller-supplied model string.
+        let recorder =
+            RecordReplayChatProvider::record(stub.clone(), cassette.clone(), "gemma4-e2b:latest");
+        assert_eq!(recorder.model_id(), "gemma4-e2b:latest");
+        let pass = RecordReplayChatProvider::passthrough(stub.clone(), "gemma4-e2b:latest");
+        assert_eq!(pass.model_id(), "gemma4-e2b:latest");
 
         // Replay returns the cassette header model.
         recorder.flush().expect("flush");
         let player = RecordReplayChatProvider::replay(cassette.clone()).expect("replay load");
         assert_eq!(
-            player.model(),
+            player.model_id(),
             "gemma4-e2b:latest",
-            "replay model() must read the cassette header, not the \"\" default"
+            "replay model_id() must read the cassette header, not empty"
         );
-        assert_ne!(player.model(), "", "model() must never collapse to empty");
+        assert_ne!(
+            player.model_id(),
+            "",
+            "model_id() must never collapse to empty"
+        );
 
         let _ = std::fs::remove_file(&cassette);
     }
@@ -451,7 +450,6 @@ mod record_replay {
 
         let cassette = temp_cassette_path("populated_schema");
         let stub = Arc::new(StubProvider {
-            model: "gemma4-e2b:latest".to_string(),
             response: r#"{"entities":[{"name":"Alice","entity_type_id":1}]}"#.to_string(),
         });
 
@@ -469,7 +467,8 @@ mod record_replay {
         let msgs = vec![chat_msg_user("Alice met Bob in Boston.")];
 
         // Record with the populated schema.
-        let recorder = RecordReplayChatProvider::record(stub.clone(), cassette.clone());
+        let recorder =
+            RecordReplayChatProvider::record(stub.clone(), cassette.clone(), "gemma4-e2b:latest");
         recorder
             .chat_with_tools(&msgs, None, Some(schema_a.clone()))
             .await
@@ -520,12 +519,13 @@ mod record_replay {
     #[tokio::test]
     async fn decorator_is_send_sync_as_dyn() {
         let stub = Arc::new(StubProvider {
-            model: "gemma4-e2b:latest".to_string(),
             response: "y".to_string(),
         });
-        let provider: Arc<dyn ChatProvider> = Arc::new(RecordReplayChatProvider::passthrough(stub));
+        let provider: Arc<dyn ChatProvider> = Arc::new(RecordReplayChatProvider::passthrough(
+            stub,
+            "gemma4-e2b:latest",
+        ));
         fn assert_send_sync<T: Send + Sync>(_t: &T) {}
         assert_send_sync(&provider);
-        assert_eq!(provider.model(), "gemma4-e2b:latest");
     }
 }

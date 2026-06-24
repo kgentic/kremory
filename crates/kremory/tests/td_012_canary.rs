@@ -135,6 +135,7 @@ async fn td_012_no_placeholder_labels_in_fixture_extraction() {
         llm,
         embedder: Arc::new(emb),
         config,
+        model: None,
     });
 
     // Run ingest on the fixture.

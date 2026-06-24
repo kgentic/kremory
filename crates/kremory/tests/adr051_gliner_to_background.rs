@@ -146,6 +146,7 @@ async fn add_episode_returns_before_gliner_fires() {
         llm: Arc::new(recording_llm),
         embedder,
         config,
+        model: None,
     });
 
     let ingestor_config = IngestorConfig {

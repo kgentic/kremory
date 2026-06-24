@@ -73,7 +73,7 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
             "EntityListIntegerId",
         )
         .messages(stage1_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
@@ -111,7 +111,7 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
             "RelTypeList",
         )
         .messages(stage2_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
@@ -138,7 +138,7 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
             "TripletList",
         )
         .messages(stage3_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await

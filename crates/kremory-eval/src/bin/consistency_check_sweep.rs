@@ -366,6 +366,7 @@ async fn ingest_fixture(
         llm: Arc::clone(&llm),
         embedder: arc_emb,
         config,
+        model: None,
     });
     let source_params = build_source_params();
     let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));

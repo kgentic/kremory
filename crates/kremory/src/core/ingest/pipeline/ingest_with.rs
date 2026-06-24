@@ -587,6 +587,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 registry_specs: registry.specs(),
                 existing_graph_entities: &existing_entities_for_prompt,
                 arm_budget_ms: self.config.extraction_arm_budget_ms,
+                model: self.model.as_deref(),
             };
             let result = extractor.extract(chunk, &ctx).await?;
             all_entities.extend(result.entities);
@@ -674,7 +675,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             Arc::clone(llm_for_resolver),
             self.config.minhash.clone(),
             self.config.entropy.clone(),
-        );
+        )
+        .with_model(self.model.clone());
 
         // ── Bug E: open a single outer transaction wrapping Phase 1 (entities +
         // stubs) and Phase 2 (facts).  All inner graph methods call
@@ -1142,7 +1144,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                            contradiction detection; or use .with_facts(…) to pin \
                            triples without LLM",
                     })?;
-            let detector = TwoPoolDetector::new(Arc::clone(llm_for_detector));
+            let detector =
+                TwoPoolDetector::new(Arc::clone(llm_for_detector)).with_model(self.model.clone());
 
             for fact in &all_facts {
                 // Resolve subject and object IDs through the merge map

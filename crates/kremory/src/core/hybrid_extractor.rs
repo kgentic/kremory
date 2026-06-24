@@ -187,7 +187,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
                 "EntityList",
             )
             .messages(gleaning_msgs)
-            .model(self.llm.model())
+            .model(ctx.model())
             .ttft_budget_ms(ctx.arm_budget_ms)
             .call()
             .await
@@ -263,7 +263,7 @@ impl<L: ChatProvider> HybridExtractor<L> {
             "EntityTyping",
         )
         .messages(typing_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await

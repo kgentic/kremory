@@ -121,6 +121,7 @@ async fn phase1_returns_episode_id_no_candidates() {
         llm: null_llm(),
         embedder: null_embedder(),
         config,
+        model: None,
     });
 
     let episode_count_before = count_table_rows(&graph.conn, "episodes").await;
@@ -183,6 +184,7 @@ async fn write_verified_entities_writes_entities_per_decision() {
         llm: null_llm(),
         embedder: null_embedder(),
         config,
+        model: None,
     });
 
     // Insert an episode manually so write_verified_entities has a valid episode_id FK.
@@ -371,6 +373,7 @@ async fn legacy_engine_ingest_still_works() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // This call uses the EXISTING ingest_with API — must not break.

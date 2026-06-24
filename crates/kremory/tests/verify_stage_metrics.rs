@@ -266,6 +266,7 @@ async fn verify_stage_path_alpha_emits_success_counter() {
     };
 
     let result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &request,
@@ -334,6 +335,7 @@ async fn verify_stage_path_beta_emits_success_counter() {
 
     // Path β: verify_llm = None.
     let result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &request,
@@ -394,6 +396,7 @@ async fn verify_stage_extractor_failure_emits_gliner_fail_counter() {
     };
 
     let result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &request,

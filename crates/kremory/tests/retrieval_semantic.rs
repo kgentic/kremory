@@ -502,6 +502,7 @@ mod semantic_tests {
                 llm: Arc::new(MockChatProvider::null()),
                 embedder,
                 config,
+                model: None,
             });
 
         // contextualize() uses FTS — "Ria" in the label should match.

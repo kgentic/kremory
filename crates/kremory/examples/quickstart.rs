@@ -74,6 +74,10 @@ async fn main() -> anyhow::Result<()> {
         .embedding_dim(DEMO_DIM) // required: our embedder is 16-dim, not the 384 default
         .default_namespace(Namespace::new("quickstart"))
         .with_llm(llm)
+        // Tell kremory which model you wired so it picks the right structured-output
+        // strategy (Ollama → FormatSchema). Without this the raw `with_llm` path
+        // falls back to prompt-only extraction. Must match the LLMBuilder `.model()`.
+        .with_model_id("gemma4-e2b:latest")
         .with_embedder(DemoEmbedder { dim: DEMO_DIM }.into_dyn())
         .await?;
 

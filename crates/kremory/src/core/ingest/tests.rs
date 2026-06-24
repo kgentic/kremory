@@ -108,6 +108,7 @@ async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvid
         llm,
         embedder,
         config,
+        model: None,
     })
 }
 
@@ -288,6 +289,7 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // Extractor provides "Alice" (canonical label). Proper noun scanner will
@@ -369,6 +371,7 @@ async fn ingest_intra_batch_duplicate_dedupes_silently() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // Two entities with identical names — normalize to the same id.
@@ -459,6 +462,7 @@ async fn stub_entity_inserted_on_forward_reference_lib() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // Alice in entity list; Bob only referenced in facts (forward reference).
@@ -540,6 +544,7 @@ async fn stub_entity_promoted_on_reingestion_lib() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // Ingest 1: Alice + forward-ref Bob → Bob becomes stub.
@@ -654,6 +659,7 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // Use a canonical label ("Person") so the TD-012 guard does not filter
@@ -704,78 +710,19 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
     );
 }
 
-// ── P7b Red: Engine model field threading tests ──────────────────────────
+// ── Engine model field threading tests (Option-1, 2026-06-23) ─────────────
 //
-// These tests target AC6-AC8: Engine must store the model string supplied
-// by the LLM provider at construction time via llm.model().
+// Option-1 inverted the original P7b contract: the Engine model string is now
+// CONSUMER-SUPPLIED via `EngineNewParams.model`, NOT read off `llm.model()`
+// (which only exists on autoagents-llm `main`, not published 0.3.7). The mocks
+// below deliberately do NOT override `fn model()` — that override would be
+// E0407 against 0.3.7 and is no longer consulted by the Engine.
 //
-// All three tests FAIL until Green phase adds `model: Option<String>` to
+// Spec: .ai-docs/specs/option1-drop-model-accessor-impl-spec-2026-06-23.md §1.
 
-/// AC6+AC8: Engine stores the model string from the LLM provider at construction.
-///
-/// When llm.model() returns a non-empty string the Engine must store
-/// `Some(model_str)` in its `model` field.
-///
-/// FAILS (Red) until Engine gains `pub(crate) model: Option<String>` field.
+/// Engine stores the consumer-supplied model string from `EngineNewParams.model`.
 #[tokio::test]
-async fn engine_stores_model_string_from_llm() {
-    struct ModelledMock {
-        model_str: &'static str,
-    }
-
-    #[async_trait::async_trait]
-    impl ChatProvider for ModelledMock {
-        async fn chat_with_tools(
-            &self,
-            _messages: &[crate::core::provider::ChatMessage],
-            _tools: Option<&[autoagents_llm::chat::Tool]>,
-            _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
-        ) -> std::result::Result<
-            Box<dyn autoagents_llm::chat::ChatResponse>,
-            autoagents_llm::error::LLMError,
-        > {
-            Err(autoagents_llm::error::LLMError::Generic(
-                "not needed in this test".to_string(),
-            ))
-        }
-
-        fn model(&self) -> &str {
-            self.model_str
-        }
-    }
-
-    let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
-    let config = PipelineConfig::builder().build().unwrap();
-    let llm = Arc::new(ModelledMock {
-        model_str: "qwen2.5:14b",
-    });
-    let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
-    let engine = Engine::new(EngineNewParams {
-        graph,
-        llm,
-        embedder,
-        config,
-    });
-
-    // AC8: model field must hold Some("qwen2.5:14b") — the value returned by llm.model().
-    assert_eq!(
-        engine.model.as_deref(),
-        Some("qwen2.5:14b"),
-        "Engine::new must capture llm.model() into engine.model; \
-         got: {:?}",
-        engine.model
-    );
-}
-
-/// AC8 (empty-string branch): when llm.model() returns "" the Engine must
-/// store `None` — the empty string is semantically "unknown model" and should
-/// not propagate as a model identifier.
-///
-/// FAILS (Red) until Engine gains `pub(crate) model: Option<String>` field.
-#[tokio::test]
-async fn engine_model_is_none_when_llm_model_empty() {
-    // MockChatProvider::null() uses the default ChatProvider::model() impl
-    // which returns "" — exactly the "no model configured" case.
+async fn engine_stores_consumer_supplied_model() {
     let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
     let config = PipelineConfig::builder().build().unwrap();
     let llm = Arc::new(MockChatProvider::null());
@@ -785,68 +732,61 @@ async fn engine_model_is_none_when_llm_model_empty() {
         llm,
         embedder,
         config,
-    });
-
-    // AC8: empty model string must map to None, not Some("").
-    assert_eq!(
-        engine.model, None,
-        "Engine::new must store None when llm.model() returns empty string; \
-         got: {:?}",
-        engine.model
-    );
-}
-
-/// AC7: Engine::new signature must remain (graph, llm, embedder, config) —
-/// no new parameters. The model is derived from llm.model() internally.
-///
-/// This test verifies AC7 by constructing Engine::new with the existing
-/// 4-argument signature and asserting the model is populated from the
-/// provider's model() method — not from a separate argument.
-///
-/// FAILS (Red) until Engine gains `pub(crate) model: Option<String>` field.
-#[tokio::test]
-async fn engine_new_signature_unchanged_model_derived_from_llm() {
-    struct NamedMock;
-
-    #[async_trait::async_trait]
-    impl ChatProvider for NamedMock {
-        async fn chat_with_tools(
-            &self,
-            _messages: &[crate::core::provider::ChatMessage],
-            _tools: Option<&[autoagents_llm::chat::Tool]>,
-            _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
-        ) -> std::result::Result<
-            Box<dyn autoagents_llm::chat::ChatResponse>,
-            autoagents_llm::error::LLMError,
-        > {
-            Err(autoagents_llm::error::LLMError::Generic(
-                "not needed".to_string(),
-            ))
-        }
-
-        fn model(&self) -> &str {
-            "llama3.2:3b-instruct"
-        }
-    }
-
-    let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
-    let config = PipelineConfig::builder().build().unwrap();
-    // Exactly 4 arguments to Engine::new — signature unchanged per AC7.
-    let engine = Engine::new(EngineNewParams {
-        graph,
-        llm: Arc::new(NamedMock),
-        embedder: Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
-        config,
+        model: Some("qwen2.5:14b".to_string()),
     });
 
     assert_eq!(
         engine.model.as_deref(),
-        Some("llama3.2:3b-instruct"),
-        "model must be derived from llm.model() without adding new Engine::new params"
+        Some("qwen2.5:14b"),
+        "Engine::new must store the consumer-supplied model param; got: {:?}",
+        engine.model
     );
 }
 
-// ── End P7b Red tests ─────────────────────────────────────────────────────
+/// Empty / whitespace-only consumer model normalises to `None` (semantically
+/// "no model configured" → capability detection falls to PromptOnly).
+#[tokio::test]
+async fn engine_model_is_none_when_param_empty() {
+    let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
+    let config = PipelineConfig::builder().build().unwrap();
+    let llm = Arc::new(MockChatProvider::null());
+    let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+    let engine = Engine::new(EngineNewParams {
+        graph,
+        llm,
+        embedder,
+        config,
+        model: Some("   ".to_string()),
+    });
+
+    assert_eq!(
+        engine.model, None,
+        "whitespace-only model param must normalise to None; got: {:?}",
+        engine.model
+    );
+}
+
+/// `model: None` (raw `with_llm` path) leaves `engine.model` unset — proving the
+/// Engine sources the model from the param, never from the provider.
+#[tokio::test]
+async fn engine_model_none_when_param_none() {
+    let graph = Arc::new(TemporalGraph::open_in_memory().await.unwrap());
+    let config = PipelineConfig::builder().build().unwrap();
+    let engine = Engine::new(EngineNewParams {
+        graph,
+        llm: Arc::new(MockChatProvider::null()),
+        embedder: Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0)),
+        config,
+        model: None,
+    });
+
+    assert_eq!(
+        engine.model, None,
+        "model: None must leave engine.model unset (sourced from param, not provider)"
+    );
+}
+
+// ── End Engine model field tests ──────────────────────────────────────────
 
 /// TD-013 Phase 8 finalises Vera M1: the TD-012 over-rejection guard is
 /// DELETED. Under the L1 integer-ID design, "Entity" id=0 is the legitimate
@@ -876,6 +816,7 @@ async fn ingest_persists_entity_catchall_under_l1_design() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     let extractor = FixedExtractor {
@@ -986,6 +927,7 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
         llm,
         embedder,
         config,
+        model: None,
     });
     let extractor = Arc::clone(&engine.extractor);
 
@@ -1123,6 +1065,7 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
         llm,
         embedder,
         config,
+        model: None,
     });
     let extractor = Arc::clone(&engine.extractor);
 
@@ -1237,6 +1180,7 @@ async fn test_ingest_with_no_override_fresh_db_extracts_zero_typed_entities() {
         llm,
         embedder,
         config,
+        model: None,
     });
     let extractor = Arc::clone(&engine.extractor);
 
@@ -1308,6 +1252,7 @@ async fn ingest_persists_runtime_allowed_entity_label() {
         llm,
         embedder,
         config,
+        model: None,
     });
 
     // Inject an entity whose label matches the runtime config but NOT the

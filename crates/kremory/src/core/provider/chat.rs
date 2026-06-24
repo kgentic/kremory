@@ -223,12 +223,8 @@ impl ChatProvider for ArcChatProvider {
         self.0.chat_with_tools(messages, tools, json_schema).await
     }
 
-    /// TD-013 F1: delegate model() to inner provider so the model string
-    /// reaches StructuredCallBuilder.capability_of() at the production
-    /// wrapper-chain boundary. Without this delegation, capability_of("")
-    /// returns PromptOnly and FormatSchema arm never fires for Ollama models.
-    /// See ADR adr-td-013-graph-quality-remediation-2026-06-03.
-    fn model(&self) -> &str {
-        self.0.model()
-    }
+    // Option-1 (2026-06-23): the `ChatProvider::model()` override is removed.
+    // `ArcChatProvider` wraps a raw consumer provider with no model knowledge;
+    // the model string now flows from the builder via `Engine.model` /
+    // `ExtractionContext.model`, not by delegating through the wrapper chain.
 }

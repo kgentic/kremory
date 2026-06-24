@@ -84,6 +84,8 @@ impl SimpleGraph {
                 dim: config.embedding_dim.0,
             }),
             config,
+            // Null provider → no model (Option-1).
+            model: None,
         }))
     }
 }

@@ -299,6 +299,7 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
                     // entity types so the deferred path doesn't reject on empty.
                     allowed_entity_types: &graph.config.allowed_entity_types,
                     excluded_entity_types: &graph.config.excluded_entity_types,
+                    model: graph.model.as_deref(),
                 })
                 .await
             }
@@ -333,6 +334,7 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
             // configured types for parity with the ner arm (ADR-051).
             allowed_entity_types: &graph.config.allowed_entity_types,
             excluded_entity_types: &graph.config.excluded_entity_types,
+            model: graph.model.as_deref(),
         })
         .await
     };

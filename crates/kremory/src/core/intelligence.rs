@@ -94,6 +94,12 @@ pub struct ExtractionContext<'a> {
     /// Override for slow local LLMs (qwen2.5:14b ~80-130s per call) by
     /// setting `PipelineConfig::extraction_arm_budget_ms` to 180_000-300_000.
     pub arm_budget_ms: u64,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Populated by
+    /// the Engine from its `model` field (sourced from the builder, NOT from
+    /// `llm.model()`). Drives capability detection in `extraction/structured.rs`
+    /// (Ollama → `FormatSchema`, OpenAI/Anthropic GA → `NativeSchema`, else
+    /// `PromptOnly`) + metric labels. `None`/empty → `PromptOnly`.
+    pub model: Option<&'a str>,
 }
 
 impl<'a> Default for ExtractionContext<'a> {
@@ -107,7 +113,17 @@ impl<'a> Default for ExtractionContext<'a> {
             registry_specs: &[],
             existing_graph_entities: &[],
             arm_budget_ms: 30_000,
+            model: None,
         }
+    }
+}
+
+impl<'a> ExtractionContext<'a> {
+    /// Model identifier for capability detection + metric labels (Option-1).
+    /// Returns `""` when unset, matching the prior `llm.model()` empty-string
+    /// "no model configured" semantics consumed by `extraction/structured.rs`.
+    pub fn model(&self) -> &str {
+        self.model.unwrap_or("")
     }
 }
 

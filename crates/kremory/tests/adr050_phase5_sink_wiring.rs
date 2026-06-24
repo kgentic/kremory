@@ -201,6 +201,7 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
 
     // ── First run: MISS path — entity written + idempotency key written ────────
     let first_result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &DeferredRequest {
@@ -245,6 +246,7 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
     let episode_id_2 = insert_pending_episode(&graph.conn, "Alice works at Acme Corp.").await;
 
     let second_result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &DeferredRequest {
@@ -325,6 +327,7 @@ async fn sink_worker_resumed_fires_on_checkpoint_boot() {
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
         config,
+        model: None,
     });
 
     let ingestor_config = IngestorConfig {

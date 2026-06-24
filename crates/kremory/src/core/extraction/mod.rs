@@ -794,6 +794,7 @@ mod tests {
             registry_specs: &[],
             existing_graph_entities: &[],
             arm_budget_ms: 30_000,
+            model: None,
         };
         let (entities, _facts) =
             parse_nuextract_response(malformed, &ctx).expect("must not return Err");

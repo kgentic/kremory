@@ -179,7 +179,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             "EntityTyping",
         )
         .messages(typing_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms)
         .call()
         .await
@@ -226,7 +226,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
             "RelOnlyForceFallback",
         )
         .messages(rel_msgs)
-        .model(self.llm.model())
+        .model(ctx.model())
         .ttft_budget_ms(ctx.arm_budget_ms);
         if let Some(arm) = schemas::SCHEMA_REL_ONLY_FORCE_FALLBACK_FORCE_ARM {
             rel_builder = rel_builder.force_arm(arm);

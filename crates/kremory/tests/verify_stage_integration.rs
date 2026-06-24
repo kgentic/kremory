@@ -255,6 +255,7 @@ async fn run_verify_stage_path_alpha_writes_entities_and_transitions_status_to_v
     };
 
     let result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &request,
@@ -335,6 +336,7 @@ async fn run_verify_stage_path_beta_writes_entities_and_transitions_status_to_ve
 
     // Path β: verify_llm = None.
     let result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &request,
@@ -405,6 +407,7 @@ async fn run_verify_stage_failure_transitions_status_to_failed() {
 
     // Path α with a failing extractor.
     let result = run_verify_stage(RunVerifyStageParams {
+        model: None,
         allowed_entity_types: &[],
         excluded_entity_types: &[],
         request: &request,
