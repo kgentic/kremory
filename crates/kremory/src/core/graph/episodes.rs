@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use metrics::histogram;
+use metrics::{counter, histogram};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
@@ -230,13 +230,51 @@ impl TemporalGraph {
         // None ⇒ 'default', matching the entities-table convention
         // (`insert_entity_with_group`) so the composite FK lines up.
         let effective_group_id = entity_group_id.unwrap_or("default");
-        self.conn.execute(
-            "INSERT INTO episodic_edges (episode_id, entity_id, entity_group_id, role, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        // Presence-uniqueness invariant (migrate_017): UNIQUE(episode_id,
+        // entity_id, entity_group_id). `INSERT OR IGNORE` makes the write
+        // idempotent — re-asserting that an entity appears in an episode is a
+        // no-op, not an error. The inline path already keeps presence
+        // single-owned via `entity_loop_ids` (so this should rarely fire there);
+        // it is the correct mechanism for the data-dependent overlaps the deferred
+        // path and canonicalization merges can produce.
+        let changed = self.conn.execute(
+            "INSERT OR IGNORE INTO episodic_edges (episode_id, entity_id, entity_group_id, role, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             libsql::params![episode_id, entity_id, effective_group_id, role, now],
         ).await?;
-        let edge_id = self.conn.last_insert_rowid();
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.db.insert_episodic_edge_ms").record(_ms);
+        if changed == 0 {
+            // Duplicate presence edge suppressed by the UNIQUE constraint. Emit an
+            // observable signal (R19) — this counter should read ~zero on the
+            // inline path; sustained increments mean a writer is re-asserting
+            // presence that another writer already owns. Return the EXISTING edge
+            // id (not a stale last_insert_rowid) so callers keep a valid handle.
+            counter!("kremory.ingest.episodic_edge_dup_suppressed_total").increment(1);
+            let mut rows = self.conn.query(
+                "SELECT id FROM episodic_edges WHERE episode_id = ?1 AND entity_id = ?2 AND entity_group_id = ?3 LIMIT 1",
+                libsql::params![episode_id, entity_id, effective_group_id],
+            ).await?;
+            if let Some(row) = rows.next().await? {
+                let existing_id = row.get::<i64>(0)?;
+                tracing::debug!(
+                    _ms,
+                    edge_id = existing_id,
+                    "kremory.db.insert_episodic_edge.deduped"
+                );
+                return Ok(existing_id);
+            }
+            // changed==0 means the UNIQUE constraint suppressed the insert, so the
+            // conflicting row MUST exist — a missing row is a structural violation
+            // (constraint changed under us, or a race). Surface it loudly rather
+            // than fall through to `last_insert_rowid()`, which would return the
+            // stale rowid of a prior, unrelated insert on this connection.
+            return Err(crate::core::error::Error::Other(anyhow::anyhow!(
+                "insert_episodic_edge: INSERT OR IGNORE suppressed a row but no \
+                 existing (episode_id={episode_id}, entity_id={entity_id}, \
+                 entity_group_id={effective_group_id}) edge was found"
+            )));
+        }
+        let edge_id = self.conn.last_insert_rowid();
         tracing::info!(_ms, edge_id, "kremory.db.insert_episodic_edge");
         Ok(edge_id)
     }

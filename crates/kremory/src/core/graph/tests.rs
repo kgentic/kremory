@@ -703,6 +703,65 @@ async fn test_insert_episodic_edge() {
     assert_eq!(edges[0].episode_id, ep_id);
 }
 
+/// Migration 017 presence-uniqueness: a second presence edge for the same
+/// (episode_id, entity_id, entity_group_id) is suppressed by `INSERT OR IGNORE`
+/// — even with a different `role` (role is unread metadata, NOT part of the
+/// presence key). First-writer-wins: the surviving row is the first insert, and
+/// the suppressed insert returns that existing edge id rather than a new row.
+#[tokio::test]
+async fn episodic_edge_presence_unique_suppresses_duplicate() {
+    let g = TemporalGraph::open_in_memory().await.unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    let ep_id = g
+        .insert_episode(InsertEpisodeParams {
+            content: "Alice joined.",
+            timestamp: Utc::now(),
+            source_type: Some("transcript"),
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    let id1 = g
+        .insert_episodic_edge(InsertEpisodicEdgeParams {
+            episode_id: ep_id,
+            entity_id: "alice",
+            entity_group_id: None,
+            role: "mention",
+        })
+        .await
+        .unwrap();
+    // Same (episode, entity), DIFFERENT role → must be suppressed, not a 2nd row.
+    let id2 = g
+        .insert_episodic_edge(InsertEpisodicEdgeParams {
+            episode_id: ep_id,
+            entity_id: "alice",
+            entity_group_id: None,
+            role: "object",
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        id1, id2,
+        "suppressed duplicate must return the existing edge id, not a new one"
+    );
+    let edges = g.episodic_edges_for_entity("alice").await.unwrap();
+    assert_eq!(
+        edges.len(),
+        1,
+        "presence-uniqueness: at most one edge per (episode, entity); got {edges:?}"
+    );
+    assert_eq!(
+        edges[0].role, "mention",
+        "first-writer-wins: the original mention edge survives"
+    );
+}
+
 #[tokio::test]
 async fn test_invalidate_fact_with_reason() {
     let g = TemporalGraph::open_in_memory().await.unwrap();

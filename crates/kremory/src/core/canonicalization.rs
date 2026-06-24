@@ -377,15 +377,33 @@ async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> 
         r1
     };
 
-    // Remap episodic_edges.entity_id
+    // Remap episodic_edges.entity_id onto the keeper.
+    // Migration 017: episodic_edges carries UNIQUE(episode_id, entity_id,
+    // entity_group_id). When keeper and loser both link the same episode the
+    // remap collides; `UPDATE OR IGNORE` skips those rows (the keeper already
+    // owns that presence edge — the loser's is the same presence fact about the
+    // now-merged entity), then `DELETE` removes the now-orphaned loser rows so no
+    // dangling entity_id survives the merge.
     let r3 = if r2.is_ok() {
-        graph
+        match graph
             .conn
             .execute(
-                "UPDATE episodic_edges SET entity_id = ?1 WHERE entity_id = ?2",
+                "UPDATE OR IGNORE episodic_edges SET entity_id = ?1 WHERE entity_id = ?2",
                 libsql::params![keeper_id, loser_id],
             )
             .await
+        {
+            Ok(_) => {
+                graph
+                    .conn
+                    .execute(
+                        "DELETE FROM episodic_edges WHERE entity_id = ?1",
+                        libsql::params![loser_id],
+                    )
+                    .await
+            }
+            Err(e) => Err(e),
+        }
     } else {
         r2
     };
@@ -507,6 +525,56 @@ mod tests {
         assert_eq!(report.pairs_examined, 0);
         assert_eq!(report.group_id, "g_empty");
         assert_eq!(report.threshold_used, L5_CANONICALIZATION_THRESHOLD);
+    }
+
+    /// Migration 017 interaction: when keeper and loser BOTH have a presence edge
+    /// to the same episode, remapping loser→keeper collides on
+    /// UNIQUE(episode_id, entity_id, entity_group_id). `apply_merge`'s
+    /// `UPDATE OR IGNORE` + cleanup `DELETE` must leave exactly one surviving edge
+    /// on the keeper and zero dangling loser edges — no FK violation, no error.
+    #[tokio::test]
+    async fn merge_collapses_duplicate_episodic_edges() {
+        use crate::core::graph::{InsertEpisodeParams, InsertEpisodicEdgeParams};
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        insert_entity_with_embedding(&graph, "keeper", "g1", "keeper", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "loser", "g1", "loser", &unit_vec(384)).await;
+        let ep = graph
+            .insert_episode(InsertEpisodeParams {
+                content: "Keeper and loser appear together.",
+                timestamp: chrono::Utc::now(),
+                source_type: Some("transcript"),
+                metadata: None,
+            })
+            .await
+            .expect("episode");
+        // Both entities link the SAME episode → post-merge they would collide.
+        for ent in ["keeper", "loser"] {
+            graph
+                .insert_episodic_edge(InsertEpisodicEdgeParams {
+                    episode_id: ep,
+                    entity_id: ent,
+                    entity_group_id: Some("g1"),
+                    role: "mention",
+                })
+                .await
+                .expect("edge");
+        }
+
+        apply_merge(&graph, "loser", "keeper")
+            .await
+            .expect("merge must not error on episodic-edge collision");
+
+        let keeper_edges = graph.episodic_edges_for_entity("keeper").await.unwrap();
+        assert_eq!(
+            keeper_edges.len(),
+            1,
+            "keeper keeps exactly one presence edge after merge; got {keeper_edges:?}"
+        );
+        let loser_edges = graph.episodic_edges_for_entity("loser").await.unwrap();
+        assert!(
+            loser_edges.is_empty(),
+            "no dangling loser edges after merge; got {loser_edges:?}"
+        );
     }
 
     // ── T2: Single entity ─────────────────────────────────────────────────────

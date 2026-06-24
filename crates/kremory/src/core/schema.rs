@@ -704,6 +704,13 @@ impl TemporalGraph {
         // Emergency downgrade: migrate_015b_downgrade_crash_safety_schema (not called here).
         crate::core::migrations::migrate_016_crash_safety_schema(&self.conn).await?;
 
+        // Migration 017: presence-uniqueness invariant on episodic_edges —
+        // ≤1 row per (episode_id, entity_id, entity_group_id). Dedups any
+        // pre-existing duplicate presence edges (kremory ≤ 0.3.1 had no such
+        // constraint) then installs a UNIQUE index. Idempotent: DELETE is a no-op
+        // on a clean db + CREATE UNIQUE INDEX IF NOT EXISTS is re-runnable.
+        crate::core::migrations::migrate_017_episodic_edges_presence_unique(&self.conn).await?;
+
         Ok(())
     }
 
