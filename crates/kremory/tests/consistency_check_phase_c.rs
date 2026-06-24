@@ -119,14 +119,12 @@ async fn insert_entity_type(graph: &TemporalGraph, id: i64, name: &str, descript
 
 struct MockLlm {
     response: String,
-    model: String,
 }
 
 impl MockLlm {
     fn new(json: impl Into<String>) -> Self {
         Self {
             response: json.into(),
-            model: "mock-model".to_string(),
         }
     }
 }
@@ -167,9 +165,6 @@ impl ChatProvider for MockLlm {
         Ok(Box::new(MockChatResponse {
             text: self.response.clone(),
         }))
-    }
-    fn model(&self) -> &str {
-        &self.model
     }
 }
 

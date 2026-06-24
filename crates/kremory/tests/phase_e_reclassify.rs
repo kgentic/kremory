@@ -113,14 +113,12 @@ async fn insert_entity_type(graph: &TemporalGraph, id: u32, name: &str, descript
 /// Minimal mock ChatProvider that returns a fixed JSON response.
 struct MockLlm {
     response: String,
-    model: String,
 }
 
 impl MockLlm {
     fn new(json: impl Into<String>) -> Self {
         Self {
             response: json.into(),
-            model: "mock-model".to_string(),
         }
     }
 }
@@ -164,10 +162,6 @@ impl ChatProvider for MockLlm {
         Ok(Box::new(MockChatResponse {
             text: self.response.clone(),
         }))
-    }
-
-    fn model(&self) -> &str {
-        &self.model
     }
 }
 

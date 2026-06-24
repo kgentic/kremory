@@ -168,6 +168,7 @@ async fn make_ingestor_with_sink(
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
         config,
+        model: None,
     });
 
     let ingestor_config = IngestorConfig {

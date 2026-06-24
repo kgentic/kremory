@@ -528,6 +528,7 @@ async fn q04_with_facts_object_id_stamped_consumer_pinned() {
         llm: Arc::clone(&llm),
         embedder,
         config,
+        model: None,
     });
 
     let extractor = LlmExtractor::new(llm);
@@ -608,6 +609,7 @@ async fn q04_with_facts_object_value_literal_no_object_stamp() {
         llm: Arc::clone(&llm),
         embedder,
         config,
+        model: None,
     });
 
     let extractor = LlmExtractor::new(llm);

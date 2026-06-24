@@ -244,8 +244,9 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     /// Optional OOV auditor for language-agnostic entity safety net.
     /// When set, runs after each chunk extraction to catch domain terms the LLM missed.
     pub(crate) oov_auditor: Option<text_utils::OovAuditor>,
-    /// Model identifier read from `llm.model()` at construction.
-    /// None when llm.model() returns empty string.
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Sourced from
+    /// the builder, NOT read off `llm.model()`. `None` when the consumer did not
+    /// supply one (raw `with_llm` path) or supplied an empty string.
     pub(crate) model: Option<String>,
     /// Entity extractor — constructed once per Engine, shared via Arc across
     /// all ingest hot-path callsites.  Built-in variants are `Llm` and
@@ -270,6 +271,13 @@ pub struct EngineNewParams<L: ChatProvider, Emb: EmbeddingProvider> {
     pub llm: Arc<L>,
     pub embedder: Arc<Emb>,
     pub config: PipelineConfig,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). kremory owns
+    /// this string as *data* — it is NOT read back off the provider trait. Used
+    /// for capability detection (`extraction/structured.rs`) + metric labels.
+    /// `None` / empty → capability detection falls to `PromptOnly`, metric label
+    /// `model="unknown"`. Threaded from the builder (`.with_model_id`, Tier-1
+    /// shortcuts, `with_llm_tracked`); raw `with_llm` leaves it `None`.
+    pub model: Option<String>,
 }
 
 /// Bundled parameters for [`Engine::with_extractor`] — args-as-object per TD-042
@@ -280,6 +288,9 @@ pub(crate) struct EngineWithExtractorParams<L: ChatProvider, Emb: EmbeddingProvi
     pub embedder: Arc<Emb>,
     pub config: PipelineConfig,
     pub extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). See
+    /// [`EngineNewParams::model`] for semantics.
+    pub model: Option<String>,
 }
 
 /// Bundled parameters for [`Engine::with_custom_extractor_no_llm`] —
@@ -339,9 +350,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             llm,
             embedder,
             config,
+            model,
         } = params;
-        let m = llm.model().trim().to_string();
-        let model = if m.is_empty() { None } else { Some(m) };
+        // Option-1 (2026-06-23): model is consumer-supplied data, not read off
+        // `llm.model()`. Normalise empty → None for capability detection.
+        let model = model.and_then(|m| {
+            let t = m.trim().to_string();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        });
         let extractor = Arc::new(crate::core::extraction::factory::ExtractorKind::Llm(
             crate::core::extraction::graphiti::LlmExtractor::new(Arc::clone(&llm)),
         ));
@@ -370,9 +390,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             embedder,
             config,
             extractor,
+            model,
         } = params;
-        let m = llm.model().trim().to_string();
-        let model = if m.is_empty() { None } else { Some(m) };
+        // Option-1 (2026-06-23): model is consumer-supplied data, not read off
+        // `llm.model()`. Normalise empty → None for capability detection.
+        let model = model.and_then(|m| {
+            let t = m.trim().to_string();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        });
         Self {
             graph,
             llm: Some(llm),
@@ -427,10 +456,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         Arc::clone(&self.graph)
     }
 
-    /// Model identifier captured from `llm.model()` at construction.
+    /// Consumer-supplied model identifier captured at construction (Option-1).
     ///
-    /// Returns `None` when the LLM provider reported an empty or whitespace-only
-    /// model string (semantically "no model configured"). Pub-scoped pending a
+    /// Returns `None` when the consumer did not supply a model id (raw `with_llm`
+    /// path) or supplied an empty/whitespace-only string. Pub-scoped pending a
     /// facade `Memory::model()` caller.
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
@@ -561,7 +590,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // Clone the accumulator handle BEFORE moving counting into the reclassify call.
             // The budget-INSERT site reads totals from this handle after pass completes.
             let acc_handle = counting.accumulator();
-            let model_str = counting.model().to_string();
+            // Option-1 (2026-06-23): model is the Engine's consumer-supplied string,
+            // not read off the provider wrapper.
+            let model_str = self.model.clone().unwrap_or_default();
 
             match crate::core::dream::reclassify::reclassify_all_groups(
                 &self.graph,

@@ -116,6 +116,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // is not needed here — the NER names already serve as the anchor.
                 existing_graph_entities: &[],
                 arm_budget_ms: self.config.extraction_arm_budget_ms,
+                model: self.model.as_deref(),
             };
             let result = extractor.extract(chunk, &ctx).await?;
             all_facts.extend(result.facts);
@@ -164,7 +165,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                        contradiction detection; or use .with_facts(…) to pin \
                        triples without LLM",
                 })?;
-        let detector = TwoPoolDetector::new(Arc::clone(llm_for_batch_detector));
+        let detector =
+            TwoPoolDetector::new(Arc::clone(llm_for_batch_detector)).with_model(self.model.clone());
         let mut inserted_count: usize = 0;
 
         // MED-01 fire-once flags (ADR-052 §3.1 normative):

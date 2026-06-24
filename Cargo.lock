@@ -174,12 +174,12 @@ dependencies = [
 [[package]]
 name = "autoagents-llm"
 version = "0.3.7"
-source = "git+https://github.com/liquidos-ai/AutoAgents.git?branch=main#9781a48b095f60c70c4a8eb29e624183d5c674c5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4afe50cb2767b514559748c23b60e815a91a24d5422fb01041fcc0b3e1babb97"
 dependencies = [
  "async-trait",
  "autoagents-protocol",
  "base64 0.22.1",
- "bytes",
  "chrono",
  "dirs 6.0.0",
  "either",
@@ -203,7 +203,8 @@ dependencies = [
 [[package]]
 name = "autoagents-protocol"
 version = "0.3.7"
-source = "git+https://github.com/liquidos-ai/AutoAgents.git?branch=main#9781a48b095f60c70c4a8eb29e624183d5c674c5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "831a39521bcbb57b41d7a92bd064fd662e55f59ca862340407d878192f480c21"
 dependencies = [
  "serde",
  "serde_json",
@@ -1711,7 +1712,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration 0.7.0",
  "tokio",
  "tower-service",
@@ -3198,7 +3199,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.40",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3236,7 +3237,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -5308,7 +5309,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

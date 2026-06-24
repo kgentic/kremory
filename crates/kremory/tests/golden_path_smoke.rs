@@ -223,7 +223,11 @@ async fn golden_path_smoke() {
     ) = match mode {
         SmokeMode::Live => {
             let real = real_ollama_chat();
-            let rec = Arc::new(RecordReplayChatProvider::record(real, cassette.clone()));
+            let rec = Arc::new(RecordReplayChatProvider::record(
+                real,
+                cassette.clone(),
+                ollama_chat_model(),
+            ));
             (rec, real_ollama_embedder(), 768)
         }
         SmokeMode::Replay => {

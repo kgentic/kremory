@@ -101,6 +101,7 @@ three business days after the API merge to run the full regression suite.";
             llm: Arc::new(llm),
             embedder: Arc::new(embedder),
             config,
+            model: None,
         });
 
         let result = rql
@@ -396,6 +397,7 @@ three business days after the API merge to run the full regression suite.";
             llm: llm.clone(),
             embedder: Arc::new(embedder),
             config,
+            model: None,
         });
 
         let extractor = NuExtractExtractor::new(llm);

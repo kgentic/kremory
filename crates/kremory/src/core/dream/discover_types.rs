@@ -148,7 +148,13 @@ pub(crate) async fn discover_types<L: ChatProvider>(
     // ── Step 3: Load existing registry for anti-redundancy gate ──────────────
 
     let registry = EntityTypeRegistry::load_for_group(conn, group_id).await?;
-    let model_str = llm.model().to_string();
+    // Option-1 (2026-06-23): the dream path no longer reads `llm.model()`.
+    // Capability detection for this call falls to PromptOnly + the LlmJsonRepair
+    // ladder (safe for all providers; quality models still parse). A dedicated
+    // dream model id (`with_dream_model_id`) that threads the real model — and
+    // enables cross-family dream configs — is a tracked follow-up (see the
+    // Option-1 integration-points doc). `llm` itself is still used for the call.
+    let model_str = String::new();
 
     // ── Step 4: Anti-redundancy embeddings (degraded mode check) ─────────────
 
@@ -1013,10 +1019,6 @@ mod td050_full_workflow_tests {
             Ok(Box::new(MockChatResponse {
                 text: self.json.clone(),
             }))
-        }
-
-        fn model(&self) -> &str {
-            "scripted-test"
         }
     }
 

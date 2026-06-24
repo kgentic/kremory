@@ -22,10 +22,12 @@
 // `ChatProvider: Send + Sync` and the decorator Arc is shared across the
 // background worker thread.
 //
-// model() override (ASMP-002): MUST NOT inherit the trait default (returns "").
-// Record/Passthrough delegate to the inner provider; Replay returns the cassette
-// header's stored `model`. The header is a plain (non-Mutex) field so `model()`
-// can return `&str` directly.
+// model resolution (Option-1, 2026-06-23 — supersedes the former ASMP-002
+// `ChatProvider::model()` override, removed when published autoagents-llm 0.3.7
+// dropped the trait method): the model is a caller-supplied field exposed via the
+// inherent `model_id()`. In Record/Passthrough it is the value passed to
+// `record()`/`passthrough()`; in Replay it is the cassette header's stored `model`.
+// The header is a plain (non-Mutex) field so `model_id()` can return `&str` directly.
 //
 // Fingerprint (§4.2): Sha256 of (model || messages-json || schema-json ||
 // tools-count-marker), stable across runs/platforms.
@@ -53,8 +55,8 @@ pub struct CassetteEntry {
 }
 
 /// On-disk cassette file format (§4.1). The top-level `model` header is
-/// LOAD-BEARING (DENT-001 + ASMP-002): Replay-mode `model()` returns it so
-/// extraction builders route to the correct capability arm.
+/// LOAD-BEARING (DENT-001; Option-1 2026-06-23): Replay-mode `model_id()` returns
+/// it so extraction builders route to the correct capability arm.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Cassette {
     /// Format version (currently 1).
@@ -104,9 +106,10 @@ pub struct RecordReplayChatProvider {
     inner: Option<Arc<dyn ChatProvider>>,
     /// Shared cassette state (capture buffer + replay cursor) — see NEW-201.
     state: Arc<Mutex<CassetteState>>,
-    /// Stored model header (ASMP-002): plain field so `model()` returns `&str`
-    /// directly without holding the `Mutex`. In Record/Passthrough this mirrors
-    /// the inner provider's model; in Replay it is the cassette header `model`.
+    /// Stored model header (Option-1 2026-06-23): plain field so `model_id()`
+    /// returns `&str` directly without holding the `Mutex`. In Record/Passthrough
+    /// this is the caller-supplied model passed to `record()`/`passthrough()`; in
+    /// Replay it is the cassette header `model`.
     model: String,
     /// Cassette file path (written by `flush()` in Record mode; loaded from in
     /// Replay mode). `None` in Passthrough mode.
@@ -137,17 +140,22 @@ struct FingerprintParams<'a> {
 
 impl RecordReplayChatProvider {
     /// Record mode: wrap a real provider and capture responses to `cassette_path`
-    /// on [`Self::flush`]. The decorator's `model()` mirrors `inner.model()`.
+    /// on [`Self::flush`].
+    ///
+    /// Option-1 (2026-06-23): `model` is supplied by the caller (it can no longer
+    /// be read off `inner.model()` — that trait method does not exist on published
+    /// `autoagents-llm` 0.3.7). The string is load-bearing: it feeds the request
+    /// fingerprint + cassette header, so record/replay must use the same value.
     pub fn record(
         inner: Arc<dyn ChatProvider>,
         cassette_path: impl Into<std::path::PathBuf>,
+        model: impl Into<String>,
     ) -> Self {
-        let model = inner.model().to_string();
         Self {
             mode: VcrMode::Record,
             inner: Some(inner),
             state: Arc::new(Mutex::new(CassetteState::default())),
-            model,
+            model: model.into(),
             cassette_path: Some(cassette_path.into()),
         }
     }
@@ -189,20 +197,23 @@ impl RecordReplayChatProvider {
     }
 
     /// Passthrough mode: delegate to a real provider, capture nothing.
-    pub fn passthrough(inner: Arc<dyn ChatProvider>) -> Self {
-        let model = inner.model().to_string();
+    ///
+    /// Option-1 (2026-06-23): `model` is caller-supplied (no longer read off
+    /// `inner.model()` — absent on published 0.3.7).
+    pub fn passthrough(inner: Arc<dyn ChatProvider>, model: impl Into<String>) -> Self {
         Self {
             mode: VcrMode::Passthrough,
             inner: Some(inner),
             state: Arc::new(Mutex::new(CassetteState::default())),
-            model,
+            model: model.into(),
             cassette_path: None,
         }
     }
 
-    /// The cassette header `model` string (Replay) or the inner model
-    /// (Record/Passthrough). Used by the `model()` trait override.
-    fn cassette_model(&self) -> &str {
+    /// kremory-inherent model accessor (Option-1, 2026-06-23). Returns the model
+    /// string captured at construction (cassette header in Replay; caller-supplied
+    /// in Record/Passthrough). Replaces the former `ChatProvider::model()` override.
+    pub fn model_id(&self) -> &str {
         &self.model
     }
 
@@ -420,14 +431,7 @@ impl ChatProvider for RecordReplayChatProvider {
         }
     }
 
-    // MANDATORY override (ASMP-002): the trait default returns "", which
-    // collapses `capability_of("")` to `PromptOnly` and records the wrong
-    // fingerprint arm. Record/Passthrough delegate to inner; Replay returns the
-    // cassette header model. `self.model` is set at construction in all modes.
-    fn model(&self) -> &str {
-        match &self.inner {
-            Some(inner) => inner.model(),
-            None => self.cassette_model(),
-        }
-    }
+    // Option-1 (2026-06-23): the `ChatProvider::model()` override is removed (the
+    // trait method does not exist on published 0.3.7). The model is now a
+    // caller-supplied field exposed via the inherent `model_id()`.
 }

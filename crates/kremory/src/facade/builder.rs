@@ -29,6 +29,12 @@ use crate::memory::{
 pub struct MemoryBuilder<L, E> {
     path: std::path::PathBuf,
     llm: Option<Arc<dyn ChatProvider>>,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Set by Tier-1
+    /// shortcuts, `with_llm_tracked` (from the metric label), and the explicit
+    /// `.with_model_id(…)` escape hatch. Left `None` by raw `with_llm` →
+    /// capability detection falls to `PromptOnly`. Threaded unchanged across
+    /// every type-state transition; does NOT change type-state.
+    model_id: Option<String>,
     /// Optional dedicated dream-phase LLM (TD-052b). `None` (default) → dream
     /// re-uses the `with_llm` provider. Threaded unchanged across every
     /// type-state transition. Does NOT change type-state.
@@ -122,6 +128,41 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Set the default namespace used by operations that don't specify `.in_namespace()`.
     pub fn default_namespace(mut self, ns: Namespace) -> Self {
         self.default_namespace = Some(ns);
+        self
+    }
+
+    /// Supply the model identifier kremory should use for capability detection
+    /// and metric labels (Option-1, 2026-06-23).
+    ///
+    /// kremory does **not** read the model back off the provider — the consumer
+    /// owns this string. Set it when you wire a provider via the raw
+    /// [`with_llm`](Self::with_llm) path and want full provider-native schema
+    /// detection (`FormatSchema` for Ollama, `NativeSchema` for OpenAI/Anthropic).
+    /// Without it, the raw path falls back to `PromptOnly` extraction and a
+    /// `model="unknown"` metric label.
+    ///
+    /// State-agnostic: callable before or after `.with_llm(…)`. Tier-1 shortcuts
+    /// (`with_ollama`/`with_openai`/`with_anthropic`) and
+    /// [`with_llm_tracked`](Self::with_llm_tracked) set this for you.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use kremory::Memory;
+    /// # async fn ex(
+    /// #     my_llm: Arc<dyn kremory::memory::ChatProvider>,
+    /// #     my_embedder: Arc<dyn kremory::DynEmbeddingProvider>,
+    /// # ) -> kremory::memory::Result<()> {
+    /// let memory = Memory::open("./agent.db")
+    ///     .with_llm(my_llm)
+    ///     .with_model_id("gemma4-e2b:latest")
+    ///     .with_embedder(my_embedder)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_model_id(mut self, model: impl Into<String>) -> Self {
+        self.model_id = Some(model.into());
         self
     }
 
@@ -418,6 +459,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         Self {
             path,
             llm: None,
+            model_id: None,
             dream_llm: None,
             embedder: None,
             default_sink: None,
@@ -446,6 +488,9 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
             llm: Some(llm),
+            // Raw `with_llm` sets no model id itself (Option-1) — preserves any
+            // prior `.with_model_id(…)`. Unset → capability detection → PromptOnly.
+            model_id: self.model_id,
             dream_llm: self.dream_llm,
             embedder: self.embedder,
             default_sink: self.default_sink,
@@ -514,10 +559,14 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         llm: L,
     ) -> MemoryBuilder<WithLlm, NoEmb> {
         let WithLlmTrackedParams { provider, model } = params;
+        // Capture the tracked model id as kremory-owned data (Option-1) before
+        // `model` is moved into the tracking wrapper.
+        let model_id = Some(model.clone());
         let tracked = TokenTrackingChatProvider::new(llm, provider, model);
         MemoryBuilder {
             path: self.path,
             llm: Some(Arc::new(tracked) as Arc<dyn ChatProvider>),
+            model_id,
             dream_llm: self.dream_llm,
             embedder: self.embedder,
             default_sink: self.default_sink,
@@ -548,6 +597,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
             llm: self.llm,
+            model_id: self.model_id,
             dream_llm: self.dream_llm,
             embedder: Some(emb),
             default_sink: self.default_sink,
@@ -583,6 +633,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         MemoryBuilder {
             path: self.path,
             llm: self.llm,
+            model_id: self.model_id,
             dream_llm: self.dream_llm,
             embedder: Some(emb),
             default_sink: self.default_sink,
@@ -713,6 +764,11 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 .embedder
                 .ok_or_else(|| MemoryError::Other("embedder missing".into()))?;
 
+            // Consumer-supplied model id (Option-1) — threaded into every
+            // Engine-construction param below. `None` → capability detection
+            // → PromptOnly.
+            let model_id = self.model_id.clone();
+
             // ── Compat matrix (ADR-039, 7-row table) ────────────────────────
             // Row 6: .with_extractor conflicts with .with_gliner → Err
             #[cfg(feature = "ner")]
@@ -758,6 +814,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedder: embedder.clone(),
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: self.allowed_entity_types,
+                        model: model_id.clone(),
                     },
                     llm.clone(),
                     crate::core::extraction::factory::ExtractorKind::Custom(custom),
@@ -782,6 +839,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedder: embedder.clone(),
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
+                            model: model_id.clone(),
                         },
                         llm.clone(),
                         crate::core::extraction::factory::ExtractorKind::GlinerLlm(Box::new(
@@ -798,6 +856,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedder: embedder.clone(),
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
+                            model: model_id.clone(),
                         },
                     )
                     .await?
@@ -812,6 +871,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedder: embedder.clone(),
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
+                            model: model_id.clone(),
                         },
                     )
                     .await?
@@ -876,6 +936,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedder: embedder.clone(),
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg.clone(),
+                        model: model_id.clone(),
                     },
                 )
                 .await?;
@@ -895,6 +956,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedder: embedder.clone(),
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg,
+                        model: model_id.clone(),
                     },
                 )
                 .await?;
@@ -1036,13 +1098,16 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                 .embedder
                 .ok_or_else(|| MemoryError::Other("embedder missing".into()))?;
 
-            // Row 4 (no LLM, custom extractor) — open without LLM
+            // Row 4 (no LLM, custom extractor) — open without LLM.
+            // model is carried for struct completeness; the no-LLM path does no
+            // capability detection (custom extractor owns extraction).
             let (graph, temporal_graph) = providers::open_graph_no_llm(
                 providers::GraphOpenParams {
                     path: self.path.clone(),
                     embedder: embedder.clone(),
                     embedding_dim: self.embedding_dim,
                     allowed_entity_types: self.allowed_entity_types,
+                    model: self.model_id.clone(),
                 },
                 custom,
             )

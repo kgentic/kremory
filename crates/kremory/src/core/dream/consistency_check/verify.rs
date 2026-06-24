@@ -372,10 +372,10 @@ pub async fn verify_batch_for_candidates(
         });
     }
 
-    let verify_model = opts
-        .verify_model_override
-        .clone()
-        .unwrap_or_else(|| llm.model().to_string());
+    // Option-1 (2026-06-23): no longer read `llm.model()`. The model is the
+    // consumer-supplied `verify_model_override` (set by the dream entry point
+    // from the Engine model, or by the consumer directly). Empty → `PromptOnly`.
+    let verify_model = opts.verify_model_override.clone().unwrap_or_default();
 
     // Cap candidates if requested.
     let effective_candidates: &[crate::core::ingest::EntityCandidate] =

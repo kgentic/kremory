@@ -522,6 +522,12 @@ pub struct RunVerifyStageParams<'a> {
     pub allowed_entity_types: &'a [String],
     /// Entity labels that must never be extracted, forwarded into the context.
     pub excluded_entity_types: &'a [String],
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Sourced from
+    /// the Engine (`graph.model`) at the deferred call site and forwarded into
+    /// the `ExtractionContext` so the background extraction arm reaches the same
+    /// capability detection (FormatSchema/NativeSchema) as the inline path.
+    /// `None`/empty → `PromptOnly`.
+    pub model: Option<&'a str>,
 }
 
 #[doc(hidden)]
@@ -534,6 +540,7 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
         sink,
         allowed_entity_types,
         excluded_entity_types,
+        model,
     } = params;
     let total_start = Instant::now();
     let arm = if verify_llm.is_some() {
@@ -656,6 +663,10 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
     let ctx = ExtractionContext {
         allowed_entity_types,
         excluded_entity_types,
+        // Option-1: forward the Engine model so background extraction reaches
+        // the same capability-detection arm as the inline path (no PromptOnly
+        // downgrade on the deferred path).
+        model,
         ..ExtractionContext::default()
     };
     let extract_start = Instant::now();

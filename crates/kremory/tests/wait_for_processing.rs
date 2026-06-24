@@ -168,6 +168,7 @@ async fn wait_for_processing_blocks_until_extraction_complete() {
         llm: Arc::new(EmptyArrayLlmClient),
         embedder: null_emb,
         config,
+        model: None,
     });
 
     let ingestor_config = IngestorConfig {

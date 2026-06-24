@@ -602,6 +602,7 @@ async fn test_contextualize_one_hop_expansion() {
             llm,
             embedder,
             config,
+            model: None,
         });
 
     let result: ContextResult = rql

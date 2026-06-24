@@ -145,6 +145,7 @@ async fn main() -> Result<()> {
         registry_specs: &[],
         existing_graph_entities: &[],
         arm_budget_ms: 30_000,
+        model: None,
     };
     let warm_start = Instant::now();
     let _ = extractor
@@ -173,6 +174,7 @@ async fn main() -> Result<()> {
             registry_specs: &[],
             existing_graph_entities: &[],
             arm_budget_ms: 30_000,
+            model: None,
         };
 
         let mut samples: Vec<u128> = Vec::with_capacity(runs_per_size);

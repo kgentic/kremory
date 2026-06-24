@@ -232,6 +232,7 @@ async fn b2_builder_seed_populates_registry_for_custom_types() {
         llm: Arc::clone(&llm),
         embedder,
         config,
+        model: None,
     });
 
     // Build extractor locally — engine.extractor is pub(crate), not accessible
@@ -306,6 +307,7 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
         llm: Arc::clone(&llm),
         embedder,
         config,
+        model: None,
     });
     let extractor = LlmExtractor::new(Arc::clone(&llm));
 
@@ -393,6 +395,7 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
                 llm: Arc::clone(&llm),
                 embedder,
                 config,
+                model: None,
             });
             let extractor = LlmExtractor::new(Arc::clone(&llm));
 
@@ -475,6 +478,7 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
                 llm: Arc::clone(&llm),
                 embedder,
                 config,
+                model: None,
             });
             let extractor = LlmExtractor::new(Arc::clone(&llm));
 
@@ -611,6 +615,7 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
         llm: Arc::clone(&llm),
         embedder,
         config,
+        model: None,
     });
 
     // Shared capture store: one Vec<String> per extract() call.

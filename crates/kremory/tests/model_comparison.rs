@@ -372,6 +372,7 @@ mod model_comparison_tests {
             llm: llm.clone(),
             embedder: Arc::new(embedder),
             config,
+            model: None,
         });
         let extractor = NuExtractExtractor::new(llm);
 
@@ -429,6 +430,7 @@ mod model_comparison_tests {
             llm: llm.clone(),
             embedder: Arc::new(embedder),
             config,
+            model: None,
         });
         let extractor = IntegerIdLlmExtractor::new(llm);
 
@@ -486,6 +488,7 @@ mod model_comparison_tests {
             llm: llm.clone(),
             embedder: Arc::new(embedder),
             config,
+            model: None,
         });
         let extractor = IntegerIdLlmExtractor::new(llm);
 
@@ -543,6 +546,7 @@ mod model_comparison_tests {
             llm: llm.clone(),
             embedder: Arc::new(embedder),
             config,
+            model: None,
         });
         let extractor = GroundedNuExtractExtractor::new(llm);
 

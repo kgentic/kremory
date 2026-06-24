@@ -1331,16 +1331,14 @@ mod dream_llm_slot_tests {
     #[derive(Debug)]
     struct CountingProvider {
         calls: Arc<AtomicUsize>,
-        tag: &'static str,
     }
 
     impl CountingProvider {
-        fn new(tag: &'static str) -> (Arc<Self>, Arc<AtomicUsize>) {
+        fn new() -> (Arc<Self>, Arc<AtomicUsize>) {
             let calls = Arc::new(AtomicUsize::new(0));
             (
                 Arc::new(Self {
                     calls: Arc::clone(&calls),
-                    tag,
                 }),
                 calls,
             )
@@ -1357,10 +1355,6 @@ mod dream_llm_slot_tests {
         ) -> std::result::Result<Box<dyn ChatResponse>, LLMError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Box::new(EmptyResponse))
-        }
-
-        fn model(&self) -> &str {
-            self.tag
         }
     }
 
@@ -1420,7 +1414,7 @@ mod dream_llm_slot_tests {
     /// `llm_or_err` (structural fallback, byte-for-byte prior behaviour).
     #[tokio::test]
     async fn t3_accessor_falls_back_to_main_when_dream_unset() {
-        let (main, _) = CountingProvider::new("MAIN");
+        let (main, _) = CountingProvider::new();
         let main: Arc<dyn ChatProvider> = main;
         let mem = build_with(Some(Arc::clone(&main)), None).await;
 
@@ -1438,8 +1432,8 @@ mod dream_llm_slot_tests {
     /// the main provider.
     #[tokio::test]
     async fn t3_accessor_returns_dream_provider_when_set() {
-        let (main, _) = CountingProvider::new("MAIN");
-        let (dream, _) = CountingProvider::new("DREAM");
+        let (main, _) = CountingProvider::new();
+        let (dream, _) = CountingProvider::new();
         let main: Arc<dyn ChatProvider> = main;
         let dream: Arc<dyn ChatProvider> = dream;
         let mem = build_with(Some(Arc::clone(&main)), Some(Arc::clone(&dream))).await;
@@ -1499,8 +1493,8 @@ mod dream_llm_slot_tests {
             .build()
             .expect("runtime");
 
-        let (main, main_calls) = CountingProvider::new("MAIN");
-        let (dream, dream_calls) = CountingProvider::new("DREAM");
+        let (main, main_calls) = CountingProvider::new();
+        let (dream, dream_calls) = CountingProvider::new();
         let main: Arc<dyn ChatProvider> = main;
         let dream: Arc<dyn ChatProvider> = dream;
 
@@ -1560,7 +1554,7 @@ mod dream_llm_slot_tests {
             .build()
             .expect("runtime");
 
-        let (main, _) = CountingProvider::new("MAIN");
+        let (main, _) = CountingProvider::new();
         let main: Arc<dyn ChatProvider> = main;
 
         metrics::with_local_recorder(&recorder, || {
@@ -1644,17 +1638,13 @@ mod dream_llm_slot_tests {
                         .to_string(),
                 }))
             }
-
-            fn model(&self) -> &str {
-                "scripted-dream"
-            }
         }
 
         let dream_calls = Arc::new(AtomicUsize::new(0));
         let scripted_dream: Arc<dyn ChatProvider> = Arc::new(ScriptedCountingProvider {
             calls: Arc::clone(&dream_calls),
         });
-        let (main, main_calls) = CountingProvider::new("MAIN");
+        let (main, main_calls) = CountingProvider::new();
         let main: Arc<dyn ChatProvider> = main;
 
         let mem = build_with(Some(main), Some(scripted_dream)).await;

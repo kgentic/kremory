@@ -224,11 +224,23 @@ pub struct DetectParams<'a> {
 /// Contradiction detector using two candidate pools and temporal overlap filtering.
 pub(crate) struct TwoPoolDetector<L: ChatProvider> {
     llm: Arc<L>,
+    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Set by the
+    /// Engine via [`with_model`](Self::with_model) at construction — NOT read off
+    /// `llm.model()`. Drives capability detection + metric labels for the
+    /// contradiction-verdict call. `None`/empty → `PromptOnly`.
+    model: Option<String>,
 }
 
 impl<L: ChatProvider> TwoPoolDetector<L> {
     pub(crate) fn new(llm: Arc<L>) -> Self {
-        Self { llm }
+        Self { llm, model: None }
+    }
+
+    /// Set the consumer-supplied model identifier (Option-1). Chainable; the
+    /// Engine calls this with `self.model.clone()` at construction.
+    pub(crate) fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model;
+        self
     }
 
     /// Detect contradictions for a new fact against existing facts.
@@ -314,7 +326,7 @@ impl<L: ChatProvider> TwoPoolDetector<L> {
             "ContradictionVerdict",
         )
         .messages(contradiction_msgs)
-        .model(self.llm.model())
+        .model(self.model.as_deref().unwrap_or(""))
         .call()
         .await
         .map_err(|e| crate::core::error::Error::Llm(e.to_string()))?;
