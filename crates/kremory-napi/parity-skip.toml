@@ -44,56 +44,13 @@ symbol = "Memory::auto"
 reason = "Env-detected provider constructor called internally by JsMemory.open; not directly callable from napi — JsMemory.open IS the auto() entry point for JS consumers"
 revisit = "never"
 
-# ── Memory write surface ──────────────────────────────────────────────────────
-
-[[skip]]
-symbol = "Memory::remember"
-reason = "Semantic rename: napi surface exposes this as JsMemory.ingest (simpler name for JS consumers); has napi mirror under the name 'ingest'"
-revisit = "never"
-
-# ── Internal / lifecycle helpers ─────────────────────────────────────────────
-
-[[skip]]
-symbol = "Memory::status_of"
-reason = "Internal observability surface; not on B1-B10 napi surface"
-revisit = "v0.2.0"
-
-[[skip]]
-symbol = "Memory::await_enrichment"
-reason = "Internal sync helper; napi ingest blocks inline and does not expose EpisodeCommit run_id"
-revisit = "v0.2.0"
-
-[[skip]]
-symbol = "Memory::await_dream"
-reason = "Internal sync helper; napi dream() returns when complete (DreamHandle not on JS surface)"
-revisit = "v0.2.0"
-
-[[skip]]
-symbol = "Memory::await_batch"
-reason = "Internal batch-enrichment sync helper; napi awaits inline"
-revisit = "v0.2.0"
-
-[[skip]]
-symbol = "Memory::cancel"
-reason = "Lifecycle-control for in-flight Phase 2; EpisodeCommit not on JS surface in v0.1.6"
-revisit = "v0.2.0"
-
-[[skip]]
-symbol = "Memory::cancel_dream"
-reason = "Lifecycle-control for dream phases; DreamHandle not on JS surface in v0.1.6"
-revisit = "v0.2.0"
-
-# ── Namespace policy (ADR-029a/b) ─────────────────────────────────────────────
-
-[[skip]]
-symbol = "Memory::register_namespace"
-reason = "Will be mirrored via JsMemory.registerNamespace after B10 lands; deferred to next loop"
-revisit = "v0.1.6"
-
-[[skip]]
-symbol = "Memory::upgrade_namespace_policy"
-reason = "Mirrors with registerNamespace; deferred to next loop"
-revisit = "v0.1.6"
+# NOTE (TD-053, 2026-06-25): `Memory::{remember, status_of, await_enrichment,
+# await_dream, await_batch, cancel, cancel_dream, register_namespace,
+# upgrade_namespace_policy}` skip entries were REMOVED — ADR-034 landed their
+# napi mirrors (remember / statusOf / awaitEnrichment / awaitDream / awaitBatch
+# / cancel / cancelDream / registerNamespace / upgradeNamespacePolicy). The
+# parity test matches them directly; the skips were redundant + their reasons
+# described the pre-ADR-034 divergent state (doc-rot, not a gap).
 
 # ── RememberRequest builder methods ──────────────────────────────────────────
 
@@ -154,10 +111,8 @@ revisit = "never"
 
 # ── RememberBatchBuilder ──────────────────────────────────────────────────────
 
-[[skip]]
-symbol = "Memory::remember_batch"
-reason = "Batch ingest not on B1-B10 napi surface; single-episode ingest via JsMemory.ingest covers the consumer ingestion path"
-revisit = "v0.2.0"
+# NOTE (TD-053, 2026-06-25): `Memory::remember_batch` skip removed — ADR-034
+# landed `rememberBatch`; the parity test matches it directly.
 
 [[skip]]
 symbol = "RememberBatchBuilder::entry"
@@ -337,26 +292,11 @@ symbol = "DreamRequest::opts"
 reason = "DreamOpts escape hatch; not on JS surface"
 revisit = "never"
 
-# ── UpdateSourceUriRequest ────────────────────────────────────────────────────
-
-[[skip]]
-symbol = "Memory::update_source_uri"
-reason = "Already mirrored as JsMemory.updateUri(sourceId, newUri) — B3 implemented"
-revisit = "never"
-
-# ── UpdateEpisodeMetadataRequest ──────────────────────────────────────────────
-
-[[skip]]
-symbol = "Memory::update_episode_metadata"
-reason = "Already mirrored as JsMemory.updateMetadata(sourceId, patch) — B2 implemented"
-revisit = "never"
-
-# ── Memory::recall_by_source_id ───────────────────────────────────────────────
-
-[[skip]]
-symbol = "Memory::recall_by_source_id"
-reason = "Already mirrored as JsMemory.getBySourceId(sourceId, namespace?) — B5 implemented. Note: JsEpisode.sourceUri is always null (substrate query gap)"
-revisit = "never"
+# NOTE (TD-053, 2026-06-25): `Memory::{update_source_uri, update_episode_metadata,
+# recall_by_source_id}` skip entries removed — ADR-034 landed their mirrors under
+# the CORRECT names (updateSourceUri / updateEpisodeMetadata / recallBySourceId).
+# The old reasons named the pre-ADR-034 shortened names (updateUri / updateMetadata
+# / getBySourceId) which no longer exist. The parity test matches the real methods.
 
 # ── RecallTemplate ────────────────────────────────────────────────────────────
 
