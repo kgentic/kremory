@@ -1,107 +1,39 @@
 <!-- sprint-activate-begin -->
 ## Active Sprint
 
-**Sprint**: Tech-Debt Clearance (post-v0.2.4) — **near-complete, UNPUSHED**
-**Branch**: `jimsheen/tech-debt-clearance` (off `main`) — **30 commits ahead of `origin/main`, ALL UNPUSHED.** Bundles the v0.2.4 build (ADR-050 crash-safety, shipped) + the clearance backlog.
-**Status**: Workspace GREEN — `cargo test --workspace` **1164 / 0 fail**; `clippy --workspace --all-targets -D warnings` GREEN **and** `--all-features` GREEN; `fmt` clean. Register: `.ai-docs/tech-debt/tech-debt-register.md`.
-**Blocked on push** — `kgentic` org GitHub Actions billing suspended (no restore expected soon) → **all 4 workflows FULLY COMMENTED OUT** (`ci`/`napi-ci`/`release-please`/`eval-canary` — entire bodies commented, 0 active lines, nothing runs by any trigger; RESTORE header + `git revert` on each). Not paying for CI. **User confirms `v0.2.4` tag BEFORE any push** (no autonomous push/tag — irreversible HITL gate).
+**No active sprint.** Last shipped: **kremory 0.3.2** (live on crates.io — episodic-edge presence-uniqueness fix). `origin/main` = `fad4d5d` (0.3.2 + TD-053 napi-parity hygiene). The post-v0.2.4 Tech-Debt Clearance sprint and the 0.3.x release line are **DONE and merged to main** — the prior "30 commits ahead / UNPUSHED / v0.2.4 bundle" framing is retired (it predated the 0.3.x releases).
 
-**Clearance backlog state (per register):**
+**Current baseline (verified 2026-06-25):**
 
-| TD | What | Status |
-|---|---|---|
-| **TD-044** | doc-vs-code drift (ADR-051 signature, CLAUDE.md) | ✅ CLOSED `ffa7fa3` |
-| **TD-042** | clippy-allows Tier 1+2+3 — threshold 5→3, ~77 fns → args-as-object params structs (7 sequential foreground waves) | ✅ **CLOSED 2026-06-19** `d8180e5`→`c485419` (+`e6a0fda` Tier 1) |
-| **TD-046** | observability gaps (stale doc + silent cursor fallback log) | ✅ CLOSED `5d37e69` |
-| **TD-043** | dead_code triage | ⏳ PARTIAL `a1be838`/`d2ddf2c` — `graph.rs:43 parse_dt_opt` folds into TD-045 Wave 2 |
-| **TD-045** | god-file splits (4 files >500 LoC) | ⏳ PARTIAL `107614d` — `migrations.rs`+`provider/mod.rs` done; **`graph.rs` (3240) + `ingest/pipeline.rs` (2141) PENDING Wave 2** |
-| hygiene | close TD-036/037, de-dup TD-037/TD-038 id-collisions | ⏳ PENDING |
+- Releases **0.3.0 → 0.3.1 → 0.3.2** shipped, tagged, on crates.io; `main` fast-forwarded through all. 0.3.0 yanked (broken default); 0.3.1 + 0.3.2 live.
+- **TD-053 (napi parity hygiene) CLOSED + on main** (`a05be15` doc-rot pass, `fad4d5d` boy-scout pass): `parity-skip.toml` = **72 entries ≤ 80 cap**, `cargo test -p kremory-napi --test api_parity` **7/0 GREEN**. The napi 1:1 surface is verified 1:1 (ADR-034 landed); parity-skip now lists only genuinely-absent symbols.
+- **One known pre-existing test fail**: `with_facts_empty_vec_equivalent_to_no_facts` (TD-013, kremory) — empty-vec skip increments the skip_extraction counter when it should not. Fix the bug per Rule 8, do not skip. (This is the ONLY standing fail; the old "napi parity-cap fail" was never real — the "103>100" number was stale/fabricated per `feedback_subagent_fabricates_gate_results`.)
+- `cargo fmt --check` is NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
+- The napi parity test is invisible to `cargo test -p kremory` (cross-crate gate) — run workspace-wide to see it.
 
-**v0.2.4 build** (ADR-050 dream-pass crash-safety, also in the 30 unpushed): groundwork `ec766e4`, Phase 1 `d128b09`, Phase 3 `85e4fce`, Phase 4 `8ec711f`, Phase 5 `1ec121e`. Quinn PASS every phase (90/93/94/96). Zero `#[allow]` band-aids in `src/`. Spec `.ai-docs/specs/v0-2-4-impl-spec-2026-06-12.md`; ADR `adr-050-dream-pass-crash-safety-and-idempotency-2026-06-11` (SHIPPED).
+**Standing constraints (load-bearing for ANY release / push):**
 
-**Gate lesson (load-bearing for next clearance work)**: global clippy threshold changes must gate **both** `--all-targets` AND `--all-features` — cfg-gated code (e.g. `ner.rs` under `--features ner`) is invisible to default-features clippy (memory `feedback_gate_all_features_for_global_clippy_changes`). Whole-program-coupled refactors (args-as-object) run **sequential + foreground only** — background agents zombie on machine-sleep and race the orchestrator (memory `feedback_background_agents_zombie_on_machine_sleep`). **TD-045 large-file splitting is NOT TD-042** — keep distinct.
+- **No CI** — `kgentic` org GitHub Actions billing suspended (no restore expected). All 4 workflows (`ci` / `napi-ci` / `release-please` / `eval-canary`) are FULLY COMMENTED OUT (RESTORE header + `git revert` on each). Cross-platform binary builds + crate/npm publishes are **manual** off the M4 Max.
+- **Push + release-tag = irreversible HITL gate** — no autonomous push or tag; user confirms each. Clean fast-forward to `main` is the normal land path for hygiene commits.
+- **gah convention** — `.gahrc` present (work hours 9–17). Run gah before push to shift unpushed commits out-of-hours; it no-ops when commits are already OOH, and its scope is the unpushed range only (`origin/main..HEAD`). gah refuses on a dirty tree — untracked files from a parallel agent count as dirty (skip gah when already-OOH in that case).
 
-> ⚠️ **The v0.2.3 / v0.2.4 phase detail BELOW is HISTORICAL** (predates this clearance sprint). The "1 pre-existing fail" baseline claim is STALE — workspace is now fully green (1164/0). The "Phase-boundary discipline" subsection further down remains the persistent baseline and still applies.
+**Open backlog** — `.ai-docs/tech-debt/tech-debt-register.md` (living) is the SoT. Still open at last review: TD-013 (above); TD-043 / TD-045 god-file splits (`graph.rs`, `ingest/pipeline.rs` — PARTIAL, verify current LoC against the register before resuming); TD-005 / TD-012 / TD-016 / TD-029 / TD-030 / TD-032 / TD-034 (pre-existing deferrals); TD-H (RISK-001 multi-run mean±SD hardening). Verify any TD's status against the register + actual code before acting — register narrative can lag.
 
-### v0.2.3 phase plan (per impl spec §6)
+**In-flight adjacent work (other agent's lane — do NOT collide):**
 
-| Phase | Topology | Files | Effort |
-|---|---|---|---|
-| 1 — IngestStatus::EntitiesReady + from_sql_status bridge | sequential | core/sink.rs, tests/sink_trait_shape.rs | 30 min |
-| 2 — BackgroundIngestor.sink field + Memory::with_sink() builder | sequential | core/background/, facade/, memory/events.rs | 45 min |
-| 3 — Background pipeline callsite wiring (11 fire-sites) | **diamond — 3 parallel sub-agents (file-disjoint)** | verify_stage.rs / deferred_pipeline.rs / pipeline.rs | 2-3h |
-| 4 — BatchPhase2Complete + BatchProgress tracker | sequential | NEW batch_tracker.rs, background/, facade/ | 45 min |
-| 5 — Observability surfaces (deferred_queue_depth gauge, callback_duration_ms histogram) | sequential | deferred_pipeline.rs, worker_loop.rs, batch_tracker.rs | 30 min |
-| 6 — Test surface | sequential | NEW tests/helpers/recording_sink.rs, NEW tests/sink_wiring.rs, NEW tests/sink_wiring_integration.rs | 2h |
-| 7 — CI gates + doc-comment polish | sequential | scripts/check-dual-emit.sh, NEW scripts/check-sink-callsite-coverage.sh, memory/events.rs | 1h |
+- **ADR-053** (proposed) — TS/JS MCP server distribution shape (Hybrid A→B) + the companion architecture doc + ADR-054 cloud-positioning. Untracked in this workspace; a parallel agent owns them. The 0.3.2 fix + TD-053 hygiene are inherited by that release via the `kremory = { path = ... }` dependency. A handoff note (incl. a `recall({query})` doc-error flag for their arch doc §5) sits at `.context/NOTE-to-tsmcp-distribution-agent-2026-06-25.md`.
 
-**Workspace baseline (corrected 2026-06-25, TD-053)**: **one** pre-existing fail remains: `with_facts_empty_vec_equivalent_to_no_facts` (TD-013, kremory). The previously-listed napi fail was never real — `napi_surface_matches_substrate_or_skip_list` has been **GREEN** all along (the "103 entries > 100 cap" claim was a stale/fabricated number per `feedback_subagent_fabricates_gate_results`; actual was 99). **TD-053 closed 2026-06-25**: pruned 13 doc-rot skip entries + 14 more redundant "already mirrored" entries in a boy-scout pass (forget/dream/RecallRequest::*/DreamSummary::*), fixed `JsMemory`→`Memory` prose, added ADR-034 recall-signature erratum → **72 entries ≤ 80 cap, test 7/0 GREEN** (`cargo test -p kremory-napi --test api_parity`). The napi test is invisible to `cargo test -p kremory` (cross-crate gate). Clippy clean; `cargo fmt --check` NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
+**Strategic posture (load-bearing for future planning):**
 
-### v0.2.3 DoD highlights (per impl spec §2)
+- `cloud-readiness-posture-2026-06-11` — passive cloud-readiness, no speculative engineering. Apply the 30-second self-check at every future ADR/spec.
+- `queue-and-background-worker-research-2026-06-11` — recommended hybrid P1+P2 (tokio mpsc + apalis SQLite) when durability becomes a requirement.
+- ADR-048 (accepted, **v0.3.0 scope**) — three-signal local-first consistency check.
 
-1. All 14 sink fire-sites wired (arch spec §3.1 catalogue)
-2. `IngestStatus::EntitiesReady` variant added (`#[non_exhaustive]` preserved)
-3. `from_sql_status()` bridge at `core/sink.rs` (one-way SQL → enum)
-4. `BackgroundIngestor.sink` field + `Memory::with_sink()` builder
-5. Triple-emit pattern at every callsite (sink + `metrics::counter!/histogram!` + `tracing::*` within 5 source lines — Alt 4 unified enum REJECTED per ADR-2026-05-20 D1)
-6. D7 cardinality discipline (entity_id / episode_id / batch_id NEVER as metric labels)
-7. New monitoring: `rql.background.deferred_queue_depth` gauge (Vera MED-04 OOM early-warning)
-8. New observability: `kremory.sink.callback_duration_ms` histogram (G7 slow-consumer detection)
-9. CI gates: `check-dual-emit.sh` (8 new entries) + NEW `check-sink-callsite-coverage.sh`
-10. Test surface: `RecordingSink` helper + `sink_wiring.rs` (L1/L2 ≥15 tests) + `sink_wiring_integration.rs` (L3 ≥6 tests)
-11. `events.rs` doc-comment polish: MED-02 inline-path zero-events limitation, MED-05 ADR-050 idempotency forward-compat, MED-01 normative Deduplicating fire condition, D4 thread-context contract
+**Recurring-discipline reminders (from prior sprints, still apply):**
 
-### Out of scope (explicitly excluded per impl spec §1)
-
-- ADR-050 crash-safety + idempotency cluster (v0.2.4+)
-- napi-rs binding parity (v0.3.0)
-- `on_community_updated` wiring (depends on stable dream-pass)
-- Substrate-owned bounded backpressure queue (deferred per D3)
-- `cargo-nextest` migration
-- Inline-path (`run_in_background=false`) sink wiring — known asymmetry (Vera MED-02)
-- `engine_handle.rs::graph_ingest_episode(run_in_background=true)` tokio-spawn path sink wiring
-
-### Sprint-specific HITL boundaries (per impl spec §9)
-
-| Boundary | Trigger | Action |
-|---|---|---|
-| Mid-Phase 2 plumbing | trait-object / lifetime design beyond spec | surface, do not guess |
-| Mid-Phase 3 | Quinn HIGH on aggregate diff | halt, fix, re-run Quinn |
-| Mid-Phase 4 | BatchProgress concurrency design beyond `Mutex<HashMap>` vs `DashMap` | surface with data |
-| Pre-push | tag `v0.2.3` | user confirms tag before push (no autonomous force-push) |
-| napi-rs thread-context discovery | Phase 6 L3 NonBlocking deadlock | HALT + escalate (architectural signal on D4 contract) |
-
-### Open architectural decisions
-
-- ✅ **ADR-052 (accepted 2026-06-12)** — Sink callsite wiring + event-arch. This sprint.
-- ✅ **ADR-051 (accepted 2026-06-11, shipped 2026-06-12)** — GLiNER-to-background unified hot path.
-- ✅ **ADR-048 (accepted 2026-06-11) — scope v0.3.0** — Three-signal local-first consistency check.
-- ✅ **ADR-049 §5.5 SLA** — superseded by ADR-051 §5.5 SLA Cascade Amendment.
-- ⏸ **ADR-050 (drafted, DEFERRED v0.2.4+)** — Dream-pass crash-safety + idempotency cluster. Cross-ADR coupling: crash-resume will retroactively force consumer-side idempotency for sink callbacks (documented in ADR-052 Consequences + Phase 7 doc-comment).
-
-### Strategic posture docs (load-bearing for future planning)
-
-- `cloud-readiness-posture-2026-06-11` — passive cloud-readiness, no speculative engineering. Apply 30-second self-check at every future ADR/spec.
-- `queue-and-background-worker-research-2026-06-11` — Recommended hybrid P1+P2 (tokio mpsc + apalis SQLite) when durability becomes a requirement.
-
-### Closed (carried over)
-
-- ✅ TD-A — 4× never_list_* test fixture drift
-- ✅ TD-B — 2× background_integration LLM mock drift
-- ✅ ADR-051 ratification + §5.5 cascade
-- ✅ ADR-048 ratification (v0.3.0 scope)
-- ✅ v0.2.2 sprint shipped + tagged + pushed (all 5 phases, zero `#[allow]` band-aids)
-
-### Still open
-
-- ✅ TD-C — CLOSED 2026-06-16 (P1a, commit `01231d6`): consistency_check.rs split into mod/verify/audit (each <500 LoC); `c1_module_exists_under_500_loc` PASS. Done ahead of the ADR-050 sprint.
-- TD-013 — `with_facts_empty_vec_equivalent_to_no_facts` failing (empty-vec skip increments skip_extraction counter when it should not). Pre-existing baseline, confirmed via stash-test; scheduled for P2 (fix the bug per Rule 8, not skip).
-- ✅ napi parity-cap — **CLOSED (TD-053, 2026-06-25)**. `napi_surface_matches_substrate_or_skip_list` is GREEN (was never failing; the "103>100" claim was stale). Pruned 13 doc-rot + 14 boy-scout redundant skip entries (napi mirrors landed in ADR-034) → 72 entries, cap lowered 100→80. Spec: `.ai-docs/specs/td-053-napi-parity-hygiene-and-test-hardening-spec-2026-06-25.md`.
-- TD-005 / TD-012 / TD-016 / TD-029 / TD-030 / TD-032 / TD-034 — pre-existing, out-of-scope per prior deferrals.
-- TD-H (informal) — RISK-001 methodology hardening (multi-run mean ± SD).
-- Vera MED-04 deferred-queue OOM monitoring — spec'd, lands in v0.2.3 Phase 5.
-- Recurring git-add-untracked-test pattern (3× in v0.2.2) — worker-brief discipline TD for ship-build skill update.
-- v0.2.2 gah backup branch `backup-after-hours-2026-06-12T06-29-57` — safe to delete after CI green.
+- Global clippy threshold changes must gate **both** `--all-targets` AND `--all-features` — cfg-gated code (e.g. `ner.rs` under `--features ner`) is invisible to default-features clippy (`feedback_gate_all_features_for_global_clippy_changes`).
+- Whole-program-coupled refactors (args-as-object splits) run **sequential + foreground only** — background agents zombie on machine-sleep and race the orchestrator (`feedback_background_agents_zombie_on_machine_sleep`).
+- When other agents are modifying the tree, commit with **explicit paths** (`git commit -- <paths>`), never a bare commit that sweeps their staged/untracked work.
 
 ### Phase-boundary discipline (preserved across sprints)
 
