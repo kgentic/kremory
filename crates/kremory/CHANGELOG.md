@@ -3,6 +3,25 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
+## [0.3.2] - 2026-06-24
+
+### Fixed
+- **Duplicate episodic presence edge** — an entity that was both extracted *and* the
+  object of a fact received two `episodic_edges` rows for the same `(episode, entity)`
+  (one `role="mention"`, one `role="object"`), so `recall` rendered the same source
+  episode twice (observed as a fact appearing twice in retrieved context). The `role`
+  tag is not read on the recall path, so presence is one fact per `(episode, entity)`.
+
+### Changed
+- **Migration 017** installs `UNIQUE(episode_id, entity_id, entity_group_id)` on
+  `episodic_edges` (dedup-first, idempotent — safe on existing 0.3.x databases) and
+  `insert_episodic_edge` now uses `INSERT OR IGNORE`, making "an entity appears in an
+  episode at most once" a structural invariant. New counter
+  `kremory.ingest.episodic_edge_dup_suppressed_total` surfaces any suppressed duplicate
+  (≈0 in normal operation). Entity-merge edge remapping handles the new constraint.
+
+See ADR-055 for the full rationale.
+
 ## [0.3.1] - 2026-06-24
 
 ### Fixed
