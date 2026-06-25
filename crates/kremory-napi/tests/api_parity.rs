@@ -383,13 +383,15 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 100 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 90 (sanity cap — over-finding guard).
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
     // aggressive or the skip list is being used as an escape hatch.
+    // Lowered 100 → 90 by TD-053 (2026-06-25) after pruning 13 redundant entries
+    // whose napi mirrors landed in ADR-034 — leaves ~4 headroom over the real count.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 100,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 100. \
+        skip_count <= 90,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 90. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."

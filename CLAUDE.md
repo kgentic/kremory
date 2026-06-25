@@ -35,7 +35,7 @@
 | 6 — Test surface | sequential | NEW tests/helpers/recording_sink.rs, NEW tests/sink_wiring.rs, NEW tests/sink_wiring_integration.rs | 2h |
 | 7 — CI gates + doc-comment polish | sequential | scripts/check-dual-emit.sh, NEW scripts/check-sink-callsite-coverage.sh, memory/events.rs | 1h |
 
-**Workspace baseline (corrected 2026-06-16, P1 hardening)**: TD-C now CLOSED (consistency_check.rs split → c1 PASS). The "1 pre-existing fail" baseline was wrong — stash-tests on clean HEAD `114b158` confirm **two** pre-existing fails remain: (1) `with_facts_empty_vec_equivalent_to_no_facts` (TD-013, kremory) and (2) `napi_surface_matches_substrate_or_skip_list` (kremory-napi — `parity-skip.toml` 103 entries > its own 100 cap). The napi one is invisible to `cargo test -p kremory` (cross-crate gate). Clippy clean; `cargo fmt --check` NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
+**Workspace baseline (corrected 2026-06-25, TD-053)**: **one** pre-existing fail remains: `with_facts_empty_vec_equivalent_to_no_facts` (TD-013, kremory). The previously-listed napi fail was never real — `napi_surface_matches_substrate_or_skip_list` has been **GREEN** all along (the "103 entries > 100 cap" claim was a stale/fabricated number per `feedback_subagent_fabricates_gate_results`; actual was 99). **TD-053 closed 2026-06-25**: pruned 13 redundant skip entries (ADR-034 mirrors landed) → **86 entries ≤ 90 cap, test 7/0 GREEN** (`cargo test -p kremory-napi --test api_parity`). The napi test is invisible to `cargo test -p kremory` (cross-crate gate). Clippy clean; `cargo fmt --check` NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
 
 ### v0.2.3 DoD highlights (per impl spec §2)
 
@@ -96,7 +96,7 @@
 
 - ✅ TD-C — CLOSED 2026-06-16 (P1a, commit `01231d6`): consistency_check.rs split into mod/verify/audit (each <500 LoC); `c1_module_exists_under_500_loc` PASS. Done ahead of the ADR-050 sprint.
 - TD-013 — `with_facts_empty_vec_equivalent_to_no_facts` failing (empty-vec skip increments skip_extraction counter when it should not). Pre-existing baseline, confirmed via stash-test; scheduled for P2 (fix the bug per Rule 8, not skip).
-- napi parity-cap — `napi_surface_matches_substrate_or_skip_list` fails: `parity-skip.toml` has 103 entries > its own sanity cap of 100. Pre-existing; binding-layer drift (per substrate-first posture, binding parity work defers while substrate evolves). Fix = prune skip-list by refining `tracked_impl_types()`/`tracked_struct_types()` scope, not inflating the cap.
+- ✅ napi parity-cap — **CLOSED (TD-053, 2026-06-25)**. `napi_surface_matches_substrate_or_skip_list` is GREEN (was never failing; the "103>100" claim was stale). Pruned 13 redundant skip entries (their napi mirrors landed in ADR-034) → 86 entries, cap lowered 100→90. Spec: `.ai-docs/specs/td-053-napi-parity-hygiene-and-test-hardening-spec-2026-06-25.md`.
 - TD-005 / TD-012 / TD-016 / TD-029 / TD-030 / TD-032 / TD-034 — pre-existing, out-of-scope per prior deferrals.
 - TD-H (informal) — RISK-001 methodology hardening (multi-run mean ± SD).
 - Vera MED-04 deferred-queue OOM monitoring — spec'd, lands in v0.2.3 Phase 5.
