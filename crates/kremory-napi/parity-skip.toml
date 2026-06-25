@@ -9,7 +9,7 @@
 
 [[skip]]
 symbol = "Memory::with_ollama"
-reason = "Convenience constructor; napi consumers use auto() via JsMemory.open which performs env-detected provider selection"
+reason = "Convenience constructor; napi consumers use auto() via Memory.open which performs env-detected provider selection"
 revisit = "never"
 
 [[skip]]
@@ -19,7 +19,7 @@ revisit = "never"
 
 [[skip]]
 symbol = "Memory::with_ollama_at_model"
-reason = "Internal env-auto plumbing for Memory::auto path; consumers go through JsMemory.open which already honors OLLAMA_HOST + OLLAMA_CHAT_MODEL via auto()"
+reason = "Internal env-auto plumbing for Memory::auto path; consumers go through Memory.open which already honors OLLAMA_HOST + OLLAMA_CHAT_MODEL via auto()"
 revisit = "never"
 
 [[skip]]
@@ -36,12 +36,12 @@ revisit = "never"
 
 [[skip]]
 symbol = "Memory::open"
-reason = "Tier-2 builder entry point; napi exposes JsMemory.open (factory) which calls Memory::auto — Tier-2 builder wiring deferred per ADR-030 Form B"
+reason = "Tier-2 builder entry point; napi exposes Memory.open (factory) which calls Memory::auto — Tier-2 builder wiring deferred per ADR-030 Form B"
 revisit = "v0.2.0"
 
 [[skip]]
 symbol = "Memory::auto"
-reason = "Env-detected provider constructor called internally by JsMemory.open; not directly callable from napi — JsMemory.open IS the auto() entry point for JS consumers"
+reason = "Env-detected provider constructor called internally by Memory.open; not directly callable from napi — Memory.open IS the auto() entry point for JS consumers"
 revisit = "never"
 
 # NOTE (TD-053, 2026-06-25): `Memory::{remember, status_of, await_enrichment,
@@ -188,78 +188,43 @@ symbol = "RecallRequest::opts"
 reason = "SearchOpts escape hatch; not on JS surface"
 revisit = "never"
 
-[[skip]]
-symbol = "RecallRequest::filter_metadata"
-reason = "Already mirrored via JsRecallOptions.filterMetadata (B9 implemented); individual filter_metadata calls are an implementation detail"
-revisit = "never"
+# NOTE (TD-053 boy-scout, 2026-06-25): RecallRequest::{filter_metadata,
+# in_namespace, in_namespaces, per_namespace_top_k, best_effort, k, as_of} skip
+# entries removed — each is already mirrored as a field on the RecallOptions
+# bag (Rust struct JsRecallOptions); the parity test matches them by name.
+# Redundant skips. `filter_metadata_in` below is a GENUINE gap and stays.
 
 [[skip]]
 symbol = "RecallRequest::filter_metadata_in"
-reason = "Multi-value variant not yet on JsRecallOptions; filterMetadata covers single-value AND semantics. filter_metadata_in deferred to v0.1.7"
+reason = "Multi-value variant not yet on RecallOptions; filterMetadata covers single-value AND semantics. filter_metadata_in deferred to v0.1.7"
 revisit = "v0.1.7"
-
-[[skip]]
-symbol = "RecallRequest::in_namespace"
-reason = "Already mirrored via JsRecallOptions.namespace (resolved by convert::resolve_recall_namespace)"
-revisit = "never"
-
-[[skip]]
-symbol = "RecallRequest::in_namespaces"
-reason = "Already mirrored via JsRecallOptions.in_namespaces (resolved by convert::resolve_recall_namespaces)"
-revisit = "never"
-
-[[skip]]
-symbol = "RecallRequest::per_namespace_top_k"
-reason = "Already mirrored via JsRecallOptions.per_namespace_top_k"
-revisit = "never"
-
-[[skip]]
-symbol = "RecallRequest::best_effort"
-reason = "Already mirrored via JsRecallOptions.best_effort"
-revisit = "never"
-
-[[skip]]
-symbol = "RecallRequest::k"
-reason = "Already mirrored via JsRecallOptions.k"
-revisit = "never"
-
-[[skip]]
-symbol = "RecallRequest::as_of"
-reason = "Already mirrored via JsRecallOptions.as_of"
-revisit = "never"
 
 # ── ForgetRequest ─────────────────────────────────────────────────────────────
 
-[[skip]]
-symbol = "Memory::forget"
-reason = "Already mirrored as JsMemory.forget(sourceId, namespace?) — B7 implemented"
-revisit = "never"
+# NOTE (TD-053 boy-scout): Memory::forget skip removed — mirror `forget` exists.
 
 [[skip]]
 symbol = "ForgetRequest::in_namespace"
-reason = "Implementation detail of JsMemory.forget; JsMemory.forget accepts namespace as arg and routes internally"
+reason = "Implementation detail of Memory.forget; Memory.forget accepts namespace as arg and routes internally"
 revisit = "never"
 
 [[skip]]
 symbol = "ForgetRequest::by_source_id"
-reason = "Implementation detail of JsMemory.forget; JsMemory.forget accepts sourceId as required arg and routes internally"
+reason = "Implementation detail of Memory.forget; Memory.forget accepts sourceId as required arg and routes internally"
 revisit = "never"
 
 [[skip]]
 symbol = "ForgetRequest::execute"
-reason = "Implementation detail of JsMemory.forget; execute() is called internally by the napi binding"
+reason = "Implementation detail of Memory.forget; execute() is called internally by the napi binding"
 revisit = "never"
 
 # ── DreamRequest ──────────────────────────────────────────────────────────────
 
-[[skip]]
-symbol = "Memory::dream"
-reason = "Already mirrored as JsMemory.dream(opts?) — B6 implemented"
-revisit = "never"
+# NOTE (TD-053 boy-scout): Memory::dream skip removed — mirror `dream` exists.
 
 [[skip]]
 symbol = "DreamRequest::in_namespace"
-reason = "Implementation detail of JsMemory.dream; namespace routed via JsDreamOpts.namespace"
+reason = "Implementation detail of Memory.dream; namespace routed via JsDreamOpts.namespace"
 revisit = "never"
 
 [[skip]]
@@ -279,7 +244,7 @@ revisit = "v0.1.7"
 
 [[skip]]
 symbol = "DreamRequest::fire_and_forget"
-reason = "Async fire-and-forget dream; JsMemory.dream always blocks inline in v0.1.6"
+reason = "Async fire-and-forget dream; Memory.dream always blocks inline in v0.1.6"
 revisit = "v0.2.0"
 
 [[skip]]
@@ -310,32 +275,12 @@ symbol = "RecallTemplate::as_str"
 reason = "Template enum helper; same rationale as parse_str"
 revisit = "never"
 
-# ── DreamSummary fields ───────────────────────────────────────────────────────
-
-[[skip]]
-symbol = "DreamSummary::communities_updated"
-reason = "Already mirrored as JsDreamSummary.communitiesUpdated — B6 implemented"
-revisit = "never"
-
-[[skip]]
-symbol = "DreamSummary::cross_episode_merges"
-reason = "Already mirrored as JsDreamSummary.crossEpisodeMerges — B6 implemented"
-revisit = "never"
-
-[[skip]]
-symbol = "DreamSummary::supersessions_recorded"
-reason = "Already mirrored as JsDreamSummary.supersessionsRecorded — B6 implemented"
-revisit = "never"
-
-[[skip]]
-symbol = "DreamSummary::facts_archived"
-reason = "Already mirrored as JsDreamSummary.factsArchived — B6 implemented"
-revisit = "never"
-
-[[skip]]
-symbol = "DreamSummary::duration_ms"
-reason = "Already mirrored as JsDreamSummary.durationMs — B6 implemented"
-revisit = "never"
+# NOTE (TD-053 boy-scout, 2026-06-25): DreamSummary::{communities_updated,
+# cross_episode_merges, supersessions_recorded, facts_archived, duration_ms}
+# skip entries removed — all mirrored as DreamSummary fields (Rust struct
+# JsDreamSummary), matched by the parity test directly. The genuinely-DEFERRED
+# DreamSummary fields (types_discovered / warnings / entities_reclassified) keep
+# their skips in their own section further below.
 
 # ── MemoryBuilder methods ─────────────────────────────────────────────────────
 
@@ -346,7 +291,7 @@ revisit = "v0.1.7"
 
 [[skip]]
 symbol = "MemoryBuilder::default_namespace"
-reason = "Builder method; mirrored via JsOpenOptions.defaultNamespace at JsMemory.open level"
+reason = "Builder method; mirrored via JsOpenOptions.defaultNamespace at Memory.open level"
 revisit = "never"
 
 [[skip]]
@@ -475,14 +420,14 @@ revisit = "v0.2.0"
 
 [[skip]]
 symbol = "MemoryBuilder::allowed_entity_types"
-reason = "GLiNER feature builder knob (Phase D adjacent). Mirrored on JS side via JsOpenOptions.gliner config; direct builder method not exposed because JsMemory.open is the single JS construction entry point per ADR-030 Form B."
+reason = "GLiNER feature builder knob (Phase D adjacent). Mirrored on JS side via JsOpenOptions.gliner config; direct builder method not exposed because Memory.open is the single JS construction entry point per ADR-030 Form B."
 revisit = "v0.2.0"
 
 # ── ADR-051 Phase 4 wait API (v0.2.2) ────────────────────────────────────────
 
 [[skip]]
 symbol = "MemoryBuilder::with_await_extraction"
-reason = "ADR-051 Phase 4: opt-in sync-extraction builder knob. JS consumers use the separate waitForProcessing() JS method directly; the builder opt-in pattern doesn't map to napi's JsMemory.open single-entry-point convention (ADR-030 Form B). Revisit when napi adds a construction-time option for sync-wait ergonomics."
+reason = "ADR-051 Phase 4: opt-in sync-extraction builder knob. JS consumers use the separate waitForProcessing() JS method directly; the builder opt-in pattern doesn't map to napi's Memory.open single-entry-point convention (ADR-030 Form B). Revisit when napi adds a construction-time option for sync-wait ergonomics."
 revisit = "v0.3.0"
 
 [[skip]]
@@ -492,7 +437,7 @@ revisit = "v0.3.0"
 
 [[skip]]
 symbol = "Memory::wait_for_processing"
-reason = "ADR-051 Phase 4: poll episodes.episode_processing_status until Verified/Failed/timeout. Expose on napi surface as JsMemory.waitForProcessing(episodeId: number, timeoutMs: number) in v0.3.0 when napi consumers need read-your-writes semantics on async extraction."
+reason = "ADR-051 Phase 4: poll episodes.episode_processing_status until Verified/Failed/timeout. Expose on napi surface as Memory.waitForProcessing(episodeId: number, timeoutMs: number) in v0.3.0 when napi consumers need read-your-writes semantics on async extraction."
 revisit = "v0.3.0"
 
 [[skip]]
@@ -509,6 +454,6 @@ revisit = "v0.3.0"
 
 [[skip]]
 symbol = "Memory::send_batched"
-reason = "v0.2.3 follow-up (2026-06-15): send_batched now routes through BackgroundIngestorGraphHandle when sink is configured (arch spec §3.2 Option A), fixing Quinn MED-3 / Phase 7 facade gap. JS binding still deferred: napi JsMemory does not expose sink configuration (MemoryBuilder::with_sink is also skipped above). When napi sink binding lands (v0.3.0), send_batched will naturally get BatchTracker + on_batch_phase2_complete via the same BackgroundIngestorGraphHandle path."
+reason = "v0.2.3 follow-up (2026-06-15): send_batched now routes through BackgroundIngestorGraphHandle when sink is configured (arch spec §3.2 Option A), fixing Quinn MED-3 / Phase 7 facade gap. JS binding still deferred: napi Memory does not expose sink configuration (MemoryBuilder::with_sink is also skipped above). When napi sink binding lands (v0.3.0), send_batched will naturally get BatchTracker + on_batch_phase2_complete via the same BackgroundIngestorGraphHandle path."
 revisit = "v0.3.0"
 
