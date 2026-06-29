@@ -79,104 +79,18 @@ pub struct InvalidateFactWithReasonParams {
 
 impl TemporalGraph {
     pub async fn insert_fact(&self, fact: FactInsert<'_>) -> Result<i64> {
-        let FactInsert {
-            subject_id,
-            predicate,
-            object_id,
-            object_value,
-            valid_from,
-            confidence,
-            source_episode_id,
-            embedding,
-        } = fact;
-        let _db_start = Instant::now();
-        let now = Utc::now().to_rfc3339();
-        let valid_from_str = valid_from.to_rfc3339();
-        // Story #209: compute SHA-256 content hash for dedup
-        let hash = fact_content_hash(FactContentHashParams {
-            subject_id,
-            predicate,
-            object_id,
-            object_value,
-        });
-        // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
-        // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
-        let guard = self.begin_immediate_if_needed().await?;
-        // Inner ops wrapped so we can explicitly rollback on Err — without this,
-        // a raw `?` would drop the guard, leaking the BEGIN IMMEDIATE on the
-        // libsql connection and causing "transaction within a transaction" on
-        // the next call.
-        let result: Result<i64> = async {
-            let mut dup_check = self
-                .conn
-                .query(
-                    "SELECT id FROM facts WHERE content_hash = ?1 AND expired_at IS NULL LIMIT 1",
-                    libsql::params![hash.clone()],
-                )
-                .await?;
-            if dup_check.next().await?.is_some() {
-                return Err(crate::core::error::Error::Duplicate {
-                    content_hash: hash.clone(),
-                });
-            }
-            let vec_str = embedding.map(|e| {
-                format!(
-                    "[{}]",
-                    e.iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )
-            });
-            self.conn
-                .execute(
-                    "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, content_hash)
-                     VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10)",
-                    libsql::params![
-                        subject_id,
-                        predicate,
-                        object_id,
-                        object_value,
-                        vec_str,
-                        valid_from_str,
-                        now,
-                        confidence,
-                        source_episode_id,
-                        hash.clone(),
-                    ],
-                )
-                .await?;
-            let mut rows = self.conn.query("SELECT last_insert_rowid()", ()).await?;
-            let row = rows.next().await?.ok_or(
-                crate::core::error::Error::InsertReturnedNoRowId {
-                    operation: "insert_fact",
-                },
-            )?;
-            let fact_id = row.get::<i64>(0)?;
-            if let Some(ov) = object_value {
-                self.conn
-                    .execute(
-                        "INSERT INTO facts_fts(fact_id, predicate, object_value) VALUES (?1, ?2, ?3)",
-                        libsql::params![fact_id, predicate, ov],
-                    )
-                    .await?;
-            }
-            Ok(fact_id)
-        }
-        .await;
-        match result {
-            Ok(fact_id) => {
-                guard.commit().await?;
-                let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
-                histogram!("rql.db.insert_fact_ms").record(_ms);
-                tracing::info!(_ms, fact_id, "kremory.db.insert_fact");
-                Ok(fact_id)
-            }
-            Err(e) => {
-                let _ = guard.rollback().await;
-                Err(e)
-            }
-        }
+        // TD-080 #3 (2026-06-29, spec
+        // `td-080-facade-fact-quality-and-namespace-clearance-sprint-2026-06-29.md` §P2):
+        // delegate to the group-aware path. `insert_fact` is DEFAULT-NAMESPACE-ONLY by
+        // contract; any namespaced caller MUST use `insert_fact_with_group(.., Some(ns))`
+        // so the composite FK resolves (see the TD-080 #1 background-path fix).
+        //
+        // We pass `Some("default")` — NOT `None`. `facts.subject_group_id` is NOT NULL
+        // (schema DEFAULT 'default' applies only when the column is omitted from the
+        // INSERT list; explicitly binding NULL violates NOT NULL). The prior bespoke INSERT
+        // omitted these columns so the schema DEFAULT took effect; this delegation makes
+        // that intent explicit at the call site rather than relying on a silent DDL default.
+        self.insert_fact_with_group(fact, Some("default")).await
     }
 
     /// `insert_fact` with `Err(Error::Duplicate)` swallowed to `Ok(None)`.
@@ -206,6 +120,16 @@ impl TemporalGraph {
                     subject_id,
                     predicate,
                     "kremory.try_insert_fact.swallowed_duplicate"
+                );
+                Ok(None)
+            }
+            // P3: self-loop counter already fired in insert_fact_with_group; swallow here
+            // so a self-loop in a batch doesn't abort the surrounding fact writes.
+            Err(crate::core::error::Error::SelfLoop { .. }) => {
+                tracing::debug!(
+                    subject_id,
+                    predicate,
+                    "kremory.try_insert_fact.swallowed_self_loop"
                 );
                 Ok(None)
             }
@@ -351,6 +275,18 @@ impl TemporalGraph {
             source_episode_id,
             embedding,
         } = fact;
+
+        // P3 self-loop guard (TD-080 §P3): formal invariant check — no DB needed.
+        // object_value facts have object_id=None and are never self-loops.
+        // Counter fires PRE-swallow so try_* callers still feed P5 quality metrics.
+        if object_id == Some(subject_id) {
+            metrics::counter!("kremory.fact.rejected_total", "reason" => "self_loop").increment(1);
+            return Err(crate::core::error::Error::SelfLoop {
+                subject_id: subject_id.to_owned(),
+                predicate: predicate.to_owned(),
+            });
+        }
+
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
@@ -476,6 +412,17 @@ impl TemporalGraph {
                     predicate,
                     group_id,
                     "kremory.try_insert_fact_with_group.swallowed_duplicate"
+                );
+                Ok(None)
+            }
+            // P3: self-loop counter already fired in insert_fact_with_group; swallow here
+            // so a self-loop in a batch doesn't abort the surrounding fact writes.
+            Err(crate::core::error::Error::SelfLoop { .. }) => {
+                tracing::debug!(
+                    subject_id,
+                    predicate,
+                    group_id,
+                    "kremory.try_insert_fact_with_group.swallowed_self_loop"
                 );
                 Ok(None)
             }

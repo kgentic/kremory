@@ -17,7 +17,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use kremory::core::config::PipelineConfig;
+use kremory::core::error::Error as KremoryError;
 use kremory::core::extraction::IntegerIdLlmExtractor;
+use kremory::core::graph::{FactInsert, InsertEntityParams};
 use kremory::core::ingest::{Engine, EngineNewParams, IngestWithParams, SourceParams};
 use kremory::core::provider::{MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
@@ -124,18 +126,15 @@ async fn engine_ingest_writes_facts_in_any_namespace() {
 /// Regression guard (Quinn REL-001 / TD-080 #1): the DEFERRED/background Phase-2 path
 /// (`BackgroundIngestor` → `deferred.rs`) must persist facts in a non-default namespace.
 ///
-/// CURRENTLY #[ignore]: this test EXPOSES a deeper, pre-existing bug it cannot fix alone.
-/// The deferred fact insert is now namespace-aware (deferred.rs), but Phase 1 of the
-/// background path HARDCODES the entity namespace to "default" (`phase1.rs:77`
-/// `let effective_gid = "default"`; `verify_stage.rs:277` `group_id: Some("default")`),
-/// ignoring `SendParams.group_id`. So for a non-default namespace the entities land in
-/// "default" while the fact targets the requested namespace → composite-FK mismatch →
-/// fact dropped. i.e. the entire background path ignores namespaces at the entity level.
-/// Un-ignore once Phase 1 threads `SendParams.group_id` through `ingest_phase1_ner` +
-/// `verify_stage` (multi-file). Default-namespace background ingestion is unaffected
-/// (background_unit tests pass). See TD-080 #1.
+/// FIXED 2026-06-29 (TD-080 #1, spec
+/// `td-080-facade-fact-quality-and-namespace-clearance-sprint-2026-06-29.md` §P1):
+/// `verify_stage::stage3_write` now threads `request.group_id` into the entity INSERT,
+/// the idempotency synthetic hash, and the episodic edge — so background entities land
+/// in the requested namespace and the deferred fact's composite FK
+/// `(facts.subject_group_id) → entities(id, group_id)` resolves. Previously entities were
+/// hardcoded to "default" while the namespace-aware fact targeted the requested namespace
+/// → silent composite-FK drop. Default-namespace background ingestion was always fine.
 #[cfg(not(feature = "ner"))]
-#[ignore = "exposes deeper Phase-1 hardcoded-default namespace bug — see TD-080 #1"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deferred_path_writes_facts_in_namespace() {
     use kremory::core::background::{BackgroundIngestor, IngestorConfig, SendParams};
@@ -238,4 +237,69 @@ async fn facade_remember_persists_facts_with_mock_extractor() {
          if both 0 the facade ingest path never wrote it.",
         history.len()
     );
+}
+
+/// P3 self-loop guard (TD-080 §P3): entity-entity self-loop (subject==object) must be
+/// rejected with `Error::SelfLoop`; `try_insert_fact_with_group` must swallow to `Ok(None)`
+/// so a self-loop in a batch doesn't abort the surrounding fact writes; and a legitimate
+/// different-subject/object triple must be unaffected.
+///
+/// The `kremory.fact.rejected_total{reason="self_loop"}` counter fires inside
+/// `insert_fact_with_group` PRE-swallow so P5 quality metrics capture the defect rate
+/// even when callers use the `try_*` path (Vera P3-001).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn self_loop_fact_is_rejected() {
+    let graph = TemporalGraph::open_in_memory().await.expect("graph");
+
+    // Seed two entities so the legitimate-triple assertion exercises a real FK path.
+    for id in ["Alice", "Bob"] {
+        graph
+            .insert_entity(InsertEntityParams {
+                id,
+                entity_type_id: 1,
+                properties: serde_json::json!({}),
+            })
+            .await
+            .unwrap_or_else(|e| panic!("insert_entity {id}: {e}"));
+    }
+
+    // Self-loop — loud path: insert_fact_with_group must return Error::SelfLoop.
+    let err = graph
+        .insert_fact_with_group(
+            FactInsert::new("Alice", "knows", chrono::Utc::now()).object_id("Alice"),
+            None,
+        )
+        .await
+        .expect_err("self-loop must be rejected");
+    assert!(
+        matches!(err, KremoryError::SelfLoop { .. }),
+        "expected Error::SelfLoop, got: {err:?}"
+    );
+
+    // Self-loop — try_* path: must swallow to Ok(None) without aborting the batch.
+    let swallowed = graph
+        .try_insert_fact_with_group(
+            FactInsert::new("Alice", "knows", chrono::Utc::now()).object_id("Alice"),
+            None,
+        )
+        .await
+        .expect("try_insert_fact_with_group must not Err on self-loop");
+    assert!(
+        swallowed.is_none(),
+        "try_insert_fact_with_group must return Ok(None) for a self-loop"
+    );
+
+    // Legitimate triple — must insert without triggering the guard.
+    // group_id=Some("default") matches entity rows that `insert_entity` writes via
+    // the schema DEFAULT ('default'). Raw None would bind NULL to subject_group_id
+    // (NOT NULL column), which the DB rejects — same reason the engine normalises via
+    // `group_id.unwrap_or("default")` before calling insert_fact_with_group.
+    let fact_id = graph
+        .insert_fact_with_group(
+            FactInsert::new("Alice", "knows", chrono::Utc::now()).object_id("Bob"),
+            Some("default"),
+        )
+        .await
+        .expect("legitimate triple (Alice → knows → Bob) must succeed");
+    assert!(fact_id > 0, "inserted fact must have a positive rowid");
 }

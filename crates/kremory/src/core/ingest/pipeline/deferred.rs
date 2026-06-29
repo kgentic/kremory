@@ -504,15 +504,46 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     );
                 }
                 Err(e) => {
-                    metrics::counter!("kremory.ingest.deferred_phase2_fact_insert_failed_total")
-                        .increment(1);
+                    // TD-080 P0 (Rule 19): label by namespace + reason so the silent
+                    // composite-FK drop class is distinguishable from generic failures.
+                    // `fk_mismatch` ⇒ the subject/object entity isn't resolvable in this
+                    // fact's namespace (the exact TD-080 #1 failure shape).
+                    let reason = if e.to_string().contains("FOREIGN KEY") {
+                        "fk_mismatch"
+                    } else {
+                        "other"
+                    };
+                    metrics::counter!(
+                        "kremory.ingest.deferred_phase2_fact_insert_failed_total",
+                        "namespace" => deferred_effective_gid.to_string(),
+                        "reason" => reason,
+                    )
+                    .increment(1);
                     tracing::warn!(
                         subject = %fact.subject,
                         predicate = %fact.predicate,
                         object = %fact.object,
+                        namespace = %deferred_effective_gid,
+                        reason,
                         error = %e,
                         "kremory.ingest.deferred_phase2_fact_insert_failed"
                     );
+                    // KREMORY_DEBUG mismatch detector (matches parsers.rs convention):
+                    // surfaces the exact signal that would have squashed TD-080 in
+                    // seconds — the fact's namespace vs its subject/object entity being
+                    // absent there. Zero cost when the switch is off.
+                    if reason == "fk_mismatch" && std::env::var("KREMORY_DEBUG").is_ok() {
+                        tracing::error!(
+                            target: "kremory.ingest.namespace_mismatch",
+                            fact_namespace = %deferred_effective_gid,
+                            subject = %fact.subject,
+                            object = %fact.object,
+                            "[KREMORY_DEBUG] deferred fact dropped: composite-FK mismatch — \
+                             subject/object entity not found in namespace (see fact_namespace). \
+                             Compare entity-write namespace via \
+                             rql.ingest.entity_persisted_total{{namespace}}."
+                        );
+                    }
                 }
             }
         }

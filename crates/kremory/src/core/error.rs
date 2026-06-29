@@ -189,6 +189,25 @@ pub enum Error {
     #[error("duplicate content detected: hash {content_hash} already present")]
     Duplicate { content_hash: String },
 
+    // ── Self-loop rejection (TD-080 #1, P3) ──────────────────────────────────
+    /// A fact insert was rejected because `subject_id == object_id`, which would
+    /// create a self-loop edge (entity points to itself). Self-loops are a formal
+    /// graph invariant violation: they produce meaningless triples and confuse
+    /// graph traversal algorithms.
+    ///
+    /// `kremory.fact.rejected_total{reason="self_loop"}` is emitted before this
+    /// error is returned so quality metrics capture PRE-rejection extraction rate.
+    ///
+    /// `try_insert_fact` / `try_insert_fact_with_group` swallow this to `Ok(None)`
+    /// so a self-loop in a batch does not abort other facts.
+    #[error(
+        "self-loop fact rejected: predicate '{predicate}' from entity '{subject_id}' to itself"
+    )]
+    SelfLoop {
+        subject_id: String,
+        predicate: String,
+    },
+
     // ── Pre-mutation validation (Story #150) ──────────────────────────────────
     /// Two episodes within the same ingest batch share an ID, which would
     /// produce a primary-key conflict after the first INSERT. `id` is the

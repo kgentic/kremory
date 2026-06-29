@@ -125,6 +125,15 @@ struct Stage3WriteParams<'a> {
     candidates: &'a [EntityCandidate],
     decisions: &'a [ResolvedDecision],
     sink: Option<&'a dyn EnrichmentEventSink>,
+    /// Namespace the entities + episodic edges are written under. Sourced from
+    /// `DeferredRequest.group_id` at the call site. `None` ⇒ `'default'`.
+    ///
+    /// TD-080 #1 (2026-06-29): previously hardcoded `'default'`, so a non-default
+    /// namespace background ingest wrote entities in `'default'` while the deferred
+    /// fact targeted the requested namespace → composite-FK
+    /// `(facts.subject_group_id) → entities(id, group_id)` mismatch → fact silently
+    /// dropped. Threading this makes the entity namespace match the fact namespace.
+    group_id: Option<&'a str>,
 }
 
 /// Write entity rows and episodic edges for the given verify decisions.
@@ -164,7 +173,11 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
         candidates,
         decisions,
         sink,
+        group_id,
     } = params;
+    // TD-080 #1: effective namespace for entity + edge writes. `None` ⇒ `'default'`,
+    // matching the composite-FK target (entities.group_id) used by deferred facts.
+    let gid = group_id.unwrap_or("default");
     let now = Utc::now().to_rfc3339();
     let now_epoch: i64 = Utc::now().timestamp();
     let mut count = 0usize;
@@ -199,13 +212,14 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
                  (id, entity_type_id, properties, recorded_at, group_id, \
                   entity_type_source, entity_type_assigned_at, ner_confidence, \
                   is_dream_generated) \
-                 VALUES (?1, ?2, ?3, ?4, 'default', 'Phase1Ner', ?4, ?5, 1)",
+                 VALUES (?1, ?2, ?3, ?4, ?6, 'Phase1Ner', ?4, ?5, 1)",
                 libsql::params![
                     entity_id.clone(),
                     entity_type_id,
                     props_str.clone(),
                     now.clone(),
-                    candidate.ner_confidence as f64
+                    candidate.ner_confidence as f64,
+                    gid,
                 ],
             )
             .await
@@ -264,9 +278,11 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
         };
 
         // Build synthetic Entity for canonical-view hashing.
-        // group_id is always 'default' for verify_stage writes (see INSERT above).
-        // Audit/mutable fields (recorded_at, updated_at, access_count, properties)
-        // are excluded from the hash by design — R-10 invariant.
+        // TD-080 #1: group_id MUST mirror the INSERT above (`gid`) so the
+        // idempotency content-hash is computed per-namespace — otherwise two
+        // entities with the same id in different namespaces would collide on the
+        // 'default'-hashed key. Audit/mutable fields (recorded_at, updated_at,
+        // access_count, properties) are excluded from the hash by design — R-10.
         let synthetic = Entity {
             id: entity_id.clone(),
             label: candidate.name.clone(),
@@ -274,7 +290,7 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
             properties: serde_json::Value::Null,
             recorded_at: Utc::now(),
             updated_at: None,
-            group_id: Some("default".to_string()),
+            group_id: Some(gid.to_string()),
             access_count: 0,
         };
         let hash = idempotency::content_hash(&synthetic);
@@ -359,11 +375,11 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
                 ))
             })?;
 
-        // Episodic edge — link entity to its source episode. `stage3_write`
-        // persists entities under `group_id = 'default'` (the INSERT above), so
-        // the episodic edge MUST also reference the `'default'` namespace for the
-        // Migration 006 composite FK (entity_id, entity_group_id) to resolve.
-        // `None` ⇒ `'default'` matches that.
+        // Episodic edge — link entity to its source episode. TD-080 #1:
+        // `stage3_write` now persists entities under `gid` (the INSERT above), so
+        // the episodic edge MUST reference the SAME namespace for the Migration 006
+        // composite FK (entity_id, entity_group_id) to resolve. `group_id` (`None`
+        // ⇒ `'default'`) matches the entity write.
         // ── Fire-site 3: on_edge_added("mention") (ADR-052 Gap 1 §3.1 row 3) ─
         // Triple-emit fires on Ok only; edge insertion errors are soft (.ok() precedent).
         // D7: episode_id/entity_id in tracing fields only, NOT metric labels.
@@ -372,7 +388,7 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
             .insert_episodic_edge(InsertEpisodicEdgeParams {
                 episode_id,
                 entity_id: &entity_id,
-                entity_group_id: None,
+                entity_group_id: group_id,
                 role: "mention",
             })
             .await
@@ -422,9 +438,13 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
             .increment(1);
         }
 
+        // TD-080 P0 (Rule 19): namespace label makes per-namespace entity provenance
+        // visible — "entity landed in `default` instead of `X`" was invisible before,
+        // which is exactly what made the composite-FK fact-drop expensive to diagnose.
         metrics::counter!(
             "rql.ingest.entity_persisted_total",
             "source" => "verify_stage",
+            "namespace" => gid.to_string(),
         )
         .increment(1);
 
@@ -814,6 +834,9 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                 candidates: &candidates,
                 decisions: &vb_result.decisions,
                 sink,
+                // TD-080 #1: write entities into the request's namespace so the
+                // deferred fact's composite FK resolves (entities(id, group_id)).
+                group_id: request.group_id.as_deref(),
             })
             .await;
 
@@ -902,6 +925,9 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                 candidates: &candidates,
                 decisions: &decisions,
                 sink,
+                // TD-080 #1: write entities into the request's namespace so the
+                // deferred fact's composite FK resolves (entities(id, group_id)).
+                group_id: request.group_id.as_deref(),
             })
             .await;
 
