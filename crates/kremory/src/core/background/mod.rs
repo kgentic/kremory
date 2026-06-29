@@ -106,6 +106,12 @@ impl From<&Error> for IngestErrorKind {
             Error::Extraction(_) => IngestErrorKind::Extraction,
             Error::Resolution(_) => IngestErrorKind::Resolution,
             Error::Llm(_) => IngestErrorKind::Llm,
+            // `ExtractionStage` wraps a StructuredCallBuilder `.call()` failure inside
+            // IntegerIdLlmExtractor's per-stage extraction (default_extractor.rs:80/118)
+            // — i.e. an LLM provider failure, carrying which stage failed. Classify as
+            // Llm so it's not silently demoted to Other (graphiti LlmExtractor uses
+            // Error::Llm for the equivalent failures). Observability correctness (Rule 19).
+            Error::ExtractionStage { .. } => IngestErrorKind::Llm,
             Error::Embedding(_) => IngestErrorKind::Embedding,
             // Config, Search, Parse, Serialization, Other all collapse to Other.
             _ => IngestErrorKind::Other,

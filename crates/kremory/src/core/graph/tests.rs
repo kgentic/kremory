@@ -147,12 +147,14 @@ async fn test_try_insert_fact_returns_none_on_duplicate() {
 #[tokio::test]
 async fn test_try_insert_fact_with_group_returns_some_on_fresh_insert() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
-    // Entities are global (FK on entity id only, not (id, group_id)) — pattern
-    // mirrors search.rs:1700 + 1704 successful with_group tests.
-    g.insert_entity(InsertEntityParams {
+    // The facts table has a COMPOSITE FK (subject_id, subject_group_id) → entities(id,
+    // group_id) (schema.rs:1450). A fact in group "g1" must reference an entity that
+    // exists in "g1", so the subject is created in that same namespace.
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
         id: "alice",
         entity_type_id: 0,
         properties: serde_json::json!({}),
+        group_id: Some("g1"),
     })
     .await
     .unwrap();

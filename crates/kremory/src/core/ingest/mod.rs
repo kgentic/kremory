@@ -362,8 +362,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 Some(t)
             }
         });
-        let extractor = Arc::new(crate::core::extraction::factory::ExtractorKind::Llm(
-            crate::core::extraction::graphiti::LlmExtractor::new(Arc::clone(&llm)),
+        // Production default = IntegerIdLlmExtractor (3-stage, integer-ID). It extracts
+        // materially more relationship facts than the 2-stage graphiti LlmExtractor on
+        // real LLMs (16 vs 3 on mock_interview, 3 vs 0 on short prose — qwen2.5:14b,
+        // 2026-06-29 probe). This amends ADR-039, which wired `Llm` (graphiti) here;
+        // see `.ai-docs/research/extractor-wiring-investigation-2026-06-29.md`.
+        let extractor = Arc::new(crate::core::extraction::factory::ExtractorKind::IntegerId(
+            crate::core::extraction::default_extractor::IntegerIdLlmExtractor::new(Arc::clone(
+                &llm,
+            )),
         ));
         Self {
             graph,

@@ -55,9 +55,14 @@ fn build_mock_llm(
         r#"[{"subject":"Alice","predicate":"works_at","object":"Acme","is_entity_ref":true,"confidence":0.95}]"#.to_string(),
     );
 
-    // ── IntegerIdLlmExtractor stage 1: entity extraction prompt ends with this substring ──
+    // ── IntegerIdLlmExtractor stage 1: build_entity_prompt. Keyed on a phrase UNIQUE
+    // to that prompt ("Each entity must appear exactly once") — NOT shared with the
+    // graphiti build_graphiti_entity_prompt above. Response must be the integer-ID
+    // object form `{"entities":[{"name","entity_type_id":<int>}]}` (parse_entities_integer),
+    // not an array of {name,label}. (Stale prior key/format was never exercised because
+    // IntegerId was not the Engine::new default before the 2026-06-29 wiring fix.)
     map.insert(
-        "Output a JSON array of objects with \"name\" and \"label\" fields.".to_string(),
+        "Each entity must appear exactly once".to_string(),
         entities_json.to_string(),
     );
     // IntegerIdLlmExtractor stage 2: relation names prompt ends with this substring
@@ -96,7 +101,7 @@ async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvid
         .build()
         .unwrap();
     let llm = Arc::new(build_mock_llm(
-        r#"[{"name":"Alice","label":"Person"},{"name":"Acme","label":"Organisation"}]"#,
+        r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme","entity_type_id":2}]}"#,
         r#"["works_at"]"#,
         r#"[{"subject":"Alice","predicate":"works_at","object":"Acme","is_entity_ref":true,"confidence":0.95}]"#,
         "different",
@@ -110,6 +115,27 @@ async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvid
         config,
         model: None,
     })
+}
+
+/// Regression guard: the production-default `Engine::new` MUST wire the 3-stage
+/// `IntegerIdLlmExtractor` (`name()=="default"`), not the 2-stage graphiti
+/// `LlmExtractor` (`name()=="llm"`).
+///
+/// Why this matters (real-LLM probe, 2026-06-29, qwen2.5:14b, identical harness):
+/// on the rich `mock_interview` corpus IntegerIdLlmExtractor extracted **16** facts
+/// vs graphiti LlmExtractor's **3**; on short prose, **3 vs 0**. Until this fix the
+/// facade (`Memory::with_ollama().remember()` → `open_graph` → `Engine::new`)
+/// silently shipped the weaker extractor while every test validated the stronger one
+/// via explicit `ingest_with` — see `.ai-docs/research/extractor-wiring-investigation-2026-06-29.md`.
+#[tokio::test]
+async fn default_engine_uses_integer_id_extractor() {
+    let engine = make_engine_with_mock().await;
+    assert_eq!(
+        EntityExtractor::name(&engine.extractor),
+        "default",
+        "Engine::new default extractor must be IntegerIdLlmExtractor (name()=\"default\"); \
+         a value of \"llm\" means the weaker graphiti LlmExtractor is wired into production"
+    );
 }
 
 #[tokio::test]
@@ -1012,7 +1038,7 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
 
     // Mock that returns Alice(Person) + Acme(Organisation) as a NuExtract response.
     let llm = Arc::new(build_mock_llm(
-        r#"[{"name":"Alice","label":"Person"},{"name":"Acme","label":"Organisation"}]"#,
+        r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme","entity_type_id":2}]}"#,
         r#"[]"#,
         r#"[]"#,
         "different",
@@ -1265,7 +1291,7 @@ async fn test_ingest_with_no_override_fresh_db_extracts_zero_typed_entities() {
 
     // Mock returns Person + Organisation — but entity_types is empty for "g_fresh".
     let llm = Arc::new(build_mock_llm(
-        r#"[{"name":"Alice","label":"Person"},{"name":"Acme","label":"Organisation"}]"#,
+        r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme","entity_type_id":2}]}"#,
         r#"[]"#,
         r#"[]"#,
         "different",

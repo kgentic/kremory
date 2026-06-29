@@ -415,8 +415,9 @@ async fn deferred_queue_does_not_block_subsequent_ner_items() {
             )
             .expect("send should succeed");
     }
+    // IntegerId 3-stage default → 6 LLM calls per item (3 Phase-1 + 3 deferred Phase-2).
     for _ in 0..50 {
-        if call_counter.load(Ordering::SeqCst) >= N * 2 {
+        if call_counter.load(Ordering::SeqCst) >= N * 6 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -428,9 +429,10 @@ async fn deferred_queue_does_not_block_subsequent_ner_items() {
     let total_calls = call_counter.load(Ordering::SeqCst);
     assert_eq!(
         total_calls,
-        N * 2,
-        "expected {expected} LLM calls ({N} NER + {N} deferred); got {total_calls}",
-        expected = N * 2
+        N * 6,
+        "expected {expected} LLM calls ({N} items × 6: 3 Phase-1 + 3 deferred Phase-2, \
+         IntegerId 3-stage); got {total_calls}",
+        expected = N * 6
     );
 }
 
@@ -572,7 +574,7 @@ async fn deferred_metrics_code_paths_execute() {
         .send("Alice leads the Acme project", SendParams::default())
         .expect("send should succeed");
     for _ in 0..50 {
-        if call_counter.load(Ordering::SeqCst) >= 2 {
+        if call_counter.load(Ordering::SeqCst) >= 6 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -582,9 +584,12 @@ async fn deferred_metrics_code_paths_execute() {
         .await
         .expect("guard.shutdown() panicked");
     let total_calls = call_counter.load(Ordering::SeqCst);
+    // Default extractor is the 3-stage IntegerIdLlmExtractor (2026-06-29 wiring fix),
+    // which runs in BOTH Phase 1 (sync) and Phase 2 (deferred): 3 + 3 = 6 LLM calls.
+    // A count of ≤3 means the deferred metric path was skipped.
     assert_eq!(
-        total_calls, 2,
-        "expected 2 LLM calls (1 NER + 1 deferred); got {total_calls} — \
-         a count of 1 means the deferred metric path was skipped"
+        total_calls, 6,
+        "expected 6 LLM calls (3 Phase-1 + 3 deferred Phase-2, IntegerId 3-stage); \
+         got {total_calls} — a count of ≤3 means the deferred path was skipped"
     );
 }

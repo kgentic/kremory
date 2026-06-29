@@ -27,6 +27,7 @@ use crate::core::intelligence::{
 };
 use crate::core::provider::ChatProvider;
 
+use super::default_extractor::IntegerIdLlmExtractor;
 use super::graphiti::LlmExtractor;
 #[cfg(feature = "ner")]
 use super::hybrid_typer::GlinerLlmExtractor;
@@ -36,7 +37,20 @@ use super::hybrid_typer::GlinerLlmExtractor;
 /// `pub(crate)` — consumers access this only via `ExtractorKind::Custom` through
 /// the `MemoryBuilder::with_extractor` knob.
 pub(crate) enum ExtractorKind<L: ChatProvider> {
-    /// Pure-LLM 3-stage extraction (Graphiti-quality prompts).
+    /// Integer-ID 3-stage extraction (entities → relation names → triplets).
+    /// **Production default** (wired in `Engine::new`). On real LLMs this extracts
+    /// materially more relationship facts than the `Llm` (graphiti) variant — 16 vs 3
+    /// on the `mock_interview` corpus, 3 vs 0 on short prose (qwen2.5:14b, 2026-06-29
+    /// probe). Amends ADR-039, which originally made `Llm` the `Engine::new` default;
+    /// see `.ai-docs/research/extractor-wiring-investigation-2026-06-29.md`.
+    IntegerId(IntegerIdLlmExtractor<L>),
+
+    /// Pure-LLM 2-stage extraction (Graphiti-quality prompts, entities → triplets).
+    /// Retained as a selectable variant; NOT the default (under-extracts facts vs
+    /// `IntegerId` on real LLMs — see above). No builder path constructs it yet, so
+    /// `#[allow(dead_code)]` matches the sibling `GlinerLlm`/`Custom` convention for
+    /// intentionally-retained-but-unwired variants.
+    #[allow(dead_code)]
     Llm(LlmExtractor<L>),
 
     /// GLiNER span-discovery + ONE LLM typing call (TD-023).
@@ -57,6 +71,7 @@ pub(crate) enum ExtractorKind<L: ChatProvider> {
 impl<L: ChatProvider + 'static> EntityExtractor for ExtractorKind<L> {
     fn name(&self) -> &'static str {
         match self {
+            Self::IntegerId(e) => EntityExtractor::name(e),
             Self::Llm(e) => EntityExtractor::name(e),
             #[cfg(feature = "ner")]
             Self::GlinerLlm(e) => EntityExtractor::name(e.as_ref()),
@@ -73,6 +88,7 @@ impl<L: ChatProvider + 'static> EntityExtractor for ExtractorKind<L> {
         counter!("kremory.extraction.kind", "kind" => EntityExtractor::name(self)).increment(1);
 
         match self {
+            Self::IntegerId(e) => e.extract(text, ctx).await,
             Self::Llm(e) => e.extract(text, ctx).await,
             #[cfg(feature = "ner")]
             Self::GlinerLlm(e) => e.extract(text, ctx).await,

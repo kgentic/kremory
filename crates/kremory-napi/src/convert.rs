@@ -37,7 +37,8 @@ pub struct GlinerConfigJs {
 ///
 /// Replaces the old string-literal `extractor: 'auto'|'hybrid'|'nuextract'` API.
 /// Mirrors the Rust `MemoryBuilder` composable knobs:
-///   - `{ embedder, llm }`          → `ExtractorKind::Llm`
+///   - `{ embedder, llm }`          → `ExtractorKind::IntegerId` (default since ADR-056;
+///                                     3-stage integer-ID extractor. Was `Llm`/graphiti.)
 ///   - `{ embedder, llm, gliner }`  → `ExtractorKind::GlinerLlm`
 ///   - `{ embedder, extractor }`    → `ExtractorKind::Custom` (NoLlm typestate)
 ///   - `{ embedder, llm, extractor }` → `ExtractorKind::Custom` (WithLlm typestate)

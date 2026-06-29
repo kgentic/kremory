@@ -379,21 +379,29 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 continue;
             }
 
-            // ADR-035 §5 Option A: use try_insert_fact for caller-pin dedup parity
-            // with the inline path. Deferred Phase 2 writes also silently skip
-            // triples already pre-pinned by the caller via with_facts.
+            // ADR-035 §5 Option A: caller-pin dedup parity with the inline path.
+            // MUST be `_with_group(.., Some(deferred_effective_gid))`: entities are
+            // upserted into this namespace (entity_group_id: group_id below), and the
+            // facts composite FK (subject_id, subject_group_id) → entities(id, group_id)
+            // (schema.rs:1450) fails — silently dropping the fact — if the group columns
+            // aren't stamped with the entities' namespace. This is the same fix as the
+            // inline path (ingest_with.rs); the deferred/background path had the identical
+            // bug (Quinn REL-001, 2026-06-29).
             match self
                 .graph
-                .try_insert_fact(FactInsert {
-                    subject_id: &subject_id,
-                    predicate: &fact.predicate,
-                    object_id: object_id.as_deref(),
-                    object_value,
-                    valid_from: ref_time,
-                    confidence: fact.confidence,
-                    source_episode_id: Some(episode_id),
-                    embedding: None,
-                })
+                .try_insert_fact_with_group(
+                    FactInsert {
+                        subject_id: &subject_id,
+                        predicate: &fact.predicate,
+                        object_id: object_id.as_deref(),
+                        object_value,
+                        valid_from: ref_time,
+                        confidence: fact.confidence,
+                        source_episode_id: Some(episode_id),
+                        embedding: None,
+                    },
+                    Some(deferred_effective_gid),
+                )
                 .await
             {
                 Ok(Some(fact_id)) => {
@@ -496,6 +504,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     );
                 }
                 Err(e) => {
+                    metrics::counter!("kremory.ingest.deferred_phase2_fact_insert_failed_total")
+                        .increment(1);
                     tracing::warn!(
                         subject = %fact.subject,
                         predicate = %fact.predicate,
