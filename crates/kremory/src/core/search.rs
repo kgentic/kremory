@@ -2048,10 +2048,23 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
         let t0 = Utc::now() - Duration::hours(1);
 
-        g.insert_entity(InsertEntityParams {
+        // Composite FK (subject_id, subject_group_id) → entities(id, group_id)
+        // (schema.rs:1450): a fact's subject must exist in the fact's namespace, and the
+        // cross-namespace entity guard forbids one id spanning groups — so each group gets
+        // its own subject entity.
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
             id: "alice",
             entity_type_id: 0,
             properties: serde_json::json!({}),
+            group_id: Some("group-a"),
+        })
+        .await
+        .unwrap();
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "bob",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+            group_id: Some("group-b"),
         })
         .await
         .unwrap();
@@ -2063,7 +2076,7 @@ mod tests {
         .await
         .unwrap();
         g.insert_fact_with_group(
-            FactInsert::new("alice", "has_title", t0).object_value("Manager"),
+            FactInsert::new("bob", "has_title", t0).object_value("Manager"),
             Some("group-b"),
         )
         .await

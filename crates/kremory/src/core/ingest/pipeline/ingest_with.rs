@@ -11,9 +11,9 @@ use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::graph::{
-    EpisodeInsert, FactInsert, InsertEntityParams, InsertEntityWithGroupParams,
-    InsertEpisodicEdgeParams, InvalidateFactWithReasonParams, SetEntityNerConfidenceParams,
-    UpdateEntitySourceTierParams, UpsertEntityWithGroupParams,
+    EpisodeInsert, FactInsert, InsertEntityWithGroupParams, InsertEpisodicEdgeParams,
+    InvalidateFactWithReasonParams, SetEntityNerConfidenceParams, UpdateEntitySourceTierParams,
+    UpsertEntityWithGroupParams,
 };
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
@@ -128,12 +128,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // NON-Duplicate errors (connection failure, schema gap, etc) are
                 // surfaced via tracing::warn — masking them silently would hide
                 // real production failures.
+                // Stub entities MUST be created in the fact's `group_id` namespace, not the
+                // default one: the facts composite FK is (subject_id, subject_group_id) →
+                // entities(id, group_id) (schema.rs:1450). A namespace-less `insert_entity`
+                // puts the stub in "default" while the pinned fact below stamps
+                // `subject_group_id = group_id`, so the FK fails and the fact is dropped.
                 if let Err(e) = self
                     .graph
-                    .insert_entity(InsertEntityParams {
+                    .insert_entity_with_group(InsertEntityWithGroupParams {
                         id: &pf.subject,
                         entity_type_id: 0,
                         properties: serde_json::json!({"stub": false}),
+                        group_id,
                     })
                     .await
                 {
@@ -148,10 +154,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 if let Some(ref obj_id) = pf.object_id {
                     if let Err(e) = self
                         .graph
-                        .insert_entity(InsertEntityParams {
+                        .insert_entity_with_group(InsertEntityWithGroupParams {
                             id: obj_id,
                             entity_type_id: 0,
                             properties: serde_json::json!({"stub": false}),
+                            group_id,
                         })
                         .await
                     {
@@ -1332,21 +1339,40 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // Insert the new fact — skip gracefully if FK constraint fails
                 // (e.g., fact references an entity not in the extraction results).
                 //
-                // ADR-035 §5 Option A: use try_insert_fact so caller-pinned facts
-                // (via mem.remember(...).with_facts(...)) silently dedup at LLM
-                // Phase 2 — the caller wins by virtue of being there first.
+                // MUST be `try_insert_fact_with_group(.., group_id)`: entities are
+                // upserted into the episode's `group_id` namespace, so a namespace-less
+                // `try_insert_fact` writes the fact in the "default" namespace and its
+                // FK to the namespaced subject/object entities FAILS → the fact is
+                // silently skipped. That dropped EVERY LLM-extracted fact whenever a
+                // group_id was set — i.e. on the entire facade path
+                // (`Memory::remember` always passes `group_id = Some(namespace)`),
+                // even though `Engine::ingest_with(group_id = None)` worked. Mirrors the
+                // pre-pinned `with_facts` path above. (Deterministic repro: facts=1 at
+                // group_id=None vs facts=0 at group_id=Some, 2026-06-29.)
+                //
+                // ADR-035 §5 Option A: the `_with_group` variant still dedups
+                // caller-pinned `with_facts` triples (caller wins by being there first).
                 match self
                     .graph
-                    .try_insert_fact(FactInsert {
-                        subject_id: &subject_id,
-                        predicate: &fact.predicate,
-                        object_id: object_id.as_deref(),
-                        object_value,
-                        valid_from: ref_time,
-                        confidence: fact.confidence,
-                        source_episode_id: Some(episode_id),
-                        embedding: None,
-                    })
+                    .try_insert_fact_with_group(
+                        FactInsert {
+                            subject_id: &subject_id,
+                            predicate: &fact.predicate,
+                            object_id: object_id.as_deref(),
+                            object_value,
+                            valid_from: ref_time,
+                            confidence: fact.confidence,
+                            source_episode_id: Some(episode_id),
+                            embedding: None,
+                        },
+                        // Use `effective_gid` (= group_id.unwrap_or("default")), the SAME
+                        // namespace the subject/object entities were upserted into above
+                        // (l.398/498). Passing the raw `group_id` Option would write a NULL
+                        // group for the `None` case while entities live in "default" — the
+                        // same FK mismatch, just inverted. `try_insert_fact` (non-group)
+                        // hardcodes "default", which is why it only worked at group_id=None.
+                        Some(effective_gid),
+                    )
                     .await
                 {
                     Ok(Some(fact_id)) => {
@@ -1374,6 +1400,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                     }
                     Err(e) => {
+                        // Rule 19: a swallowed fact-insert failure (e.g. FK constraint) was
+                        // previously only a tracing::warn — invisible in aggregate, which hid
+                        // the composite-FK namespace bug (facade facts silently dropped). Emit
+                        // a counter so dropped facts are observable, not silent.
+                        metrics::counter!("kremory.ingest.phase2_fact_insert_failed_total")
+                            .increment(1);
                         tracing::warn!(
                             subject = %fact.subject,
                             predicate = %fact.predicate,

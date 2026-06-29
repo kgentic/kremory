@@ -387,10 +387,19 @@ impl TemporalGraph {
                         .join(",")
                 )
             });
+            // Composite-FK columns (schema.rs:1450 / defs_h): the facts table enforces
+            // `(subject_id, subject_group_id) REFERENCES entities(id, group_id)` and the same
+            // for object. Entities live in the episode's `group_id` namespace, so the fact
+            // MUST stamp `subject_group_id`/`object_group_id` with that group — otherwise they
+            // default to NULL/"default" and the composite FK fails for any non-"default"
+            // namespace, silently dropping every fact on the facade path (which always passes
+            // `group_id = Some(namespace)`). `object_group_id` is NULL for literal objects
+            // (object_id = None → object FK is not enforced).
+            let object_group_id = object_id.and(group_id);
             self.conn
                 .execute(
-                    "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, group_id, content_hash)
-                     VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    "INSERT INTO facts (subject_id, predicate, object_id, object_value, embedding, valid_from, recorded_at, confidence, source_episode_id, group_id, subject_group_id, object_group_id, content_hash)
+                     VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 IS NULL THEN NULL ELSE vector(?5) END, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     libsql::params![
                         subject_id,
                         predicate,
@@ -402,6 +411,8 @@ impl TemporalGraph {
                         confidence,
                         source_episode_id,
                         group_id,
+                        group_id,
+                        object_group_id,
                         hash.clone(),
                     ],
                 )
