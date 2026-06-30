@@ -256,9 +256,12 @@ impl BackgroundIngestor {
     ///
     /// Use when you need `reference_time`, `group_id`, or `content_type` on a
     /// batched send.  The race-safety invariant (arch spec §3.3) is enforced
-    /// here: `BatchProgress::total` is incremented BEFORE `try_send`.
+    /// here: both `BatchProgress::total` and `queued` are incremented BEFORE
+    /// `try_send` so the worker thread can never decrement below zero.
     pub(crate) fn enqueue_req(&self, req: IngestRequest) -> Result<(), IngestSendError> {
-        // Race-safety invariant: increment total BEFORE enqueue (arch spec §3.3).
+        // Race-safety invariant: increment BEFORE enqueue (arch spec §3.3).
+        // Both counters must be incremented before try_send so the worker
+        // cannot fetch_sub(1) on a zero counter and wrap to usize::MAX.
         if let Some(ref bid) = req.batch_id {
             let mut tracker = self.batch_tracker.lock().unwrap_or_else(|p| p.into_inner());
             tracker
@@ -266,15 +269,22 @@ impl BackgroundIngestor {
                 .and_modify(|p| p.total += 1)
                 .or_default();
         }
+        self.inner.queued.fetch_add(1, Ordering::Relaxed);
 
         match self.inner.work_tx.try_send(req) {
             Ok(()) => {
-                let depth = self.inner.queued.fetch_add(1, Ordering::Relaxed) + 1;
+                let depth = self.inner.queued.load(Ordering::Relaxed);
                 metrics::gauge!("rql.background.queue_depth").set(depth as f64);
                 Ok(())
             }
-            Err(TrySendError::Full(_)) => Err(IngestSendError::Full(self.inner.channel_capacity)),
-            Err(TrySendError::Disconnected(_)) => Err(IngestSendError::Disconnected),
+            Err(TrySendError::Full(_)) => {
+                self.inner.queued.fetch_sub(1, Ordering::Relaxed);
+                Err(IngestSendError::Full(self.inner.channel_capacity))
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.inner.queued.fetch_sub(1, Ordering::Relaxed);
+                Err(IngestSendError::Disconnected)
+            }
         }
     }
 
