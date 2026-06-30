@@ -214,7 +214,18 @@ impl TemporalGraph {
                 let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
                 histogram!("rql.search.fts_entities_hits").record(0.0);
                 histogram!("rql.search.fts_entities_ms").record(_ms);
-                tracing::info!(hits = 0u64, _ms, "kremory.search.fts_entities empty query");
+                // R2.2 §spec-td-085: empty-result counter + paired info (ADR D1).
+                // arm label per pre-R2 enumeration table §4.
+                metrics::counter!(
+                    "kremory.search.empty_result_total",
+                    "arm" => "fts_entities",
+                )
+                .increment(1);
+                tracing::info!(
+                    arm = "fts_entities",
+                    _ms,
+                    "kremory.search.empty_result sanitiser fired"
+                );
                 return Ok(vec![]);
             }
         };
@@ -277,7 +288,18 @@ impl TemporalGraph {
                 let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
                 histogram!("rql.search.fts_facts_hits").record(0.0);
                 histogram!("rql.search.fts_facts_ms").record(_ms);
-                tracing::info!(hits = 0u64, _ms, "kremory.search.fts_facts empty query");
+                // R2.2 §spec-td-085: empty-result counter + paired info (ADR D1).
+                // arm label per pre-R2 enumeration table §4.
+                metrics::counter!(
+                    "kremory.search.empty_result_total",
+                    "arm" => "fts_facts",
+                )
+                .increment(1);
+                tracing::info!(
+                    arm = "fts_facts",
+                    _ms,
+                    "kremory.search.empty_result sanitiser fired"
+                );
                 return Ok(vec![]);
             }
         };
@@ -382,14 +404,47 @@ impl TemporalGraph {
 
         let hits = match result {
             Ok(hits) => hits,
-            Err(_) => {
-                // Fall back to brute-force cosine distance
-                self.vector_search_brute_force(VectorSearchBruteForceParams {
-                    vec_str: &vec_str,
-                    limit,
-                    filters,
-                })
-                .await?
+            Err(e) => {
+                // R2.2 §spec-td-085 FLAG-1: bind error before fallback — counter + paired warn (ADR D1).
+                // arm/reason labels per pre-R2 enumeration table §5.
+                metrics::counter!(
+                    "kremory.search.error_total",
+                    "arm" => "vector_entities",
+                    "reason" => "index_fallback",
+                )
+                .increment(1);
+                tracing::warn!(
+                    error = %e,
+                    arm = "vector_entities",
+                    reason = "index_fallback",
+                    "kremory.search.vector_entities index failed, falling back to brute-force"
+                );
+                // R2.2 FLAG-4: instrument brute-force failure path before propagation.
+                match self
+                    .vector_search_brute_force(VectorSearchBruteForceParams {
+                        vec_str: &vec_str,
+                        limit,
+                        filters,
+                    })
+                    .await
+                {
+                    Ok(hits) => hits,
+                    Err(e) => {
+                        metrics::counter!(
+                            "kremory.search.error_total",
+                            "arm" => "vector_entities",
+                            "reason" => "brute_force_failed",
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            error = %e,
+                            arm = "vector_entities",
+                            reason = "brute_force_failed",
+                            "kremory.search.vector_entities brute-force failed"
+                        );
+                        return Err(e.into());
+                    }
+                }
             }
         };
         let hits_count = hits.len();
@@ -583,14 +638,47 @@ impl TemporalGraph {
 
         let hits = match result {
             Ok(hits) => hits,
-            Err(_) => {
-                // Fall back to brute-force cosine distance
-                self.vector_search_facts_brute_force(VectorSearchFactsBruteForceParams {
-                    vec_str: &vec_str,
-                    limit,
-                    filters,
-                })
-                .await?
+            Err(e) => {
+                // R2.2 §spec-td-085 FLAG-1: bind error before fallback — counter + paired warn (ADR D1).
+                // arm/reason labels per pre-R2 enumeration table §5.
+                metrics::counter!(
+                    "kremory.search.error_total",
+                    "arm" => "vector_facts",
+                    "reason" => "index_fallback",
+                )
+                .increment(1);
+                tracing::warn!(
+                    error = %e,
+                    arm = "vector_facts",
+                    reason = "index_fallback",
+                    "kremory.search.vector_facts index failed, falling back to brute-force"
+                );
+                // R2.2 FLAG-4: instrument brute-force failure path before propagation.
+                match self
+                    .vector_search_facts_brute_force(VectorSearchFactsBruteForceParams {
+                        vec_str: &vec_str,
+                        limit,
+                        filters,
+                    })
+                    .await
+                {
+                    Ok(hits) => hits,
+                    Err(e) => {
+                        metrics::counter!(
+                            "kremory.search.error_total",
+                            "arm" => "vector_facts",
+                            "reason" => "brute_force_failed",
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            error = %e,
+                            arm = "vector_facts",
+                            reason = "brute_force_failed",
+                            "kremory.search.vector_facts brute-force failed"
+                        );
+                        return Err(e.into());
+                    }
+                }
             }
         };
         let hits_count = hits.len();

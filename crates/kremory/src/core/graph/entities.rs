@@ -78,6 +78,23 @@ impl TemporalGraph {
             }
             Err(e) => {
                 let _ = guard.rollback().await;
+                // R2.2 §spec-td-085: error-path counter + paired warn (ADR D1).
+                // Reason labels per pre-R2 enumeration table §2.
+                let reason: &'static str = match &e {
+                    crate::core::error::Error::Serialization(_) => "serialization",
+                    crate::core::error::Error::Database(_) => "db_error",
+                    _ => "other",
+                };
+                metrics::counter!(
+                    "kremory.db.insert_entity_error_total",
+                    "reason" => reason,
+                )
+                .increment(1);
+                tracing::warn!(
+                    error = %e,
+                    reason = %reason,
+                    "kremory.db.insert_entity failed"
+                );
                 return Err(e);
             }
         }

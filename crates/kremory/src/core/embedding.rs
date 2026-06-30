@@ -70,7 +70,26 @@ impl<E: EmbeddingProvider> EmbeddingProvider for TokenTrackingEmbedder<E> {
             // takes precedence after the call.
             let pre_token_approx = text.split_whitespace().count() as u64;
 
-            let result = self.inner.embed(text).await?;
+            let result = match self.inner.embed(text).await {
+                Ok(r) => r,
+                Err(e) => {
+                    // R2.2 §spec-td-085: error-path counter + paired warn (ADR D1).
+                    // All embed errors are provider-level (ONNX / lock / upstream wrap) —
+                    // single static bucket per pre-R2 enumeration table.
+                    metrics::counter!(
+                        "kremory_core_embed_error_total",
+                        "reason" => "provider_error",
+                    )
+                    .increment(1);
+                    tracing::warn!(
+                        error = %e,
+                        provider = self.provider,
+                        model = self.model,
+                        "kremory_core_embed failed"
+                    );
+                    return Err(e);
+                }
+            };
 
             let elapsed_secs = start.elapsed().as_secs_f64();
 
