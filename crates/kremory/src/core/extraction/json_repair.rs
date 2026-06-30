@@ -192,6 +192,18 @@ pub(crate) fn parse_nuextract_response(
             // Try object-level repair first, then array-unwrap fallback.
             let repaired = llm_json::repair_json(trimmed, &llm_json::RepairOptions::default())
                 .unwrap_or_else(|_| trimmed.to_owned());
+            // KREMORY_DEBUG: dump raw before/after the repair so the operator can see what
+            // malformed JSON the model emitted and what repair produced (R1.3 json_repair
+            // supplemental). The unconditional warn on the failure paths below is the
+            // always-on operational signal; this gated debug carries the raw payload.
+            if std::env::var("KREMORY_DEBUG").is_ok() {
+                tracing::debug!(
+                    target: "kremory.extraction.json_repair",
+                    raw_before = %trimmed,
+                    repaired_after = %repaired,
+                    "nuextract JSON repair invoked"
+                );
+            }
             match serde_json::from_str::<LlmExtractionOutput>(&repaired) {
                 Ok(v) => {
                     counter!("rql.extraction.json_parse_ok").increment(1);
@@ -220,9 +232,6 @@ pub(crate) fn parse_nuextract_response(
                                 Err(e) => {
                                     counter!("rql.extraction.json_parse_fail").increment(1);
                                     tracing::warn!(error = %e, parser = "nuextract", "kremory.extraction.json_parse_fail after repair");
-                                    eprintln!(
-                                        "warn: failed to parse NuExtract JSON after repair: {e}"
-                                    );
                                     return Ok((vec![], vec![]));
                                 }
                             }
@@ -230,7 +239,6 @@ pub(crate) fn parse_nuextract_response(
                         Err(e) => {
                             counter!("rql.extraction.json_parse_fail").increment(1);
                             tracing::warn!(error = %e, parser = "nuextract", "kremory.extraction.json_parse_fail array repair");
-                            eprintln!("warn: failed to parse NuExtract JSON after repair: {e}");
                             return Ok((vec![], vec![]));
                         }
                     }

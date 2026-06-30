@@ -610,7 +610,9 @@ mod inner {
                     .map(|d| d.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                eprintln!("[ner] GLiNER logits shape: [{}]", shape_str);
+                if std::env::var("KREMORY_DEBUG").is_ok() {
+                    tracing::debug!(target: "kremory.ner", shape = %shape_str, "GLiNER logits shape");
+                }
 
                 let num_classes = entity_types.len();
                 let batch_spans = &spans_per_text[0];

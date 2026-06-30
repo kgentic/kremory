@@ -599,7 +599,7 @@ mod tests {
         ];
         let schema = entity_list_schema_with_label_enum(&specs);
         let pretty = serde_json::to_string_pretty(&schema).unwrap();
-        eprintln!("SCHEMA DUMP:\n{pretty}");
+        tracing::debug!("SCHEMA DUMP:\n{}", pretty);
         // Try $defs path first
         let label_at_defs = schema.pointer("/$defs/RawEntitySimple/properties/label");
         let label_inline = schema.pointer("/properties/items/items/properties/label");

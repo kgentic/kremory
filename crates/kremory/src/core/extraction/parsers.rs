@@ -35,7 +35,6 @@ pub(crate) fn parse_relation_names(json: &str) -> anyhow::Result<Vec<String>> {
                 Err(e) => {
                     counter!("rql.extraction.json_parse_fail").increment(1);
                     tracing::warn!(error = %e, parser = "relation_names", "kremory.extraction.json_parse_fail");
-                    eprintln!("warn: failed to parse relation names JSON after repair: {e}");
                     return Ok(vec![]);
                 }
             }
@@ -81,7 +80,6 @@ pub(crate) fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>>
                 Err(e) => {
                     counter!("rql.extraction.json_parse_fail").increment(1);
                     tracing::warn!(error = %e, parser = "entities", "kremory.extraction.json_parse_fail");
-                    eprintln!("warn: failed to parse entity JSON after repair: {e}");
                     return Ok(vec![]);
                 }
             }
@@ -128,52 +126,52 @@ pub(crate) fn parse_entities_integer(
         return Ok(vec![]);
     }
 
-    // KREMORY_DEBUG=1: emit raw stage1 LLM output to stderr for diagnosis (Rule 19).
+    // KREMORY_DEBUG=1: emit raw stage1 LLM output for diagnosis (Rule 19).
     if std::env::var("KREMORY_DEBUG").is_ok() {
-        eprintln!(
-            "[KREMORY_DEBUG] parse_entities_integer raw input (len={}):\n{trimmed}\n[KREMORY_DEBUG end]",
-            trimmed.len()
+        tracing::debug!(
+            target: "kremory.extraction.parsers",
+            len = trimmed.len(),
+            raw_input = %trimmed,
+            "parse_entities_integer raw input"
         );
     }
 
     // Try wrapped form first: {"entities": [...]}
-    let raw: Vec<RawEntityIntegerId> = if let Ok(w) =
-        serde_json::from_str::<EntityListIntegerWrapper>(trimmed)
-    {
-        counter!("rql.extraction.json_parse_ok", "path" => "wrapped").increment(1);
-        w.entities
-    } else {
-        // Try bare array.
-        match serde_json::from_str::<Vec<RawEntityIntegerId>>(trimmed) {
-            Ok(v) => {
-                counter!("rql.extraction.json_parse_ok", "path" => "bare_array").increment(1);
-                v
-            }
-            Err(_) => {
-                // repair_to_array handles: markdown fences, single-object, trailing commas.
-                let repaired = repair_to_array(trimmed);
-                match serde_json::from_str::<Vec<RawEntityIntegerId>>(&repaired) {
-                    Ok(v) => {
-                        // Per Rule 20: repair-path success is suspicious. Track separately
-                        // so qwen-vs-haiku divergence and post-repair garbage are visible.
-                        counter!("rql.extraction.json_parse_ok", "path" => "post_repair")
-                            .increment(1);
-                        v
-                    }
-                    Err(e) => {
-                        counter!("rql.extraction.json_parse_fail").increment(1);
-                        tracing::warn!(
-                            error = %e,
-                            parser = "entities_integer",
-                            "kremory.extraction.json_parse_fail"
-                        );
-                        eprintln!("warn: failed to parse integer-id entity JSON after repair: {e}");
-                        return Ok(vec![]);
+    let raw: Vec<RawEntityIntegerId> =
+        if let Ok(w) = serde_json::from_str::<EntityListIntegerWrapper>(trimmed) {
+            counter!("rql.extraction.json_parse_ok", "path" => "wrapped").increment(1);
+            w.entities
+        } else {
+            // Try bare array.
+            match serde_json::from_str::<Vec<RawEntityIntegerId>>(trimmed) {
+                Ok(v) => {
+                    counter!("rql.extraction.json_parse_ok", "path" => "bare_array").increment(1);
+                    v
+                }
+                Err(_) => {
+                    // repair_to_array handles: markdown fences, single-object, trailing commas.
+                    let repaired = repair_to_array(trimmed);
+                    match serde_json::from_str::<Vec<RawEntityIntegerId>>(&repaired) {
+                        Ok(v) => {
+                            // Per Rule 20: repair-path success is suspicious. Track separately
+                            // so qwen-vs-haiku divergence and post-repair garbage are visible.
+                            counter!("rql.extraction.json_parse_ok", "path" => "post_repair")
+                                .increment(1);
+                            v
+                        }
+                        Err(e) => {
+                            counter!("rql.extraction.json_parse_fail").increment(1);
+                            tracing::warn!(
+                                error = %e,
+                                parser = "entities_integer",
+                                "kremory.extraction.json_parse_fail"
+                            );
+                            return Ok(vec![]);
+                        }
                     }
                 }
             }
-        }
-    };
+        };
 
     Ok(raw
         .into_iter()
@@ -232,9 +230,11 @@ pub(crate) fn parse_facts(json: &str) -> anyhow::Result<Vec<ExtractedFact>> {
     // genuine `[]` emission OR a malformed payload silently swallowed below — this dump
     // distinguishes them. Mirrors the stage1 dump in `parse_entities_integer`.
     if std::env::var("KREMORY_DEBUG").is_ok() {
-        eprintln!(
-            "[KREMORY_DEBUG] parse_facts raw input (len={}):\n{trimmed}\n[KREMORY_DEBUG end]",
-            trimmed.len()
+        tracing::debug!(
+            target: "kremory.extraction.parsers",
+            len = trimmed.len(),
+            raw_input = %trimmed,
+            "parse_facts raw input"
         );
     }
     if trimmed == "[]" || trimmed.is_empty() {
@@ -256,7 +256,6 @@ pub(crate) fn parse_facts(json: &str) -> anyhow::Result<Vec<ExtractedFact>> {
                 Err(e) => {
                     counter!("rql.extraction.json_parse_fail").increment(1);
                     tracing::warn!(error = %e, parser = "facts", "kremory.extraction.json_parse_fail");
-                    eprintln!("warn: failed to parse fact JSON after repair: {e}");
                     return Ok(vec![]);
                 }
             }
