@@ -32,7 +32,6 @@
 //! - Thresholds are empirically sourced from Cognee's research; adjustable via
 //!   the named constants below.
 
-pub(crate) mod embedding;
 pub(crate) mod lexical;
 pub(crate) use lexical::names_lexically_compatible;
 
@@ -123,13 +122,6 @@ pub struct DisambiguateParams<'a> {
     pub group_id: Option<&'a str>,
     /// The temporal graph to search against.
     pub graph: &'a TemporalGraph,
-    /// Context snippet extracted from the source text around this entity (ADR-058 B1).
-    /// Used by `compose_embed_text` when `embed_entity_input` is `NameContext`.
-    /// Pass `""` when no context is available (falls back to name-only embedding).
-    pub entity_context: &'a str,
-    /// Controls whether the probe embedding includes context (ADR-058 B1).
-    /// Must match the mode used at index time for meaningful cosine comparison.
-    pub embed_entity_input: crate::core::config::EntityEmbeddingInput,
 }
 
 /// Disambiguate a newly extracted entity name against existing entities in the
@@ -159,8 +151,6 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         entity_name,
         group_id,
         graph,
-        entity_context,
-        embed_entity_input,
     } = params;
     // No-op: global namespace or empty name.
     let Some(gid) = group_id else {
@@ -170,14 +160,8 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         return Ok(DisambiguationOutcome::New);
     }
 
-    // Step 1: embed the probe using the same compose_embed_text as index time
-    // (ADR-058 B1 symmetry invariant: probe embedding must match stored embedding).
-    let embed_text = crate::core::disambiguation::embedding::compose_embed_text(
-        entity_name,
-        entity_context,
-        embed_entity_input,
-    );
-    let embedding = embedder.embed(&embed_text).await?;
+    // Step 1: embed the entity name.
+    let embedding = embedder.embed(entity_name).await?;
     if embedding.is_empty() {
         // Degenerate embedder returned a zero-length slice — skip disambiguation.
         return Ok(DisambiguationOutcome::New);
@@ -219,11 +203,10 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         "kremory.l4.similarity_probe"
     );
 
-    // Step 4: threshold ladder — delegated to the pure `classify_pair` helper so
-    // the D4/D5 benchmark exercises the SAME decision path as production (not a
-    // copy). Metrics and tracing are re-derived here because `classify_pair` must
-    // remain counter-free (the benchmark calls it thousands of times and must not
-    // touch production counters).
+    // Step 4: threshold ladder — delegated to the pure `classify_pair` helper.
+    // Metrics and tracing are re-derived here because `classify_pair` must
+    // remain counter-free (the corpus benchmark calls it thousands of times
+    // and must not touch production counters).
     //
     // ADR-057: `existing_id` is the existing entity's normalized name (entity ids
     // ARE normalized names — ingest_with.rs:1017), so it is the correct lexical
@@ -709,8 +692,6 @@ mod tests {
                 entity_name: "Alice",
                 group_id: Some("test-group"),
                 graph: &graph,
-                entity_context: "",
-                embed_entity_input: crate::core::config::EntityEmbeddingInput::Name,
             },
             &embedder,
         )
@@ -732,8 +713,6 @@ mod tests {
                 entity_name: "Alice",
                 group_id: None,
                 graph: &graph,
-                entity_context: "",
-                embed_entity_input: crate::core::config::EntityEmbeddingInput::Name,
             },
             &embedder,
         )
@@ -755,8 +734,6 @@ mod tests {
                 entity_name: "   ",
                 group_id: Some("g"),
                 graph: &graph,
-                entity_context: "",
-                embed_entity_input: crate::core::config::EntityEmbeddingInput::Name,
             },
             &embedder,
         )
@@ -1039,164 +1016,5 @@ mod tests {
              degenerate never-merge gate guard). Expected {trivial_pos} trivial pairs \
              to pass; got {trivial_tp}."
         );
-    }
-
-    // ── D4: deterministic embedding plumbing benchmark ───────────────────────
-    //
-    // Spec: td080-b1-context-embedding-toggle-spec-2026-06-30.md §"Deterministic
-    // benchmark (fast, always-on)".
-    //
-    // IMPORTANT — DeterministicEmbeddingProvider cosines are ARBITRARY
-    // (FNV-1a hash-based, no semantic meaning). This test asserts:
-    //   1. Plumbing/no-crash: compose_embed_text → embed → cosine_similarity →
-    //      classify_pair completes for all 68 corpus pairs × 2 modes (B-off/B-on).
-    //   2. All 68 pairs processed (loop-completion count assertion).
-    //   3. Structural baseline regression: one fixed pair's B-off outcome is
-    //      pinned so a regression in the embed/compose/classify plumbing is
-    //      immediately visible (outcome is reproducible because the provider is
-    //      fully deterministic).
-    // NOT asserted: F1, precision, recall, or any meaningful cosine number.
-    // Real-signal validation is the #[ignore] real-nomic benchmark (D5).
-    #[tokio::test]
-    async fn benchmark_embedding_input_deterministic() {
-        use crate::core::config::EntityEmbeddingInput;
-        use crate::core::disambiguation::embedding::compose_embed_text;
-        use crate::core::dream::consistency_check::cosine_similarity;
-        use crate::core::provider::DeterministicEmbeddingProvider;
-
-        let corpus_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../kremory-eval/fixtures/entity_pairs.jsonl"
-        );
-        let content = std::fs::read_to_string(corpus_path)
-            .unwrap_or_else(|e| panic!("failed to read corpus at {corpus_path}: {e}"));
-
-        struct Row {
-            name_a: String,
-            context_a: String,
-            name_b: String,
-            context_b: String,
-        }
-
-        let rows: Vec<Row> = content
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .enumerate()
-            .map(|(i, line)| {
-                let v: serde_json::Value = serde_json::from_str(line)
-                    .unwrap_or_else(|e| panic!("corpus line {i}: JSON error: {e}"));
-                Row {
-                    name_a: v["name_a"].as_str().expect("name_a").to_string(),
-                    context_a: v["context_a"].as_str().expect("context_a").to_string(),
-                    name_b: v["name_b"].as_str().expect("name_b").to_string(),
-                    context_b: v["context_b"].as_str().expect("context_b").to_string(),
-                }
-            })
-            .collect();
-
-        assert_eq!(
-            rows.len(),
-            68,
-            "corpus must have 68 pairs (67 original + 1 TD-083 dotted_initialism probe)"
-        );
-
-        let provider = DeterministicEmbeddingProvider::new(384);
-
-        // Outcome tallies per mode — printed for human inspection, not asserted.
-        let mut b_off_counts = [0usize; 3]; // [Merge, PotentialAlias, New]
-        let mut b_on_counts = [0usize; 3];
-
-        // Structural baseline: pin the B-off outcome for pair 0 ("Apple Inc." / "Apple Inc")
-        // — a trivial pair; the FNV-hash cosine is stable run-to-run.
-        // First-run outcome (2026-06-30): New (pinned at the assertion below).
-        let mut baseline_b_off_outcome: Option<DisambiguationOutcome> = None;
-
-        let mut processed = 0usize;
-
-        for row in &rows {
-            for mode in [
-                EntityEmbeddingInput::Name,
-                EntityEmbeddingInput::NameContext,
-            ] {
-                let text_a = compose_embed_text(&row.name_a, &row.context_a, mode);
-                let text_b = compose_embed_text(&row.name_b, &row.context_b, mode);
-                let va = provider
-                    .embed(&text_a)
-                    .await
-                    .unwrap_or_else(|e| panic!("embed failed for name_a='{}': {e}", row.name_a));
-                let vb = provider
-                    .embed(&text_b)
-                    .await
-                    .unwrap_or_else(|e| panic!("embed failed for name_b='{}': {e}", row.name_b));
-                let cos = cosine_similarity(&va, &vb);
-                let outcome = classify_pair(cos, &row.name_a, &row.name_b);
-
-                let bucket = match &outcome {
-                    DisambiguationOutcome::Merge { .. } => 0,
-                    DisambiguationOutcome::PotentialAlias { .. } => 1,
-                    DisambiguationOutcome::New => 2,
-                };
-
-                if mode == EntityEmbeddingInput::Name {
-                    b_off_counts[bucket] += 1;
-                    // Capture B-off outcome for first pair (Apple Inc. / Apple Inc).
-                    if processed == 0 {
-                        baseline_b_off_outcome = Some(outcome.clone());
-                    }
-                } else {
-                    b_on_counts[bucket] += 1;
-                }
-            }
-            processed += 1;
-        }
-
-        // ── Assertion 1: all 68 pairs processed without panic ─────────────────
-        assert_eq!(
-            processed, 68,
-            "expected 68 pairs processed, got {processed}"
-        );
-
-        // ── Assertion 2: valid outcome type for every pair (proved by type system
-        //    for Merge/PotentialAlias/New — the totals must sum to 68 per mode).
-        let b_off_total = b_off_counts.iter().sum::<usize>();
-        let b_on_total = b_on_counts.iter().sum::<usize>();
-        assert_eq!(b_off_total, 68, "B-off outcome total mismatch");
-        assert_eq!(b_on_total, 68, "B-on outcome total mismatch");
-
-        // ── Assertion 3: structural baseline regression ────────────────────────
-        // Pair 0: "Apple Inc." / "Apple Inc" (category=trivial, should_merge=true).
-        // DeterministicEmbeddingProvider is FNV-1a — same input always → same
-        // vector → same cosine → same outcome. If this assertion fires, the
-        // embed/compose/classify plumbing has changed in a structurally
-        // significant way.
-        //
-        // Discovered B-off outcome (first run 2026-06-30): New
-        // (FNV cosine of "Apple Inc." vs "Apple Inc" is below L4_MERGE_THRESHOLD —
-        //  dot-suffix difference changes the hash; arbitrary, not semantic.)
-        let expected_baseline = DisambiguationOutcome::New;
-        assert_eq!(
-            baseline_b_off_outcome.as_ref().unwrap(),
-            &expected_baseline,
-            "structural regression: B-off outcome for ('Apple Inc.', 'Apple Inc') \
-             changed. DeterministicEmbeddingProvider is deterministic — a change here \
-             means compose_embed_text / embed / classify_pair plumbing was modified. \
-             New outcome: {:?}",
-            baseline_b_off_outcome
-        );
-
-        // ── Human-readable summary (not asserted) ─────────────────────────────
-        println!("\n── benchmark_embedding_input_deterministic ──────────────────────────");
-        println!("  pairs processed: {processed}");
-        println!(
-            "  B-off (Name):    Merge={} PotentialAlias={} New={}",
-            b_off_counts[0], b_off_counts[1], b_off_counts[2]
-        );
-        println!(
-            "  B-on  (Context): Merge={} PotentialAlias={} New={}",
-            b_on_counts[0], b_on_counts[1], b_on_counts[2]
-        );
-        println!("  baseline pair ('Apple Inc.','Apple Inc') B-off: {expected_baseline:?}");
-        println!("  NOTE: cosines are FNV-hash-based — counts are arbitrary, not semantic.");
-        println!("────────────────────────────────────────────────────────────────────");
     }
 }
