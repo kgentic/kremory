@@ -1357,6 +1357,11 @@ mod schema_tests {
             "INSERT with non-existent (subject_id, subject_group_id) must violate composite FK"
         );
         let err_msg = format!("{}", result.unwrap_err());
+        // libsql 0.9.30 emits: "FOREIGN KEY constraint failed" (SQLite
+        // SQLITE_CONSTRAINT_FOREIGNKEY, extended code 787). The `.contains`
+        // heuristic catches both the standard message and any future libsql
+        // rephrasing. If this assertion fails, check the actual `err_msg` —
+        // libsql may have changed the error text in a newer version.
         assert!(
             err_msg.to_lowercase().contains("foreign key")
                 || err_msg.to_lowercase().contains("constraint"),
