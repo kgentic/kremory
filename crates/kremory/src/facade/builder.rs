@@ -82,12 +82,6 @@ pub struct MemoryBuilder<L, E> {
     /// Timeout applied when `await_extraction = true`.
     /// Default: 60 s (spec §Risk R-12 mitigation).
     await_extraction_timeout: Duration,
-    /// Entity embedding mode (ADR-058 B1). Controls whether entity embeddings
-    /// include a surrounding context snippet (`NameContext`, default) or only
-    /// the bare entity name (`Name`). Applied symmetrically at both ingest-time
-    /// indexing (Site 1) and L4 disambiguation probing (Site 2) via
-    /// `compose_embed_text`.
-    embed_entity_input: crate::core::config::EntityEmbeddingInput,
     _llm_state: std::marker::PhantomData<L>,
     _emb_state: std::marker::PhantomData<E>,
 }
@@ -444,29 +438,6 @@ impl<E> MemoryBuilder<WithLlm, E> {
         }
         self
     }
-
-    /// Override the entity embedding mode (ADR-058 B1).
-    ///
-    /// Controls whether entity embeddings include a surrounding context snippet
-    /// (`NameContext`, the default) or only the bare entity name (`Name`).
-    /// Applied symmetrically at both ingest-time indexing and L4 disambiguation
-    /// probing via `compose_embed_text`.
-    ///
-    /// # Default
-    ///
-    /// `EntityEmbeddingInput::NameContext` — richer embeddings that reduce false
-    /// merges of homonymous entities when the surrounding context differs (e.g.
-    /// "Amazon" the company vs "Amazon River").
-    ///
-    /// # When to use `Name`
-    ///
-    /// When the embedder was trained or indexed on bare entity names only.
-    /// Switching mode mid-stream requires re-embedding all stored entities; see
-    /// ADR-058 B2 for the migration plan.
-    pub fn embed_entity_input(mut self, input: crate::core::config::EntityEmbeddingInput) -> Self {
-        self.embed_entity_input = input;
-        self
-    }
 }
 
 /// Bundled parameters for [`MemoryBuilder::with_llm_tracked`] — args-as-object
@@ -504,7 +475,6 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             dream_schedule: crate::memory::scheduler::DreamSchedule::Off,
             await_extraction: false,
             await_extraction_timeout: Duration::from_secs(60),
-            embed_entity_input: crate::core::config::EntityEmbeddingInput::default(),
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -536,7 +506,6 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
-            embed_entity_input: self.embed_entity_input,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -613,7 +582,6 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
-            embed_entity_input: self.embed_entity_input,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -645,7 +613,6 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
-            embed_entity_input: self.embed_entity_input,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -682,7 +649,6 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
             await_extraction_timeout: self.await_extraction_timeout,
-            embed_entity_input: self.embed_entity_input,
             _llm_state: std::marker::PhantomData,
             _emb_state: std::marker::PhantomData,
         }
@@ -849,7 +815,6 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: self.allowed_entity_types,
                         model: model_id.clone(),
-                        embed_entity_input: self.embed_entity_input,
                     },
                     llm.clone(),
                     crate::core::extraction::factory::ExtractorKind::Custom(custom),
@@ -875,7 +840,6 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
-                            embed_entity_input: self.embed_entity_input,
                         },
                         llm.clone(),
                         crate::core::extraction::factory::ExtractorKind::GlinerLlm(Box::new(
@@ -893,7 +857,6 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
-                            embed_entity_input: self.embed_entity_input,
                         },
                     )
                     .await?
@@ -909,7 +872,6 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
-                            embed_entity_input: self.embed_entity_input,
                         },
                     )
                     .await?
@@ -975,7 +937,6 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg.clone(),
                         model: model_id.clone(),
-                        embed_entity_input: self.embed_entity_input,
                     },
                 )
                 .await?;
@@ -996,7 +957,6 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg,
                         model: model_id.clone(),
-                        embed_entity_input: self.embed_entity_input,
                     },
                 )
                 .await?;
@@ -1148,7 +1108,6 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                     embedding_dim: self.embedding_dim,
                     allowed_entity_types: self.allowed_entity_types,
                     model: self.model_id.clone(),
-                    embed_entity_input: self.embed_entity_input,
                 },
                 custom,
             )
