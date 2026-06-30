@@ -219,64 +219,92 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         "kremory.l4.similarity_probe"
     );
 
-    // Step 4: threshold ladder.
-    // ADR-057: a destructive Merge requires BOTH a high cosine AND a deterministic
-    // name-compatibility check. `existing_id` is the existing entity's normalized
-    // name (entity ids ARE normalized names — ingest_with.rs:1017), so it is the
-    // correct lexical comparand. When cosine clears the merge bar but the names are
-    // lexically incompatible, the high cosine is embedder anisotropy, not identity:
-    // fall through to the non-destructive PotentialAlias branch (the embedder's
-    // signal is preserved as a soft alias edge, never a destructive id-reuse).
-    let cosine_says_merge = similarity >= L4_MERGE_THRESHOLD;
-    let names_compatible = names_lexically_compatible(entity_name, &existing_id);
-    if cosine_says_merge && names_compatible {
-        counter!("kremory.l4.merge_total").increment(1);
-        tracing::info!(
-            target: "kremory.l4",
-            entity_name,
-            existing_id = %existing_id,
-            similarity,
-            "kremory.l4.merge"
-        );
-        Ok(DisambiguationOutcome::Merge {
-            existing_id,
-            similarity,
-        })
-    } else if similarity >= L4_POTENTIAL_ALIAS_THRESHOLD {
-        // ADR-057: distinguish a genuine alias-band hit from a lexically-blocked
-        // merge so a weak consumer embedder is observable (a spike here signals
-        // anisotropy). `cosine_says_merge && !names_compatible` is the blocked case.
-        if cosine_says_merge {
-            counter!("kremory.l4.merge_blocked_lexical_total").increment(1);
+    // Step 4: threshold ladder — delegated to the pure `classify_pair` helper so
+    // the D4/D5 benchmark exercises the SAME decision path as production (not a
+    // copy). Metrics and tracing are re-derived here because `classify_pair` must
+    // remain counter-free (the benchmark calls it thousands of times and must not
+    // touch production counters).
+    //
+    // ADR-057: `existing_id` is the existing entity's normalized name (entity ids
+    // ARE normalized names — ingest_with.rs:1017), so it is the correct lexical
+    // comparand AND the `existing_id` forwarded in Merge/PotentialAlias outcomes.
+    let outcome = classify_pair(similarity, entity_name, &existing_id);
+
+    match &outcome {
+        DisambiguationOutcome::Merge { .. } => {
+            counter!("kremory.l4.merge_total").increment(1);
             tracing::info!(
                 target: "kremory.l4",
                 entity_name,
                 existing_id = %existing_id,
                 similarity,
-                "kremory.l4.merge_blocked_lexical"
+                "kremory.l4.merge"
             );
         }
-        counter!("kremory.l4.potential_alias_total").increment(1);
-        tracing::info!(
-            target: "kremory.l4",
-            entity_name,
-            existing_id = %existing_id,
-            similarity,
-            "kremory.l4.potential_alias"
-        );
-        Ok(DisambiguationOutcome::PotentialAlias {
-            existing_id,
-            similarity,
-        })
+        DisambiguationOutcome::PotentialAlias { .. } => {
+            // ADR-057: distinguish a genuine alias-band hit from a lexically-blocked
+            // merge so a weak consumer embedder is observable (a spike here signals
+            // anisotropy). The blocked case is `cosine >= L4_MERGE_THRESHOLD` yet the
+            // outcome landed here — i.e. `classify_pair` downgraded a high-cosine pair
+            // because the names were lexically incompatible. Re-derive locally (mirrors
+            // the threshold inside `classify_pair`) to attribute the metric.
+            let cosine_says_merge = similarity >= L4_MERGE_THRESHOLD;
+            if cosine_says_merge {
+                counter!("kremory.l4.merge_blocked_lexical_total").increment(1);
+                tracing::info!(
+                    target: "kremory.l4",
+                    entity_name,
+                    existing_id = %existing_id,
+                    similarity,
+                    "kremory.l4.merge_blocked_lexical"
+                );
+            }
+            counter!("kremory.l4.potential_alias_total").increment(1);
+            tracing::info!(
+                target: "kremory.l4",
+                entity_name,
+                existing_id = %existing_id,
+                similarity,
+                "kremory.l4.potential_alias"
+            );
+        }
+        DisambiguationOutcome::New => {
+            counter!("kremory.l4.new_entity_total").increment(1);
+            tracing::debug!(
+                target: "kremory.l4",
+                entity_name,
+                similarity,
+                "kremory.l4.new_entity"
+            );
+        }
+    }
+
+    Ok(outcome)
+}
+
+/// Classify a pre-computed cosine score through the L4 threshold ladder and
+/// ADR-057 lexical floor. Pure: no metrics, no tracing, no I/O — so the B-on/off
+/// benchmark exercises the identical decision path as production.
+///
+/// `name_b` is the existing entity's normalized name (entity ids ARE normalized
+/// names — ingest_with.rs:1017). It is used as both the lexical comparand and the
+/// `existing_id` forwarded in `Merge` and `PotentialAlias` outcomes.
+///
+/// Production `disambiguate` delegates its final decision to this function;
+/// benchmarks call this directly — one implementation, no copy.
+pub(crate) fn classify_pair(cosine: f32, name_a: &str, name_b: &str) -> DisambiguationOutcome {
+    if cosine >= L4_MERGE_THRESHOLD && names_lexically_compatible(name_a, name_b) {
+        DisambiguationOutcome::Merge {
+            existing_id: name_b.to_owned(),
+            similarity: cosine,
+        }
+    } else if cosine >= L4_POTENTIAL_ALIAS_THRESHOLD {
+        DisambiguationOutcome::PotentialAlias {
+            existing_id: name_b.to_owned(),
+            similarity: cosine,
+        }
     } else {
-        counter!("kremory.l4.new_entity_total").increment(1);
-        tracing::debug!(
-            target: "kremory.l4",
-            entity_name,
-            similarity,
-            "kremory.l4.new_entity"
-        );
-        Ok(DisambiguationOutcome::New)
+        DisambiguationOutcome::New
     }
 }
 
@@ -739,6 +767,69 @@ mod tests {
             "blank entity name must return New"
         );
         Ok(())
+    }
+
+    // ── D3: classify_pair boundary tests ─────────────────────────────────────
+    //
+    // Spec: td080-b1-context-embedding-toggle-spec-2026-06-30.md §classify_pair
+    // Four cases that must hold independent of embedder choice.
+
+    #[test]
+    fn classify_pair_at_merge_threshold_compatible_names_is_merge() {
+        // Exactly at L4_MERGE_THRESHOLD with lexically-compatible names → Merge.
+        // "alice johnson" / "alice johnson" normalize-equal → compatible.
+        let outcome = classify_pair(L4_MERGE_THRESHOLD, "Alice Johnson", "alice johnson");
+        assert!(
+            matches!(
+                outcome,
+                DisambiguationOutcome::Merge { ref existing_id, similarity }
+                if existing_id == "alice johnson"
+                    && (similarity - L4_MERGE_THRESHOLD).abs() < f32::EPSILON
+            ),
+            "cosine == L4_MERGE_THRESHOLD + compatible names must produce Merge, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn classify_pair_at_alias_threshold_is_potential_alias() {
+        // Exactly at L4_POTENTIAL_ALIAS_THRESHOLD → PotentialAlias (not New).
+        // Names are unrelated ("alice" vs "bob") so the merge arm cannot fire.
+        let outcome = classify_pair(L4_POTENTIAL_ALIAS_THRESHOLD, "alice", "bob");
+        assert!(
+            matches!(
+                outcome,
+                DisambiguationOutcome::PotentialAlias { ref existing_id, similarity }
+                if existing_id == "bob"
+                    && (similarity - L4_POTENTIAL_ALIAS_THRESHOLD).abs() < f32::EPSILON
+            ),
+            "cosine == L4_POTENTIAL_ALIAS_THRESHOLD must produce PotentialAlias, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn classify_pair_cosine_above_merge_threshold_incompatible_names_is_potential_alias() {
+        // ADR-057 lexical downgrade: cosine ≥ L4_MERGE_THRESHOLD but names are
+        // lexically incompatible → must NOT merge → PotentialAlias.
+        // "alice" / "bob" share zero tokens → names_lexically_compatible = false.
+        let cosine = L4_MERGE_THRESHOLD + 0.01;
+        let cosine = cosine.min(1.0);
+        let outcome = classify_pair(cosine, "alice", "bob");
+        assert!(
+            matches!(outcome, DisambiguationOutcome::PotentialAlias { .. }),
+            "cosine >= L4_MERGE_THRESHOLD + incompatible names must produce PotentialAlias \
+             (ADR-057 lexical downgrade), got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn classify_pair_below_alias_threshold_is_new() {
+        // Below L4_POTENTIAL_ALIAS_THRESHOLD → New regardless of names.
+        let cosine = L4_POTENTIAL_ALIAS_THRESHOLD - 0.01;
+        let outcome = classify_pair(cosine, "alice", "bob");
+        assert!(
+            matches!(outcome, DisambiguationOutcome::New),
+            "cosine < L4_POTENTIAL_ALIAS_THRESHOLD must produce New, got {outcome:?}"
+        );
     }
 
     // ── Phase A: corpus precision/recall measurement ─────────────────────────
