@@ -281,6 +281,13 @@ impl TemporalGraph {
         // Counter fires PRE-swallow so try_* callers still feed P5 quality metrics.
         if object_id == Some(subject_id) {
             metrics::counter!("kremory.fact.rejected_total", "reason" => "self_loop").increment(1);
+            // Dual-emit (ADR D1 / R1.2): warn paired with counter above.
+            tracing::warn!(
+                subject_id = %subject_id,
+                object_id = ?object_id,
+                predicate = ?predicate,
+                "kremory.fact.rejected self_loop"
+            );
             return Err(crate::core::error::Error::SelfLoop {
                 subject_id: subject_id.to_owned(),
                 predicate: predicate.to_owned(),

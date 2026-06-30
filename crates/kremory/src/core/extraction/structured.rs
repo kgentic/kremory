@@ -269,23 +269,50 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                         matches!(arm, FallbackArm::NativeSchema | FallbackArm::FormatSchema);
 
                     if !should_validate {
+                        // Dual-emit (ADR D1 / R1.1): counter + fused OTel gen_ai.* per SPEC-001.
+                        // gen_ai.usage tokens = honest 0 + system "unknown": try_arm drops the
+                        // ChatResponse before .usage() is read, and ChatProvider exposes no
+                        // provider_name(). Both ARE recoverable — wiring tracked as TD-090.
                         counter!(
                             "rql.extraction.structured_call_success",
                             "schema" => schema_name,
                             "arm" => arm_name(arm),
                         )
                         .increment(1);
+                        tracing::info!(
+                            "gen_ai.system" = "unknown",
+                            "gen_ai.operation.name" = "extraction",
+                            "gen_ai.request.model" = %model_str,
+                            "gen_ai.usage.input_tokens" = 0_u64,
+                            "gen_ai.usage.output_tokens" = 0_u64,
+                            schema = schema_name,
+                            arm = arm_name(arm),
+                            "kremory.extraction.structured_call_success"
+                        );
                         return Ok(value);
                     }
 
                     match validate_against_schema(&value, schema) {
                         Ok(()) => {
+                            // Dual-emit (ADR D1 / R1.1): counter + fused OTel gen_ai.* per SPEC-001.
+                            // gen_ai.usage tokens 0 / system "unknown": try_arm drops the
+                            // ChatResponse before .usage(); recoverable, tracked as TD-090.
                             counter!(
                                 "rql.extraction.structured_call_success",
                                 "schema" => schema_name,
                                 "arm" => arm_name(arm),
                             )
                             .increment(1);
+                            tracing::info!(
+                                "gen_ai.system" = "unknown",
+                                "gen_ai.operation.name" = "extraction",
+                                "gen_ai.request.model" = %model_str,
+                                "gen_ai.usage.input_tokens" = 0_u64,
+                                "gen_ai.usage.output_tokens" = 0_u64,
+                                schema = schema_name,
+                                arm = arm_name(arm),
+                                "kremory.extraction.structured_call_success"
+                            );
                             return Ok(value);
                         }
                         Err(detail) => {
@@ -321,12 +348,25 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
 
                                 if let Ok(retry_value) = retry_result {
                                     if validate_against_schema(&retry_value, schema).is_ok() {
+                                        // Dual-emit (ADR D1 / R1.1): retry success path, fused OTel gen_ai.* per SPEC-001.
+                                        // gen_ai.usage tokens 0 / system "unknown" — see TD-090 (try_arm drops response before .usage()).
+                                        // Token counts / provider not available at StructuredCallBuilder layer.
                                         counter!(
                                             "rql.extraction.structured_call_success",
                                             "schema" => schema_name,
                                             "arm" => arm_name(arm),
                                         )
                                         .increment(1);
+                                        tracing::info!(
+                                            "gen_ai.system" = "unknown",
+                                            "gen_ai.operation.name" = "extraction",
+                                            "gen_ai.request.model" = %model_str,
+                                            "gen_ai.usage.input_tokens" = 0_u64,
+                                            "gen_ai.usage.output_tokens" = 0_u64,
+                                            schema = schema_name,
+                                            arm = arm_name(arm),
+                                            "kremory.extraction.structured_call_success"
+                                        );
                                         return Ok(retry_value);
                                     }
                                 }

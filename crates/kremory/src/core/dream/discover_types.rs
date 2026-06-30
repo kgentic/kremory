@@ -1360,25 +1360,17 @@ mod td050_real_llm_tests {
         .expect("discover_types must not error with a live model");
 
         // Surface what the real model actually discovered (operator observability).
-        eprintln!(
-            "[td050-real-llm] model={chat_model} proposed={:?} accepted={:?} rejected={:?} retyped={}",
-            result
-                .types_proposed
-                .iter()
-                .map(|t| t.name.as_str())
-                .collect::<Vec<_>>(),
-            result
-                .types_accepted
-                .iter()
-                .map(|t| t.name.as_str())
-                .collect::<Vec<_>>(),
-            result
-                .types_rejected
-                .iter()
-                .map(|(t, r)| format!("{}:{r}", t.name))
-                .collect::<Vec<_>>(),
-            result.entities_retyped,
-        );
+        if std::env::var("KREMORY_DEBUG").is_ok() {
+            tracing::debug!(
+                target: "kremory.dream.discover_types",
+                model = %chat_model,
+                proposed = ?result.types_proposed.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+                accepted = ?result.types_accepted.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+                rejected = ?result.types_rejected.iter().map(|(t, r)| format!("{}:{r}", t.name)).collect::<Vec<_>>(),
+                entities_retyped = result.entities_retyped,
+                "td050-real-llm discover_types result"
+            );
+        }
 
         // Gap: the real model actually produced a usable proposal (not vacuous,
         // not scripted). Reliable for an unambiguous drug cluster; if this flaps,
