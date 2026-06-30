@@ -100,17 +100,27 @@ pub const L4_LEXICAL_JACCARD_MIN: f32 = 0.5;
 /// | Trivial recall | 1.00 (8/8) | ≥ 0.90 (RISK-006 guard) |
 /// | Overall recall | 0.568 (21/37) | recorded only |
 ///
-/// **Documented gaps (FN by design — routed to context-embedding in ADR-058 B1):**
-/// - `acronym` (IBM / International Business Machines): Jaccard 0/4 = 0 → FN
-/// - `nickname` (Bob / Robert): no shared tokens → FN
-/// - `diacritic` (café / cafe): unicode-aware `is_alphanumeric` preserves diacritics
-///   so the tokens never collide → mostly FN (pairs with multiple shared non-diacritic
-///   tokens, e.g. "Café de Flore" / "Cafe de Flore", pass via shared "de"+"flore")
+/// **Token-Jaccard capability gaps (categories where overall recall < 1.0):**
 ///
-/// **Documented intentional FP (homonym limitation):**
-/// - `Amazon` / `Amazon River`: Jaccard 1/2 = 0.5 → gate TRUE despite should_merge=false.
-///   Homonym pairs cannot be distinguished by name tokens alone; embedder signal
-///   (ADR-058) is the correct resolution mechanism.
+/// These are NOT accepted failures. They are inherent limits of a name-token
+/// approach that cannot be closed by hardcoded lists. The correct mechanism is
+/// context-embedding (ADR-058 B1): embed `name + "\n" + context`, where semantic
+/// distance closes gaps that pure token overlap cannot.
+///
+/// - `acronym` (IBM / International Business Machines): Jaccard 0/4 = 0 — zero
+///   shared tokens regardless of threshold. B1 closes this via semantic embedding.
+/// - `nickname` (Bob / Robert): zero shared tokens. B1 closes via embedding.
+/// - `diacritic` (café / cafe): unicode-aware `is_alphanumeric` preserves
+///   diacritics, so tokens never collide → gap when the diacritic is the only
+///   difference. Multi-token pairs ("Café de Flore" / "Cafe de Flore") pass via
+///   shared "de"+"flore". B1 closes single-token diacritic pairs.
+///
+/// **Known FP (homonym — measured, documented, routed to B1):**
+/// - `Amazon` / `Amazon River`: Jaccard 1/2 = 0.5 → gate TRUE despite
+///   `should_merge=false`. Name tokens alone cannot distinguish homonyms. B1
+///   embeds `name + context`, where "Amazon River" context (geography, South
+///   America, flow) diverges from "Amazon" (e-commerce) — cosine drops below
+///   the merge threshold, resolving the homonym without a curated block-list.
 ///
 /// Worked spot-checks against verified embedder data (`tests/spike_td080_embedder_cosine.rs`):
 /// - `Ria`/`Morocco`, `Ria`/`Amazon Robotics`, `Northeastern University`/`Amazon
@@ -802,21 +812,31 @@ mod tests {
     // (crates/kremory-eval/fixtures/entity_pairs.jsonl), runs the lexical gate
     // over every pair, and records precision/recall/F1 + per-category breakdown.
     //
-    // Documented expected gaps (FNs — NOT failures, honest acknowledgement):
-    //   acronym   — e.g. IBM vs International Business Machines: Jaccard 0/4 (FN)
-    //   nickname  — e.g. Bob vs Robert: no shared tokens (FN)
-    //   diacritic — e.g. café vs cafe: unicode preserves diacritics, no collision (FN)
+    // Capability gaps in token-Jaccard (categories where overall recall < 1.0):
     //
-    // One intentional FP documented inline:
-    //   Amazon vs Amazon River: homonym collision, Jaccard 1/2 = 0.5 → gate TRUE.
-    //   This documents the lexical floor's known homonym limitation.
+    //   acronym   — IBM / International Business Machines: zero shared tokens → Jaccard 0.
+    //   nickname  — Bob / Robert: zero shared tokens.
+    //   diacritic — café / cafe: unicode-aware `is_alphanumeric` preserves diacritics,
+    //               so the token sets never collide.
+    //
+    // These are NOT accepted failures — they are gaps that a pure token-matching approach
+    // cannot close without hardcoded lists. The correct fix is context-embedding (ADR-058
+    // B1), which routes these pairs through a semantic signal rather than a name-token
+    // heuristic. Adding a curated acronym blocklist here was explicitly rejected in ADR-058.
+    //
+    // Known FP (homonym — measured, documented, routes to B1 for resolution):
+    //   Amazon / Amazon River: both names share the token "amazon" → Jaccard 1/2 = 0.5.
+    //   Homonyms cannot be distinguished by name tokens alone; context-embedding resolves
+    //   them by embedding `name + context`, where "Amazon River" context diverges from
+    //   "Amazon" (company) context.
     //
     // Hard assertions (ADR-057 §contract):
     //   precision ≥ 0.95  — one false merge corrupts every fact with that subject
     //   trivial recall ≥ 0.90  — guards against a degenerate never-merge gate
     //                            (ADR-058 RISK-006)
     //
-    // Overall recall is RECORDED but not asserted — gap categories are expected.
+    // Overall recall is RECORDED but not asserted — gap categories are capability limits
+    // of the token layer, addressed by the embedding layer (B1), not by this gate.
     #[test]
     fn corpus_precision_recall() {
         let corpus_path = concat!(
