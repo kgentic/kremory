@@ -205,4 +205,22 @@ async fn facade_remember_extracts_facts_via_real_llm() {
          Got {semantic} semantic facts among {total} total. Facts: {facts:?}",
         total = facts.len()
     );
+
+    // ADR-057 correctness oracle: the prior `semantic >= 1` count passed even when
+    // every fact's subject was CORRUPTED to one wrong entity ("amazon robotics") by
+    // the cosine-only L4 over-merge — the count is blind to subject correctness.
+    // mock_interview is Ria's interview: the LLM reliably extracts `Ria` as the
+    // subject of her own facts (verified spike_td080_self_loop). So a correct graph
+    // MUST have ≥1 fact whose subject is the normalized protagonist name "ria".
+    // Under the pre-fix bug this is `amazon robotics` for ALL facts → this fails.
+    let ria_is_a_subject = facts.iter().any(|f| f.subject_id == "ria");
+    let distinct_subjects: std::collections::BTreeSet<&str> =
+        facts.iter().map(|f| f.subject_id.as_str()).collect();
+    assert!(
+        ria_is_a_subject,
+        "subject corruption (ADR-057): expected the protagonist 'ria' to be the subject of \
+         >=1 fact, but no fact has subject_id=='ria'. This is the L4 over-merge signature — \
+         all subjects collapsed to one wrong entity. Distinct subjects seen: {distinct_subjects:?}. \
+         Facts: {facts:?}"
+    );
 }

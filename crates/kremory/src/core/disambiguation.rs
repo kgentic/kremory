@@ -63,6 +63,66 @@ pub const L4_POTENTIAL_ALIAS_THRESHOLD: f32 = 0.70;
 /// consumed by the dream-phase reclassification logic (Phase 8 scope).
 pub const L4_REVOKE_THRESHOLD: f32 = 0.50;
 
+/// Minimum token-Jaccard overlap (over significant name tokens) required for two
+/// entity names to be considered lexically compatible for a DESTRUCTIVE merge.
+///
+/// ADR-057: cosine similarity over bare entity NAMES is an unreliable identity
+/// signal — anisotropic embedders (e.g. nomic-embed-text on short proper nouns)
+/// return cosine 0.90–1.00 between completely unrelated names (`cos(Ria,Morocco)
+/// = 1.0000`, verified `tests/spike_td080_embedder_cosine.rs`). A cosine-only
+/// merge therefore collapses all entities into one canonical id and corrupts
+/// every fact's subject. The fix: a destructive merge (L4 `Merge`, L5
+/// canonicalization) additionally requires a DETERMINISTIC, embedder-independent
+/// name-compatibility check. Cosine alone may only ever produce a NON-destructive
+/// `PotentialAlias`. This makes entity resolution robust to ANY consumer embedder
+/// (BYOM invariant), not just a well-calibrated one.
+pub const L4_LEXICAL_JACCARD_MIN: f32 = 0.5;
+
+/// Deterministic, embedder-independent check: are two entity names lexically
+/// compatible enough to justify a DESTRUCTIVE merge (reusing one entity's id for
+/// the other)? Used by BOTH destructive-merge sites — L4 `disambiguate` (this
+/// module) and L5 `canonicalization` — via the same rule so the two paths cannot
+/// diverge.
+///
+/// Compatible iff EITHER:
+/// 1. **Normalized equality** — the common case (idempotent re-ingest of the same
+///    name across chunks; the dominant real merge).
+/// 2. **Token-Jaccard ≥ [`L4_LEXICAL_JACCARD_MIN`]** over *significant* tokens
+///    (length ≥ 2 after [`normalize_name`] — drops single-initial noise like "j").
+///
+/// Worked against the verified data (`tests/spike_td080_embedder_cosine.rs`):
+/// - `Ria`/`Morocco`, `Ria`/`Amazon Robotics`, `Northeastern University`/`Amazon
+///   Robotics` → zero shared tokens → Jaccard 0 → **incompatible** (the catastrophe
+///   is fully blocked).
+/// - `Alice Johnson`/`Alice Marie Johnson` → Jaccard 2/3 = 0.67 → **compatible**
+///   (true variant still merges).
+/// - `Boston`/`Boston Consulting Group` (city vs firm) → Jaccard 1/3 = 0.33 →
+///   **incompatible** (avoids a real false-merge a token-subset rule would allow).
+pub(crate) fn names_lexically_compatible(a: &str, b: &str) -> bool {
+    use std::collections::BTreeSet;
+    let na = crate::core::resolver::normalize_name(a);
+    let nb = crate::core::resolver::normalize_name(b);
+    if na == nb {
+        return true;
+    }
+    let ta: BTreeSet<&str> = na
+        .split_whitespace()
+        .filter(|t| t.chars().count() >= 2)
+        .collect();
+    let tb: BTreeSet<&str> = nb
+        .split_whitespace()
+        .filter(|t| t.chars().count() >= 2)
+        .collect();
+    if ta.is_empty() || tb.is_empty() {
+        // No significant tokens on one side; equality (handled above) is the only
+        // path to compatibility — single initials etc. are never auto-merged.
+        return false;
+    }
+    let inter = ta.intersection(&tb).count();
+    let union = ta.union(&tb).count();
+    union > 0 && (inter as f32 / union as f32) >= L4_LEXICAL_JACCARD_MIN
+}
+
 // ─── Reserved predicates ─────────────────────────────────────────────────────
 
 /// Predicate for the meta-edge that records a probable alias relationship.
@@ -201,7 +261,16 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
     );
 
     // Step 4: threshold ladder.
-    if similarity >= L4_MERGE_THRESHOLD {
+    // ADR-057: a destructive Merge requires BOTH a high cosine AND a deterministic
+    // name-compatibility check. `existing_id` is the existing entity's normalized
+    // name (entity ids ARE normalized names — ingest_with.rs:1017), so it is the
+    // correct lexical comparand. When cosine clears the merge bar but the names are
+    // lexically incompatible, the high cosine is embedder anisotropy, not identity:
+    // fall through to the non-destructive PotentialAlias branch (the embedder's
+    // signal is preserved as a soft alias edge, never a destructive id-reuse).
+    let cosine_says_merge = similarity >= L4_MERGE_THRESHOLD;
+    let names_compatible = names_lexically_compatible(entity_name, &existing_id);
+    if cosine_says_merge && names_compatible {
         counter!("kremory.l4.merge_total").increment(1);
         tracing::info!(
             target: "kremory.l4",
@@ -215,6 +284,19 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
             similarity,
         })
     } else if similarity >= L4_POTENTIAL_ALIAS_THRESHOLD {
+        // ADR-057: distinguish a genuine alias-band hit from a lexically-blocked
+        // merge so a weak consumer embedder is observable (a spike here signals
+        // anisotropy). `cosine_says_merge && !names_compatible` is the blocked case.
+        if cosine_says_merge {
+            counter!("kremory.l4.merge_blocked_lexical_total").increment(1);
+            tracing::info!(
+                target: "kremory.l4",
+                entity_name,
+                existing_id = %existing_id,
+                similarity,
+                "kremory.l4.merge_blocked_lexical"
+            );
+        }
         counter!("kremory.l4.potential_alias_total").increment(1);
         tracing::info!(
             target: "kremory.l4",
@@ -405,7 +487,14 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
 
         let similarity = (1.0_f32 - distance as f32).clamp(0.0, 1.0);
 
-        if similarity >= L4_MERGE_THRESHOLD {
+        // ADR-057: L7 alias-confirmation is the THIRD destructive-merge path (it
+        // invalidates the alias fact so L5 performs the structural merge). It must
+        // honour the SAME deterministic name gate as L4/L5: a high cosine between
+        // lexically-incompatible names is embedder anisotropy, not a confirmed
+        // identity. Without this, one dream cycle could re-merge `boston` into
+        // `amazon robotics` and re-introduce the TD-080 #2 corruption.
+        let names_compatible = names_lexically_compatible(&fact.subject_id, object_id);
+        if similarity >= L4_MERGE_THRESHOLD && names_compatible {
             // Confirmed alias — invalidate the fact; L5 will merge structurally.
             graph.invalidate_fact(fact.id, now).await?;
             counter!("kremory.l7.resolve_aliases_total", "outcome" => "merged").increment(1);
@@ -418,8 +507,14 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
                 "kremory.l7.resolve_aliases.merged"
             );
             resolved += 1;
-        } else if similarity < L4_REVOKE_THRESHOLD {
-            // False alarm — revoke the alias fact.
+        } else if similarity < L4_REVOKE_THRESHOLD
+            || (similarity >= L4_MERGE_THRESHOLD && !names_compatible)
+        {
+            // Revoke: a genuine false alarm (low cosine) OR a high-cosine pair the
+            // lexical gate rejects as anisotropy (never the same real-world entity).
+            if similarity >= L4_MERGE_THRESHOLD && !names_compatible {
+                counter!("kremory.l7.merge_blocked_lexical_total").increment(1);
+            }
             graph.invalidate_fact(fact.id, now).await?;
             counter!("kremory.l7.resolve_aliases_total", "outcome" => "revoked").increment(1);
             tracing::info!(
@@ -485,6 +580,66 @@ mod tests {
             "RESERVED_PREDICATE_POTENTIAL_ALIAS must be snake_case"
         );
         assert_eq!(RESERVED_PREDICATE_POTENTIAL_ALIAS, "potential_alias");
+    }
+
+    // ── ADR-057: lexical-name compatibility gate ──────────────────────────────
+    //
+    // Truth table anchored on the VERIFIED anisotropy data
+    // (tests/spike_td080_embedder_cosine.rs): every observed false-merge pair
+    // shares zero significant tokens and MUST be blocked; true variants MUST pass.
+
+    #[test]
+    fn lexical_gate_blocks_unrelated_names() {
+        // The exact pairs that nomic-embed-text rated cosine 0.95–1.00 — all unrelated.
+        assert!(!names_lexically_compatible("Ria", "Morocco"));
+        assert!(!names_lexically_compatible("Ria", "Amazon Robotics"));
+        assert!(!names_lexically_compatible("Morocco", "Boston"));
+        assert!(!names_lexically_compatible(
+            "Northeastern University",
+            "Amazon Robotics"
+        ));
+        // City vs firm sharing ONE token — the token-subset hole; Jaccard 1/3 < 0.5.
+        assert!(!names_lexically_compatible(
+            "Boston",
+            "Boston Consulting Group"
+        ));
+        // Different orgs sharing one token.
+        assert!(!names_lexically_compatible(
+            "Amazon Robotics",
+            "Amazon Web Services"
+        ));
+    }
+
+    #[test]
+    fn lexical_gate_allows_true_variants_and_idempotent_reingest() {
+        // Idempotent re-ingest of the same name (the dominant real merge case).
+        assert!(names_lexically_compatible("Ria", "Ria"));
+        assert!(names_lexically_compatible(
+            "Northeastern University",
+            "Northeastern University"
+        ));
+        // Case / punctuation variants normalize-equal.
+        assert!(names_lexically_compatible(
+            "Amazon Robotics",
+            "amazon robotics"
+        ));
+        assert!(names_lexically_compatible("Acme, Inc", "acme inc"));
+        // True multi-token variant — Jaccard 2/3 = 0.67 ≥ 0.5.
+        assert!(names_lexically_compatible(
+            "Alice Johnson",
+            "Alice Marie Johnson"
+        ));
+        // First-name → full-name (Jaccard 1/2 = 0.5).
+        assert!(names_lexically_compatible("Ria Patel", "Ria"));
+    }
+
+    #[test]
+    fn lexical_gate_drops_single_initial_noise() {
+        // "j" is a single-char (insignificant) token; only "alice" is significant
+        // on each side → equal significant-token sets → compatible.
+        assert!(names_lexically_compatible("Alice J", "Alice J."));
+        // But a bare differing initial cannot rescue unrelated names.
+        assert!(!names_lexically_compatible("A Ria", "B Morocco"));
     }
 
     // ── Outcome classification from simulated scores ──────────────────────────
