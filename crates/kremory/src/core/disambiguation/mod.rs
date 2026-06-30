@@ -123,6 +123,13 @@ pub struct DisambiguateParams<'a> {
     pub group_id: Option<&'a str>,
     /// The temporal graph to search against.
     pub graph: &'a TemporalGraph,
+    /// Context snippet extracted from the source text around this entity (ADR-058 B1).
+    /// Used by `compose_embed_text` when `embed_entity_input` is `NameContext`.
+    /// Pass `""` when no context is available (falls back to name-only embedding).
+    pub entity_context: &'a str,
+    /// Controls whether the probe embedding includes context (ADR-058 B1).
+    /// Must match the mode used at index time for meaningful cosine comparison.
+    pub embed_entity_input: crate::core::config::EntityEmbeddingInput,
 }
 
 /// Disambiguate a newly extracted entity name against existing entities in the
@@ -152,6 +159,8 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         entity_name,
         group_id,
         graph,
+        entity_context,
+        embed_entity_input,
     } = params;
     // No-op: global namespace or empty name.
     let Some(gid) = group_id else {
@@ -161,8 +170,14 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         return Ok(DisambiguationOutcome::New);
     }
 
-    // Step 1: embed the new entity name.
-    let embedding = embedder.embed(entity_name).await?;
+    // Step 1: embed the probe using the same compose_embed_text as index time
+    // (ADR-058 B1 symmetry invariant: probe embedding must match stored embedding).
+    let embed_text = crate::core::disambiguation::embedding::compose_embed_text(
+        entity_name,
+        entity_context,
+        embed_entity_input,
+    );
+    let embedding = embedder.embed(&embed_text).await?;
     if embedding.is_empty() {
         // Degenerate embedder returned a zero-length slice — skip disambiguation.
         return Ok(DisambiguationOutcome::New);
@@ -666,6 +681,8 @@ mod tests {
                 entity_name: "Alice",
                 group_id: Some("test-group"),
                 graph: &graph,
+                entity_context: "",
+                embed_entity_input: crate::core::config::EntityEmbeddingInput::Name,
             },
             &embedder,
         )
@@ -687,6 +704,8 @@ mod tests {
                 entity_name: "Alice",
                 group_id: None,
                 graph: &graph,
+                entity_context: "",
+                embed_entity_input: crate::core::config::EntityEmbeddingInput::Name,
             },
             &embedder,
         )
@@ -708,6 +727,8 @@ mod tests {
                 entity_name: "   ",
                 group_id: Some("g"),
                 graph: &graph,
+                entity_context: "",
+                embed_entity_input: crate::core::config::EntityEmbeddingInput::Name,
             },
             &embedder,
         )

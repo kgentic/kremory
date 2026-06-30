@@ -206,6 +206,20 @@ impl Default for EmbeddingDim {
     }
 }
 
+/// Controls how entity embeddings are composed before indexing and disambiguation.
+///
+/// `NameContext` (default): embeds `"{name}\n{context}"` — semantically richer;
+/// reduces anisotropic-embedder false-alias risk (ADR-058 B1).
+/// `Name`: embeds bare `"{name}"` — original pre-B1 behaviour.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EntityEmbeddingInput {
+    /// Embed `"{name}\n{context}"` (default post-B1).
+    #[default]
+    NameContext,
+    /// Embed bare `"{name}"` — original pre-B1 behaviour.
+    Name,
+}
+
 /// Top-level pipeline configuration aggregating all sub-configs.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -242,6 +256,10 @@ pub struct PipelineConfig {
     /// `.extraction_arm_budget_ms(value)` on the builder. The benchmark
     /// suite sets this to 300_000 to accommodate qwen2.5:14b warm-up latency.
     pub extraction_arm_budget_ms: u64,
+    /// Controls whether entity embeddings include surrounding context.
+    ///
+    /// Default: [`EntityEmbeddingInput::NameContext`] (ADR-058 B1).
+    pub embed_entity_input: EntityEmbeddingInput,
 }
 
 impl PipelineConfig {
@@ -260,6 +278,7 @@ impl PipelineConfig {
                 cache_ttl: Duration::from_secs(300),
                 cache_max_entries: 1000,
                 extraction_arm_budget_ms: 30_000,
+                embed_entity_input: EntityEmbeddingInput::default(),
             },
         }
     }
@@ -399,6 +418,16 @@ impl PipelineConfigBuilder {
     /// silicon (~80-130s per call at 32k context).
     pub fn extraction_arm_budget_ms(mut self, ms: u64) -> Self {
         self.inner.extraction_arm_budget_ms = ms;
+        self
+    }
+
+    // ── EntityEmbeddingInput ─────────────────────────────────────────────────
+
+    /// Control how entity embeddings are composed (ADR-058 B1).
+    ///
+    /// Default: [`EntityEmbeddingInput::NameContext`].
+    pub fn embed_entity_input(mut self, v: EntityEmbeddingInput) -> Self {
+        self.inner.embed_entity_input = v;
         self
     }
 

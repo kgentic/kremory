@@ -50,6 +50,7 @@ pub(crate) struct GraphOpenParams {
     /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
+    pub embed_entity_input: crate::core::config::EntityEmbeddingInput,
 }
 
 /// Bundled non-generic parameters for [`open_graph`] — args-as-object per
@@ -63,6 +64,7 @@ pub(crate) struct OpenGraphParams {
     /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
+    pub embed_entity_input: crate::core::config::EntityEmbeddingInput,
 }
 
 /// Bundled non-generic parameters for [`open_engine_handle`] — args-as-object
@@ -76,6 +78,7 @@ pub(crate) struct OpenEngineHandleParams {
     /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
+    pub embed_entity_input: crate::core::config::EntityEmbeddingInput,
 }
 
 /// Bundled non-generic parameters for [`build_memory_with_model`] —
@@ -112,6 +115,7 @@ pub(crate) async fn open_graph(
         embedding_dim,
         allowed_entity_types,
         model,
+        embed_entity_input,
     } = params;
     let path_str = path
         .as_ref()
@@ -126,7 +130,9 @@ pub(crate) async fn open_graph(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder = PipelineConfig::builder()
+        .embedding_dim(resolved_dim)
+        .embed_entity_input(embed_entity_input);
     if !allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(allowed_entity_types);
     }
@@ -168,7 +174,9 @@ pub(crate) async fn open_graph_with_extractor(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder = PipelineConfig::builder()
+        .embedding_dim(resolved_dim)
+        .embed_entity_input(params.embed_entity_input);
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -213,7 +221,9 @@ pub(crate) async fn open_graph_no_llm(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder = PipelineConfig::builder()
+        .embedding_dim(resolved_dim)
+        .embed_entity_input(params.embed_entity_input);
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -257,6 +267,7 @@ pub(crate) async fn open_engine_handle(
         embedding_dim,
         allowed_entity_types,
         model,
+        embed_entity_input,
     } = params;
     let path_str = path
         .as_ref()
@@ -271,7 +282,9 @@ pub(crate) async fn open_engine_handle(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder = PipelineConfig::builder()
+        .embedding_dim(resolved_dim)
+        .embed_entity_input(embed_entity_input);
     if !allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(allowed_entity_types);
     }
@@ -599,6 +612,10 @@ async fn build_memory_with_model(
             // capability detection reaches the provider-native schema arm
             // (Option-1, 2026-06-23).
             model: model.map(str::to_owned),
+            // Tier-1 shortcuts always use the default embedding mode (NameContext).
+            // Consumers that want Name-only mode use the Tier-2 builder with
+            // `.embed_entity_input(EntityEmbeddingInput::Name)`.
+            embed_entity_input: crate::core::config::EntityEmbeddingInput::default(),
         },
     )
     .await?;
