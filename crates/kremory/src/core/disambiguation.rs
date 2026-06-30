@@ -90,14 +90,33 @@ pub const L4_LEXICAL_JACCARD_MIN: f32 = 0.5;
 /// 2. **Token-Jaccard ≥ [`L4_LEXICAL_JACCARD_MIN`]** over *significant* tokens
 ///    (length ≥ 2 after [`normalize_name`] — drops single-initial noise like "j").
 ///
-/// Worked against the verified data (`tests/spike_td080_embedder_cosine.rs`):
+/// ## Measured precision/recall (Phase A corpus, 67 adversarial pairs)
+///
+/// See `tests::corpus_precision_recall` for the live assertion.
+///
+/// | Metric | Value | Threshold |
+/// |---|---|---|
+/// | Precision | 0.9545 (21/22) | ≥ 0.95 (hard gate) |
+/// | Trivial recall | 1.00 (8/8) | ≥ 0.90 (RISK-006 guard) |
+/// | Overall recall | 0.568 (21/37) | recorded only |
+///
+/// **Documented gaps (FN by design — routed to context-embedding in ADR-058 B1):**
+/// - `acronym` (IBM / International Business Machines): Jaccard 0/4 = 0 → FN
+/// - `nickname` (Bob / Robert): no shared tokens → FN
+/// - `diacritic` (café / cafe): unicode-aware `is_alphanumeric` preserves diacritics
+///   so the tokens never collide → mostly FN (pairs with multiple shared non-diacritic
+///   tokens, e.g. "Café de Flore" / "Cafe de Flore", pass via shared "de"+"flore")
+///
+/// **Documented intentional FP (homonym limitation):**
+/// - `Amazon` / `Amazon River`: Jaccard 1/2 = 0.5 → gate TRUE despite should_merge=false.
+///   Homonym pairs cannot be distinguished by name tokens alone; embedder signal
+///   (ADR-058) is the correct resolution mechanism.
+///
+/// Worked spot-checks against verified embedder data (`tests/spike_td080_embedder_cosine.rs`):
 /// - `Ria`/`Morocco`, `Ria`/`Amazon Robotics`, `Northeastern University`/`Amazon
-///   Robotics` → zero shared tokens → Jaccard 0 → **incompatible** (the catastrophe
-///   is fully blocked).
-/// - `Alice Johnson`/`Alice Marie Johnson` → Jaccard 2/3 = 0.67 → **compatible**
-///   (true variant still merges).
-/// - `Boston`/`Boston Consulting Group` (city vs firm) → Jaccard 1/3 = 0.33 →
-///   **incompatible** (avoids a real false-merge a token-subset rule would allow).
+///   Robotics` → zero shared tokens → Jaccard 0 → **incompatible** (catastrophe blocked).
+/// - `Alice Johnson`/`Alice Marie Johnson` → Jaccard 2/3 = 0.67 → **compatible**.
+/// - `Boston`/`Boston Consulting Group` → Jaccard 1/3 = 0.33 → **incompatible**.
 pub(crate) fn names_lexically_compatible(a: &str, b: &str) -> bool {
     use std::collections::BTreeSet;
     let na = crate::core::resolver::normalize_name(a);
@@ -774,5 +793,203 @@ mod tests {
             "blank entity name must return New"
         );
         Ok(())
+    }
+
+    // ── Phase A: corpus precision/recall measurement ─────────────────────────
+    //
+    // `names_lexically_compatible` is pub(crate) — integration tests cannot
+    // reach it. This unit test loads the adversarial corpus
+    // (crates/kremory-eval/fixtures/entity_pairs.jsonl), runs the lexical gate
+    // over every pair, and records precision/recall/F1 + per-category breakdown.
+    //
+    // Documented expected gaps (FNs — NOT failures, honest acknowledgement):
+    //   acronym   — e.g. IBM vs International Business Machines: Jaccard 0/4 (FN)
+    //   nickname  — e.g. Bob vs Robert: no shared tokens (FN)
+    //   diacritic — e.g. café vs cafe: unicode preserves diacritics, no collision (FN)
+    //
+    // One intentional FP documented inline:
+    //   Amazon vs Amazon River: homonym collision, Jaccard 1/2 = 0.5 → gate TRUE.
+    //   This documents the lexical floor's known homonym limitation.
+    //
+    // Hard assertions (ADR-057 §contract):
+    //   precision ≥ 0.95  — one false merge corrupts every fact with that subject
+    //   trivial recall ≥ 0.90  — guards against a degenerate never-merge gate
+    //                            (ADR-058 RISK-006)
+    //
+    // Overall recall is RECORDED but not asserted — gap categories are expected.
+    #[test]
+    fn corpus_precision_recall() {
+        let corpus_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../kremory-eval/fixtures/entity_pairs.jsonl"
+        );
+        let content = std::fs::read_to_string(corpus_path)
+            .unwrap_or_else(|e| panic!("failed to read corpus at {corpus_path}: {e}"));
+
+        struct Row {
+            name_a: String,
+            name_b: String,
+            should_merge: bool,
+            category: String,
+            source: String,
+        }
+
+        let rows: Vec<Row> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .enumerate()
+            .map(|(i, line)| {
+                let v: serde_json::Value = serde_json::from_str(line)
+                    .unwrap_or_else(|e| panic!("corpus line {i}: JSON error: {e}"));
+                Row {
+                    name_a: v["name_a"].as_str().expect("name_a").to_string(),
+                    name_b: v["name_b"].as_str().expect("name_b").to_string(),
+                    should_merge: v["should_merge"].as_bool().expect("should_merge"),
+                    category: v["category"].as_str().expect("category").to_string(),
+                    source: v["source"].as_str().expect("source").to_string(),
+                }
+            })
+            .collect();
+
+        assert!(!rows.is_empty(), "corpus must not be empty");
+
+        let gate: Vec<bool> = rows
+            .iter()
+            .map(|r| names_lexically_compatible(&r.name_a, &r.name_b))
+            .collect();
+
+        let mut tp = 0usize;
+        let mut fp = 0usize;
+        let mut fn_ = 0usize;
+        let mut tn = 0usize;
+        for (r, &g) in rows.iter().zip(gate.iter()) {
+            match (g, r.should_merge) {
+                (true, true) => tp += 1,
+                (true, false) => fp += 1,
+                (false, true) => fn_ += 1,
+                (false, false) => tn += 1,
+            }
+        }
+
+        let precision = if tp + fp == 0 {
+            1.0_f64
+        } else {
+            tp as f64 / (tp + fp) as f64
+        };
+        let recall = if tp + fn_ == 0 {
+            1.0_f64
+        } else {
+            tp as f64 / (tp + fn_) as f64
+        };
+        let f1 = if precision + recall == 0.0 {
+            0.0_f64
+        } else {
+            2.0 * precision * recall / (precision + recall)
+        };
+
+        let categories = [
+            "trivial",
+            "suffix",
+            "abbrev",
+            "acronym",
+            "nickname",
+            "diacritic",
+            "unrelated",
+            "same-type",
+            "same-context-diff-entity",
+        ];
+
+        println!("\n── corpus_precision_recall ─────────────────────────────────────────");
+        println!("  total={} TP={tp} FP={fp} FN={fn_} TN={tn}", rows.len());
+        println!("  precision={precision:.4}  recall={recall:.4}  F1={f1:.4}");
+        println!("  per-category:");
+
+        let mut trivial_tp = 0usize;
+        let mut trivial_pos = 0usize;
+
+        for cat in &categories {
+            let cat_tp: usize = rows
+                .iter()
+                .zip(gate.iter())
+                .filter(|(r, &g)| r.category == *cat && g && r.should_merge)
+                .count();
+            let cat_fp: usize = rows
+                .iter()
+                .zip(gate.iter())
+                .filter(|(r, &g)| r.category == *cat && g && !r.should_merge)
+                .count();
+            let cat_fn: usize = rows
+                .iter()
+                .zip(gate.iter())
+                .filter(|(r, &g)| r.category == *cat && !g && r.should_merge)
+                .count();
+            let cat_tn: usize = rows
+                .iter()
+                .zip(gate.iter())
+                .filter(|(r, &g)| r.category == *cat && !g && !r.should_merge)
+                .count();
+            let cat_label_pos = cat_tp + cat_fn;
+            let cat_rec: f64 = if cat_label_pos == 0 {
+                f64::NAN
+            } else {
+                cat_tp as f64 / cat_label_pos as f64
+            };
+            println!(
+                "    {cat:<32} tp={cat_tp} fp={cat_fp} fn={cat_fn} tn={cat_tn}  rec={cat_rec:.2}"
+            );
+            if *cat == "trivial" {
+                trivial_tp = cat_tp;
+                trivial_pos = cat_label_pos;
+            }
+        }
+
+        let trivial_recall = if trivial_pos == 0 {
+            1.0_f64
+        } else {
+            trivial_tp as f64 / trivial_pos as f64
+        };
+
+        // Control-subset numbers (source="human") for ADR-058 ASMP-005.
+        let human_tp: usize = rows
+            .iter()
+            .zip(gate.iter())
+            .filter(|(r, &g)| r.source == "human" && g && r.should_merge)
+            .count();
+        let human_gate_pos: usize = rows
+            .iter()
+            .zip(gate.iter())
+            .filter(|(r, &g)| r.source == "human" && g)
+            .count();
+        let human_label_pos: usize = rows
+            .iter()
+            .filter(|r| r.source == "human" && r.should_merge)
+            .count();
+        let human_prec = if human_gate_pos == 0 {
+            1.0_f64
+        } else {
+            human_tp as f64 / human_gate_pos as f64
+        };
+        let human_rec = if human_label_pos == 0 {
+            1.0_f64
+        } else {
+            human_tp as f64 / human_label_pos as f64
+        };
+        println!("\n  control-subset (source=human):");
+        println!("    gate_pos={human_gate_pos}  label_pos={human_label_pos}  tp={human_tp}");
+        println!("    precision={human_prec:.4}  recall={human_rec:.4}");
+        println!("────────────────────────────────────────────────────────────────────");
+
+        // ── Hard assertions (ADR-057 §contract) ──────────────────────────────
+        assert!(
+            precision >= 0.95,
+            "lexical gate precision {precision:.4} < 0.95 — a false merge corrupts \
+             every fact with that subject. FP={fp}. Inspect per-category output above."
+        );
+        assert!(
+            trivial_recall >= 0.90,
+            "trivial-variant recall {trivial_recall:.4} < 0.90 (ADR-058 RISK-006 — \
+             degenerate never-merge gate guard). Expected {trivial_pos} trivial pairs \
+             to pass; got {trivial_tp}."
+        );
     }
 }
