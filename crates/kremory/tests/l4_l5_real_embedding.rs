@@ -25,7 +25,8 @@
 
 use kremory::core::canonicalization::{canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD};
 use kremory::core::disambiguation::{
-    disambiguate, DisambiguateParams, DisambiguationOutcome, L4_MERGE_THRESHOLD,
+    disambiguate, insert_potential_alias_fact, resolve_pending_aliases, AliasProvenance,
+    DisambiguateParams, DisambiguationOutcome, InsertPotentialAliasFactParams, L4_MERGE_THRESHOLD,
     L4_POTENTIAL_ALIAS_THRESHOLD,
 };
 use kremory::core::error::Result as KResult;
@@ -130,14 +131,19 @@ fn l4_disambiguate_merge_on_high_similarity_real_embedding() {
             let graph = TemporalGraph::open_in_memory().await.expect("open graph");
             let group = "test-group";
 
-            seed_entity(&graph, "entity-a", group, &axis_unit(0)).await;
+            // ADR-057: a destructive Merge now requires high cosine AND a deterministic
+            // name-compatibility check. Seed + query are SURFACE VARIANTS of one name
+            // ("alice johnson" / "alice johnson jr", Jaccard 2/3 ≥ 0.5) — exactly the
+            // variant case L4 exists to merge. Lexically-unrelated names with a high
+            // (anisotropic) cosine are deliberately NOT merged (see the L4 unit tests).
+            seed_entity(&graph, "alice johnson", group, &axis_unit(0)).await;
 
             // θ = 1.4° → cos ≈ 0.9997, well above the 0.95 merge threshold.
             let theta: f32 = 1.4_f32.to_radians();
             let embedder = FixedVectorEmbedder::new(rotated_unit(theta));
             disambiguate(
                 DisambiguateParams {
-                    entity_name: "similar entity",
+                    entity_name: "alice johnson jr",
                     group_id: Some(group),
                     graph: &graph,
                 },
@@ -154,7 +160,7 @@ fn l4_disambiguate_merge_on_high_similarity_real_embedding() {
             similarity,
         } => {
             assert_eq!(
-                existing_id, "entity-a",
+                existing_id, "alice johnson",
                 "Merge must reference the seeded entity"
             );
             assert!(
@@ -323,12 +329,16 @@ fn l5_canonicalize_merges_when_two_entities_have_near_identical_embeddings() {
             let graph = TemporalGraph::open_in_memory().await.expect("open graph");
             let group = "test-group";
 
+            // ADR-057: L5 merge now requires high cosine AND lexical name compatibility.
+            // A and B are SURFACE VARIANTS of one name ("alice johnson" / "alice johnson
+            // jr", Jaccard 2/3 ≥ 0.5) — the legitimate L5 merge case. Unrelated names with
+            // an anisotropic high cosine are deliberately not merged (L5 unit tests cover that).
             // A = exact unit on x-axis
-            seed_entity(&graph, "entity-a", group, &axis_unit(0)).await;
+            seed_entity(&graph, "alice johnson", group, &axis_unit(0)).await;
 
             // B = 0.5° rotation from A → cos ≈ 0.99996, far above the 0.8 threshold.
             let theta: f32 = 0.5_f32.to_radians();
-            seed_entity(&graph, "entity-b", group, &rotated_unit(theta)).await;
+            seed_entity(&graph, "alice johnson jr", group, &rotated_unit(theta)).await;
 
             canonicalize_surface_forms(&graph, group, L5_CANONICALIZATION_THRESHOLD)
                 .await
@@ -357,5 +367,184 @@ fn l5_canonicalize_merges_when_two_entities_have_near_identical_embeddings() {
     assert!(
         names.iter().any(|n| n == "kremory.l5.merges_applied_total"),
         "kremory.l5.merges_applied_total must be emitted; got: {names:?}"
+    );
+}
+
+// ─── ADR-057 regression: lexical gate blocks anisotropic over-merge ────────────
+
+/// THE bug (TD-080 #2): a weak/anisotropic embedder returns a HIGH cosine between
+/// two UNRELATED entity names. Pre-fix, L4 merged them (cosine-only) and corrupted
+/// every fact's subject. Post-fix, the deterministic name gate refuses the merge and
+/// downgrades to the non-destructive `PotentialAlias` — even though cosine ≈ 1.0.
+///
+/// Counter: `kremory.l4.merge_blocked_lexical_total` must increment.
+#[test]
+fn l4_high_cosine_but_lexically_incompatible_downgrades_to_alias() {
+    let rt = make_rt();
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+
+    let outcome = metrics::with_local_recorder(&recorder, || {
+        rt.block_on(async {
+            let graph = TemporalGraph::open_in_memory().await.expect("open graph");
+            let group = "test-group";
+
+            // Seed "morocco". Query "ria" with a near-identical embedding (cos ≈ 0.9997)
+            // — this is exactly the verified anisotropy (cos(Ria,Morocco)=1.0000).
+            seed_entity(&graph, "morocco", group, &axis_unit(0)).await;
+
+            let theta: f32 = 1.4_f32.to_radians();
+            let embedder = FixedVectorEmbedder::new(rotated_unit(theta));
+            disambiguate(
+                DisambiguateParams {
+                    entity_name: "ria",
+                    group_id: Some(group),
+                    graph: &graph,
+                },
+                &embedder,
+            )
+            .await
+            .expect("disambiguate must succeed")
+        })
+    });
+
+    match outcome {
+        DisambiguationOutcome::PotentialAlias { similarity, .. } => {
+            assert!(
+                similarity >= L4_MERGE_THRESHOLD,
+                "the cosine MUST be in merge range ({similarity:.4} ≥ {L4_MERGE_THRESHOLD}); \
+                 the downgrade is driven by the lexical gate, NOT by a low score"
+            );
+        }
+        other => panic!(
+            "Expected PotentialAlias (lexical gate downgrade of a high-cosine but \
+             lexically-incompatible pair), got {other:?}"
+        ),
+    }
+
+    let names: Vec<String> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .map(|(k, _, _, _)| k.key().name().to_string())
+        .collect();
+    assert!(
+        names
+            .iter()
+            .any(|n| n == "kremory.l4.merge_blocked_lexical_total"),
+        "kremory.l4.merge_blocked_lexical_total must be emitted; got: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "kremory.l4.merge_total"),
+        "a lexically-blocked pair MUST NOT increment merge_total; got: {names:?}"
+    );
+}
+
+/// L5 sibling of the above: a batch run with two UNRELATED names at near-identical
+/// (anisotropic) embeddings must NOT merge — `merges_applied == 0` — and must emit
+/// `kremory.l5.merge_blocked_lexical_total`.
+#[test]
+fn l5_high_cosine_but_lexically_incompatible_does_not_merge() {
+    let rt = make_rt();
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+
+    let report = metrics::with_local_recorder(&recorder, || {
+        rt.block_on(async {
+            let graph = TemporalGraph::open_in_memory().await.expect("open graph");
+            let group = "test-group";
+
+            seed_entity(&graph, "morocco", group, &axis_unit(0)).await;
+            let theta: f32 = 0.5_f32.to_radians();
+            seed_entity(&graph, "amazon robotics", group, &rotated_unit(theta)).await;
+
+            canonicalize_surface_forms(&graph, group, L5_CANONICALIZATION_THRESHOLD)
+                .await
+                .expect("canonicalize must succeed")
+        })
+    });
+
+    assert_eq!(
+        report.merges_applied, 0,
+        "unrelated names at high (anisotropic) cosine MUST NOT merge under ADR-057; \
+         got merges_applied = {}",
+        report.merges_applied
+    );
+
+    let names: Vec<String> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .map(|(k, _, _, _)| k.key().name().to_string())
+        .collect();
+    assert!(
+        names
+            .iter()
+            .any(|n| n == "kremory.l5.merge_blocked_lexical_total"),
+        "kremory.l5.merge_blocked_lexical_total must be emitted; got: {names:?}"
+    );
+}
+
+/// L7 (dream alias-confirmation) is the THIRD destructive-merge path: it promotes a
+/// `potential_alias` to a structural merge on recomputed cosine ≥ 0.95. ADR-057 gates
+/// it with the same lexical check — a high-cosine but lexically-incompatible alias is
+/// REVOKED (anisotropy noise), NOT confirmed. Without this gate, one dream cycle would
+/// re-merge unrelated entities and re-introduce the TD-080 #2 corruption.
+///
+/// Counter: `kremory.l7.merge_blocked_lexical_total` must increment; the alias must
+/// NOT be confirmed/merged.
+#[test]
+fn l7_high_cosine_but_lexically_incompatible_alias_is_revoked_not_merged() {
+    let rt = make_rt();
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+
+    let resolved = metrics::with_local_recorder(&recorder, || {
+        rt.block_on(async {
+            let graph = TemporalGraph::open_in_memory().await.expect("open graph");
+            let group = "test-group";
+
+            // Two UNRELATED names with near-identical (anisotropic) embeddings:
+            // cos ≈ 0.99996 ≥ 0.95, but "morocco" / "amazon robotics" share no tokens.
+            seed_entity(&graph, "morocco", group, &axis_unit(0)).await;
+            let theta: f32 = 0.5_f32.to_radians();
+            seed_entity(&graph, "amazon robotics", group, &rotated_unit(theta)).await;
+
+            // Record a potential_alias fact morocco → amazon robotics (as L4 would).
+            insert_potential_alias_fact(InsertPotentialAliasFactParams {
+                graph: &graph,
+                new_entity_id: "morocco",
+                existing_id: "amazon robotics",
+                similarity: 0.99,
+                provenance: AliasProvenance {
+                    source_episode_id: None,
+                    group_id: Some(group),
+                },
+            })
+            .await
+            .expect("insert alias fact");
+
+            resolve_pending_aliases(&graph, group)
+                .await
+                .expect("resolve must succeed")
+        })
+    });
+
+    assert_eq!(
+        resolved, 1,
+        "the alias must be resolved (revoked), got resolved = {resolved}"
+    );
+
+    let names: Vec<String> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .map(|(k, _, _, _)| k.key().name().to_string())
+        .collect();
+    assert!(
+        names
+            .iter()
+            .any(|n| n == "kremory.l7.merge_blocked_lexical_total"),
+        "kremory.l7.merge_blocked_lexical_total must be emitted (the gate fired); got: {names:?}"
     );
 }

@@ -227,6 +227,16 @@ pub(crate) fn name_looks_like_json_fragment(name: &str) -> bool {
 
 pub(crate) fn parse_facts(json: &str) -> anyhow::Result<Vec<ExtractedFact>> {
     let trimmed = json.trim();
+    // KREMORY_DEBUG=1: emit raw stage3 triplet output to stderr for diagnosis (Rule 19).
+    // Closes the observability gap identified in TD-080: an empty fact list could be a
+    // genuine `[]` emission OR a malformed payload silently swallowed below — this dump
+    // distinguishes them. Mirrors the stage1 dump in `parse_entities_integer`.
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        eprintln!(
+            "[KREMORY_DEBUG] parse_facts raw input (len={}):\n{trimmed}\n[KREMORY_DEBUG end]",
+            trimmed.len()
+        );
+    }
     if trimmed == "[]" || trimmed.is_empty() {
         return Ok(vec![]);
     }

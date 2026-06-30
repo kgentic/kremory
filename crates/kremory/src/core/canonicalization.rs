@@ -119,8 +119,33 @@ pub async fn canonicalize_surface_forms(
     }
 
     // ── Step 2: pairwise cosine similarity via SQL ────────────────────────────
-    let pairs_to_merge = find_merge_pairs(graph, &slots, threshold).await?;
+    let raw_pairs = find_merge_pairs(graph, &slots, threshold).await?;
     let pairs_examined = (slots.len() * (slots.len().saturating_sub(1))) / 2;
+
+    // ADR-057: the L5 batch merge is the MORE dangerous destructive-merge site —
+    // its 0.80 threshold sits below the ~0.90 anisotropic-cosine floor of bare-name
+    // embeddings, so a weak consumer embedder would merge nearly every entity in a
+    // group (`tests/spike_td080_embedder_cosine.rs`). Apply the SAME deterministic
+    // name-compatibility gate as L4: a cosine-high pair whose names are lexically
+    // incompatible is anisotropy, not identity — drop it. Entity ids ARE normalized
+    // names, so they are the correct lexical comparand.
+    let pairs_to_merge: Vec<(String, String)> = raw_pairs
+        .into_iter()
+        .filter(|(loser_id, keeper_id)| {
+            let compatible =
+                crate::core::disambiguation::names_lexically_compatible(loser_id, keeper_id);
+            if !compatible {
+                counter!("kremory.l5.merge_blocked_lexical_total").increment(1);
+                tracing::info!(
+                    target: "kremory.l5",
+                    loser_id = %loser_id,
+                    keeper_id = %keeper_id,
+                    "kremory.l5.merge_blocked_lexical"
+                );
+            }
+            compatible
+        })
+        .collect();
 
     if pairs_to_merge.is_empty() {
         tracing::debug!(
@@ -622,16 +647,19 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
         // Two very similar embeddings: both unit vectors → cosine ≈ 1.0 (above 0.8).
+        // ADR-057: entity ids are SURFACE VARIANTS of the same name (Jaccard ≥ 0.5),
+        // so the lexical merge gate permits the merge (this is what L5 is FOR — merging
+        // variants of one entity, never unrelated names). "alice j" → "alice johnson".
         // e_short has the shorter description → it should become the loser.
         insert_entity_with_embedding(
             &graph,
-            "e_long",
+            "alice johnson",
             "g_pair",
             "A detailed description of Alice Johnson, software engineer at Acme Corp.",
             &unit_vec(384),
         )
         .await;
-        insert_entity_with_embedding(&graph, "e_short", "g_pair", "Alice.", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "alice j", "g_pair", "Alice.", &unit_vec(384)).await;
 
         let report = canonicalize_surface_forms(&graph, "g_pair", L5_CANONICALIZATION_THRESHOLD)
             .await
@@ -640,11 +668,11 @@ mod tests {
         assert_eq!(report.merges_applied, 1, "expected exactly 1 merge");
         assert_eq!(report.pairs_examined, 1);
 
-        // Verify: e_long still exists, e_short is gone.
+        // Verify: "alice johnson" (longer desc) survives, "alice j" is gone.
         let entities = graph.list_entities_in_group("g_pair").await.expect("list");
         let ids: Vec<&str> = entities.iter().map(|e| e.id.as_str()).collect();
-        assert!(ids.contains(&"e_long"), "keeper e_long must survive");
-        assert!(!ids.contains(&"e_short"), "loser e_short must be deleted");
+        assert!(ids.contains(&"alice johnson"), "keeper must survive");
+        assert!(!ids.contains(&"alice j"), "loser must be deleted");
     }
 
     // ── T5: Multi-pair chain (A↔B, B↔C, A↔C) → all coalesce to 1 keeper ─────
@@ -654,13 +682,22 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
         // All three entities have the same unit vector → pairwise cosine = 1.0 (>0.8).
-        // Longest description → "c_long" is the keeper.
-        insert_entity_with_embedding(&graph, "a_short", "g_tri", "Alice.", &unit_vec(384)).await;
-        insert_entity_with_embedding(&graph, "b_mid", "g_tri", "Alice Johnson.", &unit_vec(384))
+        // ADR-057: surface variants of one name (shared {alice, johnson} significant
+        // tokens → Jaccard ≥ 0.5 pairwise) so the lexical gate permits all merges.
+        // Longest description → "alice johnson engineer" is the keeper.
+        insert_entity_with_embedding(&graph, "alice johnson", "g_tri", "Alice.", &unit_vec(384))
             .await;
         insert_entity_with_embedding(
             &graph,
-            "c_long",
+            "alice johnson m",
+            "g_tri",
+            "Alice Johnson.",
+            &unit_vec(384),
+        )
+        .await;
+        insert_entity_with_embedding(
+            &graph,
+            "alice johnson engineer",
             "g_tri",
             "Alice Johnson, software engineer.",
             &unit_vec(384),
@@ -685,10 +722,12 @@ mod tests {
     #[tokio::test]
     async fn t6_idempotent_second_run_zero_merges() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
-        insert_entity_with_embedding(&graph, "x1", "g_idem", "Short.", &unit_vec(384)).await;
+        // ADR-057: surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
+        insert_entity_with_embedding(&graph, "sam carter", "g_idem", "Short.", &unit_vec(384))
+            .await;
         insert_entity_with_embedding(
             &graph,
-            "x2",
+            "sam carter phd",
             "g_idem",
             "Longer description here.",
             &unit_vec(384),
@@ -712,9 +751,17 @@ mod tests {
     async fn t7_threshold_boundary_strict_greater_than() {
         // Use a threshold of 0.99 and unit vectors (similarity ≈ 1.0) → should merge.
         let graph = TemporalGraph::open_in_memory().await.expect("open");
-        insert_entity_with_embedding(&graph, "b1", "g_bound", "Alpha.", &unit_vec(384)).await;
-        insert_entity_with_embedding(&graph, "b2", "g_bound", "Alpha extended.", &unit_vec(384))
+        // ADR-057: surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
+        insert_entity_with_embedding(&graph, "omega corp", "g_bound", "Alpha.", &unit_vec(384))
             .await;
+        insert_entity_with_embedding(
+            &graph,
+            "omega corp ltd",
+            "g_bound",
+            "Alpha extended.",
+            &unit_vec(384),
+        )
+        .await;
 
         // Threshold 0.99 — unit vectors have cosine = 1.0 > 0.99 → merge.
         let r = canonicalize_surface_forms(&graph, "g_bound", 0.99)
@@ -747,11 +794,12 @@ mod tests {
     async fn t8_cross_group_isolation() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
-        // group_a: two very similar entities (should merge within a).
-        insert_entity_with_embedding(&graph, "ga1", "group_a", "Short.", &unit_vec(384)).await;
+        // group_a: two surface variants (Jaccard 2/3 ≥ 0.5) → merge within a (ADR-057).
+        insert_entity_with_embedding(&graph, "nova labs", "group_a", "Short.", &unit_vec(384))
+            .await;
         insert_entity_with_embedding(
             &graph,
-            "ga2",
+            "nova labs inc",
             "group_a",
             "Longer description.",
             &unit_vec(384),
@@ -790,15 +838,22 @@ mod tests {
     async fn t9_access_count_accumulated_on_keeper() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
-        insert_entity_with_embedding(&graph, "ac_loser", "g_ac", "Short.", &unit_vec(384)).await;
-        insert_entity_with_embedding(&graph, "ac_keeper", "g_ac", "Longer desc.", &unit_vec(384))
-            .await;
+        // ADR-057: surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
+        insert_entity_with_embedding(&graph, "zeta group", "g_ac", "Short.", &unit_vec(384)).await;
+        insert_entity_with_embedding(
+            &graph,
+            "zeta group holdings",
+            "g_ac",
+            "Longer desc.",
+            &unit_vec(384),
+        )
+        .await;
 
         // Artificially bump access_count on loser via SQL.
         graph
             .conn
             .execute(
-                "UPDATE entities SET access_count = 7 WHERE id = 'ac_loser'",
+                "UPDATE entities SET access_count = 7 WHERE id = 'zeta group'",
                 (),
             )
             .await
@@ -813,7 +868,7 @@ mod tests {
         let entities = graph.list_entities_in_group("g_ac").await.expect("list");
         let keeper = entities
             .iter()
-            .find(|e| e.id == "ac_keeper")
+            .find(|e| e.id == "zeta group holdings")
             .expect("keeper");
         assert_eq!(
             keeper.access_count, 7,
