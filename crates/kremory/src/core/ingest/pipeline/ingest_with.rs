@@ -950,11 +950,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     //   Merge         → reuse the existing entity_id (same real-world entity)
                     //   PotentialAlias → insert new row AND a `potential_alias` fact edge
                     //   New           → proceed as normal (no existing match)
+                    //
+                    // ADR-058 B1: extract context snippet BEFORE the L4 probe so the probe
+                    // embedding uses the same compose_embed_text as the stored embedding
+                    // (symmetry invariant). half_window=100 matches index-time Site 1.
+                    let entity_context =
+                        extract_context_snippet(text, &extracted.name, 100);
                     let l4_outcome = match crate::core::disambiguation::disambiguate(
                         crate::core::disambiguation::DisambiguateParams {
                             entity_name: &extracted.name,
                             group_id,
                             graph: &self.graph,
+                            entity_context: &entity_context,
+                            embed_entity_input: self.config.embed_entity_input,
                         },
                         &*self.embedder,
                     )
@@ -1019,9 +1027,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // Bug B: capture verbatim first-mention snippet (±100 chars around the
                     // entity name in the source text).  First-mention wins: this branch only
                     // runs for genuinely new entity rows.
-                    let snippet = extract_context_snippet(text, &extracted.name, 100);
+                    // ADR-058 B1: `entity_context` was hoisted before the L4 call above;
+                    // reuse it here so the stored context matches the probe context.
                     let props_with_context = serde_json::json!({
-                        "context": snippet,
+                        "context": entity_context,
                         "name": extracted.name.clone(),
                     });
 
@@ -1086,8 +1095,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         }
                     }
 
-                    // Embed and store embedding
-                    let embedding = match self.embedder.embed(&extracted.name).await {
+                    // Embed and store embedding (ADR-058 B1 Site 1: index-time embedding
+                    // uses compose_embed_text so stored vector matches the L4 probe vector).
+                    let embed_text = crate::core::disambiguation::embedding::compose_embed_text(
+                        &extracted.name,
+                        &entity_context,
+                        self.config.embed_entity_input,
+                    );
+                    let embedding = match self.embedder.embed(&embed_text).await {
                         Ok(v) => v,
                         Err(e) => break 'phases Err(e),
                     };

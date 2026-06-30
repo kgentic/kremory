@@ -146,6 +146,8 @@ fn l4_disambiguate_merge_on_high_similarity_real_embedding() {
                     entity_name: "alice johnson jr",
                     group_id: Some(group),
                     graph: &graph,
+                    entity_context: "",
+                    embed_entity_input: kremory::core::config::EntityEmbeddingInput::Name,
                 },
                 &embedder,
             )
@@ -214,6 +216,8 @@ fn l4_disambiguate_potential_alias_on_moderate_similarity_real_embedding() {
                     entity_name: "alias entity",
                     group_id: Some(group),
                     graph: &graph,
+                    entity_context: "",
+                    embed_entity_input: kremory::core::config::EntityEmbeddingInput::Name,
                 },
                 &embedder,
             )
@@ -282,6 +286,8 @@ fn l4_disambiguate_new_on_low_similarity_real_embedding() {
                     entity_name: "brand new entity",
                     group_id: Some(group),
                     graph: &graph,
+                    entity_context: "",
+                    embed_entity_input: kremory::core::config::EntityEmbeddingInput::Name,
                 },
                 &embedder,
             )
@@ -400,6 +406,8 @@ fn l4_high_cosine_but_lexically_incompatible_downgrades_to_alias() {
                     entity_name: "ria",
                     group_id: Some(group),
                     graph: &graph,
+                    entity_context: "",
+                    embed_entity_input: kremory::core::config::EntityEmbeddingInput::Name,
                 },
                 &embedder,
             )

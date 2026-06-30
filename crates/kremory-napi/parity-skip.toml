@@ -340,6 +340,11 @@ reason = "Runtime method (seed-registry T1-T11): registers a namespace with a cu
 revisit = "v0.2.0"
 
 [[skip]]
+symbol = "MemoryBuilder::embed_entity_input"
+reason = "Builder method (ADR-058 B1): controls whether entity embeddings include surrounding context snippet (NameContext, default) or bare name (Name). Builder method not on Memory itself; JS binding would expose this as an openMemory option when Tier-2 builder surface lands."
+revisit = "v0.4.0"
+
+[[skip]]
 symbol = "MemoryBuilder::with_embedder"
 reason = "Builder method; Tier-2 builder wiring deferred per ADR-030 Form B"
 revisit = "v0.2.0"
