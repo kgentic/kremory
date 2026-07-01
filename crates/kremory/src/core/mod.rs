@@ -38,6 +38,91 @@
 //!    assign an index higher than any lock it may be nested inside, and update
 //!    this table before merging.
 
+// ── emit_and_trace! — dual-emit macro (ADR D1, §R4.2) ──────────────────────
+//
+// Expands to BOTH a metrics::counter!(...).increment(n) call AND a co-located
+// tracing::<level>!(...) call in a single statement, satisfying the ADR D1
+// ±5-source-line co-location requirement structurally.
+//
+// Defined here (in core/mod.rs) so the macro is available to ALL child modules
+// without #[macro_export] (which would leak into the public kremory:: namespace).
+// See crates/kremory/src/core/obs.rs for documentation and tests.
+//
+// Syntax:
+//   emit_and_trace!(
+//       counter: "<name>", "<key>" => "<val>"[, ...];
+//       [n: <expr>;]
+//       level: <level>;         // error|warn|info|debug|trace
+//       [fields: <k = v>[, ...];]
+//       msg: "<message>"
+//   );
+macro_rules! emit_and_trace {
+    // ── with fields (any n) ──────────────────────────────────────────────────
+    // Syntax:
+    //   emit_and_trace!(
+    //       counter: "name", "k" => "v";
+    //       n: <expr>;          ← optional; defaults to 1
+    //       level: warn;
+    //       { field = %val, field2 = ?val2 }  ← tracing fields in braces
+    //       msg: "message"
+    //   );
+    //
+    // Using a braced group for fields avoids tt* ambiguity with the ; delimiter.
+
+    // variant: explicit n, with fields in { }
+    (
+        counter: $cname:expr $(, $lk:expr => $lv:expr)*;
+        n: $n:expr;
+        level: $lvl:tt;
+        { $($field:tt)* }
+        msg: $msg:expr
+    ) => {{
+        metrics::counter!($cname $(, $lk => $lv)*).increment($n);
+        tracing::$lvl!($($field)* $msg);
+    }};
+
+    // variant: default n=1, with fields in { }
+    (
+        counter: $cname:expr $(, $lk:expr => $lv:expr)*;
+        level: $lvl:tt;
+        { $($field:tt)* }
+        msg: $msg:expr
+    ) => {
+        emit_and_trace!(
+            counter: $cname $(, $lk => $lv)*;
+            n: 1;
+            level: $lvl;
+            { $($field)* }
+            msg: $msg
+        )
+    };
+
+    // variant: explicit n, no fields
+    (
+        counter: $cname:expr $(, $lk:expr => $lv:expr)*;
+        n: $n:expr;
+        level: $lvl:tt;
+        msg: $msg:expr
+    ) => {{
+        metrics::counter!($cname $(, $lk => $lv)*).increment($n);
+        tracing::$lvl!($msg);
+    }};
+
+    // variant: default n=1, no fields
+    (
+        counter: $cname:expr $(, $lk:expr => $lv:expr)*;
+        level: $lvl:tt;
+        msg: $msg:expr
+    ) => {
+        emit_and_trace!(
+            counter: $cname $(, $lk => $lv)*;
+            n: 1;
+            level: $lvl;
+            msg: $msg
+        )
+    };
+}
+
 pub mod arena;
 pub mod background;
 pub mod canonicalization;
@@ -62,6 +147,7 @@ pub mod intelligence;
 pub mod migrations;
 #[cfg(feature = "ner")]
 pub mod ner;
+pub mod obs;
 pub mod provider;
 pub mod rates;
 pub mod reclassification;
