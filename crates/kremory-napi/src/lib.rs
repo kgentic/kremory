@@ -31,7 +31,7 @@ pub use convert::{
     JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsDreamOpts, JsDreamPassOpts,
     JsDreamStatusResult, JsDreamSummary, JsEpisode, JsIngestResult, JsIngestStatusResult,
     JsMetadataFilter, JsOpenOptions, JsRecallOptions, JsRememberOptions, JsRetrievedContext,
-    JsStructuredFact,
+    JsStructuredFact, JsTypeProposal,
 };
 
 // ── JsMemory ──────────────────────────────────────────────────────────────────

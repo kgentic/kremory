@@ -877,6 +877,9 @@ mod tests {
                 duration_ms: 0,
                 types_discovered: vec![],
                 entities_reclassified: 0,
+                aliases_resolved: 0,
+                canonicalization_merges: 0,
+                consistency_check_corrected: 0,
                 warnings: vec![],
             })
         }

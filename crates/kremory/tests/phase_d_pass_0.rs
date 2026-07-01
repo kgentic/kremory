@@ -255,6 +255,9 @@ async fn d6_dream_summary_types_discovered_field_accessible() {
         cross_episode_merges: 0,
         supersessions_recorded: 0,
         facts_archived: 0,
+        aliases_resolved: 0,
+        canonicalization_merges: 0,
+        consistency_check_corrected: 0,
         duration_ms: 0,
         types_discovered: vec![kremory::TypeProposal {
             name: "TestType".to_string(),

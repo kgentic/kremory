@@ -371,29 +371,15 @@ revisit = "v0.1.7"
 # Resolution: substrate needs Memory::auto_with_sink() or pub set_event_sink().
 # Tracked in MemoryBuilder::with_event_sink skip entry above.
 
-# ── Dream Pass 0 type discovery fields (ADR-037 §3 D6) ───────────────────────
+# ── Dream DreamSummary fields — NOW MIRRORED (dream-v2 Phase 4, 2026-07-01) ───
 #
-# DreamSummary.types_discovered (Vec<TypeProposal>) and DreamSummary.warnings
-# (Vec<String>) were added in v0.1.1 for Dream Pass 0. Surfacing TypeProposal
-# on the JS side requires a JsTypeProposal napi(object) struct + converter —
-# deferred to v0.2.0 when the full dream API surface is stabilised.
-# Until then JsDreamSummary continues to omit these fields; JS consumers
-# receive the numeric summary only.
-
-[[skip]]
-symbol = "DreamSummary::types_discovered"
-reason = "ADR-037 §3 D6: TypeProposal napi mirror (JsTypeProposal) deferred to v0.2.0; JsDreamSummary omits this field until the full dream API surface stabilises"
-revisit = "v0.2.0"
-
-[[skip]]
-symbol = "DreamSummary::warnings"
-reason = "ADR-037 §3 D6: dream-phase warning strings deferred to v0.2.0 alongside types_discovered; JsDreamSummary omits this field"
-revisit = "v0.2.0"
-
-[[skip]]
-symbol = "DreamSummary::entities_reclassified"
-reason = "ADR-046 Option E E8: Dream Pass 2 reclassify count; JsDreamSummary omits this field pending full dream API surface stabilisation at v0.2.0 (same deferral rationale as types_discovered)"
-revisit = "v0.2.0"
+# The previously-skipped `DreamSummary::types_discovered` (now via a real
+# JsTypeProposal napi(object) mirror), `warnings`, and `entities_reclassified`
+# are fully mirrored in JsDreamSummary + `dream_summary_to_js`, alongside the
+# dream-v2 §D3 fields `aliases_resolved` / `canonicalization_merges` /
+# `consistency_check_corrected`. Their "deferred to v0.2.0" [[skip]] entries were
+# REMOVED here so parity-skip.toml does not lie about the current surface
+# (Quinn Phase 4 MED). JsDreamSummary now mirrors the substrate struct 1:1.
 
 # ── Phase C v0.1.1 dream scheduler surface (ADR-006 / sprint plan §Phase C C9-C11) ──
 #

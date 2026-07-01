@@ -121,18 +121,22 @@ pub struct WithEmb;
 /// Summary returned when a dream phase completes via the facade.
 ///
 /// **Real fields (populated by `mem.dream()`):**
-/// - `types_discovered` — entity types proposed and accepted by Dream Pass 0.
-/// - `entities_reclassified` — entities reclassified by Dream Pass 2.
+/// - `types_discovered` — entity types proposed and accepted by Pass 0 type-discovery.
+/// - `entities_reclassified` — entities reclassified by the reclassify pass.
+/// - `aliases_resolved` — pending potential-alias facts resolved (merged/revoked).
+/// - `canonicalization_merges` — near-duplicate entities merged by canonicalize.
+/// - `consistency_check_corrected` — entity types corrected by consistency_check.
 /// - `duration_ms` — wall-clock time of the dream call.
-/// - `warnings` — non-fatal notices from either pass.
+/// - `warnings` — non-fatal notices from any pass.
 ///
-/// **Honest-zero fields (Phase-3 consolidation not yet implemented):**
+/// **Honest-zero fields (graph consolidation not yet implemented):**
 /// - `communities_updated`, `cross_episode_merges`, `supersessions_recorded`,
-///   `facts_archived` — always 0 until Phase-3 consolidation ships
-///   (see ADR-007 retirement, `adr-mem-dream-canonical-supersede-f01-2026-06-22`).
+///   `facts_archived` — always 0 until consolidation ships
+///   (see F-01 retirement, `adr-mem-dream-canonical-supersede-f01-2026-06-22`).
 ///
-/// ADR-037 §3 D6: `types_discovered` + `warnings` added for Dream Pass 0.
-/// ADR-046 Option E E8: `entities_reclassified` added for Dream Pass 2.
+/// Fields wired across ADR-037 §3 D6 (types_discovered/warnings), ADR-046 Option E
+/// E8 (entities_reclassified), and dream-phase-reconciliation-v2 §D3
+/// (aliases_resolved, canonicalization_merges, consistency_check_corrected).
 #[derive(Debug, Clone)]
 pub struct DreamSummary {
     pub communities_updated: usize,
@@ -146,6 +150,15 @@ pub struct DreamSummary {
     /// Total entities reclassified by Dream Pass 2 (catch_all_cascade + low_confidence arms).
     /// Zero when Pass 2 was not run or found no candidates.
     pub entities_reclassified: usize,
+    /// Pending `potential_alias` facts resolved (merged or revoked) by the aliases
+    /// pass (§D3). Zero when the pass was not run or found no pending alias facts.
+    pub aliases_resolved: usize,
+    /// Near-duplicate entities merged by the canonicalize pass (§D3). Zero when the
+    /// pass was not run or found no merges above `L5_CANONICALIZATION_THRESHOLD`.
+    pub canonicalization_merges: usize,
+    /// Entity types corrected by the consistency_check pass (ADR-047, §D3). Zero
+    /// when opted out (`include_consistency_check = false`) or nothing to correct.
+    pub consistency_check_corrected: usize,
     /// Warnings emitted during the dream phase.
     /// Includes degraded-mode notices (e.g. anti-redundancy gate skipped).
     pub warnings: Vec<String>,
@@ -161,6 +174,9 @@ impl From<DreamPhaseResult> for DreamSummary {
             duration_ms: r.duration_ms,
             types_discovered: r.types_discovered,
             entities_reclassified: 0,
+            aliases_resolved: 0,
+            canonicalization_merges: 0,
+            consistency_check_corrected: 0,
             warnings: r.dream_warnings,
         }
     }
@@ -178,6 +194,9 @@ impl From<crate::core::ingest::DreamPassSummary> for DreamSummary {
             duration_ms: s.duration_ms,
             types_discovered: Vec::new(),
             entities_reclassified: s.entities_reclassified,
+            aliases_resolved: 0,
+            canonicalization_merges: 0,
+            consistency_check_corrected: 0,
             warnings: Vec::new(),
         }
     }

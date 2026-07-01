@@ -341,11 +341,22 @@ pub struct JsEpisode {
     pub content_hash: Option<String>,
 }
 
+/// A new entity type proposed + accepted by Dream Pass 0 type-discovery.
+/// Mirrors substrate `kremory::core::dream::TypeProposal`.
+#[napi(object, js_name = "TypeProposal")]
+pub struct JsTypeProposal {
+    pub name: String,
+    pub description: String,
+    pub justification: String,
+}
+
 /// Summary returned by `Memory.dream`.
 ///
-/// Field names mirror the substrate `DreamSummary` struct exactly.
-/// All numeric fields are safe to represent as JS `number` (f64) since they
-/// are `usize`/`u64` values far below 2^53 at practical memory scale.
+/// Field names mirror the substrate `DreamSummary` struct exactly. The
+/// honest-zero consolidation fields (`communities_updated`, `cross_episode_merges`,
+/// `supersessions_recorded`, `facts_archived`) are always 0 until graph
+/// consolidation ships (F-01). All numeric fields are safe as JS `number` (f64) —
+/// usize/u64 values far below 2^53 at practical memory scale.
 #[napi(object, js_name = "DreamSummary")]
 pub struct JsDreamSummary {
     pub communities_updated: f64,
@@ -353,6 +364,12 @@ pub struct JsDreamSummary {
     pub supersessions_recorded: f64,
     pub facts_archived: f64,
     pub duration_ms: f64,
+    pub types_discovered: Vec<JsTypeProposal>,
+    pub entities_reclassified: f64,
+    pub aliases_resolved: f64,
+    pub canonicalization_merges: f64,
+    pub consistency_check_corrected: f64,
+    pub warnings: Vec<String>,
 }
 
 /// Options for `JsMemory.dream`. All fields are optional.
@@ -590,6 +607,20 @@ pub fn dream_summary_to_js(s: DreamSummary) -> JsDreamSummary {
         supersessions_recorded: s.supersessions_recorded as f64,
         facts_archived: s.facts_archived as f64,
         duration_ms: s.duration_ms as f64,
+        types_discovered: s
+            .types_discovered
+            .into_iter()
+            .map(|t| JsTypeProposal {
+                name: t.name,
+                description: t.description,
+                justification: t.justification,
+            })
+            .collect(),
+        entities_reclassified: s.entities_reclassified as f64,
+        aliases_resolved: s.aliases_resolved as f64,
+        canonicalization_merges: s.canonicalization_merges as f64,
+        consistency_check_corrected: s.consistency_check_corrected as f64,
+        warnings: s.warnings,
     }
 }
 

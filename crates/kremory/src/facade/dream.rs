@@ -364,6 +364,9 @@ impl<'a> DreamRequest<'a> {
         // counts accumulated in locals above are folded in here (§SCOPE-001).
         let mut summary = DreamSummary::from(result);
         summary.entities_reclassified = entities_reclassified;
+        summary.aliases_resolved = aliases_resolved;
+        summary.canonicalization_merges = canonicalization_merges;
+        summary.consistency_check_corrected = consistency_check_corrected;
         summary.duration_ms = dream_start.elapsed().as_millis() as u64;
         Ok(summary)
     }
