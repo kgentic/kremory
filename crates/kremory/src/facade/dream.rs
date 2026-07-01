@@ -105,6 +105,13 @@ impl<'a> DreamRequest<'a> {
         // making every pass ordered after it unreachable — the root cause of
         // "mem.dream() runs only 2 of the 5 designed passes".
         let mut entities_reclassified: usize = 0;
+        // Phase 2 (§D3) deterministic-pass accumulators — consumed by per-pass
+        // counters below. Phase 4 folds these into DreamSummary as pub fields;
+        // that schema change MUST re-run the napi parity gate (readiness R-05)
+        // and also close the pre-existing JsDreamSummary gap for
+        // `types_discovered` + `entities_reclassified`.
+        let mut aliases_resolved: usize = 0;
+        let mut canonicalization_merges: usize = 0;
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
         let _ = sink;
@@ -176,6 +183,31 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
+        // Dream Pass — aliases (dream-phase-reconciliation-v2 §D3): resolve
+        // pending `potential_alias` facts (merge or revoke). Deterministic (no
+        // LLM). Ordered BEFORE reclassify so an entity about to be merged away
+        // is not reclassified first. Non-fatal: failure warns + continues.
+        if let Some(tg) = self.memory.temporal_graph.as_ref() {
+            let group_id = namespace_to_group_id(&ns);
+            match crate::core::disambiguation::resolve_pending_aliases(tg, &group_id).await {
+                Ok(n) => aliases_resolved = n,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "kremory::dream::aliases",
+                        error = %e,
+                        "Dream aliases pass failed — skipping; dream phase result unaffected"
+                    );
+                    result
+                        .dream_warnings
+                        .push(format!("Dream aliases pass failed: {e}"));
+                }
+            }
+            // Counter emitted inside the graph-present block so it reflects an
+            // actual pass run (not the degenerate no-temporal-graph path).
+            metrics::counter!("kremory.dream.aliases_resolved_total")
+                .increment(aliases_resolved as u64);
+        }
+
         // ADR-046 Option E — Dream Pass 2: reclassify.
         // Runs AFTER Pass 0 so newly discovered types (from Pass 0) are available in
         // the entity type registry for the reclassify LLM prompt.
@@ -244,6 +276,37 @@ impl<'a> DreamRequest<'a> {
                     }
                 }
             }
+        }
+
+        // Dream Pass — canonicalize (dream-phase-reconciliation-v2 §D3): merge
+        // near-duplicate surface forms by embedding similarity above
+        // L5_CANONICALIZATION_THRESHOLD. Deterministic (no LLM). Ordered LAST so
+        // merges benefit from the corrected type distribution. Non-fatal.
+        if let Some(tg) = self.memory.temporal_graph.as_ref() {
+            let group_id = namespace_to_group_id(&ns);
+            match crate::core::canonicalization::canonicalize_surface_forms(
+                tg,
+                &group_id,
+                crate::core::canonicalization::L5_CANONICALIZATION_THRESHOLD,
+            )
+            .await
+            {
+                Ok(report) => canonicalization_merges = report.merges_applied,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "kremory::dream::canonicalize",
+                        error = %e,
+                        "Dream canonicalize pass failed — skipping; dream phase result unaffected"
+                    );
+                    result
+                        .dream_warnings
+                        .push(format!("Dream canonicalize pass failed: {e}"));
+                }
+            }
+            // Counter emitted inside the graph-present block so it reflects an
+            // actual pass run (not the degenerate no-temporal-graph path).
+            metrics::counter!("kremory.dream.canonicalization_merges_total")
+                .increment(canonicalization_merges as u64);
         }
 
         // SCOPE-001 restructure gate (dream-phase-reconciliation-v2 Phase 1):
