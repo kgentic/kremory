@@ -192,6 +192,7 @@ async fn e1_catch_all_arm_includes_zero_type_id_only() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -253,6 +254,7 @@ async fn e1_low_confidence_arm_selects_phase1ner_below_threshold() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -296,6 +298,7 @@ async fn e3_high_confidence_stamps_dreampass1() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -331,6 +334,7 @@ async fn e3_low_confidence_preserves_source_tier() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -369,6 +373,7 @@ async fn e4_entity_id_preserved_after_reclassify() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -414,6 +419,7 @@ async fn e5_dreampass1_excluded_from_next_cycle() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -439,6 +445,7 @@ async fn e5_dreampass1_excluded_from_next_cycle() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -485,6 +492,7 @@ async fn e6_idempotent_two_runs_converge() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -500,6 +508,7 @@ async fn e6_idempotent_two_runs_converge() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -635,6 +644,7 @@ async fn e9_observability_counters_fire() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,
@@ -706,6 +716,7 @@ async fn e9_parse_fail_counter_fires_on_garbage_response() {
         ReclassifyParams {
             conn: &graph.conn,
             group_id: "test-group",
+            model_id: "test-model",
             opts: kremory::core::dream::reclassify::ReclassifyOpts {
                 confidence_threshold: 0.5,
                 high_conf_threshold: 0.7,

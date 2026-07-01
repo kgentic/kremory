@@ -1,4 +1,11 @@
-#![cfg(feature = "test-utils")]
+// TD-094 fix (2026-07-01): gate the WHOLE file on `llm-integration`, not just
+// `test-utils`. The only test lane + `mod helpers` are `#[cfg(feature =
+// "llm-integration")]`, so under the default gate (dev-dep force-enables
+// `test-utils` but NOT `llm-integration`) the file-scope helpers had no callers
+// → `-D warnings` dead-code failure. There is no test-utils-only content here
+// and the run command already requires BOTH features, so requiring both at the
+// file level is the cause-fix (not a symptom-level `#[allow(dead_code)]`).
+#![cfg(all(feature = "test-utils", feature = "llm-integration"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Real-LLM validation of the reconciled dream pass chain — 5-lane fixture.
 //!
@@ -21,15 +28,30 @@
 //! NOT naively re-gate on `llm-smoke` without recording a cassette first (it
 //! would fail wherever Ollama is absent).
 //!
-//! ⚠️ CURRENT STATUS (2026-07-01): RED on the 3 LLM lanes (type_discovery,
-//! reclassify, consistency_check) — they run with an EMPTY model string and
-//! produce zero output. Root cause = TD-094 (the "Option-1 2026-06-23" refactor
-//! left dream model-threading half-built: discover_types + reclassify hardcode
-//! `model_str = String::new()`, consistency_check gets `verify_model_override:
-//! None`). The 2 DETERMINISTIC lanes (aliases, canonicalize) PASS. This test is
-//! the REGRESSION GUARD for TD-094 and goes GREEN when it is fixed. It is
-//! `#[ignore]` so it does not affect the default gate. Do NOT loosen the
-//! assertions to force a pass — the red is the whole point.
+//! ⚠️ STATUS (2026-07-01, post TD-094 fix): TD-094 (dream model-threading) is
+//! FIXED. The passes no longer run with an empty model string: `with_model_id`
+//! is now threaded through `dream_model_id_or_main` into all 3 LLM passes (and
+//! `verify_model_override` for consistency_check). Proof the fix works, observed
+//! live against `gemma4:e4b`: `kremory.dream.types_proposed_total` went 0 (empty
+//! model → PromptOnly → zero proposals emitted) → 3 (real model → LLM invoked →
+//! proposals emitted); consistency_check + reclassify now engage and retype
+//! entities. The test wires `.with_model_id(chat_model)` accordingly.
+//!
+//! ⚠️ WHY THIS TEST IS STILL FLAKY (and NOT a TD-094 regression): each LLM lane
+//! asserts `>= 1` on the output of an INDEPENDENT, stochastic real-LLM pass.
+//! Observed across runs: reclassify 0↔9, consistency_corrected 0↔1, and
+//! type_discovery proposes 3 but the shape validator rejects all 3 (gemma4:e4b
+//! emits placeholder-ish type names — `types_proposed=3, types_rejected=3,
+//! types_accepted=0`). So on any given live run one or more lanes may yield 0
+//! and the test goes RED — this is real-LLM variance, not the model-threading
+//! bug. Deterministic all-green REQUIRES the TD-093 VCR cassette (record once,
+//! replay offline). Two open follow-ups gate a reliably-green E2E:
+//!   • TD-093 — record a KREMORY_VCR cassette → tier-2, deterministic.
+//!   • TD-095 — Lane A discovery-quality: gemma4:e4b proposals fail the shape
+//!     validator (validator too strict for real model output, OR needs a
+//!     higher-tier discovery model). Root-cause before asserting Lane A live.
+//! Do NOT loosen the assertions to force a pass — cause-fix TD-093/TD-095.
+//! `#[ignore]` + `cfg(llm-integration)` keep this off the default gate.
 
 use std::sync::Arc;
 
@@ -204,6 +226,14 @@ async fn dream_e2e_real_llm_five_pass_chain() {
     let ns = Namespace::new("dream-e2e-5pass");
     let mem = Memory::open(dir.path().join("dream_e2e.db"))
         .with_llm(llm as Arc<dyn ChatProvider>)
+        // TD-094: declare the concrete model id so the dream LLM passes reach the
+        // provider-native / FormatSchema capability arm instead of the empty-model
+        // → PromptOnly degrade. kremory cannot read the provider's internal model
+        // (Option-1 2026-06-23 removed `llm.model()` reads); the consumer supplies
+        // it. This single-provider path exercises the main-model → dream fallback
+        // (`with_model_id` → `dream_model_id_or_main`); the dedicated-dream-model
+        // override path is unit-tested in facade::dream_llm_slot_tests.
+        .with_model_id(chat_model.clone())
         .with_embedder(emb.clone())
         .embedding_dim(768)
         .default_namespace(ns.clone())

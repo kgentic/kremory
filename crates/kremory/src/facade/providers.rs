@@ -630,6 +630,12 @@ async fn build_memory_with_model(
         // chain exposes. `None` → dream falls back to the main provider,
         // byte-for-byte unchanged behaviour (TD-052b §2.3a).
         dream_llm: None,
+        // TD-094: Tier-1 shortcuts know the concrete model string, so thread it
+        // to the dream passes for capability detection. `dream_model_id` stays
+        // `None` — a dedicated dream model is a two-provider `MemoryBuilder`-only
+        // configuration; here dream falls back to this `model_id`.
+        model_id: model.map(str::to_owned),
+        dream_model_id: None,
         embedder,
         default_sink: None,
         default_namespace: None,
