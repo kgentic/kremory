@@ -6,10 +6,13 @@
 //! mode-gating — specifically that `DreamMode::Light` skips community,
 //! distillation, and supersession passes and only runs archive.
 //!
-//! These tests fail until B.1 GREEN adds:
-//! - `DreamMode` enum to `kremory::memory::types`
-//! - `kremory::memory::dream_phase` module with `PassDef` + `PASSES` table
-//! - `DreamOpts::mode` field (default = `DreamMode::Full`)
+//! Shape test for the CONSOLIDATION (sub-phase 2) pass-table scaffolding —
+//! `DreamMode` + `PassDef` + `PASSES` in `kremory::memory::dream_phase`. These
+//! describe the UNBUILT consolidation passes (community/distillation/
+//! supersession/archive) and are DORMANT: no production code reads them, and
+//! there is intentionally NO `DreamOpts::mode` field — reconciliation uses the
+//! per-pass `DreamOpts` knobs (`include_type_discovery`, `include_consistency_check`),
+//! not `DreamMode`. See `.ai-docs/architecture/dream-phase-two-sub-phases-2026-07-01.md`.
 
 use kremory::memory::{
     dream_phase::{PassDef, PASSES},
