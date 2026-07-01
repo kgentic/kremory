@@ -133,7 +133,14 @@ async fn dream_resolves_planted_potential_alias() {
     .expect("plant potential_alias fact");
 
     // Run the full dream pass chain.
-    mem.dream().await.expect("dream must succeed");
+    let summary = mem.dream().await.expect("dream must succeed");
+
+    // Phase 4: the DreamSummary surfaces the resolved count (accumulator → fold).
+    assert!(
+        summary.aliases_resolved >= 1,
+        "DreamSummary.aliases_resolved must be populated; got {}",
+        summary.aliases_resolved,
+    );
 
     // The aliases pass must have run AND resolved the confirmed alias (≥ 1).
     let snapshot = snapshotter.snapshot().into_vec();
@@ -192,7 +199,14 @@ async fn dream_merges_near_duplicate_entities() {
     .await;
     plant_entity(&graph, "alice j", &gid, "Alice.").await;
 
-    mem.dream().await.expect("dream must succeed");
+    let summary = mem.dream().await.expect("dream must succeed");
+
+    // Phase 4: the DreamSummary surfaces the merge count (accumulator → fold).
+    assert!(
+        summary.canonicalization_merges >= 1,
+        "DreamSummary.canonicalization_merges must be populated; got {}",
+        summary.canonicalization_merges,
+    );
 
     // Counter proof: canonicalize ran and applied ≥ 1 merge.
     let snapshot = snapshotter.snapshot().into_vec();
