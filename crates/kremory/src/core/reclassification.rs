@@ -24,25 +24,21 @@
 //! - `{outcome=skipped, reason=already_typed}` — no-op, entity had concrete type.
 //! - `{outcome=skipped, reason=insufficient_episodes}` — L7 throttled below threshold.
 //!
-//! Per-pass roll-up (emitted by [`run_dream_phase_passes`]):
-//!
-//! - `rql.dream.l7_pass_started_total` — counter, one increment per pass invocation.
-//! - `rql.dream.l7_eligible_entities_per_pass` — histogram, count of `entity_type_id=0`
-//!   candidates observed before the reclassify loop fires. Denominator for the
-//!   per-entity outcome counters.
-//!
 //! Cardinality: bounded — 4 outcome×reason combinations, no group_id labels.
 //!
 //! ## Dream-phase wiring
 //!
-//! Called from [`run_dream_phase_passes`] after alias resolution and before
-//! L5 canonicalization.  All three passes operate on the same `group_id` scope.
+//! [`reclassify_entity_type_in_dream_phase`] is the single-entity reclassify
+//! primitive. The live dream pass chain is orchestrated by the facade
+//! (`mem.dream()` → `facade::dream::execute_blocking`), which runs the canonical
+//! §D3 five-pass ordering directly. The former free-function orchestrator
+//! `run_dream_phase_passes` (and its `l7_pass_*` roll-up counters, which were
+//! only ever emitted from that never-wired orchestrator) was removed in the
+//! TD-094 Phase-6 cleanup (2026-07-01) — the facade path is the sole caller.
 
-use metrics::{counter, histogram};
+use metrics::counter;
 use tracing;
 
-use crate::core::canonicalization::{canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD};
-use crate::core::disambiguation::resolve_pending_aliases;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::error::Result;
 use crate::core::extraction::prompts::render_reclassify_prompt;
@@ -179,101 +175,6 @@ pub async fn reclassify_entity_type_in_dream_phase<L: ChatProvider>(
     );
 
     Ok(Some(validated))
-}
-
-// ─── Dream-phase report ───────────────────────────────────────────────────────
-
-/// Aggregated outcome of a single `run_dream_phase_passes` invocation.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DreamPhaseReport {
-    /// `group_id` that was processed.
-    pub group_id: String,
-    /// Number of `potential_alias` facts that were resolved (merged or revoked).
-    pub aliases_resolved: usize,
-    /// Number of entities reclassified from `entity_type_id=0` to a concrete type.
-    pub entities_reclassified: usize,
-    /// Number of entity merges performed by L5 canonicalization.
-    pub canonicalization_merges: usize,
-}
-
-// ─── Dream-phase orchestrator ─────────────────────────────────────────────────
-
-/// Bundled non-generic parameters for `run_dream_phase_passes`, args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). The generic `llm: &L` stays
-/// a lead positional argument.
-pub struct RunDreamPhasePassesParams<'a> {
-    /// The temporal graph the dream-phase passes operate on.
-    pub graph: &'a TemporalGraph,
-    /// The namespace to process.
-    pub group_id: &'a str,
-    /// Registry used by the reclassification pass.
-    pub registry: &'a EntityTypeRegistry,
-}
-
-/// Run the three L7 dream-phase passes for a single `group_id`.
-///
-/// Pass order:
-/// 1. [`resolve_pending_aliases`] — merge or revoke `potential_alias` facts.
-/// 2. [`reclassify_entity_type_in_dream_phase`] — promote `entity_type_id=0` entities.
-/// 3. [`canonicalize_surface_forms`] — merge near-duplicate entities by embedding sim.
-///
-/// ## Isolation
-///
-/// This free function does not interact with the memory-layer `GraphHandle` trait
-/// or the `graph_run_consolidation` path (which is F-01 LOCKED at `NotImplemented`).
-/// It operates directly on a `TemporalGraph` reference, keeping it testable without
-/// the full async `Engine` infrastructure.
-pub async fn run_dream_phase_passes<L: ChatProvider>(
-    llm: &L,
-    params: RunDreamPhasePassesParams<'_>,
-) -> Result<DreamPhaseReport> {
-    let RunDreamPhasePassesParams {
-        graph,
-        group_id,
-        registry,
-    } = params;
-    // Pass 1: resolve pending aliases.
-    let aliases_resolved = resolve_pending_aliases(graph, group_id).await?;
-
-    // Pass 2: reclassify untyped entities.
-    let episodes = graph.get_episodes_in_group(group_id).await?;
-    let entities = graph.list_entities_in_group(group_id).await?;
-
-    // Eligibility snapshot (TD-019 Gap 3 Tier C): denominator for per-entity outcomes.
-    // group_id intentionally NOT included as a label — unbounded cardinality.
-    let eligible_count = entities.iter().filter(|e| e.entity_type_id == 0).count();
-    counter!("rql.dream.l7_pass_started_total").increment(1);
-    histogram!("rql.dream.l7_eligible_entities_per_pass").record(eligible_count as f64);
-
-    let mut entities_reclassified = 0usize;
-    for entity in &entities {
-        if entity.entity_type_id == 0 {
-            let outcome = reclassify_entity_type_in_dream_phase(
-                llm,
-                ReclassifyEntityTypeParams {
-                    graph,
-                    entity,
-                    related_episodes: &episodes,
-                    registry,
-                },
-            )
-            .await?;
-            if outcome.is_some() {
-                entities_reclassified += 1;
-            }
-        }
-    }
-
-    // Pass 3: L5 canonicalization.
-    let canon_report =
-        canonicalize_surface_forms(graph, group_id, L5_CANONICALIZATION_THRESHOLD).await?;
-
-    Ok(DreamPhaseReport {
-        group_id: group_id.to_owned(),
-        aliases_resolved,
-        entities_reclassified,
-        canonicalization_merges: canon_report.merges_applied,
-    })
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -496,15 +397,5 @@ mod tests {
             unchanged.entity_type_id, 0,
             "entity_type_id must remain 0 when LLM returns invalid id"
         );
-    }
-
-    // ── T5: DreamPhaseReport default is all-zero ───────────────────────────────
-
-    #[test]
-    fn t5_dream_phase_report_default() {
-        let report = DreamPhaseReport::default();
-        assert_eq!(report.aliases_resolved, 0);
-        assert_eq!(report.entities_reclassified, 0);
-        assert_eq!(report.canonicalization_merges, 0);
     }
 }

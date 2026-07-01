@@ -330,6 +330,11 @@ reason = "Builder method (TD-052b): per-phase dream-pass model slot. Tier-2 buil
 revisit = "v0.2.0"
 
 [[skip]]
+symbol = "MemoryBuilder::with_dream_model_id"
+reason = "Builder method (TD-094): dedicated dream-pass model id, pairs with with_dream_llm as with_model_id pairs with with_llm. Tier-2 builder wiring deferred, same rationale as with_dream_llm + with_model_id (both skipped) — substrate-side capability-detection knob; JS binding lands with the broader builder surface."
+revisit = "v0.2.0"
+
+[[skip]]
 symbol = "MemoryBuilder::with_seed_registry"
 reason = "Builder method (seed-registry T1-T11): custom per-namespace entity-type seed. Tier-2 builder wiring deferred, same rationale as with_embedder; seed registries are configured substrate-side before the JS binding is constructed."
 revisit = "v0.2.0"

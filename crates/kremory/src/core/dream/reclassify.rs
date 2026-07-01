@@ -171,6 +171,11 @@ pub struct ReclassifyParams<'a> {
     pub conn: &'a libsql::Connection,
     pub group_id: &'a str,
     pub opts: ReclassifyOpts,
+    /// Concrete model id for capability detection (TD-094). Threaded from the
+    /// facade dream path (`dream_model_id_or_main`). Empty (`""`) → `PromptOnly`
+    /// degrade. Before TD-094 this was hardcoded to `String::new()`, silently
+    /// degrading every reclassify call to zero structured output.
+    pub model_id: &'a str,
 }
 
 /// Reclassify entities matching the two-arm SELECT for `group_id`.
@@ -185,6 +190,7 @@ pub async fn reclassify<L: ChatProvider>(
         conn,
         group_id,
         opts,
+        model_id,
     } = params;
     let confidence_threshold = opts.confidence_threshold;
     let high_conf_threshold = opts.high_conf_threshold;
@@ -228,13 +234,12 @@ pub async fn reclassify<L: ChatProvider>(
 
     let registry =
         crate::core::entity_types::EntityTypeRegistry::load_for_group(conn, group_id).await?;
-    // Option-1 (2026-06-23): the dream path no longer reads `llm.model()`.
-    // Capability detection for this call falls to PromptOnly + the LlmJsonRepair
-    // ladder (safe for all providers; quality models still parse). A dedicated
-    // dream model id (`with_dream_model_id`) that threads the real model — and
-    // enables cross-family dream configs — is a tracked follow-up (see the
-    // Option-1 integration-points doc). `llm` itself is still used for the call.
-    let model_str = String::new();
+    // TD-094: the consumer-supplied model id (Option-1, 2026-06-23) now reaches
+    // this pass via `ReclassifyParams.model_id`, threaded from the facade dream
+    // path (`with_dream_model_id` / `with_model_id` → `dream_model_id_or_main`).
+    // Empty → `PromptOnly` degrade; a populated id drives provider-native /
+    // FormatSchema capability detection. `llm` itself is still used for the call.
+    let model_str = model_id.to_string();
 
     // ── Step 4: Build JSON schema ─────────────────────────────────────────────
 
@@ -799,6 +804,7 @@ pub async fn reclassify_all_groups<L: ChatProvider>(
                 conn,
                 group_id: gid,
                 opts,
+                model_id: "test-model",
             },
         )
         .await

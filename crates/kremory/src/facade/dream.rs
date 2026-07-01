@@ -97,6 +97,13 @@ impl<'a> DreamRequest<'a> {
             "dream",
             "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
         )?;
+        // TD-094: resolve the model id the dream LLM passes use for capability
+        // detection — the dedicated `with_dream_model_id` string when set, else
+        // the main `with_model_id` string, else "" (→ PromptOnly degrade). This
+        // is the missing half of the Option-1 (2026-06-23) refactor: the passes
+        // were made to take a consumer-supplied model id, but the facade never
+        // threaded one, silently degrading every LLM pass to zero output.
+        let dream_model_id = self.memory.dream_model_id_or_main().unwrap_or_default();
         let dream_start = std::time::Instant::now();
         let mut result = memory::DreamPhaseResult::default();
         // SCOPE-001 (dream-phase-reconciliation-v2 Phase 1): accumulate per-pass
@@ -162,6 +169,8 @@ impl<'a> DreamRequest<'a> {
                         group_id: &group_id,
                         embedder: embedder_ref,
                         max_proposals: pass0_max,
+                        // TD-094: thread the resolved dream model id for capability detection.
+                        model_id: dream_model_id,
                     },
                 )
                 .await
@@ -252,6 +261,8 @@ impl<'a> DreamRequest<'a> {
                         conn: &tg.conn,
                         group_id: &group_id,
                         opts: pass2_opts,
+                        // TD-094: thread the resolved dream model id for capability detection.
+                        model_id: dream_model_id,
                     },
                 )
                 .await
@@ -296,7 +307,14 @@ impl<'a> DreamRequest<'a> {
                     crate::core::dream::consistency_check::RunConsistencyCheckParams {
                         embedder: self.memory.embedder.as_ref(),
                         llm: llm.as_ref(),
-                        opts: crate::core::dream::consistency_check::ConsistencyCheckOpts::default(),
+                        opts: crate::core::dream::consistency_check::ConsistencyCheckOpts {
+                            // TD-094: thread the resolved dream model id as the
+                            // verify model. `None` when unknown → verify.rs
+                            // degrades to PromptOnly (unchanged from before).
+                            verify_model_override: (!dream_model_id.is_empty())
+                                .then(|| dream_model_id.to_string()),
+                            ..Default::default()
+                        },
                     },
                 )
                 .await

@@ -102,6 +102,11 @@ pub(crate) struct DiscoverTypesParams<'a> {
     pub(crate) group_id: &'a str,
     pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
     pub(crate) max_proposals: usize,
+    /// Concrete model id for capability detection (TD-094). Threaded from the
+    /// facade dream path (`dream_model_id_or_main`). Empty (`""`) → `PromptOnly`
+    /// degrade — the correct behaviour when the model is unknown. Before TD-094
+    /// this was hardcoded to `String::new()`, silently degrading every call.
+    pub(crate) model_id: &'a str,
 }
 
 /// Discover new entity types from catch-all entities in `group_id`.
@@ -116,6 +121,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
         group_id,
         embedder,
         max_proposals,
+        model_id,
     } = params;
     let mut result = DiscoveryResult::default();
 
@@ -148,13 +154,12 @@ pub(crate) async fn discover_types<L: ChatProvider>(
     // ── Step 3: Load existing registry for anti-redundancy gate ──────────────
 
     let registry = EntityTypeRegistry::load_for_group(conn, group_id).await?;
-    // Option-1 (2026-06-23): the dream path no longer reads `llm.model()`.
-    // Capability detection for this call falls to PromptOnly + the LlmJsonRepair
-    // ladder (safe for all providers; quality models still parse). A dedicated
-    // dream model id (`with_dream_model_id`) that threads the real model — and
-    // enables cross-family dream configs — is a tracked follow-up (see the
-    // Option-1 integration-points doc). `llm` itself is still used for the call.
-    let model_str = String::new();
+    // TD-094: the consumer-supplied model id (Option-1, 2026-06-23) now reaches
+    // this pass via `DiscoverTypesParams.model_id`, threaded from the facade
+    // dream path (`with_dream_model_id` / `with_model_id` → `dream_model_id_or_main`).
+    // Empty → `PromptOnly` degrade (correct when the model is unknown); a
+    // populated id drives provider-native / FormatSchema capability detection.
+    let model_str = model_id.to_string();
 
     // ── Step 4: Anti-redundancy embeddings (degraded mode check) ─────────────
 
@@ -1061,6 +1066,7 @@ mod td050_full_workflow_tests {
                 group_id: "legal",
                 embedder: None,
                 max_proposals: 3,
+                model_id: "test-model",
             },
         )
         .await
@@ -1172,6 +1178,7 @@ mod td050_full_workflow_tests {
                 group_id: "med",
                 embedder: None,
                 max_proposals: 3,
+                model_id: "test-model",
             },
         )
         .await
@@ -1354,6 +1361,7 @@ mod td050_real_llm_tests {
                 group_id: "med",
                 embedder: None,
                 max_proposals: 3,
+                model_id: "test-model",
             },
         )
         .await

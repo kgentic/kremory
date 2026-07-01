@@ -39,6 +39,12 @@ pub struct MemoryBuilder<L, E> {
     /// re-uses the `with_llm` provider. Threaded unchanged across every
     /// type-state transition. Does NOT change type-state.
     dream_llm: Option<Arc<dyn ChatProvider>>,
+    /// Optional dedicated dream-phase model id (TD-094). Pairs with `dream_llm`
+    /// as `model_id` pairs with `llm`: a dedicated dream provider usually reports
+    /// a different model string, and capability detection needs the right one.
+    /// `None` (default) → dream falls back to `model_id`. Threaded unchanged
+    /// across every type-state transition. Does NOT change type-state.
+    dream_model_id: Option<String>,
     embedder: Option<Arc<dyn DynEmbeddingProvider>>,
     default_sink: Option<Arc<dyn EnrichmentEventSink>>,
     default_namespace: Option<Namespace>,
@@ -330,6 +336,40 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Set the concrete model id used by the dream phase's LLM passes for
+    /// capability detection (TD-094). Pairs with [`with_dream_llm`](Self::with_dream_llm):
+    /// when a dedicated dream provider is wired, its model string usually
+    /// differs from the interactive model, so the dream passes need their own
+    /// id to select the right structured-output strategy.
+    ///
+    /// Left unset, the dream passes fall back to the main
+    /// [`with_model_id`](Self::with_model_id) string (and, absent that, degrade
+    /// to `PromptOnly` — exactly as the interactive path does when the model is
+    /// unknown). Threaded unchanged across every type-state transition.
+    ///
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # async fn ex(
+    /// #     main: Arc<dyn kremory::memory::ChatProvider>,
+    /// #     dream: Arc<dyn kremory::memory::ChatProvider>,
+    /// #     embedder: Arc<dyn kremory::DynEmbeddingProvider>,
+    /// # ) -> kremory::memory::Result<()> {
+    /// let memory = kremory::Memory::open(":memory:")
+    ///     .with_llm(main)
+    ///     .with_model_id("qwen2.5:7b")
+    ///     .with_dream_llm(dream)
+    ///     .with_dream_model_id("gemma4:e4b")
+    ///     .with_embedder(embedder)
+    ///     .await?;
+    /// # let _ = memory;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_dream_model_id(mut self, model: impl Into<String>) -> Self {
+        self.dream_model_id = Some(model.into());
+        self
+    }
+
     /// Seed the DEFAULT namespace's entity-type registry at open time
     /// (spec custom-entity-type-registry §5.2.3).
     ///
@@ -461,6 +501,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             llm: None,
             model_id: None,
             dream_llm: None,
+            dream_model_id: None,
             embedder: None,
             default_sink: None,
             default_namespace: None,
@@ -492,6 +533,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             // prior `.with_model_id(…)`. Unset → capability detection → PromptOnly.
             model_id: self.model_id,
             dream_llm: self.dream_llm,
+            dream_model_id: self.dream_model_id,
             embedder: self.embedder,
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -568,6 +610,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             llm: Some(Arc::new(tracked) as Arc<dyn ChatProvider>),
             model_id,
             dream_llm: self.dream_llm,
+            dream_model_id: self.dream_model_id,
             embedder: self.embedder,
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -599,6 +642,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             llm: self.llm,
             model_id: self.model_id,
             dream_llm: self.dream_llm,
+            dream_model_id: self.dream_model_id,
             embedder: Some(emb),
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -635,6 +679,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             llm: self.llm,
             model_id: self.model_id,
             dream_llm: self.dream_llm,
+            dream_model_id: self.dream_model_id,
             embedder: Some(emb),
             default_sink: self.default_sink,
             default_namespace: self.default_namespace,
@@ -1040,6 +1085,8 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                 graph,
                 llm: Some(llm),
                 dream_llm: self.dream_llm,
+                model_id: self.model_id,
+                dream_model_id: self.dream_model_id,
                 embedder,
                 default_sink: self.default_sink,
                 default_namespace: self.default_namespace,
@@ -1130,6 +1177,8 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                 graph,
                 llm: None,
                 dream_llm: self.dream_llm,
+                model_id: self.model_id,
+                dream_model_id: self.dream_model_id,
                 embedder,
                 default_sink: self.default_sink,
                 default_namespace: self.default_namespace,

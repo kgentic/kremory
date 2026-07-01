@@ -274,6 +274,20 @@ pub struct Memory {
     /// Optional dedicated dream-phase LLM (TD-052b). `Some` → `dream()` uses it;
     /// `None` → dream falls back to `self.llm` via `dream_llm_or_main`.
     pub(crate) dream_llm: Option<Arc<dyn ChatProvider>>,
+    /// Concrete model id for the MAIN chat provider (`with_model_id` / Tier-1
+    /// shortcut). Threaded into the dream LLM passes for capability detection
+    /// (empty → `PromptOnly` degrade). `None` when the provider was wired via
+    /// raw `with_llm` without a model id — dream then degrades exactly as the
+    /// interactive path does. TD-094: previously baked only into the ingest
+    /// pipeline, never reaching the dream facade — the root cause of the
+    /// silent empty-model → zero-output degrade in the LLM dream passes.
+    pub(crate) model_id: Option<String>,
+    /// Optional dedicated dream-phase model id (`with_dream_model_id`). Pairs
+    /// with `dream_llm` the way `model_id` pairs with `llm`: when a dedicated
+    /// dream *provider* is set, its model *string* usually differs from the
+    /// interactive model, so capability detection needs its own id. `None` →
+    /// dream falls back to `model_id` via `dream_model_id_or_main` (TD-094).
+    pub(crate) dream_model_id: Option<String>,
     /// Embedding provider — read by the dream/disambiguation paths
     /// (`facade/dream.rs` passes `self.memory.embedder.as_ref()` into the
     /// dream pass). TD-043: field is live, `#[allow(dead_code)]` removed.
@@ -1235,6 +1249,25 @@ impl Memory {
         }
     }
 
+    /// Return the model id the dream phase should thread into its LLM passes for
+    /// capability detection: the dedicated `with_dream_model_id` string when set,
+    /// else the main `with_model_id` string, else `None`.
+    ///
+    /// Mirrors [`dream_llm_or_main`](Self::dream_llm_or_main) at the model-id
+    /// layer: `dream_model_id` pairs with `dream_llm` the way `model_id` pairs
+    /// with `llm`. `None` (raw `with_llm` without a model id) means the dream
+    /// passes degrade to `PromptOnly` exactly as the interactive path does —
+    /// no worse than before, and the correct behaviour when the model is unknown.
+    ///
+    /// TD-094: before this resolver, the facade dream path hardcoded an empty
+    /// model string in every LLM pass, silently degrading every configuration
+    /// (even a fully-specified `with_model_id`) to zero structured output.
+    pub(crate) fn dream_model_id_or_main(&self) -> Option<&str> {
+        self.dream_model_id
+            .as_deref()
+            .or(self.model_id.as_deref())
+    }
+
     /// Return the wired LLM, or a no-op stub when no LLM was configured.
     ///
     /// Used by Category A methods (remember, remember_batch) that pass a
@@ -1480,6 +1513,56 @@ mod dream_llm_slot_tests {
         assert!(
             !Arc::ptr_eq(&selected, &main),
             "dream_llm_or_main must NOT return the main provider when dream_llm is set"
+        );
+    }
+
+    /// TD-094 — `dream_model_id_or_main` resolves the model id the dream LLM
+    /// passes use for capability detection. Mirrors `dream_llm_or_main` at the
+    /// model-id layer: dedicated `with_dream_model_id` wins; else `with_model_id`;
+    /// else `None` (→ `PromptOnly` degrade). Regression guard for the empty-model
+    /// bug where dream passes silently degraded to zero structured output.
+    #[tokio::test]
+    async fn td094_dream_model_id_resolution() {
+        let (main, _) = CountingProvider::new();
+        let main: Arc<dyn ChatProvider> = main;
+
+        // Case 1: only with_model_id → dream falls back to the main model id.
+        let mem = Memory::open(":memory:")
+            .with_llm(Arc::clone(&main))
+            .with_model_id("main-model")
+            .with_embedder(null_embedder())
+            .await
+            .expect("build with model_id");
+        assert_eq!(
+            mem.dream_model_id_or_main(),
+            Some("main-model"),
+            "dream must fall back to the main model id when no dream model id is set"
+        );
+
+        // Case 2: with_dream_model_id takes precedence over with_model_id.
+        let mem = Memory::open(":memory:")
+            .with_llm(Arc::clone(&main))
+            .with_model_id("main-model")
+            .with_dream_model_id("dream-model")
+            .with_embedder(null_embedder())
+            .await
+            .expect("build with dream_model_id");
+        assert_eq!(
+            mem.dream_model_id_or_main(),
+            Some("dream-model"),
+            "dedicated dream model id must take precedence over the main model id"
+        );
+
+        // Case 3: neither set (raw with_llm) → None → PromptOnly degrade, unchanged.
+        let mem = Memory::open(":memory:")
+            .with_llm(Arc::clone(&main))
+            .with_embedder(null_embedder())
+            .await
+            .expect("build without any model id");
+        assert_eq!(
+            mem.dream_model_id_or_main(),
+            None,
+            "unset model id must resolve to None (PromptOnly degrade), not an empty-string sentinel"
         );
     }
 
