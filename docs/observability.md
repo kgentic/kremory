@@ -339,4 +339,22 @@ Slow ingest sessions:
 - `crates/kremory/monitoring/provider-rates.toml` — bundled rates source of truth
 
 ---
+
+## Consumer notes
+
+**[RISK-003] Tracing subscriber requirement.** kremory is a library and installs NO
+tracing subscriber (ADR D2 — consumer owns the pipeline). To see operational signals
+(warn/info/debug events from kremory internals), install a `tracing_subscriber` in your
+binary or application at `WARN` level or below before calling any kremory API. With no
+subscriber registered these events are silently dropped — no `eprintln!` fallback, no
+stderr output. Minimal setup: `tracing_subscriber::fmt().with_max_level(tracing::Level::WARN).init();`
+
+**[ASMP-003] INFO volume.** kremory emits one unconditional `tracing::info!` event per
+LLM extraction call (`rql.extraction.structured_call_success`). With `RUST_LOG=info`
+that is one event per extraction round-trip. To suppress without losing WARN-level
+signals: set `RUST_LOG=kremory=warn` at runtime, or compile kremory with the
+`release_max_level_warn` feature for compile-time elimination of all INFO-and-below
+tracing events (zero runtime overhead).
+
+---
 _Authored 2026-05-28 alongside v0.1.3 doc-vs-code parity backfill._

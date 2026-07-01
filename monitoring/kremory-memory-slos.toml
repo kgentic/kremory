@@ -87,7 +87,11 @@ severity    = "ticket"
 [[slo]]
 name        = "db_insert_fact_ms_p99"
 description = "DB fact insert p99 < 50ms over 5m"
-metric      = "rql.db.insert_fact_ms"
+# R4.3 audit 2026-06-30 (TD-085): reconciled to the real emit site. `insert_fact`
+# delegates to `insert_fact_with_group` (facts.rs:93 → :385), which records
+# `rql.db.insert_fact_with_group_ms`; the old `rql.db.insert_fact_ms` name had no
+# emit site anywhere in crates/kremory/src. SLO now tracks the emitted metric.
+metric      = "rql.db.insert_fact_with_group_ms"
 aggregation = "histogram_quantile(0.99, ...)"
 threshold   = 50      # ms
 window      = "5m"
