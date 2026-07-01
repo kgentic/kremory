@@ -369,6 +369,18 @@ impl Memory {
         self.temporal_graph.as_ref()
     }
 
+    /// Resolve a `Namespace` to the internal group-id string, so integration
+    /// tests can plant graph rows under the exact group `mem.dream()` operates
+    /// on for that namespace.
+    ///
+    /// Only available under `test` or `test-utils`. Not part of the stable
+    /// public API — external callers MUST NOT depend on the group-id string
+    /// layout (it is substrate detail; see `namespace_to_group_id`).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn group_id_for_test(&self, ns: &crate::Namespace) -> String {
+        crate::memory::engine_handle::namespace_to_group_id(ns)
+    }
+
     // ── Ingest ────────────────────────────────────────────────────────────────
 
     /// Ingest a memory episode.
