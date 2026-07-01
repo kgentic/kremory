@@ -99,6 +99,12 @@ impl<'a> DreamRequest<'a> {
         )?;
         let dream_start = std::time::Instant::now();
         let mut result = memory::DreamPhaseResult::default();
+        // SCOPE-001 (dream-phase-reconciliation-v2 Phase 1): accumulate per-pass
+        // counts in locals so the DreamSummary is built ONCE at the end of the
+        // pass chain. The reclassify pass previously early-returned on success,
+        // making every pass ordered after it unreachable — the root cause of
+        // "mem.dream() runs only 2 of the 5 designed passes".
+        let mut entities_reclassified: usize = 0;
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
         let _ = sink;
@@ -218,15 +224,12 @@ impl<'a> DreamRequest<'a> {
                 {
                     Ok(reclassify_result) => {
                         // Aggregate entities_reclassified into DreamSummary (E8).
-                        // DreamPhaseResult does not yet carry entities_reclassified;
-                        // we accumulate it separately and fold into DreamSummary after From.
-                        let reclassified = reclassify_result.entities_reclassified;
+                        // SCOPE-001 (dream-phase-reconciliation-v2 §D1/§D3): accumulate
+                        // into the local and FALL THROUGH — do NOT early-return. Passes
+                        // ordered after reclassify (consistency_check, canonicalize per
+                        // the D3 canonical ordering) dispatch below and must be reachable.
+                        entities_reclassified = reclassify_result.entities_reclassified;
                         result.dream_warnings.extend(reclassify_result.warnings);
-                        // Convert result → summary, then set reclassified count (E8) and timing.
-                        let mut summary = DreamSummary::from(result);
-                        summary.entities_reclassified = reclassified;
-                        summary.duration_ms = dream_start.elapsed().as_millis() as u64;
-                        return Ok(summary);
                     }
                     Err(e) => {
                         // Pass 2 failure is non-fatal — surface as warning, don't abort dream.
@@ -243,7 +246,19 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
+        // SCOPE-001 restructure gate (dream-phase-reconciliation-v2 Phase 1):
+        // reaching this point proves control flowed PAST the reclassify pass
+        // instead of early-returning inside its success arm. Passes wired in
+        // Phase 2-3 (consistency_check, canonicalize per §D3) dispatch between
+        // the reclassify block above and this line. This counter is the
+        // mechanical regression guard for the early-return trap
+        // (tests/dream_scope001_restructure.rs).
+        metrics::counter!("kremory.dream.passes_continued_past_reclassify_total").increment(1);
+
+        // Build the DreamSummary ONCE, at the end of the pass chain. Per-pass
+        // counts accumulated in locals above are folded in here (§SCOPE-001).
         let mut summary = DreamSummary::from(result);
+        summary.entities_reclassified = entities_reclassified;
         summary.duration_ms = dream_start.elapsed().as_millis() as u64;
         Ok(summary)
     }
