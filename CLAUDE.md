@@ -17,7 +17,9 @@
 - **Push + release-tag = irreversible HITL gate** — no autonomous push or tag; user confirms each. Clean fast-forward to `main` is the normal land path for hygiene commits.
 - **gah convention** — `.gahrc` present (work hours 9–17). Run gah before push to shift unpushed commits out-of-hours; it no-ops when commits are already OOH, and its scope is the unpushed range only (`origin/main..HEAD`). gah refuses on a dirty tree — untracked files from a parallel agent count as dirty (skip gah when already-OOH in that case).
 
-**Open backlog** — `.ai-docs/tech-debt/tech-debt-register.md` (living) is the SoT. Still open at last review: TD-013 (above); TD-043 / TD-045 god-file splits (`graph.rs`, `ingest/pipeline.rs` — PARTIAL, verify current LoC against the register before resuming); TD-005 / TD-012 / TD-016 / TD-029 / TD-030 / TD-032 / TD-034 (pre-existing deferrals); TD-H (RISK-001 multi-run mean±SD hardening). Verify any TD's status against the register + actual code before acting — register narrative can lag.
+**Open backlog** — `.ai-docs/tech-debt/tech-debt-register.md` (living) is the SoT. Still open at last review: TD-013 (above); TD-043 / TD-045 god-file splits (`graph.rs`, `ingest/pipeline.rs` — PARTIAL, verify current LoC against the register before resuming); TD-005 / TD-012 / TD-016 / TD-029 / TD-030 / TD-032 / TD-034 (pre-existing deferrals); TD-H (RISK-001 multi-run mean±SD hardening); **TD-086 / TD-087 (dream-phase gaps, 2026-06-30: `PASSES` static drift; reclassify has no recency sort / maturity gate — TD-087 carries an open product-UX decision).** Verify any TD's status against the register + actual code before acting — register narrative can lag.
+
+**Deferred feature (captured, not scheduled):** **ADR-059** (proposed, OOS) — consumer-directed dream + relationship-discovery query (the read/write seam: free-text steering safe only on the read/recall surface; write-side directed dream takes structured scope only). Route through `/ship-architect` + Vera if/when it goes in-scope.
 
 **In-flight adjacent work (other agent's lane — do NOT collide):**
 
