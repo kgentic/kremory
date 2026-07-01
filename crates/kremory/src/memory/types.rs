@@ -682,6 +682,15 @@ pub struct DreamOpts {
     /// to the LLM for new entity-type proposals.
     /// Set to `false` to skip type discovery on this dream cycle.
     pub include_type_discovery: bool,
+    /// Run Dream Pass consistency_check (ADR-047) — the LLM type-verification
+    /// pass. When `true` (default), typed entities are re-verified against the
+    /// registry and corrected. Set to `false` to skip this LLM-cost pass on this
+    /// dream cycle (the deterministic aliases + canonicalize passes still run).
+    ///
+    /// This is the per-pass cost lever, mirroring `include_type_discovery`. The
+    /// coarser Full/Light `DreamMode` gating is a separate concern deferred to
+    /// SCOPE-002 (Phase 5) — see `dream-phase-reconciliation-v2-2026-06-30` §D4.
+    pub include_consistency_check: bool,
     /// Maximum number of episodes processed per dream run.
     ///
     /// Caps both Dream Pass 0 (type discovery) and Dream Pass 2 (reclassify)
@@ -700,6 +709,7 @@ impl Default for DreamOpts {
         Self {
             since: None,
             include_type_discovery: true,
+            include_consistency_check: true,
             max_episodes_per_run: None,
         }
     }

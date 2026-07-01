@@ -112,6 +112,8 @@ impl<'a> DreamRequest<'a> {
         // `types_discovered` + `entities_reclassified`.
         let mut aliases_resolved: usize = 0;
         let mut canonicalization_merges: usize = 0;
+        // Phase 3 (§D3, ADR-047) consistency_check accumulator — Full-mode LLM pass.
+        let mut consistency_check_corrected: usize = 0;
         // Sink is accepted but dream events are fired by the graph impl internally.
         // The sink parameter is stored for future use when non-blocking dream fires events.
         let _ = sink;
@@ -275,6 +277,46 @@ impl<'a> DreamRequest<'a> {
                             .push(format!("Dream Pass 2 reclassify failed: {e}"));
                     }
                 }
+            }
+        }
+
+        // Dream Pass — consistency_check (dream-phase-reconciliation-v2 §D3,
+        // ADR-047): re-verify entity types (embed-prefilter → LLM verify).
+        // LLM-cost pass — gated by the per-pass opt-out `include_consistency_check`
+        // (default true; mirrors `include_type_discovery`). NOTE: this is the
+        // interim per-pass cost lever; the coarser Full/Light `DreamMode` gating
+        // (what `Light` should mean at the enum level) is the separate SCOPE-002
+        // concern deferred to Phase 5 — do NOT conflate the two. Ordered AFTER
+        // reclassify (correct the types reclassify just assigned) and BEFORE
+        // canonicalize (merges benefit from corrected types). Non-fatal.
+        if opts.include_consistency_check {
+            if let Some(tg) = self.memory.temporal_graph.as_ref() {
+                match crate::core::dream::consistency_check::run_consistency_check(
+                    &tg.conn,
+                    crate::core::dream::consistency_check::RunConsistencyCheckParams {
+                        embedder: self.memory.embedder.as_ref(),
+                        llm: llm.as_ref(),
+                        opts: crate::core::dream::consistency_check::ConsistencyCheckOpts::default(),
+                    },
+                )
+                .await
+                {
+                    Ok(cc_summary) => consistency_check_corrected = cc_summary.corrected,
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "kremory::dream::consistency_check",
+                            error = %e,
+                            "Dream consistency_check pass failed — skipping; dream phase result unaffected"
+                        );
+                        result
+                            .dream_warnings
+                            .push(format!("Dream consistency_check pass failed: {e}"));
+                    }
+                }
+                // Counter emitted inside the graph-present block so it reflects an
+                // actual pass run (not the degenerate no-temporal-graph path).
+                metrics::counter!("kremory.dream.consistency_check_corrected_total")
+                    .increment(consistency_check_corrected as u64);
             }
         }
 
