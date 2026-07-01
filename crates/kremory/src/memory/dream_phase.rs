@@ -1,28 +1,38 @@
-//! Dream phase (batch consolidation) pass orchestration.
+//! Dream phase — CONSOLIDATION (sub-phase 2) pass-table scaffolding. DORMANT.
 //!
-//! ## Static pass table (ADR §2.4.B)
+//! ## What this is — and what it is NOT
 //!
-//! `PASSES` is a compile-time static array of `PassDef` descriptors. Each pass
-//! declares its name, which `DreamMode`s it runs in, and a `fail_fast` flag.
+//! This module describes the **consolidation** sub-phase — graph-global passes
+//! (community detection, distillation, supersession, archival). **Consolidation
+//! is NOT yet implemented** (`graph_run_consolidation` is `NotImplemented` — F-01;
+//! the `DreamSummary` consolidation fields are honest zeros). `DreamMode` +
+//! `PASSES` here are the *future* mode-gating for those unbuilt passes — nothing
+//! in production reads them today (only a shape test, `b1_static_pass_table.rs`).
 //!
-//! The orchestrator iterates `PASSES`, filters by the requested `DreamMode`,
-//! and dispatches each pass. No dynamic registration — the table is the
-//! single source of truth for pass ordering and mode-gating.
+//! This does **NOT** gate the live **reconciliation** sub-phase (the 5 passes:
+//! type_discovery / aliases / reclassify / consistency_check / canonicalize).
+//! Reconciliation cost-control is the per-pass `DreamOpts` knobs
+//! (`include_type_discovery`, `include_consistency_check`) — NOT `DreamMode`.
+//! When consolidation is scoped, its gating is (re)designed with the real passes;
+//! do not repurpose this table for reconciliation. See
+//! `.ai-docs/architecture/dream-phase-two-sub-phases-2026-07-01.md`.
 //!
-//! ## Mode semantics
+//! ## Static pass table (consolidation, per architecture spec §2.4.B)
 //!
-//! | Mode | Passes that run |
+//! `PASSES` is a compile-time static array of `PassDef` descriptors — the
+//! intended ordering + mode-gating for the consolidation passes.
+//!
+//! | Mode | Consolidation passes that run |
 //! |------|----------------|
 //! | `Full` | community + distillation + supersession + archive |
 //! | `Light` | archive only (skip community/distillation/supersession) |
-//!
-//! `Light` is used when the caller wants a quick consolidation snapshot without
-//! the CPU-intensive community-recompute or distillation passes.
 
-/// Which passes to run in a dream phase.
+/// Which CONSOLIDATION passes to run in a dream phase (sub-phase 2, DORMANT).
 ///
-/// Per runbook §5.8 and architecture spec §2.4.B.
-/// `DreamOpts::mode` (default = `Full`) selects the pass subset.
+/// Per runbook §5.8 and architecture spec §2.4.B. This is the intended
+/// mode-gating for the UNBUILT consolidation passes; it does not gate the live
+/// reconciliation passes (those use the per-pass `DreamOpts` knobs). There is no
+/// `DreamOpts::mode` field today — consolidation is not yet wired (F-01).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DreamMode {
     /// Run all passes: community, distillation, supersession, archive.
@@ -55,7 +65,10 @@ impl PassDef {
     }
 }
 
-/// Static pass table — canonical ordering and mode-gating per architecture spec §2.4.B.
+/// Static pass table for CONSOLIDATION (sub-phase 2) — canonical ordering +
+/// mode-gating per architecture spec §2.4.B, to be wired when consolidation is
+/// built. DORMANT scaffolding: not iterated by any production code today (only
+/// the shape test `b1_static_pass_table.rs`); TD-086 tracks its reconciliation.
 ///
 /// Order matters: community must complete before distillation (graph topology
 /// must stabilise before cross-episode synthesis). Supersession precedes archive
