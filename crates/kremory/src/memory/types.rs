@@ -732,6 +732,24 @@ pub struct DreamOpts {
     /// silently activating an unvalidated mechanism. Set to `true` only once
     /// S1/S2/S6 have passed for your data shape.
     pub include_acronym_nickname_recall: bool,
+    /// Run Site #2 type-novelty DESCRIPTION-gate LLM-verify band (ADR-063
+    /// "The six sites" #2; impl spec §4.3 sibling table) — extends Pass 0's
+    /// existing anti-redundancy gate (`discover_types` / `anti_redundancy.rs`) so a
+    /// proposal whose best desc-cosine match against an existing type falls in the
+    /// AMBIGUOUS zone (`[0.70, 0.85)`, or `≥0.85` with zero name-lemma overlap) is
+    /// adjudicated by the shared `write_gate` (spec §2.2) instead of a hard cosine
+    /// cutoff alone.
+    ///
+    /// DEFAULT `false` — spike-gated (spec §8), mirroring `include_type_registry_
+    /// collapse`'s S3 gating: the 0.70 lower band edge is a provisional number
+    /// carried by analogy, not independently validated for this at-proposal gate.
+    /// When `false` (default), the DEFAULT build's outcome is UNCHANGED from
+    /// before Site #2 landed: a `NeedsLlmVerify` classification at `≥0.85` is
+    /// rejected (same as the old hard cutoff), and in `[0.70, 0.85)` is accepted
+    /// (same as the old "no candidate" path). Set to `true` only once the
+    /// SYNTHESIS §2 row 1 EDC over-generalization mitigation has been validated
+    /// for your data shape.
+    pub include_type_novelty_llm_verify: bool,
 }
 
 impl Default for DreamOpts {
@@ -743,6 +761,7 @@ impl Default for DreamOpts {
             max_episodes_per_run: None,
             include_type_registry_collapse: false,
             include_acronym_nickname_recall: false,
+            include_type_novelty_llm_verify: false,
         }
     }
 }
