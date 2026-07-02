@@ -63,3 +63,11 @@ pub use consistency_check::{
 pub use type_registry_collapse::{
     type_registry_collapse, TypeRegistryCollapseParams, TypeRegistryCollapseReport,
 };
+
+// Same MNT-002 pattern, for the ADR-063 Site #5 S2 spike integration test
+// (`tests/acronym_nickname_recall_s2_spike.rs`). `acronym_nickname_recall` and
+// `AcronymNicknameRecallParams` are `pub` + `#[doc(hidden)]` inside
+// `acronym_nickname_recall.rs` (not part of the stable public API contract)
+// for the identical E0365 reason documented above.
+#[cfg(any(test, feature = "test-utils"))]
+pub use acronym_nickname_recall::{acronym_nickname_recall, AcronymNicknameRecallParams};

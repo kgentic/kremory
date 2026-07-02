@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "9fbd820b157f7a8e6433052ec97c604b5c1e4f131954482dc921c19098c2f8af": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"One is a major broadcast network (ABC); the other is a Chicago legal association. They are unrelated organizations.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 1,\n      \"reasoning\": \"The descriptions indicate that 'Robert Wexler' goes by 'Bob,' strongly suggesting they refer to the same person.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 2,\n      \"reasoning\": \"The full name matches the common acronym, representing the same federal law enforcement agency.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 3,\n      \"reasoning\": \"The full name matches the common acronym, representing the same technology corporation.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 4,\n      \"reasoning\": \"The descriptions explicitly link the two names, noting that one is called 'Peggy' and the other uses the name 'Peggy Lin,' implying the same person.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 5,\n      \"reasoning\": \"The full name matches the common acronym, representing the same US space agency.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"One refers to an international organization (UN); the other is a small, unrelated local medical clinic ('Union Neurologists').\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 7,\n      \"reasoning\": \"The full name matches the common acronym, representing the same UN specialized agency.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}
