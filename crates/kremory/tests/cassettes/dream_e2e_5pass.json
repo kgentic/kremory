@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "49a5acbe29cee3fb45801d6673df8065c71ccb8c9de50225d50a9a01a47690ed": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"Named musical composers and artists.\",\n      \"justification\": \"Covers 'wolfgang mozart' and 'wolfgang amadeus mozart', establishing a type for famous creative individuals, particularly artists.\"\n    ,\n      \"name\": \"MusicalComposer\"\n    },\n    {\n      \"description\": \"Business entities or corporations, including their common abbreviations.\",\n      \"justification\": \"Groups 'acme corporation' and 'acme corp' together to handle variations of company names.\"\n    ,\n      \"name\": \"BusinessEntity\"\n    },\n    {\n      \"description\": \"Pharmaceutical products or drugs.\",\n      \"justification\": \"Categorizes specific chemical or medical compounds like 'aspirin' which are tangible products.\"\n    ,\n      \"name\": \"PharmaceuticalProduct\"\n    }\n  ]\n}"
+      }
+    ],
+    "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
+      {
+        "call_index": 0,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 1,
+        "response_text": "What can I help you with today? 😊"
+      },
+      {
+        "call_index": 2,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 3,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 4,
+        "response_text": "How can I help you today? 😊"
+      }
+    ],
+    "f22fad6d2871936792ef2f9f9b72a4ddd65c4f62db1564907fb6cf658ef273c9": [
+      {
+        "call_index": 0,
+        "response_text": "{\"decisions\": [\n    {\"action\": \"correct\", \"confidence\": 1.0, \"entity_id\": 8, \"new_type_id\": 1},\n    {\"action\": \"confirm\", \"confidence\": 1.0, \"entity_id\": 9},\n    {\"action\": \"confirm\", \"confidence\": 1.0, \"entity_id\": 10}\n]}"
+      }
+    ],
+    "ffbdb4d03999f53a394fa9a310b530c85d48cb43535e1258c56516c8bb463b98": [
+      {
+        "call_index": 0,
+        "response_text": "{\"decisions\": [\n  {\"entity_id\": \"aspirin\", \"entity_type_id\": 9, \"confidence\": 0.85},\n  {\"entity_id\": \"ibuprofen\", \"entity_type_id\": 9, \"confidence\": 0.85},\n  {\"entity_id\": \"paracetamol\", \"entity_type_id\": 9, \"confidence\": 0.85},\n  {\"entity_id\": \"acme corporation\", \"entity_type_id\": 2, \"confidence\": 0.95},\n  {\"entity_id\": \"acme corp\", \"entity_type_id\": 2, \"confidence\": 0.95},\n  {\"entity_id\": \"wolfgang amadeus mozart\", \"entity_type_id\": 1, \"confidence\": 0.95},\n  {\"entity_id\": \"wolfgang mozart\", \"entity_type_id\": 1, \"confidence\": 0.90},\n  {\"entity_id\": \"Albert Einstein\", \"entity_type_id\": 1, \"confidence\": 0.95},\n  {\"entity_id\": \"Marie Curie\", \"entity_type_id\": 1, \"confidence\": 0.95}\n]}"
+      }
+    ]
+  }
+}
