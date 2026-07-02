@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "4c39bf2b3eebfb720a0989f902d96d6e80406c21946436fee0fe0d48b415f211": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Physician is a medical professional, while Attorney is a legal professional; they are distinct roles.\"}]}"
+      }
+    ]
+  }
+}
