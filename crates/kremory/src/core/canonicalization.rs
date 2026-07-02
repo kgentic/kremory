@@ -429,21 +429,26 @@ pub(crate) async fn apply_merge_with_audit(
     } = params;
     let guard = graph.begin_immediate_if_needed().await?;
 
-    // Collect loser's access_count before deletion.
+    // Collect loser's access_count + ner_confidence before deletion. Site #6
+    // (ADR-063): the loser's confidence is combined into the keeper via noisy-OR,
+    // not discarded (SYNTHESIS §2 — merging the same entity must never lower it).
     let mut rows = graph
         .conn
         .query(
-            "SELECT access_count FROM entities WHERE id = ?1",
+            "SELECT access_count, ner_confidence FROM entities WHERE id = ?1",
             libsql::params![loser_id],
         )
         .await;
 
-    let loser_access_count: i64 = match rows {
+    let (loser_access_count, loser_ner_confidence): (i64, Option<f32>) = match rows {
         Ok(ref mut r) => match r.next().await {
-            Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0),
-            _ => 0,
+            Ok(Some(row)) => (
+                row.get::<i64>(0).unwrap_or(0),
+                row.get::<Option<f64>>(1).ok().flatten().map(|v| v as f32),
+            ),
+            _ => (0, None),
         },
-        Err(_) => 0,
+        Err(_) => (0, None),
     };
 
     // Remap facts.subject_id
@@ -512,8 +517,48 @@ pub(crate) async fn apply_merge_with_audit(
         r3
     };
 
+    // Site #6 (ADR-063 §"six sites" #6 / SYNTHESIS §2): combine the loser's
+    // ner_confidence into the keeper via noisy-OR (a + b − a·b), null-safe — merging
+    // the same real-world entity must never LOWER its confidence. This is the
+    // deterministic merged-confidence FORMULA half; the reject-FLOOR gate is deferred
+    // (S4-blocked — the floor value + null-prevalence are both unmeasured, R4 open
+    // item; building it now would hardcode a guessed floor).
+    let r4b = if r4.is_ok() {
+        let keeper_ner_confidence: Option<f32> = match graph
+            .conn
+            .query(
+                "SELECT ner_confidence FROM entities WHERE id = ?1",
+                libsql::params![keeper_id],
+            )
+            .await
+        {
+            Ok(mut kr) => match kr.next().await {
+                Ok(Some(row)) => row.get::<Option<f64>>(0).ok().flatten().map(|v| v as f32),
+                _ => None,
+            },
+            Err(_) => None,
+        };
+        match crate::core::confidence::merged_confidence(
+            keeper_ner_confidence,
+            loser_ner_confidence,
+        ) {
+            Some(merged) => {
+                graph
+                    .conn
+                    .execute(
+                        "UPDATE entities SET ner_confidence = ?1 WHERE id = ?2",
+                        libsql::params![f64::from(merged), keeper_id],
+                    )
+                    .await
+            }
+            None => Ok(0), // both null — nothing to combine
+        }
+    } else {
+        r4
+    };
+
     // Delete loser FTS entry
-    let r5 = if r4.is_ok() {
+    let r5 = if r4b.is_ok() {
         graph
             .conn
             .execute(
@@ -522,7 +567,7 @@ pub(crate) async fn apply_merge_with_audit(
             )
             .await
     } else {
-        r4
+        r4b
     };
 
     // Delete loser entity row
@@ -740,6 +785,69 @@ mod tests {
             .expect("canonicalize");
         assert_eq!(report.merges_applied, 0);
         assert_eq!(report.pairs_examined, 10); // C(5,2) = 10
+    }
+
+    // ── T3b: noisy-OR ner_confidence combination on merge (ADR-063 Site #6) ────
+
+    #[tokio::test]
+    async fn merge_combines_ner_confidence_via_noisy_or() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        // Same surface-variant pair as T4 (merges); keeper = longer description.
+        insert_entity_with_embedding(
+            &graph,
+            "alice johnson",
+            "g_conf",
+            "A detailed description of Alice Johnson, software engineer.",
+            &unit_vec(384),
+        )
+        .await;
+        insert_entity_with_embedding(&graph, "alice j", "g_conf", "Alice.", &unit_vec(384)).await;
+
+        // Seed ner_confidence: keeper 0.6, loser 0.8 → noisy_or(0.6,0.8) = 0.92.
+        graph
+            .conn
+            .execute(
+                "UPDATE entities SET ner_confidence = 0.6 WHERE id = 'alice johnson'",
+                (),
+            )
+            .await
+            .expect("set keeper conf");
+        graph
+            .conn
+            .execute(
+                "UPDATE entities SET ner_confidence = 0.8 WHERE id = 'alice j'",
+                (),
+            )
+            .await
+            .expect("set loser conf");
+
+        let report = canonicalize_surface_forms(&graph, "g_conf", L5_CANONICALIZATION_THRESHOLD)
+            .await
+            .expect("canonicalize");
+        assert_eq!(report.merges_applied, 1, "the surface-variant pair merges");
+
+        // Keeper ("alice johnson", longer desc) now carries noisy_or(0.6, 0.8) = 0.92
+        // — the loser's confidence was COMBINED, not discarded (Site #6 formula half).
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT ner_confidence FROM entities WHERE id = 'alice johnson'",
+                (),
+            )
+            .await
+            .expect("query keeper conf");
+        let conf: f64 = rows
+            .next()
+            .await
+            .expect("row")
+            .expect("keeper survives")
+            .get::<Option<f64>>(0)
+            .expect("conf col")
+            .expect("keeper ner_confidence is set after merge");
+        assert!(
+            (conf - 0.92).abs() < 1e-4,
+            "keeper ner_confidence must be noisy_or(0.6, 0.8) = 0.92, got {conf}"
+        );
     }
 
     // ── T4: One pair above threshold → 1 merge, keeper = longer description ───
