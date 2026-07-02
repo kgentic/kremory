@@ -6,6 +6,9 @@
 //! Pass 4: consistency_check — hybrid embed-prefilter + LLM-verify for
 //!         high-confidence wrong-type detection (ADR-047).
 
+/// Site #5 (ADR-063 spec §3) — instance acronym/nickname recall. Spike-gated
+/// behind `DreamOpts::include_acronym_nickname_recall`, default `false`.
+pub(crate) mod acronym_nickname_recall;
 pub(crate) mod anti_redundancy;
 pub mod consistency_check;
 pub(crate) mod discover_types;

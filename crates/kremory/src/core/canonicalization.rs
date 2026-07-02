@@ -360,7 +360,73 @@ async fn find_merge_pairs(
 /// accumulate `access_count`, then delete the loser row.
 ///
 /// Wrapped in a single `BEGIN IMMEDIATE` transaction — partial failure rolls back.
+///
+/// Thin wrapper over [`apply_merge_with_audit`] with `audit = None` — L5's own
+/// pairwise cosine merges are not LLM-adjudicated, so no `identity_verdict_audit`
+/// row is written for them (ADR-063 spec §5.2: "audit only LLM-touched decisions").
 async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> Result<()> {
+    apply_merge_with_audit(
+        graph,
+        ApplyMergeWithAuditParams {
+            loser_id,
+            keeper_id,
+            audit: None,
+        },
+    )
+    .await
+}
+
+/// One `identity_verdict_audit` row to write INSIDE the same `BEGIN IMMEDIATE`
+/// transaction as a destructive merge (ADR-063 spec §5.1 RISK-003 — "the audit
+/// row and the destructive remap are the same logical event; a rollback undoes
+/// the audit row along with the remap, which is correct"). Shared by Site #5
+/// (`core::dream::acronym_nickname_recall`) and any future LLM-adjudicated
+/// caller of [`apply_merge_with_audit`].
+pub(crate) struct IdentityVerdictAuditRow<'a> {
+    /// `'site5_acronym_nickname'` | `'site3_type_registry'` (spec §5.1).
+    pub(crate) site: &'a str,
+    pub(crate) group_id: &'a str,
+    pub(crate) candidate_a: &'a str,
+    pub(crate) candidate_b: &'a str,
+    /// `None` for Site #5 (no meaningful cosine signal, spec §3.3/§5.1).
+    pub(crate) cosine: Option<f32>,
+    /// The write_gate's `DeterministicSignal` input value for this pair.
+    pub(crate) structural_signal: bool,
+    /// The LLM verdict that authorized this merge. `Merge` via `write_gate`
+    /// row 5 always carries a verdict for Site #5 (row 1 never fires there —
+    /// `cosine` is always `0.0`, spec §3.3).
+    pub(crate) verdict: Option<&'a crate::core::identity_verdict::IdentityVerdictItem>,
+    /// `'merge'` — this row always documents a `Merge` decision (the
+    /// `PotentialAlias`/`Reject` arms never call `apply_merge_with_audit`).
+    pub(crate) decision: &'a str,
+    pub(crate) run_id: &'a str,
+}
+
+/// Bundled parameters for [`apply_merge_with_audit`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments, threshold 3). `graph` stays
+/// a lead positional param (receiver-like dep, project convention).
+pub(crate) struct ApplyMergeWithAuditParams<'a> {
+    pub(crate) loser_id: &'a str,
+    pub(crate) keeper_id: &'a str,
+    pub(crate) audit: Option<IdentityVerdictAuditRow<'a>>,
+}
+
+/// [`apply_merge`] extended with an OPTIONAL `identity_verdict_audit` INSERT
+/// (ADR-063 spec §3.3/§5.1) inside the SAME `BEGIN IMMEDIATE` transaction as
+/// the destructive remap. `audit = None` preserves `apply_merge`'s exact
+/// prior behavior (existing L5 callers); `audit = Some(..)` is the new Site #5
+/// path. This is the "extended `apply_merge` with an optional audit param"
+/// approach named in the implementation brief — additive, no change to the
+/// existing `apply_merge` call site's signature or semantics.
+pub(crate) async fn apply_merge_with_audit(
+    graph: &TemporalGraph,
+    params: ApplyMergeWithAuditParams<'_>,
+) -> Result<()> {
+    let ApplyMergeWithAuditParams {
+        loser_id,
+        keeper_id,
+        audit,
+    } = params;
     let guard = graph.begin_immediate_if_needed().await?;
 
     // Collect loser's access_count before deletion.
@@ -472,7 +538,43 @@ async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> 
         r5
     };
 
-    match r6 {
+    // Optional identity_verdict_audit INSERT — spec §5.1 RISK-003: runs INSIDE
+    // this same BEGIN IMMEDIATE transaction, not as a separate best-effort
+    // write. `r7` folds into the same all-must-succeed chain as r1-r6 so a
+    // failed audit insert rolls back the merge too (same commit/rollback
+    // boundary as the remap itself).
+    let r7: std::result::Result<u64, libsql::Error> = if r6.is_ok() {
+        if let Some(a) = audit.as_ref() {
+            graph
+                .conn
+                .execute(
+                    "INSERT INTO identity_verdict_audit \
+                     (site, group_id, candidate_a, candidate_b, cosine, structural_signal, \
+                      llm_is_same, llm_confidence, llm_reasoning, decision, run_id) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    libsql::params![
+                        a.site,
+                        a.group_id,
+                        a.candidate_a,
+                        a.candidate_b,
+                        a.cosine.map(f64::from),
+                        a.structural_signal,
+                        a.verdict.map(|v| v.is_same_entity),
+                        a.verdict.map(|v| f64::from(v.confidence)),
+                        a.verdict.map(|v| v.reasoning.clone()),
+                        a.decision,
+                        a.run_id,
+                    ],
+                )
+                .await
+        } else {
+            Ok(0)
+        }
+    } else {
+        r6.map(|_| 0)
+    };
+
+    match r7 {
         Ok(_) => {
             guard.commit().await?;
             Ok(())

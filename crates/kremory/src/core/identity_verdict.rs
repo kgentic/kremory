@@ -152,14 +152,17 @@ pub(crate) struct DeterministicSignal(bool);
 impl DeterministicSignal {
     /// Site #3 (type-registry collapse): the `names_lexically_compatible`-style
     /// lemma/exact-match result on the type NAME.
-    ///
-    /// Site #5's sibling constructor `from_structural_prefilter` (the structural
-    /// pre-filter's `initialism_candidate OR cooccurs_in_graph` nomination result)
-    /// is added in Phase 3 when Site #5 consumes it — deferred here to avoid a
-    /// dead-code error on a constructor with no caller until then (spec §2.2.2's
-    /// two-constructor design is completed across Phase 2 + Phase 3).
     pub(crate) fn from_lexical(names_lexically_compatible_result: bool) -> Self {
         Self(names_lexically_compatible_result)
+    }
+
+    /// Site #5 (acronym/nickname recall): the structural pre-filter's boolean
+    /// nomination result (`initialism_candidate OR cooccurs_in_graph`). TRUE means a
+    /// deterministic, embedder-independent signal justified escalating to the LLM —
+    /// the analogue of token-Jaccard for the zero-lexical-overlap acronym/nickname
+    /// surface (spec §2.2.2).
+    pub(crate) fn from_structural_prefilter(nominated: bool) -> Self {
+        Self(nominated)
     }
 
     /// Whether a deterministic signal fired.
