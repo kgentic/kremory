@@ -219,6 +219,56 @@ impl<'a> DreamRequest<'a> {
                 .increment(aliases_resolved as u64);
         }
 
+        // Dream Pass — acronym_nickname_recall (ADR-063 spec §3, "Site #5"):
+        // nominate entity-instance pairs via a deterministic structural
+        // pre-filter (initialism test OR graph co-occurrence, spec §3.1) and
+        // adjudicate nominated pairs via batched LLM verdicts + the shared
+        // write_gate (spec §3.2/§3.3). Spike-gated per spec §8 — gated by
+        // `include_acronym_nickname_recall` (default `false`). Ordered
+        // immediately AFTER aliases (`resolve_pending_aliases`, above) and
+        // BEFORE reclassify (spec §3.0): merges land before type-correctness
+        // is re-verified, avoiding a wasted reclassify pass on an entity
+        // about to be merged away, and can reuse the now-resolved alias
+        // state as one of its co-occurrence signals without racing a
+        // concurrent alias mutation. Non-fatal: failure warns + continues.
+        let mut acronym_recall_merges: usize = 0;
+        if opts.include_acronym_nickname_recall {
+            if let Some(tg) = self.memory.temporal_graph.as_ref() {
+                let group_id = namespace_to_group_id(&ns);
+                let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
+                match crate::core::dream::acronym_nickname_recall::acronym_nickname_recall(
+                    &arc_llm,
+                    crate::core::dream::acronym_nickname_recall::AcronymNicknameRecallParams {
+                        graph: tg,
+                        group_id: &group_id,
+                        // TD-094-style threading: reuse the resolved dream model id.
+                        model_id: dream_model_id,
+                    },
+                )
+                .await
+                {
+                    Ok(recall_report) => {
+                        acronym_recall_merges = recall_report.merges_applied;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "kremory::dream::acronym_recall",
+                            error = %e,
+                            "Dream acronym_nickname_recall pass failed — skipping; dream phase result unaffected"
+                        );
+                        result
+                            .dream_warnings
+                            .push(format!("Dream acronym_nickname_recall pass failed: {e}"));
+                    }
+                }
+                // Counter emitted inside the graph-present block so it reflects an
+                // actual pass run (not the degenerate no-temporal-graph path).
+                metrics::counter!("kremory.dream.acronym_recall.merges_applied_total")
+                    .increment(acronym_recall_merges as u64);
+            }
+        }
+        let _ = acronym_recall_merges; // reserved for DreamSummary surfacing in a future napi-parity phase.
+
         // ADR-046 Option E — Dream Pass 2: reclassify.
         // Runs AFTER Pass 0 so newly discovered types (from Pass 0) are available in
         // the entity type registry for the reclassify LLM prompt.

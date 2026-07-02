@@ -715,6 +715,23 @@ pub struct DreamOpts {
     /// merge and be reviewed without silently activating an unvalidated
     /// threshold. Set to `true` only once S3 has passed for your data shape.
     pub include_type_registry_collapse: bool,
+    /// Run Site #5 instance acronym/nickname recall (ADR-063 spec §3) — a new
+    /// dream pass (NOT an extension of L7 `resolve_pending_aliases`) that
+    /// nominates entity-instance pairs via a deterministic structural
+    /// pre-filter (initialism test OR graph co-occurrence, spec §3.1) and
+    /// adjudicates nominated pairs via batched LLM verdicts (spec §3.2),
+    /// closing the acronym/nickname gap `names_lexically_compatible`
+    /// documents as inherent (`disambiguation/lexical.rs`).
+    ///
+    /// DEFAULT `false` — spike-gated (spec §8): S1 (initialism precision/
+    /// recall), S2 (LLM adjudication precision/recall), and S6 (co-occurrence
+    /// query cost) have NOT yet run. Per spec §8's hard constraint, no
+    /// spike-gated number may be wired into a consumer's production dream
+    /// cycle until its mapped spike shows PASS — this pass ships DISABLED by
+    /// default so the architecture can merge and be reviewed without
+    /// silently activating an unvalidated mechanism. Set to `true` only once
+    /// S1/S2/S6 have passed for your data shape.
+    pub include_acronym_nickname_recall: bool,
 }
 
 impl Default for DreamOpts {
@@ -725,6 +742,7 @@ impl Default for DreamOpts {
             include_consistency_check: true,
             max_episodes_per_run: None,
             include_type_registry_collapse: false,
+            include_acronym_nickname_recall: false,
         }
     }
 }
