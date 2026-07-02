@@ -15,6 +15,9 @@ pub(crate) mod discover_types;
 pub(crate) mod idempotency;
 pub(crate) mod proposed_type;
 pub mod reclassify;
+/// Site #3 (ADR-063 spec §4) — type-registry post-hoc collapse. Spike-gated
+/// behind `DreamOpts::include_type_registry_collapse`, default `false`.
+pub(crate) mod type_registry_collapse;
 
 pub use discover_types::{DiscoveryResult, TypeProposal};
 pub use reclassify::ReclassifyResult;

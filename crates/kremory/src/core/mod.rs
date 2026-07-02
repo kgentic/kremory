@@ -142,6 +142,10 @@ pub mod format;
 pub mod graph;
 pub mod grounding;
 pub mod hybrid_extractor;
+/// Shared identity-verdict schema + deterministic write-gate (ADR-063 spec §2).
+/// Crate-internal — consumed by Site #5 (dream acronym/nickname recall), Site #3
+/// (type-registry collapse), and composes with Site #6; not napi-exposed.
+pub(crate) mod identity_verdict;
 pub mod ingest;
 pub mod intelligence;
 pub mod migrations;

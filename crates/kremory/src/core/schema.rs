@@ -711,6 +711,13 @@ impl TemporalGraph {
         // on a clean db + CREATE UNIQUE INDEX IF NOT EXISTS is re-runnable.
         crate::core::migrations::migrate_017_episodic_edges_presence_unique(&self.conn).await?;
 
+        // Migration 018 (ADR-063 spec §5.0 + §5.1): identity-verdict / write-gate
+        // prerequisites — `idx_facts_subject` (subject-side index mirroring
+        // idx_facts_object; needed for Site #5's cooccurs_in_graph query, resolves
+        // RISK-002) + the `identity_verdict_audit` table (Site #5/#3 adjudication
+        // audit trail). Idempotent: CREATE INDEX/TABLE IF NOT EXISTS.
+        crate::core::migrations::migrate_018_identity_verdict_prereqs(&self.conn).await?;
+
         Ok(())
     }
 
