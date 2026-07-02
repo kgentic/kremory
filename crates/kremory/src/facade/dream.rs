@@ -171,6 +171,11 @@ impl<'a> DreamRequest<'a> {
                         max_proposals: pass0_max,
                         // TD-094: thread the resolved dream model id for capability detection.
                         model_id: dream_model_id,
+                        // Site #2 (ADR-063 "The six sites" #2) — spike-gated, default
+                        // `false` (spec §8). Threaded from `DreamOpts::include_type_
+                        // novelty_llm_verify` so the DEFAULT build's Pass-0 outcome is
+                        // unchanged from before Site #2 landed.
+                        llm_verify_band: opts.include_type_novelty_llm_verify,
                     },
                 )
                 .await
