@@ -53,3 +53,13 @@ pub use consistency_check::{
     VerifyBatchOutcome,
     VerifyBatchParams,
 };
+
+// Same MNT-002 pattern, for the ADR-063 Site #3 S3 spike integration test
+// (`tests/type_registry_collapse_s3_spike.rs`). `type_registry_collapse` and
+// `TypeRegistryCollapseParams` are `pub` + `#[doc(hidden)]` inside
+// `type_registry_collapse.rs` (not part of the stable public API contract)
+// for the identical E0365 reason documented above.
+#[cfg(any(test, feature = "test-utils"))]
+pub use type_registry_collapse::{
+    type_registry_collapse, TypeRegistryCollapseParams, TypeRegistryCollapseReport,
+};
