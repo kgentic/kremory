@@ -131,16 +131,25 @@ struct NominatedPair {
 /// TD-042 (rust-conventions §too_many_arguments, threshold 3). `llm` stays a
 /// lead generic positional param (project convention, mirrors
 /// `type_registry_collapse<L>` / `discover_types<L>`).
-pub(crate) struct AcronymNicknameRecallParams<'a> {
+///
+/// `pub` + `#[doc(hidden)]` (not `pub(crate)`) per the MNT-002 precedent
+/// (`dream/mod.rs`'s `consistency_check`/`type_registry_collapse` re-export
+/// block): `pub(crate)` items cannot be re-exported as `pub` (E0365), and the
+/// S2 spike's integration test (`tests/acronym_nickname_recall_s2_spike.rs`)
+/// lives outside the crate boundary. Re-exported under `feature =
+/// "test-utils"` in `dream/mod.rs` — explicitly NOT part of the stable public
+/// API contract.
+#[doc(hidden)]
+pub struct AcronymNicknameRecallParams<'a> {
     /// Full graph handle (not a bare connection) — needed because this pass
     /// reuses `canonicalization::apply_merge_with_audit` and
     /// `disambiguation::insert_potential_alias_fact`, both of which are
     /// `TemporalGraph`-typed methods (spec §3.3).
-    pub(crate) graph: &'a TemporalGraph,
-    pub(crate) group_id: &'a str,
+    pub graph: &'a TemporalGraph,
+    pub group_id: &'a str,
     /// Concrete model id for capability detection (TD-094-style threading).
     /// Empty (`""`) → `PromptOnly` degrade.
-    pub(crate) model_id: &'a str,
+    pub model_id: &'a str,
 }
 
 /// Run Site #5 instance acronym/nickname recall over `group_id` (ADR-063
@@ -150,7 +159,11 @@ pub(crate) struct AcronymNicknameRecallParams<'a> {
 /// = true` (spike-gated, default `false` — spec §8). Hooked immediately
 /// AFTER `resolve_pending_aliases` (L7) and BEFORE the reclassify pass (spec
 /// §3.0).
-pub(crate) async fn acronym_nickname_recall<L: ChatProvider>(
+///
+/// `pub` + `#[doc(hidden)]` — see [`AcronymNicknameRecallParams`]'s doc
+/// comment for the MNT-002 re-export rationale (S2 spike integration test).
+#[doc(hidden)]
+pub async fn acronym_nickname_recall<L: ChatProvider>(
     llm: &L,
     params: AcronymNicknameRecallParams<'_>,
 ) -> Result<AcronymNicknameRecallReport> {
