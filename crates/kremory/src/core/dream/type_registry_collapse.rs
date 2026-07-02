@@ -1616,4 +1616,94 @@ mod tests {
     fn lexical_prefilter_unrelated_names_no_match() {
         assert!(!names_share_lemma_or_exact("Person", "Vehicle"));
     }
+
+    /// ADR-063 test-strategy spec §6.3 / F3 — the lemma false-merge safety
+    /// corpus, TIER 1 (unit, pure-fn, no LLM/embedder). Characterizes what
+    /// `names_share_lemma_or_exact`'s naive `strip_trailing_s` singular/plural
+    /// heuristic ACTUALLY does across three adversarial categories. This does
+    /// NOT assume the heuristic is safe — it pins the measured behaviour so a
+    /// future change to the heuristic is caught by a diff against this test,
+    /// and documents the FP/FN counts honestly per the spec's own framing
+    /// ("a characterization test — pin what the naive heuristic really does").
+    #[test]
+    fn names_share_lemma_or_exact_adversarial_corpus() {
+        // Distinct-concept trailing-s collisions: mechanically strip to the
+        // same lemma but are NOT the same real-world concept. These are the
+        // pairs whose cosine margin the Tier 2 integration test (§6.3) must
+        // separately prove stays below the 0.85 auto-merge threshold — this
+        // unit test only proves the LEXICAL signal fires, which is the first
+        // half of the row-1 auto-merge condition (`cosine >= 0.85 AND
+        // lexical_compatible`, type_registry_collapse.rs:235).
+        const DISTINCT_CONCEPT_COLLISIONS: &[(&str, &str)] = &[
+            ("Species", "Specie"), // biological taxon vs coined/hard currency
+            ("Physics", "Physic"), // the science vs archaic medicine/purgative
+            ("Customs", "Custom"), // border/tax agency vs habitual practice
+            ("Arms", "Arm"),       // military weaponry/heraldry vs body part
+            ("Status", "Statu"),   // spec §4.2's own named nonsense-lemma example
+            ("Series", "Serie"),   // TV/broadcast series vs (not a real word)
+        ];
+        let firing: Vec<(&str, &str)> = DISTINCT_CONCEPT_COLLISIONS
+            .iter()
+            .copied()
+            .filter(|(a, b)| names_share_lemma_or_exact(a, b))
+            .collect();
+        eprintln!(
+            "[lemma-corpus] distinct-concept collisions that FIRE (lexical signal true): {firing:?}"
+        );
+        // Every pair in this corpus is a mechanically-possible false-positive
+        // by construction (that's why they're in this list) — assert the
+        // heuristic actually fires on all of them, confirming the risk is
+        // real and not vacuous. If any of these stop firing, the heuristic
+        // implementation changed and this test's premise (and the Tier 2
+        // integration test's rationale) needs re-verification.
+        assert_eq!(
+            firing.len(),
+            DISTINCT_CONCEPT_COLLISIONS.len(),
+            "expected ALL distinct-concept trailing-s collisions to fire the lexical \
+             signal (that is precisely the mechanical false-positive risk F3 names) — \
+             got {firing:?}; if fewer fired, `names_share_lemma_or_exact` changed shape \
+             and the safety-margin story in the Tier 2 integration test must be re-checked"
+        );
+
+        // True-positive plurals: the heuristic SHOULD match these — same
+        // concept, genuine singular/plural pair.
+        const TRUE_POSITIVE_PLURALS: &[(&str, &str)] = &[
+            ("Organization", "Organizations"),
+            ("Document", "Documents"),
+            ("Vehicle", "Vehicles"),
+        ];
+        for (a, b) in TRUE_POSITIVE_PLURALS {
+            assert!(
+                names_share_lemma_or_exact(a, b),
+                "true-positive plural pair {a}/{b} must match — same concept, \
+                 genuine trailing-s plural"
+            );
+        }
+
+        // Irregular-plural false-negatives: the naive trailing-s strip CANNOT
+        // relate these (same concept, no shared lemma once stripped) — this
+        // is an honest RECALL gap, not a precision bug. Document it rather
+        // than silently accepting or hiding it.
+        const IRREGULAR_PLURAL_FALSE_NEGATIVES: &[(&str, &str)] = &[
+            ("Company", "Companies"),
+            ("Analysis", "Analyses"),
+            ("Person", "People"),
+        ];
+        let missed: Vec<(&str, &str)> = IRREGULAR_PLURAL_FALSE_NEGATIVES
+            .iter()
+            .copied()
+            .filter(|(a, b)| !names_share_lemma_or_exact(a, b))
+            .collect();
+        eprintln!(
+            "[lemma-corpus] irregular-plural false negatives (heuristic misses, same \
+             concept): {missed:?}"
+        );
+        assert_eq!(
+            missed.len(),
+            IRREGULAR_PLURAL_FALSE_NEGATIVES.len(),
+            "expected ALL irregular plurals to be MISSED by the naive trailing-s \
+             heuristic (documents the honest recall blind spot) — got {missed:?}; if \
+             any of these now match, the heuristic implementation changed shape"
+        );
+    }
 }
