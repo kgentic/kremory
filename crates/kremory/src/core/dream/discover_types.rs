@@ -170,9 +170,11 @@ pub(crate) async fn discover_types<L: ChatProvider>(
             if spec.id == 0 {
                 continue;
             }
+            // TD-097 (Site #1): only the DESCRIPTION is embedded now. The name signal
+            // is a deterministic normalized exact-match in `check_proposal`, not a
+            // (degenerate) bare-name cosine, so no name embedding is computed.
             let desc_emb = emb.embed_dyn(&spec.description).await?;
-            let name_emb = emb.embed_dyn(&spec.name).await?;
-            embs.push((spec.clone(), desc_emb, name_emb));
+            embs.push((spec.clone(), desc_emb));
         }
         embs
     } else {
@@ -334,37 +336,12 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                     continue;
                 }
             };
-            let name_emb = match emb.embed_dyn(&proposal.name).await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "kremory::dream::discover_types",
-                        error = %e,
-                        name = %proposal.name,
-                        "discover_types: failed to embed proposal name — skipping gate"
-                    );
-                    result.warnings.push(format!(
-                        "embed failed for '{}' name — anti-redundancy gate skipped",
-                        proposal.name
-                    ));
-                    anti_redundancy::emit_gate_skipped();
-                    accept_proposal(AcceptProposalParams {
-                        conn,
-                        group_id,
-                        model_str: &model_str,
-                        proposal: &proposal,
-                        catch_alls: &catch_alls,
-                        desc_emb_and_embedder: None,
-                        result: &mut result,
-                    })
-                    .await?;
-                    continue;
-                }
-            };
-
+            // TD-097 (Site #1): no name embedding — `check_proposal` uses a
+            // deterministic normalized exact-match on `proposal.name` instead of a
+            // (degenerate) bare-name cosine.
             match anti_redundancy::check_proposal(anti_redundancy::CheckProposalParams {
+                proposal_name: &proposal.name,
                 proposal_desc_emb: &desc_emb,
-                proposal_name_emb: &name_emb,
                 existing_type_embeddings: &existing_embeddings,
                 namespace: group_id,
                 model: &model_str,
