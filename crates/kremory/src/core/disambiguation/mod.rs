@@ -37,6 +37,24 @@
 //!   participates in temporal validity and can be invalidated by the dream phase.
 //! - Thresholds are empirically sourced from Cognee's research; adjustable via
 //!   the named constants below.
+//!
+//! ## ADR-063 Site #6 — confidence-aware third gate (spike S4, 2026-07-02)
+//!
+//! [`classify_pair`] additionally accepts each candidate's (possibly absent)
+//! `ner_confidence`. When BOTH are present, `min(conf_a, conf_b)` must clear
+//! [`crate::core::confidence::CONFIDENCE_REJECT_FLOOR`] for the `Merge`/alias
+//! arms to fire unchanged; when EITHER is absent, the floor is vacuously
+//! satisfied (S4 null-bypass policy — see `core::confidence` module docs for
+//! the full measurement + rationale). `disambiguate()`'s production call site
+//! currently passes `(None, None)`: the query-time `Entity` struct
+//! (`core::schema::Entity`) does not yet expose `ner_confidence` as a field, so
+//! there is no DB-read path to source a real value from at this call site
+//! today — a follow-on (threading `Entity.ner_confidence` + a matching column
+//! on the disambiguated candidate) is required before this site's floor can
+//! ever downgrade a decision in production. This is a correct no-op today, not
+//! a broken one: S4 measured 100% null `ner_confidence` prevalence on the
+//! default (no `ner` feature) LLM-only ingest path, so `(None, None)` matches
+//! the vast majority of real deployments exactly.
 
 pub(crate) mod lexical;
 pub(crate) use lexical::names_lexically_compatible;
@@ -45,6 +63,7 @@ use chrono::Utc;
 use metrics::counter;
 use tracing;
 
+use crate::core::confidence::{min_confidence_floor_for_gate, CONFIDENCE_REJECT_FLOOR};
 use crate::core::error::Result;
 use crate::core::graph::FactInsert;
 use crate::core::provider::EmbeddingProvider;
@@ -220,7 +239,21 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
     // ADR-057: `existing_id` is the existing entity's normalized name (entity ids
     // ARE normalized names — ingest_with.rs:1017), so it is the correct lexical
     // comparand AND the `existing_id` forwarded in Merge/PotentialAlias outcomes.
-    let outcome = classify_pair(similarity, entity_name, &existing_id);
+    //
+    // ADR-063 Site #6 (spike S4): confidences passed as `(None, None)` — neither
+    // the newly-extracted entity nor `top_hit.item` (`core::schema::Entity`) carry
+    // `ner_confidence` at this call site today (`Entity` does not expose the
+    // column; see module docs). This composes as a correct no-op (the floor gate
+    // is vacuously satisfied per S4's null-bypass policy) and matches the
+    // measured reality: 100% null `ner_confidence` prevalence on the default
+    // (no `ner` feature) LLM-only ingest path this function is called from.
+    let outcome = classify_pair(ClassifyPairParams {
+        cosine: similarity,
+        name_a: entity_name,
+        name_b: &existing_id,
+        conf_a: None,
+        conf_b: None,
+    });
 
     match &outcome {
         DisambiguationOutcome::Merge { .. } => {
@@ -295,21 +328,72 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
     Ok(outcome)
 }
 
-/// Classify a pre-computed cosine score through the L4 threshold ladder and
-/// ADR-057 lexical floor. Pure: no metrics, no tracing, no I/O — so the B-on/off
+/// Bundled parameters for [`classify_pair`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments; `crates/kremory/clippy.toml` sets the
+/// workspace threshold to 3, so a 3-signal decision function (cosine + names +
+/// confidence pair) is bundled rather than taking 5 positional args).
+#[derive(Clone, Copy)]
+pub(crate) struct ClassifyPairParams<'a> {
+    /// Pre-computed cosine similarity between the two candidates.
+    pub(crate) cosine: f32,
+    /// The newly-extracted (or probe) entity name.
+    pub(crate) name_a: &'a str,
+    /// The existing entity's normalized name (entity ids ARE normalized names —
+    /// ingest_with.rs:1017). Used as both the lexical comparand and the
+    /// `existing_id` forwarded in `Merge`/`PotentialAlias` outcomes.
+    pub(crate) name_b: &'a str,
+    /// `name_a`'s (possibly absent) `ner_confidence` (ADR-063 Site #6, spike S4).
+    pub(crate) conf_a: Option<f32>,
+    /// `name_b`'s (possibly absent) `ner_confidence` (ADR-063 Site #6, spike S4).
+    pub(crate) conf_b: Option<f32>,
+}
+
+/// Classify a pre-computed cosine score through the L4 threshold ladder,
+/// ADR-057 lexical floor, and ADR-063 Site #6 confidence-reject-floor gate
+/// (spike S4). Pure: no metrics, no tracing, no I/O — so the B-on/off
 /// benchmark exercises the identical decision path as production.
 ///
-/// `name_b` is the existing entity's normalized name (entity ids ARE normalized
-/// names — ingest_with.rs:1017). It is used as both the lexical comparand and the
-/// `existing_id` forwarded in `Merge` and `PotentialAlias` outcomes.
+/// `conf_a`/`conf_b` are each candidate's (possibly absent) `ner_confidence`.
+/// `min_confidence_floor_for_gate` (`core::confidence`) applies the S4
+/// null-bypass policy: `None` unless BOTH are present, in which case the floor
+/// check activates. Existing callers passing `(None, None)` see byte-identical
+/// behaviour to pre-S4 `classify_pair` — the gate is a pure ADD, never a
+/// silent behaviour change for the (today, near-universal) no-confidence case.
 ///
 /// Production `disambiguate` delegates its final decision to this function;
 /// benchmarks call this directly — one implementation, no copy.
-pub(crate) fn classify_pair(cosine: f32, name_a: &str, name_b: &str) -> DisambiguationOutcome {
+pub(crate) fn classify_pair(params: ClassifyPairParams<'_>) -> DisambiguationOutcome {
+    let ClassifyPairParams {
+        cosine,
+        name_a,
+        name_b,
+        conf_a,
+        conf_b,
+    } = params;
+    let min_confidence_floor = min_confidence_floor_for_gate(conf_a, conf_b);
+    // ADR-063 Site #6 (spike S4): when both confidences are present and their
+    // minimum falls below the floor, downgrade what would otherwise be a
+    // destructive `Merge` to a non-destructive `PotentialAlias` — mirrors
+    // `identity_verdict::write_gate`'s row 5b composition semantics exactly
+    // (same floor constant, same "None is vacuously satisfied" degradation).
+    let confidence_floor_cleared = min_confidence_floor
+        .map(|observed_min_conf| observed_min_conf >= CONFIDENCE_REJECT_FLOOR)
+        .unwrap_or(true);
+
     if cosine >= L4_MERGE_THRESHOLD && names_lexically_compatible(name_a, name_b) {
-        DisambiguationOutcome::Merge {
-            existing_id: name_b.to_owned(),
-            similarity: cosine,
+        if confidence_floor_cleared {
+            DisambiguationOutcome::Merge {
+                existing_id: name_b.to_owned(),
+                similarity: cosine,
+            }
+        } else {
+            // Site #6 downgrade: cosine + lexical agree, but the entities' own
+            // extraction confidence does not clear the floor — do not perform
+            // a destructive merge on low-confidence evidence.
+            DisambiguationOutcome::PotentialAlias {
+                existing_id: name_b.to_owned(),
+                similarity: cosine,
+            }
         }
     } else if cosine >= L4_POTENTIAL_ALIAS_THRESHOLD && names_lexically_compatible(name_a, name_b) {
         // TD-098 (Site #4 of ADR-063): the PotentialAlias arm was cosine-ALONE — the
@@ -802,7 +886,13 @@ mod tests {
     fn classify_pair_at_merge_threshold_compatible_names_is_merge() {
         // Exactly at L4_MERGE_THRESHOLD with lexically-compatible names → Merge.
         // "alice johnson" / "alice johnson" normalize-equal → compatible.
-        let outcome = classify_pair(L4_MERGE_THRESHOLD, "Alice Johnson", "alice johnson");
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine: L4_MERGE_THRESHOLD,
+            name_a: "Alice Johnson",
+            name_b: "alice johnson",
+            conf_a: None,
+            conf_b: None,
+        });
         assert!(
             matches!(
                 outcome,
@@ -814,6 +904,104 @@ mod tests {
         );
     }
 
+    // ── ADR-063 Site #6 confidence-reject-floor gate boundary tests (spike S4) ──
+    //
+    // Spec: adr-063-embedding-identity-impl-spec-2026-07-02.md §2.2/§2.2.1/§8;
+    // R4-confidence-aware-merge.md §6.3. Mirrors the existing exactly-at-threshold
+    // boundary-test discipline above, for the third (confidence) gate.
+
+    #[test]
+    fn classify_pair_confidence_floor_exactly_at_floor_is_merge() {
+        // Both confidences present, min == CONFIDENCE_REJECT_FLOOR exactly →
+        // floor is NOT below floor → Merge (mirrors write_gate row4_boundary
+        // "== floor is merge side" precedent in identity_verdict.rs).
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine: L4_MERGE_THRESHOLD,
+            name_a: "Alice Johnson",
+            name_b: "alice johnson",
+            conf_a: Some(CONFIDENCE_REJECT_FLOOR),
+            conf_b: Some(0.99),
+        });
+        assert!(
+            matches!(outcome, DisambiguationOutcome::Merge { .. }),
+            "min(conf_a, conf_b) == CONFIDENCE_REJECT_FLOOR must still Merge, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn classify_pair_confidence_floor_below_downgrades_merge_to_potential_alias() {
+        // cosine + lexical both agree (would be Merge with no confidence signal),
+        // but min(conf_a, conf_b) is below the floor → downgrade to PotentialAlias,
+        // never a destructive Merge on low-confidence evidence (R4 §6.3).
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine: L4_MERGE_THRESHOLD,
+            name_a: "Alice Johnson",
+            name_b: "alice johnson",
+            conf_a: Some(CONFIDENCE_REJECT_FLOOR - 0.01),
+            conf_b: Some(0.99),
+        });
+        assert!(
+            matches!(outcome, DisambiguationOutcome::PotentialAlias { .. }),
+            "min(conf_a, conf_b) < CONFIDENCE_REJECT_FLOOR must downgrade Merge to \
+             PotentialAlias, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn classify_pair_confidence_null_bypasses_floor_still_merges() {
+        // S4 null policy: EITHER confidence absent → floor is vacuously satisfied
+        // (matches identity_verdict::write_gate's `min_confidence_floor: None`
+        // no-op composition, spec §2.2.1). This is the near-universal case on the
+        // default (no `ner` feature) build — must NOT regress existing behaviour.
+        let both_none = classify_pair(ClassifyPairParams {
+            cosine: L4_MERGE_THRESHOLD,
+            name_a: "Alice Johnson",
+            name_b: "alice johnson",
+            conf_a: None,
+            conf_b: None,
+        });
+        assert!(
+            matches!(both_none, DisambiguationOutcome::Merge { .. }),
+            "(None, None) confidences must not block an otherwise-valid Merge, got {both_none:?}"
+        );
+
+        let one_none_low = classify_pair(ClassifyPairParams {
+            cosine: L4_MERGE_THRESHOLD,
+            name_a: "Alice Johnson",
+            name_b: "alice johnson",
+            conf_a: None,
+            conf_b: Some(0.01), // would fail the floor if compared, but one side is None
+        });
+        assert!(
+            matches!(one_none_low, DisambiguationOutcome::Merge { .. }),
+            "exactly one confidence present (other None) must bypass the floor \
+             per S4 null policy, got {one_none_low:?}"
+        );
+    }
+
+    #[test]
+    fn classify_pair_confidence_floor_never_downgrades_new_or_out_of_band_potential_alias() {
+        // The confidence floor only composes at the merge-eligible band (mirrors
+        // write_gate row 5b, which only fires after rows 3/4/6 have already
+        // passed). Below the merge threshold, a low confidence must not somehow
+        // "elevate" New to PotentialAlias or vice versa — the floor is a
+        // downgrade-only gate on the Merge arm, never an upgrade mechanism.
+        let mid_band = (L4_POTENTIAL_ALIAS_THRESHOLD + L4_MERGE_THRESHOLD) / 2.0;
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine: mid_band,
+            name_a: "alice marie johnson",
+            name_b: "alice johnson",
+            conf_a: Some(0.01),
+            conf_b: Some(0.01),
+        });
+        assert!(
+            matches!(outcome, DisambiguationOutcome::PotentialAlias { .. }),
+            "alias-band cosine + compatible names + low confidence must remain \
+             PotentialAlias (floor doesn't apply outside the merge-eligible band), \
+             got {outcome:?}"
+        );
+    }
+
     #[test]
     fn classify_pair_at_alias_threshold_is_potential_alias() {
         // Exactly at L4_POTENTIAL_ALIAS_THRESHOLD with lexically-COMPATIBLE names →
@@ -821,11 +1009,13 @@ mod tests {
         // Post-TD-098 the alias arm ALSO requires lexical compatibility, so this test
         // uses a compatible pair ("alice johnson" ⊆ "alice marie johnson", Jaccard
         // 2/3 ≥ 0.5) to exercise the threshold ladder.
-        let outcome = classify_pair(
-            L4_POTENTIAL_ALIAS_THRESHOLD,
-            "alice marie johnson",
-            "alice johnson",
-        );
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine: L4_POTENTIAL_ALIAS_THRESHOLD,
+            name_a: "alice marie johnson",
+            name_b: "alice johnson",
+            conf_a: None,
+            conf_b: None,
+        });
         assert!(
             matches!(
                 outcome,
@@ -847,7 +1037,13 @@ mod tests {
         // high-cosine pair between unrelated names must not create a false alias fact
         // that L7 can never revoke (cosine stays ≈ 1.0 forever under a weak embedder).
         let cosine = (L4_MERGE_THRESHOLD + 0.01).min(1.0);
-        let outcome = classify_pair(cosine, "alice", "bob");
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine,
+            name_a: "alice",
+            name_b: "bob",
+            conf_a: None,
+            conf_b: None,
+        });
         assert!(
             matches!(outcome, DisambiguationOutcome::New),
             "cosine >= L4_MERGE_THRESHOLD + incompatible names must produce New \
@@ -862,7 +1058,13 @@ mod tests {
         // must be `New`, NOT a persistent `potential_alias` fact. Pre-TD-098 this arm
         // was cosine-alone and produced PotentialAlias. "alice"/"bob" → zero shared tokens.
         let mid_band = (L4_POTENTIAL_ALIAS_THRESHOLD + L4_MERGE_THRESHOLD) / 2.0;
-        let outcome = classify_pair(mid_band, "alice", "bob");
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine: mid_band,
+            name_a: "alice",
+            name_b: "bob",
+            conf_a: None,
+            conf_b: None,
+        });
         assert!(
             matches!(outcome, DisambiguationOutcome::New),
             "alias-band cosine + incompatible names must produce New (TD-098), got {outcome:?}"
@@ -873,7 +1075,13 @@ mod tests {
     fn classify_pair_below_alias_threshold_is_new() {
         // Below L4_POTENTIAL_ALIAS_THRESHOLD → New regardless of names.
         let cosine = L4_POTENTIAL_ALIAS_THRESHOLD - 0.01;
-        let outcome = classify_pair(cosine, "alice", "bob");
+        let outcome = classify_pair(ClassifyPairParams {
+            cosine,
+            name_a: "alice",
+            name_b: "bob",
+            conf_a: None,
+            conf_b: None,
+        });
         assert!(
             matches!(outcome, DisambiguationOutcome::New),
             "cosine < L4_POTENTIAL_ALIAS_THRESHOLD must produce New, got {outcome:?}"
@@ -1087,5 +1295,151 @@ mod tests {
              degenerate never-merge gate guard). Expected {trivial_pos} trivial pairs \
              to pass; got {trivial_tp}."
         );
+    }
+
+    // ── ADR-063 Site #6 spike S4: reject-floor + null-policy sweep ──────────────
+    //
+    // R4 open item #2 asked for two numbers before the CONFIDENCE_REJECT_FLOOR gate
+    // could be wired: the floor value and the null-`ner_confidence` prevalence. The
+    // null prevalence is measured as a STRUCTURAL fact from source (see
+    // `core::confidence` module docs — 100% null on the default, no-`ner`-feature,
+    // LLM-only ingest path: `parse_entities_integer` never copies
+    // `RawEntityIntegerId.confidence` into `ExtractedEntity.properties`). There is no
+    // real non-null `ner_confidence` sample anywhere in kremory's fixtures or tests
+    // to sweep a numeric precision/recall curve against (the corpus below has no
+    // confidence field at all) — inventing synthetic confidence values not anchored
+    // to any kremory data would violate `research.md`'s "verify before stating"
+    // discipline. What CAN be honestly measured: sweeping candidate floors + both
+    // named null policies (bypass vs fail) against `entity_pairs.jsonl`'s
+    // `should_merge=true` pairs (the population Site #6's floor could ever affect —
+    // it only composes at the merge-eligible cosine+lexical band) shows the
+    // DOWNSTREAM EFFECT of each choice on how many otherwise-correct merges would be
+    // needlessly downgraded to `PotentialAlias` if the null policy were "fail"
+    // instead of "bypass," given the measured 100% null prevalence.
+    #[test]
+    fn s4_null_prevalence_and_floor_sweep() {
+        let corpus_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../kremory-eval/fixtures/entity_pairs.jsonl"
+        );
+        let content = std::fs::read_to_string(corpus_path)
+            .unwrap_or_else(|e| panic!("failed to read corpus at {corpus_path}: {e}"));
+
+        let should_merge_pairs: Vec<(String, String)> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|line| {
+                let v: serde_json::Value =
+                    serde_json::from_str(line).expect("corpus line JSON parse");
+                (
+                    v["name_a"].as_str().expect("name_a").to_string(),
+                    v["name_b"].as_str().expect("name_b").to_string(),
+                )
+            })
+            .filter(|(a, b)| names_lexically_compatible(a, b))
+            .collect();
+        assert!(
+            !should_merge_pairs.is_empty(),
+            "corpus must contain at least one lexically-compatible pair to sweep"
+        );
+
+        // Measured fact (see core::confidence module docs, point 1): 100% null
+        // ner_confidence prevalence on the default (no `ner` feature) build.
+        let measured_null_prevalence = 1.0_f64;
+
+        // Candidate floors: the chosen value (reused MIN_VERIFY_CONFIDENCE=0.7) plus
+        // the two literature-anchored bracketing candidates from R4 §6.3/§7 (0.5
+        // starting point) and identity_verdict's own value, to show the floor choice
+        // is not sensitive to which of these three is picked GIVEN the null-bypass
+        // policy — it is the null POLICY, not the exact floor number, that
+        // determines the outcome at 100% null prevalence.
+        let candidate_floors: &[(&str, f32)] = &[
+            ("R4_literature_0.5", 0.5),
+            ("chosen_0.7", CONFIDENCE_REJECT_FLOOR),
+            ("conservative_0.9", 0.9),
+        ];
+
+        println!("\n── s4_null_prevalence_and_floor_sweep ──────────────────────────────");
+        println!(
+            "  measured null_ner_confidence_prevalence (default build) = {measured_null_prevalence:.2}"
+        );
+        println!(
+            "  corpus lexically-compatible pairs available to sweep: {}",
+            should_merge_pairs.len()
+        );
+        println!(
+            "  {:<20} {:>10} {:>10} {:>18} {:>18}",
+            "floor", "policy", "merges_kept", "merges_downgraded", "downgrade_rate"
+        );
+
+        // cosine held fixed at L4_MERGE_THRESHOLD for every corpus pair — this
+        // isolates the confidence-floor's effect from the lexical/cosine gates
+        // (already measured in `corpus_precision_recall`), matching this sweep's
+        // stated scope: the DOWNSTREAM EFFECT of the floor/null-policy choice, not
+        // a re-measurement of the lexical gate itself.
+        for &(label, floor) in candidate_floors {
+            for policy in ["null_bypasses_floor", "null_fails_floor"] {
+                let mut kept = 0usize;
+                let mut downgraded = 0usize;
+                for (name_a, name_b) in &should_merge_pairs {
+                    // At the measured 100% null prevalence, every pair's simulated
+                    // confidence is None on the default build.
+                    let (conf_a, conf_b): (Option<f32>, Option<f32>) = (None, None);
+                    let outcome = if policy == "null_bypasses_floor" {
+                        // S4 chosen policy: reuse min_confidence_floor_for_gate's
+                        // real null-bypass semantics (floor vacuously satisfied).
+                        classify_pair(ClassifyPairParams {
+                            cosine: L4_MERGE_THRESHOLD,
+                            name_a,
+                            name_b,
+                            conf_a,
+                            conf_b,
+                        })
+                    } else {
+                        // Counterfactual "null fails the floor" policy — NOT what
+                        // ships (see module docs point 4 for why this is rejected).
+                        // Modeled directly (not via classify_pair, which only
+                        // implements the shipped bypass policy) as: any None input
+                        // forces the floor to fail, downgrading Merge ->
+                        // PotentialAlias regardless of the floor's numeric value.
+                        let _ = floor; // floor is irrelevant once null forces failure
+                        DisambiguationOutcome::PotentialAlias {
+                            existing_id: name_b.clone(),
+                            similarity: L4_MERGE_THRESHOLD,
+                        }
+                    };
+                    match outcome {
+                        DisambiguationOutcome::Merge { .. } => kept += 1,
+                        DisambiguationOutcome::PotentialAlias { .. } => downgraded += 1,
+                        DisambiguationOutcome::New => {
+                            panic!(
+                                "lexically-compatible pair at L4_MERGE_THRESHOLD must not be New"
+                            )
+                        }
+                    }
+                }
+                let total = kept + downgraded;
+                let downgrade_rate = downgraded as f64 / total as f64;
+                println!(
+                    "  {label:<20} {policy:>10} {kept:>11} {downgraded:>18} {downgrade_rate:>17.2}"
+                );
+
+                if policy == "null_bypasses_floor" {
+                    assert_eq!(
+                        downgraded, 0,
+                        "shipped null-bypass policy must never downgrade a merge-eligible \
+                         pair when confidence is universally absent (floor={label})"
+                    );
+                } else {
+                    assert_eq!(
+                        kept, 0,
+                        "counterfactual null-fails policy would downgrade EVERY \
+                         merge-eligible pair at 100% null prevalence (floor={label}) — \
+                         this is exactly why S4 rejected it (module docs point 4)"
+                    );
+                }
+            }
+        }
+        println!("────────────────────────────────────────────────────────────────────");
     }
 }

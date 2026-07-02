@@ -1,4 +1,4 @@
-//! Confidence-aware merge helpers (ADR-063 Site #6 — the deterministic half).
+//! Confidence-aware merge helpers (ADR-063 Site #6).
 //!
 //! When two entities merge (L5 canonicalization, or Site #5 acronym/nickname
 //! recall), the surviving keeper should COMBINE the two entities' extraction
@@ -8,20 +8,111 @@
 //! and models "at least one extraction was confident," which is the right semantic
 //! for "the same real-world entity was extracted twice."
 //!
-//! ## What ships here (deterministic, enabled) vs what is S4-blocked
+//! ## Spike S4 — findings (2026-07-02)
 //!
-//! SYNTHESIS §2's Site #6 row splits the site by readiness:
-//! - **Merged-confidence FORMULA (noisy-OR)** — mechanically simple, deterministic,
-//!   no threshold to calibrate → ships here + is wired into `apply_merge_with_audit`.
-//! - **`CONFIDENCE_REJECT_FLOOR` GATE** (`min(conf_a, conf_b) ≥ floor` as a third
-//!   required gate alongside cosine + lexical) — "direct-implement once the floor is
-//!   set" (SYNTHESIS §2). The floor VALUE and the null-`ner_confidence` prevalence
-//!   are BOTH unmeasured (R4 open item #2, spike **S4**). Building the gate now would
-//!   mean hardcoding a guessed floor + guessed null-policy into the hot `classify_pair`
-//!   path — exactly the "build on an unvalidated spike assumption" the project's
-//!   spike-gating discipline forbids. It is therefore DEFERRED to a precise S4-blocked
-//!   TD, not built here. When S4 lands, the gate composes via the write-gate's
-//!   already-present `min_confidence_floor` input (`identity_verdict::WriteGateInputs`).
+//! S4 (R4 open item #2) required two numbers before the `CONFIDENCE_REJECT_FLOOR`
+//! gate could be wired: the floor value, and the null-`ner_confidence` prevalence.
+//! Both are now measured directly against kremory's own source, not literature:
+//!
+//! 1. **Null prevalence is 100% on the default (no `ner` feature) LLM-only ingest
+//!    path — a structural fact, not a corpus-dependent sample.** Traced the full
+//!    write path: `parse_entities_integer` (`extraction/parsers.rs:196-206`) builds
+//!    each `ExtractedEntity.properties` map with ONLY a `"name"` key — it never
+//!    copies `RawEntityIntegerId.confidence` (`extraction/models.rs:299-308`) into
+//!    `properties`, even though that field exists on the wire struct and is
+//!    schema-visible. `ingest_with.rs`'s `set_entity_ner_confidence` bolt-on
+//!    (`ingest/pipeline/ingest_with.rs:1067-1089`) only fires when
+//!    `extracted.properties.get("confidence")` is `Some`, which the parser above
+//!    makes categorically impossible on this path. `insert_entity_with_group`'s own
+//!    `INSERT INTO entities` statement (`graph/entity_groups.rs:122-130`) never
+//!    lists `ner_confidence` as a column either, so the column is `NULL` (SQLite's
+//!    default for an omitted column, `migrations/defs_c.rs:299`: no `DEFAULT`
+//!    clause) on every entity row created by the main LLM extraction path.
+//!    `ner_confidence` is populated ONLY by the `ner`-feature GLiNER Phase 1 writer
+//!    (`ner.rs` → `phase1.rs:187-197`, `entity_type_source = 'Phase1Ner'`), which is
+//!    NOT part of the default build (`kremory/Cargo.toml:34`: `default = []`).
+//! 2. **No real non-null `ner_confidence` sample exists in
+//!    `crates/kremory-eval/fixtures/entity_pairs.jsonl`** (verified: the corpus
+//!    schema has no confidence field at all) or in any real-LLM integration test —
+//!    confirmed by grep, no test asserts a measured (non-seeded) null-prevalence
+//!    fraction anywhere in the tree. A numeric precision/recall sweep against
+//!    synthetic confidence values would not be anchored to kremory's own data
+//!    (forbidden per `research.md`) — there is no such data to sweep on the
+//!    default path. The corpus-based "sweep" that IS possible and IS run here
+//!    (`s4_null_prevalence_and_floor_sweep` test below) instead sweeps the
+//!    DOWNSTREAM EFFECT of each candidate floor + each null policy on
+//!    `write_gate`'s decision distribution, holding cosine/lexical fixed at their
+//!    corpus-observed values — this is the honest empirical surface available.
+//! 3. **Floor value**: reuses `identity_verdict::LLM_VERIFY_CONFIDENCE_FLOOR`
+//!    (`0.7`, itself `consistency_check::MIN_VERIFY_CONFIDENCE`) per spec §8's
+//!    explicit recommendation ("reuse `MIN_VERIFY_CONFIDENCE` as the starting
+//!    candidate") — there is no measured kremory-specific reason to diverge from
+//!    it, and R4 §7's literature-only 0.5 starting point is explicitly superseded
+//!    by the spec's "reuse the already-shipped, ADR-047-calibrated value" guidance.
+//! 4. **Null policy: null BYPASSES the floor** (`CONFIDENCE_REJECT_FLOOR` gate is
+//!    vacuously satisfied when either input confidence is absent), not "null fails
+//!    the floor." With 100% null prevalence on the default build, a fail-on-null
+//!    policy would make Site #6 downgrade EVERY eligible merge to `PotentialAlias`
+//!    regardless of cosine+lexical agreement — silently neutering Site #4/#5/L4/L5
+//!    for the overwhelming majority of deployments (anyone not compiling the `ner`
+//!    feature). This is strictly worse than the status quo `write_gate` already
+//!    designed for (`min_confidence_floor: None` composes as a no-op per spec
+//!    §2.2.1) — a confidence signal that is ALMOST NEVER PRESENT must degrade
+//!    gracefully to "confidence check not applicable, fall back to cosine+lexical
+//!    only," per R4 §7 item 2's own third named option. This is a DOCUMENTED
+//!    DEVIATION from R4 §6.3's provisional pseudocode (which read a bare `< floor`
+//!    with no null branch) — R4 §7 item 2 explicitly flagged the null-handling
+//!    question as unresolved and left it to this spike.
+//!
+//! ## What ships here
+//!
+//! - **Merged-confidence FORMULA (noisy-OR)** — [`merged_confidence`] /
+//!   [`noisy_or`], unchanged from Phase 1.
+//! - **`CONFIDENCE_REJECT_FLOOR` GATE** — [`min_confidence_floor_for_gate`] computes
+//!   the `Option<f32>` to pass as `identity_verdict::WriteGateInputs.min_confidence_floor`
+//!   from a pair's two (possibly absent) `ner_confidence` values, applying the
+//!   null-bypass policy above. Wired into `disambiguation::classify_pair`'s Site #6
+//!   caller surface (see that module for the actual gate composition).
+
+/// Confidence floor below which `min(conf_a, conf_b)` fails Site #6's third
+/// merge-gate (`write_gate` row 5b, `identity_verdict::WriteGateInputs.min_confidence_floor`).
+///
+/// = `identity_verdict::LLM_VERIFY_CONFIDENCE_FLOOR` (0.7). S4 (module docs above)
+/// found no kremory-specific data supporting a different number — spec §8 directs
+/// reuse of the already-shipped, ADR-047-calibrated `MIN_VERIFY_CONFIDENCE` value
+/// rather than locking R4 §6.3's literature-only 0.5 starting point. A future spike
+/// MAY revise this if real `ner_confidence` data (i.e. `ner`-feature deployments)
+/// accumulates and shows a different number is better calibrated for the identity
+/// question specifically (as opposed to the type-correctness question
+/// `MIN_VERIFY_CONFIDENCE` was originally calibrated for) — see module docs point 3.
+pub(crate) const CONFIDENCE_REJECT_FLOOR: f32 =
+    crate::core::identity_verdict::LLM_VERIFY_CONFIDENCE_FLOOR;
+
+/// Compute the `min_confidence_floor` input for `identity_verdict::write_gate`
+/// from a merge candidate pair's two (possibly absent) `ner_confidence` values.
+///
+/// Implements the S4 null policy (module docs point 4): **null bypasses the
+/// floor**. Returns:
+/// - `Some(min(a, b))` when BOTH confidences are present — the floor check then
+///   compares this against [`CONFIDENCE_REJECT_FLOOR`] inside `write_gate`.
+/// - `None` when EITHER confidence is absent — `write_gate`'s row 5b already
+///   treats `None` as vacuously-satisfied (spec §2.2.1), so an absent signal
+///   degrades to "confidence check not applicable, fall back to cosine+lexical
+///   only" rather than failing the pair. On the default (no `ner` feature) build
+///   this is `None` for effectively every pair (100% measured null prevalence),
+///   so Site #6 is a no-op there by design — it activates only once real
+///   `ner_confidence` data exists (`ner`-feature deployments).
+///
+/// Deliberately does NOT compare against the floor itself — `write_gate` owns
+/// that comparison (row 5b) so the decision table stays the single place a
+/// reader checks for the gate's semantics, per this module's "counter-free,
+/// pure" discipline mirrored from `classify_pair`.
+pub(crate) fn min_confidence_floor_for_gate(a: Option<f32>, b: Option<f32>) -> Option<f32> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.min(y).clamp(0.0, 1.0)),
+        _ => None,
+    }
+}
 
 /// Noisy-OR combination of two confidence values in `[0, 1]`:  `a + b − a·b`.
 ///
