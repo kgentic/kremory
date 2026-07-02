@@ -40,24 +40,38 @@ pub(crate) const L4_LEXICAL_JACCARD_MIN: f32 = 0.5;
 /// **Token-Jaccard capability gaps (categories where overall recall < 1.0):**
 ///
 /// These are NOT accepted failures. They are inherent limits of a name-token
-/// approach that cannot be closed by hardcoded lists. The correct mechanism is
-/// context-embedding (ADR-058 B1): embed `name + "\n" + context`, where semantic
-/// distance closes gaps that pure token overlap cannot.
+/// approach that cannot be closed by hardcoded lists — NOR by any embedding
+/// technique. (DENT-001, 2026-07-02: the earlier claim here — "context-embedding
+/// (ADR-058 B1) closes these" — is WRONG and has been struck. B1 was empirically
+/// KILLED: embedding `name + context` as the PRIMARY identity signal for entity
+/// instances scored F1 0.051 vs bare-name 0.528 — a ~10x regression — because the
+/// same entity recurs across divergent contexts, ADR-058 B1 probe 2026-06-30. R3
+/// (embedding-identity-degeneracy swarm) confirms NO surveyed embedding technique
+/// discriminates bare proper nouns; the signal is genuinely absent from the vector
+/// space.) The ratified mechanism for these gaps is ADR-063 **Site #5**
+/// (`core::dream::acronym_nickname_recall`): a deterministic structural pre-filter
+/// (initialism test OR graph co-occurrence) nominates candidates → margin-triggered
+/// LLM adjudication in the latency-tolerant dream phase → a deterministic write-gate
+/// consumes the verdict (the LLM never authorizes a destructive write alone).
 ///
 /// - `acronym` (IBM / International Business Machines): Jaccard 0/4 = 0 — zero
-///   shared tokens regardless of threshold. B1 closes this via semantic embedding.
-/// - `nickname` (Bob / Robert): zero shared tokens. B1 closes via embedding.
+///   shared tokens regardless of threshold. Closed by Site #5's initialism
+///   pre-filter + LLM adjudication, NOT by embedding.
+/// - `nickname` (Bob / Robert): zero shared tokens. Closed by Site #5's
+///   co-occurrence pre-filter + LLM adjudication (world knowledge), NOT by embedding.
 /// - `diacritic` (café / cafe): unicode-aware `is_alphanumeric` preserves
 ///   diacritics, so tokens never collide → gap when the diacritic is the only
 ///   difference. Multi-token pairs ("Café de Flore" / "Cafe de Flore") pass via
-///   shared "de"+"flore". B1 closes single-token diacritic pairs.
+///   shared "de"+"flore". Single-token diacritic pairs remain a name-token gap
+///   (candidate for a normalization-time fold, out of ADR-063's scope).
 ///
-/// **Known FP (homonym — measured, documented, routed to B1):**
+/// **Known FP (homonym — measured, documented, routed to LLM adjudication):**
 /// - `Amazon` / `Amazon River`: Jaccard 1/2 = 0.5 → gate TRUE despite
-///   `should_merge=false`. Name tokens alone cannot distinguish homonyms. B1
-///   embeds `name + context`, where "Amazon River" context (geography, South
-///   America, flow) diverges from "Amazon" (e-commerce) — cosine drops below
-///   the merge threshold, resolving the homonym without a curated block-list.
+///   `should_merge=false`. Name tokens alone cannot distinguish homonyms. Under
+///   ADR-063, a margin-triggered LLM adjudication with the entities' context
+///   (Site #5 / Site #2 write-gate) resolves the homonym via world knowledge —
+///   the LLM sees "Amazon River" (geography) is not "Amazon" (e-commerce) — rather
+///   than any embedding-cosine test, which R3 shows cannot separate them reliably.
 ///
 /// Worked spot-checks against verified embedder data (`tests/spike_td080_embedder_cosine.rs`):
 /// - `Ria`/`Morocco`, `Ria`/`Amazon Robotics`, `Northeastern University`/`Amazon

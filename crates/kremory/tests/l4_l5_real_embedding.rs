@@ -185,9 +185,12 @@ fn l4_disambiguate_merge_on_high_similarity_real_embedding() {
 
 // ─── Test 2: PotentialAlias on moderate similarity ────────────────────────────
 
-/// Seed entity A on axis 0 ([1, 0, 0, …]).
-/// Query with [0.8, 0.6, 0, …] — unit-normalised (0.8² + 0.6² = 1.0).
-/// Cosine similarity with A = 0.8, which sits in [0.70, 0.95) → `PotentialAlias`.
+/// Seed entity "alice johnson" on axis 0 ([1, 0, 0, …]).
+/// Query "alice marie johnson" with [0.8, 0.6, 0, …] — unit-normalised (0.8² + 0.6² = 1.0).
+/// Cosine similarity with the seed = 0.8, which sits in [0.70, 0.95) → `PotentialAlias`.
+/// Post-TD-098 the alias arm also requires lexical compatibility, so the names are a
+/// compatible pair (Jaccard 2/3 ≥ 0.5) — this exercises the alias-band threshold, not
+/// the lexical-block path (covered by `l4_high_cosine_but_lexically_incompatible_...`).
 ///
 /// Counter: `kremory.l4.potential_alias_total` must increment.
 #[test]
@@ -201,7 +204,7 @@ fn l4_disambiguate_potential_alias_on_moderate_similarity_real_embedding() {
             let graph = TemporalGraph::open_in_memory().await.expect("open graph");
             let group = "test-group";
 
-            seed_entity(&graph, "entity-a", group, &axis_unit(0)).await;
+            seed_entity(&graph, "alice johnson", group, &axis_unit(0)).await;
 
             // [0.8, 0.6, 0, …]: cos with axis_unit(0) = 0.8, inside alias band.
             let mut query_vec = vec![0.0_f32; DIM];
@@ -211,7 +214,7 @@ fn l4_disambiguate_potential_alias_on_moderate_similarity_real_embedding() {
             let embedder = FixedVectorEmbedder::new(query_vec);
             disambiguate(
                 DisambiguateParams {
-                    entity_name: "alias entity",
+                    entity_name: "alice marie johnson",
                     group_id: Some(group),
                     graph: &graph,
                 },
@@ -227,7 +230,7 @@ fn l4_disambiguate_potential_alias_on_moderate_similarity_real_embedding() {
             ref existing_id,
             similarity,
         } => {
-            assert_eq!(existing_id, "entity-a");
+            assert_eq!(existing_id, "alice johnson");
             assert!(
                 similarity >= L4_POTENTIAL_ALIAS_THRESHOLD,
                 "similarity {similarity:.4} must be ≥ L4_POTENTIAL_ALIAS_THRESHOLD \
@@ -370,16 +373,19 @@ fn l5_canonicalize_merges_when_two_entities_have_near_identical_embeddings() {
     );
 }
 
-// ─── ADR-057 regression: lexical gate blocks anisotropic over-merge ────────────
+// ─── ADR-057 + TD-098 regression: lexical gate blocks anisotropic over-merge ────
 
 /// THE bug (TD-080 #2): a weak/anisotropic embedder returns a HIGH cosine between
 /// two UNRELATED entity names. Pre-fix, L4 merged them (cosine-only) and corrupted
-/// every fact's subject. Post-fix, the deterministic name gate refuses the merge and
-/// downgrades to the non-destructive `PotentialAlias` — even though cosine ≈ 1.0.
+/// every fact's subject. ADR-057 refused the destructive merge; TD-098 (Site #4 of
+/// ADR-063) goes further — a high-cosine but lexically-incompatible pair is NOT even
+/// recorded as a persistent `PotentialAlias` (which L7 could never revoke, since the
+/// degenerate cosine stays ≈ 1.0 forever) — it is classified `New`.
 ///
-/// Counter: `kremory.l4.merge_blocked_lexical_total` must increment.
+/// Counter: `kremory.l4.merge_blocked_lexical_total` must still increment (the blocked
+/// case is attributed in the `New` arm now); `merge_total` must NOT.
 #[test]
-fn l4_high_cosine_but_lexically_incompatible_downgrades_to_alias() {
+fn l4_high_cosine_but_lexically_incompatible_becomes_new_not_alias() {
     let rt = make_rt();
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
@@ -409,16 +415,15 @@ fn l4_high_cosine_but_lexically_incompatible_downgrades_to_alias() {
     });
 
     match outcome {
-        DisambiguationOutcome::PotentialAlias { similarity, .. } => {
-            assert!(
-                similarity >= L4_MERGE_THRESHOLD,
-                "the cosine MUST be in merge range ({similarity:.4} ≥ {L4_MERGE_THRESHOLD}); \
-                 the downgrade is driven by the lexical gate, NOT by a low score"
-            );
+        DisambiguationOutcome::New => {
+            // Correct: the lexical gate rejected the pair, and TD-098 discards it as
+            // New rather than a persistent false alias. The `merge_blocked_lexical`
+            // counter asserted below proves the cosine WAS in merge range — that counter
+            // fires in the `New` arm only when similarity ≥ L4_MERGE_THRESHOLD.
         }
         other => panic!(
-            "Expected PotentialAlias (lexical gate downgrade of a high-cosine but \
-             lexically-incompatible pair), got {other:?}"
+            "Expected New (TD-098: a high-cosine lexically-incompatible pair is anisotropy \
+             noise, not a persistent alias), got {other:?}"
         ),
     }
 
@@ -437,6 +442,65 @@ fn l4_high_cosine_but_lexically_incompatible_downgrades_to_alias() {
     assert!(
         !names.iter().any(|n| n == "kremory.l4.merge_total"),
         "a lexically-blocked pair MUST NOT increment merge_total; got: {names:?}"
+    );
+}
+
+/// TD-098 alias-band sibling of the above: a pair in the [alias, merge) band
+/// (cosine ≈ 0.80) with lexically-INCOMPATIBLE names must NOT be recorded as a
+/// persistent `potential_alias` fact — it is `New`, and the NEW in-band blocked
+/// counter `kremory.l4.alias_blocked_lexical_total` must fire (the poisoning fix).
+#[test]
+fn l4_alias_band_but_lexically_incompatible_becomes_new_not_alias() {
+    let rt = make_rt();
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+
+    let outcome = metrics::with_local_recorder(&recorder, || {
+        rt.block_on(async {
+            let graph = TemporalGraph::open_in_memory().await.expect("open graph");
+            let group = "test-group";
+
+            // Seed "morocco". Query "ria" at cosine ≈ 0.80 (alias band) — the same
+            // verified anisotropy shape as the merge-band test, just at a lower score
+            // so it exercises the ALIAS-arm block, not the merge-arm block.
+            seed_entity(&graph, "morocco", group, &axis_unit(0)).await;
+
+            // theta = acos(0.80) ≈ 36.87° → cos ≈ 0.80, inside [0.70, 0.95).
+            let theta: f32 = 36.87_f32.to_radians();
+            let embedder = FixedVectorEmbedder::new(rotated_unit(theta));
+            disambiguate(
+                DisambiguateParams {
+                    entity_name: "ria",
+                    group_id: Some(group),
+                    graph: &graph,
+                },
+                &embedder,
+            )
+            .await
+            .expect("disambiguate must succeed")
+        })
+    });
+
+    assert!(
+        matches!(outcome, DisambiguationOutcome::New),
+        "an alias-band lexically-incompatible pair must be New (TD-098), got {outcome:?}"
+    );
+
+    let names: Vec<String> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .map(|(k, _, _, _)| k.key().name().to_string())
+        .collect();
+    assert!(
+        names
+            .iter()
+            .any(|n| n == "kremory.l4.alias_blocked_lexical_total"),
+        "kremory.l4.alias_blocked_lexical_total must be emitted; got: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "kremory.l4.potential_alias_total"),
+        "a lexically-blocked alias-band pair MUST NOT increment potential_alias_total; got: {names:?}"
     );
 }
 

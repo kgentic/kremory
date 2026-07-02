@@ -5,11 +5,17 @@
 //! cosine similarity on their embeddings.  Based on the similarity score one of
 //! three outcomes is selected:
 //!
-//! | Threshold                              | Action                                        |
-//! |----------------------------------------|-----------------------------------------------|
-//! | `sim >= L4_MERGE_THRESHOLD` (0.95)     | **MERGE** — reuse existing entity_id          |
-//! | `L4_POTENTIAL_ALIAS_THRESHOLD` ≤ sim < `L4_MERGE_THRESHOLD` (0.70–0.95) | **ALIAS** — insert new entity + `potential_alias` fact |
-//! | `sim < L4_POTENTIAL_ALIAS_THRESHOLD`   | **NEW** — insert as completely new entity     |
+//! | Threshold + lexical gate (ADR-057 / TD-098)                            | Action |
+//! |------------------------------------------------------------------------|--------|
+//! | `sim >= L4_MERGE_THRESHOLD` (0.95) **AND** names lexically compatible   | **MERGE** — reuse existing entity_id |
+//! | `L4_POTENTIAL_ALIAS_THRESHOLD` ≤ sim < 0.95 (0.70–0.95) **AND** names lexically compatible | **ALIAS** — insert new entity + `potential_alias` fact |
+//! | cosine in the merge/alias band **but names lexically INCOMPATIBLE**     | **NEW** — anisotropy noise; no merge, no *persistent* false alias (TD-098: the alias arm was the missed 5th cosine-alone site of ADR-057's invariant) |
+//! | `sim < L4_POTENTIAL_ALIAS_THRESHOLD`                                    | **NEW** — insert as completely new entity |
+//!
+//! The lexical gate (`lexical::names_lexically_compatible`, ADR-057 Jaccard 0.5) is
+//! the deterministic, embedder-independent signal that makes BOTH the destructive
+//! merge AND the (persistent) alias-creation robust to a weak/anisotropic consumer
+//! embedder (BYOM). Cosine alone can authorize neither.
 //!
 //! ## §3 — `potential_alias` reserved predicate
 //!
@@ -54,7 +60,10 @@ use crate::core::search::{SearchFilters, VectorSearchEntitiesNoCountParams};
 pub const L4_MERGE_THRESHOLD: f32 = 0.95;
 
 /// Cosine similarity at or above which a new entity is inserted but linked to
-/// the most similar existing entity via a `potential_alias` fact edge.
+/// the most similar existing entity via a `potential_alias` fact edge — **provided
+/// the two names are also lexically compatible** (`names_lexically_compatible`,
+/// TD-098 / Site #4 of ADR-063). A high-cosine but lexically-incompatible pair is
+/// embedder anisotropy noise and is classified `New`, NOT a persistent alias.
 ///
 /// Source: Cognee `post_extraction_canonicalization` POC (empirically derived).
 pub const L4_POTENTIAL_ALIAS_THRESHOLD: f32 = 0.70;
@@ -225,23 +234,12 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
             );
         }
         DisambiguationOutcome::PotentialAlias { .. } => {
-            // ADR-057: distinguish a genuine alias-band hit from a lexically-blocked
-            // merge so a weak consumer embedder is observable (a spike here signals
-            // anisotropy). The blocked case is `cosine >= L4_MERGE_THRESHOLD` yet the
-            // outcome landed here — i.e. `classify_pair` downgraded a high-cosine pair
-            // because the names were lexically incompatible. Re-derive locally (mirrors
-            // the threshold inside `classify_pair`) to attribute the metric.
-            let cosine_says_merge = similarity >= L4_MERGE_THRESHOLD;
-            if cosine_says_merge {
-                counter!("kremory.l4.merge_blocked_lexical_total").increment(1);
-                tracing::info!(
-                    target: "kremory.l4",
-                    entity_name,
-                    existing_id = %existing_id,
-                    similarity,
-                    "kremory.l4.merge_blocked_lexical"
-                );
-            }
+            // Post-TD-098 (Site #4): the PotentialAlias arm now fires ONLY for
+            // lexically-COMPATIBLE pairs in the [alias, merge) band. A high-cosine but
+            // lexically-incompatible pair no longer downgrades to PotentialAlias — it
+            // falls to `New` (see that arm's blocked-lexical attribution), so the old
+            // `cosine >= L4_MERGE_THRESHOLD` "merge_blocked here" branch can no longer
+            // arise in this arm and has moved to `New`.
             counter!("kremory.l4.potential_alias_total").increment(1);
             tracing::info!(
                 target: "kremory.l4",
@@ -252,13 +250,45 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
             );
         }
         DisambiguationOutcome::New => {
-            counter!("kremory.l4.new_entity_total").increment(1);
-            tracing::debug!(
-                target: "kremory.l4",
-                entity_name,
-                similarity,
-                "kremory.l4.new_entity"
-            );
+            // TD-098: `New` is now reachable by THREE routes. Attribute the two
+            // lexically-blocked routes so a weak consumer embedder stays observable
+            // (observability-first-class, Rule 19). `classify_pair` is counter-free by
+            // design, so re-derive the band locally here (mirrors its thresholds).
+            if similarity >= L4_MERGE_THRESHOLD {
+                // Was ADR-057's "≥0.95 + incompatible → PotentialAlias" downgrade cell;
+                // TD-098 discards it as `New` (no persistent false-alias fact). The
+                // counter name is kept so existing merge-blocked observability + the
+                // l4_l5_real_embedding regression assertion still fire.
+                counter!("kremory.l4.merge_blocked_lexical_total").increment(1);
+                tracing::info!(
+                    target: "kremory.l4",
+                    entity_name,
+                    existing_id = %existing_id,
+                    similarity,
+                    "kremory.l4.merge_blocked_lexical"
+                );
+            } else if similarity >= L4_POTENTIAL_ALIAS_THRESHOLD {
+                // TD-098 poisoning fix: a degenerate high-cosine alias-band pair whose
+                // names are lexically incompatible is NOT recorded as a persistent
+                // `potential_alias` fact — it becomes `New`. New counter distinguishes
+                // this blocked case from a genuine low-cosine New.
+                counter!("kremory.l4.alias_blocked_lexical_total").increment(1);
+                tracing::info!(
+                    target: "kremory.l4",
+                    entity_name,
+                    existing_id = %existing_id,
+                    similarity,
+                    "kremory.l4.alias_blocked_lexical"
+                );
+            } else {
+                counter!("kremory.l4.new_entity_total").increment(1);
+                tracing::debug!(
+                    target: "kremory.l4",
+                    entity_name,
+                    similarity,
+                    "kremory.l4.new_entity"
+                );
+            }
         }
     }
 
@@ -281,7 +311,24 @@ pub(crate) fn classify_pair(cosine: f32, name_a: &str, name_b: &str) -> Disambig
             existing_id: name_b.to_owned(),
             similarity: cosine,
         }
-    } else if cosine >= L4_POTENTIAL_ALIAS_THRESHOLD {
+    } else if cosine >= L4_POTENTIAL_ALIAS_THRESHOLD && names_lexically_compatible(name_a, name_b) {
+        // TD-098 (Site #4 of ADR-063): the PotentialAlias arm was cosine-ALONE — the
+        // 5th, missed site of ADR-057's "cosine never authorizes an identity write
+        // alone" invariant. ADR-057 line 116 assumed non-destructive alias creation
+        // could stay permissive because L7 self-heals; TD-098 proved that assumption
+        // FALSE under embedder degeneracy: `nomic-embed-text` returns cosine ≈ 1.0 for
+        // unrelated short names (`cos(Ria,Morocco)=1.0000`), so the cosine NEVER drops
+        // below L4_REVOKE_THRESHOLD → L7 revocation never fires → a false alias fact
+        // persists indefinitely, poisoning graph analyses. So a high-cosine but
+        // lexically-incompatible pair is anisotropy noise and must NOT even become a
+        // (persistent) PotentialAlias — it falls through to `New`. This supersedes
+        // ADR-057's "≥0.95 + incompatible → PotentialAlias" downgrade cell (that ADR's
+        // parenthetical about "preserving acronym-variant detection" is also superseded:
+        // R1/R3 show L4 cosine does not reliably elevate acronym pairs anyway, and
+        // ADR-063 Site #5 is the dedicated acronym/nickname mechanism). Uses the SAME
+        // `names_lexically_compatible` helper (ADR-057 Jaccard 0.5) as the 4 sibling
+        // sites — no new number (Phase 1 scope). The confidence reject-floor + forced
+        // re-confirmation deadline (TD-098 parts 2/3) are spike-gated (S4/S5) → Phase 2.
         DisambiguationOutcome::PotentialAlias {
             existing_id: name_b.to_owned(),
             similarity: cosine,
@@ -769,32 +816,56 @@ mod tests {
 
     #[test]
     fn classify_pair_at_alias_threshold_is_potential_alias() {
-        // Exactly at L4_POTENTIAL_ALIAS_THRESHOLD → PotentialAlias (not New).
-        // Names are unrelated ("alice" vs "bob") so the merge arm cannot fire.
-        let outcome = classify_pair(L4_POTENTIAL_ALIAS_THRESHOLD, "alice", "bob");
+        // Exactly at L4_POTENTIAL_ALIAS_THRESHOLD with lexically-COMPATIBLE names →
+        // PotentialAlias (cosine < merge threshold so the merge arm cannot fire).
+        // Post-TD-098 the alias arm ALSO requires lexical compatibility, so this test
+        // uses a compatible pair ("alice johnson" ⊆ "alice marie johnson", Jaccard
+        // 2/3 ≥ 0.5) to exercise the threshold ladder.
+        let outcome = classify_pair(
+            L4_POTENTIAL_ALIAS_THRESHOLD,
+            "alice marie johnson",
+            "alice johnson",
+        );
         assert!(
             matches!(
                 outcome,
                 DisambiguationOutcome::PotentialAlias { ref existing_id, similarity }
-                if existing_id == "bob"
+                if existing_id == "alice johnson"
                     && (similarity - L4_POTENTIAL_ALIAS_THRESHOLD).abs() < f32::EPSILON
             ),
-            "cosine == L4_POTENTIAL_ALIAS_THRESHOLD must produce PotentialAlias, got {outcome:?}"
+            "cosine == L4_POTENTIAL_ALIAS_THRESHOLD + compatible names must produce \
+             PotentialAlias, got {outcome:?}"
         );
     }
 
     #[test]
-    fn classify_pair_cosine_above_merge_threshold_incompatible_names_is_potential_alias() {
-        // ADR-057 lexical downgrade: cosine ≥ L4_MERGE_THRESHOLD but names are
-        // lexically incompatible → must NOT merge → PotentialAlias.
-        // "alice" / "bob" share zero tokens → names_lexically_compatible = false.
-        let cosine = L4_MERGE_THRESHOLD + 0.01;
-        let cosine = cosine.min(1.0);
+    fn classify_pair_cosine_above_merge_threshold_incompatible_names_is_new() {
+        // TD-098 (Site #4): cosine ≥ L4_MERGE_THRESHOLD but names lexically
+        // incompatible → NOT Merge (ADR-057) AND NOT a persistent PotentialAlias
+        // (TD-098) → New. "alice"/"bob" share zero tokens → incompatible. This
+        // SUPERSEDES ADR-057's "downgrade to PotentialAlias" cell: a degenerate
+        // high-cosine pair between unrelated names must not create a false alias fact
+        // that L7 can never revoke (cosine stays ≈ 1.0 forever under a weak embedder).
+        let cosine = (L4_MERGE_THRESHOLD + 0.01).min(1.0);
         let outcome = classify_pair(cosine, "alice", "bob");
         assert!(
-            matches!(outcome, DisambiguationOutcome::PotentialAlias { .. }),
-            "cosine >= L4_MERGE_THRESHOLD + incompatible names must produce PotentialAlias \
-             (ADR-057 lexical downgrade), got {outcome:?}"
+            matches!(outcome, DisambiguationOutcome::New),
+            "cosine >= L4_MERGE_THRESHOLD + incompatible names must produce New \
+             (TD-098: no persistent false alias), got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn classify_pair_alias_band_incompatible_names_is_new() {
+        // TD-098 core poisoning fix: a pair in the [alias, merge) band (0.70–0.95)
+        // whose names are lexically incompatible is degenerate-embedding noise and
+        // must be `New`, NOT a persistent `potential_alias` fact. Pre-TD-098 this arm
+        // was cosine-alone and produced PotentialAlias. "alice"/"bob" → zero shared tokens.
+        let mid_band = (L4_POTENTIAL_ALIAS_THRESHOLD + L4_MERGE_THRESHOLD) / 2.0;
+        let outcome = classify_pair(mid_band, "alice", "bob");
+        assert!(
+            matches!(outcome, DisambiguationOutcome::New),
+            "alias-band cosine + incompatible names must produce New (TD-098), got {outcome:?}"
         );
     }
 
