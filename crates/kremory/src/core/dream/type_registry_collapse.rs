@@ -135,13 +135,21 @@ struct MergeEdge {
 /// Bundled parameters for [`type_registry_collapse`] — args-as-object per
 /// TD-042 (rust-conventions §too_many_arguments). `llm` stays a lead generic
 /// positional param (project convention, mirrors `discover_types<L>`).
-pub(crate) struct TypeRegistryCollapseParams<'a> {
-    pub(crate) conn: &'a libsql::Connection,
-    pub(crate) group_id: &'a str,
-    pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
+///
+/// `pub` + `#[doc(hidden)]` (not `pub(crate)`) per the MNT-002 precedent
+/// (`dream/mod.rs`'s `consistency_check` re-export block): `pub(crate)` items
+/// cannot be re-exported as `pub` (E0365), and the S3 spike's integration test
+/// (`tests/type_registry_collapse_s3_spike.rs`) lives outside the crate
+/// boundary. Re-exported under `feature = "test-utils"` in `dream/mod.rs` —
+/// explicitly NOT part of the stable public API contract.
+#[doc(hidden)]
+pub struct TypeRegistryCollapseParams<'a> {
+    pub conn: &'a libsql::Connection,
+    pub group_id: &'a str,
+    pub embedder: Option<&'a dyn DynEmbeddingProvider>,
     /// Concrete model id for capability detection (mirrors TD-094 threading
     /// used by `discover_types`/`reclassify`). Empty (`""`) → `PromptOnly` degrade.
-    pub(crate) model_id: &'a str,
+    pub model_id: &'a str,
 }
 
 /// Run Site #3 type-registry post-hoc collapse over `group_id` (ADR-063 spec §4).
@@ -151,7 +159,11 @@ pub(crate) struct TypeRegistryCollapseParams<'a> {
 /// chain, after `canonicalize_surface_forms` (spec §4.0 rationale: type
 /// collapse benefits from a stable entity population that Pass 0/2/4/L5 have
 /// already finished touching this cycle).
-pub(crate) async fn type_registry_collapse<L: ChatProvider>(
+///
+/// `pub` + `#[doc(hidden)]` — see [`TypeRegistryCollapseParams`]'s doc comment
+/// for the MNT-002 re-export rationale (S3 spike integration test).
+#[doc(hidden)]
+pub async fn type_registry_collapse<L: ChatProvider>(
     llm: &L,
     params: TypeRegistryCollapseParams<'_>,
 ) -> Result<TypeRegistryCollapseReport> {
