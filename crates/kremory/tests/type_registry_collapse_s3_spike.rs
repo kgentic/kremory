@@ -39,11 +39,24 @@
 // single call completes cleanly. This caught a real bug (smoke-one's initial
 // draft accidentally seeded the 10 default types into what was meant to be a
 // 1-pair fixture, producing 66 pairs instead of 1) AND a real architectural
-// finding at the full-fixture stage (a 25-pair batch adjudication call times
+// finding at the full-fixture stage (a 25-pair batch adjudication call timed
 // out on all 4 fallback arms against `gemma4:e4b`, since
-// `StructuredCallBuilder`'s default per-arm budget is 30s and
-// `type_registry_collapse.rs` does not override it or chunk large batches —
-// see `full_fixture_s3`'s FINDING eprintln for the full detail).
+// `StructuredCallBuilder`'s default per-arm budget was 30s and
+// `type_registry_collapse.rs` did not override it or chunk large batches).
+//
+// RESOLVED (`type_registry_collapse.rs::adjudicate_batch`, Quinn-confirmed
+// fix, commit `153c6ca`): `adjudicate_batch` now splits `nominated` into
+// chunks of at most `identity_verdict::ADJUDICATION_CHUNK_SIZE` (10) via
+// `identity_verdict::chunk_pair_indices`, running one `adjudicate_chunk` call
+// per chunk against a raised `ttft_budget_ms` of
+// `identity_verdict::ADJUDICATION_TTFT_BUDGET_MS` (180_000ms) instead of the
+// shared 30s default. Re-recorded against live `gemma4:e4b` +
+// `nomic-embed-text` post-fix: the 25-pair fixture batch now splits into 3
+// chunks (10 + 10 + 5) and completes in ~64s total (vs. the pre-fix ~2min
+// all-arms timeout with zero verdicts). `full_fixture_s3` below now ASSERTS
+// the S3 PASS bar directly (zero false merges + the human/Individual pair
+// reaching an audited LLM-verify-band verdict) rather than merely reporting
+// whether adjudication resolved at all.
 //
 // This test calls `type_registry_collapse(...)` DIRECTLY (not the full
 // `mem.dream()` facade) — the S3 surface is this one pass, and direct
@@ -704,27 +717,24 @@ async fn run_fixture(
              Recipe survived={recipe_survived}"
         );
 
-        // ── human/Individual pair routing check, WITH a genuine finding ──
+        // ── human/Individual pair routing check — the S3 PASS bar itself ──
         //
         // human/Individual must NOT auto-merge (zero shared lemma means the
         // lexical pre-filter cannot fire — this is a hard structural
-        // guarantee, always assertable). Whether it reaches a *resolved*
-        // LLM-verify-band outcome (a `potential_alias` audit row, or a row-5
-        // merge) additionally depends on the adjudication LLM call actually
-        // succeeding — and at this fixture's realistic size (16 non-catch-all
-        // types -> up to 25 nominated pairs in ONE batched call, spec §3.2/§4.4),
-        // it does NOT always succeed: see this file's FINDING note below and
-        // `smoke_one_human_individual_pair_s3`, which proves the SAME pair
-        // resolves correctly in isolation (1-pair batch).
+        // guarantee, always assertable), and — post the chunking + raised-
+        // budget fix (`adjudicate_batch`, commit `153c6ca`) — the adjudication
+        // call now reliably resolves at this fixture's realistic size (16
+        // non-catch-all types -> 25 nominated pairs, split into 3 chunks of
+        // <= `identity_verdict::ADJUDICATION_CHUNK_SIZE`). This is asserted as
+        // a hard PASS-bar requirement below, not merely reported.
         let human_individual_merged = human_survived != individual_survived;
         assert!(
             !human_individual_merged,
             "S3 FAIL: human/Individual should never AUTO-merge (zero shared \
              lemma -> the lexical pre-filter cannot fire, so a merge here \
-             could only be an LLM-authorized row-5 decision) — but if the \
-             adjudication call failed (see FINDING below), a row-5 merge is \
-             impossible, so a merge here would indicate the lexical/cosine \
-             gate mis-routed this pair instead of the LLM ever ruling on it."
+             could only be an LLM-authorized row-5 decision, which zero-lexical \
+             pairs can never reach per write_gate row 6) — a merge here would \
+             indicate the lexical/cosine gate mis-routed this pair."
         );
 
         let mut rows = graph
@@ -747,19 +757,57 @@ async fn run_fixture(
         let human_individual_audited = audit_n > 0;
 
         eprintln!(
-            "\n[S3 FINDING] human_individual_audited={human_individual_audited} \
-             (candidates_nominated={}, merges_applied={}). If FALSE: the batch \
-             adjudication call did not resolve this pair to an audited verdict \
-             at this fixture's realistic size ({} nominated pairs in one batch) \
-             — cross-check against KREMORY_DEBUG=1 tracing output for \
-             `adjudication LLM call failed` / `exceeded Nms budget` on the \
-             `IdentityVerdictBatch` schema. This is a genuine capacity finding \
-             (batch size vs. `StructuredCallBuilder`'s default 30s-per-arm \
-             budget, `structured.rs:84`), NOT a threshold-band failure — \
-             `smoke_one_human_individual_pair_s3` proves the SAME pair resolves \
-             correctly (audited, PotentialAlias) when adjudicated alone.",
-            report.candidates_nominated, report.merges_applied, report.candidates_nominated,
+            "\n[S3 PASS BAR] human_individual_audited={human_individual_audited} \
+             (candidates_nominated={}, merges_applied={})",
+            report.candidates_nominated, report.merges_applied,
         );
+
+        // ── PASS bar (spec §8 S3 row, binding assertion): the human/Individual
+        // pair MUST reach a resolved, audited LLM-verify-band verdict — proving
+        // the chunked adjudication (S3 spike fix, commit `153c6ca`) resolves
+        // this pair at realistic fixture scale (25 nominated pairs / 3 chunks),
+        // not just in `smoke_one_human_individual_pair_s3`'s 1-pair isolation.
+        assert!(
+            human_individual_audited,
+            "S3 FAIL: human/Individual did not reach an audited LLM-verify-band \
+             verdict at realistic fixture scale ({} nominated pairs in chunks of \
+             <= {}) — cross-check KREMORY_DEBUG=1 tracing output for \
+             `adjudication LLM call failed` / parse failures on the \
+             `IdentityVerdictBatch` schema. `smoke_one_human_individual_pair_s3` \
+             proves the SAME pair resolves correctly in 1-pair isolation, so a \
+             failure here would point at the chunking/budget fix regressing, \
+             not the threshold band.",
+            report.candidates_nominated,
+            10, // mirrors identity_verdict::ADJUDICATION_CHUNK_SIZE (pub(crate),
+                // unreachable from this external integration test — same manual-
+                // mirror convention as this file's `exact_or_lemma_match`).
+        );
+
+        // Also assert the specific verdict shape: PotentialAlias (row 6), never
+        // Merge — the write_gate invariant that cosine + LLM alone can never
+        // authorise a destructive type merge without a deterministic lexical
+        // signal (spec §2.2 row 6; `type_registry_collapse.rs` unit test
+        // `llm_verify_zero_lexical_true_verdict_is_potential_alias_row6` is the
+        // scripted-LLM mirror of this same invariant).
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT decision FROM identity_verdict_audit WHERE group_id = ?1 AND \
+                 ((candidate_a = 'human' AND candidate_b = 'Individual') OR \
+                  (candidate_a = 'Individual' AND candidate_b = 'human'))",
+                libsql::params![group_id],
+            )
+            .await
+            .expect("audit decision query");
+        if let Some(row) = rows.next().await.expect("row read") {
+            let decision: String = row.get(0).expect("decision col");
+            assert_eq!(
+                decision, "potential_alias",
+                "S3 FAIL: human/Individual's audited verdict must be \
+                 'potential_alias' (write_gate row 6 — zero lexical signal can \
+                 never authorise a Merge), got {decision:?}"
+            );
+        }
     }
 
     report
