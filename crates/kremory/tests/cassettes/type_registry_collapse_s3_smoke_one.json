@@ -6,7 +6,7 @@
     "b833b296f2975a1f73c639c86879069747574a82eab1778ae5262dea115875a2": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions clearly refer to a living human being, differentiated by name and biographical details.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.98,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions clearly refer to a living, single person identified by biographical details (name, life facts, relationships).\"\n    }\n  ]\n}"
       }
     ]
   }
