@@ -439,3 +439,77 @@ pub(crate) async fn migrate_017_episodic_edges_presence_unique(
     );
     Ok(())
 }
+
+// ─── Migration 018 ─────────────────────────────────────────────────────────
+
+/// Migration 018 (ADR-063 spec §5.0 + §5.1): prerequisites for the shared
+/// identity-verdict / write-gate machinery (Site #5 + Site #3).
+///
+/// 1. **`idx_facts_subject`** (spec §5.0, resolves RISK-002) — a
+///    `(subject_id, expired_at)` index mirroring the existing `idx_facts_object`
+///    `(object_id, expired_at)`. Site #5's `cooccurs_in_graph` 1-hop-neighbour
+///    query filters `facts` on `subject_id = ? AND expired_at IS NULL`; the only
+///    pre-existing subject-side index (`idx_facts_subject_group
+///    (subject_id, subject_group_id)`) does NOT cover an `expired_at` filter, so
+///    without this index that query risks a sequential scan on `facts` at real
+///    graph sizes (undermining the "cheaper than L5 O(N²)" cost bound). Spike S6
+///    empirically checks the query cost with this index present.
+///
+/// 2. **`identity_verdict_audit`** (spec §5.1) — audit trail for LLM-adjudicated
+///    identity decisions (Site #5 + Site #3), one row per adjudicated pair. The
+///    INSERT runs INSIDE the same `BEGIN IMMEDIATE` transaction as the destructive
+///    write it documents (spec §5.1 RISK-003), so a crash between the merge and a
+///    separate audit write cannot leave a merge with no audit trail. Mirrors the
+///    `dream_pass4_audit` pattern (ADR-047).
+///
+/// Idempotent: both statements are `IF NOT EXISTS` and safe to re-run on an
+/// already-migrated db.
+pub(crate) async fn migrate_018_identity_verdict_prereqs(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_018 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // 1. Subject-side index mirroring idx_facts_object (spec §5.0).
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject_id, expired_at)",
+        (),
+    )
+    .await
+    .map_err(step("idx_facts_subject"))?;
+
+    // 2. Identity-verdict audit table (spec §5.1). `structural_signal` records the
+    //    write_gate's DeterministicSignal input; `llm_*` columns are NULL for
+    //    clear-case (no-LLM) decisions.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS identity_verdict_audit ( \
+             id                INTEGER PRIMARY KEY AUTOINCREMENT, \
+             site              TEXT NOT NULL, \
+             group_id          TEXT NOT NULL, \
+             candidate_a       TEXT NOT NULL, \
+             candidate_b       TEXT NOT NULL, \
+             cosine            REAL, \
+             structural_signal BOOLEAN NOT NULL, \
+             llm_is_same       BOOLEAN, \
+             llm_confidence    REAL, \
+             llm_reasoning     TEXT, \
+             decision          TEXT NOT NULL, \
+             run_id            TEXT NOT NULL, \
+             created_at        TEXT NOT NULL DEFAULT (datetime('now')) \
+         )",
+        (),
+    )
+    .await
+    .map_err(step("identity_verdict_audit"))?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        "migrate_018: idx_facts_subject + identity_verdict_audit installed"
+    );
+    Ok(())
+}

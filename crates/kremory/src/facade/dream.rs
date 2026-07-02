@@ -369,6 +369,56 @@ impl<'a> DreamRequest<'a> {
                 .increment(canonicalization_merges as u64);
         }
 
+        // Dream Pass — type_registry_collapse (ADR-063 spec §4, "Site #3"):
+        // merge near-duplicate `entity_types` rows via description-cosine +
+        // lexical pre-filter + LLM-verify band, remapping
+        // `entities.entity_type_id` onto the keeper. Spike-gated per spec §8 —
+        // gated by `include_type_registry_collapse` (default `false`). Ordered
+        // LAST (after canonicalize) per spec §4.0: type collapse benefits from
+        // a stable entity population that Pass 0/2/4/L5 have already finished
+        // touching this cycle, and downstream queries against `entity_types`
+        // see the collapsed registry as early as possible in the NEXT cycle
+        // without perturbing the CURRENT cycle's other passes mid-flight.
+        // Non-fatal: failure warns + continues.
+        let mut type_registry_merges: usize = 0;
+        if opts.include_type_registry_collapse {
+            if let Some(tg) = self.memory.temporal_graph.as_ref() {
+                let group_id = namespace_to_group_id(&ns);
+                let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
+                match crate::core::dream::type_registry_collapse::type_registry_collapse(
+                    &arc_llm,
+                    crate::core::dream::type_registry_collapse::TypeRegistryCollapseParams {
+                        conn: &tg.conn,
+                        group_id: &group_id,
+                        embedder: Some(self.memory.embedder.as_ref()),
+                        // TD-094-style threading: reuse the resolved dream model id.
+                        model_id: dream_model_id,
+                    },
+                )
+                .await
+                {
+                    Ok(collapse_report) => {
+                        type_registry_merges = collapse_report.merges_applied;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "kremory::dream::type_registry_collapse",
+                            error = %e,
+                            "Dream type_registry_collapse pass failed — skipping; dream phase result unaffected"
+                        );
+                        result
+                            .dream_warnings
+                            .push(format!("Dream type_registry_collapse pass failed: {e}"));
+                    }
+                }
+                // Counter emitted inside the graph-present block so it reflects an
+                // actual pass run (not the degenerate no-temporal-graph path).
+                metrics::counter!("kremory.dream.type_registry_collapse.merges_applied_total")
+                    .increment(type_registry_merges as u64);
+            }
+        }
+        let _ = type_registry_merges; // reserved for DreamSummary surfacing in a future napi-parity phase.
+
         // SCOPE-001 restructure gate (dream-phase-reconciliation-v2 Phase 1):
         // reaching this point proves control flowed PAST the reclassify pass
         // instead of early-returning inside its success arm. Passes wired in

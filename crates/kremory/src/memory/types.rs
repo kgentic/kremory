@@ -702,6 +702,19 @@ pub struct DreamOpts {
     /// per CLAUDE.md Rule 19 (observability-first-class).  Use this knob for
     /// rate-limiting dream-phase LLM spend on large corpora.
     pub max_episodes_per_run: Option<usize>,
+    /// Run Site #3 type-registry post-hoc collapse (ADR-063 spec §4) — merges
+    /// near-duplicate `entity_types` rows (e.g. Pass-0-discovered "Company" +
+    /// "Business Organisation") via description-cosine + lexical pre-filter +
+    /// LLM-verify band, remapping `entities.entity_type_id` onto the keeper.
+    ///
+    /// DEFAULT `false` — spike-gated (spec §8): the 0.70 lower cosine band edge
+    /// and the singular/plural lemma pre-filter heuristic are NOT yet validated
+    /// by the S3 spike. Per spec §8's hard constraint, no spike-gated number may
+    /// be wired into a consumer's production dream cycle until its mapped spike
+    /// shows PASS — this pass ships DISABLED by default so the architecture can
+    /// merge and be reviewed without silently activating an unvalidated
+    /// threshold. Set to `true` only once S3 has passed for your data shape.
+    pub include_type_registry_collapse: bool,
 }
 
 impl Default for DreamOpts {
@@ -711,6 +724,7 @@ impl Default for DreamOpts {
             include_type_discovery: true,
             include_consistency_check: true,
             max_episodes_per_run: None,
+            include_type_registry_collapse: false,
         }
     }
 }
