@@ -585,11 +585,21 @@ struct AdjudicateBatchParams<'a, L: ChatProvider> {
     group_id: &'a str,
 }
 
-/// Run ONE batched `IdentityVerdictBatch` LLM call adjudicating every
-/// nominated pair (spec §4.4/§3.2 batch shape), returning verdicts keyed by
-/// `pair_id` (index into `nominated`). Missing/parse-failed entries are
-/// simply absent from the map — callers treat a missing `pair_id` as
-/// `llm_verdict = None` (spec §2.3 failure-mode default).
+/// Adjudicate every nominated pair via one or more chunked `IdentityVerdictBatch`
+/// LLM calls (S3 spike fix — Quinn-verified), returning verdicts keyed by the
+/// GLOBAL `pair_id` (index into the caller's full `nominated` slice).
+///
+/// Root cause (S3 spike): a single call covering all nominated pairs at once
+/// (e.g. 25 pairs) exceeds `StructuredCallBuilder`'s per-arm wall-clock budget on
+/// every fallback arm against a live local model, silently defaulting the WHOLE
+/// batch to no-verdict (safe — `write_gate` row 2 fails closed — but inert at
+/// realistic registry sizes). Fix: split `nominated` into chunks of at most
+/// [`identity_verdict::ADJUDICATION_CHUNK_SIZE`] via
+/// [`identity_verdict::chunk_pair_indices`], run one `adjudicate_chunk` call per
+/// chunk, and remap each chunk-LOCAL `pair_id` back to the GLOBAL index
+/// (`range.start + local_pair_id`) before merging into one map. A failure on one
+/// chunk (LLM error / parse fail / timeout) only defaults THAT chunk's pairs to
+/// no-verdict — it does not lose verdicts already resolved by other chunks.
 async fn adjudicate_batch<L: ChatProvider>(
     params: AdjudicateBatchParams<'_, L>,
 ) -> Result<HashMap<usize, IdentityVerdictItem>> {
@@ -601,13 +611,63 @@ async fn adjudicate_batch<L: ChatProvider>(
         group_id,
     } = params;
 
-    let messages = build_adjudication_messages(slots, nominated);
-    let schema = identity_verdict_batch_schema(nominated.len());
+    let mut verdicts_by_pair_id: HashMap<usize, IdentityVerdictItem> = HashMap::new();
+    for range in crate::core::identity_verdict::chunk_pair_indices(nominated.len()) {
+        let chunk = &nominated[range.clone()];
+        let chunk_verdicts = adjudicate_chunk(AdjudicateChunkParams {
+            llm,
+            model_id,
+            slots,
+            chunk,
+            group_id,
+        })
+        .await?;
+        for (local_pair_id, verdict) in chunk_verdicts {
+            let global_pair_id = range.start + local_pair_id;
+            verdicts_by_pair_id.insert(global_pair_id, verdict);
+        }
+    }
+    Ok(verdicts_by_pair_id)
+}
+
+struct AdjudicateChunkParams<'a, L: ChatProvider> {
+    llm: &'a L,
+    model_id: &'a str,
+    slots: &'a [TypeSlot],
+    chunk: &'a [NominatedPair],
+    group_id: &'a str,
+}
+
+/// Run ONE batched `IdentityVerdictBatch` LLM call adjudicating every pair in
+/// `chunk` (spec §4.4/§3.2 batch shape — unchanged; only the pairs-per-call count
+/// is now bounded by the caller), returning verdicts keyed by chunk-LOCAL
+/// `pair_id` (index into `chunk`, NOT the caller's full `nominated` slice — see
+/// [`adjudicate_batch`] for the global-index remap). Missing/parse-failed entries
+/// are simply absent from the map — callers treat a missing `pair_id` as
+/// `llm_verdict = None` (spec §2.3 failure-mode default).
+async fn adjudicate_chunk<L: ChatProvider>(
+    params: AdjudicateChunkParams<'_, L>,
+) -> Result<HashMap<usize, IdentityVerdictItem>> {
+    let AdjudicateChunkParams {
+        llm,
+        model_id,
+        slots,
+        chunk,
+        group_id,
+    } = params;
+
+    let messages = build_adjudication_messages(slots, chunk);
+    let schema = identity_verdict_batch_schema(chunk.len());
 
     let call_start = Instant::now();
     let raw_value = StructuredCallBuilder::new(llm, &schema, "IdentityVerdictBatch")
         .model(model_id)
         .messages(messages)
+        // S3 spike fix: dream-phase adjudication is latency-tolerant by design
+        // (ADR-063 spec) — raise the per-arm budget for THIS call site only,
+        // rather than the shared 30s default other call sites depend on
+        // (`structured.rs:84`).
+        .ttft_budget_ms(crate::core::identity_verdict::ADJUDICATION_TTFT_BUDGET_MS)
         .call()
         .await;
     let elapsed_ms = call_start.elapsed().as_millis() as f64;
@@ -634,7 +694,7 @@ async fn adjudicate_batch<L: ChatProvider>(
                 target: "kremory::dream::type_registry_collapse",
                 error = %e,
                 group_id = %group_id,
-                "type_registry_collapse: adjudication LLM call failed — all nominated pairs default to no-verdict"
+                "type_registry_collapse: adjudication LLM call failed — chunk's nominated pairs default to no-verdict"
             );
             return Ok(HashMap::new());
         }
@@ -657,13 +717,13 @@ async fn adjudicate_batch<L: ChatProvider>(
                         target: "kremory::dream::type_registry_collapse",
                         error = %e,
                         group_id = %group_id,
-                        "type_registry_collapse: failed to parse IdentityVerdictBatch — all nominated pairs default to no-verdict"
+                        "type_registry_collapse: failed to parse IdentityVerdictBatch — chunk's nominated pairs default to no-verdict"
                     );
                     counter!(
                         "kremory.identity.verdict_parse_fail_total",
                         "site" => SITE_LABEL
                     )
-                    .increment(nominated.len() as u64);
+                    .increment(chunk.len() as u64);
                     return Ok(HashMap::new());
                 }
             }
@@ -674,9 +734,9 @@ async fn adjudicate_batch<L: ChatProvider>(
     for raw_item in &batch.verdicts {
         match serde_json::from_value::<IdentityVerdictItem>(raw_item.clone()) {
             Ok(item) => {
-                if item.pair_id >= nominated.len() {
+                if item.pair_id >= chunk.len() {
                     // Out-of-range pair_id — echoed id doesn't correlate to any
-                    // nominated pair; drop it loudly (Vera Cycle 2 OBS-01).
+                    // pair in this chunk; drop it loudly (Vera Cycle 2 OBS-01).
                     counter!(
                         "kremory.identity.verdict_parse_fail_total",
                         "site" => SITE_LABEL
@@ -685,7 +745,7 @@ async fn adjudicate_batch<L: ChatProvider>(
                     tracing::warn!(
                         target: "kremory::dream::type_registry_collapse",
                         pair_id = item.pair_id,
-                        nominated_len = nominated.len(),
+                        chunk_len = chunk.len(),
                         "type_registry_collapse: verdict pair_id out of range — dropped"
                     );
                     continue;
