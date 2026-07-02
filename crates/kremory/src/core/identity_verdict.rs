@@ -294,11 +294,66 @@ pub(crate) fn identity_verdict_batch_schema(_batch_len: usize) -> serde_json::Va
     })
 }
 
+/// Maximum nominated pairs adjudicated in ONE `IdentityVerdictBatch` LLM call
+/// (spec §2.1/§3.2/§4.4 batch shape — batching itself is unchanged; this bounds
+/// how many pairs share a single call).
+///
+/// Root cause (S3 spike, `type_registry_collapse_s3_spike.rs`): a realistic
+/// 25-pair batch against a live local model (gemma4:e4b) exceeds
+/// `StructuredCallBuilder`'s per-arm wall-clock budget on all 4 fallback arms —
+/// the call simply takes longer than the model needs to reason over 25 pairs at
+/// once. The batch envelope's `write_gate` fail-closed default (row 2: "no LLM
+/// verdict -> Reject") means this was SAFE (zero false merges) but INERT (every
+/// nominated pair silently defaults to no-verdict at realistic registry sizes).
+///
+/// Fix is two-part per Quinn's spike review: (1) this chunk size caps each call's
+/// pair count so per-call latency stays inside budget — 10 is the size
+/// `smoke_one_human_individual_pair_s3`-style single/near-single-pair calls have
+/// empirically proven fast; (2) callers additionally raise
+/// `StructuredCallBuilder::ttft_budget_ms` for these dream-phase adjudication call
+/// sites specifically (dream is latency-tolerant by design, ADR-063 spec) rather
+/// than changing the shared global default other non-dream call sites depend on.
+pub(crate) const ADJUDICATION_CHUNK_SIZE: usize = 10;
+
+/// Raised per-arm wall-clock budget (ms) for dream-phase `IdentityVerdictBatch`
+/// adjudication calls specifically. Dream runs are background/latency-tolerant
+/// (ADR-063 spec) — this is set on the `StructuredCallBuilder` for THESE call
+/// sites only via `.ttft_budget_ms()`, never by changing
+/// `StructuredCallBuilder::new`'s shared 30s default (`structured.rs`), which
+/// other, latency-sensitive call sites depend on.
+pub(crate) const ADJUDICATION_TTFT_BUDGET_MS: u64 = 180_000;
+
+/// Split `total` nominated-pair indices into contiguous chunks of at most
+/// [`ADJUDICATION_CHUNK_SIZE`] each, in original order. Pure, deterministic,
+/// I/O-free — every global pair index `0..total` appears in exactly one
+/// returned range, in ascending order, with no gaps or overlaps.
+///
+/// Callers slice their `nominated` vec by each returned `Range<usize>`, run ONE
+/// `IdentityVerdictBatch` call per chunk (the LLM sees a chunk-LOCAL `pair_id`
+/// space, `0..chunk.len()`), then remap each returned verdict's `pair_id` back to
+/// the GLOBAL index via `range.start + local_pair_id` before inserting into the
+/// merged `HashMap<usize, IdentityVerdictItem>` (see
+/// `type_registry_collapse::adjudicate_batch` / `acronym_nickname_recall::adjudicate_batch`).
+pub(crate) fn chunk_pair_indices(total: usize) -> Vec<std::ops::Range<usize>> {
+    if total == 0 {
+        return Vec::new();
+    }
+    let mut chunks = Vec::with_capacity(total.div_ceil(ADJUDICATION_CHUNK_SIZE));
+    let mut start = 0;
+    while start < total {
+        let end = (start + ADJUDICATION_CHUNK_SIZE).min(total);
+        chunks.push(start..end);
+        start = end;
+    }
+    chunks
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn verdict(pair_id: usize, is_same: bool, confidence: f32) -> IdentityVerdictItem {
         IdentityVerdictItem {
@@ -532,5 +587,174 @@ mod tests {
         assert!(!s.contains("maxItems"));
         assert!(!s.contains("minimum"));
         assert!(!s.contains("maximum"));
+    }
+
+    // ── chunk_pair_indices (S3 spike fix) — deterministic, no LLM required ──────
+
+    #[test]
+    fn chunk_pair_indices_empty_input_yields_no_chunks() {
+        assert_eq!(chunk_pair_indices(0), Vec::<std::ops::Range<usize>>::new());
+    }
+
+    #[test]
+    fn chunk_pair_indices_smaller_than_one_chunk_yields_single_range() {
+        // 3 pairs, chunk size 10 → one chunk covering all 3.
+        let chunks = chunk_pair_indices(3);
+        assert_eq!(chunks, vec![0..3]);
+    }
+
+    #[test]
+    fn chunk_pair_indices_exact_multiple_yields_even_chunks() {
+        // 20 pairs, chunk size 10 → exactly two chunks of 10.
+        let chunks = chunk_pair_indices(2 * ADJUDICATION_CHUNK_SIZE);
+        assert_eq!(
+            chunks,
+            vec![
+                0..ADJUDICATION_CHUNK_SIZE,
+                ADJUDICATION_CHUNK_SIZE..(2 * ADJUDICATION_CHUNK_SIZE)
+            ]
+        );
+    }
+
+    #[test]
+    fn chunk_pair_indices_25_pairs_matches_s3_spike_scale() {
+        // The exact scale the S3 spike (`type_registry_collapse_s3_spike.rs`)
+        // surfaced as timing out in one call: 25 nominated pairs. With
+        // ADJUDICATION_CHUNK_SIZE=10 this must split into 3 chunks (10, 10, 5),
+        // never one all-25 chunk.
+        let chunks = chunk_pair_indices(25);
+        assert_eq!(chunks.len(), 3, "25 pairs must split into >1 chunk");
+        for c in &chunks {
+            assert!(
+                c.len() <= ADJUDICATION_CHUNK_SIZE,
+                "chunk {c:?} exceeds ADJUDICATION_CHUNK_SIZE"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_pair_indices_every_global_index_appears_exactly_once_in_order() {
+        // Property test across a spread of totals (including non-multiples of
+        // the chunk size): every global pair index 0..total must appear in
+        // exactly one chunk, chunks must be contiguous, ascending, and
+        // non-overlapping, and every chunk except possibly the last must be
+        // exactly ADJUDICATION_CHUNK_SIZE long.
+        for total in [0usize, 1, 5, 9, 10, 11, 19, 20, 21, 25, 47, 100] {
+            let chunks = chunk_pair_indices(total);
+
+            // Reconstruct the full index set by flattening every chunk.
+            let mut seen: Vec<usize> = chunks.iter().flat_map(|r| r.clone()).collect();
+            let expected: Vec<usize> = (0..total).collect();
+            assert_eq!(
+                seen, expected,
+                "total={total}: flattened chunks must cover 0..total exactly once, in order"
+            );
+            // Redundant explicit uniqueness check (belt-and-braces on top of the
+            // ordering assertion above).
+            let before_len = seen.len();
+            seen.sort_unstable();
+            seen.dedup();
+            assert_eq!(
+                seen.len(),
+                before_len,
+                "total={total}: a pair index appeared in more than one chunk"
+            );
+
+            // Contiguity + non-overlap + size cap.
+            let mut prev_end = 0usize;
+            for (i, c) in chunks.iter().enumerate() {
+                assert_eq!(
+                    c.start, prev_end,
+                    "total={total}: chunk {i} does not start where the previous ended"
+                );
+                assert!(
+                    c.len() <= ADJUDICATION_CHUNK_SIZE,
+                    "total={total}: chunk {i} ({c:?}) exceeds ADJUDICATION_CHUNK_SIZE"
+                );
+                let is_last = i == chunks.len() - 1;
+                if !is_last {
+                    assert_eq!(
+                        c.len(),
+                        ADJUDICATION_CHUNK_SIZE,
+                        "total={total}: non-last chunk {i} ({c:?}) must be exactly ADJUDICATION_CHUNK_SIZE"
+                    );
+                }
+                prev_end = c.end;
+            }
+            assert_eq!(
+                prev_end, total,
+                "total={total}: last chunk must end exactly at total"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_verdict_merge_preserves_pair_id_correlation() {
+        // Simulates what `type_registry_collapse::adjudicate_batch` /
+        // `acronym_nickname_recall::adjudicate_batch` do: for each chunk range,
+        // take a chunk-LOCAL verdict map (as if returned by one
+        // `adjudicate_chunk` call, keyed 0..chunk.len()) and remap into a
+        // GLOBAL map keyed by `range.start + local_pair_id`. Assert the
+        // merged map correlates every verdict back to the correct global pair,
+        // even when a middle chunk fails entirely (empty map) — proving one
+        // chunk's failure does not corrupt or lose neighboring chunks' verdicts.
+        let total = 25;
+        let chunks = chunk_pair_indices(total);
+        assert_eq!(chunks.len(), 3);
+
+        // Chunk 0 (pairs 0..10): full local verdicts.
+        let chunk0_local: HashMap<usize, IdentityVerdictItem> = (0..10)
+            .map(|local_id| (local_id, verdict(local_id, local_id % 2 == 0, 0.9)))
+            .collect();
+        // Chunk 1 (pairs 10..20): simulates a chunk-level failure — empty map
+        // (LLM call failed / parse failed for this chunk only).
+        let chunk1_local: HashMap<usize, IdentityVerdictItem> = HashMap::new();
+        // Chunk 2 (pairs 20..25): full local verdicts.
+        let chunk2_local: HashMap<usize, IdentityVerdictItem> = (0..5)
+            .map(|local_id| (local_id, verdict(local_id, true, 0.95)))
+            .collect();
+
+        let per_chunk_locals = [chunk0_local, chunk1_local, chunk2_local];
+
+        let mut merged: HashMap<usize, IdentityVerdictItem> = HashMap::new();
+        for (range, chunk_local) in chunks.iter().zip(per_chunk_locals.into_iter()) {
+            for (local_pair_id, v) in chunk_local {
+                let global_pair_id = range.start + local_pair_id;
+                merged.insert(global_pair_id, v);
+            }
+        }
+
+        // Chunk 0's global pairs 0..10 are present, with correlated pair_id
+        // preserved on the verdict item's own (chunk-local, pre-remap) field —
+        // callers key the map by the GLOBAL index; the verdict's own `pair_id`
+        // still reflects its ORIGINAL chunk-local value (matches production
+        // behavior — the map key is what's authoritative downstream).
+        for global_id in 0..10 {
+            assert!(
+                merged.contains_key(&global_id),
+                "global pair {global_id} from chunk 0 missing after merge"
+            );
+        }
+        // Chunk 1's global pairs 10..20 are ALL absent (chunk failed) — must
+        // NOT silently merge (write_gate treats a missing key as `None`, the
+        // safe Reject default).
+        for global_id in 10..20 {
+            assert!(
+                !merged.contains_key(&global_id),
+                "global pair {global_id} from the FAILED chunk 1 must be absent, not defaulted"
+            );
+        }
+        // Chunk 2's global pairs 20..25 are present.
+        for global_id in 20..25 {
+            assert!(
+                merged.contains_key(&global_id),
+                "global pair {global_id} from chunk 2 missing after merge"
+            );
+        }
+        assert_eq!(
+            merged.len(),
+            15,
+            "merged map must contain exactly chunk0(10) + chunk1(0) + chunk2(5) verdicts"
+        );
     }
 }
