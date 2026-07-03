@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "616e1ca5d0502c141004645dcf185558389f1e0e123c82bbe0c825c768c5bffb": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms describe the exact same professional role with identical functional definitions (licensed medical professionals diagnosing and treating illness).\"\n    }\n  ]\n}\n"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "c43085e21e6e0526eb91df5aa2ed05248dae65602e74c13cb89a07d2164eadc1": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions describe the exact same concept: a permanent dwelling for people.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

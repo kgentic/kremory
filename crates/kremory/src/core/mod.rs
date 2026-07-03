@@ -173,3 +173,16 @@ pub use sink::{
     ContradictionDetected, EntityId, EntityOrEdgeRef, IngestEventSink,
     IngestionError as SinkIngestionError, OnEdgeAddedParams, SinkFact,
 };
+
+// Test-utils re-export for the Site #2 metrics harness
+// (`tests/dream_metrics_harness_site2.rs`, ADR-063 spec §4.3 sibling / §2.2).
+// `identity_verdict` (the module itself) is `pub(crate) mod identity_verdict;`
+// above — crate-internal, so even though its items are individually `pub` +
+// `#[doc(hidden)]` (MNT-002 pattern), the module path is unreachable from an
+// external integration-test binary without this re-export. Mirrors the
+// `dream/mod.rs` test-utils re-export blocks exactly (same E0365-adjacent
+// visibility requirement); not part of the stable public API contract.
+#[cfg(any(test, feature = "test-utils"))]
+pub use identity_verdict::{
+    write_gate, DeterministicSignal, IdentityVerdictItem, WriteDecision, WriteGateInputs,
+};

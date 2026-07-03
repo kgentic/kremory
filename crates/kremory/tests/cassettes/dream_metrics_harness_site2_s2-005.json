@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "202808c9eb027ab2df4e8bceda3b7c10964ac9020e3b95dcef5973498fd9b82a": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.98,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both 'Attorney' and 'Lawyer' describe the same core concept: a professional qualified to practice law and represent clients in legal matters. The terms are synonyms in this context.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "cdc5eca20dd1770cc25b1ab8a1bae250d6f3df0c97296c3e4d9aa9c0235d6f0e": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms refer to a for-profit commercial business entity. 'Corporation' is a specific *type* of 'Company', but semantically, for the purpose of entity typing, they describe the same core category of entity.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

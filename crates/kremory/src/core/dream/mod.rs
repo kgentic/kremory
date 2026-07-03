@@ -89,3 +89,22 @@ pub use acronym_nickname_recall::{acronym_nickname_recall, AcronymNicknameRecall
 // for the identical reason.
 #[cfg(any(test, feature = "test-utils"))]
 pub use metrics_util::wilson_lower_upper;
+
+// Same MNT-002 pattern, for the Site #2 (ADR-063 spec §4.3 sibling / §2.2)
+// proposal-time type-novelty gate metrics harness
+// (`tests/dream_metrics_harness_site2.rs`). `check_proposal`,
+// `CheckProposalParams`, `GateOutcome`, `names_share_lemma_or_exact`,
+// `DESC_COSINE_THRESHOLD`, and `TYPE_NOVELTY_LOWER_BAND` are `pub` +
+// `#[doc(hidden)]` inside `anti_redundancy.rs`; `adjudicate_type_novelty` and
+// `AdjudicateTypeNoveltyParams` are `pub` + `#[doc(hidden)]` inside
+// `discover_types.rs` — same E0365 visibility requirement as every other
+// re-export in this block (an external integration-test binary cannot import
+// a `pub(crate)` item, so these are promoted to `pub` + hidden from rustdoc,
+// not part of the stable public API contract).
+#[cfg(any(test, feature = "test-utils"))]
+pub use anti_redundancy::{
+    check_proposal, names_share_lemma_or_exact, CheckProposalParams, GateOutcome,
+    DESC_COSINE_THRESHOLD, TYPE_NOVELTY_LOWER_BAND,
+};
+#[cfg(any(test, feature = "test-utils"))]
+pub use discover_types::{adjudicate_type_novelty, AdjudicateTypeNoveltyParams};

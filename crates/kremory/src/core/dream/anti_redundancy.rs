@@ -79,8 +79,14 @@ pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
 /// called in degraded mode, so `GateOutcome` has no `Skipped` variant.
 /// The degraded-mode counter / warning are emitted by `emit_gate_skipped()`.
 // `Eq` dropped: `NeedsLlmVerify.desc_cosine` is `f32`, which is `PartialEq` only.
+//
+// `pub` + `#[doc(hidden)]` (not `pub(crate)`) so the Site #2 metrics harness
+// (`tests/dream_metrics_harness_site2.rs`, an external integration-test binary)
+// can construct/match this via the `mod.rs` test-utils re-export — same E0365
+// / MNT-002 pattern as the Site #3/#5 re-exports (`pub(crate)` cannot be
+// re-exported as `pub`).  Never part of the stable public API contract.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum GateOutcome {
+pub enum GateOutcome {
     /// Proposal is distinct from all existing types — accepted by this gate.
     Pass,
     /// Proposal is too similar to an existing type (name or description exceeded threshold).
@@ -105,7 +111,7 @@ pub(crate) enum GateOutcome {
 /// =1.0000`). The name signal is now a deterministic normalized exact-match
 /// pre-filter (see `check_proposal`), and the description-cosine gate below is the
 /// primary + sufficient near-duplicate detector.
-pub(crate) const DESC_COSINE_THRESHOLD: f32 = 0.85;
+pub const DESC_COSINE_THRESHOLD: f32 = 0.85;
 
 /// Lower band edge for the Site #2 LLM-verify ambiguous zone (ADR-063 spec §4.3
 /// sibling table). PROVISIONAL — spike-gated S3 (spec §8), carried by analogy from
@@ -114,22 +120,27 @@ pub(crate) const DESC_COSINE_THRESHOLD: f32 = 0.85;
 /// default `false` — when the flag is off, this constant is inert (the default
 /// build's outcome for the `[0.70, 0.85)` band is unchanged: accept, per the
 /// pre-Site-#2 behaviour).
-pub(crate) const TYPE_NOVELTY_LOWER_BAND: f32 = 0.70;
+pub const TYPE_NOVELTY_LOWER_BAND: f32 = 0.70;
 
 /// Bundled parameters for [`check_proposal`] — args-as-object per TD-042
 /// (rust-conventions §too_many_arguments).
-pub(crate) struct CheckProposalParams<'a> {
+///
+/// `pub` + `#[doc(hidden)]` (not `pub(crate)`) — same MNT-002 test-utils
+/// re-export pattern as `GateOutcome` above; consumed by
+/// `tests/dream_metrics_harness_site2.rs`.
+#[doc(hidden)]
+pub struct CheckProposalParams<'a> {
     /// The proposal's raw type name. Compared via `normalize_name` against each
     /// existing type name as a free, deterministic, embedder-independent pre-filter
     /// (TD-097: bare-NAME cosine is degenerate, so the name signal is exact-match).
-    pub(crate) proposal_name: &'a str,
-    pub(crate) proposal_desc_emb: &'a [f32],
+    pub proposal_name: &'a str,
+    pub proposal_desc_emb: &'a [f32],
     /// `(spec, description_embedding)` per existing type. The name embedding was
     /// removed with the name-cosine gate (TD-097); `spec.name` supplies the name for
     /// the exact-match pre-filter.
-    pub(crate) existing_type_embeddings: &'a [(EntityTypeSpec, Vec<f32>)],
-    pub(crate) namespace: &'a str,
-    pub(crate) model: &'a str,
+    pub existing_type_embeddings: &'a [(EntityTypeSpec, Vec<f32>)],
+    pub namespace: &'a str,
+    pub model: &'a str,
 }
 
 /// Case-insensitive-normalized exact match OR a naive singular/plural lemma match
@@ -144,7 +155,7 @@ pub(crate) struct CheckProposalParams<'a> {
 /// `discover_types.rs` reuses it as the Site #2 `write_gate` deterministic signal
 /// (the same lemma test used to classify `Redundant` vs `NeedsLlmVerify` here is
 /// also the correct deterministic corroboration signal at adjudication time).
-pub(crate) fn names_share_lemma_or_exact(a: &str, b: &str) -> bool {
+pub fn names_share_lemma_or_exact(a: &str, b: &str) -> bool {
     let norm_a = crate::core::resolver::normalize_name(a);
     let norm_b = crate::core::resolver::normalize_name(b);
     if norm_a == norm_b {
@@ -189,7 +200,11 @@ fn strip_trailing_s(s: &str) -> &str {
 /// the caller once the write_gate decision is known, avoiding double-counting).
 ///
 /// `namespace` is the group_id string used as the `namespace` metrics label.
-pub(crate) fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
+///
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) so `dream_metrics_harness_site2.rs`
+/// can call this directly.
+#[doc(hidden)]
+pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
     let CheckProposalParams {
         proposal_name,
         proposal_desc_emb,

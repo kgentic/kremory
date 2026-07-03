@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "ae913c83058d71de6015001792611a2557263bab84d6a34af37e78b2523a2288": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both 'Judge' and 'Magistrate' describe a public official role within the judiciary system with authority over court proceedings and rulings. While a Magistrate can sometimes be a distinct rank, semantically for an entity registry, they represent the same underlying functional category of judicial official.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}
