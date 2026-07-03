@@ -272,7 +272,8 @@ impl<'a> DreamRequest<'a> {
                     .increment(acronym_recall_merges as u64);
             }
         }
-        let _ = acronym_recall_merges; // reserved for DreamSummary surfacing in a future napi-parity phase.
+        // Folded into DreamSummary.acronym_nickname_merges at the end of the chain
+        // (ADR-063 §3 observability — surfaced to consumers, not just a counter).
 
         // ADR-046 Option E — Dream Pass 2: reclassify.
         // Runs AFTER Pass 0 so newly discovered types (from Pass 0) are available in
@@ -472,7 +473,8 @@ impl<'a> DreamRequest<'a> {
                     .increment(type_registry_merges as u64);
             }
         }
-        let _ = type_registry_merges; // reserved for DreamSummary surfacing in a future napi-parity phase.
+        // Folded into DreamSummary.type_registry_merges at the end of the chain
+        // (ADR-063 §4 observability — surfaced to consumers, not just a counter).
 
         // SCOPE-001 restructure gate (dream-phase-reconciliation-v2 Phase 1):
         // reaching this point proves control flowed PAST the reclassify pass
@@ -489,6 +491,8 @@ impl<'a> DreamRequest<'a> {
         summary.entities_reclassified = entities_reclassified;
         summary.aliases_resolved = aliases_resolved;
         summary.canonicalization_merges = canonicalization_merges;
+        summary.acronym_nickname_merges = acronym_recall_merges;
+        summary.type_registry_merges = type_registry_merges;
         summary.consistency_check_corrected = consistency_check_corrected;
         summary.duration_ms = dream_start.elapsed().as_millis() as u64;
         Ok(summary)

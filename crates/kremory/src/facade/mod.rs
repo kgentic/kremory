@@ -156,6 +156,14 @@ pub struct DreamSummary {
     /// Near-duplicate entities merged by the canonicalize pass (§D3). Zero when the
     /// pass was not run or found no merges above `L5_CANONICALIZATION_THRESHOLD`.
     pub canonicalization_merges: usize,
+    /// Entity-instance pairs merged by the Site #5 acronym/nickname recall pass
+    /// (ADR-063 §3). Zero when opted out (`include_acronym_nickname_recall = false`)
+    /// or no acronym/nickname pairs were adjudicated as the same entity.
+    pub acronym_nickname_merges: usize,
+    /// Near-duplicate `entity_types` rows merged by the Site #3 type-registry
+    /// collapse pass (ADR-063 §4). Zero when opted out
+    /// (`include_type_registry_collapse = false`) or no type pairs were collapsed.
+    pub type_registry_merges: usize,
     /// Entity types corrected by the consistency_check pass (ADR-047, §D3). Zero
     /// when opted out (`include_consistency_check = false`) or nothing to correct.
     pub consistency_check_corrected: usize,
@@ -176,6 +184,8 @@ impl From<DreamPhaseResult> for DreamSummary {
             entities_reclassified: 0,
             aliases_resolved: 0,
             canonicalization_merges: 0,
+            acronym_nickname_merges: 0,
+            type_registry_merges: 0,
             consistency_check_corrected: 0,
             warnings: r.dream_warnings,
         }
@@ -196,6 +206,8 @@ impl From<crate::core::ingest::DreamPassSummary> for DreamSummary {
             entities_reclassified: s.entities_reclassified,
             aliases_resolved: 0,
             canonicalization_merges: 0,
+            acronym_nickname_merges: 0,
+            type_registry_merges: 0,
             consistency_check_corrected: 0,
             warnings: Vec::new(),
         }
@@ -1263,9 +1275,7 @@ impl Memory {
     /// model string in every LLM pass, silently degrading every configuration
     /// (even a fully-specified `with_model_id`) to zero structured output.
     pub(crate) fn dream_model_id_or_main(&self) -> Option<&str> {
-        self.dream_model_id
-            .as_deref()
-            .or(self.model_id.as_deref())
+        self.dream_model_id.as_deref().or(self.model_id.as_deref())
     }
 
     /// Return the wired LLM, or a no-op stub when no LLM was configured.
