@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "0183e336714c83c163af692b5a94acdbbe45fec7eea197e3f7db185397b4aab5": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"Specific named individuals, often common first or last names, when the full context of their role is missing.\",\n      \"justification\": \"Bob and Robert are personal names. Since the context is minimal, grouping them as general Person instances is best, but a specific 'NamedPerson' might be needed if 'Person' is too broad.\"\n    ,\n      \"name\": \"NamedPerson\"\n    },\n    {\n      \"description\": \"Organizations, corporations, or brands that function as commercial entities.\",\n      \"justification\": \"IBM is a clear example of a corporate entity that needs its own type separate from general concepts.\"\n    ,\n      \"name\": \"Corporation\"\n    },\n    {\n      \"description\": \"Types of complex, specialized physical equipment or technology designed for commercial or industrial use.\",\n      \"justification\": \"International business machines suggests a category for machinery that goes beyond standard product classifications.\"\n    ,\n      \"name\": \"IndustrialMachinery\"\n    }\n  ]\n}"
+      }
+    ],
+    "34b59ee300c23a6ef58e27d7d8bc2e1bc82934701db568d77041115095a1da7d": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"'Person' refers to individuals, while 'Organisation' refers to groups or institutions.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"'Person' refers to individuals, while 'Location' refers to physical places.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"'Person' refers to individuals, while 'Event' refers to specific occurrences or meetings.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"'Person' refers to individuals, while 'Concept' refers to abstract theories or methodologies.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 4,\n      \"reasoning\": \"'NamedPerson' is a more specific subset of 'Person', indicating the same underlying semantic type of human identity.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"'Organisation' pertains to groups/institutions, whereas 'Location' pertains to physical geographic places.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"'Organisation' refers to established entities, while 'Event' refers to temporary occurrences.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"'Organisation' refers to structured entities, while 'Concept' refers to abstract ideas or theories.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 8,\n      \"reasoning\": \"A 'Court' is a specific type of formal group or institution, making it semantically covered by 'Organisation'.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 9,\n      \"reasoning\": \"A 'Company' is a specific subset of 'Organisation' (a business entity), so they describe the same core type.\"\n    }\n  ]\n}"
+      }
+    ],
+    "4502cc0b73ce83e4e6161b2bc0e27c49fbbae427bb66c4cc3b24da86b4635e87": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both define organizational types. 'Organisation' is broader ('institution, agency'), while 'company' is more specific ('business organisation'). The overlap is substantial enough to consider them the same core semantic category.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Organisation refers to formal groups/entities, while Specie refers to a type of money. They are entirely different domains.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Organisation describes groups/institutions, while NamedPerson describes individuals. These are mutually exclusive categories.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 3,\n      \"reasoning\": \"Both describe formalized, large-scale entities. 'Corporation' is a strong synonym or subset of the general 'Organisation' type, especially when focusing on commercial function.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Location describes geography, while Event describes temporal occurrences/meetings. They are distinct categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Location is physical geography; Concept is abstract intellectual constructs. They are different types of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Location describes geography, while Court describes a specific type of governmental/judicial body. Although a court can be located, the type definition is different.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Location is geography; Specie is currency. They are unrelated entity types.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Location describes physical geography, while NamedPerson describes individuals. They are distinct types.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Location describes physical geography, while Corporation describes business entities. They are unrelated types.\"\n    }\n  ]\n}"
+      }
+    ],
+    "4c2a685bdf0f1e37710d2070ddac0d005713c63a9f3e23bdf40629ec34ad35a4": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Courts are judicial bodies, while Corporations are commercial entities. They are distinct concepts.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Company refers to a business, while Specie refers to a physical form of money.\"\n    },\n    {\n      \"confidence\": 0.98,\n      \"is_same_entity\": true,\n      \"pair_id\": 2,\n      \"reasoning\": \"Both 'Company' and 'Corporation' describe commercial, organizational entities functioning in business.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"One describes a business entity, the other describes a form of currency (money).\"\n    },\n    {\n      \"confidence\": 0.98,\n      \"is_same_entity\": true,\n      \"pair_id\": 4,\n      \"reasoning\": \"Both 'company' and 'Corporation' refer to types of commercial, corporate organizations.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Specie is a type of currency, whereas Corporation refers to a business organization type.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Corporation is an abstract organizational type, while IndustrialMachinery is a physical object type.\"\n    }\n  ]\n}"
+      }
+    ],
+    "66eaa5e21375a686898e86e127b993723b34a30f4c03b9b8c370c8dad577e210": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Date and Time are distinct temporal measures. Date refers to calendar points, while Time refers to points within a day or duration.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Date is a calendar concept, while Event is a specific occurrence or named happening that happens *on* a date.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Time is a point or duration, whereas Quantity represents a measured amount, which usually requires units.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Money is a general monetary value, while Specie is a very specific type of physical currency (coinage).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Event is a scheduled occurrence, while Concept is an abstract idea or methodology. They are different classes of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Event is a time-bound occurrence, while Court is a specific type of judicial organization.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Event refers to a specific happening, whereas NamedPerson refers to a person's identity. They describe fundamentally different kinds of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Concept relates to abstract ideas/theories, whereas Court is a specific type of judicial organization. They are different semantic categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Concept relates to abstract ideas/theories, while NamedPerson relates to specific people. They are unrelated types.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Concept relates to abstract ideas/theories, while Corporation refers to commercial business entities. They are distinct categories.\"\n    }\n  ]\n}"
+      }
+    ],
+    "6d58d3352afe6a6feb00c0422085272b891127ca3c39e5a5c18e06dfaaa7ab6d": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Common name variation; Bob is likely a nickname for Robert.\"}, {\"confidence\": 0.98, \"is_same_entity\": true, \"pair_id\": 1, \"reasoning\": \"The second name is the full name for the acronym IBM.\"}]}"
+      }
+    ],
+    "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
+      {
+        "call_index": 0,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 1,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 2,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 3,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 4,
+        "response_text": "What can I help you with today?"
+      },
+      {
+        "call_index": 5,
+        "response_text": "Hello! How can I help you today? 😊"
+      },
+      {
+        "call_index": 6,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 7,
+        "response_text": "Hello! How can I help you today? Whether you have a question, need some creative writing, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
+      },
+      {
+        "call_index": 8,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 9,
+        "response_text": "How can I help you today? 😊"
+      }
+    ],
+    "a1b35a9070dee333d4661d41b2a9755a263b3cb974ddbdf57bda43bf1db7b66b": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both describe a named individual. 'NamedPerson' appears to be a more specific or context-limited version of the general 'Person' type, but semantically they represent the same core entity category.\"\n    }\n  ]\n}"
+      }
+    ],
+    "b210f00848bea70c074a9fd28bb0c4413df97dd34afa858eabe89fe008eed59c": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 16,\n      \"confidence\": 0.95\n    },\n    {\n      \"entity_id\": \"Bob\",\n      \"entity_type_id\": 15,\n      \"confidence\": 0.85\n    }\n  ]\n}"
+      }
+    ],
+    "ddec03796fe259d137c0157c602739e29ceca1796b4a548ba5c3da7412ad02ed": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms refer to established, named bodies that function commercially or institutionally. 'Corporation' is a specific *type* of 'Organisation', making them semantically equivalent for this registry's purpose.\"}]}"
+      }
+    ]
+  }
+}
