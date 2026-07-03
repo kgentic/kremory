@@ -478,6 +478,7 @@ async fn load_candidates(params: LoadCandidatesParams<'_>) -> Result<Vec<Candida
              AND entity_type_source NOT IN ('ConsumerPinned', 'DreamPass1') \
              AND is_dream_generated = 0 \
              AND group_id = ?2 \
+             ORDER BY id \
              LIMIT ?3",
             libsql::params![threshold_f64, group_id.to_string(), limit],
         )
