@@ -16,6 +16,10 @@ pub(crate) mod discover_types;
 /// Phase 3 / ADR-050 Guard #1). Compile-spike landed ahead of the build sprint
 /// per the impl-spec §11 readiness-gate contingency.
 pub(crate) mod idempotency;
+/// Shared statistical helpers (Wilson interval, etc.) for dream-pass
+/// precision/recall spikes and the metrics harness (spec
+/// `dream-adversarial-corpora-and-metrics-2026-07-02.md` §3 step 0, H1).
+pub(crate) mod metrics_util;
 pub(crate) mod proposed_type;
 pub mod reclassify;
 /// Site #3 (ADR-063 spec §4) — type-registry post-hoc collapse. Spike-gated
@@ -71,3 +75,17 @@ pub use type_registry_collapse::{
 // for the identical E0365 reason documented above.
 #[cfg(any(test, feature = "test-utils"))]
 pub use acronym_nickname_recall::{acronym_nickname_recall, AcronymNicknameRecallParams};
+
+// Wilson-interval helper (spec `dream-adversarial-corpora-and-metrics-
+// 2026-07-02.md` §3 step 0, H1) — extracted from the S1 spike's inline block
+// so the metrics harness can reuse it. Gated `#[cfg(test)]` only (mirroring
+// `metrics_util::wilson_lower_upper`'s own gate — see that fn's doc comment
+// for why `feature = "test-utils"` is deliberately NOT added here yet: no
+// `tests/*.rs` integration test consumes this re-export today, so adding the
+// feature arm would make kremory's self-referential `[dev-dependencies]`
+// compilation unit (built with `test-utils` on but `cfg(test)` off) contain a
+// dead re-export under `[lints] warnings = "deny"`). Add
+// `feature = "test-utils"` back here in lockstep with the function's gate
+// once a `tests/` consumer exists.
+#[cfg(test)]
+pub(crate) use metrics_util::wilson_lower_upper;
