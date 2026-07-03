@@ -40,14 +40,19 @@
 //     that were NOMINATED-OR-AUTO-MERGED at all (i.e. reached a decision).
 //     Recall = (of those, how many did the pass call "same", i.e. NOT Reject
 //     and NOT silently unexamined).
-//   - No `uncertain` / `non_cooccurring`-shaped exclusion category exists in
-//     this corpus (verified 2026-07-03: categories are trivial_duplicate,
-//     hard_true_collapse, semantic_near_dup_zero_lexical, unicode_casing_variant
-//     [same_concept=true]; distinct_lemma_collision, distinct_unrelated,
-//     band_edge_moderate [same_concept=false]) — every row feeds the hard
-//     precision/recall/safety gate directly; `GroundTruth` therefore has only
-//     `Same`/`Different` variants for this site (no `NotNominated`/`Uncertain`
-//     carve-outs needed, unlike Site #5).
+//   - Categories (verified 2026-07-03): trivial_duplicate, hard_true_collapse,
+//     semantic_near_dup_zero_lexical, unicode_casing_variant [same_concept=
+//     true]; distinct_lemma_collision, distinct_unrelated, band_edge_moderate
+//     [same_concept=false]; every one of these feeds the hard precision/
+//     recall/safety gate directly.
+//   - One EXCEPTION (added 2026-07-03, product-owner reclassification, see
+//     `site3_corpus_v2_changelog.md` v2.1): `borderline_type_identity`
+//     (`same_concept="uncertain"`, row `s3-088` Suspenders/Suspender) is a
+//     genuinely-ambiguous entity-TYPE-identity call — mirrors Site #5's
+//     `uncertain_thin_context` convention exactly. `GroundTruth::Uncertain`
+//     is EXCLUDED from precision/recall AND from the zero-false-merge safety
+//     gate, reported descriptively only. The literal zero-false-merge gate
+//     is UNCHANGED for every clear-cut distinct category.
 
 #![cfg(all(feature = "test-utils", feature = "llm-smoke"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -322,15 +327,21 @@ async fn read_audit_decision(
 
 // ─── Ground truth ─────────────────────────────────────────────────────────────
 
-/// Ground truth, resolved from the corpus row's `same_concept` field.
-/// Every category in this corpus maps directly to `Same`/`Different` — no
-/// `NotNominated`/`Uncertain` carve-out exists for Site #3 (verified
-/// 2026-07-03: 7 categories, all boolean `same_concept`, no "uncertain" value
-/// present in the committed corpus).
+/// Ground truth, resolved from the corpus row's `same_concept` field
+/// (`true` | `false` | `"uncertain"`).
+///
+/// `Same` / `Different` feed the hard precision/recall/safety gate. `Uncertain`
+/// (the `borderline_type_identity` category, `same_concept="uncertain"` —
+/// added 2026-07-03 for row `s3-088` Suspenders/Suspender, a product-owner
+/// judgment call that entity-TYPE identity is genuinely ambiguous here) is
+/// EXCLUDED from the hard gate entirely — ground truth itself is ambiguous by
+/// design — and reported descriptively only. Mirrors Site #5's
+/// `uncertain_thin_context` / `same_entity="uncertain"` convention exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GroundTruth {
     Same,
     Different,
+    Uncertain,
 }
 
 /// Parsed corpus row.
@@ -387,7 +398,9 @@ fn load_corpus() -> Vec<Row> {
             .to_string();
 
         let same_concept_raw = &raw["same_concept"];
-        let ground_truth = if same_concept_raw.as_bool() == Some(true) {
+        let ground_truth = if same_concept_raw.as_str() == Some("uncertain") {
+            GroundTruth::Uncertain
+        } else if same_concept_raw.as_bool() == Some(true) {
             GroundTruth::Same
         } else if same_concept_raw.as_bool() == Some(false) {
             GroundTruth::Different
@@ -567,9 +580,12 @@ fn decision_is_merge(decision: &Option<String>) -> bool {
 }
 
 /// Compute precision/recall/F1/Wilson-CI per §3.1's denominator definition.
-/// Every row in this corpus has a boolean ground truth (`Same`/`Different`),
-/// so unlike Site #5's `compute_metrics`, there is no per-row `continue`
-/// carve-out — every outcome contributes to exactly one of tp/fp/fn/tn.
+/// Every row in this corpus has ground truth `Same`/`Different`/`Uncertain`.
+/// `Uncertain` rows (the `borderline_type_identity` category) are excluded
+/// from tp/fp/fn/tn entirely (mirrors Site #5's `compute_metrics` `continue`
+/// carve-out for `GroundTruth::Uncertain`/`NotNominated`) — ground truth
+/// itself is ambiguous by design for those rows, so they cannot contribute to
+/// a precision/recall measurement.
 fn compute_metrics(outcomes: &[&RowOutcome]) -> CategoryMetrics {
     let mut m = CategoryMetrics {
         n: outcomes.len(),
@@ -580,6 +596,7 @@ fn compute_metrics(outcomes: &[&RowOutcome]) -> CategoryMetrics {
         let truly_same = match o.ground_truth {
             GroundTruth::Same => true,
             GroundTruth::Different => false,
+            GroundTruth::Uncertain => continue,
         };
         let pass_says_same = decision_says_same(&o.decision);
 
@@ -630,7 +647,11 @@ fn compute_merge_only_precision(outcomes: &[&RowOutcome]) -> (usize, usize, Opti
     let mut tp = 0usize;
     let mut fp = 0usize;
     for o in outcomes {
-        let truly_same = matches!(o.ground_truth, GroundTruth::Same);
+        let truly_same = match o.ground_truth {
+            GroundTruth::Same => true,
+            GroundTruth::Different => false,
+            GroundTruth::Uncertain => continue,
+        };
         if !decision_is_merge(&o.decision) {
             continue;
         }
@@ -939,6 +960,8 @@ struct MetricsReport {
     merge_only_tp: usize,
     merge_only_fp: usize,
     n_flagged_same: usize,
+    borderline_type_identity_n: usize,
+    borderline_type_identity_rows: Vec<String>,
     safety_false_merges: usize,
     false_merge_rows: Vec<String>,
     hard_gate: String,
@@ -979,8 +1002,11 @@ fn print_and_write_report(report: &MetricsReport) {
         report.merge_only_precision, report.merge_only_tp, report.merge_only_fp,
     );
     eprintln!(
-        "\n  n_flagged_same={} safety_false_merges={} hard_gate={}",
-        report.n_flagged_same, report.safety_false_merges, report.hard_gate,
+        "\n  n_flagged_same={} borderline_type_identity_n={} safety_false_merges={} hard_gate={}",
+        report.n_flagged_same,
+        report.borderline_type_identity_n,
+        report.safety_false_merges,
+        report.hard_gate,
     );
     if !report.false_merge_rows.is_empty() {
         eprintln!("  FALSE MERGE ROWS:");
@@ -1181,6 +1207,29 @@ async fn full_corpus_site3_metrics() {
         }
     }
 
+    // ── borderline_type_identity — descriptive report only, never gated ────
+    let borderline_outcomes: Vec<&RowOutcome> = outcomes
+        .iter()
+        .filter(|o| o.ground_truth == GroundTruth::Uncertain)
+        .collect();
+    let borderline_type_identity_rows: Vec<String> = borderline_outcomes
+        .iter()
+        .map(|o| {
+            let row = corpus
+                .iter()
+                .find(|r| r.id == o.row_id)
+                .expect("row lookup");
+            format!(
+                "{} ({} / {}) — decision={:?} pass_says_same={}",
+                o.row_id,
+                row.a,
+                row.b,
+                o.decision,
+                decision_says_same(&o.decision)
+            )
+        })
+        .collect();
+
     let n_flagged_same = overall.tp + overall.fp;
 
     // ── HARD GATE (spec §4.1 honest fallback): point-estimate aggregate
@@ -1202,6 +1251,8 @@ async fn full_corpus_site3_metrics() {
         merge_only_tp,
         merge_only_fp,
         n_flagged_same,
+        borderline_type_identity_n: borderline_outcomes.len(),
+        borderline_type_identity_rows: borderline_type_identity_rows.clone(),
         safety_false_merges,
         false_merge_rows: false_merge_rows.clone(),
         hard_gate: hard_gate.clone(),
@@ -1210,17 +1261,32 @@ async fn full_corpus_site3_metrics() {
     };
     print_and_write_report(&report);
 
+    eprintln!(
+        "\n── borderline_type_identity (descriptive only, NOT part of the gate) — n={} ──",
+        borderline_type_identity_rows.len()
+    );
+    for line in &borderline_type_identity_rows {
+        eprintln!("  {line}");
+    }
+
     // ── Per-row rationale dump for any FP/FN, so a failing gate is
     // immediately diagnosable without re-running with KREMORY_DEBUG=1 ──────
+    // (GroundTruth::Uncertain rows are skipped — no truly_same fact exists.)
     for row in &corpus {
         let outcome = outcomes.iter().find(|o| o.row_id == row.id).unwrap();
-        let truly_same = matches!(outcome.ground_truth, GroundTruth::Same);
+        let truly_same = match outcome.ground_truth {
+            GroundTruth::Same => Some(true),
+            GroundTruth::Different => Some(false),
+            GroundTruth::Uncertain => None,
+        };
         let pass_says_same = decision_says_same(&outcome.decision);
-        if truly_same != pass_says_same {
-            eprintln!(
-                "  *** MISCLASSIFIED [{}] {} / {} — truly_same={} decision={:?} ***",
-                outcome.category, row.a, row.b, truly_same, outcome.decision,
-            );
+        if let Some(truly_same) = truly_same {
+            if truly_same != pass_says_same {
+                eprintln!(
+                    "  *** MISCLASSIFIED [{}] {} / {} — truly_same={} decision={:?} ***",
+                    outcome.category, row.a, row.b, truly_same, outcome.decision,
+                );
+            }
         }
     }
 

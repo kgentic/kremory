@@ -3,15 +3,15 @@
   "overall": {
     "n": 119,
     "tp": 56,
-    "fp": 4,
+    "fp": 3,
     "fn_": 0,
     "tn": 59,
-    "false_merges": 1,
-    "precision": 0.9333333333333333,
+    "false_merges": 0,
+    "precision": 0.9491525423728814,
     "recall": 1.0,
-    "f1": 0.9655172413793104,
-    "precision_ci_low": 0.8407442010623228,
-    "precision_ci_high": 0.9737717258568019
+    "f1": 0.9739130434782608,
+    "precision_ci_low": 0.8608327667771334,
+    "precision_ci_high": 0.9825575988405467
   },
   "per_category": {
     "band_edge_moderate": {
@@ -27,18 +27,31 @@
       "precision_ci_low": 0.0,
       "precision_ci_high": 0.5615060804490177
     },
-    "distinct_lemma_collision": {
-      "n": 22,
+    "borderline_type_identity": {
+      "n": 1,
       "tp": 0,
-      "fp": 1,
+      "fp": 0,
       "fn_": 0,
-      "tn": 21,
-      "false_merges": 1,
-      "precision": 0.0,
+      "tn": 0,
+      "false_merges": 0,
+      "precision": null,
       "recall": null,
       "f1": null,
-      "precision_ci_low": 0.0,
-      "precision_ci_high": 0.7934567085261071
+      "precision_ci_low": null,
+      "precision_ci_high": null
+    },
+    "distinct_lemma_collision": {
+      "n": 21,
+      "tp": 0,
+      "fp": 0,
+      "fn_": 0,
+      "tn": 21,
+      "false_merges": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci_low": null,
+      "precision_ci_high": null
     },
     "distinct_unrelated": {
       "n": 15,
@@ -106,26 +119,28 @@
       "precision_ci_high": 1.0
     }
   },
-  "merge_only_precision": 0.95,
+  "merge_only_precision": 1.0,
   "merge_only_tp": 19,
-  "merge_only_fp": 1,
-  "n_flagged_same": 60,
-  "safety_false_merges": 1,
-  "false_merge_rows": [
-    "s3-088 (Suspenders / Suspender, category=distinct_lemma_collision)"
+  "merge_only_fp": 0,
+  "n_flagged_same": 59,
+  "borderline_type_identity_n": 1,
+  "borderline_type_identity_rows": [
+    "s3-088 (Suspenders / Suspender) — decision=Some(\"merge\") pass_says_same=true"
   ],
-  "hard_gate": "FAIL",
+  "safety_false_merges": 0,
+  "false_merge_rows": [],
+  "hard_gate": "PASS",
   "latency": {
-    "vcr_mode": "record (real Ollama latency)",
+    "vcr_mode": "replay (cassette lookup — NOT real LLM latency)",
     "llm_call_count": 0,
     "llm_call_total_ms": -0.0,
     "llm_call_ms_p50": null,
     "llm_call_ms_p95": null,
     "llm_call_ms_p99": null,
-    "row_wall_clock_ms_p50": 2422.6469580000003,
-    "row_wall_clock_ms_p95": 5116.208042,
-    "row_wall_clock_ms_p99": 5637.270208,
-    "total_harness_wall_clock_ms": 233361.38967299997,
+    "row_wall_clock_ms_p50": 16.663291,
+    "row_wall_clock_ms_p95": 18.771124999999998,
+    "row_wall_clock_ms_p99": 19.855708,
+    "total_harness_wall_clock_ms": 2003.5200360000013,
     "embed_calls_expected": 238
   },
   "volume": {
