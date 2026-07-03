@@ -115,3 +115,15 @@ pub use anti_redundancy::{
 pub use discover_types::{
     adjudicate_type_novelty, type_novelty_is_redundant, AdjudicateTypeNoveltyParams,
 };
+
+// Same MNT-002 pattern, for the ADR-066 dream CONSOLIDATION P1 supersession
+// deterministic-corpus harness (`tests/consolidation_supersession_test.rs`).
+// `supersession`, `SupersessionParams`, `ConsolidationBudget`, and `OpReport`
+// are `pub` + `#[doc(hidden)]` inside the (otherwise `pub(crate)`) consolidation
+// module — same E0365 visibility requirement as every other re-export in this
+// block (an external integration-test binary cannot import a `pub(crate)` item).
+// NOT part of the stable public API contract; `feature = "test-utils"`-gated.
+#[cfg(any(test, feature = "test-utils"))]
+pub use consolidation::substrate::{ConsolidationBudget, OpReport};
+#[cfg(any(test, feature = "test-utils"))]
+pub use consolidation::supersession::{supersession, SupersessionParams};
