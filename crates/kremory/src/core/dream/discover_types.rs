@@ -47,8 +47,8 @@ use crate::core::{
     error::Result,
     extraction::structured::StructuredCallBuilder,
     identity_verdict::{
-        identity_verdict_batch_schema, write_gate, DeterministicSignal, IdentityVerdictBatch,
-        IdentityVerdictItem, WriteDecision, WriteGateInputs,
+        identity_verdict_batch_schema, IdentityVerdictBatch, IdentityVerdictItem,
+        LLM_VERIFY_CONFIDENCE_FLOOR,
     },
     provider::{chat_msg_system, chat_msg_user, ChatProvider, DynEmbeddingProvider},
 };
@@ -407,14 +407,19 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         continue;
                     }
 
-                    // Flag ON: adjudicate via the shared write_gate (spec §2.2).
+                    // Flag ON (ADR-065): trust the LLM as terminal arbiter — a
+                    // Site-#2-LOCAL decision that intentionally does NOT call the
+                    // shared `write_gate`. Type synonyms ("Firm"/"Company") are
+                    // lexically dissimilar by nature, so write_gate Row 6's
+                    // deterministic-corroboration requirement (an ADR-057 ENTITY-
+                    // homonymy guard) over-generalized to schema types and
+                    // downgraded correct confident `true` verdicts to accept →
+                    // duplicate types. See `type_novelty_is_redundant` + ADR-065.
                     let existing_desc = existing_embeddings
                         .iter()
                         .find(|(spec, _)| spec.name == existing_name)
                         .map(|(spec, _)| spec.description.clone())
                         .unwrap_or_default();
-                    let deterministic =
-                        anti_redundancy::names_share_lemma_or_exact(&proposal.name, &existing_name);
                     let verdict = adjudicate_type_novelty(AdjudicateTypeNoveltyParams {
                         llm,
                         model_id: &model_str,
@@ -426,63 +431,44 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                     })
                     .await;
 
-                    let decision = write_gate(WriteGateInputs {
-                        cosine: desc_cosine,
-                        merge_threshold: anti_redundancy::DESC_COSINE_THRESHOLD,
-                        deterministic_signal: DeterministicSignal::from_lexical(deterministic),
-                        llm_verdict: verdict,
-                        min_confidence_floor: None,
-                    });
-                    record_type_novelty_decision(decision);
+                    let redundant = type_novelty_is_redundant(&verdict);
+                    record_type_novelty_decision(redundant, &verdict);
 
-                    match decision {
-                        WriteDecision::Merge => {
-                            // The proposal IS redundant with the existing type.
-                            let reason = format!("redundant_with:{existing_name}");
-                            result.types_rejected.push((proposal, reason));
-                        }
-                        WriteDecision::Reject => {
-                            // The LLM says the proposal is DISTINCT — accept it.
-                            accept_proposal(AcceptProposalParams {
-                                conn,
-                                group_id,
-                                model_str: &model_str,
-                                proposal: &proposal,
-                                catch_alls: &catch_alls,
-                                desc_emb_and_embedder: Some((&desc_emb, emb)),
-                                result: &mut result,
-                            })
-                            .await?;
-                        }
-                        WriteDecision::PotentialAlias => {
-                            // Types have no potential-alias edge concept (mirrors
-                            // Site #3's spec brief). A low-confidence "maybe
-                            // redundant" verdict must NOT block a new type from
-                            // being registered — conservative choice: accept the
-                            // proposal, but log the low-confidence signal for
-                            // operator visibility (spec §2.2 row 4/6 downgrade,
-                            // applied here as accept-with-log rather than a
-                            // destructive reject on weak evidence).
+                    if redundant {
+                        // Confident `is_same_entity == true` → the proposal IS the
+                        // same concept as the existing type → redundant → reject.
+                        let reason = format!("redundant_with:{existing_name}");
+                        result.types_rejected.push((proposal, reason));
+                    } else {
+                        // Novel (`is_same_entity == false`), OR low-confidence / no
+                        // verdict → conservative accept. A new type must never be
+                        // blocked on weak or absent evidence (types have no
+                        // potential-alias edge concept, mirroring Site #3's brief).
+                        // The `is_same_entity == false` path is the common EDC
+                        // false-reject-prevention case; log only the low-confidence/
+                        // absent case (the decision counter records both).
+                        let llm_said_distinct = matches!(&verdict, Some(v) if !v.is_same_entity);
+                        if !llm_said_distinct {
                             tracing::info!(
                                 target: "kremory::dream::discover_types",
                                 proposal_name = %proposal.name,
                                 existing_name = %existing_name,
                                 desc_cosine = %desc_cosine,
-                                "discover_types: Site #2 write_gate returned PotentialAlias — \
-                                 accepting proposal (types have no potential-alias concept; \
-                                 low-confidence verdict must not block a new type)"
+                                "discover_types: Site #2 low-confidence/absent type-novelty \
+                                 verdict — accepting proposal (a new type must not be blocked \
+                                 on weak evidence; ADR-065)"
                             );
-                            accept_proposal(AcceptProposalParams {
-                                conn,
-                                group_id,
-                                model_str: &model_str,
-                                proposal: &proposal,
-                                catch_alls: &catch_alls,
-                                desc_emb_and_embedder: Some((&desc_emb, emb)),
-                                result: &mut result,
-                            })
-                            .await?;
                         }
+                        accept_proposal(AcceptProposalParams {
+                            conn,
+                            group_id,
+                            model_str: &model_str,
+                            proposal: &proposal,
+                            catch_alls: &catch_alls,
+                            desc_emb_and_embedder: Some((&desc_emb, emb)),
+                            result: &mut result,
+                        })
+                        .await?;
                     }
                 }
             }
@@ -1154,24 +1140,93 @@ Existing: name=\"{existing_name}\" description=\"{existing_desc}\""
     vec![chat_msg_system(system), chat_msg_user(user)]
 }
 
-fn record_type_novelty_decision(decision: WriteDecision) {
-    let label = match decision {
-        WriteDecision::Merge => "merge",
-        WriteDecision::PotentialAlias => "potential_alias",
-        WriteDecision::Reject => "reject",
+/// ADR-065: Site #2 type-novelty write decision. UNLIKE the shared
+/// [`write_gate`](crate::core::identity_verdict::write_gate) (`identity_verdict.rs`),
+/// this does NOT require deterministic (lexical) corroboration — type synonyms
+/// ("Firm"/"Company") are lexically dissimilar by nature, and schema-level
+/// matching trusts the LLM as terminal arbiter (ADR-065; ontology-alignment
+/// prior art). `write_gate`'s Row 6 protects against ENTITY homonymy (same name,
+/// different referent), a failure mode that cannot recur here after the
+/// exact-match pre-filter. See ADR-065 for the residual-risk analysis. The two
+/// decision rules carry a bidirectional doc cross-reference (Vera Finding 3) so
+/// a maintainer grepping `write_gate` finds this carve-out and does not re-unify
+/// them.
+///
+/// Returns `true` when the proposal is REDUNDANT with the existing type (the LLM
+/// is confident they are the same concept) → the caller rejects it. `false`
+/// (novel / low-confidence / no verdict) → the caller conservatively accepts.
+fn type_novelty_is_redundant(verdict: &Option<IdentityVerdictItem>) -> bool {
+    matches!(verdict, Some(v) if v.is_same_entity && v.confidence >= LLM_VERIFY_CONFIDENCE_FLOOR)
+}
+
+/// ADR-065 observability (Rule 19): a per-decision counter for the Site #2
+/// type-novelty gate. NOT the shared `write_gate_decision_total` — Site #2
+/// bypasses `write_gate`, so a distinct, honestly-named metric avoids conflating
+/// the two decision rules. `decision` ∈ {`redundant`, `novel`,
+/// `accept_low_confidence`}.
+fn record_type_novelty_decision(redundant: bool, verdict: &Option<IdentityVerdictItem>) {
+    let decision = if redundant {
+        "redundant"
+    } else if matches!(verdict, Some(v) if !v.is_same_entity) {
+        "novel"
+    } else {
+        "accept_low_confidence"
     };
     counter!(
-        "kremory.identity.write_gate_decision_total",
+        "kremory.identity.type_novelty_decision_total",
         "site" => SITE_LABEL,
-        "decision" => label
+        "decision" => decision
     )
     .increment(1);
-    if decision == WriteDecision::Merge {
-        counter!(
-            "kremory.identity.write_gate_llm_authorized_merge_total",
-            "site" => SITE_LABEL
-        )
-        .increment(1);
+}
+
+// ─── ADR-065 type_novelty_is_redundant unit tests ────────────────────────────
+#[cfg(test)]
+mod adr065_type_novelty_redundant_tests {
+    use super::*;
+
+    fn verdict(is_same: bool, confidence: f32) -> Option<IdentityVerdictItem> {
+        Some(IdentityVerdictItem {
+            pair_id: 0,
+            is_same_entity: is_same,
+            confidence,
+            reasoning: String::new(),
+        })
+    }
+
+    /// is_same + confidence at/above the floor → REDUNDANT (the fix's core case:
+    /// a correct confident `true` verdict is no longer downgraded by write_gate
+    /// Row 6). This is exactly the s2-001 Firm/Company shape.
+    #[test]
+    fn is_same_high_conf_is_redundant() {
+        assert!(type_novelty_is_redundant(&verdict(
+            true,
+            LLM_VERIFY_CONFIDENCE_FLOOR
+        )));
+        assert!(type_novelty_is_redundant(&verdict(true, 1.0)));
+    }
+
+    /// is_same but confidence BELOW the floor → NOT redundant (conservative
+    /// accept; weak agreement must not reject a new type).
+    #[test]
+    fn is_same_below_floor_not_redundant() {
+        assert!(!type_novelty_is_redundant(&verdict(
+            true,
+            LLM_VERIFY_CONFIDENCE_FLOOR - 0.01
+        )));
+    }
+
+    /// LLM says distinct → NOT redundant (EDC false-reject-prevention: accept).
+    #[test]
+    fn not_same_not_redundant() {
+        assert!(!type_novelty_is_redundant(&verdict(false, 1.0)));
+    }
+
+    /// No verdict (LLM/parse failure) → NOT redundant (conservative accept —
+    /// a failed adjudication must not silently reject a proposal).
+    #[test]
+    fn no_verdict_not_redundant() {
+        assert!(!type_novelty_is_redundant(&None));
     }
 }
 
@@ -1764,14 +1819,15 @@ mod site2_type_novelty_tests {
         );
     }
 
-    /// (b) Flag ON + scripted LLM `is_same_entity=true` (high confidence), WITH a
-    /// deterministic lemma signal (proposal name "Organizations" shares a
-    /// trailing-s lemma with existing "Organization") on the adjudication call →
-    /// write_gate row 5 (Merge: LLM true + confident + deterministic signal
-    /// fired) → the proposal IS redundant → REJECTED. Mid-band cosine (0.80, in
-    /// `[0.70, 0.85)`) is used so `check_proposal` nominates `NeedsLlmVerify`
-    /// rather than auto-rejecting at the pure classification step (lemma overlap
-    /// at cosine ≥0.85 would short-circuit to `Redundant` before any LLM call).
+    /// (b) Flag ON + scripted LLM `is_same_entity=true` (high confidence) →
+    /// `type_novelty_is_redundant` (ADR-065) → the proposal IS redundant →
+    /// REJECTED. (The lemma overlap between "Organizations"/"Organization" is now
+    /// irrelevant to the decision — it mattered only to the OLD write_gate Row 5;
+    /// the confident `true` verdict alone is decisive under ADR-065.) Mid-band
+    /// cosine (0.80, in `[0.70, 0.85)`) is used so `check_proposal` nominates
+    /// `NeedsLlmVerify` rather than auto-rejecting at the pure classification step
+    /// (lemma overlap at cosine ≥0.85 would short-circuit to `Redundant` before
+    /// any LLM call).
     #[tokio::test]
     async fn flag_on_llm_says_same_with_lemma_signal_rejects_proposal() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
@@ -1828,8 +1884,8 @@ mod site2_type_novelty_tests {
 
         assert!(
             result.types_accepted.is_empty(),
-            "flag ON + LLM true verdict + lemma signal: proposal must be rejected as \
-             redundant (write_gate row 5), got accepted={:?}",
+            "flag ON + confident LLM true verdict: proposal must be rejected as \
+             redundant (ADR-065 type_novelty_is_redundant), got accepted={:?}",
             result.types_accepted
         );
         assert_eq!(result.types_rejected.len(), 1);
@@ -1837,14 +1893,14 @@ mod site2_type_novelty_tests {
     }
 
     /// (b') Flag ON + scripted LLM `is_same_entity=true` (high confidence) but
-    /// WITHOUT any deterministic lemma signal (write_gate row 6 — the load-bearing
-    /// invariant: an LLM `true` verdict never authorises a destructive write
-    /// alone) → `PotentialAlias`. Types have no potential-alias edge concept
-    /// (spec brief) — the conservative choice this implementation makes is to
-    /// ACCEPT the proposal rather than block it on a verdict that could not, by
-    /// design, reach `Merge`.
+    /// WITHOUT any deterministic lemma signal — the exact Site #2 bug ADR-065
+    /// fixes. Under the OLD shared `write_gate` this hit Row 6 (no deterministic
+    /// corroboration → `PotentialAlias` → accept → DUPLICATE type). Under
+    /// ADR-065's `type_novelty_is_redundant`, a confident `true` verdict is the
+    /// terminal arbiter (type synonyms are lexically dissimilar by nature) → the
+    /// proposal IS redundant → REJECTED. This assertion FLIPPED with the fix.
     #[tokio::test]
-    async fn flag_on_llm_says_same_without_lemma_signal_is_potential_alias_accepts() {
+    async fn flag_on_llm_says_same_without_lemma_signal_now_rejects_redundant() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         let conn = graph.conn.clone();
         seed_existing_type(
@@ -1895,14 +1951,14 @@ mod site2_type_novelty_tests {
         .await
         .expect("discover_types must succeed");
 
-        assert_eq!(
-            result.types_accepted.len(),
-            1,
-            "row 6 (no deterministic signal) → PotentialAlias → accept (types have \
-             no potential-alias concept), rejected={:?}",
-            result.types_rejected
+        assert!(
+            result.types_accepted.is_empty(),
+            "ADR-065: confident LLM `is_same=true` verdict (no lemma signal needed) → \
+             redundant → REJECT (was accept under write_gate Row 6), accepted={:?}",
+            result.types_accepted
         );
-        assert_eq!(result.types_accepted[0].name, "Human");
+        assert_eq!(result.types_rejected.len(), 1);
+        assert!(result.types_rejected[0].1.starts_with("redundant_with:"));
     }
 
     /// (c) Flag ON + scripted LLM `is_same_entity=false` → the proposal is
