@@ -752,15 +752,18 @@ pub struct DreamOpts {
     /// adjudicated by the shared `write_gate` (spec §2.2) instead of a hard cosine
     /// cutoff alone.
     ///
-    /// DEFAULT `false` — spike-gated (spec §8), mirroring `include_type_registry_
-    /// collapse`'s S3 gating: the 0.70 lower band edge is a provisional number
-    /// carried by analogy, not independently validated for this at-proposal gate.
-    /// When `false` (default), the DEFAULT build's outcome is UNCHANGED from
-    /// before Site #2 landed: a `NeedsLlmVerify` classification at `≥0.85` is
-    /// rejected (same as the old hard cutoff), and in `[0.70, 0.85)` is accepted
-    /// (same as the old "no candidate" path). Set to `true` only once the
-    /// SYNTHESIS §2 row 1 EDC over-generalization mitigation has been validated
-    /// for your data shape.
+    /// DEFAULT `true` since 2026-07-03 (ADR-065). A `NeedsLlmVerify`
+    /// classification is adjudicated by `adjudicate_type_novelty` and decided by
+    /// the Site-#2-LOCAL `type_novelty_is_redundant` (trust the confident LLM
+    /// verdict as terminal arbiter) — NOT the shared `write_gate`, whose Row 6
+    /// deterministic-corroboration requirement (an ADR-057 entity-homonymy guard)
+    /// over-generalized to type synonyms and made this gate inert (12/12
+    /// false-accept). Re-validated on the 26-row site2 corpus (cross-family
+    /// qwen2.5:7b audited, Phase 0): 11/12 redundant rejected + 14/14 novel +
+    /// 8/8 band-edge accepted (precision 0.933). See `site2_metrics.json` /
+    /// `site2_corpus_audit.md`. Set to `false` to preserve the pre-Site-#2 hard
+    /// cutoff (≥0.85 rejects, `[0.70, 0.85)` accepts) if you do not want the
+    /// LLM-verify-band adjudication.
     pub include_type_novelty_llm_verify: bool,
 }
 
@@ -776,12 +779,15 @@ impl Default for DreamOpts {
             // ZERO false merges. See site3_metrics.json / site5_metrics.json.
             include_type_registry_collapse: true,
             include_acronym_nickname_recall: true,
-            // HELD `false` — Site #2 proposal-time novelty gate is NOT yet
-            // validated: no corpus/metrics exist for it, and its 0.70 band edge
-            // is provisional-by-analogy (see doc comment above). Enabling it would
-            // wire an unvalidated spike-gated number into prod (spec §8 forbids).
-            // Flip only once a site2 corpus+metrics clears the §4.2 gate.
-            include_type_novelty_llm_verify: false,
+            // ENABLED 2026-07-03 (ADR-065) — Site #2 now trusts the LLM as
+            // terminal arbiter (`type_novelty_is_redundant`) instead of the
+            // over-generalized shared `write_gate` Row 6. Re-validated on the
+            // 26-row site2 corpus (cross-family qwen2.5:7b audited, Phase 0):
+            // 11/12 redundant rejected + 14/14 novel + 8/8 band-edge accepted
+            // (precision 0.933, recall 1.0). See site2_metrics.json /
+            // site2_corpus_audit.md. The single miss (s2-025 Employer/Company)
+            // is an orthogonal LLM-judgment miss tracked by a follow-up TD.
+            include_type_novelty_llm_verify: true,
         }
     }
 }
