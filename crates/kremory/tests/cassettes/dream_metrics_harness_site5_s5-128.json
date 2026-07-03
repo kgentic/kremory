@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "59666dee7493ae42b7ceaec82f50af7091816780be53e6be9f4b891807db4fb4": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The names are identical strings, but the context and description explicitly differentiate them as two distinct organizations (Intelligence Agency vs. Culinary School). The prompt implies two distinct entities sharing an acronym.\"}]}"
+      }
+    ]
+  }
+}

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "cac675246bf8e81890d31f6929f1cc7d4c4ac090c1e6dddf614f87ea14dd9ff0": [
+    "9e147c1f9d686e98c9e19095a1748999d5e1175bae19dc374b11c93d33fe8178": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are variations of the same person, differing only by the inclusion of the initial 'N' in the first name, which is strongly supported by the description stating 'Nick is a standard short form of Nicholas' and matching surnames.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are clearly variations (full name vs. common nickname) of the same individual, reinforced by shared surname context.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "35e844363414e3ddcf4d91ad705fde95c084869baf1bf7fccac3f217de5fcc16": [
+    "55758d7f2f40fa23fb8a5ae008b08997efb99a0f237430547726a8c129138fdb": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Although both names share the acronym 'MADD', the description explicitly notes that 'MADD' is widely known as Mothers Against Drunk Driving, and the second name suggests a completely different, dental-related group. They are different entities.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One entity is an acronym (MADD) and the other is its full name (Mothers Against Drunk Driving), and the description confirms this relationship.\"\n    }\n  ]\n}"
       }
     ]
   }

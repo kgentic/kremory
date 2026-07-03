@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "920f00afe407193932a616286ac8d9078376035cf3c43baa2db062a49f22e74c": [
+    "b7e883118d483a9b013585cba20555c6b19e9a83526cda269c29d1cc706ed95a": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Ron' is a standard nickname for 'Ronald' and provide circumstantial evidence (same surname in board minutes) suggesting they are the same person.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The relationship suggests 'Ron' is a common nickname for 'Ronald', and they share the same surname in the context provided.\"}]}"
       }
     ]
   }

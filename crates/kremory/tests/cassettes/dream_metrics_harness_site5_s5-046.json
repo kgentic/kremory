@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "788790ff129c3d076e7cd72a2489a3c9b9b5452237a2a81abb455547769d2ec2": [
+    "f1f1ef4a08e25d232f4ecd51e4cd2d24f711b7a9e04513dc4f5a09055b388272": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state they are different people in different organizations, despite having similar names.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly distinguish the individuals: A is Alexander Petrescu (cousin, different company), while B is Alexandra Petrescu (works at the primary company). They are different people.\"}]}"
       }
     ]
   }

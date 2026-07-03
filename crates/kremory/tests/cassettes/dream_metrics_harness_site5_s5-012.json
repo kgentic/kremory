@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ac7edf402aaa8c8cedfc66e292c6d8f764ec6a98ceba3f9b01c38ee606dcabfe": [
+    "282a4474bc9f89f50e8b2c632ee6ffb55ca22d3ac2e14f2da3ae62de5b20a902": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The name 'OPEC' is explicitly stated to be the acronym for 'Organization of the Petroleum Exporting Countries'.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym and the other is the full name, and the description explicitly states they are equivalent.\"\n    }\n  ]\n}"
       }
     ]
   }

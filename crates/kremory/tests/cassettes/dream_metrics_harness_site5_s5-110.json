@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "734f1caf6ca8dbd50bae5c92b067ee90b10490f5299c24adf8f04ee2dfa5ed2d": [
+    "08aa836267f2c3d55855ade169a6a6da18967e1ef9b6fdbcdd800037e2e400fe": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Winnie' is a traditional nickname for 'Winifred' and the context (same alumni record) suggests they refer to the same person.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The difference is likely a nickname variation (Winnie vs. Winifred) while sharing the same surname and context.\"}]}"
       }
     ]
   }

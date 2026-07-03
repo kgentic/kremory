@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "2a016603391bd6a657d8c4ed2574eee003c7c04f6130e4295fb55ac637cf676c": [
+    "1ce74ef3dbfa037cabe23582d0a57b7452c31a1254daddf0eaa1d4f12dcbcb5d": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.7, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions point to three distinct potential meanings (Caterpillar Inc., CAT the acronym, Common Admission Test), suggesting they are different concepts even if the source provided them contextually.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is the full name of the acronym A, making them the same entity.\"}]}"
       }
     ]
   }

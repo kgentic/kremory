@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "735b5fa24fb9d6a6b56ffd920d3855baa7d05a8631c2422f633fa678af4a23b3": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.3, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The two names refer to different meanings of the acronym 'CVS' (a company vs. a software tool), suggesting two distinct entities despite the shared initials.\"}]}"
+      }
+    ]
+  }
+}

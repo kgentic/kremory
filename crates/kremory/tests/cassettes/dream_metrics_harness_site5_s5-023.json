@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "982c1f9335579ea7447482675f069e9e0693ea63f4c78ee1e00013efcefd8fd0": [
+    "a24deff8cbe431fc7f50b719701407a6c5fda22261e20d35619b7acf6bd6ebb9": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are direct variations (short form vs. full name) for the same individual, as indicated by the description.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The context explicitly states that 'Sam' is a standard short form of 'Samuel', and they share the same surname. This indicates they refer to the same person.\"\n    }\n  ]\n}"
       }
     ]
   }

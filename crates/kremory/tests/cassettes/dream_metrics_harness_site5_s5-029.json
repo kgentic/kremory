@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "6709ada87434bd0283f67d5ca41849cf7de7ce61bb376d6d9dede7179f3559a3": [
+    "b00b28df5568a8c401abe188e615db4341ccb601d141cd4d46652f3694a65b40": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two entities (the band and the organization) are entirely different.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly distinguish between a rock band (The Who) and a UN agency (World Health Organization).\"}]}"
       }
     ]
   }

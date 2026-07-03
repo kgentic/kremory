@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "f4f8a727c2404320bd3eaab8f6a1bad45ba63bbe2fc4db228148ee3f449bbf0b": [
+    "7ade3e0c812d18819a8ff2193c95679ed0e3320f2642da3bfa391926c22be683": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'MIT' is the standard abbreviation for 'Massachusetts Institute of Technology'.\"}]}"
+        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One entity is the abbreviation (MIT) and the other is the full name (Massachusetts Institute of Technology), and the description explicitly links them as the abbreviation of the full name.\"\n}\n]\n}"
       }
     ]
   }

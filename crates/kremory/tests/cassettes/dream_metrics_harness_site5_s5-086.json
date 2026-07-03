@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "9af0feea122d645aee622e198c103f95afcc02c8f3c763ed7b770e146a8a6209": [
+    "779dfe55145049712a48dc43c4e3952ca6d3eafdf16992790b00a64e6de73f75": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly differentiate the two entities by their association with a specific role ('ops lead's brother' vs 'ops lead') and context, suggesting they are distinct individuals despite similar names and surname.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Terry' (A) and 'Theresa Volkov' (B) are different people; A is associated with Terrence Volkov's situation, while B is Theresa Volkov (the ops lead). The context separates them as siblings.\"}]}"
       }
     ]
   }

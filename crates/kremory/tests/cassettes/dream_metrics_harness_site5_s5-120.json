@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "1657371ab4035ec0b11fa3505ec88eae8ea53d84ace01ed0d9d7d1b3b493ff3b": [
+    "20f78dbf04e5562954c49f6c5b20447660308c68ea2db7c20fa0352a41c423f4": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The difference is only the presence or absence of an umlaut (accent marks), which is a known variation for the same name.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The two names are identical except for the presence of an umlaut (ö vs o) on the same letter, which is a common variation in naming conventions for the same person.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "54f261531d95dbf78887ec7a92db50d6f715a85ac33eadb49ad174dec7c0495a": [
+    "916ecb23194ddaa08ce6cd12b3a9dc16bfcf326dfd128988ca65962edd97c3bf": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Sally' is a traditional nickname for 'Sarah', and the shared surname confirms they refer to the same person.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Sally is a traditional nickname for Sarah,' suggesting they refer to the same individual.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "58b90a0e0a3b87b47d274081c698ea63e812204d1f92ef156991280829bc3b26": [
+    "3399950b84a4cbc61a52e2ac797d0f0409e5efccc16546f56ed9002da1329f1e": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two 'Chris' references are for unrelated individuals, even if they share potential name overlap.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two individuals, one in legal and one in product, are documented as separate individuals despite sharing a surname.\"}]}"
       }
     ]
   }

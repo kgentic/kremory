@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "eb84e5b75d8aa766532aac2c4899d03b321e0d16facd9e3b432390916f6a19f5": [
+    "b7139595ca4c1e66230c69a263e79b3b2c568398e5066e72947165cbb3e00203": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The difference is purely superficial capitalization/diacritic usage; context implies they are the same company.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are identical except for case and the presence/absence of a diaeresis, which the context explicitly states refers to the same startup.\"}]}"
       }
     ]
   }

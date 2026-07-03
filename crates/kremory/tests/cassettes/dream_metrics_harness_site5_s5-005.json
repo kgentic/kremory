@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "68a50aa579b8cd314572055f67093cbc4eb138cae07e75ad87dce03f87101ed6": [
+    "26cd2d57d2ad4ee724012f6b2000202ee845e37e3b437473eb983b5a09fe7909": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are an acronym and its full form, which typically refer to the exact same entity.\"}]}"
+        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One name is the standard acronym and the other is the full name, and the description explicitly links them.\"\n}\n]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "4353b5dfe126d55f051731581c0abe31cd6733f11f562a52fa5359cf8c7e713f": [
+    "18fbd395649f15c8fcdeb8a1d5361a52ceb43be320cdd5b061cc4e5e9bf53aa9": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The names are clearly an acronym and its full English expansion, explicitly linked in the description.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is the full name/description of the acronym CERN (A).\"}]}"
       }
     ]
   }

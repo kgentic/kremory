@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "e10184f120094ab94d5f5ebb70c2fd0ccb245645f88364cb612c9df9cc5cde64": [
+    "85ca7356deff0fee0d4b13438818f5497283161778cdb1e1f53c77a1f011590b": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are the acronym and its full expansion, referring to the same US government agency.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the well-known acronym (NASA) for the other name, which is the full name of the organization.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "9e38984a846d78e2b019929b573a83a982e36137e0adc897804bc10829c3c0dd": [
+    "957956c8373600c573d6ac8f682242ecfe22639a701a7c0fd95c7165fe9f4152": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"In an academic context where both 'MA' and 'Master of Arts' are mentioned, it is highly probable that the acronym stands for the degree, suggesting they are referring to the same concept/entity within that domain.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The full name 'Master of Arts' is the unambiguous expansion of the acronym 'MA' in an academic context.\"}]}"
       }
     ]
   }

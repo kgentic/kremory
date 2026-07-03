@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "e2a189aa93840a346dfd18d339726a43122548fc7cc171a93c7a8d373154578d": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that Samantha Whitlock and Samuel Whitlock are unrelated agents with different IDs, making them distinct individuals.\"}]}"
+      }
+    ]
+  }
+}

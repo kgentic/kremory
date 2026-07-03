@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "f81238234544ee8dace234507cf5413252ff03e57257d6a6c93c16be77c22ebd": [
+    "e143b2a44429e74ef878abc1f15794809d1b565252e952349b46ab06888f0280": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'IBM' is the initialism for 'International Business Machines Corporation'.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'IBM' is the acronym/trading name for 'International Business Machines Corporation', indicating they refer to the same entity.\"\n    }\n  ]\n}"
       }
     ]
   }

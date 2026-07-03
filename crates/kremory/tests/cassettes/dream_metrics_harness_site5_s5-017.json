@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "282e02065b4b51402a05c05fbea43f6dc1aca4751a60ff3ceb954d58e891f411": [
+    "226183ff4f220151cae01f5b05adaf69296bdede97ade01155c1fcf3470b0cd4": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The relationship is clearly nickname/full name ('Bill' vs 'William') with matching surnames, strongly suggesting they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Bill' is a conventional nickname for 'William', and the surname is shared.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "825c71098134b2dbd43f2914bc76c425fe3b4bb494de5fc560edd804c5ee346b": [
+    "0abd58b940b76353c7317393a6c6c031b83ff83884e70b922b4eadca8c852477": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is the full name/expansion of the acronym A.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"B is the full name corresponding to the acronym A.\"\n    }\n  ]\n}"
       }
     ]
   }

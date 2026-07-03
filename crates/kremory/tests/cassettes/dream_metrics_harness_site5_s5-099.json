@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "10f01055ed916f00b8de67dc02960b7afaa997e3018b2666785f9d645c37b0db": [
+    "4505f79040676968b5f99e4cd231fafff4e28d9e7de8ac93265dcac7c6af7cef": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the full formal name and the other uses the established acronym/abbreviation for the same organization.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Pair B includes the acronym/initialism (JPL) and the full name/prefix (NASA) that matches the description of Pair A, indicating they refer to the same well-known entity.\"\n    }\n  ]\n}"
       }
     ]
   }

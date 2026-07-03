@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b1e579e2de26f4214f7cdfbdc3755fbac9b9c3f1a6dff0c32c9882e130b363e0": [
+    "39fa09763a1746cd5ba913f9fa71f16ceae5ba5a46d6ea68b68f4b69ff73aebb": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Gabe' is a common short form of 'Gabriel', and the context confirms they refer to the same person.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Gabe' is a common short form of 'Gabriel', and they share the same surname in the context provided.\"\n    }\n  ]\n}"
       }
     ]
   }
