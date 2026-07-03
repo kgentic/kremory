@@ -948,6 +948,7 @@ async fn write_audit_row(params: WriteAuditRowParams<'_>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::dream::wilson_lower_upper;
     use crate::core::graph::{
         InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
     };
@@ -1422,22 +1423,11 @@ mod tests {
         // wrong merges. The BINDING correctness gate for Site #5 is S2 (spec §8
         // S2), not this pass. Do not read a knife-edge S1 as the "non-negotiable
         // precondition" being robustly cleared on its own.
-        let n_flagged = (tp + fp) as f64;
-        let (ci_lo, ci_hi) = if n_flagged > 0.0 {
-            let z = 1.96_f64;
-            let z2 = z * z;
-            let centre = precision + z2 / (2.0 * n_flagged);
-            let margin = z
-                * (precision * (1.0 - precision) / n_flagged + z2 / (4.0 * n_flagged * n_flagged))
-                    .sqrt();
-            let denom = 1.0 + z2 / n_flagged;
-            (
-                ((centre - margin) / denom).max(0.0),
-                ((centre + margin) / denom).min(1.0),
-            )
-        } else {
-            (1.0, 1.0)
-        };
+        //
+        // Formula lives in `metrics_util::wilson_lower_upper` (spec
+        // `dream-adversarial-corpora-and-metrics-2026-07-02.md` §3 step 0, H1)
+        // so the metrics harness can reuse it instead of re-deriving it here.
+        let (ci_lo, ci_hi) = wilson_lower_upper(tp, tp + fp);
 
         eprintln!("\n── S1 initialism_candidate precision/recall ──────────────────────────");
         eprintln!(
