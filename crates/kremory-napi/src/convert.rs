@@ -368,6 +368,8 @@ pub struct JsDreamSummary {
     pub entities_reclassified: f64,
     pub aliases_resolved: f64,
     pub canonicalization_merges: f64,
+    pub acronym_nickname_merges: f64,
+    pub type_registry_merges: f64,
     pub consistency_check_corrected: f64,
     pub warnings: Vec<String>,
 }
@@ -619,6 +621,8 @@ pub fn dream_summary_to_js(s: DreamSummary) -> JsDreamSummary {
         entities_reclassified: s.entities_reclassified as f64,
         aliases_resolved: s.aliases_resolved as f64,
         canonicalization_merges: s.canonicalization_merges as f64,
+        acronym_nickname_merges: s.acronym_nickname_merges as f64,
+        type_registry_merges: s.type_registry_merges as f64,
         consistency_check_corrected: s.consistency_check_corrected as f64,
         warnings: s.warnings,
     }

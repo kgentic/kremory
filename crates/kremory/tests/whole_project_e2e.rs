@@ -452,12 +452,15 @@ async fn whole_project_ingest_to_dream() {
         "[whole-project-e2e] entities_before={entities_before} \
          types_discovered={} aliases_resolved={} entities_reclassified={} \
          canonicalization_merges={} cross_episode_merges={} \
+         acronym_nickname_merges={} type_registry_merges={} \
          consistency_check_corrected={} warnings={:?} duration_ms={}",
         summary.types_discovered.len(),
         summary.aliases_resolved,
         summary.entities_reclassified,
         summary.canonicalization_merges,
         summary.cross_episode_merges,
+        summary.acronym_nickname_merges,
+        summary.type_registry_merges,
         summary.consistency_check_corrected,
         summary.warnings,
         summary.duration_ms,
@@ -479,27 +482,27 @@ async fn whole_project_ingest_to_dream() {
         summary.warnings
     );
 
-    // ASSERT 5 (SAFETY — structural over-merge floor via the entity-count delta).
+    // ASSERT 5 (SAFETY — structural over-merge floor, dual guard).
     //
-    // IMPORTANT (Quinn H1): `DreamSummary` does NOT surface the Site #3
-    // (type_registry_collapse) or Site #5 (acronym_nickname_recall) merge counts —
-    // facade/dream.rs computes them but discards both (`let _ = …`, reserved for a
-    // future napi-parity phase), and `cross_episode_merges` is a structural
-    // honest-zero until consolidation ships. So the `summary.*` merge counters
-    // reflect only the OTHER passes (L7 alias-resolution, canonicalize), NOT the two
-    // enabled identity passes. This test therefore CANNOT observe Site #3/#5 merge
-    // activity through the summary — deep Site #3/#5 correctness is proven by the
-    // metrics harnesses (dream_metrics_harness{,_site3}.rs). The over-merge guard
-    // that DOES cover Site #3/#5 here is the entity-count delta below: the 4 episodes
-    // are non-overlapping domains, so a correct dream keeps >= one surviving entity
-    // per domain; a catastrophic over-merge (by ANY pass) would collapse the count
-    // below EPISODES.len(). (Follow-up: surface the two counts in DreamSummary.)
+    // `DreamSummary` now surfaces the Site #3 (type_registry_merges) and Site #5
+    // (acronym_nickname_merges) merge counts (ADR-063 §3/§4 observability), so this
+    // test observes the two enabled identity passes directly. `merge_actions` sums
+    // every DreamSummary merge/alias counter — L7 alias-resolution, canonicalize,
+    // consolidation (honest-zero), AND Site #3/#5 — so an over-merge by ANY pass is
+    // covered. Deep per-pair Site #3/#5 CORRECTNESS is still the metrics harnesses'
+    // job (dream_metrics_harness{,_site3}.rs); this is the structural over-merge
+    // ceiling. Second guard: the 4 episodes are non-overlapping domains, so a correct
+    // dream keeps >= one surviving entity per domain — a catastrophic collapse below
+    // EPISODES.len() is a false-merge failure.
     let entities_after = count_entities(&tg.conn).await;
-    let surfaced_merge_actions =
-        summary.aliases_resolved + summary.canonicalization_merges + summary.cross_episode_merges;
+    let merge_actions = summary.aliases_resolved
+        + summary.canonicalization_merges
+        + summary.cross_episode_merges
+        + summary.acronym_nickname_merges
+        + summary.type_registry_merges;
     assert!(
-        (surfaced_merge_actions as i64) <= entities_before,
-        "dream reported {surfaced_merge_actions} surfaced merge/alias actions but only \
+        (merge_actions as i64) <= entities_before,
+        "dream reported {merge_actions} total merge/alias actions but only \
          {entities_before} entities existed before dream — impossible without corruption"
     );
     assert!(

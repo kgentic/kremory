@@ -156,6 +156,8 @@ impl GraphHandle for StubHandle {
             facts_archived: 0,
             aliases_resolved: 0,
             canonicalization_merges: 0,
+            acronym_nickname_merges: 0,
+            type_registry_merges: 0,
             consistency_check_corrected: 0,
             duration_ms: 0,
             types_discovered: vec![],
