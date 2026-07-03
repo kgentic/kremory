@@ -1,7 +1,7 @@
 // ADR-063 spec `dream-adversarial-corpora-and-metrics-2026-07-02.md` §3/§3.1/
 // §3.5/§4 — the production-grade metrics harness for Site #5 (instance
 // acronym/nickname recall). Loads the committed adversarial corpus
-// (`tests/corpora/site5_acronym_adversarial.jsonl`, 121 rows), runs each row
+// (`tests/corpora/site5_acronym_adversarial.jsonl`, 140 rows), runs each row
 // through the REAL pass (real gemma4:e4b via VCR, no embedder needed — R3:
 // Site #5 always passes cosine=0.0), and computes precision/recall/F1 +
 // Wilson 95% CI per §3's denominator definition, cross-checked against the
@@ -64,7 +64,7 @@ use kremory::core::dream::{
     acronym_nickname_recall, wilson_lower_upper, AcronymNicknameRecallParams,
 };
 use kremory::core::graph::{
-    InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
+    FactInsert, InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
 };
 use kremory::core::provider::RecordReplayChatProvider;
 use kremory::core::schema::TemporalGraph;
@@ -171,6 +171,13 @@ struct Row {
     cooccurs: bool,
     ground_truth: GroundTruth,
     rationale: String,
+    /// Distinguishing context strings (spec §3/§3.1 corpus schema addition) —
+    /// planted into each entity's `properties.description` (§3.2's
+    /// `load_entity_description` read path) AND as `facts` rows (§3.2's
+    /// `load_top3_facts` read path, `subject_id`-scoped, up to 3 most-recent
+    /// non-expired) so the adjudication LLM actually sees the distinguishing
+    /// context the corpus author wrote — see `run_one_row` PART A.
+    context_facts: Vec<String>,
 }
 
 /// Load + classify the committed corpus. Ground truth is derived from the
@@ -223,6 +230,19 @@ fn load_corpus() -> Vec<Row> {
             .as_str()
             .unwrap_or_else(|| panic!("corpus line {line_no} ({id}): missing 'rationale'"))
             .to_string();
+        // `context_facts` (corpus schema addition): a list of short
+        // distinguishing-context strings. Required + non-empty for every
+        // committed row today, but tolerate absence/empty defensively rather
+        // than panicking — a row with no context_facts simply plants no
+        // extra context beyond `rationale` (see PART A below).
+        let context_facts: Vec<String> = raw["context_facts"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         // `malformed` skip-guard (task brief): no such category exists in
         // the committed corpus today (verified 2026-07-03, 0 of 121), kept
@@ -255,6 +275,7 @@ fn load_corpus() -> Vec<Row> {
             cooccurs,
             ground_truth,
             rationale,
+            context_facts,
         });
     }
     rows
@@ -275,6 +296,26 @@ struct RowOutcome {
     /// no merge — nomination itself failed to fire).
     decision: Option<String>,
     candidates_nominated: usize,
+    /// Wall-clock ms for this row's `run_one_row` call (plant + pass
+    /// execution). In `VcrMode::Replay` this is a cassette-lookup latency,
+    /// NOT real LLM latency — see PART B doc-comment on `LatencyMetrics`.
+    row_wall_clock_ms: f64,
+}
+
+/// Build a per-entity `properties.description` that surfaces the row's
+/// distinguishing `context_facts` to the adjudication LLM (PART A). Mirrors
+/// what `acronym_nickname_recall.rs::load_entity_description` reads
+/// (`properties.description`, a single string) — so the context must be
+/// FLATTENED into that one field, not left as a structured list the read
+/// path can't see.
+fn build_entity_description(entity_name: &str, row: &Row) -> String {
+    if row.context_facts.is_empty() {
+        // Fallback for any row missing context_facts (defensive; the
+        // committed corpus has none as of 2026-07-03) — plant the rationale
+        // alone, matching the harness's pre-context_facts behaviour.
+        return row.rationale.clone();
+    }
+    format!("{entity_name}. Context: {}", row.context_facts.join("; "))
 }
 
 /// Plant one row's two entities (+ co-occurrence episode iff `cooccurs`) into
@@ -282,13 +323,23 @@ struct RowOutcome {
 /// alone, and read back the pass's actual decision from
 /// `identity_verdict_audit` (mirrors `acronym_nickname_recall_s2_spike.rs`'s
 /// per-pair audit-row cross-check exactly).
+///
+/// PART A (context planting): `acronym_nickname_recall.rs::
+/// build_adjudication_messages` reads TWO things per entity —
+/// `properties.description` (via `load_entity_description`) and up to 3
+/// `facts` rows (via `load_top3_facts`, `subject_id`-scoped, most-recent
+/// non-expired, `object_value IS NOT NULL`). Both are planted here so the
+/// row's `context_facts` actually reach the adjudication LLM through the
+/// pass's real read paths, not just sit unused in the corpus JSON.
 async fn run_one_row(row: &Row, mode: VcrMode) -> Result<(RowOutcome, String), String> {
+    let row_start = std::time::Instant::now();
     let graph = TemporalGraph::open_in_memory()
         .await
         .map_err(|e| format!("open_in_memory failed for row {}: {e}", row.id))?;
     let gid = format!("site5-corpus-{}", row.id);
 
-    let props_a = serde_json::json!({ "name": row.a, "description": row.rationale });
+    let desc_a = build_entity_description(&row.a, row);
+    let props_a = serde_json::json!({ "name": row.a, "description": desc_a });
     graph
         .insert_entity_with_group(InsertEntityWithGroupParams {
             id: &row.a,
@@ -298,7 +349,8 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<(RowOutcome, String), S
         })
         .await
         .map_err(|e| format!("insert_entity a failed for row {}: {e}", row.id))?;
-    let props_b = serde_json::json!({ "name": row.b, "description": row.rationale });
+    let desc_b = build_entity_description(&row.b, row);
+    let props_b = serde_json::json!({ "name": row.b, "description": desc_b });
     graph
         .insert_entity_with_group(InsertEntityWithGroupParams {
             id: &row.b,
@@ -308,6 +360,26 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<(RowOutcome, String), S
         })
         .await
         .map_err(|e| format!("insert_entity b failed for row {}: {e}", row.id))?;
+
+    // Plant `context_facts` as real `facts` rows too (in addition to the
+    // description above) — `load_top3_facts` reads up to 3 most-recent
+    // non-expired `object_value`-bearing facts per entity, so this is a
+    // second real read path the adjudication LLM's prompt draws from.
+    // Planted identically on BOTH entities (the corpus doesn't attribute a
+    // context_fact to one side over the other), newest-first via
+    // `valid_from` so `ORDER BY recorded_at DESC LIMIT 3` keeps the last 3
+    // written (== the corpus's own list order, capped).
+    for ent in [row.a.as_str(), row.b.as_str()] {
+        for fact_text in row.context_facts.iter().take(3) {
+            graph
+                .insert_fact_with_group(
+                    FactInsert::new(ent, "context", chrono::Utc::now()).object_value(fact_text),
+                    Some(&gid),
+                )
+                .await
+                .map_err(|e| format!("insert_fact (context) failed for row {}: {e}", row.id))?;
+        }
+    }
 
     if row.cooccurs {
         let ep = graph
@@ -383,6 +455,8 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<(RowOutcome, String), S
         );
     }
 
+    let row_wall_clock_ms = row_start.elapsed().as_secs_f64() * 1000.0;
+
     Ok((
         RowOutcome {
             row_id: row.id.clone(),
@@ -390,6 +464,7 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<(RowOutcome, String), S
             ground_truth: row.ground_truth,
             decision,
             candidates_nominated: report.candidates_nominated,
+            row_wall_clock_ms,
         },
         gid,
     ))
@@ -570,6 +645,164 @@ fn sum_write_gate_decision_counter(snapshotter: &Snapshotter, site: &str, decisi
         .sum()
 }
 
+/// Collect all recorded samples for a named histogram, optionally filtered
+/// by `site` label. Mirrors `sum_counter`'s snapshot-per-call discipline.
+fn histogram_samples(
+    snapshotter: &Snapshotter,
+    metric_name: &str,
+    site_filter: Option<&str>,
+) -> Vec<f64> {
+    snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(composite_key, _, _, value)| {
+            let key = composite_key.key();
+            if key.name() != metric_name {
+                return None;
+            }
+            if let Some(site) = site_filter {
+                let labels: HashMap<&str, &str> =
+                    key.labels().map(|l| (l.key(), l.value())).collect();
+                if labels.get("site").copied() != Some(site) {
+                    return None;
+                }
+            }
+            if let DebugValue::Histogram(samples) = value {
+                Some(samples.into_iter().map(f64::from).collect::<Vec<f64>>())
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect()
+}
+
+/// Percentile over a slice of samples (nearest-rank method — no
+/// interpolation, simplest correct definition for a metrics report). Returns
+/// `None` for an empty slice. `p` is a fraction in `[0.0, 1.0]`.
+fn percentile(samples: &[f64], p: f64) -> Option<f64> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).expect("latency ms samples are never NaN"));
+    let rank = ((p * sorted.len() as f64).ceil() as usize)
+        .saturating_sub(1)
+        .min(sorted.len() - 1);
+    Some(sorted[rank])
+}
+
+/// Latency metrics (task brief PART B). Sourced from TWO places:
+///   - `llm_call_ms_p50/p95/p99` + `llm_call_count` + `llm_call_total_ms`:
+///     read from the pass's OWN histogram
+///     `kremory.identity.llm_call_latency_ms_histogram{site=
+///     site5_acronym_nickname}` — the real per-adjudication-call LLM latency
+///     the pass itself records (`acronym_nickname_recall.rs` around the
+///     `StructuredCallBuilder::call()` site).
+///   - `row_wall_clock_ms_p50/p95/p99` + `total_harness_wall_clock_ms`:
+///     the harness's OWN per-`run_one_row` wall-clock timer (plant + pass
+///     execution, includes DB I/O the LLM histogram does not).
+///
+/// IMPORTANT — in `VcrMode::Replay` (the default; what CI/local `cargo test`
+/// runs without `KREMORY_VCR=record`), the "LLM call" is a cassette lookup,
+/// not a real network/model call — these numbers are NOT real LLM latency
+/// in replay mode. Only a `KREMORY_VCR=record` run against live Ollama
+/// produces real-world latency figures. The harness stamps `vcr_mode` in the
+/// report so this is never ambiguous when reading `site5_metrics.json`.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+struct LatencyMetrics {
+    vcr_mode: String,
+    llm_call_count: usize,
+    llm_call_total_ms: f64,
+    llm_call_ms_p50: Option<f64>,
+    llm_call_ms_p95: Option<f64>,
+    llm_call_ms_p99: Option<f64>,
+    row_wall_clock_ms_p50: Option<f64>,
+    row_wall_clock_ms_p95: Option<f64>,
+    row_wall_clock_ms_p99: Option<f64>,
+    total_harness_wall_clock_ms: f64,
+}
+
+fn compute_latency_metrics(
+    snapshotter: &Snapshotter,
+    outcomes: &[RowOutcome],
+    vcr_mode: VcrMode,
+) -> LatencyMetrics {
+    const SITE: &str = "site5_acronym_nickname";
+    let llm_samples = histogram_samples(
+        snapshotter,
+        "kremory.identity.llm_call_latency_ms_histogram",
+        Some(SITE),
+    );
+    let row_wall_clock_ms: Vec<f64> = outcomes.iter().map(|o| o.row_wall_clock_ms).collect();
+
+    LatencyMetrics {
+        vcr_mode: match vcr_mode {
+            VcrMode::Record => "record (real Ollama latency)".to_string(),
+            VcrMode::Replay => "replay (cassette lookup — NOT real LLM latency)".to_string(),
+        },
+        llm_call_count: llm_samples.len(),
+        llm_call_total_ms: llm_samples.iter().sum(),
+        llm_call_ms_p50: percentile(&llm_samples, 0.50),
+        llm_call_ms_p95: percentile(&llm_samples, 0.95),
+        llm_call_ms_p99: percentile(&llm_samples, 0.99),
+        row_wall_clock_ms_p50: percentile(&row_wall_clock_ms, 0.50),
+        row_wall_clock_ms_p95: percentile(&row_wall_clock_ms, 0.95),
+        row_wall_clock_ms_p99: percentile(&row_wall_clock_ms, 0.99),
+        total_harness_wall_clock_ms: row_wall_clock_ms.iter().sum(),
+    }
+}
+
+/// Volume metrics (task brief PART B) — pairs examined / candidates
+/// nominated / nomination rate, cross-checked against the pass's own
+/// `pairs_examined_total` / `candidate_nominated_total` counters (already
+/// verified equal to the harness's observed counts by `crosscheck_o11y`, so
+/// reading directly off `outcomes` here is not a second, divergent source of
+/// truth — it's the same numbers `crosscheck_o11y` already proved match).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+struct VolumeMetrics {
+    pairs_examined: usize,
+    candidates_nominated: usize,
+    nomination_rate: Option<f64>,
+    merges_applied: usize,
+    potential_aliases: usize,
+    rejects: usize,
+    not_nominated: usize,
+}
+
+fn compute_volume_metrics(outcomes: &[RowOutcome]) -> VolumeMetrics {
+    let pairs_examined = outcomes.len();
+    let candidates_nominated: usize = outcomes.iter().map(|o| o.candidates_nominated).sum();
+    let merges_applied = outcomes
+        .iter()
+        .filter(|o| decision_is_merge(&o.decision))
+        .count();
+    let potential_aliases = outcomes
+        .iter()
+        .filter(|o| o.decision.as_deref() == Some("potential_alias"))
+        .count();
+    let rejects = outcomes
+        .iter()
+        .filter(|o| o.decision.as_deref() == Some("reject"))
+        .count();
+    let not_nominated = outcomes.iter().filter(|o| o.decision.is_none()).count();
+
+    VolumeMetrics {
+        pairs_examined,
+        candidates_nominated,
+        nomination_rate: if pairs_examined == 0 {
+            None
+        } else {
+            Some(candidates_nominated as f64 / pairs_examined as f64)
+        },
+        merges_applied,
+        potential_aliases,
+        rejects,
+        not_nominated,
+    }
+}
+
 /// Cross-check the pass's own o11y counters (§3.5) against the harness's
 /// observed decisions. A divergence is a FAIL — the counter must not lie.
 fn crosscheck_o11y(snapshotter: &Snapshotter, outcomes: &[RowOutcome]) -> Result<(), String> {
@@ -675,6 +908,9 @@ struct MetricsReport {
     safety_false_merges: usize,
     false_merge_rows: Vec<String>,
     hard_gate: String,
+    /// PART B (task brief): latency + volume metrics block.
+    latency: LatencyMetrics,
+    volume: VolumeMetrics,
 }
 
 fn print_and_write_report(report: &MetricsReport) {
@@ -726,6 +962,33 @@ fn print_and_write_report(report: &MetricsReport) {
         }
     }
 
+    eprintln!(
+        "\n  LATENCY [{}]: llm_call_count={} llm_call_total_ms={:.1} \
+         llm_call_ms p50={:?} p95={:?} p99={:?} | row_wall_clock_ms p50={:?} p95={:?} p99={:?} \
+         | total_harness_wall_clock_ms={:.1}",
+        report.latency.vcr_mode,
+        report.latency.llm_call_count,
+        report.latency.llm_call_total_ms,
+        report.latency.llm_call_ms_p50,
+        report.latency.llm_call_ms_p95,
+        report.latency.llm_call_ms_p99,
+        report.latency.row_wall_clock_ms_p50,
+        report.latency.row_wall_clock_ms_p95,
+        report.latency.row_wall_clock_ms_p99,
+        report.latency.total_harness_wall_clock_ms,
+    );
+    eprintln!(
+        "  VOLUME: pairs_examined={} candidates_nominated={} nomination_rate={:?} \
+         merges_applied={} potential_aliases={} rejects={} not_nominated={}",
+        report.volume.pairs_examined,
+        report.volume.candidates_nominated,
+        report.volume.nomination_rate,
+        report.volume.merges_applied,
+        report.volume.potential_aliases,
+        report.volume.rejects,
+        report.volume.not_nominated,
+    );
+
     let out_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("corpora")
@@ -741,7 +1004,7 @@ fn print_and_write_report(report: &MetricsReport) {
 /// smoke-one-before-batch (hard rule): run ONLY corpus row `s5-001` (IBM /
 /// International Business Machines, `genuine_acronym`) through the full
 /// scoring pipeline first, confirm the per-row plant->run->score wiring is
-/// sane, THEN proceed to the full 121-row corpus run.
+/// sane, THEN proceed to the full 140-row corpus run.
 #[tokio::test]
 #[ignore = "dream_metrics_harness: requires Ollama in record mode, or a committed cassette in \
             replay mode. Run explicitly: KREMORY_VCR=record cargo test -p kremory \
@@ -794,7 +1057,7 @@ async fn smoke_one_metrics_harness() {
     crosscheck_o11y(&snapshotter, std::slice::from_ref(&outcome))
         .unwrap_or_else(|e| panic!("smoke-one o11y cross-check FAILED: {e}"));
 
-    eprintln!("[smoke-one] PASS — proceeding to full 121-row corpus run is safe.");
+    eprintln!("[smoke-one] PASS — proceeding to full 140-row corpus run is safe.");
 }
 
 // ─── Full corpus run — the binding metrics harness ───────────────────────────
@@ -815,7 +1078,10 @@ async fn full_corpus_site5_metrics() {
 
     let mode = resolve_vcr_mode();
     let corpus = load_corpus();
-    assert_eq!(corpus.len(), 121, "corpus must have exactly 121 rows");
+    // NOTE: was 121 rows; corpus grew to 140 with the `context_dependent_nickname`
+    // + `unicode_casing_variant` category additions (2026-07-03 corpus revision,
+    // see also `context_facts` field addition PART A plants).
+    assert_eq!(corpus.len(), 140, "corpus must have exactly 140 rows");
 
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
@@ -941,6 +1207,10 @@ async fn full_corpus_site5_metrics() {
     let hard_gate_pass = point_precision >= 0.90 && safety_false_merges == 0;
     let hard_gate = if hard_gate_pass { "PASS" } else { "FAIL" }.to_string();
 
+    // ── PART B: latency + volume metrics ──────────────────────────────────
+    let latency = compute_latency_metrics(&snapshotter, &outcomes, mode);
+    let volume = compute_volume_metrics(&outcomes);
+
     let report = MetricsReport {
         site: "site5_acronym_nickname".to_string(),
         overall: overall.clone(),
@@ -956,6 +1226,8 @@ async fn full_corpus_site5_metrics() {
         safety_false_merges,
         false_merge_rows: false_merge_rows.clone(),
         hard_gate: hard_gate.clone(),
+        latency,
+        volume,
     };
     print_and_write_report(&report);
 
