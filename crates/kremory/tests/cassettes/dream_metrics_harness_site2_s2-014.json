@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "22f66c6af61ceedb4429470cff608aed6333b84e7509befab763df5b48b4cd59": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While both relate to chemistry, 'Chemical Element' refers to a fundamental, irreducible substance (like Oxygen or Gold). 'Drug Compound' refers to a specific, formulated mixture designed for biological effect, which is often a compound made of multiple elements.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

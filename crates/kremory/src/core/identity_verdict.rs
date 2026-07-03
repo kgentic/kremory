@@ -68,18 +68,24 @@ pub(crate) const LLM_VERIFY_CONFIDENCE_FLOOR: f32 = 0.7;
 /// `Deserialize` below) — a value carrying JSON-fragment tells (`{`, `}`, `\`, or
 /// the literal `"is_same_entity"`) is evidence the structured response was spliced
 /// into free text and is rejected wholesale.
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern, mirrors the Site #3/#5 test-utils
+/// re-exports in `dream/mod.rs`) — promoted from `pub(crate)` so the Site #2
+/// metrics harness (`tests/dream_metrics_harness_site2.rs`, an external
+/// integration-test binary) can construct/inspect verdicts directly. Not part
+/// of the stable public API contract.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct IdentityVerdictItem {
+#[doc(hidden)]
+pub struct IdentityVerdictItem {
     /// Correlates this verdict back to `nominated_pairs[pair_id]`. Mirrors
     /// `VerifyBatchDecision::candidate_idx` — an index into the caller's input
     /// slice, NOT a DB rowid.
-    pub(crate) pair_id: usize,
+    pub pair_id: usize,
     /// The LLM's identity judgment. REQUIRED (no `serde(default)`).
-    pub(crate) is_same_entity: bool,
+    pub is_same_entity: bool,
     /// The LLM's own calibration signal in `[0, 1]`. REQUIRED.
-    pub(crate) confidence: f32,
+    pub confidence: f32,
     /// Free-text rationale — for audit/debug only, NEVER parsed for control flow.
-    pub(crate) reasoning: String,
+    pub reasoning: String,
 }
 
 impl<'de> Deserialize<'de> for IdentityVerdictItem {
@@ -146,13 +152,16 @@ pub(crate) struct IdentityVerdictBatch {
 /// pass an ad-hoc `cosine >= 0.6` boolean into the write-gate (which would
 /// reintroduce "cosine alone can approve a destructive write" — the exact failure
 /// class ADR-057 exists to prevent) — the type itself refuses to compile that.
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` for
+/// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DeterministicSignal(bool);
+#[doc(hidden)]
+pub struct DeterministicSignal(bool);
 
 impl DeterministicSignal {
     /// Site #3 (type-registry collapse): the `names_lexically_compatible`-style
     /// lemma/exact-match result on the type NAME.
-    pub(crate) fn from_lexical(names_lexically_compatible_result: bool) -> Self {
+    pub fn from_lexical(names_lexically_compatible_result: bool) -> Self {
         Self(names_lexically_compatible_result)
     }
 
@@ -161,45 +170,53 @@ impl DeterministicSignal {
     /// deterministic, embedder-independent signal justified escalating to the LLM —
     /// the analogue of token-Jaccard for the zero-lexical-overlap acronym/nickname
     /// surface (spec §2.2.2).
-    pub(crate) fn from_structural_prefilter(nominated: bool) -> Self {
+    pub fn from_structural_prefilter(nominated: bool) -> Self {
         Self(nominated)
     }
 
     /// Whether a deterministic signal fired.
-    pub(crate) fn fired(self) -> bool {
+    pub fn fired(self) -> bool {
         self.0
     }
 }
 
 /// Inputs to [`write_gate`] — one resolved candidate pair (batch-splitting happens
 /// in the caller, BEFORE `write_gate` is invoked per pair).
-pub(crate) struct WriteGateInputs {
+///
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` for
+/// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`).
+#[doc(hidden)]
+pub struct WriteGateInputs {
     /// Pre-computed similarity. `0.0` when N/A (Site #5 acronym pairs, where cosine
     /// was never an identity signal per ADR-063).
-    pub(crate) cosine: f32,
+    pub cosine: f32,
     /// The caller's site-specific clear-merge cosine threshold (resolves spec §2.2's
     /// shared-`MERGE_THRESHOLD` ambiguity — see module docs). Site #5 passes any
     /// value because its `cosine` is always `0.0`.
-    pub(crate) merge_threshold: f32,
+    pub merge_threshold: f32,
     /// The deterministic identity-adjacent signal (spec §2.2's `lexically_compatible`
     /// parameter, wrapped in the RISK-001 newtype). Site #3: lexical match; Site #5:
     /// structural-pre-filter nomination.
-    pub(crate) deterministic_signal: DeterministicSignal,
+    pub deterministic_signal: DeterministicSignal,
     /// The single-pair verdict, already split out of its batch response by `pair_id`.
     /// `None` when the margin trigger did not fire (clear case, no LLM call) OR when
     /// the LLM call / that item's parse failed.
-    pub(crate) llm_verdict: Option<IdentityVerdictItem>,
+    pub llm_verdict: Option<IdentityVerdictItem>,
     /// Site #6's observed minimum entity extraction-confidence, when available.
     /// `None` until Site #6 ships → the row-5 floor clause is vacuously satisfied
     /// (spec §2.2.1 graceful degradation). Compared against
     /// [`LLM_VERIFY_CONFIDENCE_FLOOR`] provisionally until S4 calibrates a
     /// Site-#6-specific floor.
-    pub(crate) min_confidence_floor: Option<f32>,
+    pub min_confidence_floor: Option<f32>,
 }
 
 /// The write-gate's decision for one candidate pair.
+///
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` for
+/// the Site #2 metrics harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WriteDecision {
+#[doc(hidden)]
+pub enum WriteDecision {
     /// Destructive — caller reuses an existing id / remaps `entity_type_id`.
     Merge,
     /// Non-destructive — caller inserts an alias/candidate edge, defers to next cycle.
@@ -221,7 +238,12 @@ pub(crate) enum WriteDecision {
 /// | 6 | LLM `true`, confident, BUT no deterministic signal fired | `PotentialAlias`, never `Merge` (**the load-bearing generalization: the LLM never authorizes a destructive write alone**) |
 /// | 5b | LLM `true`, confident, deterministic signal fired, BUT Site-#6 floor set and observed conf below it | `PotentialAlias` (Site #6 downgrade) |
 /// | 5 | LLM `true`, confident, deterministic signal fired, floor cleared (or absent) | `Merge` (the ONLY row where an LLM verdict authorizes `Merge` — and never alone) |
-pub(crate) fn write_gate(inputs: WriteGateInputs) -> WriteDecision {
+///
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` so
+/// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`) can
+/// replicate the discover_types Site #2 decision flow exactly.
+#[doc(hidden)]
+pub fn write_gate(inputs: WriteGateInputs) -> WriteDecision {
     let WriteGateInputs {
         cosine,
         merge_threshold,

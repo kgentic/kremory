@@ -979,14 +979,20 @@ fn reason_to_string(r: RejectionReason) -> String {
 
 // ─── Site #2 LLM-verify-band adjudication (ADR-063 spec §2.2/§4.4 sibling) ────
 
-struct AdjudicateTypeNoveltyParams<'a, L: ChatProvider> {
-    llm: &'a L,
-    model_id: &'a str,
-    proposal_name: &'a str,
-    proposal_desc: &'a str,
-    existing_name: &'a str,
-    existing_desc: &'a str,
-    group_id: &'a str,
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern, same as the Site #3/#5 test-utils
+/// re-exports in `mod.rs`) — this and [`adjudicate_type_novelty`] were
+/// previously module-private; promoted so `tests/dream_metrics_harness_site2.rs`
+/// (an external integration-test binary) can replicate the Site #2
+/// discover_types decision exactly. Not part of the stable public API contract.
+#[doc(hidden)]
+pub struct AdjudicateTypeNoveltyParams<'a, L: ChatProvider> {
+    pub llm: &'a L,
+    pub model_id: &'a str,
+    pub proposal_name: &'a str,
+    pub proposal_desc: &'a str,
+    pub existing_name: &'a str,
+    pub existing_desc: &'a str,
+    pub group_id: &'a str,
 }
 
 /// Adjudicate ONE Site #2 candidate pair via a single-item `IdentityVerdictBatch`
@@ -1000,7 +1006,12 @@ struct AdjudicateTypeNoveltyParams<'a, L: ChatProvider> {
 /// Returns `None` on any LLM/parse failure — the caller's `write_gate` treats a
 /// missing verdict as "no LLM adjudication" (spec §2.3 failure-mode default: never
 /// silently promotes to Merge).
-async fn adjudicate_type_novelty<L: ChatProvider>(
+///
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from module-private so
+/// `tests/dream_metrics_harness_site2.rs` can call this directly, replicating
+/// the exact discover_types Site #2 decision flow.
+#[doc(hidden)]
+pub async fn adjudicate_type_novelty<L: ChatProvider>(
     params: AdjudicateTypeNoveltyParams<'_, L>,
 ) -> Option<IdentityVerdictItem> {
     let AdjudicateTypeNoveltyParams {

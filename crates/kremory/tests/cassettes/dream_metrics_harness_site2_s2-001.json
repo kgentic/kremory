@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "31294e6e2dd6bee4e5d10752ba01e54958f8c2103ca64ece042d7dadf8931e33": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions describe the exact same semantic category: a profit-driven commercial business organization. 'Firm' is an alternate, synonymous name for a 'Company' in this context.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}
