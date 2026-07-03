@@ -129,10 +129,12 @@ pub struct WithEmb;
 /// - `duration_ms` — wall-clock time of the dream call.
 /// - `warnings` — non-fatal notices from any pass.
 ///
-/// **Honest-zero fields (graph consolidation not yet implemented):**
+/// **Consolidation fields (ADR-066 — populated by the CONSOLIDATION sub-phase):**
 /// - `communities_updated`, `cross_episode_merges`, `supersessions_recorded`,
-///   `facts_archived` — always 0 until consolidation ships
-///   (see F-01 retirement, `adr-mem-dream-canonical-supersede-f01-2026-06-22`).
+///   `facts_archived` — filled by `run_consolidation` when the corresponding
+///   `DreamOpts.include_*` op is enabled (all default `false` — opt-in until each
+///   op's adversarial corpus clears its enablement gate). Zero when the op is off or
+///   found nothing to do. (Supersedes the prior F-01 honest-zero note.)
 ///
 /// Fields wired across ADR-037 §3 D6 (types_discovered/warnings), ADR-046 Option E
 /// E8 (entities_reclassified), and dream-phase-reconciliation-v2 §D3

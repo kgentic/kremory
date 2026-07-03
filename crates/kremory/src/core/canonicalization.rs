@@ -365,6 +365,28 @@ async fn find_merge_pairs(
 /// pairwise cosine merges are not LLM-adjudicated, so no `identity_verdict_audit`
 /// row is written for them (ADR-063 spec §5.2: "audit only LLM-touched decisions").
 async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> Result<()> {
+    apply_entity_merge(graph, loser_id, keeper_id).await
+}
+
+/// The shared structural entity-merge executor (ADR-066 spec DoD-P0.3).
+///
+/// Remaps all edges `loser_id → keeper_id` (`facts.subject_id`/`object_id`,
+/// `episodic_edges.entity_id`), accumulates the loser's **`Entity.access_count`**
+/// into the keeper (DENT-001 — the LIVE search-tracking field `schema.rs:106`, NOT
+/// the deprecated `facts.access_count`; retained verbatim, test T9 asserts it),
+/// combines `ner_confidence` via noisy-OR, then deletes the loser from
+/// `entities_fts` + `entities`. All inside one `BEGIN IMMEDIATE`.
+///
+/// Extracted so BOTH `canonicalize_surface_forms` (L5 reconciliation) AND the
+/// dream CONSOLIDATION `cross_episode_merges` op (ADR-066 §2.2 / spec P3) call ONE
+/// merge code path — no second, drift-prone executor (R-02). This is the
+/// `audit = None` (no `identity_verdict_audit` row) surface — the pairwise-cosine /
+/// structural-corroboration merges these two callers perform are not LLM-adjudicated.
+pub(crate) async fn apply_entity_merge(
+    graph: &TemporalGraph,
+    loser_id: &str,
+    keeper_id: &str,
+) -> Result<()> {
     apply_merge_with_audit(
         graph,
         ApplyMergeWithAuditParams {

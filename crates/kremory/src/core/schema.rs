@@ -718,6 +718,14 @@ impl TemporalGraph {
         // audit trail). Idempotent: CREATE INDEX/TABLE IF NOT EXISTS.
         crate::core::migrations::migrate_018_identity_verdict_prereqs(&self.conn).await?;
 
+        // Migration 019 (ADR-066 spec §2): dream CONSOLIDATION sub-phase substrate
+        // — `facts_archive` (append-only P2 archive history), `entity_communities`
+        // + `community_summaries` (P4 deterministic label-propagation membership).
+        // OPTIONAL feature tables: intentionally NOT in `CRITICAL_TABLES` — absence
+        // must degrade gracefully (op finds no rows), not raise CorruptStore.
+        // Idempotent: CREATE TABLE/INDEX IF NOT EXISTS.
+        crate::core::migrations::migrate_019_consolidation_substrate(&self.conn).await?;
+
         Ok(())
     }
 

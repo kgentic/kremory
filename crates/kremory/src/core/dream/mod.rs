@@ -12,6 +12,11 @@
 pub(crate) mod acronym_nickname_recall;
 pub(crate) mod anti_redundancy;
 pub mod consistency_check;
+/// Dream CONSOLIDATION sub-phase (ADR-066 axes D+E) — graph-global cleanup ops
+/// (supersession / archive / cross_episode / communities) over a shared budget +
+/// idempotency substrate. Runs after the reconciliation chain in `facade/dream.rs`.
+/// Ops are STUBS at P0; `run_consolidation` dispatches them opt-in (default off).
+pub(crate) mod consolidation;
 pub(crate) mod discover_types;
 /// Dream-pass idempotency key — canonical entity view + content hash (v0.2.4
 /// Phase 3 / ADR-050 Guard #1). Compile-spike landed ahead of the build sprint

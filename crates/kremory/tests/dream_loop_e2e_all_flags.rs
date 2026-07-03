@@ -254,6 +254,16 @@ fn all_flags_dream_opts() -> DreamOpts {
         include_type_registry_collapse: true,
         include_acronym_nickname_recall: true,
         include_type_novelty_llm_verify: true,
+        // Consolidation sub-phase (ADR-066) is opt-in / default-off and is NOT part
+        // of this reconciliation prod-flip config — held false so this test's
+        // behaviour is unchanged from before consolidation existed.
+        include_community_detection: false,
+        include_cross_episode_merges: false,
+        include_supersession_sweep: false,
+        include_supersession_llm_nominate: false,
+        include_fact_archival: false,
+        consolidation_budget_tokens: Some(50_000),
+        archive_grace_days: Some(90),
     }
 }
 
