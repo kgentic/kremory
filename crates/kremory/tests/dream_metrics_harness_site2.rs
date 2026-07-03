@@ -9,25 +9,26 @@
 // `dream_metrics_harness_site3.rs` (same VCR scaffold shape, same
 // smoke-one-before-batch discipline) — adapted for Site #2's different
 // decision flow: `check_proposal` -> (optionally) `adjudicate_type_novelty`
-// -> `write_gate`, replicating `discover_types.rs`'s per-proposal loop
-// exactly rather than calling a single top-level pass function (Site #2 has
-// no single "run the whole pass" entry point analogous to
-// `type_registry_collapse` / `acronym_nickname_recall` — the gate is inlined
-// in `discover_types`'s proposal loop).
+// -> `type_novelty_is_redundant` (ADR-065), replicating `discover_types.rs`'s
+// per-proposal loop exactly rather than calling a single top-level pass
+// function (Site #2 has no single "run the whole pass" entry point analogous
+// to `type_registry_collapse` / `acronym_nickname_recall` — the gate is
+// inlined in `discover_types`'s proposal loop).
 //
-// ## The Site #2 decision flow (verified against discover_types.rs:359-487)
+// ## The Site #2 decision flow (ADR-065; verified against discover_types.rs)
 //
 // 1. `check_proposal` (pure, no I/O) -> `GateOutcome::Pass | Redundant |
 //    NeedsLlmVerify`.
 // 2. `GateOutcome::Pass` -> ACCEPT (novel). `GateOutcome::Redundant` -> REJECT
 //    (redundant) — no LLM call, no ambiguity.
-// 3. `GateOutcome::NeedsLlmVerify{existing_name, desc_cosine}` -> call
-//    `adjudicate_type_novelty` for an `IdentityVerdictItem`, then `write_gate`
-//    with `deterministic_signal = DeterministicSignal::from_lexical(
-//    names_share_lemma_or_exact(proposal.name, existing_name))`.
-//    `WriteDecision::Merge` -> REJECT (redundant); `WriteDecision::Reject` ->
-//    ACCEPT (novel); `WriteDecision::PotentialAlias` -> ACCEPT (types have no
-//    potential-alias concept — accept-with-log per discover_types.rs:457-485).
+// 3. `GateOutcome::NeedsLlmVerify{existing_name, ..}` -> call
+//    `adjudicate_type_novelty` for an `IdentityVerdictItem`, then
+//    `type_novelty_is_redundant` (ADR-065: trust the LLM as terminal arbiter,
+//    NOT the shared `write_gate` — type synonyms are lexically dissimilar by
+//    nature, so write_gate Row 6's deterministic-corroboration requirement
+//    over-generalized an entity-homonymy guard to schema types). `true`
+//    (`is_same_entity` && `confidence >= floor`) -> REJECT (redundant);
+//    `false` (novel / low-confidence / no verdict) -> ACCEPT.
 //
 // ## SAFETY metric (the reason this gate exists)
 //
@@ -55,12 +56,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use kremory::core::dream::{
-    adjudicate_type_novelty, check_proposal, names_share_lemma_or_exact,
-    AdjudicateTypeNoveltyParams, CheckProposalParams, GateOutcome, DESC_COSINE_THRESHOLD,
+    adjudicate_type_novelty, check_proposal, type_novelty_is_redundant,
+    AdjudicateTypeNoveltyParams, CheckProposalParams, GateOutcome,
 };
 use kremory::core::entity_types::EntityTypeSpec;
 use kremory::core::provider::{DynEmbeddingProvider, RecordReplayChatProvider};
-use kremory::core::{write_gate, DeterministicSignal, WriteDecision, WriteGateInputs};
 
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 
@@ -353,8 +353,8 @@ struct RowOutcome {
     ground_truth: GroundTruth,
     decision: GateDecision,
     /// Which stage produced the decision — "check_proposal:pass",
-    /// "check_proposal:redundant", "write_gate:merge",
-    /// "write_gate:reject", "write_gate:potential_alias".
+    /// "check_proposal:redundant", "type_novelty:redundant",
+    /// "type_novelty:accept" (ADR-065).
     stage: String,
     needed_llm_verify: bool,
     row_wall_clock_ms: f64,
@@ -406,14 +406,13 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<RowOutcome, String> {
         GateOutcome::Pass => (GateDecision::Accept, "check_proposal:pass", false),
         GateOutcome::NeedsLlmVerify {
             existing_name,
-            desc_cosine,
+            desc_cosine: _,
         } => {
             let existing_desc = existing_type_embeddings
                 .iter()
                 .find(|(spec, _)| spec.name == existing_name)
                 .map(|(spec, _)| spec.description.clone())
                 .unwrap_or_default();
-            let deterministic = names_share_lemma_or_exact(&row.proposal.name, &existing_name);
 
             let verdict = adjudicate_type_novelty(AdjudicateTypeNoveltyParams {
                 llm: &*provider,
@@ -426,20 +425,14 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<RowOutcome, String> {
             })
             .await;
 
-            let decision = write_gate(WriteGateInputs {
-                cosine: desc_cosine,
-                merge_threshold: DESC_COSINE_THRESHOLD,
-                deterministic_signal: DeterministicSignal::from_lexical(deterministic),
-                llm_verdict: verdict,
-                min_confidence_floor: None,
-            });
-
-            match decision {
-                WriteDecision::Merge => (GateDecision::Reject, "write_gate:merge", true),
-                WriteDecision::Reject => (GateDecision::Accept, "write_gate:reject", true),
-                WriteDecision::PotentialAlias => {
-                    (GateDecision::Accept, "write_gate:potential_alias", true)
-                }
+            // ADR-065: Site-#2-LOCAL decision — trust the LLM as terminal
+            // arbiter (bypasses the shared write_gate). Calls the REAL
+            // `type_novelty_is_redundant` so this harness mirrors
+            // discover_types.rs's decision flow exactly (single source of truth).
+            if type_novelty_is_redundant(&verdict) {
+                (GateDecision::Reject, "type_novelty:redundant", true)
+            } else {
+                (GateDecision::Accept, "type_novelty:accept", true)
             }
         }
     };
@@ -700,7 +693,10 @@ fn print_and_write_report(report: &MetricsReport) {
         report.n_flagged_novel, report.safety_false_accepts, report.hard_gate,
     );
     if !report.false_accept_rows.is_empty() {
-        eprintln!("  FALSE ACCEPT ROWS (safety failure — genuine duplicate slipped through):");
+        eprintln!(
+            "  REDUNDANT ROWS ACCEPTED (expected: only s2-025, the ADR-065 permitted miss; \
+             any OTHER row here fails the gate):"
+        );
         for r in &report.false_accept_rows {
             eprintln!("    *** {r} ***");
         }
@@ -843,16 +839,64 @@ async fn full_corpus_site2_metrics() {
     let all_refs: Vec<&RowOutcome> = outcomes.iter().collect();
     let overall = compute_metrics(&all_refs);
 
-    // ── SAFETY gate (exact-zero): clear_redundant + subtle_redundant rows
-    // must NEVER be accepted as novel — that would silently register a
-    // genuine duplicate type. ─────────────────────────────────────────────
-    let safety_categories = ["clear_redundant", "subtle_redundant"];
-    let mut safety_false_accepts = 0usize;
-    for cat in safety_categories {
-        if let Some(m) = per_category.get(cat) {
-            safety_false_accepts += m.false_accepts;
-        }
-    }
+    // ── ADR-065 gate (spec Phase 2) ──────────────────────────────────────
+    // (1) Redundant rows (12) must be REJECTED, with EXACTLY ONE permitted
+    //     miss named BY ID: s2-025 (Employer/Company) — a Row-3 LLM
+    //     `is_same_entity=false` JUDGMENT miss (the descriptions differ; two
+    //     model families read them as distinct), NOT a gate-design failure.
+    //     Tracked by the Phase 5 adjudication-prompt TD. This is NOT a
+    //     loosened gate: any OTHER redundant false-accept fails.
+    // (2) Novel rows (14) must ALL be ACCEPTED (14/14).
+    // (3) band_edge_distinct rows (8) must ALL be ACCEPTED — Site #2's EDC
+    //     over-rejection guard (its raison d'être).
+    const PERMITTED_REDUNDANT_MISS: &str = "s2-025";
+
+    let redundant_total = outcomes
+        .iter()
+        .filter(|o| o.ground_truth == GroundTruth::Redundant)
+        .count();
+    let novel_total = outcomes
+        .iter()
+        .filter(|o| o.ground_truth == GroundTruth::Novel)
+        .count();
+    let band_edge_total = outcomes
+        .iter()
+        .filter(|o| o.category == "band_edge_distinct")
+        .count();
+    // Corpus-shape guard — if these drift, the gate thresholds below must be
+    // revisited (fail loud rather than silently validate a changed corpus).
+    assert_eq!(redundant_total, 12, "corpus must have 12 redundant rows");
+    assert_eq!(novel_total, 14, "corpus must have 14 novel rows");
+    assert_eq!(
+        band_edge_total, 8,
+        "corpus must have 8 band_edge_distinct rows"
+    );
+
+    let false_accept_ids: Vec<&str> = outcomes
+        .iter()
+        .filter(|o| o.ground_truth == GroundTruth::Redundant && o.decision == GateDecision::Accept)
+        .map(|o| o.row_id.as_str())
+        .collect();
+    let unexpected_false_accepts: Vec<&str> = false_accept_ids
+        .iter()
+        .copied()
+        .filter(|id| *id != PERMITTED_REDUNDANT_MISS)
+        .collect();
+    let redundant_rejected = redundant_total - false_accept_ids.len();
+    let novel_rejected_ids: Vec<&str> = outcomes
+        .iter()
+        .filter(|o| o.ground_truth == GroundTruth::Novel && o.decision == GateDecision::Reject)
+        .map(|o| o.row_id.as_str())
+        .collect();
+    let band_edge_rejected_ids: Vec<&str> = outcomes
+        .iter()
+        .filter(|o| o.category == "band_edge_distinct" && o.decision == GateDecision::Reject)
+        .map(|o| o.row_id.as_str())
+        .collect();
+
+    // Reported total redundant false-accepts (expected: 1 = the permitted
+    // s2-025 miss). Kept in the JSON report for quality visibility.
+    let safety_false_accepts = false_accept_ids.len();
     let false_accept_rows: Vec<String> = outcomes
         .iter()
         .filter(|o| o.ground_truth == GroundTruth::Redundant && o.decision == GateDecision::Accept)
@@ -870,10 +914,11 @@ async fn full_corpus_site2_metrics() {
 
     let n_flagged_novel = overall.tp + overall.fp;
 
-    // ── HARD GATE: safety_false_accepts == 0 is the binding assertion
-    // (never loosened). Precision is reported for quality visibility but NOT
-    // hard-failed in this smoke, per the task brief. ──────────────────────
-    let hard_gate = if safety_false_accepts == 0 {
+    let hard_gate = if unexpected_false_accepts.is_empty()
+        && redundant_rejected >= 11
+        && novel_rejected_ids.is_empty()
+        && band_edge_rejected_ids.is_empty()
+    {
         "PASS"
     } else {
         "FAIL"
@@ -920,18 +965,40 @@ async fn full_corpus_site2_metrics() {
         sum_counter(&snapshotter, "kremory.identity.verdict_parse_fail_total")
     );
 
-    // ── Hard assertion — the SAFETY gate, exact-zero, never loosened ──────
-    assert_eq!(
-        safety_false_accepts, 0,
-        "SAFETY GATE FAILED: {safety_false_accepts} false accept(s) among clear_redundant / \
-         subtle_redundant rows (ground truth = genuinely REDUNDANT concepts, but the gate \
-         ACCEPTED them as novel). Exact-zero gate, never loosened. See false_accept_rows above \
-         for exactly which corpus row(s) caused it."
+    // ── Hard assertions — the ADR-065 gate (Phase 2) ──────────────────────
+    // (1) No redundant false-accept beyond the single permitted s2-025 miss.
+    assert!(
+        unexpected_false_accepts.is_empty(),
+        "SAFETY GATE FAILED: redundant row(s) falsely accepted beyond the single permitted \
+         miss (s2-025): {unexpected_false_accepts:?}. Any redundant false-accept other than \
+         s2-025 fails the gate — the permitted miss is named BY ID (tracked by the Phase 5 \
+         adjudication-prompt TD), NOT a loosened threshold. See false_accept_rows above."
+    );
+    // (2) At least 11/12 redundant rejected (the one permitted miss = s2-025).
+    assert!(
+        redundant_rejected >= 11,
+        "REDUNDANCY GATE FAILED: only {redundant_rejected}/{redundant_total} redundant \
+         proposals rejected (expected >= 11). false-accept ids: {false_accept_ids:?}"
+    );
+    // (3) All 14 novel rows accepted (no EDC over-rejection).
+    assert!(
+        novel_rejected_ids.is_empty(),
+        "NOVEL GATE FAILED: novel proposal(s) falsely rejected (expected 14/14 accepted): \
+         {novel_rejected_ids:?}. A false reject discards a valid new type."
+    );
+    // (4) All 8 band_edge_distinct rows accepted (Site #2's EDC guard).
+    assert!(
+        band_edge_rejected_ids.is_empty(),
+        "BAND-EDGE GATE FAILED: band_edge_distinct row(s) rejected (expected 8/8 accepted — \
+         Site #2's EDC over-rejection guard): {band_edge_rejected_ids:?}"
     );
 
     eprintln!(
-        "\n══ GATE: {hard_gate} (safety_false_accepts={safety_false_accepts}, \
+        "\n══ GATE: {hard_gate} (redundant_rejected={redundant_rejected}/{redundant_total} \
+         [permitted miss: s2-025], novel_accepted={}/{novel_total}, band_edge_accepted={}/{band_edge_total}, \
          precision={:?}) ═══════════════",
+        novel_total - novel_rejected_ids.len(),
+        band_edge_total - band_edge_rejected_ids.len(),
         overall.precision,
     );
 }

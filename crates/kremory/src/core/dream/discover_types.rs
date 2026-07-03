@@ -1155,7 +1155,13 @@ Existing: name=\"{existing_name}\" description=\"{existing_desc}\""
 /// Returns `true` when the proposal is REDUNDANT with the existing type (the LLM
 /// is confident they are the same concept) → the caller rejects it. `false`
 /// (novel / low-confidence / no verdict) → the caller conservatively accepts.
-fn type_novelty_is_redundant(verdict: &Option<IdentityVerdictItem>) -> bool {
+///
+/// `pub` + `#[doc(hidden)]` (MNT-002 pattern, mirrors `adjudicate_type_novelty`)
+/// so `tests/dream_metrics_harness_site2.rs` replicates the discover_types Site
+/// #2 decision flow via the REAL fn (single source of truth). Not part of the
+/// stable public API contract.
+#[doc(hidden)]
+pub fn type_novelty_is_redundant(verdict: &Option<IdentityVerdictItem>) -> bool {
     matches!(verdict, Some(v) if v.is_same_entity && v.confidence >= LLM_VERIFY_CONFIDENCE_FLOOR)
 }
 

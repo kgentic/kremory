@@ -3,13 +3,13 @@
   "overall": {
     "n": 26,
     "tp": 14,
-    "fp": 12,
+    "fp": 1,
     "fn_": 0,
-    "tn": 0,
-    "false_accepts": 12,
-    "precision": 0.5384615384615384,
+    "tn": 11,
+    "false_accepts": 1,
+    "precision": 0.9333333333333333,
     "recall": 1.0,
-    "f1": 0.7000000000000001
+    "f1": 0.9655172413793104
   },
   "per_category": {
     "band_edge_distinct": {
@@ -37,60 +37,49 @@
     "clear_redundant": {
       "n": 6,
       "tp": 0,
-      "fp": 6,
+      "fp": 0,
       "fn_": 0,
-      "tn": 0,
-      "false_accepts": 6,
-      "precision": 0.0,
+      "tn": 6,
+      "false_accepts": 0,
+      "precision": null,
       "recall": null,
       "f1": null
     },
     "subtle_redundant": {
       "n": 6,
       "tp": 0,
-      "fp": 6,
+      "fp": 1,
       "fn_": 0,
-      "tn": 0,
-      "false_accepts": 6,
+      "tn": 5,
+      "false_accepts": 1,
       "precision": 0.0,
       "recall": null,
       "f1": null
     }
   },
-  "n_flagged_novel": 26,
-  "safety_false_accepts": 12,
+  "n_flagged_novel": 15,
+  "safety_false_accepts": 1,
   "false_accept_rows": [
-    "s2-001 (Firm / Company, category=clear_redundant, stage=write_gate:potential_alias)",
-    "s2-002 (Automobile / Car, category=clear_redundant, stage=write_gate:potential_alias)",
-    "s2-003 (Physician / Doctor, category=clear_redundant, stage=write_gate:potential_alias)",
-    "s2-004 (Residence / Home, category=clear_redundant, stage=write_gate:potential_alias)",
-    "s2-005 (Attorney / Lawyer, category=clear_redundant, stage=write_gate:potential_alias)",
-    "s2-006 (Purchase / Transaction, category=clear_redundant, stage=write_gate:potential_alias)",
-    "s2-021 (Organization / Organisation, category=subtle_redundant, stage=write_gate:potential_alias)",
-    "s2-022 (Motor Vehicle / Vehicle, category=subtle_redundant, stage=write_gate:potential_alias)",
-    "s2-023 (Corporation / Company, category=subtle_redundant, stage=write_gate:potential_alias)",
-    "s2-024 (Judge / Magistrate, category=subtle_redundant, stage=write_gate:potential_alias)",
-    "s2-025 (Employer / Company, category=subtle_redundant, stage=write_gate:reject)",
-    "s2-026 (Automobile Manufacturer / Company, category=subtle_redundant, stage=write_gate:potential_alias)"
+    "s2-025 (Employer / Company, category=subtle_redundant, stage=type_novelty:accept)"
   ],
-  "hard_gate": "FAIL",
+  "hard_gate": "PASS",
   "latency": {
-    "vcr_mode": "record (real Ollama latency)",
+    "vcr_mode": "replay (cassette lookup — NOT real LLM latency)",
     "llm_call_count": 19,
-    "llm_call_total_ms": 63920.0,
-    "llm_call_ms_p50": 3378.0,
-    "llm_call_ms_p95": 4184.0,
-    "llm_call_ms_p99": 4184.0,
-    "row_wall_clock_ms_p50": 3026.034667,
-    "row_wall_clock_ms_p95": 4294.6900000000005,
-    "row_wall_clock_ms_p99": 5172.158667,
-    "total_harness_wall_clock_ms": 67973.92629300001,
+    "llm_call_total_ms": 0.0,
+    "llm_call_ms_p50": 0.0,
+    "llm_call_ms_p95": 0.0,
+    "llm_call_ms_p99": 0.0,
+    "row_wall_clock_ms_p50": 0.607667,
+    "row_wall_clock_ms_p95": 0.843334,
+    "row_wall_clock_ms_p99": 0.856083,
+    "total_harness_wall_clock_ms": 16.738624,
     "rows_needing_llm_verify": 19
   },
   "volume": {
     "n_rows": 26,
-    "accepts": 26,
-    "rejects": 0,
+    "accepts": 15,
+    "rejects": 11,
     "llm_verify_band_hits": 19
   }
 }

@@ -107,4 +107,6 @@ pub use anti_redundancy::{
     DESC_COSINE_THRESHOLD, TYPE_NOVELTY_LOWER_BAND,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use discover_types::{adjudicate_type_novelty, AdjudicateTypeNoveltyParams};
+pub use discover_types::{
+    adjudicate_type_novelty, type_novelty_is_redundant, AdjudicateTypeNoveltyParams,
+};
