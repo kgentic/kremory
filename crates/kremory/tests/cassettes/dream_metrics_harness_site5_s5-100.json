@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "8f26abeae6138572dcf7b5214de2d46ac4e26f13564e41e80360cb5d7f80e55f": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are a common nickname ('Tony') and the full name ('Anthony') for the same individual, reinforced by shared context.\"}]}"
+      }
+    ]
+  }
+}

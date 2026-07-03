@@ -78,14 +78,12 @@ pub use acronym_nickname_recall::{acronym_nickname_recall, AcronymNicknameRecall
 
 // Wilson-interval helper (spec `dream-adversarial-corpora-and-metrics-
 // 2026-07-02.md` §3 step 0, H1) — extracted from the S1 spike's inline block
-// so the metrics harness can reuse it. Gated `#[cfg(test)]` only (mirroring
-// `metrics_util::wilson_lower_upper`'s own gate — see that fn's doc comment
-// for why `feature = "test-utils"` is deliberately NOT added here yet: no
-// `tests/*.rs` integration test consumes this re-export today, so adding the
-// feature arm would make kremory's self-referential `[dev-dependencies]`
-// compilation unit (built with `test-utils` on but `cfg(test)` off) contain a
-// dead re-export under `[lints] warnings = "deny"`). Add
-// `feature = "test-utils"` back here in lockstep with the function's gate
-// once a `tests/` consumer exists.
-#[cfg(test)]
-pub(crate) use metrics_util::wilson_lower_upper;
+// so the metrics harness can reuse it. Gated `#[cfg(any(test, feature =
+// "test-utils"))]` in lockstep with `metrics_util::wilson_lower_upper`'s own
+// gate. `pub use` (NOT `pub(crate) use`): `tests/dream_metrics_harness.rs`
+// lives outside the crate boundary (an external integration-test binary), so
+// a `pub(crate)` re-export would be unreachable from it — same E0365-adjacent
+// visibility requirement as the MNT-002 re-exports above, which are `pub`
+// for the identical reason.
+#[cfg(any(test, feature = "test-utils"))]
+pub use metrics_util::wilson_lower_upper;

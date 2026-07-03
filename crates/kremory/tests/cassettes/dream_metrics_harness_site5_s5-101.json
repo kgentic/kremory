@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "5db689fe9f707e777bd8ed714919f45bb6c66746be89748ab7f5346b8df32454": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"A nickname for a common given name, combined with the same surname, strongly suggests they refer to the same person.\"}]}"
+      }
+    ]
+  }
+}

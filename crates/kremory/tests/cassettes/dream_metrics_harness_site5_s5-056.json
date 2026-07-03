@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "501525c6f32163936392a525de8ecb308bcb83735ec682c2c0cfe4c89bd5910b": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description and facts explicitly state that 'NIH' can mean 'Not Invented Here' and that both names represent this dual meaning, strongly suggesting they refer to the same entity or concept in this context.\"}]}"
+      }
+    ]
+  }
+}

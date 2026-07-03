@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "aaa7d42210a4e64215283e748a4adbd2134c761f3bbcc9a3a13c52159c468698": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.98, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Beth' is a common short form of 'Elizabeth' and matching surnames confirm the identity.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "d2622d0419cd78663ecdf623013cc3ea9461128b1743ebfa9eb54a299a7ca49d": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"The pair represents a common nickname ('Ted Alvarez') and the full name ('Theodore Alvarez') for the same person, as stated in the descriptions.\"\n}\n]\n}"
+      }
+    ]
+  }
+}

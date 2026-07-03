@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "e086f6a931a1ea663d0fc9de9bc9b0c07f3413b06544f0862429d244180f17b1": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Nina' is a well-established nickname for 'Antonina', and the context suggests they refer to the same person.\"}]}"
+      }
+    ]
+  }
+}

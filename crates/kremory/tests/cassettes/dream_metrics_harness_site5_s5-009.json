@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "ab849d24076d68bff7eed8bae983d6d8302bfc4943721250f168c5056cb151b8": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'WHO' is the acronym for 'World Health Organization'.\"}]}"
+      }
+    ]
+  }
+}

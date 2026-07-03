@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "b95f3fe853147e90311a0f54464597a63b1ad7fb83c42c339e6cfd7c4ea3d456": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Meg' is a common short form of 'Megan', and the matching surname provides strong confirmation of identity.\"}]}"
+      }
+    ]
+  }
+}

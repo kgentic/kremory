@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "3f646f346f5cb9b0cf26c0dc1b7d47e4a7a2ac0e0b433527a89014a7aec15929": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'the people differ' despite the overlapping nickname 'Bill'.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

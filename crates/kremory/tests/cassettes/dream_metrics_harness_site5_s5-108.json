@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "54f261531d95dbf78887ec7a92db50d6f715a85ac33eadb49ad174dec7c0495a": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Sally' is a traditional nickname for 'Sarah', and the shared surname confirms they refer to the same person.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "047bb7f72d9d39e22ac41ee43c8aae9db4ce05cb0a2e7c23545a195e4671435e": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (IOC) and the other is the full name (International Olympic Committee), explicitly linked in the description.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

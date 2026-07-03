@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "6709ada87434bd0283f67d5ca41849cf7de7ce61bb376d6d9dede7179f3559a3": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two entities (the band and the organization) are entirely different.\"}]}"
+      }
+    ]
+  }
+}

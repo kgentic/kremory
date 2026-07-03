@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "9b23c03c7d471724c291e2cf02263e4b7b7b861fc2d78189db22f06d4d4ce3ee": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that ADA (American Diabetes Association) and Americans with Disabilities Act are different entities.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

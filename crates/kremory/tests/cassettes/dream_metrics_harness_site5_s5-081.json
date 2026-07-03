@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "ed3363b0271681468eaf54e0f68c247a44859b448a76a13ffeba383100c36722": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'UNICEF' is the acronym for 'United Nations Children's Fund', indicating they refer to the same organization.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "7b1f9383e3fceff396a6a612f6731ceedab12212b9147b90795aaaf16ee41ed7": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is the full phrase for the acronym/initialism given in A.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "a88c46c79327cf42b8ccff2bd140cee70d2524b139248a9f097e5377c21eb976": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Although they share the initialism 'CIA', the description explicitly states they are two entirely different institutions (intelligence agency vs. culinary school).\"}]}"
+      }
+    ]
+  }
+}

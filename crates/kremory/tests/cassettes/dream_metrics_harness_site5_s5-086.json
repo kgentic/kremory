@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "9af0feea122d645aee622e198c103f95afcc02c8f3c763ed7b770e146a8a6209": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly differentiate the two entities by their association with a specific role ('ops lead's brother' vs 'ops lead') and context, suggesting they are distinct individuals despite similar names and surname.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

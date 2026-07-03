@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "008f697215c679389ee790c5ba64efba1d41c46f16c4d9062d27de7ab92314d5": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is the full name corresponding to the acronym A, and the descriptions confirm they refer to the exact same entity (UK's National Health Service).\"}]}"
+      }
+    ]
+  }
+}

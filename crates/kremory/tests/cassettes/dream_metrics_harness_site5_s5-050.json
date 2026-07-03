@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "c4c20d8fa5fda9ea0c162cf2567545c9e2abc2a3d1086e7f3e970ec4e3079512": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions indicate two distinct individuals, one associated with 'Francesca' and the other with 'Francis', even though they share a nickname and surname.\"}]}"
+      }
+    ]
+  }
+}

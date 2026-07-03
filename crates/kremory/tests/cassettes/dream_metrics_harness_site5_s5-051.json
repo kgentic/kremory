@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "c2e5423937ec3dbba854480019a39e7ccf7d7eea3db3bbe014fa69282b5a9236": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both names refer to a character ambiguously known as 'Pat' from the same context, indicating they are likely variations or misspellings of the same person's name in the same role.\"}]}"
+      }
+    ]
+  }
+}

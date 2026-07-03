@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "06248516e3e48c54cc3bf4cd2684b3f0a48216bd24584b6228cd7f6e241fb8df": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the common acronym (SEC) and the other is the full name, which are direct and known representations of the same US regulatory body.\"}]}"
+      }
+    ]
+  }
+}

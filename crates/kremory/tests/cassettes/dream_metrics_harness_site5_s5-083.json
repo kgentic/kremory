@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "2eadf45621b92beec3585706db0a2916d795262c95c56ee4c0ddf05372180db1": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"The description explicitly states that 'Reg' is a standard British nickname for 'Reginald' and the context ties both names to the same compliance officer.\"\n}\n]\n}"
+      }
+    ]
+  }
+}

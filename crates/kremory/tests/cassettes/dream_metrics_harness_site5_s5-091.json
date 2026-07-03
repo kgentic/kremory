@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "5b0a1e064308995930061eebcde160100b4f40b0da6d15b7f970678747e99482": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Pair B is the full name for the acronym NIST given in Pair A.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

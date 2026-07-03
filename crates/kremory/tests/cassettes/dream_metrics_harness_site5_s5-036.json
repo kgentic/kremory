@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "c3974bc392e035a1d372a45600ceb10a4aed704181da34789bb3fb8ef76d6f28": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'IRA' and 'Irish Republican Army' are wholly unrelated entities, indicating they are different concepts despite the acronym overlap.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}
