@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "a5a0edfe2a15838eb6d0a4653c3452f12833dfb28612732e6ac4ad88a9107a7a": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are the acronym and its full expansion, which represent the exact same organization.\"}]}"
+      }
+    ]
+  }
+}

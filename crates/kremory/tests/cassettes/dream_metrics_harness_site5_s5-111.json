@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "cc8e183da90907431399a1fc1e7aaca840ae79fc1ae97eb6918eb654e2d41cca": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Stan' is a common Anglicized short form of 'Stanislaw' and the context suggests they refer to the same person.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "ebeaa7f9161cac692e77eff16a9f505bbe4f846342ef25bfc58ef70184971c3b": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are variations (nickname vs. full name) of the same person, sharing the same surname and contextually linked.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "2b14cf8292cf5dee7347e129d45ca9196d03b7e6767b168762be2a1f2c2fde53": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names share the same surname, and the descriptions explicitly state that 'Chuck' is a traditional nickname for 'Charles', strongly suggesting they refer to the same person.\"}]}"
+      }
+    ]
+  }
+}

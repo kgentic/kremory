@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "b06d266e343b47d7c5a1896e18e7569db2d2403216d1a4a78544105e600cf90b": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Robin' was used for two different managers and that they are distinct people, despite having the same first name.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

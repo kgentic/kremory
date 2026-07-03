@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "78328b88028c665e2dd40d1bfbf0e987a9606a42ba29c42a43b5c197f94e0594": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The difference is only the accent mark (acute accent on 'e'), and the context strongly suggests they refer to the same person.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "6e67eeaf1c892d9582d822387eb1761dbb4852db3dcd76d7aca54baca1bb0399": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description suggests that 'MAS' is used for two distinct entities (Malaysia Airlines System and Singapore's central bank), but in this specific pair, both names are presented in the context of a report where 'MAS' is the focus, and the description equates 'MAS' usage to both. Since the description provides the context where the name 'MAS' is used for the central bank, and 'Monetary Authority of Singapore' is the full name for that central bank, they likely refer to the same entity contextually.\"}]}"
+      }
+    ]
+  }
+}

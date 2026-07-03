@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "19c60be584b7a91fb11fd689d49c0e3030edb099cdc4299297d6cab6639b9615": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Vicky is a conventional nickname for Victoria' and the context (matching surname) strongly suggests they are the same person.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "6f962e9ff1671999b793d108ede8ee0c5df91fc724897eae51249b2b92be82a0": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The relationship described (nickname/full name) combined with corroborating evidence (same surname in family history) strongly suggests they refer to the same person.\"}]}"
+      }
+    ]
+  }
+}

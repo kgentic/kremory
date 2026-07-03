@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "db6226bb0932ab4fc8ddf4ee54448bb62411695a0c5aa89eec99d5cddbb38253": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Fred is a standard nickname for Frederick' and the same surname confirms they are the same person.\"}]}"
+      }
+    ]
+  }
+}

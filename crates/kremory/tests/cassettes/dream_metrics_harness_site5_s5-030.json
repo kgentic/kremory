@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "cf71ec38599ec42da28d5bf1d914431ed9e059b964721f0b1497ddfb5e5a791b": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that 'SUN' and 'Stanford University Network' refer to the same concept/entity, noting the connection to Sun Microsystems.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "2b2f77577a14c85e886338d266aa4e73e3bff34b82b126988b0800df92664f61": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that both names refer to different real people ('warehouse lead' vs 'sales director') and advises against merging them due to nickname collision.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

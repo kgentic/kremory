@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "8b4d1302edeb76b169b6be2e5611b186a14b203402214c72b1e4b71c95bd20b4": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair compares an acronym ('PAN') with its expanded form ('Personal Area Network') but the context notes they represent different things (tax vs. networking), suggesting two distinct uses or entities.\"}]}"
+      }
+    ]
+  }
+}

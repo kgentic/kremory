@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "042044f1df19384dd266a159f9edf7a4f9911d625cb5df920056c0764b2f51ea": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions suggest 'Trish' is a common short form of 'Patricia' and they share the same context, making it highly probable they refer to the same person.\"}]}"
+      }
+    ]
+  }
+}

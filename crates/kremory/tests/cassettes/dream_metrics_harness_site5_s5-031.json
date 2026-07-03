@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "934d9167c3dd38a77a3e6fcfaa7622175706acb9646a800565b11887ff4ffc06": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'AA' collides between two different entities, 'Alcoholics Anonymous' and 'Automobile Association', and the pair lists both 'AA' and 'Automobile Association' as separate concepts, suggesting they are different types of AA.\"}]}"
+      }
+    ]
+  }
+}

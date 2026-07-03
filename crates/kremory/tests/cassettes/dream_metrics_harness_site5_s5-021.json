@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "84a6e4f80e511966f5e4a48ad8678ea2892240b37c64b6672398de56374de1be": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Kate' is a common short form of 'Katherine' with the same surname, indicating they are the same person.\"}]}"
+      }
+    ]
+  }
+}

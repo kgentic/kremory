@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "2ecde8d237ee9c61dcec6c16481e2ebaacb4d05fdbc66e74d6716435a03d3868": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Fanny is a traditional nickname for Frances' and provides supporting evidence (matching surname in the same estate document) for the identity.\"}]}"
+      }
+    ]
+  }
+}

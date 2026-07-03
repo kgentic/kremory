@@ -20,21 +20,27 @@
 /// `(1.0, 1.0)` (vacuously-perfect / "nothing to reject" convention used by
 /// the dream-pass precision/recall spikes for the zero-denominator case).
 ///
-/// Gated `#[cfg(test)]` only (NOT `feature = "test-utils"`): every current
-/// caller (the S1 spike here, plus this module's own unit tests) lives inside
-/// `#[cfg(test)]` code. kremory's `[dev-dependencies]` self-reference
-/// (`kremory = { path = ".", features = ["test-utils"] }`, used so
-/// `tests/*.rs` integration binaries can import `test-utils`-gated items)
-/// compiles this crate a SECOND time as a plain dependency, with
-/// `feature = "test-utils"` active but `cfg(test)` NOT active. Gating on
-/// `feature = "test-utils"` too would make that second compilation unit
-/// contain a genuinely-dead `wilson_lower_upper` (no non-`cfg(test)` caller
-/// exists yet) — `[lints] warnings = "deny"` turns that into a hard build
-/// failure. Once an integration test in `tests/` imports this helper via the
-/// `metrics_util` re-export in `dream/mod.rs`, add `feature = "test-utils"`
-/// back to this gate (mirroring the sibling ADR-063 MNT-002 re-exports).
-#[cfg(test)]
-pub(crate) fn wilson_lower_upper(successes: usize, n: usize) -> (f64, f64) {
+/// Gated `#[cfg(any(test, feature = "test-utils"))]`: `tests/dream_metrics_
+/// harness.rs` (spec `dream-adversarial-corpora-and-metrics-2026-07-02.md`
+/// §3) is the first `tests/*.rs` integration-test consumer of this helper via
+/// the `metrics_util` re-export in `dream/mod.rs`, so the `feature =
+/// "test-utils"` arm is no longer dead code in kremory's `[dev-dependencies]`
+/// self-reference compilation unit (`kremory = { path = ".", features =
+/// ["test-utils"] }`, built with `feature = "test-utils"` active but
+/// `cfg(test)` NOT active — see git history for the prior `#[cfg(test)]`-only
+/// gate and its rationale while no such consumer existed).
+///
+/// `pub` (not `pub(crate)`) + `#[doc(hidden)]`: `tests/dream_metrics_
+/// harness.rs` lives outside the crate boundary (an external integration-test
+/// binary), so a `pub(crate)` item cannot be re-exported `pub` from
+/// `dream/mod.rs` (E0364) for it to reach — same visibility requirement as
+/// the sibling MNT-002 re-exports (`acronym_nickname_recall`,
+/// `type_registry_collapse`), which are `pub` + `#[doc(hidden)]` for the
+/// identical reason. `#[doc(hidden)]` hides it from rustdoc but not from
+/// `feature = "test-utils"` consumers, which must treat it as unstable.
+#[cfg(any(test, feature = "test-utils"))]
+#[doc(hidden)]
+pub fn wilson_lower_upper(successes: usize, n: usize) -> (f64, f64) {
     if n == 0 {
         return (1.0, 1.0);
     }

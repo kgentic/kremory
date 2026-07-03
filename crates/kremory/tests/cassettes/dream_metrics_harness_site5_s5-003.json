@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "9199fe67b5c4844a3e4e861d168f7dcb4d334ded57d944ad66418bb34230e46e": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the common acronym (FBI) and the other is its full title (Federal Bureau of Investigation). They refer to the same agency.\"}]}"
+      }
+    ]
+  }
+}

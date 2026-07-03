@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "e10184f120094ab94d5f5ebb70c2fd0ccb245645f88364cb612c9df9cc5cde64": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are the acronym and its full expansion, referring to the same US government agency.\"}]}"
+      }
+    ]
+  }
+}

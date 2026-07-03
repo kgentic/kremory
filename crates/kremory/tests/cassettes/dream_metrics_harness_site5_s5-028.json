@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "906721634f5878dd49e6717321cce57483618b21dae613ffe357cf59245c1d6f": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'ABC' refers to two different, unrelated entities (a broadcaster and a consulting firm). They are distinct.\"}]}"
+      }
+    ]
+  }
+}

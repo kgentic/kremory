@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "5231ee05f1c4179479b78bda6feefa1d075ada5550b6a1a480f3f6ea685d6d1e": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that 'BA' referring to British Airways and 'Bachelor of Arts' are unrelated concepts.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

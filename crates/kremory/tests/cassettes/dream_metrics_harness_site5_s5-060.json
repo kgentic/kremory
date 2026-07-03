@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "2a016603391bd6a657d8c4ed2574eee003c7c04f6130e4295fb55ac637cf676c": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.7, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions point to three distinct potential meanings (Caterpillar Inc., CAT the acronym, Common Admission Test), suggesting they are different concepts even if the source provided them contextually.\"}]}"
+      }
+    ]
+  }
+}

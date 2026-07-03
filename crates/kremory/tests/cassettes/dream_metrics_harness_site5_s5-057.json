@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "05e7566f1bbed3a6d2120fd412b877b9d0645de3d1cc4f036945afc8b917e20d": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions are identical, indicating that 'PIP' and 'Personal Independence Payment' are being flagged as potential variants, likely where the full form is provided for the acronym.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "d4acc0bb1b5d25276660a3d331320c6518d5db2fc957de03c6689531811eeb26": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym and the other is the full name for the same US federal agency.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "662a7ae6a6819cd2bc5220d9b478033a2dc066fd2050f932856a6a322784ded7": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two entities (CVS pharmacy and Concurrent Versions System) are unrelated, despite sharing the initials.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "9121fcb73edebdd30c93b531bac43a0b3bb682eecdf0f549963d891aff2aeb2d": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The pair represents the common acronym 'IT' and its full expansion 'Information Technology', which are widely understood to refer to the same field/concept.\"}]}"
+      }
+    ]
+  }
+}
