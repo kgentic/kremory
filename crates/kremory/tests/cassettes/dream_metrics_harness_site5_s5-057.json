@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "05e7566f1bbed3a6d2120fd412b877b9d0645de3d1cc4f036945afc8b917e20d": [
+    "e1c8c9352baf33dc83d3b6781018327e8ab14c11a68bc0c8e01abd6d04ac2baa": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions are identical, indicating that 'PIP' and 'Personal Independence Payment' are being flagged as potential variants, likely where the full form is provided for the acronym.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly mentions 'PIP could plausibly mean the UK's Personal Independence Payment', making this a direct abbreviation/full name relationship.\"}]}"
       }
     ]
   }

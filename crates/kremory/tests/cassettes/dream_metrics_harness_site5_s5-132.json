@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "ebfe35c41203ba5ce3576275791ec8bf1f9482d57b29e06a6729fc583d958e43": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The differing parts are only in the first name (Patricia vs Patrick), but the context strongly suggests they refer to the same individual (one rep on the call with the same employee ID).\"}]}"
+      }
+    ]
+  }
+}

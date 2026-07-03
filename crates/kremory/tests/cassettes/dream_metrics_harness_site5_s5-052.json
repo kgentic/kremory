@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "c7166f7801cec3f187f503d0e473320211c25bc9f2b39816d365b32fc31630bf": [
+    "f11f771e3d0404604062951466723d13ca199841a630666b32f3feed5ae6e8e4": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that the names refer to two unrelated support agents with different surnames.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that Jamie Fox and Jamie Reyes are different support agents with different surnames.\"\n    }\n  ]\n}"
       }
     ]
   }

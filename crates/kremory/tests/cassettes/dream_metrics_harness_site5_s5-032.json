@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "80fd24be51914afcac0cb0b7b05ba8faf96dbc07d8ccf7a1b8e10863c4a2853b": [
+    "ce9aeff741a80bb574c52133c13d272ba262f42e6d29ca44b9d4d6db7127365b": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"One name is the general concept/acronym 'ACE (Advanced Computing Environment)' while the other is a specific retail brand 'ACE Hardware'. Although they share an initialism, the descriptions explicitly state they are unrelated instances.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that ACE (Advanced Computing Environment) and ACE Hardware are unrelated entities in different industries.\"}]}"
       }
     ]
   }

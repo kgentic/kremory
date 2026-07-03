@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "3d59c271bb5abcf42758111b1bf87155817e058f8f776a4e198f4f6ea7ee3237": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair refers to two distinct entities that share the acronym 'ADA': one is the 'American Diabetes Association' (organization) and the other is the 'Americans with Disabilities Act' (law). The inputs for A and B seem to be describing the ambiguity, but specifically, A and B represent different meanings of the same acronym, not the same entity.\"}]}"
+      }
+    ]
+  }
+}

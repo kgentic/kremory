@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "03fed6da90ce8b235b18cc2cd474e70ae3d9860816d38de07ac39a133aa2d304": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.5, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The provided context explicitly states that 'AA' can refer to two different, distinct entities: Alcoholics Anonymous and Automobile Association. The pair compares these two different meanings of the same acronym.\"}]}"
+      }
+    ]
+  }
+}

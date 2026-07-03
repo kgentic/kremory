@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "cc8e183da90907431399a1fc1e7aaca840ae79fc1ae97eb6918eb654e2d41cca": [
+    "7a7a3252d1a0d1b638bb323498e1cc524d07633f13f5fcff2aae8fb5d41b274a": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Stan' is a common Anglicized short form of 'Stanislaw' and the context suggests they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Stan' is a common Anglicized short form of 'Stanislaw', and they share the same surname.\"}]}"
       }
     ]
   }

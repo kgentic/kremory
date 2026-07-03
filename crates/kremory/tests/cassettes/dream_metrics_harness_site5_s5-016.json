@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "fbdfb4c73b3a2796f3930573cd28a52e6cf31f0a9f78347f9b4f03c553a7b730": [
+    "1f529e40c9b5654d190fadb2ffb42c32504a80238a85bc457a682e03514c8fe8": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Bob' is a nickname for 'Robert' and the context ties both names to the same person, further supported by the title associated with 'Robert Chen'.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Bob' is a nickname for 'Robert', and the facts confirm that both names refer to the same VP of Engineering in the document context.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "ec67fb396ca99794fe09c844f4d2b500032f1d530726d14e97756234fdc382e5": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both entries refer to the same individual, Alex Whitmore, distinguished only by the shift (day vs. night), but the HR system confirms a single employee record for both.\"}, {\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 1, \"reasoning\": \"Both entries refer to the same individual, Alex Whitmore, distinguished only by the shift (day vs. night), but the HR system confirms a single employee record for both.\"}]}"
+      }
+    ]
+  }
+}

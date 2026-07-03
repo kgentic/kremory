@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d573f08172a6c7757d8ea43568567dd5f3e4c4e0ba07ff886ebed99df2177485": [
+    "e28ea8a6ef5166146533162d8693080996d34ddd92297eabd9dd77e8de8df369": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are the acronym and its full written-out form, directly corresponding to the same intergovernmental organization.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym (OECD) and the other is the full name (Organisation for Economic Co-operation and Development), and the provided context confirms this relationship.\"}]}"
       }
     ]
   }

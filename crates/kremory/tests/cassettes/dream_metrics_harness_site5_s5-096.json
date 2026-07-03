@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "1019fcd9f6febc35fbbe8a82410cb630ccff6fde4cd7882f6639d3c5e3cc8bb5": [
+    "571e3b0fe4e7563950e85043109931ac612b8f71696e86a017736287020b0c20": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the common abbreviation for the other, suggesting they refer to the same organization.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the recognized acronym/abbreviation for the other full name, and the context explicitly links them.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "2b339e30cba50520be3a274212d4652a08ff5884fd722b298cda68924a8e1158": [
+    "06575113cc192f2d838dad7586c64380cc16ea0efd7624a07753335b30c0322d": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both names are very commonly associated with 'CAP', and 'Common Agricultural Policy' is a major, well-known expansion of the acronym 'CAP'.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair B is a full expansion of one of the plausible interpretations of the acronym 'CAP' in Pair A. The descriptions and facts strongly suggest they refer to the same policy.\"}]}"
       }
     ]
   }

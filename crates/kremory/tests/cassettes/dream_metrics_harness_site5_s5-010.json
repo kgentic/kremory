@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "930b6998fba5e66188e84a0606d9d69edfb9d69b947fca859065b80d609fdd42": [
+    "34842fbb78c85442ed51e46a47b655aeada46e425a357aadee22216c48fc2deb": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One name is the acronym and the other is the full name for the same well-known organization.\"\n}\n]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (CDC) and the other is the full name, and the description explicitly states the acronym stands for the full name, indicating they are the same entity.\"\n    }\n  ]\n}"
       }
     ]
   }

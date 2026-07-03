@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "cd88a778a297c04ab659b4c89bb19f38607b08bd68edccca0f625a66bdcc1347": [
+    "2d153c92338678b9e8bc2a518737daa5f0f18628706d62898196952d7b94d5a4": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state 'no relation' for both entries, indicating they should not be merged.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The source documents explicitly state 'no relation' between Andrew Kowalski and Andrea Kowalski, suggesting they are two different individuals despite the common name 'Andy'.\"}]}"
       }
     ]
   }

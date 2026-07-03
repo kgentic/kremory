@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "3cf39790b21bc0a22138ac40c095cd6ba95d145eab897be4c2db22b53fce5ebf": [
+    "d3f83265a097a4b6ee9aef1dfd7c67ae4de5091c7d53d023b0b8dae252508217": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The names are variations of the same person, where 'Liz' is a common nickname for 'Elizabeth', and the matching surname suggests they refer to the same individual.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are variants (full name vs. nickname) of the same person, sharing the same surname and description indicating a direct relationship.\"}]}"
       }
     ]
   }

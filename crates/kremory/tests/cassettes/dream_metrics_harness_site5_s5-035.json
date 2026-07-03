@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "662a7ae6a6819cd2bc5220d9b478033a2dc066fd2050f932856a6a322784ded7": [
+    "ff9ca966fea0d4fe892a7887526e08c854fe572b6077d5ce4070182b85b291ff": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two entities (CVS pharmacy and Concurrent Versions System) are unrelated, despite sharing the initials.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are a direct acronym and its full form, as confirmed by the description and facts.\"}]}"
       }
     ]
   }

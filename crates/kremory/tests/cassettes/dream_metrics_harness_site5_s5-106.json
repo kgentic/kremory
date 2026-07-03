@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b95f3fe853147e90311a0f54464597a63b1ad7fb83c42c339e6cfd7c4ea3d456": [
+    "b85513c622b6e770b99733efed9dc638960a373a884e434249f941930a0c2aa7": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Meg' is a common short form of 'Megan', and the matching surname provides strong confirmation of identity.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Meg' is a common short form of 'Megan', and both share the same surname, strongly indicating they refer to the same person.\"\n    }\n  ]\n}"
       }
     ]
   }

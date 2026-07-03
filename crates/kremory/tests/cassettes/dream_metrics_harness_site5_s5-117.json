@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "1d0fba1fca39400953d1c658eb6527555ce813424c65c1a1e2e40dfd79afe0bc": [
+    "9c9c4000a447a2dda0e15f45add836f4563f4d2bbe1b1274366de2ca2e149168": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are identical apart from diacritics, and the description explicitly states they refer to the same person based on matching surnames.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The difference is only in diacritics (acute accent on the 'e'), which is a common variation for the same person.\"}]}"
       }
     ]
   }

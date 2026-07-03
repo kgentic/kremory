@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "08e1c910293fa04bec5c5a7b6f548f113a62cd5802666a53e70d2edadd08c864": [
+    "79dd191496cc71b554ba34b0df6402b278c18c2fc8810433a983c6e833197141": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"One is a well-known trade agreement (NAFTA), and the other is a specific, fictional/regional association. The descriptions confirm they are distinct entities despite the shared acronym.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym and the other is the full name of the same agreement.\"}]}"
       }
     ]
   }

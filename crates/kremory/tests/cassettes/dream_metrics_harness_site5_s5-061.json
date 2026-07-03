@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "e7b6e8eb237a85b37fb32e666ced958e8446bea9275ed97194a06c1bec6b9c2e": [
+    "721f366c89f94668cb32c96cdaf56e2956776152900948c8c168740cb285a735": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The pair represents a clear acronym/full name relationship, where 'PAC' is the acronym for 'Political Action Committee'.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly notes that 'PAC' could plausibly mean a Political Action Committee, and the second entity is the full name 'Political Action Committee', indicating a strong acronym expansion relationship.\"}]}"
       }
     ]
   }

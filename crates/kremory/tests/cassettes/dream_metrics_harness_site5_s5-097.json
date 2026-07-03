@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "74bcff29b7b1c514771d7d11feb51b72ead66b578df2cef9ce1c772c04285097": [
+    "e1e9c11c3a4ae8631520c6526982e4389206e2b1d9ca4b38f8a1a7e6f08ecc96": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym and the other is the full name, explicitly stated as the expansion of the other.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (NASDAQ) and the other is the full name, with the provided context explicitly stating they refer to the same organization.\"\n    }\n  ]\n}"
       }
     ]
   }

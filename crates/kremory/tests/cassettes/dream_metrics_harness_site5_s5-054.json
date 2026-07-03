@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "02ae4d7e1aa5c2ccddf6b48aa74507daa78203242580da7217319cd7effda86d": [
+    "b3bc374fae5d66555160e50a7cc3c49a5df35445f027dabf75ae5087fe1e88b5": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions indicate that both 'ICO' and 'Information Commissioner's Office' are being considered, and in the context of entity resolution, they often refer to the same organization (Information Commissioner's Office, which uses the acronym ICO). The common ambiguity points to this established alternate meaning.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.85, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are a likely acronym and its full name, with the description explicitly mentioning both possibilities, suggesting a high probability of a direct relationship.\"}]}"
       }
     ]
   }

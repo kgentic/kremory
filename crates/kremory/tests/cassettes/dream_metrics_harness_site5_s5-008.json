@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "a0e5bee49ab61282558e304b01deb61ee097d382e4d285d25f4e04c9f80eea2a": [
+    "35485cb717985a0305db979d0b441fd3fb0f009747f3da408c9b43c3c4bcad12": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym (ESA) and the other is the full name (European Space Agency) for the same organization.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (ESA) and the other is the full name (European Space Agency), which are explicitly linked in the description and facts.\"\n    }\n  ]\n}"
       }
     ]
   }

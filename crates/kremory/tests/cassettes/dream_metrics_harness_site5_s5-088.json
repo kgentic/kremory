@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d704908359525b463d493a82302f655006993f7d7a7c023b7106e0c770fa35eb": [
+    "955e41825672a0f88eebaccdb7eca2b4ff99cabca2ac96b3ecc523b33bdd275a": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym and the other is the full name for the same US government agency.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the recognized acronym (FDA) and the other is the full name, and the context explicitly links them as the full name of the acronym.\"}]}"
       }
     ]
   }

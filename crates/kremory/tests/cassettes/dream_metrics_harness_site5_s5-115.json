@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "7a3554a6f19ba1f1552d0b16576f14310fa93621c9507c9ddc7ed5f5fef489ab": [
+    "00a3ceeefa89384d5ff829a720edfe2ab4a9305c898300bbe9cf55ce15ac6cb2": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that 'Ozzy' is a common nickname for 'Oswald,' and the shared surname in a medical form confirms they are the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\n    \"verdicts\": [\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": true,\n            \"pair_id\": 0,\n            \"reasoning\": \"The description explicitly states that 'Ozzy is a common nickname for Oswald' and they share a surname, strongly indicating they refer to the same person.\"\n        }\n    ]\n}"
       }
     ]
   }

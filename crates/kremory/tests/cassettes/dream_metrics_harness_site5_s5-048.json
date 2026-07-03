@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "95ee111cd2a01eab500758413fdce7f543db63ee36a98e94a1313d07711cfc68": [
+    "41e64f784254851e47241a69a4d313a83d0a208466ac8b5ef45415e4d1329a06": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that they are two different people, despite sharing a nickname and surname coincidence.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The names differ by the middle initial/first name (Charles vs Charlotte), and the facts explicitly treat them as two distinct individuals working in the same team.\"}]}"
       }
     ]
   }

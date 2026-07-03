@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "558ec2b51740ec9df39c383ae71c0a82bdc362f7ce3bc6191432521013bb210f": [
+    "e83dbf800dbb2c7d8b851e303c317a0a89e8c70faa11ba8adc7773902223de5d": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (IMF) and the other is the full name (International Monetary Fund), which are explicitly defined as the same entity.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (IMF) and the other is the full name (International Monetary Fund), and the description explicitly links them as the official acronym/full name relationship.\"\n    }\n  ]\n}"
       }
     ]
   }
