@@ -493,9 +493,10 @@ async fn lemma_false_merge_safety_corpus() {
             "SAFETY VIOLATION: type_registry_collapse silently auto-merged the \
              distinct-concept pair {}/{} (cosine={cosine:.4}) with NO LLM \
              involvement and NO audit row (spec §5.2) — the lemma false-merge \
-             safety margin has been falsified. F3 requires building the \
-             `exact_only` lexical-prefilter config toggle before \
-             `include_type_registry_collapse` ships.",
+             safety margin has been falsified. This margin is the basis on which \
+             F3 was resolved (lemma-on-only, no `exact_only` toggle) and \
+             `include_type_registry_collapse` was enabled by default (2026-07-03) \
+             — a falsification here means that enablement must be revisited.",
             pair.name_a, pair.name_b,
         );
     }
@@ -510,9 +511,10 @@ async fn lemma_false_merge_safety_corpus() {
         falsified.is_empty(),
         "F3 safety margin FALSIFIED for {} pair(s): {falsified:#?} — the lemma-naive \
          collision heuristic combined with real embedding cosine is NOT safe as \
-         currently shipped; `include_type_registry_collapse` must NOT flip to \
-         `true` until F3's `exact_only` toggle exists or the lemma heuristic is \
-         changed.",
+         currently shipped; this margin is what justified enabling \
+         `include_type_registry_collapse` by default (2026-07-03) with lemma-on-only \
+         and no `exact_only` toggle, so a falsification here requires reverting that \
+         default or changing the lemma heuristic.",
         falsified.len(),
     );
 

@@ -6,8 +6,9 @@
 //! Pass 4: consistency_check — hybrid embed-prefilter + LLM-verify for
 //!         high-confidence wrong-type detection (ADR-047).
 
-/// Site #5 (ADR-063 spec §3) — instance acronym/nickname recall. Spike-gated
-/// behind `DreamOpts::include_acronym_nickname_recall`, default `false`.
+/// Site #5 (ADR-063 spec §3) — instance acronym/nickname recall. Gated behind
+/// `DreamOpts::include_acronym_nickname_recall`, default `true` (VALIDATED
+/// 2026-07-03: site5_metrics.json precision 1.00, Wilson-lower 0.955, 0 false merges).
 pub(crate) mod acronym_nickname_recall;
 pub(crate) mod anti_redundancy;
 pub mod consistency_check;
@@ -22,8 +23,9 @@ pub(crate) mod idempotency;
 pub(crate) mod metrics_util;
 pub(crate) mod proposed_type;
 pub mod reclassify;
-/// Site #3 (ADR-063 spec §4) — type-registry post-hoc collapse. Spike-gated
-/// behind `DreamOpts::include_type_registry_collapse`, default `false`.
+/// Site #3 (ADR-063 spec §4) — type-registry post-hoc collapse. Gated behind
+/// `DreamOpts::include_type_registry_collapse`, default `true` (VALIDATED
+/// 2026-07-03: site3_metrics.json precision 0.949, Wilson-lower 0.861, 0 false merges).
 pub(crate) mod type_registry_collapse;
 
 pub use discover_types::{DiscoveryResult, TypeProposal};
