@@ -1,0 +1,329 @@
+{
+  "model": "qwen2.5:7b",
+  "n": 26,
+  "agree": 23,
+  "agreement_rate": 0.8846,
+  "disagreements": [
+    {
+      "id": "s2-006",
+      "category": "clear_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Purchase",
+      "existing": "Transaction",
+      "expected": "SAME",
+      "qwen_verdict": "DIFFERENT",
+      "agree": false,
+      "qwen_raw": "DIFFERENT\n\nWhile both \"Purchase\" and \"Transaction\" can involve the exchange of money for goods or services, they are not exactly the same in all contexts. A purchase is typically more specific to buying goods or services with money, often implying a sale from one party to another. A transaction, on the other hand, is a broader term that can encompass any exchange or transfer of value, including but not limited to financial exchanges for goods and services."
+    },
+    {
+      "id": "s2-024",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Judge",
+      "existing": "Magistrate",
+      "expected": "SAME",
+      "qwen_verdict": "DIFFERENT",
+      "agree": false,
+      "qwen_raw": "DIFFERENT\n\nWhile both \"Judge\" and \"Magistrate\" refer to public officials who preside over court proceedings and have the authority to make legal rulings, there are differences in their usage and hierarchy within some legal systems. Magistrates are often lower-level judges, handling less serious cases such as minor offenses or traffic violations. Judges can cover a broader range of cases, including more severe criminal charges and civil disputes, and may hold a higher rank within the judicial system."
+    },
+    {
+      "id": "s2-025",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Employer",
+      "existing": "Company",
+      "expected": "SAME",
+      "qwen_verdict": "DIFFERENT",
+      "agree": false,
+      "qwen_raw": "DIFFERENT\n\nWhile both terms can sometimes be used interchangeably in casual conversation, they typically denote different concepts. 'Employer' specifically refers to an organization or individual that hires and pays workers, focusing more on the hiring and payment aspect. 'Company,' on the other hand, generally denotes a commercial business entity organized to provide goods or services for profit, which is a broader term encompassing various organizational structures and activities beyond just employment relationships."
+    }
+  ],
+  "all": [
+    {
+      "id": "s2-001",
+      "category": "clear_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Firm",
+      "existing": "Company",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nBoth \"Firm\" and \"Company\" generally refer to commercial business entities organized to provide goods or services for profit. While there might be subtle differences in usage depending on context or region, they essentially denote the same concept in most common uses."
+    },
+    {
+      "id": "s2-002",
+      "category": "clear_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Automobile",
+      "existing": "Car",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nThe terms \"Automobile\" and \"Car\" generally denote the same concept, referring to a self-propelled wheeled motor vehicle used for transporting passengers on roads. While \"Automobile\" is a more formal term often used in technical or legal contexts, \"Car\" is commonly used in everyday language."
+    },
+    {
+      "id": "s2-003",
+      "category": "clear_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Physician",
+      "existing": "Doctor",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nBoth \"Physician\" and \"Doctor\" generally denote the same concept of a medical professional licensed to diagnose and treat illnesses in patients. While there can be subtle differences in usage depending on context or region, they are largely interchangeable terms for the same role."
+    },
+    {
+      "id": "s2-004",
+      "category": "clear_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Residence",
+      "existing": "Home",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nBoth \"Residence\" and \"Home\" generally denote the same concept of a place where a person or family lives permanently. While there can be subtle differences in connotation (e.g., \"home\" often carries more emotional or personal significance), for most practical purposes, these terms are interchangeable."
+    },
+    {
+      "id": "s2-005",
+      "category": "clear_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Attorney",
+      "existing": "Lawyer",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nReason: In many jurisdictions, the terms \"Attorney\" and \"Lawyer\" are used interchangeably to refer to individuals who have been trained, qualified, and licensed to practice law and provide legal advice. However, there can be slight differences in usage depending on the region or country."
+    },
+    {
+      "id": "s2-006",
+      "category": "clear_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Purchase",
+      "existing": "Transaction",
+      "expected": "SAME",
+      "qwen_verdict": "DIFFERENT",
+      "agree": false,
+      "qwen_raw": "DIFFERENT\n\nWhile both \"Purchase\" and \"Transaction\" can involve the exchange of money for goods or services, they are not exactly the same in all contexts. A purchase is typically more specific to buying goods or services with money, often implying a sale from one party to another. A transaction, on the other hand, is a broader term that can encompass any exchange or transfer of value, including but not limited to financial exchanges for goods and services."
+    },
+    {
+      "id": "s2-007",
+      "category": "clear_novel",
+      "ground_truth": "novel",
+      "proposal": "Legal Precedent",
+      "existing": "Person",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nLegal Precedent refers to a prior court decision that establishes a principle or rule used to guide future case outcomes, while Person denotes an individual human being referenced in the text, distinct from organizations or objects. These terms describe different concepts related to law and terminology respectively."
+    },
+    {
+      "id": "s2-008",
+      "category": "clear_novel",
+      "ground_truth": "novel",
+      "proposal": "Chemical Compound",
+      "existing": "Court",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe term \"Chemical Compound\" refers to a substance formed by two or more chemical elements bonded together in fixed proportions, while \"Court\" refers to a judicial body with authority to hear and decide legal cases. These terms denote entirely different concepts related to chemistry and law respectively."
+    },
+    {
+      "id": "s2-009",
+      "category": "clear_novel",
+      "ground_truth": "novel",
+      "proposal": "Software Repository",
+      "existing": "Statute",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe term \"Software Repository\" refers to a system used for managing and maintaining software code, while \"Statute\" refers to a written law created by a legislative body. These terms denote entirely different concepts in their respective fields."
+    },
+    {
+      "id": "s2-010",
+      "category": "clear_novel",
+      "ground_truth": "novel",
+      "proposal": "Musical Instrument",
+      "existing": "Vehicle",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe term \"Musical Instrument\" refers to devices designed specifically to produce musical sounds when played, while \"Vehicle\" denotes machines used for transporting people or goods across various terrains and mediums (land, water, air). These are distinct categories with different purposes and functions."
+    },
+    {
+      "id": "s2-011",
+      "category": "clear_novel",
+      "ground_truth": "novel",
+      "proposal": "Astronomical Object",
+      "existing": "Organisation",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe term \"Astronomical Object\" refers to natural entities found in space, while \"Organisation\" refers to structured groups of people with shared purposes, such as companies or institutions. These are distinct concepts from different domains (astronomy vs. sociology/management)."
+    },
+    {
+      "id": "s2-012",
+      "category": "clear_novel",
+      "ground_truth": "novel",
+      "proposal": "Culinary Dish",
+      "existing": "Date",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe term \"Culinary Dish\" refers to a prepared food item served as part of a meal, while \"Date\" refers to a specific point in time. These terms denote different concepts entirely."
+    },
+    {
+      "id": "s2-013",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Legal Ruling",
+      "existing": "Legal Precedent",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\n\"Legal Ruling\" refers to a specific decision made by a judge or court in resolving the legal questions of a particular case. On the other hand, \"Legal Precedent\" is a principle or rule established by a prior court decision that can be used to guide future cases with similar circumstances. While rulings contribute to the body of legal precedents over time, they are distinct concepts in terms of their immediate function and scope."
+    },
+    {
+      "id": "s2-014",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Chemical Element",
+      "existing": "Drug Compound",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe term \"Chemical Element\" refers to a pure substance consisting of only one type of atom, defined by its atomic number, and it cannot be broken down into simpler substances by chemical means. On the other hand, \"Drug Compound\" refers to a chemical substance, often composed of multiple elements, that is formulated for therapeutic or physiological effects in the body. These definitions highlight distinct characteristics and purposes, indicating they denote different concepts."
+    },
+    {
+      "id": "s2-015",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Software Feature",
+      "existing": "Software Bug",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe terms 'Software Feature' and 'Software Bug' denote different concepts. A Software Feature refers to intentional, desired functionalities that are designed and implemented in software to meet user requirements, whereas a Software Bug refers to unintended flaws or defects that cause the software to behave incorrectly or fail to perform as intended."
+    },
+    {
+      "id": "s2-016",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Job Title",
+      "existing": "Job Description",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe terms \"Job Title\" and \"Job Description\" denote different concepts. A Job Title is a formal name given to a person's role within an organization, while a Job Description provides details about the duties, responsibilities, and qualifications associated with that specific role."
+    },
+    {
+      "id": "s2-017",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Court Order",
+      "existing": "Court",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\n\"Court Order\" refers to a specific directive issued by a judge within a court system, while \"Court\" denotes the judicial body itself that has the authority to hear and decide legal cases. The former is an action or decision made by the latter."
+    },
+    {
+      "id": "s2-018",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Investment Fund",
+      "existing": "Investment Strategy",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nAn \"Investment Fund\" refers to a financial vehicle that pools money from multiple investors to invest in securities or other assets, while an \"Investment Strategy\" is a planned approach or set of principles guiding decisions about how and where to allocate investment capital. The former pertains to the structure and operation of a fund, whereas the latter concerns the decision-making process for investments."
+    },
+    {
+      "id": "s2-019",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Medical Diagnosis",
+      "existing": "Medical Treatment",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nThe terms \"Medical Diagnosis\" and \"Medical Treatment\" denote different concepts in healthcare. Medical Diagnosis involves identifying the nature of an illness or injury based on patient history, physical examination, and diagnostic tests. Medical Treatment refers to the actions taken to address the identified condition, which can include medications, surgeries, therapies, etc."
+    },
+    {
+      "id": "s2-020",
+      "category": "band_edge_distinct",
+      "ground_truth": "novel",
+      "proposal": "Contractual Obligation",
+      "existing": "Contract",
+      "expected": "DIFFERENT",
+      "qwen_verdict": "DIFFERENT",
+      "agree": true,
+      "qwen_raw": "DIFFERENT\n\nWhile both \"Contractual Obligation\" and \"Contract\" are related to agreements between parties, they denote different concepts. A contract is a broader term that refers to any legally binding agreement between two or more parties. A contractual obligation, on the other hand, specifically refers to the duties or responsibilities that one party has under the terms of a contract towards another party."
+    },
+    {
+      "id": "s2-021",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Organization",
+      "existing": "Organisation",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nThe terms \"Organization\" and \"Organisation\" are used interchangeably to denote the same concept\u2014a structured group of people with a shared purpose, such as a company or institution. The difference lies only in spelling, with \"Organization\" being the American English spelling and \"Organisation\" being the British English spelling."
+    },
+    {
+      "id": "s2-022",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Motor Vehicle",
+      "existing": "Vehicle",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nThe terms \"Motor Vehicle\" and \"Vehicle\" are often used interchangeably to refer to machines used for transporting people or goods on land, water, or air. However, \"Motor Vehicle\" specifically implies that the vehicle is powered by a motor, whereas \"Vehicle\" can include non-motorized ones as well. But in common usage, they generally denote the same concept."
+    },
+    {
+      "id": "s2-023",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Corporation",
+      "existing": "Company",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nBoth \"Corporation\" and \"Company\" generally refer to commercial business entities organized to provide goods or services for profit. While there can be legal distinctions between them in certain jurisdictions, they are often used interchangeably to denote similar concepts."
+    },
+    {
+      "id": "s2-024",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Judge",
+      "existing": "Magistrate",
+      "expected": "SAME",
+      "qwen_verdict": "DIFFERENT",
+      "agree": false,
+      "qwen_raw": "DIFFERENT\n\nWhile both \"Judge\" and \"Magistrate\" refer to public officials who preside over court proceedings and have the authority to make legal rulings, there are differences in their usage and hierarchy within some legal systems. Magistrates are often lower-level judges, handling less serious cases such as minor offenses or traffic violations. Judges can cover a broader range of cases, including more severe criminal charges and civil disputes, and may hold a higher rank within the judicial system."
+    },
+    {
+      "id": "s2-025",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Employer",
+      "existing": "Company",
+      "expected": "SAME",
+      "qwen_verdict": "DIFFERENT",
+      "agree": false,
+      "qwen_raw": "DIFFERENT\n\nWhile both terms can sometimes be used interchangeably in casual conversation, they typically denote different concepts. 'Employer' specifically refers to an organization or individual that hires and pays workers, focusing more on the hiring and payment aspect. 'Company,' on the other hand, generally denotes a commercial business entity organized to provide goods or services for profit, which is a broader term encompassing various organizational structures and activities beyond just employment relationships."
+    },
+    {
+      "id": "s2-026",
+      "category": "subtle_redundant",
+      "ground_truth": "redundant",
+      "proposal": "Automobile Manufacturer",
+      "existing": "Company",
+      "expected": "SAME",
+      "qwen_verdict": "SAME",
+      "agree": true,
+      "qwen_raw": "SAME\n\nBoth \"Automobile Manufacturer\" and \"Company\" refer to commercial business entities that are organized to provide goods or services for profit. While \"Automobile Manufacturer\" is more specific, encompassing only businesses involved in manufacturing automobiles, \"Company\" is a broader term that can include any type of business entity regardless of its industry focus."
+    }
+  ]
+}
