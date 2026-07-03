@@ -48,18 +48,24 @@ const FIELD_SEP: char = '\u{1F}';
 /// local Ollama models are $0 (absent from `monitoring/provider-rates.toml`), so
 /// the token count — not a dollar figure — is the meaningful bound for a
 /// local-first background sweep.
+///
+/// **MNT-002 visibility (`pub` + `#[doc(hidden)]`):** promoted from `pub(crate)`
+/// so the deterministic supersession corpus harness can construct one under
+/// `feature = "test-utils"` (external test binaries cannot import `pub(crate)`
+/// items — E0365). NOT part of the stable public API.
+#[doc(hidden)]
 #[derive(Debug, Clone)]
-pub(crate) struct ConsolidationBudget {
+pub struct ConsolidationBudget {
     /// Per-run ceiling (from `DreamOpts.consolidation_budget_tokens`). `u64::MAX`
     /// models an unbounded budget (`None` at the opts layer).
-    pub(crate) ceiling_tokens: u64,
+    pub ceiling_tokens: u64,
     /// Cumulative tokens spent by consolidation ops so far this run.
-    pub(crate) used_tokens: u64,
+    pub used_tokens: u64,
 }
 
 impl ConsolidationBudget {
     /// Construct from an optional ceiling. `None` → unbounded (`u64::MAX`).
-    pub(crate) fn new(ceiling_tokens: Option<u64>) -> Self {
+    pub fn new(ceiling_tokens: Option<u64>) -> Self {
         Self {
             ceiling_tokens: ceiling_tokens.unwrap_or(u64::MAX),
             used_tokens: 0,
@@ -199,14 +205,19 @@ pub(crate) fn fact_archive_hash(fact_id: i64, expired_at: &str) -> String {
 ///
 /// STUB-phase (P0): every op returns `OpReport::default()` (count 0). P1-P4 fill in
 /// the real counts.
+///
+/// **MNT-002 visibility (`pub` + `#[doc(hidden)]`):** promoted from `pub(crate)`
+/// so the deterministic supersession corpus harness can read `count`/`warnings`
+/// under `feature = "test-utils"`. NOT part of the stable public API.
+#[doc(hidden)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct OpReport {
+pub struct OpReport {
     /// The op's own mutation count (supersessions / archived / merges / communities
     /// updated — interpreted by the caller which op produced it).
-    pub(crate) count: usize,
+    pub count: usize,
     /// Non-fatal notices (budget skip, degraded mode, …) folded into the
     /// `DreamSummary.warnings` surface (`facade/mod.rs`).
-    pub(crate) warnings: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 /// Aggregate of the four consolidation ops (ADR-066 §5). The dispatcher

@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_consolidation_zero_budget_skips_all_and_warns() {
+    async fn run_consolidation_zero_ceiling_allows_zero_projection_ops() {
         // A zero ceiling denies every op's pre-check (used(0)+proj(0)=0 <= 0 is
         // TRUE, so with OP_TOKEN_PROJECTION=0 the zero-token ops still run). Use a
         // ceiling below a forced non-zero projection is not reachable at P0
