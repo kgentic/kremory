@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "16378b65357253622b7d935670f5c9e11e7b004fd8baa6824599b59f73c78cc7": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.8, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"While both describe writers, they specify different genres (Poetry vs. Novels), indicating distinct roles/types.\"}]}"
+      }
+    ]
+  }
+}

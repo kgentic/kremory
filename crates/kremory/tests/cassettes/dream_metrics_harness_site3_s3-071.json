@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "c799d7d97831441d311880e37617e7705dded2d5a549a4ba0799ce17040a6263": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Clinics provide consultation/treatment, while pharmacies are retail dispensing locations. They are distinct types of healthcare facilities.\"}]}"
+      }
+    ]
+  }
+}

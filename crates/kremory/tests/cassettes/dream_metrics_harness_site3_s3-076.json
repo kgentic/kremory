@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "f064da4b44136ff246d9687f56571ffe783fa3db640f73e28a6c553098419c42": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These two terms refer to the exact same role: the highest executive officer of a company.\"}]}"
+      }
+    ]
+  }
+}

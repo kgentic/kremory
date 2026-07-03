@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "f321e54fd57f3c9b9c15dc16d36e86f8912214ed6f7f4da23c152af215dfe697": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both refer to educational textbooks/books designed for study, with 'Coursebook' being a specific type of 'Textbook'.\"}]}"
+      }
+    ]
+  }
+}

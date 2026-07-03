@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "0d16e382718f57072953f947498651e56903e0f5f1c6bc419a4c8dfc8e1cb9a8": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"These are distinct, specific types of musical instruments (violin vs. cello) that belong to the same broader category (String Instrument), but they are not semantically identical types.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "e53334aa55958a8d5e1e2fb4625da60335c9618f82981a340906e687a3c16020": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These are the same concept ('Résumé' vs 'Resume'), differing only by common spelling variations.\"}]}"
+      }
+    ]
+  }
+}

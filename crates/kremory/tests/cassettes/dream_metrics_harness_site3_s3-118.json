@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "b8e8102b476add4fcae1bbb0d06a4dd00c81b52f26ba43eb9d9f82be0f747011": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The difference is capitalization ('naïve' vs 'Naive'). Semantically, they refer to the identical concept.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "4a25eead60658a755a3c0c1e407fd5fb71e0585e4a98130017a4565cb3cd4b0c": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.85, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"A Charity is a specific subset of a Non-profit Organization, sharing the core concept of mission-driven, non-profit status.\"}]}"
+      }
+    ]
+  }
+}

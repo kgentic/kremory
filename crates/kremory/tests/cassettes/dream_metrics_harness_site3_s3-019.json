@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "d85ba9b8ee6eae28cdb999a61a9d92fa19b157dabafae88f5ceac252827ff80a": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Car is a specific, common instance of the broader category Automobile. Semantically, they refer to the same core type of vehicle.\"}]}"
+      }
+    ]
+  }
+}

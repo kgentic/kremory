@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "b6a299c2733fb36d922038a3e165270a8fa604d84c413b8aeaf1a60239002d59": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"In a B2B context, 'Vendor' and 'Supplier' are often interchangeable terms referring to an entity providing goods or services.\"}]}"
+      }
+    ]
+  }
+}

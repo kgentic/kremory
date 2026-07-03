@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "11814e8aaebec442e7d672a78bf8a22fcf7b34c4cd78b89e72a74c24fc340939": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These two definitions refer to the same geographical concept (large human settlements), differing only by singular/pluralization.\"}]}"
+      }
+    ]
+  }
+}

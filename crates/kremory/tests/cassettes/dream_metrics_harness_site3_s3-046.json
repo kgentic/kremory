@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "af1a5b48c2844c14ce00be851f568e3aad05ba0f58b53a23183402c0ae21bab5": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The terms relate but are different. 'Damage' is the abstract concept of harm, while 'Damages' specifically refers to the monetary compensation awarded for that harm, usually in a legal context.\"}]}"
+      }
+    ]
+  }
+}

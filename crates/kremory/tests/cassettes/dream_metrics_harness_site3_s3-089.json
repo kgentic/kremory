@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "4cb74cd885c2541475b4408a84c6f995cb6d1477d52f7607f974f87fb7be50d5": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These are identical concepts, differing only by capitalization, indicating the same entity type.\"}]}"
+      }
+    ]
+  }
+}

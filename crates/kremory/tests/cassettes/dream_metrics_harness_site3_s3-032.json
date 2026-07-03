@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "fa3dbc0c5400d8c40e0b28f32b2faee3f614b68336247170d2583da73e2dc020": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Ethics refers to the academic/philosophical field (the study), while Ethic refers to the principles themselves (the rules/set of guidelines).\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}
