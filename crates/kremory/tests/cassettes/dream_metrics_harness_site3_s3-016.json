@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "f132373f2b15b92b4a99c3d802f1ec47de4bf907e969205c63e255f9c658545c": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both 'Human' and 'Individual' point towards a single, discrete entity belonging to a person/human being category. 'Individual' is a more general type that encompasses 'Human'.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

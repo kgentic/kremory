@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "bef2c5517e81743568b936f5f8e9ee5b7c960e44ada6aa7888a653df6d810f18": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both 'Instructor' and 'Teacher' refer to a human role focused on imparting knowledge or skill through teaching.\"}]}"
+      }
+    ]
+  }
+}

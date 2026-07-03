@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "375b2160675a690217c39fbf33ea0f708fd9400e6f05567484be652e17594f2e": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms describe a physical structure used for storing goods or materials.\"}]}"
+      }
+    ]
+  }
+}

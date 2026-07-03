@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "e123e970d708cd678c7e852e7764e80c10be5893be191d11b9d5edc16b954f66": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Odds relates to probability/betting outcomes, while 'Odd' here describes a mathematical property of integers (not divisible by two).\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

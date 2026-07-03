@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "7c0970720cf8a4a3a3cacc4511328e228f43554676ca3be523d11902e1b0056f": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is simply the plural form of A and refers to the identical concept: sovereign nations.\"}]}"
+      }
+    ]
+  }
+}

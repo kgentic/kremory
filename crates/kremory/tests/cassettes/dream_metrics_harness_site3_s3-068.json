@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "4d04a3dd57d10f1f9efa40c7ba1fa1fa1a2dc1b9cedb130ae8522a6b29efec0d": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Aircraft travel through air, while Watercraft travel through water. They belong to distinct physical categories of vehicles.\"}]}"
+      }
+    ]
+  }
+}

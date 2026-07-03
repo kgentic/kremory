@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "8aa5dcb56c07daae2c79eca4a9f105c51c21c64e1ae0c45b8f83d51bcbcf80d9": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"In most semantic contexts, 'Nation' and 'Country' are used synonymously, though 'Country' often implies a political state ('Nation-State'). They refer to the same core concept of a sovereign territory.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "4bcfd9fa0b1aec72df43a4b9f5b656547c7f5ac4330cc03d75fb1b883ab25e95": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both 'Purchase' and 'Acquisition' in this context describe the act or event of gaining possession of something, often through a transaction.\"}]}"
+      }
+    ]
+  }
+}

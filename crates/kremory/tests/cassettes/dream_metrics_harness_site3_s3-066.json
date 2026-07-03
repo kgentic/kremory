@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "85fcf91a6dcc556a22e65508a338a47289275767744a43be6724d65690760c02": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Both describe types of 'Person', but one is specialized in music and the other in sports, indicating distinct semantic categories.\"}]}"
+      }
+    ]
+  }
+}

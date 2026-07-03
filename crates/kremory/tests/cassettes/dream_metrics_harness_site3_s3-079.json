@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "8443aeb138bddcf0b25822bf4390ddab17a66e16e1132b85fa17b4e776b94f42": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms describe the process of combining multiple companies into one new entity, which is a type of corporate action.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "33a8e67abe58683a7af91a310a0c5755e7a5054c881eb35b33d9b72b92ba7791": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These terms refer to very similar or related undergarment accessories; 'Suspenders' is the plural form of 'Suspender', referring to the same general category of clothing.\"}]}"
+      }
+    ]
+  }
+}

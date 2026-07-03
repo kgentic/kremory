@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "1758129a63352a3d33c161b6c98c31ac6154de48008a6d3032c6980c9d9e23fe": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.6,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"One refers to a group/body of people (Corps), while the other is an abbreviation for a corporate structure (Corp).\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

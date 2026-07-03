@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "7a616e2d9c38216670f02760792fc63f33adccaf9fc10050a337e5d88a585bb8": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Bike is a common colloquial synonym for Bicycle, referring to the same physical object.\"}]}"
+      }
+    ]
+  }
+}

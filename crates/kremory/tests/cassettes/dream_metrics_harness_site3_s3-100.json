@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "f00d5ed4e86f9366be8065ab98ff0d1cc0e204f571d836294b91ce8eda44fe3f": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.85, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"While both are medical professionals, 'Doctor' is a much broader category encompassing many specialties, whereas 'Surgeon' is specific to operative skills.\"}]}"
+      }
+    ]
+  }
+}

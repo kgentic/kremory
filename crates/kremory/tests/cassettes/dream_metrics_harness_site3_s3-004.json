@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "64d5946125cfde7de4f440f4f790feef7f11302b48a8164c5cfaefa4b46a51ec": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The definitions are virtually identical, differing only in the inclusion of 'and services' in B, which is a minor semantic addition to the same core concept of a technology business.\"}]}"
+      }
+    ]
+  }
+}

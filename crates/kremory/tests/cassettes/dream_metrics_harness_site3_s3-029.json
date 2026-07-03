@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "dd825677c04667dfd1bdf801b820893f90b9829bd20320e02a1ca2155fdce7e7": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions describe the same concept: a portable, wireless telephone.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

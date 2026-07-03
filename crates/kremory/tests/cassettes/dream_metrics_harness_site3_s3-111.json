@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "ce7f6378896f80b8d82301e7998c3f5aedc3995b61cd81739b458a9117b953e8": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Bacteria and Viruses are distinct biological entities; one is a cell/organism and the other is an obligate intracellular parasite.\"}]}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "site": "site3_type_registry",
+  "overall": {
+    "n": 119,
+    "tp": 56,
+    "fp": 4,
+    "fn_": 0,
+    "tn": 59,
+    "false_merges": 1,
+    "precision": 0.9333333333333333,
+    "recall": 1.0,
+    "f1": 0.9655172413793104,
+    "precision_ci_low": 0.8407442010623228,
+    "precision_ci_high": 0.9737717258568019
+  },
+  "per_category": {
+    "band_edge_moderate": {
+      "n": 26,
+      "tp": 0,
+      "fp": 3,
+      "fn_": 0,
+      "tn": 23,
+      "false_merges": 0,
+      "precision": 0.0,
+      "recall": null,
+      "f1": null,
+      "precision_ci_low": 0.0,
+      "precision_ci_high": 0.5615060804490177
+    },
+    "distinct_lemma_collision": {
+      "n": 22,
+      "tp": 0,
+      "fp": 1,
+      "fn_": 0,
+      "tn": 21,
+      "false_merges": 1,
+      "precision": 0.0,
+      "recall": null,
+      "f1": null,
+      "precision_ci_low": 0.0,
+      "precision_ci_high": 0.7934567085261071
+    },
+    "distinct_unrelated": {
+      "n": 15,
+      "tp": 0,
+      "fp": 0,
+      "fn_": 0,
+      "tn": 15,
+      "false_merges": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci_low": null,
+      "precision_ci_high": null
+    },
+    "hard_true_collapse": {
+      "n": 6,
+      "tp": 6,
+      "fp": 0,
+      "fn_": 0,
+      "tn": 0,
+      "false_merges": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci_low": 0.6096569663469354,
+      "precision_ci_high": 1.0
+    },
+    "semantic_near_dup_zero_lexical": {
+      "n": 19,
+      "tp": 19,
+      "fp": 0,
+      "fn_": 0,
+      "tn": 0,
+      "false_merges": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci_low": 0.8318156346315495,
+      "precision_ci_high": 1.0
+    },
+    "trivial_duplicate": {
+      "n": 25,
+      "tp": 25,
+      "fp": 0,
+      "fn_": 0,
+      "tn": 0,
+      "false_merges": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci_low": 0.8668035060468212,
+      "precision_ci_high": 1.0
+    },
+    "unicode_casing_variant": {
+      "n": 6,
+      "tp": 6,
+      "fp": 0,
+      "fn_": 0,
+      "tn": 0,
+      "false_merges": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci_low": 0.6096569663469354,
+      "precision_ci_high": 1.0
+    }
+  },
+  "merge_only_precision": 0.95,
+  "merge_only_tp": 19,
+  "merge_only_fp": 1,
+  "n_flagged_same": 60,
+  "safety_false_merges": 1,
+  "false_merge_rows": [
+    "s3-088 (Suspenders / Suspender, category=distinct_lemma_collision)"
+  ],
+  "hard_gate": "FAIL",
+  "latency": {
+    "vcr_mode": "record (real Ollama latency)",
+    "llm_call_count": 0,
+    "llm_call_total_ms": -0.0,
+    "llm_call_ms_p50": null,
+    "llm_call_ms_p95": null,
+    "llm_call_ms_p99": null,
+    "row_wall_clock_ms_p50": 2422.6469580000003,
+    "row_wall_clock_ms_p95": 5116.208042,
+    "row_wall_clock_ms_p99": 5637.270208,
+    "total_harness_wall_clock_ms": 233361.38967299997,
+    "embed_calls_expected": 238
+  },
+  "volume": {
+    "pairs_examined": 119,
+    "candidates_nominated": 67,
+    "nomination_rate": 0.5630252100840336,
+    "merges_applied": 20,
+    "potential_aliases": 40,
+    "rejects": 26,
+    "not_examined": 33
+  }
+}

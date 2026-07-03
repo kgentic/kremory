@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "238ffc84cc9cf175413449ddcbc0ddb0c819898b89429c9902d3b7aca0ba55c9": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While a Statute is a type of Law, the definition of 'Law' is much broader, encompassing common law, regulations, and custom, which are distinct from a specific written statute.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}
