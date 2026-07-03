@@ -854,9 +854,13 @@ async fn load_catch_all_entities(
 ) -> Result<Vec<CatchAllEntity>> {
     let mut rows = conn
         .query(
+            // `id` tiebreak makes ordering deterministic when candidates tie on
+            // access_count (e.g. freshly-ingested entities all at 0) — the row
+            // order feeds the LLM prompt, so an unspecified tie-break makes the
+            // whole pass non-reproducible run-to-run (surfaced by dream-loop E1).
             "SELECT id FROM entities \
              WHERE group_id = ?1 AND entity_type_id = 0 \
-             ORDER BY access_count DESC",
+             ORDER BY access_count DESC, id",
             libsql::params![group_id.to_string()],
         )
         .await
