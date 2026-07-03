@@ -765,6 +765,81 @@ pub struct DreamOpts {
     /// cutoff (≥0.85 rejects, `[0.70, 0.85)` accepts) if you do not want the
     /// LLM-verify-band adjudication.
     pub include_type_novelty_llm_verify: bool,
+    /// Run the CONSOLIDATION community-detection op (ADR-066 §2.1, spec P4) —
+    /// deterministic in-Rust label propagation over the entity co-occurrence graph,
+    /// persisting `entity_communities` + `community_summaries`. Zero-LLM.
+    ///
+    /// DEFAULT `false` — opt-in until its adversarial corpus clears an enablement
+    /// gate (spec §6). Unlike the reconciliation passes (validated `true`),
+    /// consolidation ships opt-in for a graph-global mutating sweep.
+    pub include_community_detection: bool,
+    /// Run the CONSOLIDATION cross-episode entity-merge op (ADR-066 §2.2, spec P3)
+    /// — merge the SAME referent re-extracted verbatim (or trivially fuzzy) across
+    /// DISTINCT episodes, gated by a mandatory structural-corroboration signal
+    /// (shared neighbour / identical `(predicate, object)`) so a shared label alone
+    /// never merges (homonymy guard, R-01b). Zero-LLM; delegates the structural
+    /// merge to the shared `apply_entity_merge` executor.
+    ///
+    /// DEFAULT `false` — opt-in (spec §6).
+    pub include_cross_episode_merges: bool,
+    /// Run the CONSOLIDATION supersession sweep (ADR-066 §2.3, spec P1) — the
+    /// deterministic world-time window close-out lane (retire facts whose
+    /// `valid_to` has passed but were never marked expired). Zero-LLM,
+    /// pure date-compare, orthogonal to ingest's same-object dedup.
+    ///
+    /// DEFAULT `false` — opt-in (spec §6).
+    pub include_supersession_sweep: bool,
+    /// Also run supersession's OPT-IN LLM-nominated value-change lane (ADR-066
+    /// §2.3, spec P1.3) — only meaningful when `include_supersession_sweep` is
+    /// also `true`. The LLM only NOMINATES the value-change pairing; the write
+    /// decision stays the deterministic date-compare (a time-inverted nomination
+    /// is rejected structurally). Default-off because auto-superseding a
+    /// DIFFERENT-object fact is unsafe without a functional-predicate registry
+    /// (kremory has none).
+    ///
+    /// DEFAULT `false`.
+    pub include_supersession_llm_nominate: bool,
+    /// Run the CONSOLIDATION fact-archival op (ADR-066 §2.4, spec P2) — MOVE a
+    /// long-expired, unreferenced fact from the live `facts` table into the
+    /// append-only `facts_archive` audit table (INSERT + FTS-shadow delete +
+    /// DELETE in one transaction), gated by a ref-count "orphans nothing" guard.
+    /// Zero-LLM.
+    ///
+    /// DEFAULT `false` — opt-in (spec §6).
+    pub include_fact_archival: bool,
+    /// Per-run token budget ceiling for the consolidation sub-phase (ADR-066 §2.5
+    /// F-1, spec P0.1). Soft partial-abort: an op whose projected spend would push
+    /// cumulative usage past this ceiling is SKIPPED (later ops still run), matching
+    /// kremory's warn-and-continue posture. `None` = unbounded.
+    ///
+    /// DEFAULT `Some(50_000)` — a conservative cap (only supersession's optional LLM
+    /// lane + community detection consume tokens; the other ops are ~zero).
+    pub consolidation_budget_tokens: Option<u64>,
+    /// Grace window (days) before an expired fact becomes archival-eligible
+    /// (ADR-066 §2.4, spec P2.1). A fact is a candidate only when
+    /// `expired_at < now - archive_grace_days`. `None` = no grace (archive
+    /// immediately on expiry — not recommended).
+    ///
+    /// DEFAULT `Some(90)`.
+    pub archive_grace_days: Option<u32>,
+}
+
+impl DreamOpts {
+    /// True when ANY of the four CONSOLIDATION ops is enabled (ADR-066 spec §5).
+    ///
+    /// The facade uses this to skip the whole `run_consolidation` dispatcher when
+    /// no op is on — so with the all-`false` defaults, consolidation is inert and
+    /// the existing reconciliation-only dream path is unaffected.
+    ///
+    /// `include_supersession_llm_nominate` is NOT itself an enabling flag — it only
+    /// modifies the supersession sweep's behaviour, so it is excluded here (an
+    /// LLM-nominate flag with the sweep off is a no-op).
+    pub fn any_consolidation_enabled(&self) -> bool {
+        self.include_community_detection
+            || self.include_cross_episode_merges
+            || self.include_supersession_sweep
+            || self.include_fact_archival
+    }
 }
 
 impl Default for DreamOpts {
@@ -788,6 +863,19 @@ impl Default for DreamOpts {
             // site2_corpus_audit.md. The single miss (s2-025 Employer/Company)
             // is an orthogonal LLM-judgment miss tracked by a follow-up TD.
             include_type_novelty_llm_verify: true,
+            // CONSOLIDATION sub-phase (ADR-066 §5) — all ops default OFF (opt-in
+            // until each op's adversarial corpus clears its enablement gate, spec
+            // §6). With these all `false`, `any_consolidation_enabled()` is false
+            // and the consolidation dispatcher never runs — the existing
+            // reconciliation-only dream path is unaffected.
+            include_community_detection: false,
+            include_cross_episode_merges: false,
+            include_supersession_sweep: false,
+            include_supersession_llm_nominate: false,
+            include_fact_archival: false,
+            // Conservative token cap (only supersession-LLM + communities spend).
+            consolidation_budget_tokens: Some(50_000),
+            archive_grace_days: Some(90),
         }
     }
 }

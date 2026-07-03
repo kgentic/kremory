@@ -476,6 +476,35 @@ impl<'a> DreamRequest<'a> {
         // Folded into DreamSummary.type_registry_merges at the end of the chain
         // (ADR-063 §4 observability — surfaced to consumers, not just a counter).
 
+        // Dream CONSOLIDATION sub-phase (ADR-066) — graph-global cleanup ops
+        // (supersession / archive / cross_episode / communities). Runs AFTER the
+        // reconciliation chain (all merges/reclassifications settled). Gated by the
+        // per-op `DreamOpts.include_*` flags, all default `false` — so
+        // `any_consolidation_enabled()` is false by default and this block is inert
+        // (existing dream tests unaffected). Non-fatal: `unwrap_or_default()` folds a
+        // dispatcher error into an all-zero summary + the counts land on the four
+        // (already-existing) DreamSummary consolidation fields. Ops are STUBS at P0
+        // (return 0); P1-P4 fill them.
+        let consolidation = if opts.any_consolidation_enabled() {
+            if let Some(tg) = self.memory.temporal_graph.as_ref() {
+                let group_id = namespace_to_group_id(&ns);
+                crate::core::dream::consolidation::run_consolidation(
+                    crate::core::dream::consolidation::RunConsolidationParams {
+                        graph: tg,
+                        group_id: &group_id,
+                        opts: &opts,
+                        model_id: dream_model_id,
+                    },
+                )
+                .await
+                .unwrap_or_default()
+            } else {
+                crate::core::dream::consolidation::ConsolidationSummary::default()
+            }
+        } else {
+            crate::core::dream::consolidation::ConsolidationSummary::default()
+        };
+
         // SCOPE-001 restructure gate (dream-phase-reconciliation-v2 Phase 1):
         // reaching this point proves control flowed PAST the reclassify pass
         // instead of early-returning inside its success arm. Passes wired in
@@ -494,6 +523,14 @@ impl<'a> DreamRequest<'a> {
         summary.acronym_nickname_merges = acronym_recall_merges;
         summary.type_registry_merges = type_registry_merges;
         summary.consistency_check_corrected = consistency_check_corrected;
+        // ADR-066 CONSOLIDATION: fold the four op counts into the (already-existing)
+        // DreamSummary consolidation fields, replacing their honest-zeros. Inert
+        // (all zero) unless a consolidation op was enabled + fired.
+        summary.communities_updated = consolidation.communities_updated;
+        summary.cross_episode_merges = consolidation.cross_episode_merges;
+        summary.supersessions_recorded = consolidation.supersessions_recorded;
+        summary.facts_archived = consolidation.facts_archived;
+        summary.warnings.extend(consolidation.warnings);
         summary.duration_ms = dream_start.elapsed().as_millis() as u64;
         Ok(summary)
     }

@@ -513,3 +513,109 @@ pub(crate) async fn migrate_018_identity_verdict_prereqs(
     );
     Ok(())
 }
+
+// ─── Migration 019 ─────────────────────────────────────────────────────────
+
+/// Migration 019 (ADR-066 spec §2): dream CONSOLIDATION sub-phase substrate.
+///
+/// Three new optional feature tables backing the four consolidation ops:
+///
+/// 1. **`facts_archive`** (P2 archive) — append-only audit history decoupled from
+///    the live `facts` table (SYNTHESIS #23). Same column shape as `facts` plus an
+///    `archived_at` timestamp. A long-expired, unreferenced fact is MOVED here
+///    (INSERT + DELETE inside one transaction, P2.3) so the live `facts` table +
+///    its temporal indexes stay bounded on the hot recall path. `id` carries the
+///    original `facts.id`. Index on `group_id` for scoped audit queries.
+///
+/// 2. **`entity_communities`** (P4 communities) — per-entity community membership
+///    from deterministic label propagation (`community_id`), keyed on
+///    `(group_id, entity_id)`. Index on `(group_id, community_id)` for
+///    membership-set lookups.
+///
+/// 3. **`community_summaries`** (P4 communities) — one row per community with a
+///    deterministic aggregate (`member_count`, `top_labels_json`) and a
+///    `member_hash` (SHA-256 of the sorted member-id list, §F-2) so an unchanged
+///    community hashes identically and is not re-counted (`communities_updated`).
+///    NO LLM summary (ADR-066 §A6). Keyed on `(group_id, community_id)`.
+///
+/// These are OPTIONAL feature tables: `check_integrity` (`schema.rs`) does NOT list
+/// them in `CRITICAL_TABLES`. Their absence on an old db must degrade gracefully
+/// (a consolidation op simply finds no rows), not raise `CorruptStore`.
+///
+/// Idempotent: every statement is `IF NOT EXISTS` and safe to re-run on an
+/// already-migrated db (mirrors migration 016/017/018 style).
+pub(crate) async fn migrate_019_consolidation_substrate(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_019 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // 1. facts_archive — append-only history, same column shape as facts + archived_at.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS facts_archive ( \
+             id INTEGER PRIMARY KEY, \
+             subject_id TEXT NOT NULL, predicate TEXT NOT NULL, \
+             object_id TEXT, object_value TEXT, properties TEXT, \
+             valid_from TEXT NOT NULL, valid_to TEXT, recorded_at TEXT NOT NULL, \
+             expired_at TEXT, invalid_at TEXT, group_id TEXT, confidence REAL, \
+             source_episode_id INTEGER, memory_type TEXT, content_hash TEXT, \
+             subject_group_id TEXT, object_group_id TEXT, is_dream_generated INTEGER DEFAULT 0, \
+             archived_at TEXT NOT NULL \
+         )",
+        (),
+    )
+    .await
+    .map_err(step("create_facts_archive"))?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_facts_archive_group ON facts_archive(group_id)",
+        (),
+    )
+    .await
+    .map_err(step("create_idx_facts_archive_group"))?;
+
+    // 2. entity_communities — per-entity community membership (deterministic, no LLM).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS entity_communities ( \
+             group_id TEXT NOT NULL, entity_id TEXT NOT NULL, \
+             community_id INTEGER NOT NULL, updated_at TEXT NOT NULL, \
+             PRIMARY KEY (group_id, entity_id) \
+         )",
+        (),
+    )
+    .await
+    .map_err(step("create_entity_communities"))?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entity_communities_comm \
+         ON entity_communities(group_id, community_id)",
+        (),
+    )
+    .await
+    .map_err(step("create_idx_entity_communities_comm"))?;
+
+    // 3. community_summaries — deterministic top-labels + member_hash (idempotency, §F-2).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS community_summaries ( \
+             group_id TEXT NOT NULL, community_id INTEGER NOT NULL, \
+             member_count INTEGER NOT NULL, top_labels_json TEXT NOT NULL, \
+             member_hash TEXT NOT NULL, updated_at TEXT NOT NULL, \
+             PRIMARY KEY (group_id, community_id) \
+         )",
+        (),
+    )
+    .await
+    .map_err(step("create_community_summaries"))?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        migration = "019",
+        "migrate_019: facts_archive + entity_communities + community_summaries installed"
+    );
+    Ok(())
+}
