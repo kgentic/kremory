@@ -61,3 +61,5 @@ repomix-*.xml
 .ai-docs/.obsidian/cache
 .ai-docs/.obsidian/graph.json
 .ai-docs/_attachments/
+
+spike/community_detect_bin
