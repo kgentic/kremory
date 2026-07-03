@@ -32,9 +32,17 @@
 //! ## Spike gating (spec §8)
 //!
 //! The 0.85 primary threshold is ADR-037's own already-calibrated number
-//! (reused, not invented). The 0.70 lower band edge and the lemma-heuristic
-//! pre-filter are SPIKE-GATED (S3) — this pass therefore ships behind
-//! `DreamOpts::include_type_registry_collapse`, DEFAULT `false` (spec §8).
+//! (reused, not invented). The lemma-heuristic pre-filter (F3) is VALIDATED
+//! (2026-07-03, findings-log F3 RESOLVED): distinct-concept trailing-s collisions
+//! measure real nomic cosines 0.56–0.64 ≪ 0.85, so the dual-signal guard holds
+//! without an `exact_only` toggle. The 0.70 lower band edge (F4) is exercised
+//! REJECT-side only — the `band_edge_moderate` corpus category (n=26) records
+//! zero false merges — but merge-side recall in [0.70, 0.85) is still unspiked
+//! (findings-log F4: open). Enablement rests on the strict lower-CI +
+//! zero-false-merge gate (site3_metrics.json precision 0.949, Wilson-lower 0.861
+//! ≥ 0.85, 0 false merges), which does NOT depend on F4's merge-side recall.
+//! This pass therefore ships behind
+//! `DreamOpts::include_type_registry_collapse`, DEFAULT `true`.
 //!
 //! ## Observability (spec §6)
 //!

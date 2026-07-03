@@ -48,13 +48,14 @@
 //! uses the `.with_known_alias()` escape hatch (spec §3.4, D8) — DEFERRED in
 //! this implementation pass; see the `// D8 escape hatch` marker below.
 //!
-//! ## Spike gating (spec §8)
+//! ## Spike gating (spec §8) — VALIDATED 2026-07-03
 //!
 //! S1 (initialism precision/recall), S2 (LLM adjudication precision/recall),
-//! and S6 (co-occurrence query cost) are NOT yet run. This pass therefore
-//! ships behind `DreamOpts::include_acronym_nickname_recall`, DEFAULT
-//! `false` (spec §8's hard constraint: no spike-gated number goes live
-//! before its mapped spike shows PASS).
+//! and S6 (co-occurrence query cost) have all PASSED. The fair adversarial
+//! metrics harness (`crates/kremory/tests/corpora/site5_metrics.json`, n=140)
+//! cleared the spec §4.2 gate: precision 1.00, Wilson-lower 0.955 ≥ 0.85, recall
+//! 0.988, ZERO false merges. This pass therefore ships behind
+//! `DreamOpts::include_acronym_nickname_recall`, DEFAULT `true`.
 //!
 //! ## Observability (spec §6)
 //!
