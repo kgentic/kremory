@@ -916,8 +916,13 @@ fn top_k_clusters(entities: &[CatchAllEntity], k: usize) -> Vec<NameCluster> {
         .filter(|(_, c)| *c >= 1) // include singletons at v0.1.1
         .map(|(name, count)| NameCluster { name, count })
         .collect();
-    // Sort descending by count for prompt ordering (most evidence first).
-    clusters.sort_by(|a, b| b.count.cmp(&a.count));
+    // Sort descending by count, then ascending by name as a DETERMINISTIC
+    // tiebreak. The HashMap `.into_iter()` above yields randomized per-process
+    // order, so a count-only sort leaves tied clusters in arbitrary order and
+    // `truncate(k)` then keeps an arbitrary subset run-to-run — making this
+    // pass's LLM prompt (and thus dream results) non-reproducible. Surfaced by
+    // dream-loop E2; sibling of the ORDER BY tiebreak fix (b8208c9).
+    clusters.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
     clusters.truncate(k);
     clusters
 }
