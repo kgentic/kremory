@@ -239,6 +239,17 @@ pub enum WriteDecision {
 /// | 5b | LLM `true`, confident, deterministic signal fired, BUT Site-#6 floor set and observed conf below it | `PotentialAlias` (Site #6 downgrade) |
 /// | 5 | LLM `true`, confident, deterministic signal fired, floor cleared (or absent) | `Merge` (the ONLY row where an LLM verdict authorizes `Merge` — and never alone) |
 ///
+/// **ADR-065 carve-out (Site #2):** the dream-phase type-novelty gate
+/// (`dream::discover_types::type_novelty_is_redundant`) intentionally does NOT
+/// call this function. Schema-level TYPE matching trusts the LLM as terminal
+/// arbiter, because Row 6's deterministic-corroboration requirement — an
+/// ADR-057 ENTITY-homonymy guard (same name, *different* referent) — over-
+/// generalizes to type synonyms ("Firm"/"Company"), which are lexically
+/// dissimilar by nature and so structurally fail the lexical signal even when a
+/// correct, confident `true` verdict is returned. Do NOT re-unify the two rules
+/// without reading ADR-065 (the residual-risk analysis is there). Entity /
+/// instance identity (Sites #3 / #5 / #6) still uses this gate UNCHANGED.
+///
 /// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` so
 /// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`) can
 /// replicate the discover_types Site #2 decision flow exactly.
