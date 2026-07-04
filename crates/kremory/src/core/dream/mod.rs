@@ -140,3 +140,10 @@ pub use consolidation::archive::archive;
 // `feature = "test-utils"`-gated. NOT part of the stable public API contract.
 #[cfg(any(test, feature = "test-utils"))]
 pub use consolidation::cross_episode::cross_episode;
+// ADR-066 dream CONSOLIDATION P4 communities fixture harness
+// (`tests/consolidation_communities_test.rs`). `communities` is `pub` +
+// `#[doc(hidden)]` inside the (otherwise `pub(crate)`) consolidation module — same
+// E0365 visibility requirement as the supersession/archive/cross_episode re-exports
+// above. `feature = "test-utils"`-gated. NOT part of the stable public API contract.
+#[cfg(any(test, feature = "test-utils"))]
+pub use consolidation::communities::communities;

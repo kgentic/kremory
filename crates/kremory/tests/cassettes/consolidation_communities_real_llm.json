@@ -1,0 +1,685 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "05a2a5401ed7fdee0eb4ca19865f1a08a7dfb96dfc1ba335d629fa0f710f3c48": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "0b96007a35d9db2d882b03d756fb54406cc1d4ddd77e0684bcb3003a8a4fdaa0": [
+      {
+        "call_index": 0,
+        "response_text": "[\n  \"flows through\",\n  \"empties into\"\n]"
+      }
+    ],
+    "0f07f8e88788823a6b56822c75cd44a25b0b59031cd0cef606508eb9d6782030": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "0ff38ba39ab861cf8a71fa3bbd8d656f3a824a22a262851aded36bd8e58c39c0": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "11d6e4e27bbdb28bb99a0988fcc5a844cfbd91c55666aac5159b20cbd424ddb3": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "1543c7c65f7c1908f5b21f8fc529e34831044bff2265ada508cfa5576430c0f9": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "1590f7d3a481631e358f00a1eb50a6725ff08720c9e06112a1fce4c8ee20db5a": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "180db52c08b5543b20d83bc2a18d3dbe96f3164d5848ee2848d29f5df74bcd4a": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "19ec9161553b0230c3a3e1cdd8d563ab44d4e88f748413df6887f9297c3ad54b": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "1dbb6f7156b19ed2913fa8d6904242b4478171b60a1a2302d182862e0e1099f0": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "1eecf7e43c0da0d8a5c1969e5d6dbb34e0ab309ac5588e984f9291f65c4584ca": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "20726f66630a408c8d17fa4cf475be45275d391fe09bc9e26b281a470c60641e": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "27e1d4628eef733e5a27a7137a72a28d44ae7dbd2b33f7e4a708c562bbdaf66e": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "27fb046d73868029c73bd49c7da32d878b268a9b1c257989e4d19b6f759383fa": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "28f4164560b5546cadee93146d41ebc0824f52540681460e3c8342f503e122f0": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "2fb5bd69d75e1414635bac5b6580a4830002b84b031002b0a6b5bc4c32090ee9": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "3219830e8ee4cc9b7dc709f970bf2478dfca1cc4a5a282981d7c14021c3d73bf": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "32ee30bc5fca12fdbf2e90b6f728a0cafdd4085135246bb4eed0e1812c2c23c1": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "34f1455956fe5cf2ed50aa8afebc07c2df48fe5b52e7d7ab22697936f41d8e12": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "35c7f7a5921650c47692cd76061c36a4905b730d51717519b385d2f92e2a7991": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "3a22bf823f6feed90c69e27a4f4a30c54d2c1a56a675945b3e1b68f463c321a4": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "3c0dc7cfb5aa8073e1f38204c6f21f0a8348d919366cec12c039b0428fc00702": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "421b12f556692c32b2d783ece6bc01629148a52fce1411835b43cecd2e35b297": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "438b994dc97f2686ea308f03c20f6d9203e897d5a8abda4c75723e7d24ef6f6f": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "48bd89866b0027c87860489caf5ceeb42142e1476ad8649c30c8daf1bee03bc9": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "4bcde35b74b5267586385abfe27f79c6222ef11141116f2b7c58c5e9b952bc04": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "4cf14155fa2e011da60a75629f332fba8c4a7f79e18ec161dde7161fa36ab797": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "55cfcdd6778f58501490e717ccd87a07b78d4198fd3a59ccf7bbfb48222e81c2": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "5627eadd9cbcf6219d74224198bfeb60ab4a397276f5f9377aaa4c08a1157ef3": [
+      {
+        "call_index": 0,
+        "response_text": "{\"entities\": [{\"name\": \"Marie Curie\", \"entity_type_id\": 1}, {\"name\": \"Warsaw\", \"entity_type_id\": 3}, {\"name\": \"Nobel Prizes\", \"entity_type_id\": 8}, {\"name\": \"Physics\", \"entity_type_id\": 9}, {\"name\": \"Chemistry\", \"entity_type_id\": 9}]}"
+      }
+    ],
+    "5678843b151abeeefa600def0131db6a28560779134a8cd30a4d5c2fe512fc75": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  \"ingredient_amount\"\n]\n```"
+      }
+    ],
+    "56b9a01111208cc37008e06cb97f5b0828c229753f489de078084fd414f446a1": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "59003f7b729f9d2ac666cfec14956464183ee42160b93d9842309b4a416f6135": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "5a0696c455840e1aa5262785f7bac0fe7df059e48705b7a97e86c7e975bea787": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "5c28b662c3402f42e53a039245f2513fd30c3900dda5e1f580ecd26a556e4d41": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "5d22233af475e6eb347885e39237719357e8a4c9d72ec771b19cb20068489f41": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "5e859ddd282d78f5372448531e1d3cbbbeeb7b6f5d81cac59d0935d9a6ce02e5": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "6103b04ab3bb8fd4a45c9599ec3d7ae44ebc84ec14f42f918d4db625bdca0d51": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "64bfb5e1c0e990bbef11635994968714bf38921a814471ffab6d88e1b2cd6d46": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "64db79776c94dd4b3743ab3b70c4848e636de122c4dfeb43b12d7decb9fb6ca6": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "65283f71831fd8a62cf0b09db261914c1d5a7363c2488d41c97cbba4881005d6": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "66b9ba35970e927d12ad67482b5c9f9d059cf455a32b24d42f1546589fa336f6": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "6841ed10bcdcd8c0e91df8be427007fcf5507fa729f9e29d7e08fad435f6febd": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "68ad9f8ecbe2597e455ed3195112d43bcff27ea381cd76c013d9eab8dd9d0fe9": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"flour\",\n    \"predicate\": \"ingredient_amount\",\n    \"object\": \"two cups\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"baking soda\",\n    \"predicate\": \"ingredient_amount\",\n    \"object\": \"a teaspoon\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"ripe bananas\",\n    \"predicate\": \"ingredient_amount\",\n    \"object\": \"three\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
+      }
+    ],
+    "6ae37f0f609cd226d084348cd63bdb29d343949091960d2ce42b46548924b976": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "6e8b2373f7a0f11393cb7f40ba9eceda3cc31f28a1e718b1a56cd3cb65335dcf": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "711751eb98321592f33376379785ee4f97e4fe067ab31439aff2ebe708a741cb": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "7406d56ec20a5413472715bbf1163152799930231eb5e4f04cc239293bddbb37": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
+      {
+        "call_index": 0,
+        "response_text": "How can I help you today? Whether you have a question, need some creative writing, want to learn something new, or just want to chat, feel free to let me know! 😊"
+      },
+      {
+        "call_index": 1,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 2,
+        "response_text": "Hello! How can I help you today? 😊"
+      },
+      {
+        "call_index": 3,
+        "response_text": "Hello! How can I help you today? 😊"
+      },
+      {
+        "call_index": 4,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 5,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 6,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 7,
+        "response_text": "I'm ready! What can I help you with today? 😊"
+      },
+      {
+        "call_index": 8,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 9,
+        "response_text": "How can I help you today? 😊"
+      }
+    ],
+    "7645128d6fe3d956343c88eff94176f12876b1a91be1ec3e0b69cf2449b798ac": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "7809db93f48287dd308d68ef8b5674fc9132dde7d6ebfddf250278a6769634c7": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  \"born_in\",\n  \"awarded_award\",\n  \"award_for_field\"\n]\n```"
+      }
+    ],
+    "8090660029c204076a1743d4f2592078f4c7f7d8e5f88a0d9a6654936761711b": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "83da325b9d708d1e88fa794042aa1b743dbb768151908e857d151bdd2cbf94c5": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "841e9f6684c2d4518dacabeb03db2f1512a447efe7173a25b776a3ebd6c7e9d4": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "84e55ac8928f5488732c38c674b698c1d1622afc6b31d664864147b6eb7b8e77": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "8545f944f9fcb1c314f2463ae4367f4ba6038c34e4cb68a5e9908899c20ccee7": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "85bb054c8d885d16ff550626766b79ce2e3625d3608d516daaed00e474b36f4b": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "87db7435bcb9877ece21e609edd032fde597f33a4e5d874032c291c2a2843025": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  \"founded_by\",\n  \"located_in\"\n]\n```"
+      }
+    ],
+    "88accbec560b9d78d8fb6fa72a3db1fd13bf36e74ec66d744fc56cd67f4052a5": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"two cups\",\n      \"entity_type_id\": 7\n    },\n    {\n      \"name\": \"teaspoon\",\n      \"entity_type_id\": 7\n    },\n    {\n      \"name\": \"three ripe bananas\",\n      \"entity_type_id\": 7\n    }\n  ]\n}\n```"
+      }
+    ],
+    "88d310a7ce2e2249eb9e4e0efd0d43e9f7de293467cfc755c226bab295a10c1f": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "88d47473305f0d24db9992b66525467d95047792aeef23a23486d278431a45c9": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "8fd6b854aa3e43eddad18f16c56376eefee0d31a69d2b6b47dd305f1c2c3e3ba": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "9068cb1d30a39f82adcd43d98c8531a23788fcf24ac3dbcd071b3f2450670098": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "94e0640e2349c87ba965f8ff25e8d8032f493240ecf781c743b744af524c8b76": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "94fd87b73460099de3829f13a6545073ecfe01a49fd1ae249f4eaf9f540033de": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "9778d0a0dffa559fcdc48b99ba76279c4eabf02eb03a3af0ce79bd86e5da9601": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "9c3544f2d84a1c631b8c313cb5ff19db3d2fc67517f7ab05e66b837509dca052": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "9c477901a5f6e47e3193bfb1cf38f5c4cd88aa98cf2e8cb16e315468b4003b20": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "a476d14fe8652459b54f271e2f9cd7a82a9db52c885583ae54fc241d4334565c": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "a48bd88421e2edaefba523563364ea3e8bceace23b10f091652f1988822a4c1c": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "a53655324c2603c45593d7b497191ca4ca260c6a280826559b1f1733bc2343d2": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "a73f539cbce38c6beb3b94bcf4d4c780abb65103daa1c45725d43b2a8d7e8285": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "a79b0a93cb1a8520928c44ebed6d4d77791842073ace8941a3627a1e6f49b59a": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "a982034da75012cf511fb137b5563fa2482a340a9b9b761f5c238782653dab52": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "aaf01004b1691a742e764db008596a87ed00eb2c6beb50025bf21dc5440e29e7": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "ae3e9c8a53824b1bee6ec530773dce06b6b5306ee3acf5133894ce5eafa9027e": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "b4162b423416d3e4587ade2fdd1b87bdb10f0b4cf41f362bac762a1c2b7a7d6d": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "b6084e13de84a045378f6cbaaef3635f5adeb8f437fc5af357c46cf28df42f01": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "b716bf6715ebac69172a4029da1858e7010c01cecc1f8dcf67369979fad4a5f5": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "b7c2fa1c971af9a3a4d1270ae98523962d4e2edfd7f2a8e2fc49fdc7f79aa987": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "b81209fa166ee035ac226d96a1754c1f2f25e2e62206849244ec1510e4f12871": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "bfd102e78f6ca8ba1457bf63c6aa86e3bd05416f0920712b16f591917354aee5": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "c1e4f02377625ec6bb7bfbf8ed3a9943aab35c9b7d1860ec6eb2e315a472da39": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "c3105fdda83fba3d14d69831fbc9399ae971931c7635819a20678d30df598dcc": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founded_by\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"located_in\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.90\n  }\n]\n```"
+      }
+    ],
+    "c8bea0759e06145ac6e7dc40b4f088df41d9c0a1ba114405779dacfda4b4fa03": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "c964012f905eafc6a414542b018054beac302c32bcca3339eb9f3d7a9e84bbca": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"born_in\",\n    \"object\": \"Warsaw\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_award\",\n    \"object\": \"Nobel Prizes\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"award_for_field\",\n    \"object\": \"Physics\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"award_for_field\",\n    \"object\": \"Chemistry\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
+      }
+    ],
+    "cbe229f35934f19016f921a736f072cd267b637eb9a9984215956673fc3e16aa": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "cc5f0667be6321879178af33c25a6483d8409807c5a58916598f8af0f375912b": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "d491496672452d135d809632f375f298e92d66de03c8ffad4f8b1b9836792159": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "dd662c27be7a764465f7c72d460f74bd9cd642dba6e24c7bbbcf6e34937d081c": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e0500786259af2e9c2de19742c5b1b839e73568c1b5c8d72302421b44d93baa2": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e0dca3418b96575ea7b8afd6bf34705b1ab655aeed9217e371f2158bca194ef7": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e1af5c4673016865f8a27e643a7c59c3d1d0bc41bc8c2c6a95ba6ec045c29bd2": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.98\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows over\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.90\n  }\n]\n```"
+      }
+    ],
+    "e1f1b2f760d76f3a0cbb27e7c5062b43baea1edb5e0bbb9a02a5bc54d7aeaecc": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e23d05658d3047e8d5a26d6783e5a603616b7af14691dd2d37400a9023fc3c7d": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e4d514c5f2bf9139936703f106ab2e83844f187b6baa823a9a32de0e7e3b9356": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e5d3b5e7d78537c699ed9412bc38f55c95303f13b16de7eda427cc69defe815a": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e691375f4e4e9a0b2927f1f81edda0386ef007836098f589eb52b84c3838b8b0": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Acme Corporation\",\n      \"entity_type_id\": 2\n    },\n    {\n      \"name\": \"Jane Smith\",\n      \"entity_type_id\": 1\n    },\n    {\n      \"name\": \"Ohio\",\n      \"entity_type_id\": 3\n    }\n  ]\n}\n```"
+      }
+    ],
+    "e964cb74426529a40af3020c6cb50f244428d426eff64659f0a4617287a89312": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "eae0d20222340f2cfc29f41121b61a0a1f9e51e76865352d5f6d3f672616aa39": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "eb896d625ed88b482a9131e85283fdc15f1d573f6ac927858e88c9abf4879476": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "ef62d707a4db0e227c2986a7142b4f4d89affa8ad81f7a18503e65b41b5195df": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "ef9db078e8299250db69357568df5ed1cb97183602d181474f00ed2eb1571765": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "f20cae150e24ddf944a3bccdcc1153db88943d2488f5e525a76d05c1ae6a00b8": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "f535430be40255a52748925236026f7cf20f4d0a007f73be2a4a6c54200847b8": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"entities\": [\n    {\n      \"name\": \"Amazon River\",\n      \"entity_type_id\": 0\n    },\n    {\n      \"name\": \"six thousand kilometres\",\n      \"entity_type_id\": 7\n    },\n    {\n      \"name\": \"Brazil\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Peru\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Atlantic Ocean\",\n      \"entity_type_id\": 3\n    }\n  ]\n}"
+      }
+    ],
+    "f79aff1179f0acafabf16c7c8e3e49a087534e63f1f7e7d242c0d82ae681fd0f": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "f8f61d6daa4be28e834660ee1ae60e09d41db8627fa745a488dddbe8ae0a70d3": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "fd6431df6c1b1b4c6ed6e2b2f6b960a4bcab8279cd1baf52e2afa96aabee60a1": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ]
+  }
+}
