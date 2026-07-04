@@ -1,0 +1,12 @@
+{"id":"arc-001","subject":"alice","predicate":"lived_in","object_value":"Boston","category":"long_expired_safe","valid_from_days_ago":400,"expired_at_days_ago":120,"sole_binding":false,"expected_archive":true}
+{"id":"arc-002","subject":"bob","predicate":"worked_at","object_value":"AcmeCorp","category":"long_expired_safe","valid_from_days_ago":800,"expired_at_days_ago":365,"sole_binding":false,"expected_archive":true}
+{"id":"arc-003","subject":"carol","predicate":"held_role","object_value":"Intern","category":"long_expired_safe","valid_from_days_ago":500,"expired_at_days_ago":200,"sole_binding":false,"expected_archive":true}
+{"id":"arc-004","subject":"dave","predicate":"studied","object_value":"Physics","category":"long_expired_safe","valid_from_days_ago":1000,"expired_at_days_ago":91,"sole_binding":false,"expected_archive":true}
+{"id":"arc-005","subject":"erin","predicate":"drove","object_value":"Volvo","category":"within_grace","valid_from_days_ago":300,"expired_at_days_ago":30,"sole_binding":false,"expected_archive":false}
+{"id":"arc-006","subject":"frank","predicate":"lived_in","object_value":"Denver","category":"within_grace","valid_from_days_ago":200,"expired_at_days_ago":89,"sole_binding":false,"expected_archive":false}
+{"id":"arc-007","subject":"grace","predicate":"used","object_value":"Windows","category":"within_grace","valid_from_days_ago":150,"expired_at_days_ago":1,"sole_binding":false,"expected_archive":false}
+{"id":"arc-008","subject":"heidi","predicate":"likes","object_value":"tea","category":"unexpired","valid_from_days_ago":400,"expired_at_days_ago":null,"sole_binding":false,"expected_archive":false}
+{"id":"arc-009","subject":"ivan","predicate":"lives_in","object_value":"Oslo","category":"unexpired","valid_from_days_ago":50,"expired_at_days_ago":null,"sole_binding":false,"expected_archive":false}
+{"id":"arc-010","subject":"judy","predicate":"was","object_value":"ghost","category":"sole_binding","valid_from_days_ago":600,"expired_at_days_ago":300,"sole_binding":true,"expected_archive":false}
+{"id":"arc-011","subject":"mallory","predicate":"was","object_value":"phantom","category":"sole_binding","valid_from_days_ago":700,"expired_at_days_ago":250,"sole_binding":true,"expected_archive":false}
+{"id":"arc-012","subject":"olivia","predicate":"formerly","object_value":"analyst","category":"long_expired_safe","valid_from_days_ago":900,"expired_at_days_ago":180,"sole_binding":false,"expected_archive":true}

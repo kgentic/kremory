@@ -127,3 +127,9 @@ pub use discover_types::{
 pub use consolidation::substrate::{ConsolidationBudget, OpReport};
 #[cfg(any(test, feature = "test-utils"))]
 pub use consolidation::supersession::{supersession, SupersessionParams};
+// ADR-066 dream CONSOLIDATION P2 archive corpus harness
+// (`tests/consolidation_archive_test.rs`). `archive` is `pub` + `#[doc(hidden)]`
+// inside the (otherwise `pub(crate)`) consolidation module — same E0365 visibility
+// requirement as the supersession re-export above. `feature = "test-utils"`-gated.
+#[cfg(any(test, feature = "test-utils"))]
+pub use consolidation::archive::archive;
