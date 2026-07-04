@@ -133,3 +133,10 @@ pub use consolidation::supersession::{supersession, SupersessionParams};
 // requirement as the supersession re-export above. `feature = "test-utils"`-gated.
 #[cfg(any(test, feature = "test-utils"))]
 pub use consolidation::archive::archive;
+// ADR-066 dream CONSOLIDATION P3 cross_episode corpus harness
+// (`tests/consolidation_cross_episode_test.rs`). `cross_episode` is `pub` +
+// `#[doc(hidden)]` inside the (otherwise `pub(crate)`) consolidation module — same
+// E0365 visibility requirement as the supersession/archive re-exports above.
+// `feature = "test-utils"`-gated. NOT part of the stable public API contract.
+#[cfg(any(test, feature = "test-utils"))]
+pub use consolidation::cross_episode::cross_episode;
