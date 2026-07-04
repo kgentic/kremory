@@ -619,3 +619,111 @@ pub(crate) async fn migrate_019_consolidation_substrate(
     );
     Ok(())
 }
+
+// ─── Migration 020 ─────────────────────────────────────────────────────────────
+
+/// Migration 020 (ADR-067 V1): `facts.corroboration_inert` — provenance-anchored
+/// corroboration column, the convergence fix for the `cross_episode_merges`
+/// (P3) op.
+///
+/// ## Why
+///
+/// `apply_merge_with_audit` (`canonicalization.rs`) remaps the loser's facts onto
+/// the keeper (`UPDATE facts SET subject_id = keeper WHERE subject_id = loser`
+/// and the `object_id` analogue). The remap rewrites ONLY the endpoint id — every
+/// other column is untouched — so the keeper INHERITS the loser's fact-neighbours.
+/// `cross_episode`'s corroboration reads (`neighbours_of` / `assertions_of`) read
+/// the LIVE `facts` table, so on the NEXT pass the keeper's neighbour set includes
+/// the inherited structure, which can make a previously-deferred bridge partner
+/// newly eligible → a distinct referent co-merges one pass later. `corroboration_inert`
+/// severs this: every fact endpoint REWRITTEN by a merge is stamped `= 1`;
+/// corroboration reads filter `= 0` (directly-asserted structure only). The flag
+/// is monotone (merges only ever set it, never clear it), so the corroboration-live
+/// edge set shrinks monotonically across passes — the op reaches a fixpoint in
+/// ≤ 1 merge-pass. See ADR-067 + impl-spec §C0/§6.
+///
+/// **`is_dream_generated` (migration 016) is NOT reusable** — it marks
+/// dream-*synthesized* facts written by `verify_stage`/`supersession`, and Pass-2
+/// reclassify filters `WHERE is_dream_generated = 0`; overloading it would corrupt
+/// that filter. `corroboration_inert` is a dedicated column with distinct semantics
+/// (merge-inherited, not dream-synthesized).
+///
+/// ## Additive column
+///
+/// - **`facts.corroboration_inert`** — `INTEGER NOT NULL DEFAULT 0`. `0` =
+///   "directly asserted" (the default — every existing + newly-inserted fact is
+///   corroboration-live unless a merge stamps it inert). `1` = "this fact's
+///   subject_id or object_id was rewritten by an entity-merge remap" — set by
+///   `apply_merge_with_audit`'s two endpoint UPDATEs (canonicalization.rs), NEVER
+///   cleared.
+///
+/// ## Idempotency
+///
+/// PRAGMA-guard (`SELECT COUNT(*) FROM pragma_table_info('facts') WHERE name =
+/// 'corroboration_inert'`) before the `ALTER TABLE ADD COLUMN`, mirroring
+/// migration 016's `is_dream_generated` idiom exactly (`defs_g1.rs:195-236`).
+/// Additive, no table rebuild, no FTS/embedding recompute, no data migration
+/// (default 0 = "directly asserted" is correct for every pre-existing row — no
+/// backfill needed). `facts_archive` (migration 019) intentionally does NOT
+/// project this column: `archive.rs`'s `ARCHIVE_INSERT_SQL` uses an explicit
+/// column list (not `SELECT *`) and only archives `expired_at`-set facts, which
+/// are already excluded from corroboration reads by the existing
+/// `expired_at IS NULL` filter — `corroboration_inert` is a live-fact concern only.
+pub(crate) async fn migrate_020_facts_corroboration_inert(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_020 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    let mut pragma_rows = conn
+        .query(
+            "SELECT COUNT(*) FROM pragma_table_info('facts') WHERE name = 'corroboration_inert'",
+            (),
+        )
+        .await
+        .map_err(step("pragma_facts_corroboration_inert"))?;
+    let has_col = if let Some(row) = pragma_rows
+        .next()
+        .await
+        .map_err(step("pragma_facts_corroboration_inert_next"))?
+    {
+        let count: i64 = row
+            .get(0)
+            .map_err(step("pragma_facts_corroboration_inert_get"))?;
+        count > 0
+    } else {
+        false
+    };
+    drop(pragma_rows);
+
+    if !has_col {
+        conn.execute(
+            "ALTER TABLE facts ADD COLUMN corroboration_inert INTEGER NOT NULL DEFAULT 0",
+            (),
+        )
+        .await
+        .map_err(step("add_column_facts_corroboration_inert"))?;
+
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_020: facts.corroboration_inert column added"
+        );
+    } else {
+        tracing::debug!(
+            target: "kremory::migrations",
+            "migrate_020: facts.corroboration_inert already present — skipping ALTER"
+        );
+    }
+
+    tracing::info!(
+        target: "kremory::migrations",
+        migration = "020",
+        "migrate_020: facts.corroboration_inert (ADR-067 provenance-anchored corroboration) installed"
+    );
+    Ok(())
+}

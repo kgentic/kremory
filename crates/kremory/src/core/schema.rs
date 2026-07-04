@@ -726,6 +726,12 @@ impl TemporalGraph {
         // Idempotent: CREATE TABLE/INDEX IF NOT EXISTS.
         crate::core::migrations::migrate_019_consolidation_substrate(&self.conn).await?;
 
+        // Migration 020 (ADR-067 V1): facts.corroboration_inert — provenance-anchored
+        // corroboration column, the convergence fix for cross_episode_merges (P3).
+        // Additive, PRAGMA-guarded, mirrors migration 016's is_dream_generated idiom.
+        // Idempotent: PRAGMA-guarded ADD COLUMN.
+        crate::core::migrations::migrate_020_facts_corroboration_inert(&self.conn).await?;
+
         Ok(())
     }
 
@@ -1241,6 +1247,65 @@ mod schema_tests {
         assert!(
             found_composite,
             "facts must still have composite FK after second migration run"
+        );
+    }
+
+    /// Migration 020 (ADR-067 V1): `facts.corroboration_inert` must be present on a
+    /// FRESH in-memory DB (open runs the full migration chain including 020) AND
+    /// survive a re-run of the whole chain unchanged (idempotent PRAGMA-guarded ADD
+    /// COLUMN — impl-spec §C0 DoD: "a fresh in-memory DB + a migrated-from-prior DB
+    /// both end with the column present").
+    #[tokio::test]
+    async fn migrate_020_facts_corroboration_inert_present_and_idempotent() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+
+        // Fresh DB: column present with default 0.
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT COUNT(*) FROM pragma_table_info('facts') WHERE name = 'corroboration_inert'",
+                (),
+            )
+            .await
+            .expect("pragma_table_info query");
+        let count: i64 = rows
+            .next()
+            .await
+            .expect("row")
+            .expect("present")
+            .get(0)
+            .expect("count col");
+        assert_eq!(
+            count, 1,
+            "facts.corroboration_inert must be present on a fresh in-memory DB"
+        );
+
+        // Re-run the whole migration chain (idempotent PRAGMA-guarded ADD COLUMN) —
+        // must not error and the column must still be present exactly once.
+        graph
+            .run_migrations_again_for_test()
+            .await
+            .expect("second run must be no-op");
+
+        let mut rows2 = graph
+            .conn
+            .query(
+                "SELECT COUNT(*) FROM pragma_table_info('facts') WHERE name = 'corroboration_inert'",
+                (),
+            )
+            .await
+            .expect("pragma_table_info query (2nd)");
+        let count2: i64 = rows2
+            .next()
+            .await
+            .expect("row")
+            .expect("present")
+            .get(0)
+            .expect("count col");
+        assert_eq!(
+            count2, 1,
+            "facts.corroboration_inert must remain present exactly once after re-run \
+             (idempotent — no duplicate-column error)"
         );
     }
 
