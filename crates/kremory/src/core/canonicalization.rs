@@ -473,21 +473,30 @@ pub(crate) async fn apply_merge_with_audit(
         Err(_) => (0, None),
     };
 
-    // Remap facts.subject_id
+    // Remap facts.subject_id — ADR-067 §C0 (V1): also stamp `corroboration_inert = 1`
+    // on every rewritten row. The endpoint remap makes the keeper INHERIT the
+    // loser's fact-neighbours; without this stamp `cross_episode`'s corroboration
+    // reads (`neighbours_of`/`assertions_of`, which filter `corroboration_inert = 0`)
+    // would treat the inherited structure as directly-asserted on the NEXT pass,
+    // re-opening a deferred bridge partner's eligibility (the V1 convergence bug).
+    // The flag is monotone (set here, never cleared) — see impl-spec §6 fixpoint proof.
     let r1 = graph
         .conn
         .execute(
-            "UPDATE facts SET subject_id = ?1 WHERE subject_id = ?2",
+            "UPDATE facts SET subject_id = ?1, corroboration_inert = 1 WHERE subject_id = ?2",
             libsql::params![keeper_id, loser_id],
         )
         .await;
 
-    // Remap facts.object_id
+    // Remap facts.object_id — same C0 stamp, object-position analogue. Both UNION
+    // arms of `neighbours_of` (and `assertions_of`) filter `corroboration_inert = 0`,
+    // so a neighbour reached via the loser's OBJECT-position fact must be equally
+    // inerted (impl-spec §C0 DoD: "BOTH arms of neighbours_of's UNION").
     let r2 = if r1.is_ok() {
         graph
             .conn
             .execute(
-                "UPDATE facts SET object_id = ?1 WHERE object_id = ?2",
+                "UPDATE facts SET object_id = ?1, corroboration_inert = 1 WHERE object_id = ?2",
                 libsql::params![keeper_id, loser_id],
             )
             .await
@@ -1106,5 +1115,160 @@ mod tests {
             keeper.access_count, 7,
             "keeper must accumulate loser access_count"
         );
+    }
+
+    // ── ADR-067 §C0: apply_entity_merge stamps corroboration_inert on remapped facts ──
+
+    /// Insert a bare entity (no embedding needed — these tests exercise the merge
+    /// executor directly via `apply_entity_merge`, not the cosine-gated
+    /// `canonicalize_surface_forms` path).
+    async fn insert_bare_entity(graph: &TemporalGraph, id: &str, group_id: &str) {
+        graph
+            .insert_entity_with_group(crate::core::graph::InsertEntityWithGroupParams {
+                id,
+                entity_type_id: 0,
+                properties: serde_json::json!({ "name": id }),
+                group_id: Some(group_id),
+            })
+            .await
+            .expect("insert bare entity");
+    }
+
+    /// Plant a relational fact `subject --predicate--> object` directly via SQL
+    /// (mirrors `cross_episode.rs`'s test `fact_rel` helper).
+    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    async fn plant_fact_rel(
+        graph: &TemporalGraph,
+        gid: &str,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+    ) {
+        let now = chrono::Utc::now().to_rfc3339();
+        graph
+            .conn
+            .execute(
+                "INSERT INTO facts \
+                 (subject_id, predicate, object_id, valid_from, recorded_at, group_id, \
+                  subject_group_id, object_group_id, confidence) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1.0)",
+                libsql::params![subject, predicate, object, now.clone(), now, gid, gid, gid],
+            )
+            .await
+            .expect("plant relational fact");
+    }
+
+    async fn corroboration_inert_of(graph: &TemporalGraph, fact_id: i64) -> i64 {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT corroboration_inert FROM facts WHERE id = ?1",
+                libsql::params![fact_id],
+            )
+            .await
+            .expect("query corroboration_inert");
+        rows.next()
+            .await
+            .expect("row")
+            .expect("present")
+            .get::<i64>(0)
+            .expect("corroboration_inert col")
+    }
+
+    async fn fact_id_of(graph: &TemporalGraph, subject: &str, predicate: &str) -> i64 {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT id FROM facts WHERE subject_id = ?1 AND predicate = ?2",
+                libsql::params![subject, predicate],
+            )
+            .await
+            .expect("query fact id");
+        rows.next()
+            .await
+            .expect("row")
+            .expect("present")
+            .get::<i64>(0)
+            .expect("id col")
+    }
+
+    #[tokio::test]
+    async fn apply_entity_merge_stamps_corroboration_inert_on_subject_endpoint() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let gid = "g_c0_subj";
+        insert_bare_entity(&graph, "keeper", gid).await;
+        insert_bare_entity(&graph, "loser", gid).await;
+        insert_bare_entity(&graph, "untouched_subject", gid).await;
+        insert_bare_entity(&graph, "neighbour", gid).await;
+
+        // loser's fact (loser is SUBJECT) — endpoint gets remapped to keeper.
+        plant_fact_rel(&graph, gid, "loser", "knows", "neighbour").await;
+        // An UNRELATED fact (neither endpoint touches the merge) must stay live (=0).
+        plant_fact_rel(&graph, gid, "untouched_subject", "knows", "neighbour").await;
+
+        let remapped_id = fact_id_of(&graph, "loser", "knows").await;
+        let untouched_id = fact_id_of(&graph, "untouched_subject", "knows").await;
+
+        apply_entity_merge(&graph, "loser", "keeper")
+            .await
+            .expect("merge");
+
+        // The remapped fact's endpoint is now `keeper` (subject_id rewritten) AND it
+        // must be stamped corroboration_inert = 1.
+        assert_eq!(
+            corroboration_inert_of(&graph, remapped_id).await,
+            1,
+            "fact whose subject_id endpoint was rewritten by the merge must be \
+             corroboration_inert = 1"
+        );
+        // The untouched fact (no endpoint rewritten) must remain corroboration_inert = 0.
+        assert_eq!(
+            corroboration_inert_of(&graph, untouched_id).await,
+            0,
+            "fact NOT touched by the merge remap must remain corroboration_inert = 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_entity_merge_stamps_corroboration_inert_on_object_endpoint() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let gid = "g_c0_obj";
+        insert_bare_entity(&graph, "keeper", gid).await;
+        insert_bare_entity(&graph, "loser", gid).await;
+        insert_bare_entity(&graph, "asserter", gid).await;
+
+        // `asserter --knows--> loser`: loser is the OBJECT here. Verifies the C0 stamp
+        // fires equally on the object_id UPDATE branch (impl-spec §C0 DoD: "a neighbour
+        // inherited via the loser's OBJECT-position fact is equally inert").
+        plant_fact_rel(&graph, gid, "asserter", "knows", "loser").await;
+        let remapped_id = fact_id_of(&graph, "asserter", "knows").await;
+
+        apply_entity_merge(&graph, "loser", "keeper")
+            .await
+            .expect("merge");
+
+        assert_eq!(
+            corroboration_inert_of(&graph, remapped_id).await,
+            1,
+            "fact whose object_id endpoint was rewritten by the merge must be \
+             corroboration_inert = 1"
+        );
+        // object_id itself must have been remapped to keeper.
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT object_id FROM facts WHERE id = ?1",
+                libsql::params![remapped_id],
+            )
+            .await
+            .expect("query object_id");
+        let object_id: Option<String> = rows
+            .next()
+            .await
+            .expect("row")
+            .expect("present")
+            .get(0)
+            .expect("object_id col");
+        assert_eq!(object_id.as_deref(), Some("keeper"), "object_id must be remapped");
     }
 }
