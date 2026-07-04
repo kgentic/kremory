@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "0b96007a35d9db2d882b03d756fb54406cc1d4ddd77e0684bcb3003a8a4fdaa0": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  \"flows through\",\n  \"empties into\"\n]\n```"
+      }
+    ],
+    "1543c7c65f7c1908f5b21f8fc529e34831044bff2265ada508cfa5576430c0f9": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "1dbb6f7156b19ed2913fa8d6904242b4478171b60a1a2302d182862e0e1099f0": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "35c7f7a5921650c47692cd76061c36a4905b730d51717519b385d2f92e2a7991": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "421b12f556692c32b2d783ece6bc01629148a52fce1411835b43cecd2e35b297": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "4cf14155fa2e011da60a75629f332fba8c4a7f79e18ec161dde7161fa36ab797": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "64bfb5e1c0e990bbef11635994968714bf38921a814471ffab6d88e1b2cd6d46": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "6e8b2373f7a0f11393cb7f40ba9eceda3cc31f28a1e718b1a56cd3cb65335dcf": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
+      {
+        "call_index": 0,
+        "response_text": "How can I help you today? Whether you have a question, need some creative writing, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
+      },
+      {
+        "call_index": 1,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 2,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 3,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 4,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 5,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 6,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 7,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 8,
+        "response_text": "What can I help you with today? 😊"
+      },
+      {
+        "call_index": 9,
+        "response_text": "How can I help you today? Whether you have a question, need some creative writing, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
+      }
+    ],
+    "7645128d6fe3d956343c88eff94176f12876b1a91be1ec3e0b69cf2449b798ac": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "87db7435bcb9877ece21e609edd032fde597f33a4e5d874032c291c2a2843025": [
+      {
+        "call_index": 0,
+        "response_text": "[\n  \"founded_by\",\n  \"located_in\"\n]"
+      }
+    ],
+    "a53655324c2603c45593d7b497191ca4ca260c6a280826559b1f1733bc2343d2": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "b7c2fa1c971af9a3a4d1270ae98523962d4e2edfd7f2a8e2fc49fdc7f79aa987": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "c3105fdda83fba3d14d69831fbc9399ae971931c7635819a20678d30df598dcc": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founded_by\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"located_in\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  }\n]\n```"
+      }
+    ],
+    "cbe229f35934f19016f921a736f072cd267b637eb9a9984215956673fc3e16aa": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e1af5c4673016865f8a27e643a7c59c3d1d0bc41bc8c2c6a95ba6ec045c29bd2": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows over\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.85\n  }\n]\n```"
+      }
+    ],
+    "e5d3b5e7d78537c699ed9412bc38f55c95303f13b16de7eda427cc69defe815a": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "e691375f4e4e9a0b2927f1f81edda0386ef007836098f589eb52b84c3838b8b0": [
+      {
+        "call_index": 0,
+        "response_text": "{\"entities\": [{\"name\": \"Acme Corporation\", \"entity_type_id\": 2}, {\"name\": \"Jane Smith\", \"entity_type_id\": 1}, {\"name\": \"Ohio\", \"entity_type_id\": 3}]}"
+      }
+    ],
+    "eae0d20222340f2cfc29f41121b61a0a1f9e51e76865352d5f6d3f672616aa39": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "ef9db078e8299250db69357568df5ed1cb97183602d181474f00ed2eb1571765": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "f20cae150e24ddf944a3bccdcc1153db88943d2488f5e525a76d05c1ae6a00b8": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
+      }
+    ],
+    "f535430be40255a52748925236026f7cf20f4d0a007f73be2a4a6c54200847b8": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Amazon River\",\n      \"entity_type_id\": 0\n    },\n    {\n      \"name\": \"six thousand kilometres\",\n      \"entity_type_id\": 7\n    },\n    {\n      \"name\": \"Brazil\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Peru\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Atlantic Ocean\",\n      \"entity_type_id\": 3\n    }\n  ]\n}\n```"
+      }
+    ]
+  }
+}
