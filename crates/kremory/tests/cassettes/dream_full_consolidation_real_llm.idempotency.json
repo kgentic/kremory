@@ -1,0 +1,435 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "0274a0d07fb53a310bad77d05b3addb2a75d02a37477ae1c46e48608cf4fe382": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "02a34fbde629b40ac5d89d2626fbd7f74e3028d8fae39547f0842fa000aed981": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "0370037434da8b165b4b8cd525c594920d774b5ff1f8c3297948ecead8cbe1b7": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows over\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
+      }
+    ],
+    "06c0863f80474600239f66a9d650d1393d831626a0e1870ee093216db3441561": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "09645cdb3a3f349ed4bf1e0bebfe772539bcc92439aec38af47251716cab00f8": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "0bd75e0e58dfc99cd2cb9d1376c64c0978f32a8e948e4792793f2ee254b57eef": [
+      {
+        "call_index": 0,
+        "response_text": "{\"entities\": [{\"entity_type_id\": 2, \"name\": \"Acme Corporation\"}, {\"entity_type_id\": 1, \"name\": \"Jane Smith\"}, {\"entity_type_id\": 3, \"name\": \"Ohio\"}]}"
+      }
+    ],
+    "0ceb50ea3d628df607aad0281376d2c3acbd823104444f0963db456fa3d528b5": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "0dd8c71659b40541c0e54f99ee00d17673b94ff9209a646847a9dc32ca7d1e64": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "105c15a9b7127d27c33939e2be1e90e69b2dfffbb29486730b767f39a5905788": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "156419cffb7c916f0a531dcd6b5b1119c4e1234bdaf7408e7c9fa512a36cfa74": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "18ce6ba5ec96ea333dc939f8852623bf99e72bff567ec9d5db73fcb153b711aa": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "1b5cac8c778675725201307b5d98dd1e1be8a36a4bd352d4233e93197ac18d47": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "2275fd7a9e683315e689ca5c1fd678b0d711efef53a98cbb9ee529d6f25e85fc": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "2286a01d0a2fbb446d97ba72dc37010291043832ecfea7a3f61ad11036dd3112": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "268f4f4944faa53f1fa943d583e4fc921795d6d2dfc81cddeeb7d343ef07e4e3": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "287611da9e01ca41ef5e98bb86fe9238d05e96388998aa2f13ef4b9488c905e6": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "29b873ff71974f7d83a0b4ec6c3c73d4d48dcacbdfa3560cdbe0128e03d39154": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "31ab97578cab078dcb8469eece60fab882f3aac42a0bb177fc7e8d23a57dab9c": [
+      {
+        "call_index": 0,
+        "response_text": "entity<|#|>Apple<|#|>3<|#|>A technology company.\nentity<|#|>Tim Cook<|#|>4<|#|>CEO of Apple.\n<|COMPLETE|>"
+      }
+    ],
+    "4d948a2189edd0da66f01e248b106d6867cf2502c6b7e0adc998816f8351b908": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"items\": [\n\"born_in\",\n\"awarded_prize_in\"\n]\n}"
+      }
+    ],
+    "4ee02a2d4231bd89dbc309dc77563fb1ef07a140f21289dbb9ad65f8034371e3": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "4f498efffab8fce103184ebebe56d93c801a89dc10763bc0ac0a3c3f1c522d22": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "582e1a85abb71a573ba8941450c9c46c7c4f412c6c9fa1504537b46a4a628c57": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "5aa9a209f991f1f2dfab08d76650606078bdf023912653f630aa8397ac74bb61": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "5bcd642f55b0af543e6ece5c2ce1b2a6f9a8650e78585919fb46b6a055beba23": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "5c2cb80b408e608a76b36080efe08b8d1dcc1fa0051276bbc9fc6a3f53451a41": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "6018405846c61b9ccb90026d531e975c55274d096411ecde725fa51420898597": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "65ea0bde0eca114c0a2adca2275480b8a76c3aa6b5b4927f882ef53d70825d05": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "6ec13792ee341c7284bd0435477083ed13134644319da72d19662917620be169": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "6ff91157eafad86ded7b706c2a518363a269c591ac1fa83a0316fa463478c68e": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "70aaa4a6a4b6ec03d6924ea9ec86737b2c687653018be3c8e821b4e87370f9e9": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"entities\": [\n    {\n      \"entity_type_id\": 1,\n      \"name\": \"Marie Curie\"\n    },\n    {\n      \"entity_type_id\": 3,\n      \"name\": \"Warsaw\"\n    },\n    {\n      \"entity_type_id\": 9,\n      \"name\": \"Nobel Prizes\"\n    },\n    {\n      \"entity_type_id\": 9,\n      \"name\": \"Physics\"\n    },\n    {\n      \"entity_type_id\": 9,\n      \"name\": \"Chemistry\"\n    }\n  ]\n}"
+      }
+    ],
+    "71b93068f4f55e522d9242c7a24ce16d20ece40442a6f66fa949ead274086b88": [
+      {
+        "call_index": 0,
+        "response_text": "{\"items\": [\"founded_by\", \"located_in\"]}"
+      }
+    ],
+    "72b68df7bd1bfc67e6d99d0ab4e9906de5fc8f945f4832b3e7b9e648238054f8": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
+      {
+        "call_index": 0,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 1,
+        "response_text": "What can I help you with today? 😊"
+      },
+      {
+        "call_index": 2,
+        "response_text": "I'm ready when you are! What can I help you with today? 😊"
+      },
+      {
+        "call_index": 3,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 4,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 5,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 6,
+        "response_text": "How can I help you today? Whether you have a question, need some creative writing, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
+      },
+      {
+        "call_index": 7,
+        "response_text": "How can I help you today? 😊"
+      },
+      {
+        "call_index": 8,
+        "response_text": "How can I help you today? 😊"
+      }
+    ],
+    "7c9c81b33c5802bd9341f9e961ac2ec374bb09dce2b2898a30868505fd416304": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "7e8fd70f5ae00bb9cb73248b800d046d55fe87d5998c05a8821c9e6efdba7e08": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "85c87d9dc2046ede7070507ef950d45db16f6e856a61613ce4470045c832f409": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "882496bf5132d2159fb07aab7d33995b79386b97e40896ca1cef94c453321012": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "89276851c2928b7be28fdd10511562bfb7585b6a257fd567be8312db06ceab45": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "8b2deb9aee6fc53cfe7f639ad2e6420104f7cc72d57c7e6cc2643272aa7a0ed3": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"items\": [\n\"flows_through\",\n\"flows_into\"\n]\n}"
+      }
+    ],
+    "962346576f4c97feeb2849482d09f3ab86741073e9ec67892dd6a46cd7901200": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "96502265a5ce0fa258de96b7329363df2e8e7bc764a69d5c4020e3a0bd262631": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "a317af93f02c80fe7028a3c156f4dee1c15bafb1e10ae2fc93da472d2e64bd59": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "a4c99114db90996473193b36924a9bfa3e5277c909aaefd53ca25166b0bb6367": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "af258da1bdaf00f240e7590ede763e814b9072afcf445a0cd98faab41b24cf96": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "bc2b0d2d3ade3aa20347f8647d0a388ed53ee4556f27cd599e26be774eb42d8d": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "c16033e24f2e318e3140ca7ea9f67d0885b4f019593d16b699df842dec01d4e1": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "c20196ef9bcc85a50f0c095e50f4484065758df5cac888583ab2d27a11a144f7": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "c4b5fb8c24aee557d3715845c5d4f45927e4a0b232b170d0205a94834e35066d": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "c97d7c377f0caf79fed0320585561fe22fd35751aa7c690bb3556bd805be9309": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "c9a0c4eabc5b1971e73d3ce035988075e3f2188ae19fc68f63dd5aa3d5dd4196": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "cdf86d8b75a6aeeff52b8e6aca9b8ce8a94aad973132223e83fc62174e98a03b": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "ce5b695688f19e18392dde6d628aa59486b86fff06d6d2ebe1a0cf2ea9774bb5": [
+      {
+        "call_index": 0,
+        "response_text": "{\"items\": [{\"subject\": \"Acme Corporation (Organisation)\"}, {\"predicate\": \"founded by\", \"subject\": \"Jane Smith (Person)\"}, {\"predicate\": \"in\", \"subject\": \"Ohio (Location)\"}, {\"predicate\": \"manufactures\", \"subject\": \"Acme Corporation (Organisation)\"}, {\"predicate\": \"industrial robots\", \"subject\": \"automotive assembly lines\"}]\n}"
+      }
+    ],
+    "cef58940fab5ed29b0cf0ab1657165e343ad5e14a7e39f67d3885e1e966a3edd": [
+      {
+        "call_index": 0,
+        "response_text": "{\"entities\": [{\"entity_type_id\": 3, \"name\": \"Amazon River\"}, {\"entity_type_id\": 7, \"name\": \"six thousand kilometres\"}, {\"entity_type_id\": 3, \"name\": \"Brazil\"}, {\"entity_type_id\": 3, \"name\": \"Peru\"}, {\"entity_type_id\": 3, \"name\": \"Atlantic Ocean\"}]}"
+      }
+    ],
+    "dd175bec52caf3f55cc0ab0d37bb9e5bbd6cffe8de3afdb032d8d61528abeff9": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "dfe0bd4ee5d0123aa43d25e1e955700e73f9849936a7aa4a30407edf828efb17": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "e457a77fd4819cc7195e128c86056af9d4bf10fd4ca5785cc204d1bdf416514e": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "e643acb94961cbf5c5ad63285845b8bf60361341c9477c863326bbd578356017": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "e98fe283be2a7c679fed87d36aa69a5611f9281be72941da2486abd6cf483f69": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "f32cca3b569c8d0edf17badafc312062d80e494238695dba187c74bf4a6e6484": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "f65d07952b70820da5f13caaaf45ff69e63192d83ff852bc8812af58d951256a": [
+      {
+        "call_index": 0,
+        "response_text": "{\"items\": [{\"subject\": \"Marie Curie (Person)\"}, {\"predicate\": \"was born in\"}, {\"object\": \"Warsaw (Location)\"}, {\"is_entity_ref\": true}, {\"confidence\": 1.01}, {\"subject\": \"Marie Curie (Person)\"}, {\"predicate\": \"awarded Nobel Prizes in\"}, {\"object\": \"Physics (Concept)\"}, {\"is_entity_ref\": true}, {\"confidence\": 0.95}, {\"subject\": \"Marie Curie (Person)\"}, {\"predicate\": \"awarded Nobel Prizes in\"}, {\"object\": \"Chemistry (Concept)\"}, {\"is_entity_ref\": true}, {\"confidence\": 0.95}]}"
+      }
+    ],
+    "f9c91bd553abe7f5347749031e3e76380705b89657e7095c5be88fad5bb79147": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "f9fbfb29bb7ddd8d632f86841cbf68f82c0f0fffcac95e4a7995276f29d44fb4": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}"
+      }
+    ],
+    "fc651d8a2fa6f5a6b8191f7ce77ceb676b7f986ff17fe9ff75b9f4a579d858e7": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdict\": \"different\"}"
+      }
+    ],
+    "fca3239171b8ec7d175dfad99850f01e0d7851ab82bfe53a5f6e528533b81576": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdict\": \"different\"\n}\n"
+      }
+    ],
+    "fd39ba4a47dad31c16574bd5312195dac77aa82f6a76d0920911b8491f076d8b": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ],
+    "fda294c95ba657a805083eccbb003487531183bc7509d7076045c068cb72093b": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"verdict\": \"different\"\n}"
+      }
+    ]
+  }
+}
