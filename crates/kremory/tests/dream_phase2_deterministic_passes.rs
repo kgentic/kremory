@@ -115,7 +115,13 @@ async fn dream_resolves_planted_potential_alias() {
         .clone();
 
     // Two surface-variant entities with identical embeddings (cosine 1.0 ≥ 0.95).
-    plant_entity(&graph, "acme corporation", &gid, "Acme Corporation, a company.").await;
+    plant_entity(
+        &graph,
+        "acme corporation",
+        &gid,
+        "Acme Corporation, a company.",
+    )
+    .await;
     plant_entity(&graph, "acme corp", &gid, "Acme Corp.").await;
 
     // Plant a pending `potential_alias` fact: new "acme corp" → existing "acme corporation".

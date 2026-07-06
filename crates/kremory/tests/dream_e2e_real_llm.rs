@@ -251,11 +251,9 @@ async fn entity_type_id_by_name(graph: &TemporalGraph, group_id: &str, name: &st
         )
         .await
         .expect("query entity_types by name");
-    let row = rows
-        .next()
-        .await
-        .expect("row read")
-        .unwrap_or_else(|| panic!("entity_types row for name={name} in group={group_id} must exist"));
+    let row = rows.next().await.expect("row read").unwrap_or_else(|| {
+        panic!("entity_types row for name={name} in group={group_id} must exist")
+    });
     row.get::<i64>(0).expect("id at index 0")
 }
 
@@ -403,7 +401,10 @@ async fn dream_e2e_real_llm_five_pass_chain() {
                 .build()
                 .expect("nomic embedder must build (KREMORY_VCR=record needs Ollama)");
             let nomic: Arc<dyn DynEmbeddingProvider> = Arc::new(OllamaEmbedderAdapter(raw_nomic));
-            Arc::new(RecordReplayEmbedder::record(nomic, embedding_cassette_path()))
+            Arc::new(RecordReplayEmbedder::record(
+                nomic,
+                embedding_cassette_path(),
+            ))
         }
         VcrMode::Replay => Arc::new(RecordReplayEmbedder::replay(embedding_cassette_path())),
     };
@@ -659,7 +660,9 @@ async fn dream_e2e_real_llm_five_pass_chain() {
     let davinci_after = after
         .iter()
         .find(|(id, _, _)| id == "Leonardo da Vinci")
-        .unwrap_or_else(|| panic!("Leonardo da Vinci must still exist post-dream; after={after:?}"));
+        .unwrap_or_else(|| {
+            panic!("Leonardo da Vinci must still exist post-dream; after={after:?}")
+        });
     assert_eq!(
         davinci_after.1, correct_person_id,
         "Lane D (consistency_check): Leonardo da Vinci entity_type_id must be corrected \
