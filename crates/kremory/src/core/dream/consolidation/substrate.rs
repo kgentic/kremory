@@ -237,6 +237,111 @@ pub(crate) struct ConsolidationSummary {
     pub(crate) warnings: Vec<String>,
 }
 
+// ─── Uniform decision telemetry (ADR-070 Fork 2/3) ──────────────────────────────
+//
+// A single `emit_decision(DecisionRecord)` contract every consolidation op calls at
+// its decision points. Structurally enforces the cardinality split (Fork 3): the
+// LOW-cardinality discriminants (`op`/`mode`/`outcome`) go on the counter's labels;
+// the HIGH-cardinality context (`group_id`/`entity_refs`/`debug_context`) goes ONLY
+// on the trace event. `outcome: &'static str` makes the split a TYPE-level guarantee
+// — an author cannot compile `format!("merged_{id}")` (a `String`) into a label.
+
+/// Low-cardinality op discriminant (Fork 3) — fixed 4-variant enum, safe as a
+/// counter label under any cardinality-safety rule.
+// planned consumer: Phase B — the four ops pass this to `emit_decision`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConsolidationOpKind {
+    Supersession,
+    Archive,
+    CrossEpisode,
+    Communities,
+}
+
+impl ConsolidationOpKind {
+    // planned consumer: Phase B — `emit_decision` renders the label via this.
+    #[allow(dead_code)]
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Supersession => "supersession",
+            Self::Archive => "archive",
+            Self::CrossEpisode => "cross_episode",
+            Self::Communities => "communities",
+        }
+    }
+}
+
+/// Low-cardinality mode discriminant (Fork 1/3) — 2 variants, safe as a counter
+/// label. `Shadow` = decision computed, write skipped (dry_run). `Applied` = write
+/// committed (or the op has no dry_run concept — always `Applied`).
+// planned consumer: Phase B/C — cross_episode picks Shadow/Applied by `dry_run`;
+// the other three ops are always Applied.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DecisionMode {
+    Shadow,
+    Applied,
+}
+
+impl DecisionMode {
+    // planned consumer: Phase B — `emit_decision` renders the label via this.
+    #[allow(dead_code)]
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Shadow => "shadow",
+            Self::Applied => "applied",
+        }
+    }
+}
+
+/// One consolidation op's decision at a single decision point (ADR-070 Fork 2).
+/// `op`/`mode`/`outcome` are LOW-cardinality — safe as counter labels.
+/// `group_id`/`entity_refs`/`debug_context` are HIGH-cardinality — trace fields
+/// ONLY (Fork 3). [`emit_decision`] enforces this split structurally: there is no
+/// code path by which a `DecisionRecord` field reaches the wrong sink.
+// planned consumer: Phase B — constructed at each op's decision point.
+#[allow(dead_code)]
+pub(crate) struct DecisionRecord<'a> {
+    pub(crate) op: ConsolidationOpKind,
+    pub(crate) mode: DecisionMode,
+    /// Fixed short string per op (e.g. cross_episode's `"merged"` / `"homonym_skip"`
+    /// / `"hub_skip"` / `"group_size_skip"`). MUST be drawn from a small fixed
+    /// enumeration per op — never an interpolated value (no entity id, no score).
+    /// The `&'static str` type makes that structural: interpolated data is a
+    /// `String` and will not compile here.
+    pub(crate) outcome: &'static str,
+    pub(crate) group_id: &'a str,
+    pub(crate) entity_refs: &'a [&'a str],
+    pub(crate) debug_context: Option<String>,
+}
+
+/// The ONE emission function every consolidation op calls at its decision point
+/// (ADR-070 Fork 2/3). Structurally enforces the cardinality split: low-cardinality
+/// fields go on the counter's labels; high-cardinality fields go ONLY on the trace
+/// event.
+// planned consumer: Phase B — the four ops call this at their decision points.
+#[allow(dead_code)]
+pub(crate) fn emit_decision(record: DecisionRecord<'_>) {
+    metrics::counter!(
+        "kremory.dream.consolidation.decision_total",
+        "op" => record.op.as_str(),
+        "mode" => record.mode.as_str(),
+        "outcome" => record.outcome,
+    )
+    .increment(1);
+
+    tracing::info!(
+        target: "kremory.dream.consolidation.decision",
+        op = record.op.as_str(),
+        mode = record.mode.as_str(),
+        outcome = record.outcome,
+        group_id = record.group_id,
+        entity_refs = ?record.entity_refs,
+        debug_context = record.debug_context.as_deref(),
+        "consolidation decision"
+    );
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -437,5 +542,111 @@ mod tests {
             permute(&items, k + 1, out);
             items.swap(k, i);
         }
+    }
+
+    // ── Decision telemetry (ADR-070 Fork 2/3) ───────────────────────────────────
+
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    #[test]
+    fn op_kind_and_mode_render_fixed_low_cardinality_strings() {
+        // The label domain is a fixed, code-reviewable enumeration (Fork 3).
+        assert_eq!(ConsolidationOpKind::Supersession.as_str(), "supersession");
+        assert_eq!(ConsolidationOpKind::Archive.as_str(), "archive");
+        assert_eq!(ConsolidationOpKind::CrossEpisode.as_str(), "cross_episode");
+        assert_eq!(ConsolidationOpKind::Communities.as_str(), "communities");
+        assert_eq!(DecisionMode::Shadow.as_str(), "shadow");
+        assert_eq!(DecisionMode::Applied.as_str(), "applied");
+    }
+
+    /// Does `decision_total` carry exactly the `(op, mode, outcome)` labels with the
+    /// given count? Filters a `DebuggingRecorder` snapshot (the reuse pattern from
+    /// `tests/consolidation_supersession_test.rs`).
+    fn decision_counter(
+        snapshotter: &metrics_util::debugging::Snapshotter,
+        op: &str,
+        mode: &str,
+        outcome: &str,
+    ) -> Option<u64> {
+        snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .find_map(|(composite_key, _, _, value)| {
+                let key = composite_key.key();
+                if key.name() != "kremory.dream.consolidation.decision_total" {
+                    return None;
+                }
+                let labels: std::collections::HashMap<&str, &str> =
+                    key.labels().map(|l| (l.key(), l.value())).collect();
+                if labels.get("op").copied() != Some(op)
+                    || labels.get("mode").copied() != Some(mode)
+                    || labels.get("outcome").copied() != Some(outcome)
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(n) => Some(n),
+                    _ => None,
+                }
+            })
+    }
+
+    #[test]
+    fn emit_decision_fires_decision_total_with_low_cardinality_labels() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        emit_decision(DecisionRecord {
+            op: ConsolidationOpKind::CrossEpisode,
+            mode: DecisionMode::Shadow,
+            outcome: "merged",
+            // HIGH-cardinality context — must NOT reach the counter labels.
+            group_id: "g-cardinality",
+            entity_refs: &["keeper-1", "loser-2"],
+            debug_context: Some("free-text detail".to_string()),
+        });
+
+        assert_eq!(
+            decision_counter(&snapshotter, "cross_episode", "shadow", "merged"),
+            Some(1),
+            "decision_total{{op=cross_episode,mode=shadow,outcome=merged}} must fire once"
+        );
+
+        // Fork 3 structural guarantee: NO counter key carries the high-cardinality
+        // group_id / entity id as a label value.
+        let leaked = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .any(|(composite_key, _, _, _)| {
+                let key = composite_key.key();
+                key.labels()
+                    .any(|l| l.value() == "g-cardinality" || l.value() == "keeper-1")
+            });
+        assert!(
+            !leaked,
+            "high-cardinality group_id/entity_refs must never appear as a counter label"
+        );
+    }
+
+    #[test]
+    fn emit_decision_applied_mode_renders_applied_label() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        emit_decision(DecisionRecord {
+            op: ConsolidationOpKind::Archive,
+            mode: DecisionMode::Applied,
+            outcome: "archived",
+            group_id: "g1",
+            entity_refs: &["ent-a"],
+            debug_context: None,
+        });
+        assert_eq!(
+            decision_counter(&snapshotter, "archive", "applied", "archived"),
+            Some(1),
+            "decision_total{{op=archive,mode=applied,outcome=archived}} must fire once"
+        );
     }
 }

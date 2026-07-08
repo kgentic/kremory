@@ -34,6 +34,27 @@ pub struct BatchPhase2Complete {
     pub duration_ms: u64,
 }
 
+/// A cross-episode merge decision (ADR-070 Fork 1/5), passed to
+/// [`EnrichmentEventSink::on_merge_proposed`]. Args-as-object per the TD-042
+/// convention (mirrors [`BatchPhase2Complete`]) so the callback stays within the
+/// project's method-arity budget.
+///
+/// Borrowed (`&str`) rather than owned: the event fires sync-inline from inside the
+/// consolidation clique loop where the ids are already borrowed, so it allocates
+/// nothing on the background dream sweep. Per the G7 callback contract, a consumer
+/// that needs to retain the data copies it (`.to_string()`) before returning.
+#[derive(Debug, Clone, Copy)]
+pub struct MergeProposed<'a> {
+    /// The namespace the merge decision was made in.
+    pub group_id: &'a str,
+    /// The entity id that would be (or was) fused into `keeper`.
+    pub loser: &'a str,
+    /// The surviving entity id.
+    pub keeper: &'a str,
+    /// `true` = shadowed (decision computed, no entity fused); `false` = applied.
+    pub dry_run: bool,
+}
+
 /// Extension of `IngestEventSink` with Phase 3 (dream-phase) events.
 ///
 /// Per ADR §4.8: consumers wanting both Phase 2 and Phase 3 events implement
@@ -177,4 +198,21 @@ pub trait EnrichmentEventSink: IngestEventSink {
     /// fires once per worker boot on the resume path to signal that redelivery
     /// is about to occur.
     fn on_worker_resumed(&self, _from_cursor: &str, _op_name: &str) {}
+
+    /// A cross-episode merge decision was made during Phase 3 consolidation
+    /// (ADR-070 Fork 1/5) — fires whether the decision was shadowed
+    /// ([`MergeProposed::dry_run`]` == true`, no entity fused) or applied
+    /// (`dry_run == false`, the loser was fused into the keeper). The `dry_run` flag
+    /// lets a consumer observing a shadow window tell "would-have-merged" from
+    /// "did-merge".
+    ///
+    /// **Default no-op**, mirroring the `on_worker_resumed` precedent above: existing
+    /// consumers implementing only Phase 2/3 correctness events are unaffected (this
+    /// is an operational-observability event, not a correctness event).
+    ///
+    /// Follows the SAME G7 callback contract every other `EnrichmentEventSink` method
+    /// documents (see the trait-level "Sink callback contract" above): fired
+    /// sync-inline on the dream-phase's executing thread — slow callbacks stall dream.
+    /// Consumers buffer + return immediately, exactly as for every other method.
+    fn on_merge_proposed(&self, _event: MergeProposed<'_>) {}
 }
