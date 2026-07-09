@@ -24,7 +24,9 @@ use metrics::counter;
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
-use super::substrate::{ConsolidationBudget, OpReport};
+use super::substrate::{
+    emit_decision, ConsolidationBudget, ConsolidationOpKind, DecisionMode, DecisionRecord, OpReport,
+};
 
 /// Bundled params for [`supersession`] — args-as-object per TD-042
 /// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
@@ -105,6 +107,17 @@ pub async fn supersession(params: SupersessionParams<'_>) -> Result<OpReport> {
         // Documented no-op rather than a silent skip so the surface is observable.
         counter!("kremory.dream.consolidation.supersession_llm_nominate_stub_off_total",)
             .increment(1);
+        // Uniform decision record alongside the existing counter (ADR-070 Fork 2/3,
+        // §3.3). No entity refs (the lane is a whole-op stub-off signal, not a
+        // per-entity decision); supersession has no dry_run concept → `Applied`.
+        emit_decision(DecisionRecord {
+            op: ConsolidationOpKind::Supersession,
+            mode: DecisionMode::Applied,
+            outcome: "llm_nominate_stub_off",
+            group_id,
+            entity_refs: &[],
+            debug_context: None,
+        });
         report.warnings.push(
             "supersession LLM-nominate lane requested but is stub-off this phase (P1 \
              ships the deterministic window-closeout lane only)"
@@ -143,7 +156,7 @@ async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Result<usize>
     let now = Utc::now().to_rfc3339();
 
     let guard = graph.begin_immediate_if_needed().await?;
-    let result: Result<usize> = async {
+    let result: Result<Vec<i64>> = async {
         // Candidate SELECT — the double-handle guard (`expired_at IS NULL AND
         // invalid_at IS NULL`, P1.2) excludes any fact the ingest resolver already
         // superseded/invalidated; `is_dream_generated = 0` (F-4 anti-loop) excludes
@@ -171,7 +184,10 @@ async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Result<usize>
         }
         drop(rows);
 
-        let mut retired = 0usize;
+        // Collect the retired fact ids; the per-fact decision records are emitted ONLY
+        // after this txn durably commits (see the Ok arm) so a mid-sweep rollback never
+        // leaves an un-revertable decision_total increment (Quinn Phase-B MED-1).
+        let mut retired_ids: Vec<i64> = Vec::new();
         for cand in &candidates {
             // Set `expired_at = valid_to` — the demonstrated window-close time, NOT
             // `now` (the fact expired when its world-time window ended, not when the
@@ -190,15 +206,33 @@ async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Result<usize>
                 })?
                 .with_timezone(&Utc);
             graph.invalidate_fact(cand.fact_id, valid_to_dt).await?;
-            retired += 1;
+            retired_ids.push(cand.fact_id);
         }
-        Ok(retired)
+        Ok(retired_ids)
     }
     .await;
 
     match result {
-        Ok(retired) => {
+        Ok(retired_ids) => {
             guard.commit().await?;
+            let retired = retired_ids.len();
+            // Post-commit emission of the per-fact decision records (ADR-070 Fork 2/3,
+            // §3.3): fired ONLY after the txn durably commits so
+            // decision_total{op=supersession,outcome=window_closeout} never overcounts
+            // a mid-sweep rollback (Quinn Phase-B MED-1) — mirroring the post-commit
+            // counter below, which is why the two stay equal. fact id is
+            // HIGH-cardinality → trace-only via debug_context (Fork 3); no entity refs
+            // are loaded on this fact-level lane; no dry_run → `Applied`.
+            for fact_id in &retired_ids {
+                emit_decision(DecisionRecord {
+                    op: ConsolidationOpKind::Supersession,
+                    mode: DecisionMode::Applied,
+                    outcome: "window_closeout",
+                    group_id,
+                    entity_refs: &[],
+                    debug_context: Some(format!("fact_id={fact_id}")),
+                });
+            }
             // P1.4: source-attributed counter split by lane. This lane == the count
             // this op reports for the deterministic path; the o11y cross-check asserts
             // counter == OpReport.count.
@@ -1067,6 +1101,95 @@ mod tests {
             read_expired_at(&graph, bad).await,
             None,
             "rollback: the malformed fact was never retired"
+        );
+    }
+
+    /// Quinn Phase-B MED-1 lock: the per-fact `decision_total{window_closeout}` records
+    /// are emitted POST-COMMIT only, so a mid-sweep rollback must leave the metric at
+    /// ZERO — never overcounting the rolled-back "good" candidate. Mirrors the
+    /// atomicity test above but asserts the TELEMETRY side (the decision counter never
+    /// diverges from what actually committed — the "counters that lie" failure mode).
+    #[tokio::test]
+    async fn window_closeout_decision_not_emitted_on_rollback() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let now = Utc::now();
+        // Good candidate (processed first, write lands inside the txn) + a candidate
+        // whose corrupt `valid_to` throws Error::Parse mid-sweep → whole txn rolls back.
+        let _good = plant_fact(
+            &graph,
+            "g1",
+            "alice",
+            "lived_in",
+            "Boston",
+            now - Duration::days(30),
+            Some(now - Duration::days(2)),
+            None,
+            None,
+            0,
+        )
+        .await;
+        let bad = plant_fact(
+            &graph,
+            "g1",
+            "bob",
+            "worked_at",
+            "Acme",
+            now - Duration::days(30),
+            Some(now - Duration::days(1)),
+            None,
+            None,
+            0,
+        )
+        .await;
+        graph
+            .conn
+            .execute(
+                "UPDATE facts SET valid_to = '2020-99-99garbage' WHERE id = ?1",
+                libsql::params![bad],
+            )
+            .await
+            .expect("corrupt valid_to");
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let result = supersession(SupersessionParams {
+            graph: &graph,
+            group_id: "g1",
+            budget: &mut budget(),
+            include_llm_nominate: false,
+            model_id: "gemma4:e4b",
+        })
+        .await;
+        assert!(result.is_err(), "sweep must fail on the unparseable valid_to");
+
+        let emitted = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .find_map(|(composite_key, _, _, value)| {
+                let key = composite_key.key();
+                if key.name() != "kremory.dream.consolidation.decision_total" {
+                    return None;
+                }
+                let labels: std::collections::HashMap<&str, &str> =
+                    key.labels().map(|l| (l.key(), l.value())).collect();
+                if labels.get("op").copied() != Some("supersession")
+                    || labels.get("outcome").copied() != Some("window_closeout")
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(n) => Some(n),
+                    _ => None,
+                }
+            })
+            .unwrap_or(0);
+        assert_eq!(
+            emitted, 0,
+            "window_closeout decision must NOT be emitted for a rolled-back sweep (post-commit only)"
         );
     }
 

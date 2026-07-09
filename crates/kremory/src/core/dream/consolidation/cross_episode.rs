@@ -67,7 +67,9 @@ use crate::core::canonicalization::apply_entity_merge;
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
-use super::substrate::OpReport;
+use super::substrate::{
+    emit_decision, ConsolidationOpKind, DecisionMode, DecisionRecord, OpReport,
+};
 
 /// Fuzzy-path admission threshold on the label token-shingle Jaccard (SYNTHESIS #9).
 /// A pair below this on the fuzzy path is NOT admitted; the exact path (Jaccard == 1.0
@@ -218,6 +220,12 @@ pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpRe
         return Ok(report);
     }
 
+    // Decision-record mode for THIS op's decisions (ADR-070 Fork 1). Phase B has no
+    // dry_run gate yet → every decision is `Applied`. Phase C1 flips this ONE line to
+    // `if dry_run { DecisionMode::Shadow } else { DecisionMode::Applied }` when the
+    // shadow gate lands — nothing else in the op needs to change for the mode.
+    let mode = DecisionMode::Applied;
+
     // ── Phase 1: admit candidate pairs (exact + fuzzy), deterministic order ───────
     // Both paths computed over the SAME slot list; an exact pair is never re-admitted
     // by fuzzy (fuzzy only fires on DISTINCT normalized labels). Zero-embedding.
@@ -237,15 +245,45 @@ pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpRe
         }
         // Structural-corroboration gate (P3.1b / RISK-001, MANDATORY): shared neighbour
         // OR identical (predicate, object) fact. No shared structure → homonym → DROP.
-        if !shares_structure(graph, group_id, (&cand.keeper, &cand.loser)).await? {
-            counter!(
-                "kremory.dream.consolidation.cross_episode_homonym_skip_total",
-                "path" => cand.path.as_str(),
-            )
-            .increment(1);
-            continue;
+        match shares_structure(graph, group_id, (&cand.keeper, &cand.loser)).await? {
+            StructureOutcome::Corroborated => {
+                eligible.push(cand.clone());
+            }
+            rejected => {
+                // Legacy skip counter — the SAME call, args, and fire condition as
+                // before (once per rejected pair, for BOTH skip reasons); only its
+                // enclosing `if !` became a `match` arm (bool→enum refactor, Risk #13).
+                counter!(
+                    "kremory.dream.consolidation.cross_episode_homonym_skip_total",
+                    "path" => cand.path.as_str(),
+                )
+                .increment(1);
+                // Uniform decision record carries the PRECISE reason so
+                // decision_total{outcome} is a true partition — never double-counting
+                // one rejected pair into two buckets (ADR-070 Fork 2/3, §3.3).
+                let outcome = match rejected {
+                    StructureOutcome::NoSharedStructure => "homonym_skip",
+                    StructureOutcome::WeakCorroboration => "hub_skip",
+                    StructureOutcome::Corroborated => {
+                        unreachable!("Corroborated is handled in the arm above")
+                    }
+                };
+                emit_decision(DecisionRecord {
+                    op: ConsolidationOpKind::CrossEpisode,
+                    mode,
+                    // `outcome` is the computed `&'static str` from the match above —
+                    // still type-enforced (a `String`/`format!` would not compile), but
+                    // note it is field-init SHORTHAND, so the §3.2 `grep 'outcome:'`
+                    // literal audit does NOT surface this site (the two skip literals
+                    // live in the `let outcome` match arms above).
+                    outcome,
+                    group_id,
+                    entity_refs: &[cand.keeper.as_str(), cand.loser.as_str()],
+                    debug_context: None,
+                });
+                continue;
+            }
         }
-        eligible.push(cand.clone());
     }
 
     // ── Phase 3 (ADR-067 F1): CLIQUE-ONLY clustering, NOT connected-component
@@ -286,6 +324,15 @@ pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpRe
                 MAX_LABEL_GROUP
             ));
             counter!("kremory.dream.consolidation.cross_episode_group_skipped_total").increment(1);
+            let group_refs: Vec<&str> = component.iter().map(|s| s.as_str()).collect();
+            emit_decision(DecisionRecord {
+                op: ConsolidationOpKind::CrossEpisode,
+                mode,
+                outcome: "group_size_skip",
+                group_id,
+                entity_refs: &group_refs,
+                debug_context: None,
+            });
             continue;
         }
         let component_adjacency: BTreeMap<String, BTreeSet<String>> = component
@@ -343,6 +390,14 @@ pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpRe
                 MergePath::Exact => exact_merges += 1,
                 MergePath::Fuzzy => fuzzy_merges += 1,
             }
+            emit_decision(DecisionRecord {
+                op: ConsolidationOpKind::CrossEpisode,
+                mode,
+                outcome: "merged",
+                group_id,
+                entity_refs: &[keeper.as_str(), loser.as_str()],
+                debug_context: None,
+            });
             tracing::info!(
                 target: "kremory.dream.consolidation.cross_episode",
                 group_id,
@@ -596,6 +651,22 @@ fn spans_distinct_episodes(slots: &[EntitySlot], id_a: &str, id_b: &str) -> bool
 
 // ─── Structural-corroboration gate (P3.1b / RISK-001, ADR-067 F2 rarity-weighted) ─
 
+/// The three-way result of the structural-corroboration gate ([`shares_structure`]).
+/// Distinguishes the TWO rejection reasons so the caller can emit the precise
+/// consolidation decision outcome (ADR-070 §3.3, Fork 2/3) — a pure homonym vs a
+/// hub-weak pair — WITHOUT double-counting one rejected pair into two outcome
+/// buckets. (The pre-ADR-070 code returned a bare `bool`, collapsing both reasons.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructureOutcome {
+    /// Shared rare structure ≥ threshold → the pair is merge-eligible.
+    Corroborated,
+    /// No shared neighbours or assertions at all → pure homonym.
+    NoSharedStructure,
+    /// Shared structure exists but the rarity-weighted score is below threshold
+    /// (dominated by hubs) → weak/hub corroboration.
+    WeakCorroboration,
+}
+
 /// Do `a` and `b` share STRUCTURE ABOVE THE RARITY-WEIGHTED THRESHOLD (DoD-P3.1b,
 /// MANDATORY homonym guard, ADR-067 F2)?
 ///
@@ -612,7 +683,7 @@ async fn shares_structure(
     graph: &TemporalGraph,
     group_id: &str,
     pair: (&str, &str),
-) -> Result<bool> {
+) -> Result<StructureOutcome> {
     let (a, b) = pair;
     let neighbours_a = neighbours_of(graph, group_id, a).await?;
     let neighbours_b = neighbours_of(graph, group_id, b).await?;
@@ -646,7 +717,7 @@ async fn shares_structure(
         .collect();
 
     if shared_neighbours.is_empty() && shared_assertions.is_empty() {
-        return Ok(false);
+        return Ok(StructureOutcome::NoSharedStructure);
     }
 
     // Accumulate in sorted-id order (BTreeSet iteration = deterministic fixed
@@ -685,7 +756,11 @@ async fn shares_structure(
         );
     }
 
-    Ok(outcome)
+    Ok(if outcome {
+        StructureOutcome::Corroborated
+    } else {
+        StructureOutcome::WeakCorroboration
+    })
 }
 
 /// Integer weight for a corroborator with in-group degree/frequency `f`: looks up

@@ -63,7 +63,10 @@ use petgraph::visit::EdgeRef;
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
-use super::substrate::{community_member_hash, OpReport};
+use super::substrate::{
+    community_member_hash, emit_decision, ConsolidationOpKind, DecisionMode, DecisionRecord,
+    OpReport,
+};
 
 /// How many top type-labels to record per community in `top_labels_json` (DoD-P4.2).
 /// Deterministic aggregate: the N most-frequent labels, ties broken smallest-string.
@@ -134,8 +137,29 @@ pub async fn communities(graph: &TemporalGraph, group_id: &str) -> Result<OpRepo
         let member_hash = community_member_hash(&member_ids);
         // A community whose exact membership SET existed last run (same hash) is
         // unchanged; a new/changed membership set counts toward `communities_updated`.
+        // Both arms emit a uniform decision record (ADR-070 Fork 2/3, §3.3): the
+        // `unchanged_passthrough` arm is a GENUINELY-NEW observability point — the
+        // idempotency no-op path previously emitted no signal at all. Communities has
+        // no dry_run concept → always `Applied`.
         if !prior_hashes.contains(&member_hash) {
             updated += 1;
+            emit_decision(DecisionRecord {
+                op: ConsolidationOpKind::Communities,
+                mode: DecisionMode::Applied,
+                outcome: "updated",
+                group_id,
+                entity_refs: &member_ids,
+                debug_context: None,
+            });
+        } else {
+            emit_decision(DecisionRecord {
+                op: ConsolidationOpKind::Communities,
+                mode: DecisionMode::Applied,
+                outcome: "unchanged_passthrough",
+                group_id,
+                entity_refs: &member_ids,
+                debug_context: None,
+            });
         }
 
         let top_labels = top_type_labels(&member_ids, &built.type_label);
@@ -783,6 +807,66 @@ mod tests {
         assert_eq!(
             second.count, 0,
             "unchanged graph rerun → communities_updated == 0 (idempotent, DoD-P4.5)"
+        );
+    }
+
+    /// ADR-070 §4 matrix: the idempotency-hash-unchanged path (previously SILENT) now
+    /// emits `decision_total{op=communities,outcome=unchanged_passthrough}` — the
+    /// "first-class observability closes a real gap" half of Fork 2/3.
+    #[tokio::test]
+    async fn communities_unchanged_passthrough_emits_new_decision_signal() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let gid = "g_idem_decision";
+        for id in ["a", "b", "c", "d", "e", "f"] {
+            insert_typed_entity(&graph, gid, id, 1).await;
+        }
+        for _ in 0..3 {
+            let ep = new_episode(&graph).await;
+            for id in ["a", "b", "c"] {
+                anchor(&graph, gid, ep, id).await;
+            }
+        }
+        for _ in 0..3 {
+            let ep = new_episode(&graph).await;
+            for id in ["d", "e", "f"] {
+                anchor(&graph, gid, ep, id).await;
+            }
+        }
+
+        // First run persists the partition (communities are NEW → `updated`).
+        let _first = communities(&graph, gid).await.expect("first");
+
+        // Capture the SECOND run: every member_hash matches → unchanged_passthrough.
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let second = communities(&graph, gid).await.expect("second");
+        assert_eq!(second.count, 0, "unchanged rerun → 0 updated");
+
+        let passthrough = snapshotter.snapshot().into_vec().into_iter().find_map(
+            |(composite_key, _, _, value)| {
+                let key = composite_key.key();
+                if key.name() != "kremory.dream.consolidation.decision_total" {
+                    return None;
+                }
+                let labels: std::collections::HashMap<&str, &str> =
+                    key.labels().map(|l| (l.key(), l.value())).collect();
+                if labels.get("op").copied() != Some("communities")
+                    || labels.get("outcome").copied() != Some("unchanged_passthrough")
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(n) => Some(n),
+                    _ => None,
+                }
+            },
+        );
+        assert!(
+            matches!(passthrough, Some(n) if n >= 1),
+            "unchanged_passthrough decision must fire on the idempotent rerun (was silent)"
         );
     }
 
