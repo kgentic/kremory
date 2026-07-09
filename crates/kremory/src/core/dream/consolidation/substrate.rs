@@ -201,10 +201,12 @@ pub(crate) fn fact_archive_hash(fact_id: i64, expired_at: &str) -> String {
 // ─── Per-op report + aggregate summary ──────────────────────────────────────────
 
 /// The result of a single consolidation op (P1-P4). One count (the op's own
-/// source-attributed mutation total) + any non-fatal warnings it emitted.
+/// source-attributed mutation total) + any non-fatal warnings it emitted + (for
+/// cross_episode only) the merge decisions for the orchestrator to fan out as
+/// `on_merge_proposed` events (ADR-070 Fork 5).
 ///
-/// STUB-phase (P0): every op returns `OpReport::default()` (count 0). P1-P4 fill in
-/// the real counts.
+/// The four ops are fully implemented and populate their real counts (the inert path
+/// — all-zero `default()` — is only returned when an op is disabled or errors).
 ///
 /// **MNT-002 visibility (`pub` + `#[doc(hidden)]`):** promoted from `pub(crate)`
 /// so the deterministic supersession corpus harness can read `count`/`warnings`

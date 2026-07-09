@@ -67,6 +67,7 @@ use metrics::counter;
 
 use crate::core::canonicalization::apply_entity_merge;
 use crate::core::error::Result;
+use crate::core::graph::InsertEntityWithGroupParams;
 use crate::core::schema::TemporalGraph;
 
 use super::substrate::{
@@ -1033,6 +1034,163 @@ fn emit_counters(exact_merges: usize, fuzzy_merges: usize) {
     .increment(fuzzy_merges as u64);
 }
 
+// ─── Correction-signal seam (ADR-070 Fork 4) ────────────────────────────────────
+
+/// Bundled params for [`correct_wrong_merge`] — args-as-object per TD-042
+/// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
+// planned consumer: a future consumer-facing entity-split API (ADR-070 Fork 4 defers
+// the safe wrapper to a follow-up TD).
+#[allow(dead_code)]
+pub(crate) struct CorrectWrongMergeParams<'a> {
+    pub(crate) graph: &'a TemporalGraph,
+    pub(crate) group_id: &'a str,
+    pub(crate) keeper_id: &'a str,
+    pub(crate) split_id: &'a str,
+    pub(crate) fact_ids_to_reassign: &'a [i64],
+}
+
+/// Reverse a prior cross-episode merge (ADR-070 Fork 4): re-materialize `split_id` as
+/// a distinct entity and re-point the caller-specified facts from `keeper_id` back
+/// onto it, firing the correction-signal telemetry.
+///
+/// This is the MINIMAL, caller-directed seam the ADR scopes — it does NOT reconstruct
+/// "what the graph looked like before the merge" automatically (the caller — a human
+/// or a consumer-side tool that noticed two distinct referents were fused — supplies
+/// `split_id` + `fact_ids_to_reassign` explicitly). A full entity-split UI/API (bulk
+/// correction, provenance-aware partial un-merge) is OUT OF SCOPE (ADR-070 §5.1
+/// DoD-5.1.1).
+///
+/// Fires `kremory.dream.consolidation.cross_episode_wrong_merge_corrected_total`
+/// (counter, LOW-cardinality — no group_id label) + a `tracing::warn!` carrying the
+/// HIGH-cardinality context (trace only, Fork 3 split).
+///
+/// **Visibility `pub(crate)` + `#[allow(dead_code)]`:** there is no consumer-facing
+/// "split" API to wire this to yet — exposing a bare low-level primitive without a
+/// safe caller-facing wrapper risks incorrect use (ADR-070 §5.1 DoD-5.1.2, Risk #5).
+/// Promoting to `pub` is a follow-up TD once a concrete consumer is validated. The
+/// counter existing with zero fires is itself meaningful telemetry ("no corrections
+/// recorded yet").
+// planned consumer: the future entity-split wrapper (see the params struct above).
+#[allow(dead_code)]
+pub(crate) async fn correct_wrong_merge(params: CorrectWrongMergeParams<'_>) -> Result<()> {
+    let CorrectWrongMergeParams {
+        graph,
+        group_id,
+        keeper_id,
+        split_id,
+        fact_ids_to_reassign,
+    } = params;
+
+    // Steps 1-2 run inside ONE transaction (project mutation-safety convention, Quinn
+    // D+E MED-2): a mid-correction failure rolls back the re-materialized entity AND
+    // every fact re-point together. `begin_immediate_if_needed` no-ops when already in
+    // a txn, and `insert_entity_with_group`'s own guard likewise nests, so the entity
+    // insert joins THIS transaction rather than committing early.
+    let guard = graph.begin_immediate_if_needed().await?;
+    let inner: Result<usize> = async {
+        // 1. Re-materialize the split-off entity (catch-all type — a minimal seam does
+        //    not reconstruct the original type; a safe wrapper would). No-op if it
+        //    already exists (the caller may correct incrementally).
+        let already_exists = {
+            let mut rows = graph
+                .conn
+                .query(
+                    "SELECT COUNT(*) FROM entities WHERE id = ?1 AND group_id = ?2",
+                    libsql::params![split_id, group_id],
+                )
+                .await?;
+            let n: i64 = rows
+                .next()
+                .await?
+                .map(|r| r.get::<i64>(0))
+                .transpose()?
+                .unwrap_or(0);
+            n > 0
+        };
+        if !already_exists {
+            graph
+                .insert_entity_with_group(InsertEntityWithGroupParams {
+                    id: split_id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({ "name": split_id }),
+                    group_id: Some(group_id),
+                })
+                .await?;
+        }
+
+        // 2. Re-point ONLY the caller-specified facts from keeper → split, on whichever
+        //    endpoint references the keeper. Reset `corroboration_inert = 0` so the
+        //    re-split entity is a LIVE corroborator again (Quinn D+E MED-1):
+        //    `apply_entity_merge` stamped these facts inert as merge-inherited, and
+        //    `neighbours_of`/`assertions_of` filter `corroboration_inert = 0` — leaving
+        //    it set would keep the split structurally invisible to the very
+        //    corroboration mechanism the correction is meant to restore. Per-id (small,
+        //    caller-supplied) to avoid a dynamic `IN (...)` clause.
+        let mut reassigned = 0usize;
+        for &fact_id in fact_ids_to_reassign {
+            let subj = graph
+                .conn
+                .execute(
+                    "UPDATE facts SET subject_id = ?1, corroboration_inert = 0 \
+                     WHERE id = ?2 AND group_id = ?3 AND subject_id = ?4",
+                    libsql::params![split_id, fact_id, group_id, keeper_id],
+                )
+                .await?;
+            let obj = graph
+                .conn
+                .execute(
+                    "UPDATE facts SET object_id = ?1, corroboration_inert = 0 \
+                     WHERE id = ?2 AND group_id = ?3 AND object_id = ?4",
+                    libsql::params![split_id, fact_id, group_id, keeper_id],
+                )
+                .await?;
+            if subj == 0 && obj == 0 {
+                // Loud on a caller mistake (Quinn D+E LOW-3): a fact_id that references
+                // the keeper on NEITHER endpoint reassigned nothing.
+                tracing::warn!(
+                    target: "kremory.dream.consolidation.cross_episode",
+                    fact_id,
+                    keeper = keeper_id,
+                    "correct_wrong_merge: fact references the keeper on neither endpoint \
+                     — nothing reassigned (stale fact_id, or already corrected?)"
+                );
+            } else {
+                reassigned += 1;
+            }
+        }
+        Ok(reassigned)
+    }
+    .await;
+
+    let reassigned = match inner {
+        Ok(n) => {
+            guard.commit().await?;
+            n
+        }
+        Err(e) => {
+            let _ = guard.rollback().await;
+            return Err(e);
+        }
+    };
+
+    // 3. Correction signal (Fork 4) — emitted AFTER commit so a rolled-back correction
+    //    never leaves an un-revertable counter increment (observability-first-class:
+    //    emit-after-commit). LOW-cardinality counter + HIGH-cardinality warn (Fork 3).
+    metrics::counter!("kremory.dream.consolidation.cross_episode_wrong_merge_corrected_total")
+        .increment(1);
+    tracing::warn!(
+        target: "kremory.dream.consolidation.cross_episode",
+        group_id,
+        corrected_keeper = keeper_id,
+        corrected_split = split_id,
+        facts_reassigned = reassigned,
+        fact_ids_reassigned = ?fact_ids_to_reassign,
+        "a prior cross-episode merge was manually corrected — consider adding this pair \
+         to the ADR-063 corpus as a new SHOULD_NOT_MERGE case"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1449,6 +1607,120 @@ mod tests {
         let applied = run_once(false).await;
         assert_eq!(applied.len(), 1, "one merge decision → one on_merge_proposed (applied)");
         assert!(!applied[0].3, "applied run → dry_run=false propagated to the event");
+    }
+
+    /// ADR-070 §5.2: `correct_wrong_merge` reverses a merge — re-materializes the
+    /// split-off entity, re-points the caller-specified facts on BOTH endpoints, resets
+    /// their `corroboration_inert` flag (Quinn D+E MED-1 — so the split is a live
+    /// corroborator again), and fires the correction counter exactly once.
+    #[tokio::test]
+    async fn correct_wrong_merge_reverses_a_merge_and_fires_signal() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        async fn fact_row(graph: &TemporalGraph, id: i64) -> (String, Option<String>, i64) {
+            let mut rows = graph
+                .conn
+                .query(
+                    "SELECT subject_id, object_id, corroboration_inert FROM facts WHERE id = ?1",
+                    libsql::params![id],
+                )
+                .await
+                .expect("query fact row");
+            let r = rows.next().await.expect("row").expect("fact present");
+            (
+                r.get::<String>(0).expect("subject_id"),
+                r.get::<Option<String>>(1).expect("object_id"),
+                r.get::<i64>(2).expect("corroboration_inert"),
+            )
+        }
+        async fn fact_id_where(graph: &TemporalGraph, gid: &str, col: &str, val: &str) -> i64 {
+            // `col` is a hard-coded test literal ("subject_id"/"object_id") — no injection.
+            let sql = format!("SELECT id FROM facts WHERE group_id = ?1 AND {col} = ?2");
+            let mut rows = graph
+                .conn
+                .query(&sql, libsql::params![gid, val])
+                .await
+                .expect("query fact id");
+            rows.next()
+                .await
+                .expect("row")
+                .expect("fact present")
+                .get::<i64>(0)
+                .expect("id")
+        }
+
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let gid = "g_correct";
+        for id in ["keeper", "loser", "acme"] {
+            insert_entity(&graph, gid, id).await;
+        }
+        // Two facts referencing the loser on DIFFERENT endpoints:
+        //   subject-endpoint: loser --works_at--> acme
+        //   object-endpoint:  acme  --employs-->  loser
+        fact_rel(&graph, gid, "loser", "works_at", "acme").await;
+        fact_rel(&graph, gid, "acme", "employs", "loser").await;
+        let subj_fact = fact_id_where(&graph, gid, "subject_id", "loser").await;
+        let obj_fact = fact_id_where(&graph, gid, "object_id", "loser").await;
+
+        // Merge loser → keeper (stamps both facts corroboration_inert = 1).
+        apply_entity_merge(&graph, "loser", "keeper")
+            .await
+            .expect("apply_entity_merge");
+        assert!(
+            !entities_in_group(&graph, gid)
+                .await
+                .contains(&"loser".to_string()),
+            "precondition: loser was merged away"
+        );
+        assert_eq!(
+            fact_row(&graph, subj_fact).await.2,
+            1,
+            "precondition: the merge stamped the subject fact corroboration_inert = 1"
+        );
+
+        // Correct the wrong merge, capturing the signal.
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        {
+            let _g = metrics::set_default_local_recorder(&recorder);
+            correct_wrong_merge(CorrectWrongMergeParams {
+                graph: &graph,
+                group_id: gid,
+                keeper_id: "keeper",
+                split_id: "loser",
+                fact_ids_to_reassign: &[subj_fact, obj_fact],
+            })
+            .await
+            .expect("correct_wrong_merge");
+        }
+
+        // Both entities exist again.
+        let ids = entities_in_group(&graph, gid).await;
+        assert!(ids.contains(&"keeper".to_string()), "keeper survives");
+        assert!(
+            ids.contains(&"loser".to_string()),
+            "split entity re-materialized"
+        );
+
+        // BOTH endpoints re-pointed back to the split, and corroboration_inert reset to 0.
+        let (subj, _, subj_inert) = fact_row(&graph, subj_fact).await;
+        assert_eq!(subj, "loser", "subject-endpoint fact points back at the split entity");
+        assert_eq!(subj_inert, 0, "subject fact is a LIVE corroborator again (MED-1)");
+        let (_, obj, obj_inert) = fact_row(&graph, obj_fact).await;
+        assert_eq!(
+            obj.as_deref(),
+            Some("loser"),
+            "object-endpoint fact points back at the split entity"
+        );
+        assert_eq!(obj_inert, 0, "object fact is a LIVE corroborator again (MED-1)");
+
+        // The correction counter fired exactly once (flat, sibling-consistent name).
+        let fired = snapshotter.snapshot().into_vec().into_iter().any(|(ck, _, _, v)| {
+            ck.key().name()
+                == "kremory.dream.consolidation.cross_episode_wrong_merge_corrected_total"
+                && matches!(v, DebugValue::Counter(1))
+        });
+        assert!(fired, "wrong_merge_corrected_total must fire exactly once");
     }
 
     // ── DoD-P3.1b / RISK-001: same label, NO shared neighbour → DO NOT MERGE ─────
