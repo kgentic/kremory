@@ -289,9 +289,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_consolidation_stub_ops_return_zero_when_enabled() {
-        // Enable all four ops — the P0 stubs each return count 0, so the summary is
-        // still all-zero, but this exercises every dispatch arm + budget pre-check.
+    async fn run_consolidation_ops_return_zero_on_empty_graph_when_enabled() {
+        // Enable all four ops. They are REAL impls (not stubs); on an EMPTY graph each
+        // finds no candidates and returns count 0, so the summary is still all-zero —
+        // this exercises every dispatch arm + budget pre-check (per-op logic coverage
+        // lives in each op's own tests, not here).
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         let opts = DreamOpts {
             include_supersession_sweep: true,

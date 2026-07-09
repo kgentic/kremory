@@ -840,8 +840,9 @@ pub struct DreamOpts {
     /// cumulative usage past this ceiling is SKIPPED (later ops still run), matching
     /// kremory's warn-and-continue posture. `None` = unbounded.
     ///
-    /// DEFAULT `Some(50_000)` — a conservative cap (only supersession's optional LLM
-    /// lane + community detection consume tokens; the other ops are ~zero).
+    /// DEFAULT `Some(50_000)` — a conservative cap. Only supersession's optional
+    /// LLM-nominate lane consumes tokens; the other three consolidation ops
+    /// (cross_episode, archive, communities) are zero-LLM / zero-token.
     pub consolidation_budget_tokens: Option<u64>,
     /// Per-run USD-micro budget ceiling for the consolidation sub-phase (TD-060,
     /// ADR-071 §Item 4a). Mirrors `consolidation_budget_tokens` exactly — soft
@@ -915,12 +916,15 @@ impl Default for DreamOpts {
             // site2_corpus_audit.md. The single miss (s2-025 Employer/Company)
             // is an orthogonal LLM-judgment miss tracked by a follow-up TD.
             include_type_novelty_llm_verify: true,
-            // CONSOLIDATION sub-phase (ADR-066 §5) — all ops default OFF (opt-in
-            // until each op's adversarial corpus clears its enablement gate, spec
-            // §6). With these all `false`, `any_consolidation_enabled()` is false
-            // and the consolidation dispatcher never runs — the existing
-            // reconciliation-only dream path is unaffected.
-            include_community_detection: false,
+            // CONSOLIDATION sub-phase (ADR-066 §5) — ops default OFF until each op's
+            // own enablement gate clears (spec §6).
+            //
+            // ADR-071 Item 2: P4 communities has NO Wilson-LB gate (unlike Item 1's
+            // P3 corpus gate) — the mechanical proof is the reversibility argument:
+            // full-recompute (wipe-then-rebuild, `communities.rs`) with no accumulated
+            // corruption, verified in code (`.ai-docs/specs/adr-071-dream-phase-
+            // hardening-impl-spec-2026-07-06.md` §Item 2). ENABLED.
+            include_community_detection: true,
             // ADR-071 Item 1: P3 corpus gate PASSED (Wilson-LB 0.971297 >= 0.95, zero
             // hub/two-hub false-merges — see
             // .ai-docs/research/adr-071-p3-corpus-calibration-findings-2026-07-09.md) ->
@@ -937,8 +941,14 @@ impl Default for DreamOpts {
             cross_episode_dry_run: true,
             include_supersession_sweep: false,
             include_supersession_llm_nominate: false,
-            include_fact_archival: false,
-            // Conservative token cap (only supersession-LLM + communities spend).
+            // ADR-071 Item 2: P2 archive has NO Wilson-LB gate (unlike Item 1's P3
+            // corpus gate) — the mechanical proof is the reversibility argument:
+            // archive is an append-only MOVE into `facts_archive` (recoverable),
+            // guarded by the P2.2 ref-count "orphans nothing" check, verified in
+            // code (`.ai-docs/specs/adr-071-dream-phase-hardening-impl-spec-
+            // 2026-07-06.md` §Item 2). ENABLED.
+            include_fact_archival: true,
+            // Conservative token cap (only supersession's LLM-nominate lane spends).
             consolidation_budget_tokens: Some(50_000),
             // TD-060: no USD cap by default — most consolidation ops run against
             // local Ollama at $0 cost; a non-None default is a product/UX call the
