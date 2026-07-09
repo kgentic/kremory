@@ -248,8 +248,6 @@ pub(crate) struct ConsolidationSummary {
 
 /// Low-cardinality op discriminant (Fork 3) — fixed 4-variant enum, safe as a
 /// counter label under any cardinality-safety rule.
-// planned consumer: Phase B — the four ops pass this to `emit_decision`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConsolidationOpKind {
     Supersession,
@@ -259,8 +257,6 @@ pub(crate) enum ConsolidationOpKind {
 }
 
 impl ConsolidationOpKind {
-    // planned consumer: Phase B — `emit_decision` renders the label via this.
-    #[allow(dead_code)]
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::Supersession => "supersession",
@@ -274,18 +270,16 @@ impl ConsolidationOpKind {
 /// Low-cardinality mode discriminant (Fork 1/3) — 2 variants, safe as a counter
 /// label. `Shadow` = decision computed, write skipped (dry_run). `Applied` = write
 /// committed (or the op has no dry_run concept — always `Applied`).
-// planned consumer: Phase B/C — cross_episode picks Shadow/Applied by `dry_run`;
-// the other three ops are always Applied.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DecisionMode {
+    /// planned consumer: Phase C1 — the cross_episode shadow gate is the first
+    /// non-test site to construct `Shadow`; until then only `Applied` is emitted.
+    #[allow(dead_code)]
     Shadow,
     Applied,
 }
 
 impl DecisionMode {
-    // planned consumer: Phase B — `emit_decision` renders the label via this.
-    #[allow(dead_code)]
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::Shadow => "shadow",
@@ -299,8 +293,6 @@ impl DecisionMode {
 /// `group_id`/`entity_refs`/`debug_context` are HIGH-cardinality — trace fields
 /// ONLY (Fork 3). [`emit_decision`] enforces this split structurally: there is no
 /// code path by which a `DecisionRecord` field reaches the wrong sink.
-// planned consumer: Phase B — constructed at each op's decision point.
-#[allow(dead_code)]
 pub(crate) struct DecisionRecord<'a> {
     pub(crate) op: ConsolidationOpKind,
     pub(crate) mode: DecisionMode,
@@ -319,8 +311,6 @@ pub(crate) struct DecisionRecord<'a> {
 /// (ADR-070 Fork 2/3). Structurally enforces the cardinality split: low-cardinality
 /// fields go on the counter's labels; high-cardinality fields go ONLY on the trace
 /// event.
-// planned consumer: Phase B — the four ops call this at their decision points.
-#[allow(dead_code)]
 pub(crate) fn emit_decision(record: DecisionRecord<'_>) {
     metrics::counter!(
         "kremory.dream.consolidation.decision_total",

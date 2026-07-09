@@ -30,7 +30,9 @@ use metrics::counter;
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
-use super::substrate::OpReport;
+use super::substrate::{
+    emit_decision, ConsolidationOpKind, DecisionMode, DecisionRecord, OpReport,
+};
 
 /// A fact eligible for archival: id + both endpoints (for the ref-count guard).
 #[derive(Debug, Clone)]
@@ -117,16 +119,40 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
     // ── Move loop (P2.3) — each candidate moved inside its own atomic transaction ──
     let mut archived = 0usize;
     for cand in &candidates {
+        // Both endpoints as trace context (HIGH-cardinality — trace only, Fork 3).
+        let endpoint_refs: Vec<&str> = std::iter::once(cand.subject_id.as_str())
+            .chain(cand.object_id.as_deref())
+            .collect();
+
         // Ref-count guard (P2.2 / RISK-007): archiving this fact must not strand
         // either endpoint entity. Skip (KEEP) if it would leave subject — or object,
         // when present — with ZERO live facts remaining AFTER this fact is removed.
+        // The `skipped_would_orphan` decision is a GENUINELY-NEW observability point
+        // (ADR-070 Fork 2/3, §3.3) — this skip path previously emitted no signal.
+        // Archive has no dry_run concept → always `Applied`.
         if would_strand_endpoint(graph, group_id, cand).await? {
+            emit_decision(DecisionRecord {
+                op: ConsolidationOpKind::Archive,
+                mode: DecisionMode::Applied,
+                outcome: "skipped_would_orphan",
+                group_id,
+                entity_refs: &endpoint_refs,
+                debug_context: None,
+            });
             continue;
         }
 
         let moved = move_fact(graph, cand.fact_id, group_id).await?;
         if moved {
             archived += 1;
+            emit_decision(DecisionRecord {
+                op: ConsolidationOpKind::Archive,
+                mode: DecisionMode::Applied,
+                outcome: "archived",
+                group_id,
+                entity_refs: &endpoint_refs,
+                debug_context: None,
+            });
         }
     }
 
@@ -634,6 +660,64 @@ mod tests {
             "wholly-expired entity: BOTH facts KEPT (archiving either strands `quiet` to 0 live) — EXACT 0"
         );
         assert_eq!(archive_count(&graph, "g1").await, 0, "nothing moved to archive");
+    }
+
+    /// ADR-070 §4 matrix: the ref-count-guard reject path (previously SILENT — it just
+    /// `continue`d) now emits `decision_total{op=archive,outcome=skipped_would_orphan}`
+    /// — the "first-class observability closes a real gap" half of Fork 2/3.
+    #[tokio::test]
+    async fn archive_skip_would_orphan_emits_new_decision_signal() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let now = Utc::now();
+        // `orphan`'s sole (long-expired) fact: archiving it would strand `orphan` with
+        // zero live facts → the ref-count guard skips it (the new decision point).
+        let _id = plant_fact(
+            &graph,
+            PlantFact {
+                group_id: "g1",
+                subject: "orphan",
+                predicate: "was",
+                object_id: None,
+                object_value: Some("ghost"),
+                valid_from: now - Duration::days(400),
+                expired_at: Some(now - Duration::days(200)),
+                invalid_at: None,
+                with_fts_shadow: true,
+            },
+        )
+        .await;
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let report = archive(&graph, "g1", 90).await.expect("archive");
+        assert_eq!(report.count, 0, "sole-binding fact KEPT (would strand)");
+
+        let skipped = snapshotter.snapshot().into_vec().into_iter().find_map(
+            |(composite_key, _, _, value)| {
+                let key = composite_key.key();
+                if key.name() != "kremory.dream.consolidation.decision_total" {
+                    return None;
+                }
+                let labels: std::collections::HashMap<&str, &str> =
+                    key.labels().map(|l| (l.key(), l.value())).collect();
+                if labels.get("op").copied() != Some("archive")
+                    || labels.get("outcome").copied() != Some("skipped_would_orphan")
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(n) => Some(n),
+                    _ => None,
+                }
+            },
+        );
+        assert!(
+            matches!(skipped, Some(n) if n >= 1),
+            "skipped_would_orphan decision must fire on the ref-count-guard skip (was silent)"
+        );
     }
 
     // ── L2: sole-binding fact is KEPT (ref-count guard, RISK-007) ────────────────
