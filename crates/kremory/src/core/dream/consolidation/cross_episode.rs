@@ -50,8 +50,10 @@
 //! lexically distinct is canonicalize's job, and cross_episode leaves it (spec §6
 //! `cosine_near_dup_lexically_distinct`). No double-count.
 //!
-//! `cross_episode_merges` counts merges THIS pass applied, split
-//! `{path=exact|fuzzy}` (DoD-P3.4).
+//! `cross_episode_merges` counts merge DECISIONS this pass, split
+//! `{path=exact|fuzzy}` (DoD-P3.4). Under the ADR-070 shadow gate (`dry_run=true`)
+//! the count is identical but no entity is fused — the `decision_total` `mode` label
+//! (`shadow`/`applied`) distinguishes the two.
 //!
 //! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`
 //! §3 (P3.1–P3.4, incl. P3.1b) + §6 (cross_episode corpus) + ADR-066 §2.2 (REVISED),
@@ -208,9 +210,21 @@ fn select_keeper<'a>(id_a: &'a str, id_b: &'a str) -> (&'a str, &'a str) {
 /// it under `feature = "test-utils"` (external test binaries cannot import `pub(crate)`
 /// items — E0365). NOT part of the stable public API.
 ///
-/// Args count = 2 — plain args, no params struct needed (TD-042 threshold 3).
+/// `dry_run` (ADR-070 Stage 2 shadow gate): when `true`, every clique-cover + F2
+/// corroboration decision is computed and emitted EXACTLY as it would live, but the
+/// `apply_entity_merge` write is SKIPPED — no entity is fused. `report.count` is
+/// incremented identically either way (it counts DECISIONS, not writes), so
+/// `DreamSummary.cross_episode_merges` under shadow mode tells an operator "the op
+/// WOULD have merged N pairs" (ADR-070 §2.3 DoD-2.3.1). The `mode` label on every
+/// `emit_decision` (`shadow`/`applied`) is how a consumer distinguishes the two.
+///
+/// Args count = 3 — plain args, no params struct needed (TD-042 threshold 3).
 #[doc(hidden)]
-pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpReport> {
+pub async fn cross_episode(
+    graph: &TemporalGraph,
+    group_id: &str,
+    dry_run: bool,
+) -> Result<OpReport> {
     let mut report = OpReport::default();
 
     // ── Load entity slots (id + normalized label + distinct episode set) ──────────
@@ -220,11 +234,16 @@ pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpRe
         return Ok(report);
     }
 
-    // Decision-record mode for THIS op's decisions (ADR-070 Fork 1). Phase B has no
-    // dry_run gate yet → every decision is `Applied`. Phase C1 flips this ONE line to
-    // `if dry_run { DecisionMode::Shadow } else { DecisionMode::Applied }` when the
-    // shadow gate lands — nothing else in the op needs to change for the mode.
-    let mode = DecisionMode::Applied;
+    // Decision-record mode for THIS op's decisions (ADR-070 Fork 1): in shadow mode
+    // (`dry_run`) every decision is observed but no write commits, so ALL decisions
+    // (merge + skips) carry `Shadow`; otherwise `Applied`. Filtering
+    // decision_total{mode=shadow} gives an operator a shadow window's full decision
+    // distribution — the Stage-2 observability use case.
+    let mode = if dry_run {
+        DecisionMode::Shadow
+    } else {
+        DecisionMode::Applied
+    };
 
     // ── Phase 1: admit candidate pairs (exact + fuzzy), deterministic order ───────
     // Both paths computed over the SAME slot list; an exact pair is never re-admitted
@@ -385,7 +404,12 @@ pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpRe
         let mut losers: Vec<&String> = clique.iter().filter(|m| **m != keeper).collect();
         losers.sort();
         for loser in losers {
-            apply_entity_merge(graph, loser, &keeper).await?;
+            // Shadow gate (ADR-070 §2.3): in `dry_run` the merge decision is still
+            // counted (`report.count`) + emitted (`emit_decision`, mode=Shadow), but the
+            // destructive `apply_entity_merge` fusion is SKIPPED — no entity is fused.
+            if !dry_run {
+                apply_entity_merge(graph, loser, &keeper).await?;
+            }
             match clique_path {
                 MergePath::Exact => exact_merges += 1,
                 MergePath::Fuzzy => fuzzy_merges += 1,
@@ -403,7 +427,8 @@ pub async fn cross_episode(graph: &TemporalGraph, group_id: &str) -> Result<OpRe
                 group_id,
                 keeper = %keeper,
                 loser = %loser,
-                "cross-episode merge applied"
+                dry_run,
+                "cross-episode merge decision" // covers both shadow + applied modes
             );
         }
         for m in clique {
@@ -1197,7 +1222,7 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "acme").await;
         fact_rel(&graph, gid, "john  smith", "works_at", "acme").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(report.count, 1, "exact-label corroborated pair merges once");
 
         let ids = entities_in_group(&graph, gid).await;
@@ -1208,6 +1233,127 @@ mod tests {
             "loser merged away"
         );
         assert!(ids.contains(&"acme".to_string()), "neighbour untouched");
+    }
+
+    // ── ADR-070 C1: shadow-mode (dry_run) gate ──────────────────────────────────
+
+    /// Plant the canonical exact-label corroborated mergeable pair (mirrors
+    /// `exact_label_shared_neighbour_two_episodes_merges`): 3 entities, two of which
+    /// normalize identically + share neighbour `acme` across 2 episodes → 1 merge.
+    async fn plant_mergeable_pair(graph: &TemporalGraph, gid: &str) {
+        insert_entity(graph, gid, "John Smith").await;
+        insert_entity(graph, gid, "john  smith").await;
+        insert_entity(graph, gid, "acme").await;
+        let e1 = new_episode(graph).await;
+        let e2 = new_episode(graph).await;
+        anchor(graph, gid, e1, "John Smith").await;
+        anchor(graph, gid, e2, "john  smith").await;
+        fact_rel(graph, gid, "John Smith", "works_at", "acme").await;
+        fact_rel(graph, gid, "john  smith", "works_at", "acme").await;
+    }
+
+    /// Count `decision_total{op=cross_episode, mode, outcome=merged}` in a snapshot.
+    fn merged_decision_count(
+        snapshotter: &metrics_util::debugging::Snapshotter,
+        mode: &str,
+    ) -> u64 {
+        use metrics_util::debugging::DebugValue;
+        snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(composite_key, _, _, value)| {
+                let key = composite_key.key();
+                if key.name() != "kremory.dream.consolidation.decision_total" {
+                    return None;
+                }
+                let labels: std::collections::HashMap<&str, &str> =
+                    key.labels().map(|l| (l.key(), l.value())).collect();
+                if labels.get("op").copied() != Some("cross_episode")
+                    || labels.get("mode").copied() != Some(mode)
+                    || labels.get("outcome").copied() != Some("merged")
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(n) => Some(n),
+                    _ => None,
+                }
+            })
+            .sum()
+    }
+
+    /// ADR-070 §2.3 DoD-2.3.1: the SAME mergeable fixture yields an IDENTICAL
+    /// `report.count` under dry_run true/false (count reflects DECISIONS), but the
+    /// entity row count is reduced by 1 under `false` (real fusion) and UNCHANGED
+    /// under `true` (shadow skips the write). The `mode` label differs accordingly.
+    #[tokio::test]
+    async fn cross_episode_dry_run_skips_write_identical_count() {
+        use metrics_util::debugging::DebuggingRecorder;
+
+        // Applied (dry_run=false): the write commits → the loser is fused away.
+        let applied = TemporalGraph::open_in_memory().await.expect("open");
+        plant_mergeable_pair(&applied, "g1").await;
+        let entities_before = entities_in_group(&applied, "g1").await.len();
+        let rec_a = DebuggingRecorder::new();
+        let snap_a = rec_a.snapshotter();
+        let report_applied = {
+            let _g = metrics::set_default_local_recorder(&rec_a);
+            cross_episode(&applied, "g1", false).await.expect("applied")
+        };
+        let entities_after_applied = entities_in_group(&applied, "g1").await.len();
+
+        // Shadow (dry_run=true): identical fixture on a fresh graph → same decision
+        // count, but NO fusion.
+        let shadow = TemporalGraph::open_in_memory().await.expect("open");
+        plant_mergeable_pair(&shadow, "g1").await;
+        let rec_s = DebuggingRecorder::new();
+        let snap_s = rec_s.snapshotter();
+        let report_shadow = {
+            let _g = metrics::set_default_local_recorder(&rec_s);
+            cross_episode(&shadow, "g1", true).await.expect("shadow")
+        };
+        let entities_after_shadow = entities_in_group(&shadow, "g1").await.len();
+
+        // (a) report.count identical across modes (counts DECISIONS, not writes).
+        assert_eq!(
+            report_applied.count, report_shadow.count,
+            "report.count is identical across dry_run true/false"
+        );
+        assert_eq!(report_applied.count, 1, "the corroborated pair is one decision");
+        // (b) entity ROW count: applied fuses (−1); shadow leaves it untouched.
+        assert_eq!(
+            entities_after_applied,
+            entities_before - 1,
+            "applied (dry_run=false): the loser was fused away"
+        );
+        assert_eq!(
+            entities_after_shadow, entities_before,
+            "shadow (dry_run=true): no entity was fused — the write was skipped"
+        );
+        // (c) the `mode` label differs (shadow vs applied), with no cross-contamination.
+        assert_eq!(
+            merged_decision_count(&snap_a, "applied"),
+            1,
+            "applied run emits decision_total{{mode=applied,outcome=merged}}"
+        );
+        assert_eq!(
+            merged_decision_count(&snap_s, "shadow"),
+            1,
+            "shadow run emits decision_total{{mode=shadow,outcome=merged}}"
+        );
+        assert_eq!(merged_decision_count(&snap_a, "shadow"), 0);
+        assert_eq!(merged_decision_count(&snap_s, "applied"), 0);
+    }
+
+    /// ADR-070 §2.2 compound default: a first enablement of cross-episode merges lands
+    /// in shadow mode until the operator explicitly opts into Stage 5 (apply).
+    #[test]
+    fn dream_opts_cross_episode_dry_run_defaults_true() {
+        assert!(
+            crate::memory::types::DreamOpts::default().cross_episode_dry_run,
+            "DreamOpts::default().cross_episode_dry_run must be true (ADR-070 §2.2)"
+        );
     }
 
     // ── DoD-P3.1b / RISK-001: same label, NO shared neighbour → DO NOT MERGE ─────
@@ -1232,7 +1378,7 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "lawfirm").await;
         fact_rel(&graph, gid, "john  smith", "competed_in", "olympics").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "homonym: same label + NO shared structure must NOT merge (EXACT 0)"
@@ -1260,7 +1406,7 @@ mod tests {
         fact_lit(&graph, gid, "Acme Corp", "headquartered_in", "Boston").await;
         fact_lit(&graph, gid, "acme  corp", "headquartered_in", "Boston").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 1,
             "identical literal assertion corroborates merge"
@@ -1303,7 +1449,7 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "located_in", "Boston").await;
         fact_rel(&graph, gid, "john  smith", "located_in", "Boston").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "single HUB shared neighbour (deg > HUB_DEGREE_CAP) contributes integer \
@@ -1334,7 +1480,7 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "member_of", "MegaCorp").await;
         fact_rel(&graph, gid, "john  smith", "member_of", "MegaCorp").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "TWO hub corroborators, BOTH deg > HUB_DEGREE_CAP → each weight 0 → \
@@ -1360,7 +1506,7 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "niche_org").await;
         fact_rel(&graph, gid, "john  smith", "works_at", "niche_org").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 1,
             "one shared neighbour of degree 2 → scaled weight 524_288 >= threshold → MERGE"
@@ -1393,7 +1539,7 @@ mod tests {
             fact_rel(&graph, gid, "John Smith", "member_of", "org_b").await;
             fact_rel(&graph, gid, "john  smith", "member_of", "org_b").await;
 
-            let report = cross_episode(&graph, gid).await.expect("cross_episode");
+            let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
             assert_eq!(
                 report.count, 1,
                 "TWO deg-8 corroborators sum to EXACTLY SCALED_THRESHOLD (integer `>=`) → MERGE"
@@ -1415,7 +1561,7 @@ mod tests {
             fact_rel(&graph, gid, "John Smith", "member_of", "org_a").await;
             fact_rel(&graph, gid, "john  smith", "member_of", "org_a").await;
 
-            let report = cross_episode(&graph, gid).await.expect("cross_episode");
+            let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
             assert_eq!(
                 report.count, 0,
                 "ONE deg-8 corroborator: 262_144 < SCALED_THRESHOLD 524_288 → must NOT merge"
@@ -1470,7 +1616,7 @@ mod tests {
         fact_rel(&graph, gid, id_a, "member_of", "org").await;
         fact_rel(&graph, gid, id_b, "member_of", "org").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(report.count, 1, "fuzzy ≥0.9 corroborated pair merges");
     }
 
@@ -1495,7 +1641,7 @@ mod tests {
         fact_rel(&graph, gid, id_a, "works_at", "lawfirm").await;
         fact_rel(&graph, gid, id_b, "competed_in", "olympics").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "fuzzy label match with NO shared structure must NOT merge (EXACT 0)"
@@ -1520,7 +1666,7 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "acme").await;
         fact_rel(&graph, gid, "john  smith", "works_at", "acme").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "same-episode-only pair is not cross-episode recurrence (EXACT 0)"
@@ -1548,7 +1694,7 @@ mod tests {
         fact_rel(&graph, gid, "big blue", "makes", "acme").await;
         fact_rel(&graph, gid, "ibm", "makes", "acme").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "lexically-distinct pair is canonicalize's cosine job, not cross_episode"
@@ -1603,7 +1749,7 @@ mod tests {
         fact_rel(&graph, gid, "john  smith", "knows", "pair_bc_rare").await;
         fact_rel(&graph, gid, "john   smith", "knows", "pair_bc_rare").await;
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 2,
             "transitive: 3 same-label corroborated entities fuse to ONE root (2 losers)"
@@ -1652,7 +1798,7 @@ mod tests {
         fact_rel(&graph, gid, "john  smith", "knows", "y").await; // B → y
         fact_rel(&graph, gid, "john   smith", "knows", "y").await; // C → y  (B~C share y)
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         // Clique-only + disjoint-cover: eligible cliques are {A,B} and {B,C} (both
         // sharing B). Sort by (size desc [tie: both 2], weight desc [tie: both one
         // SCALED_THRESHOLD edge], min-id asc): "John Smith" (0x4A...) < "john  smith"
@@ -1709,7 +1855,7 @@ mod tests {
         // against a runaway loop if the convergence proof is ever violated.
         let mut pass_counts: Vec<usize> = Vec::new();
         for pass in 0..5 {
-            let report = cross_episode(&graph, gid)
+            let report = cross_episode(&graph, gid, false)
                 .await
                 .unwrap_or_else(|e| panic!("pass {pass}: cross_episode: {e}"));
             pass_counts.push(report.count);
@@ -1771,9 +1917,9 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "acme").await;
         fact_rel(&graph, gid, "john  smith", "works_at", "acme").await;
 
-        let first = cross_episode(&graph, gid).await.expect("first");
+        let first = cross_episode(&graph, gid, false).await.expect("first");
         assert_eq!(first.count, 1, "first run merges the recurring pair");
-        let second = cross_episode(&graph, gid).await.expect("second");
+        let second = cross_episode(&graph, gid, false).await.expect("second");
         assert_eq!(second.count, 0, "second run merges 0 (loser gone)");
     }
 
@@ -1798,7 +1944,7 @@ mod tests {
         fact_rel(&graph, "gA", "John Smith", "works_at", "acme a").await;
         fact_rel(&graph, "gB", "john  smith", "works_at", "acme b").await;
 
-        let report = cross_episode(&graph, "gA").await.expect("cross_episode gA");
+        let report = cross_episode(&graph, "gA", false).await.expect("cross_episode gA");
         assert_eq!(
             report.count, 0,
             "gA sweep sees only one john-smith → no pair"
@@ -1817,7 +1963,7 @@ mod tests {
     #[tokio::test]
     async fn empty_group_merges_zero() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
-        let report = cross_episode(&graph, "g_empty")
+        let report = cross_episode(&graph, "g_empty", false)
             .await
             .expect("cross_episode");
         assert_eq!(report.count, 0);
@@ -1859,7 +2005,7 @@ mod tests {
             fact_rel(&graph, gid, &ids[i + 1], "knows", &neighbour).await;
         }
 
-        let report = cross_episode(&graph, gid).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "a same-label component of {n} entities (> MAX_LABEL_GROUP={MAX_LABEL_GROUP}) \
@@ -2422,7 +2568,7 @@ mod tests {
             let mut pass_counts: Vec<usize> = Vec::new();
             const MAX_PASSES: usize = 6; // bounded guard against a runaway loop.
             for pass in 0..MAX_PASSES {
-                let report = cross_episode(&graph, "gA")
+                let report = cross_episode(&graph, "gA", false)
                     .await
                     .unwrap_or_else(|e| panic!("seed={seed:#x} pass={pass}: cross_episode: {e}"));
                 pass_counts.push(report.count);
@@ -2517,7 +2663,7 @@ mod tests {
             );
 
             // P-INV5 (idempotent): one MORE run past the fixpoint still merges 0.
-            let confirm = cross_episode(&graph, "gA")
+            let confirm = cross_episode(&graph, "gA", false)
                 .await
                 .unwrap_or_else(|e| panic!("seed={seed:#x}: confirm cross_episode: {e}"));
             let after_confirm_ga = snapshot_entity_ids(&graph, "gA").await;

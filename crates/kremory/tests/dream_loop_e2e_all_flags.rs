@@ -259,6 +259,8 @@ fn all_flags_dream_opts() -> DreamOpts {
         // behaviour is unchanged from before consolidation existed.
         include_community_detection: false,
         include_cross_episode_merges: false,
+        // Op is off here → dry_run value is cosmetic; `true` matches DreamOpts::default.
+        cross_episode_dry_run: true,
         include_supersession_sweep: false,
         include_supersession_llm_nominate: false,
         include_fact_archival: false,

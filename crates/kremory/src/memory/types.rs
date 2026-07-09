@@ -782,6 +782,26 @@ pub struct DreamOpts {
     ///
     /// DEFAULT `false` — opt-in (spec §6).
     pub include_cross_episode_merges: bool,
+    /// Shadow-mode gate for the CONSOLIDATION cross-episode merge op (ADR-070 Stage 2
+    /// of the enablement ratchet). When `true` (and `include_cross_episode_merges` is
+    /// also `true`), the op computes every clique-cover + F2 corroboration decision
+    /// EXACTLY as it would live, but SKIPS the `apply_entity_merge` call — no entity is
+    /// actually fused. Every decision (merge-would-fire or defer/skip) still emits its
+    /// `DecisionRecord` (ADR-070 Fork 2/3) with `mode = Shadow`, so an operator can
+    /// observe the op's real decision distribution on THEIR data before trusting it
+    /// with destructive writes.
+    ///
+    /// Mirrors the existing `ConsistencyCheckOpts.dry_run` precedent — same "decision
+    /// computed, write skipped, skip-signal emitted" contract, generalized to this op.
+    ///
+    /// **Compound default `true`** (ADR-070 §2.2): a consumer flipping
+    /// `include_cross_episode_merges: true` for the FIRST time, WITHOUT also explicitly
+    /// setting `cross_episode_dry_run: false`, gets Stage 2 (shadow) automatically —
+    /// the op runs, computes decisions, emits telemetry, but does not commit merges.
+    /// Reaching Stage 5 (apply) requires setting BOTH `include_cross_episode_merges:
+    /// true` AND `cross_episode_dry_run: false`. Only matters when
+    /// `include_cross_episode_merges` is true (the op is off otherwise).
+    pub cross_episode_dry_run: bool,
     /// Run the CONSOLIDATION supersession sweep (ADR-066 §2.3, spec P1) — the
     /// deterministic world-time window close-out lane (retire facts whose
     /// `valid_to` has passed but were never marked expired). Zero-LLM,
@@ -870,6 +890,11 @@ impl Default for DreamOpts {
             // reconciliation-only dream path is unaffected.
             include_community_detection: false,
             include_cross_episode_merges: false,
+            // Compound default TRUE (ADR-070 §2.2): the FIRST enablement of
+            // `include_cross_episode_merges` lands in shadow mode (decisions computed +
+            // observed, no entity fused) until an operator explicitly sets this `false`
+            // to reach Stage 5 (apply). Irrelevant while the op is off (default).
+            cross_episode_dry_run: true,
             include_supersession_sweep: false,
             include_supersession_llm_nominate: false,
             include_fact_archival: false,

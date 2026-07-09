@@ -260,7 +260,10 @@ async fn run_one_row(row: &Row) -> RowOutcome {
     fact_rel(&graph, &gid, &row.entity_b, "works_at", &row.neighbour_b).await;
 
     let entities_before = entity_count(&graph, &gid).await;
-    let report = cross_episode(&graph, &gid).await.expect("cross_episode");
+    // dry_run=false: the corpus harness measures REAL fusion (entity_count before/after).
+    let report = cross_episode(&graph, &gid, false)
+        .await
+        .expect("cross_episode");
     let entities_after = entity_count(&graph, &gid).await;
 
     let survivors = entity_ids(&graph, &gid).await;

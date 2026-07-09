@@ -267,6 +267,9 @@ fn all_consolidation_on() -> DreamOpts {
     DreamOpts {
         include_community_detection: true,
         include_cross_episode_merges: true,
+        // dry_run=false → exercise REAL fusion (this real-LLM harness asserts merges +
+        // idempotency, which require the destructive write to actually commit, not shadow).
+        cross_episode_dry_run: false,
         include_supersession_sweep: true,
         include_supersession_llm_nominate: false,
         include_fact_archival: true,
