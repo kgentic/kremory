@@ -329,7 +329,7 @@ const EPISODES: &[(&str, &str)] = &[
 /// provides. `include_llm_nominate: false` (the LLM value-change lane is stub-off
 /// this phase and irrelevant to the deterministic window-closeout property here).
 async fn run_supersession(graph: &TemporalGraph, group_id: &str) -> usize {
-    let mut budget = ConsolidationBudget::new(None);
+    let mut budget = ConsolidationBudget::new(None, None);
     let report = supersession(SupersessionParams {
         graph,
         group_id,

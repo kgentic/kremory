@@ -551,6 +551,7 @@ async fn e7_dream_summary_entities_reclassified_field_exists() {
         types_discovered: vec![],
         entities_reclassified: 42,
         warnings: vec![],
+        budget_exhausted: false,
     };
     assert_eq!(
         summary.entities_reclassified, 42,

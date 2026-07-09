@@ -154,6 +154,7 @@ impl GraphHandle for LegacyStub {
             types_discovered: vec![],
             entities_reclassified: 0,
             warnings: vec![],
+            budget_exhausted: false,
         })
     }
 

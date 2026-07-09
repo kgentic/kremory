@@ -265,7 +265,9 @@ fn all_flags_dream_opts() -> DreamOpts {
         include_supersession_llm_nominate: false,
         include_fact_archival: false,
         consolidation_budget_tokens: Some(50_000),
+        consolidation_budget_usd_micro: None,
         archive_grace_days: Some(90),
+        net_mutation_warn_floor: Some(500),
     }
 }
 

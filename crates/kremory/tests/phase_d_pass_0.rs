@@ -268,6 +268,7 @@ async fn d6_dream_summary_types_discovered_field_accessible() {
         }],
         entities_reclassified: 0,
         warnings: vec!["test warning".to_string()],
+        budget_exhausted: false,
     };
     assert_eq!(summary.types_discovered.len(), 1);
     assert_eq!(summary.types_discovered[0].name, "TestType");

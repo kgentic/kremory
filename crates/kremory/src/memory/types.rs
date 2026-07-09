@@ -375,6 +375,14 @@ pub struct DreamPhaseResult {
     /// Warnings emitted during the dream phase (e.g. degraded-mode notices).
     #[serde(default)]
     pub dream_warnings: Vec<String>,
+    /// TD-060 (ADR-071 §Item 4a step 6) — `true` when the consolidation
+    /// sub-phase's `ConsolidationBudget` (token or USD ceiling) was exhausted this
+    /// run, skipping at least one op. `#[serde(default)]` so older persisted/
+    /// deserialized payloads without this field still parse (this is an internal
+    /// operator signal, not LLM-emitted output, but the same loud-vs-silent-default
+    /// posture applies to any struct crossing a (de)serialization boundary).
+    #[serde(default)]
+    pub budget_exhausted: bool,
 }
 
 /// Options for `search`. All fields optional — defaults are the
@@ -835,6 +843,16 @@ pub struct DreamOpts {
     /// DEFAULT `Some(50_000)` — a conservative cap (only supersession's optional LLM
     /// lane + community detection consume tokens; the other ops are ~zero).
     pub consolidation_budget_tokens: Option<u64>,
+    /// Per-run USD-micro budget ceiling for the consolidation sub-phase (TD-060,
+    /// ADR-071 §Item 4a). Mirrors `consolidation_budget_tokens` exactly — soft
+    /// partial-abort, AND-gated with the token ceiling at each op's pre-check
+    /// (`budget.check(...) && budget.check_usd(...)`), both must pass for the op to
+    /// run. `None` = unbounded (no USD cap configured; most local-Ollama runs are
+    /// $0-cost and never need one).
+    ///
+    /// DEFAULT `None` — the ADR leaves a conservative non-`None` default as a
+    /// product/UX call it does not make; this spec does not invent one.
+    pub consolidation_budget_usd_micro: Option<u64>,
     /// Grace window (days) before an expired fact becomes archival-eligible
     /// (ADR-066 §2.4, spec P2.1). A fact is a candidate only when
     /// `expired_at < now - archive_grace_days`. `None` = no grace (archive
@@ -842,6 +860,20 @@ pub struct DreamOpts {
     ///
     /// DEFAULT `Some(90)`.
     pub archive_grace_days: Option<u32>,
+    /// TD-106 (ADR-071 §Item 4b) — post-aggregation WARN-only guard on the
+    /// consolidation sub-phase's aggregate destructive-mutation count
+    /// (`cross_episode_merges + supersessions_recorded + facts_archived`;
+    /// `communities_updated` is EXCLUDED — a community "update" is a recomputed
+    /// partition write, not a destructive mutation of fact/entity identity). When
+    /// the aggregate exceeds this floor, `run_consolidation` fires an always-on
+    /// `tracing::warn!` + `kremory.dream.consolidation.net_mutation_warn_total`
+    /// counter — a WARN signal only, no behavior change to any op's own decision
+    /// logic. `None` disables the check.
+    ///
+    /// DEFAULT `Some(500)` — calibration detail (mirrors gbrain's
+    /// `NET_DELETION_WARN_FLOOR = 50` scaled ~10x for kremory's typical namespace
+    /// size), not an architectural decision.
+    pub net_mutation_warn_floor: Option<usize>,
 }
 
 impl DreamOpts {
@@ -900,7 +932,14 @@ impl Default for DreamOpts {
             include_fact_archival: false,
             // Conservative token cap (only supersession-LLM + communities spend).
             consolidation_budget_tokens: Some(50_000),
+            // TD-060: no USD cap by default — most consolidation ops run against
+            // local Ollama at $0 cost; a non-None default is a product/UX call the
+            // ADR does not make.
+            consolidation_budget_usd_micro: None,
             archive_grace_days: Some(90),
+            // TD-106: calibration default (see field doc — mirrors gbrain's
+            // NET_DELETION_WARN_FLOOR scaled ~10x).
+            net_mutation_warn_floor: Some(500),
         }
     }
 }

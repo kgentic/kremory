@@ -179,6 +179,12 @@ pub struct DreamSummary {
     /// Warnings emitted during the dream phase.
     /// Includes degraded-mode notices (e.g. anti-redundancy gate skipped).
     pub warnings: Vec<String>,
+    /// TD-060 (ADR-071 §Item 4a step 6) — `true` when the consolidation
+    /// sub-phase's `ConsolidationBudget` (token or USD ceiling) was exhausted this
+    /// run, skipping at least one op. Set from the fold site in `facade/dream.rs`
+    /// (`consolidation.budget_exhausted`) — inert (`false`) unless a consolidation
+    /// op was enabled and its budget ceiling actually tripped.
+    pub budget_exhausted: bool,
 }
 
 impl From<DreamPhaseResult> for DreamSummary {
@@ -197,6 +203,13 @@ impl From<DreamPhaseResult> for DreamSummary {
             type_registry_merges: 0,
             consistency_check_corrected: 0,
             warnings: r.dream_warnings,
+            // Carried through structurally (not hardcoded false) — DreamPhaseResult
+            // gained this field for exactly this propagation (ADR-071 §Item 4a step
+            // 6). In the live `facade/dream.rs` call path `r` is always freshly
+            // `DreamPhaseResult::default()`-constructed BEFORE consolidation runs, so
+            // this is `false` here and is overwritten by the fold site immediately
+            // after with the real `consolidation.budget_exhausted` value.
+            budget_exhausted: r.budget_exhausted,
         }
     }
 }
@@ -219,7 +232,73 @@ impl From<crate::core::ingest::DreamPassSummary> for DreamSummary {
             type_registry_merges: 0,
             consistency_check_corrected: 0,
             warnings: Vec::new(),
+            // DreamPassSummary has no budget concept — no consolidation sub-phase
+            // ran on this path.
+            budget_exhausted: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod dream_summary_budget_exhausted_tests {
+    //! TD-060 (ADR-071 §Item 4a step 6, Vera HIGH-1) — consumer-observability
+    //! coverage for `budget_exhausted` propagation. `run_consolidation`'s real op
+    //! projections are all 0 at this stage (§Item 4a DoD note), so a true
+    //! budget-capped skip cannot be triggered end-to-end through `mem.dream()`
+    //! yet — these tests instead prove the STRUCTURAL propagation chain a live
+    //! skip will ride once a non-zero projection ships: `ConsolidationSummary`
+    //! (mod.rs `skip()`) → `DreamSummary` (facade/dream.rs fold site) and
+    //! `DreamPhaseResult` → `DreamSummary` (the `From` impl above).
+
+    use super::*;
+    use crate::core::dream::consolidation::ConsolidationSummary;
+
+    #[test]
+    fn dream_phase_result_budget_exhausted_field_accessible() {
+        // Structural/compile-shape test (mirrors the established
+        // `d6_dream_summary_types_discovered_field_accessible` pattern) — the field
+        // must exist on DreamPhaseResult and accept a bool value.
+        let r = DreamPhaseResult {
+            budget_exhausted: true,
+            ..Default::default()
+        };
+        assert!(r.budget_exhausted, "DreamPhaseResult.budget_exhausted must be settable");
+    }
+
+    #[test]
+    fn dream_summary_from_dream_phase_result_carries_budget_exhausted() {
+        // Proves the `From<DreamPhaseResult>` impl above threads the flag through
+        // rather than hardcoding `false` — the propagation half of Vera HIGH-1.
+        let r = DreamPhaseResult {
+            budget_exhausted: true,
+            ..Default::default()
+        };
+        let summary: DreamSummary = r.into();
+        assert!(
+            summary.budget_exhausted,
+            "DreamSummary::from(DreamPhaseResult) must carry budget_exhausted through, not hardcode false"
+        );
+    }
+
+    #[test]
+    fn dream_summary_fold_site_pattern_carries_consolidation_budget_exhausted() {
+        // Proves the exact assignment shape used at the `facade/dream.rs` fold site
+        // (`summary.budget_exhausted = consolidation.budget_exhausted;`) correctly
+        // reads a `true` ConsolidationSummary.budget_exhausted through to the
+        // consumer-facing DreamSummary — the other half of Vera HIGH-1 (a live
+        // budget-capped run cannot yet drive this end-to-end per the module doc
+        // above, so this test exercises the fold assignment directly).
+        let consolidation = ConsolidationSummary {
+            budget_exhausted: true,
+            ..Default::default()
+        };
+        let mut summary = DreamSummary::from(DreamPhaseResult::default());
+        assert!(!summary.budget_exhausted, "starts false (no skip yet)");
+        summary.budget_exhausted = consolidation.budget_exhausted;
+        assert!(
+            summary.budget_exhausted,
+            "fold-site assignment must carry a tripped ConsolidationSummary.budget_exhausted through to DreamSummary"
+        );
     }
 }
 

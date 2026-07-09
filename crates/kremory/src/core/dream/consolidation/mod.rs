@@ -45,6 +45,10 @@ use substrate::{ConsolidationBudget, OpReport};
 /// is an op-internal concern folded in as each op lands.
 const OP_TOKEN_PROJECTION: u64 = 0;
 
+/// Sibling of [`OP_TOKEN_PROJECTION`] for the USD-micro ceiling (TD-060). Same
+/// coarse-gate rationale: 0 until an op's real per-call USD projection is wired.
+const OP_USD_PROJECTION: u64 = 0;
+
 /// Bundled params for [`run_consolidation`] — args-as-object per TD-042
 /// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
 pub(crate) struct RunConsolidationParams<'a> {
@@ -87,11 +91,14 @@ pub(crate) async fn run_consolidation(
         sink,
     } = params;
     let mut summary = ConsolidationSummary::default();
-    let mut budget = ConsolidationBudget::new(opts.consolidation_budget_tokens);
+    let mut budget = ConsolidationBudget::new(
+        opts.consolidation_budget_tokens,
+        opts.consolidation_budget_usd_micro,
+    );
 
     // 1. supersession (P1) — build FIRST; feeds archive's `expired_at` input.
     if opts.include_supersession_sweep {
-        if budget.check(OP_TOKEN_PROJECTION) {
+        if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
             let report = supersession::supersession(supersession::SupersessionParams {
                 graph,
                 group_id,
@@ -106,25 +113,25 @@ pub(crate) async fn run_consolidation(
                 &mut summary.warnings,
             );
         } else {
-            skip("supersession", &mut summary.warnings);
+            skip("supersession", &budget, &mut summary);
         }
     }
 
     // 2. archive (P2) — consumes supersession's `expired_at` output.
     if opts.include_fact_archival {
-        if budget.check(OP_TOKEN_PROJECTION) {
+        if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
             let grace_days = opts.archive_grace_days.unwrap_or(0);
             let report = archive::archive(graph, group_id, grace_days).await;
             fold(&mut summary.facts_archived, report, &mut summary.warnings);
         } else {
-            skip("archive", &mut summary.warnings);
+            skip("archive", &budget, &mut summary);
         }
     }
 
     // 3. cross_episode (P3) — runs after canonicalize (reconciliation chain), so it
     //    only handles the exact/fuzzy cases canonicalize's cosine band missed.
     if opts.include_cross_episode_merges {
-        if budget.check(OP_TOKEN_PROJECTION) {
+        if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
             let report =
                 cross_episode::cross_episode(graph, group_id, opts.cross_episode_dry_run).await;
             // Orchestrator-fires the consumer event for each merge decision (ADR-070
@@ -147,13 +154,13 @@ pub(crate) async fn run_consolidation(
                 &mut summary.warnings,
             );
         } else {
-            skip("cross_episode", &mut summary.warnings);
+            skip("cross_episode", &budget, &mut summary);
         }
     }
 
     // 4. communities (P4) — LAST; benefits from a settled entity population.
     if opts.include_community_detection {
-        if budget.check(OP_TOKEN_PROJECTION) {
+        if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
             let report = communities::communities(graph, group_id).await;
             fold(
                 &mut summary.communities_updated,
@@ -161,11 +168,49 @@ pub(crate) async fn run_consolidation(
                 &mut summary.warnings,
             );
         } else {
-            skip("communities", &mut summary.warnings);
+            skip("communities", &budget, &mut summary);
         }
     }
 
+    check_net_mutation_warn(group_id, opts.net_mutation_warn_floor, &summary);
+
     Ok(summary)
+}
+
+/// TD-106 (ADR-071 §Item 4b) — net-mutation warn guard. Pure post-aggregation
+/// check, no change to any op's own decision logic. `communities_updated` is
+/// EXCLUDED: a community "update" is a recomputed partition write, not a
+/// destructive mutation of fact/entity identity (ADR-071 Item 2's own
+/// reversibility argument), so including it would conflate a safe, fully
+/// reversible op with the three ops that DO destroy/move source rows.
+///
+/// NOTE (Vera MED-2, carried from impl-spec §4b): supersession→archive are
+/// coupled (the dispatcher runs supersession before archive; archive consumes
+/// its `expired_at` output). A fact superseded THIS pass could — rarely, given
+/// `archive_grace_days` default 90 — also be archived same-pass, double-counting
+/// one logical retirement toward the floor. Acceptable for a WARN-ONLY guard: no
+/// correctness risk, at worst a slightly-early warn. Documented, not corrected.
+///
+/// Extracted as its own fn (rather than inlined in `run_consolidation`) so unit
+/// tests can drive the arithmetic + counter directly against a constructed
+/// `ConsolidationSummary`, without needing a fixture graph that produces real
+/// non-zero op counts.
+fn check_net_mutation_warn(group_id: &str, floor: Option<usize>, summary: &ConsolidationSummary) {
+    let Some(floor) = floor else { return };
+    let net_mutations =
+        summary.cross_episode_merges + summary.supersessions_recorded + summary.facts_archived;
+    if net_mutations > floor {
+        // Always-on trace (not KREMORY_DEBUG-gated) per ADR-071 §Item 5 table:
+        // "a warn is itself the operator signal."
+        tracing::warn!(
+            target: "kremory.dream.consolidation",
+            group_id,
+            net_mutations,
+            floor,
+            "consolidation pass exceeded net-mutation warn floor"
+        );
+        counter!("kremory.dream.consolidation.net_mutation_warn_total").increment(1);
+    }
 }
 
 /// Fold an op's `Result<OpReport>` into the running summary: on `Ok`, add its
@@ -183,12 +228,28 @@ fn fold(count: &mut usize, report: Result<OpReport>, warnings: &mut Vec<String>)
     }
 }
 
-/// Record a budget skip: emit the source-attributed counter + a summary warning.
-fn skip(op: &str, warnings: &mut Vec<String>) {
+/// Record a budget skip: emit the source-attributed counter (fires identically
+/// whether the token or the USD-micro ceiling tripped — TD-060), set the summary's
+/// typed `budget_exhausted` flag, and append a warning. `KREMORY_DEBUG`-gated trace
+/// carries the USD ceiling/used values as FIELDS (never counter labels), mirroring
+/// the pattern at `cross_episode.rs`'s corroboration-score debug trace.
+fn skip(op: &str, budget: &ConsolidationBudget, summary: &mut ConsolidationSummary) {
     counter!("kremory.dream.consolidation.budget_skip_total", "op" => op.to_string()).increment(1);
-    warnings.push(format!(
+    summary.budget_exhausted = true;
+    summary.warnings.push(format!(
         "consolidation op '{op}' skipped: budget ceiling reached"
     ));
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        tracing::debug!(
+            target: "kremory.dream.consolidation",
+            op,
+            used_tokens = budget.used_tokens,
+            ceiling_tokens = budget.ceiling_tokens,
+            used_usd_micro = budget.used_usd_micro,
+            ceiling_usd_micro = ?budget.ceiling_usd_micro,
+            "consolidation op skipped: budget ceiling reached"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -276,6 +337,168 @@ mod tests {
         assert!(
             summary.warnings.is_empty(),
             "zero-projection op is not skipped by a zero ceiling"
+        );
+        assert!(
+            !summary.budget_exhausted,
+            "zero-projection op does not trip the token budget_exhausted flag"
+        );
+    }
+
+    // ── USD budget (TD-060) ─────────────────────────────────────────────────────
+
+    #[test]
+    fn budget_exhausted_flag_set_on_usd_skip() {
+        // Synthetic (impl-spec §4a DoD): `skip()` is the single call site that sets
+        // `ConsolidationSummary.budget_exhausted`, fired identically whether the
+        // token or the USD ceiling tripped. OP_TOKEN_PROJECTION/OP_USD_PROJECTION
+        // are both 0 at this stage (no op yet spends token/USD budget), so a real
+        // `run_consolidation` skip can't be triggered non-synthetically — assert the
+        // flag-setting mechanism directly instead.
+        let mut summary = ConsolidationSummary::default();
+        assert!(!summary.budget_exhausted, "starts false");
+        let budget = ConsolidationBudget::new(Some(0), Some(0));
+        skip("supersession", &budget, &mut summary);
+        assert!(
+            summary.budget_exhausted,
+            "skip() must set budget_exhausted regardless of which ceiling tripped"
+        );
+    }
+
+    #[tokio::test]
+    async fn budget_exhausted_not_set_when_usd_projection_zero() {
+        // OP_USD_PROJECTION is currently 0 for every op (no op yet spends USD) — a
+        // zero USD ceiling with a zero projection still passes check_usd (0<=0), so
+        // no op is skipped and budget_exhausted stays false. Mirrors
+        // run_consolidation_zero_ceiling_allows_zero_projection_ops for the USD path.
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let opts = DreamOpts {
+            include_supersession_sweep: true,
+            consolidation_budget_usd_micro: Some(0),
+            ..DreamOpts::default()
+        };
+        let summary = run_consolidation(RunConsolidationParams {
+            graph: &graph,
+            group_id: "g_usd_budget",
+            opts: &opts,
+            model_id: "gemma4:e4b",
+            sink: None,
+        })
+        .await
+        .expect("run_consolidation");
+        assert_eq!(summary.supersessions_recorded, 0);
+        assert!(
+            !summary.budget_exhausted,
+            "zero-projection op does not trip the usd budget_exhausted flag"
+        );
+    }
+
+    // ── Net-mutation warn guard (TD-106) ────────────────────────────────────────
+
+    fn summary_with(
+        cross_episode_merges: usize,
+        supersessions_recorded: usize,
+        facts_archived: usize,
+        communities_updated: usize,
+    ) -> ConsolidationSummary {
+        ConsolidationSummary {
+            communities_updated,
+            cross_episode_merges,
+            supersessions_recorded,
+            facts_archived,
+            warnings: Vec::new(),
+            budget_exhausted: false,
+        }
+    }
+
+    /// Does `net_mutation_warn_total` (zero labels) carry the given count?
+    fn net_mutation_warn_counter(snapshotter: &metrics_util::debugging::Snapshotter) -> Option<u64> {
+        use metrics_util::debugging::DebugValue;
+        snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .find_map(|(composite_key, _, _, value)| {
+                let key = composite_key.key();
+                if key.name() != "kremory.dream.consolidation.net_mutation_warn_total" {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(n) => Some(n),
+                    _ => None,
+                }
+            })
+    }
+
+    #[test]
+    fn net_mutation_warn_fires_above_floor() {
+        use metrics_util::debugging::DebuggingRecorder;
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        // floor=2, net=3 (1 cross_episode + 1 supersession + 1 archive = 3 > 2).
+        let summary = summary_with(1, 1, 1, 0);
+        check_net_mutation_warn("g1", Some(2), &summary);
+
+        assert_eq!(
+            net_mutation_warn_counter(&snapshotter),
+            Some(1),
+            "net_mutation_warn_total must fire once when net_mutations(3) > floor(2)"
+        );
+    }
+
+    #[test]
+    fn net_mutation_warn_silent_below_floor() {
+        use metrics_util::debugging::DebuggingRecorder;
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        // floor=10, net=3 — well below floor, no fire.
+        let summary = summary_with(1, 1, 1, 0);
+        check_net_mutation_warn("g1", Some(10), &summary);
+
+        assert_eq!(
+            net_mutation_warn_counter(&snapshotter),
+            None,
+            "net_mutation_warn_total must NOT fire when net_mutations(3) <= floor(10)"
+        );
+    }
+
+    #[test]
+    fn net_mutation_warn_floor_none_disables_check() {
+        use metrics_util::debugging::DebuggingRecorder;
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        // Arbitrarily large net count, floor disabled (None) — never fires.
+        let summary = summary_with(1_000_000, 1_000_000, 1_000_000, 0);
+        check_net_mutation_warn("g1", None, &summary);
+
+        assert_eq!(
+            net_mutation_warn_counter(&snapshotter),
+            None,
+            "net_mutation_warn_total must never fire when floor is None"
+        );
+    }
+
+    #[test]
+    fn net_mutation_warn_excludes_communities_updated() {
+        use metrics_util::debugging::DebuggingRecorder;
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        // Large communities_updated ALONE (all three destructive counts at 0) must
+        // NOT trip the floor — communities is excluded from the formula.
+        let summary = summary_with(0, 0, 0, 1_000_000);
+        check_net_mutation_warn("g1", Some(2), &summary);
+
+        assert_eq!(
+            net_mutation_warn_counter(&snapshotter),
+            None,
+            "communities_updated must be excluded from the net-mutation formula"
         );
     }
 }
