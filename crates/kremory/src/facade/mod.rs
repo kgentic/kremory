@@ -142,6 +142,13 @@ pub struct WithEmb;
 #[derive(Debug, Clone)]
 pub struct DreamSummary {
     pub communities_updated: usize,
+    /// Cross-episode merge DECISIONS this pass (not necessarily writes). Under the
+    /// ADR-070 shadow gate (`DreamOpts.cross_episode_dry_run == true`, the default on
+    /// first enablement) the op computes + counts every merge decision but SKIPS the
+    /// fusion — so `cross_episode_merges > 0` does NOT imply entities were actually
+    /// fused. To distinguish, inspect the `DreamOpts` used, or the
+    /// `kremory.dream.consolidation.decision_total{op=cross_episode,mode}` metric
+    /// (`mode=shadow` vs `mode=applied`).
     pub cross_episode_merges: usize,
     pub supersessions_recorded: usize,
     pub facts_archived: usize,

@@ -61,6 +61,11 @@ pub struct MergeProposed<'a> {
 /// this single trait. `rqlm::submit_episode` and `rqlm::submit_dream_phase`
 /// both accept `Option<Arc<dyn EnrichmentEventSink>>`.
 ///
+/// Phase 3 events: `on_community_updated`, `on_batch_phase2_complete`,
+/// `on_worker_resumed` (crash-resume), and `on_merge_proposed` (ADR-070 Fork 5 — a
+/// cross-episode merge decision, shadowed or applied). All but the first two carry a
+/// default no-op, so consumers implement only the events they care about.
+///
 /// Supertrait ordering: `IngestEventSink` MUST be declared in kremory::core
 /// before this trait can compile (ADR C2 constraint).
 ///

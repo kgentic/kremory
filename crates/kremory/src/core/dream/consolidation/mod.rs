@@ -9,12 +9,14 @@
 //! 3. `cross_episode` — merge the same referent recurring across episodes (P3).
 //! 4. `communities` — deterministic label-propagation community detection (P4).
 //!
-//! The four ops are STUBS this phase (P0) — they return `OpReport::default()`;
-//! P1-P4 fill them. `run_consolidation` (DoD-P0.4) dispatches them in the strict
-//! dependency order supersession→archive→cross_episode→communities (§2.6), each
-//! gated by its `DreamOpts.include_*` flag + a shared soft `ConsolidationBudget`
-//! pre-check. Wired into `facade/dream.rs` after the reconciliation chain; inert by
-//! default (all `include_*` flags default `false`).
+//! The four ops are fully implemented (P1-P4) and each adopts the uniform ADR-070
+//! `emit_decision` telemetry contract. `run_consolidation` (DoD-P0.4) dispatches them
+//! in the strict dependency order supersession→archive→cross_episode→communities
+//! (§2.6), each gated by its `DreamOpts.include_*` flag + a shared soft
+//! `ConsolidationBudget` pre-check, and fires the `on_merge_proposed` consumer event
+//! (ADR-070 Fork 5) for each cross_episode merge decision. Wired into
+//! `facade/dream.rs` after the reconciliation chain; inert by default (all
+//! `include_*` flags default `false`).
 //!
 //! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`.
 
