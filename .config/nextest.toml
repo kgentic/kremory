@@ -1,0 +1,27 @@
+# nextest configuration for kremory. See TD-109 +
+# .ai-docs/specs/test-suite-build-perf-spec-2026-07-09.md
+#
+# `cargo nextest run -p kremory` is the recommended local test runner:
+# ~16x faster than `cargo test` (measured 568s -> 35s, single-run) because it
+# runs all test binaries in one global parallel pool instead of serially.
+#
+# IMPORTANT: nextest does NOT run doctests. Run them separately:
+#     cargo test --doc -p kremory
+
+[profile.default]
+# Surface (do not kill) any test slower than 60s — an early warning for the
+# hung-test / machine-sleep-stall class. Nothing in the default feature set
+# exceeds ~10s today.
+slow-timeout = "60s"
+
+# --- Ready-to-enable scaffold (kept commented per no-speculative-engineering) ---
+# If feature-profile flakes appear under nextest's higher parallelism
+# (ner_singleton / ollama keep_alive / single libSQL writer contention; see
+# Vera RISK-002 in the spec), serialize the resource-touching tests:
+#
+# [test-groups]
+# serial-resource = { max-threads = 1 }
+#
+# [[profile.default.overrides]]
+# filter = 'test(/_real_llm|llm_integration|ner_/)'
+# test-group = 'serial-resource'
