@@ -114,7 +114,8 @@ pub(crate) async fn run_consolidation(
     //    only handles the exact/fuzzy cases canonicalize's cosine band missed.
     if opts.include_cross_episode_merges {
         if budget.check(OP_TOKEN_PROJECTION) {
-            let report = cross_episode::cross_episode(graph, group_id).await;
+            let report =
+                cross_episode::cross_episode(graph, group_id, opts.cross_episode_dry_run).await;
             fold(
                 &mut summary.cross_episode_merges,
                 report,

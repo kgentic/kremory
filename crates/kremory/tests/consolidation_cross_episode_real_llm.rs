@@ -440,7 +440,8 @@ const EPISODES: &[(&str, &str)] = &[
 /// Nothing else from the dream phase runs — this is the isolation the L3 tier
 /// provides. cross_episode is 2-arg (graph, group_id) — no params struct (TD-042).
 async fn run_cross_episode(graph: &TemporalGraph, group_id: &str) -> usize {
-    let report = cross_episode(graph, group_id)
+    // dry_run=false: the real-LLM corpus harness measures REAL cross-episode fusion.
+    let report = cross_episode(graph, group_id, false)
         .await
         .expect("cross_episode op must succeed");
     report.count
