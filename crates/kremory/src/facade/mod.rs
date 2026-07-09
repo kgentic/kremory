@@ -1885,6 +1885,16 @@ mod dream_llm_slot_tests {
         let summary = mem
             .dream()
             .in_namespace(Namespace::new("default"))
+            // ADR-071 Item 1 turned cross_episode ON by default (in SHADOW);
+            // communities/archive follow in Item 2. This Pass-0/type-discovery test pins
+            // ALL consolidation flags OFF so its honest-zeros below stay valid across
+            // both items (shadow/consolidation behaviour is covered elsewhere).
+            .opts(crate::memory::types::DreamOpts {
+                include_cross_episode_merges: false,
+                include_community_detection: false,
+                include_fact_archival: false,
+                ..Default::default()
+            })
             .await
             .expect("dream with seeded catch-all entities must return Ok");
 
@@ -1906,19 +1916,19 @@ mod dream_llm_slot_tests {
         // NT-2 (honest-zeros lock): Phase-3 consolidation fields always 0.
         assert_eq!(
             summary.communities_updated, 0,
-            "communities_updated must be 0 — Phase-3 consolidation not yet implemented"
+            "communities_updated must be 0 — consolidation pinned OFF here (ADR-071)"
         );
         assert_eq!(
             summary.cross_episode_merges, 0,
-            "cross_episode_merges must be 0 — Phase-3 consolidation not yet implemented"
+            "cross_episode_merges must be 0 — consolidation pinned OFF here (ADR-071)"
         );
         assert_eq!(
             summary.supersessions_recorded, 0,
-            "supersessions_recorded must be 0 — Phase-3 consolidation not yet implemented"
+            "supersessions_recorded must be 0 — consolidation pinned OFF here (ADR-071)"
         );
         assert_eq!(
             summary.facts_archived, 0,
-            "facts_archived must be 0 — Phase-3 consolidation not yet implemented"
+            "facts_archived must be 0 — consolidation pinned OFF here (ADR-071)"
         );
     }
 }

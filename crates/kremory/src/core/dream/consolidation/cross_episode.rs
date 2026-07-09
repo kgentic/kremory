@@ -1521,6 +1521,24 @@ mod tests {
         );
     }
 
+    /// ADR-071 Item 1: the P3 corpus gate PASSED (Wilson-LB 0.971297) so
+    /// `include_cross_episode_merges` was flipped default-ON. Combined with
+    /// `cross_episode_dry_run` defaulting `true` (asserted above), the op runs
+    /// SHADOW-FIRST by construction — decisions computed, no fusion. This locks the
+    /// flip against an accidental revert.
+    #[test]
+    fn dream_opts_cross_episode_merges_defaults_true_in_shadow() {
+        let d = crate::memory::types::DreamOpts::default();
+        assert!(
+            d.include_cross_episode_merges,
+            "DreamOpts::default().include_cross_episode_merges must be true (ADR-071 Item 1)"
+        );
+        assert!(
+            d.cross_episode_dry_run,
+            "…and cross_episode_dry_run must stay true so the flip lands in SHADOW, not apply"
+        );
+    }
+
     /// ADR-070 §5.5.2: the orchestrator (`run_consolidation`) fires `on_merge_proposed`
     /// once per cross_episode merge decision, carrying the correct `dry_run` flag —
     /// whether shadowed (true) or applied (false). Uses a minimal inline capturing sink

@@ -921,7 +921,15 @@ impl Default for DreamOpts {
             // and the consolidation dispatcher never runs — the existing
             // reconciliation-only dream path is unaffected.
             include_community_detection: false,
-            include_cross_episode_merges: false,
+            // ADR-071 Item 1: P3 corpus gate PASSED (Wilson-LB 0.971297 >= 0.95, zero
+            // hub/two-hub false-merges — see
+            // .ai-docs/research/adr-071-p3-corpus-calibration-findings-2026-07-09.md) ->
+            // ENABLED. Lands in SHADOW by construction (`cross_episode_dry_run: true`
+            // below, ADR-070 §2.2): decisions are computed + emit DecisionRecord{mode=
+            // Shadow}, but `apply_entity_merge` is SKIPPED — no entity is fused. Stage-5
+            // (real apply) is a deferred later ratchet (set `cross_episode_dry_run:
+            // false`), NOT this build (locked-decision-3).
+            include_cross_episode_merges: true,
             // Compound default TRUE (ADR-070 §2.2): the FIRST enablement of
             // `include_cross_episode_merges` lands in shadow mode (decisions computed +
             // observed, no entity fused) until an operator explicitly sets this `false`

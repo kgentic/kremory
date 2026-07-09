@@ -479,9 +479,12 @@ impl<'a> DreamRequest<'a> {
         // Dream CONSOLIDATION sub-phase (ADR-066) — graph-global cleanup ops
         // (supersession / archive / cross_episode / communities). Runs AFTER the
         // reconciliation chain (all merges/reclassifications settled). Gated by the
-        // per-op `DreamOpts.include_*` flags, all default `false` — so
-        // `any_consolidation_enabled()` is false by default and this block is inert
-        // (existing dream tests unaffected). Non-fatal: `unwrap_or_default()` folds a
+        // per-op `DreamOpts.include_*` flags. Since ADR-071 Item 1, cross_episode
+        // defaults ON (in SHADOW — `cross_episode_dry_run: true`), so
+        // `any_consolidation_enabled()` is TRUE by default and this block RUNS (the op
+        // computes merge decisions + emits shadow telemetry, but fuses nothing);
+        // supersession / archive / communities remain default-off. Non-fatal:
+        // `unwrap_or_default()` folds a
         // dispatcher error into an all-zero summary + the counts land on the four
         // (already-existing) DreamSummary consolidation fields. The four ops
         // (P1-P4) are fully implemented (doc-drift fix, ADR-071 impl-spec

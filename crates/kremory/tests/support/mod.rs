@@ -7,4 +7,5 @@
 //! the existing `tests/helpers/` convention.
 #![allow(dead_code)]
 
+pub mod p3_corpus;
 pub mod test_log;
