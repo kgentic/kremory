@@ -27,7 +27,7 @@ use kremory::core::error::IngestStatus;
 use kremory::core::sink::{
     ContradictionDetected, IngestEventSink, IngestionError, OnEdgeAddedParams,
 };
-use kremory::memory::events::{BatchPhase2Complete, EnrichmentEventSink};
+use kremory::memory::events::{BatchPhase2Complete, EnrichmentEventSink, MergeProposed};
 
 // ---------------------------------------------------------------------------
 // SinkEvent
@@ -85,6 +85,16 @@ pub enum SinkEvent {
     WorkerResumed {
         from_cursor: String,
         op_name: String,
+    },
+    /// `on_merge_proposed(MergeProposed{group_id, loser, keeper, dry_run})` fired.
+    ///
+    /// Added ADR-070 (Fork 5): fires once per cross_episode merge decision during
+    /// dream consolidation, whether shadowed (`dry_run=true`) or applied.
+    MergeProposed {
+        group_id: String,
+        loser: String,
+        keeper: String,
+        dry_run: bool,
     },
 }
 
@@ -245,6 +255,28 @@ impl RecordingSink {
             })
             .collect()
     }
+
+    /// Drain the `on_merge_proposed` events as `(group_id, loser, keeper, dry_run)`
+    /// (ADR-070 Fork 5). Used by the consolidation sink-wiring test.
+    #[allow(dead_code)]
+    pub fn merge_proposed_events(&self) -> Vec<(String, String, String, bool)> {
+        self.snapshot()
+            .into_iter()
+            .filter_map(|e| {
+                if let SinkEvent::MergeProposed {
+                    group_id,
+                    loser,
+                    keeper,
+                    dry_run,
+                } = e
+                {
+                    Some((group_id, loser, keeper, dry_run))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +393,20 @@ impl EnrichmentEventSink for RecordingSink {
             .push(SinkEvent::WorkerResumed {
                 from_cursor: from_cursor.to_string(),
                 op_name: op_name.to_string(),
+            });
+    }
+
+    fn on_merge_proposed(&self, event: MergeProposed<'_>) {
+        // ADR-070 Fork 5: records cross_episode merge decisions (shadow or applied) so
+        // `merge_proposed_events()` can assert them structurally.
+        self.events
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(SinkEvent::MergeProposed {
+                group_id: event.group_id.to_string(),
+                loser: event.loser.to_string(),
+                keeper: event.keeper.to_string(),
+                dry_run: event.dry_run,
             });
     }
 }

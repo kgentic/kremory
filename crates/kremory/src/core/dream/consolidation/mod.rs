@@ -24,10 +24,13 @@ pub(crate) mod cross_episode;
 pub(crate) mod substrate;
 pub(crate) mod supersession;
 
+use std::sync::Arc;
+
 use metrics::counter;
 
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
+use crate::memory::events::{EnrichmentEventSink, MergeProposed};
 use crate::memory::types::DreamOpts;
 
 pub(crate) use substrate::ConsolidationSummary;
@@ -48,6 +51,11 @@ pub(crate) struct RunConsolidationParams<'a> {
     pub(crate) opts: &'a DreamOpts,
     /// Resolved dream model id (TD-094 style), threaded to supersession's LLM lane.
     pub(crate) model_id: &'a str,
+    /// Optional consumer event sink. The orchestrator fires `on_merge_proposed` from
+    /// here for each cross_episode merge decision (ADR-070 Fork 5, Risk #17
+    /// orchestrator-fires) — the sink lives at this layer already (`facade/dream.rs`
+    /// `resolve_sink`), so the op itself does not need it threaded in.
+    pub(crate) sink: Option<&'a Arc<dyn EnrichmentEventSink>>,
 }
 
 /// Dispatch the four consolidation ops over `group_id` in dependency order
@@ -74,6 +82,7 @@ pub(crate) async fn run_consolidation(
         group_id,
         opts,
         model_id,
+        sink,
     } = params;
     let mut summary = ConsolidationSummary::default();
     let mut budget = ConsolidationBudget::new(opts.consolidation_budget_tokens);
@@ -116,6 +125,20 @@ pub(crate) async fn run_consolidation(
         if budget.check(OP_TOKEN_PROJECTION) {
             let report =
                 cross_episode::cross_episode(graph, group_id, opts.cross_episode_dry_run).await;
+            // Orchestrator-fires the consumer event for each merge decision (ADR-070
+            // Fork 5, Risk #17 contingency): the sink lives at THIS layer, so
+            // cross_episode returns its merge pairs via `OpReport.merges` and we fan
+            // them out here. Fires for shadow AND applied decisions (dry_run carried).
+            if let (Some(sink), Ok(op)) = (sink, &report) {
+                for m in &op.merges {
+                    sink.on_merge_proposed(MergeProposed {
+                        group_id,
+                        loser: &m.loser,
+                        keeper: &m.keeper,
+                        dry_run: opts.cross_episode_dry_run,
+                    });
+                }
+            }
             fold(
                 &mut summary.cross_episode_merges,
                 report,
@@ -186,6 +209,7 @@ mod tests {
             group_id: "g_default",
             opts: &opts,
             model_id: "gemma4:e4b",
+            sink: None,
         })
         .await
         .expect("run_consolidation");
@@ -210,6 +234,7 @@ mod tests {
             group_id: "g_all",
             opts: &opts,
             model_id: "gemma4:e4b",
+            sink: None,
         })
         .await
         .expect("run_consolidation");
@@ -239,6 +264,7 @@ mod tests {
             group_id: "g_budget",
             opts: &opts,
             model_id: "gemma4:e4b",
+            sink: None,
         })
         .await
         .expect("run_consolidation");
