@@ -259,17 +259,26 @@ mod tests {
     use crate::memory::types::DreamOpts;
 
     #[tokio::test]
-    async fn run_consolidation_inert_by_default() {
-        // Default DreamOpts has all consolidation flags OFF → dispatcher runs no
-        // op, returns an all-zero summary (matches the facade's inert-by-default
-        // contract). `any_consolidation_enabled()` is false so the facade would not
-        // even call this, but the dispatcher must itself be inert if called.
+    async fn run_consolidation_inert_when_all_ops_off() {
+        // With every consolidation flag explicitly OFF, `any_consolidation_enabled()`
+        // is false (facade skips the dispatcher) and the dispatcher is itself inert
+        // (all-zero summary) if called. NOTE: this is NO LONGER the DEFAULT — ADR-071
+        // Item 1 enabled `include_cross_episode_merges` (SHADOW) by default, so the
+        // flags are pinned OFF explicitly here. The enabled path is covered by
+        // `run_consolidation_stub_ops_return_zero_when_enabled` + the cross_episode
+        // shadow tests + the P3 corpus gate.
         let graph = TemporalGraph::open_in_memory().await.expect("open");
-        let opts = DreamOpts::default();
+        let opts = DreamOpts {
+            include_cross_episode_merges: false,
+            include_community_detection: false,
+            include_supersession_sweep: false,
+            include_fact_archival: false,
+            ..DreamOpts::default()
+        };
         assert!(!opts.any_consolidation_enabled());
         let summary = run_consolidation(RunConsolidationParams {
             graph: &graph,
-            group_id: "g_default",
+            group_id: "g_all_off",
             opts: &opts,
             model_id: "gemma4:e4b",
             sink: None,

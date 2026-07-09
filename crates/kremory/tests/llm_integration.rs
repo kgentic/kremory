@@ -545,25 +545,36 @@ async fn dream_phase_returns_ok_summary() {
 
     let summary = mem
         .dream()
+        // ADR-071 Item 1 turned cross_episode ON by default (in SHADOW); communities/
+        // archive follow in Item 2. This reconciliation-focused end-to-end test pins ALL
+        // consolidation flags OFF so its honest-zeros below stay valid across both items
+        // — the new default's shadow behaviour is covered by the P3 corpus gate +
+        // cross_episode shadow unit tests + dream_full_consolidation_real_llm (all-on).
+        .opts(kremory::memory::types::DreamOpts {
+            include_cross_episode_merges: false,
+            include_community_detection: false,
+            include_fact_archival: false,
+            ..Default::default()
+        })
         .await
         .expect("dream() must return Ok after F-01 retirement");
 
-    // Honest-zeros lock: Phase-3 consolidation fields must be 0.
+    // Honest-zeros lock: with consolidation pinned OFF, consolidation fields must be 0.
     assert_eq!(
         summary.communities_updated, 0,
-        "communities_updated must be 0 — Phase-3 consolidation not yet implemented"
+        "communities_updated must be 0 — consolidation pinned OFF here (ADR-071)"
     );
     assert_eq!(
         summary.cross_episode_merges, 0,
-        "cross_episode_merges must be 0 — Phase-3 consolidation not yet implemented"
+        "cross_episode_merges must be 0 — consolidation pinned OFF here (ADR-071)"
     );
     assert_eq!(
         summary.supersessions_recorded, 0,
-        "supersessions_recorded must be 0 — Phase-3 consolidation not yet implemented"
+        "supersessions_recorded must be 0 — consolidation pinned OFF here (ADR-071)"
     );
     assert_eq!(
         summary.facts_archived, 0,
-        "facts_archived must be 0 — Phase-3 consolidation not yet implemented"
+        "facts_archived must be 0 — consolidation pinned OFF here (ADR-071)"
     );
     // Real-work fields: don't assert > 0 (stochastic; mirror E10 no-panic stance).
     // The pass itself not panicking + honest-zeros is the contract under test.
