@@ -121,9 +121,9 @@ impl<'a> DreamRequest<'a> {
         let mut canonicalization_merges: usize = 0;
         // Phase 3 (§D3, ADR-047) consistency_check accumulator — Full-mode LLM pass.
         let mut consistency_check_corrected: usize = 0;
-        // Sink is accepted but dream events are fired by the graph impl internally.
-        // The sink parameter is stored for future use when non-blocking dream fires events.
-        let _ = sink;
+        // The resolved sink is threaded into `run_consolidation` below (ADR-070 Fork 5),
+        // where the orchestrator fires `on_merge_proposed` for each cross_episode merge
+        // decision. Other dream events are still fired by the graph impl internally.
 
         // ADR-037 §3 D6 — Dream Pass 0: type discovery.
         // Run after core dream phase so Pass 0 can observe freshly-consolidated graph state.
@@ -494,6 +494,9 @@ impl<'a> DreamRequest<'a> {
                         group_id: &group_id,
                         opts: &opts,
                         model_id: dream_model_id,
+                        // ADR-070 Fork 5: the orchestrator fires on_merge_proposed from
+                        // this sink for each cross_episode merge decision.
+                        sink: sink.as_ref(),
                     },
                 )
                 .await

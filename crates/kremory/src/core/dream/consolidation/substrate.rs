@@ -209,6 +209,20 @@ pub(crate) fn fact_archive_hash(fact_id: i64, expired_at: &str) -> String {
 /// **MNT-002 visibility (`pub` + `#[doc(hidden)]`):** promoted from `pub(crate)`
 /// so the deterministic supersession corpus harness can read `count`/`warnings`
 /// under `feature = "test-utils"`. NOT part of the stable public API.
+/// One cross-episode merge decision (keeper ← loser) surfaced by `cross_episode` so
+/// the orchestrator (`run_consolidation`) can fire the `on_merge_proposed` consumer
+/// event from the layer that already holds the `EnrichmentEventSink` (ADR-070 Fork 5,
+/// Risk #17 orchestrator-fires contingency — chosen over threading the sink INTO
+/// `cross_episode`, which would push its arity past the `too_many_arguments` threshold).
+/// Carries only the two entity ids; `dry_run` is known by the orchestrator (from the
+/// `DreamOpts`), so it is not duplicated here.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrossEpisodeMerge {
+    pub keeper: String,
+    pub loser: String,
+}
+
 #[doc(hidden)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpReport {
@@ -218,6 +232,11 @@ pub struct OpReport {
     /// Non-fatal notices (budget skip, degraded mode, …) folded into the
     /// `DreamSummary.warnings` surface (`facade/mod.rs`).
     pub warnings: Vec<String>,
+    /// Cross-episode merge decisions this pass (keeper ← loser), for the orchestrator
+    /// to fire `on_merge_proposed` (ADR-070 Fork 5). Populated ONLY by `cross_episode`;
+    /// EMPTY for every other op (default). One entry per `merged` decision, whether
+    /// shadowed or applied.
+    pub merges: Vec<CrossEpisodeMerge>,
 }
 
 /// Aggregate of the four consolidation ops (ADR-066 §5). The dispatcher

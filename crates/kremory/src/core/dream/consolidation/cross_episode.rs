@@ -70,7 +70,7 @@ use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
 use super::substrate::{
-    emit_decision, ConsolidationOpKind, DecisionMode, DecisionRecord, OpReport,
+    emit_decision, ConsolidationOpKind, CrossEpisodeMerge, DecisionMode, DecisionRecord, OpReport,
 };
 
 /// Fuzzy-path admission threshold on the label token-shingle Jaccard (SYNTHESIS #9).
@@ -421,6 +421,13 @@ pub async fn cross_episode(
                 group_id,
                 entity_refs: &[keeper.as_str(), loser.as_str()],
                 debug_context: None,
+            });
+            // Surface the merge decision for the orchestrator to fire `on_merge_proposed`
+            // (ADR-070 Fork 5, Risk #17 orchestrator-fires). One entry per merged
+            // decision, whether shadowed or applied.
+            report.merges.push(CrossEpisodeMerge {
+                keeper: keeper.clone(),
+                loser: loser.clone(),
             });
             tracing::info!(
                 target: "kremory.dream.consolidation.cross_episode",
@@ -1354,6 +1361,94 @@ mod tests {
             crate::memory::types::DreamOpts::default().cross_episode_dry_run,
             "DreamOpts::default().cross_episode_dry_run must be true (ADR-070 §2.2)"
         );
+    }
+
+    /// ADR-070 §5.5.2: the orchestrator (`run_consolidation`) fires `on_merge_proposed`
+    /// once per cross_episode merge decision, carrying the correct `dry_run` flag —
+    /// whether shadowed (true) or applied (false). Uses a minimal inline capturing sink
+    /// (the shared `RecordingSink` lives in the integration-test tree, unreachable from
+    /// lib unit tests; this double captures only the one method under test).
+    #[tokio::test]
+    async fn on_merge_proposed_fires_from_orchestrator_with_dry_run_flag() {
+        use crate::core::sink::{
+            ContradictionDetected, IngestEventSink, IngestionError, OnEdgeAddedParams,
+        };
+        use crate::core::IngestStatus;
+        use crate::memory::events::{BatchPhase2Complete, EnrichmentEventSink, MergeProposed};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        struct MergeCapture {
+            // (group_id, loser, keeper, dry_run)
+            merges: Mutex<Vec<(String, String, String, bool)>>,
+        }
+        impl IngestEventSink for MergeCapture {
+            fn on_entity_extracted(&self, _entity_id: &str, _name: &str) {}
+            fn on_edge_added(&self, _params: OnEdgeAddedParams<'_>) {}
+            fn on_contradiction(&self, _event: ContradictionDetected) {}
+            fn on_dedup_merge(&self, _surviving_id: &str, _absorbed_id: &str) {}
+            fn on_stage_change(&self, _stage: IngestStatus) {}
+            fn on_ingestion_error(&self, _event: IngestionError) {}
+        }
+        impl EnrichmentEventSink for MergeCapture {
+            fn on_community_updated(&self, _community_id: &str, _member_count: usize) {}
+            fn on_batch_phase2_complete(&self, _event: BatchPhase2Complete) {}
+            fn on_merge_proposed(&self, event: MergeProposed<'_>) {
+                self.merges
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push((
+                        event.group_id.to_string(),
+                        event.loser.to_string(),
+                        event.keeper.to_string(),
+                        event.dry_run,
+                    ));
+            }
+        }
+
+        async fn run_once(dry_run: bool) -> Vec<(String, String, String, bool)> {
+            let graph = TemporalGraph::open_in_memory().await.expect("open");
+            plant_mergeable_pair(&graph, "g1").await;
+            let capture = Arc::new(MergeCapture::default());
+            let sink: Arc<dyn EnrichmentEventSink> = capture.clone();
+            let opts = crate::memory::types::DreamOpts {
+                include_cross_episode_merges: true,
+                cross_episode_dry_run: dry_run,
+                ..crate::memory::types::DreamOpts::default()
+            };
+            let _summary = crate::core::dream::consolidation::run_consolidation(
+                crate::core::dream::consolidation::RunConsolidationParams {
+                    graph: &graph,
+                    group_id: "g1",
+                    opts: &opts,
+                    model_id: "gemma4:e4b",
+                    sink: Some(&sink),
+                },
+            )
+            .await
+            .expect("run_consolidation");
+            // Bind before returning so the MutexGuard temporary drops at the `;` —
+            // BEFORE `capture` — rather than at the block tail (E0597).
+            let events = capture
+                .merges
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            events
+        }
+
+        // Shadow: the merge decision fires the event with dry_run=true (no fusion).
+        let shadow = run_once(true).await;
+        assert_eq!(shadow.len(), 1, "one merge decision → one on_merge_proposed (shadow)");
+        assert_eq!(shadow[0].0, "g1", "group_id");
+        assert_eq!(shadow[0].2, "John Smith", "keeper = lowest id");
+        assert_eq!(shadow[0].1, "john  smith", "loser");
+        assert!(shadow[0].3, "shadow run → dry_run=true propagated to the event");
+
+        // Applied: same fixture, dry_run=false.
+        let applied = run_once(false).await;
+        assert_eq!(applied.len(), 1, "one merge decision → one on_merge_proposed (applied)");
+        assert!(!applied[0].3, "applied run → dry_run=false propagated to the event");
     }
 
     // ── DoD-P3.1b / RISK-001: same label, NO shared neighbour → DO NOT MERGE ─────
