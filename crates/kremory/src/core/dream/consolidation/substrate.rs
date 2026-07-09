@@ -13,7 +13,9 @@
 //!   sorted entity pair, a fact-archive event). Sorting makes the pair/member hashes
 //!   order-independent, extending the proven ADR-050 `content_hash` shape.
 //! - **`OpReport` / `ConsolidationSummary`** — the per-op result struct and the
-//!   dispatcher's aggregate. Populated by the four ops (P1-P4); STUBS this phase.
+//!   dispatcher's aggregate. The four ops (P1-P4) are fully implemented and
+//!   populate these with real counts (doc-drift fix, ADR-071 impl-spec §"Pre-existing
+//!   doc drift to fix in passing" — this line previously said "STUBS this phase").
 //!
 //! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`
 //! §3 (P0.1/P0.2) + ADR-066 §2.5 (F-1/F-2).
@@ -61,14 +63,27 @@ pub struct ConsolidationBudget {
     pub ceiling_tokens: u64,
     /// Cumulative tokens spent by consolidation ops so far this run.
     pub used_tokens: u64,
+    /// Per-run USD-micro ceiling (TD-060, from `DreamOpts.consolidation_budget_usd_micro`).
+    /// `None` = unbounded — kept as `Option` (not folded to `u64::MAX` like the token
+    /// ceiling) because `check_usd` reads it directly via `unwrap_or(u64::MAX)`, and
+    /// a bare `None` is the more honest "no USD ceiling configured" representation for
+    /// a field most local-Ollama ($0-cost) runs never populate.
+    pub ceiling_usd_micro: Option<u64>,
+    /// Cumulative USD-micro spent by consolidation ops so far this run. Stays 0 for
+    /// $0-cost local Ollama ops that pass `None` to `record`.
+    pub used_usd_micro: u64,
 }
 
 impl ConsolidationBudget {
-    /// Construct from an optional ceiling. `None` → unbounded (`u64::MAX`).
-    pub fn new(ceiling_tokens: Option<u64>) -> Self {
+    /// Construct from optional token + USD ceilings (TD-060). `None` token ceiling →
+    /// unbounded (`u64::MAX`); `None` USD ceiling → unbounded (checked via
+    /// `unwrap_or(u64::MAX)` in `check_usd`).
+    pub fn new(ceiling_tokens: Option<u64>, ceiling_usd_micro: Option<u64>) -> Self {
         Self {
             ceiling_tokens: ceiling_tokens.unwrap_or(u64::MAX),
             used_tokens: 0,
+            ceiling_usd_micro,
+            used_usd_micro: 0,
         }
     }
 
@@ -81,14 +96,26 @@ impl ConsolidationBudget {
         self.used_tokens.saturating_add(projected) <= self.ceiling_tokens
     }
 
-    /// Record ACTUAL token spend for an op: advance `used_tokens` and append a row
-    /// to the EXISTING `dream_pass_budget_usage` ledger (migration 016).
+    /// SOFT check: does `used + projected` stay within the USD-micro ceiling
+    /// (TD-060)? Mirrors `check`'s exact shape. `None` ceiling → unbounded (always
+    /// `true`). Saturating add so a pathological `projected` can never wrap past the
+    /// ceiling into a false allow.
+    pub(crate) fn check_usd(&self, projected_usd_micro: u64) -> bool {
+        self.used_usd_micro.saturating_add(projected_usd_micro)
+            <= self.ceiling_usd_micro.unwrap_or(u64::MAX)
+    }
+
+    /// Record ACTUAL token + USD spend for an op: advance `used_tokens`/
+    /// `used_usd_micro` and append a row to the EXISTING `dream_pass_budget_usage`
+    /// ledger (migration 016).
     ///
-    /// `provider`/`model` are recorded for per-op source attribution (Rule 19). Cost
-    /// is left NULL (Ollama dream passes report 0 cost; the ledger's `cost_usd_micro`
-    /// is nullable). Non-fatal: a ledger-write failure returns `Err` for the caller's
-    /// warn-and-continue handling, but `used_tokens` is advanced regardless so the
-    /// in-memory ceiling stays honest even if persistence hiccups.
+    /// `provider`/`model` are recorded for per-op source attribution (Rule 19).
+    /// `cost_usd_micro` is `None` for $0-cost local Ollama dream passes (the
+    /// ledger's `cost_usd_micro` column is nullable; `used_usd_micro` advances by 0
+    /// in that case) and `Some(cost)` when a caller has a real per-call cost
+    /// (TD-060). Non-fatal: a ledger-write failure returns `Err` for the caller's
+    /// warn-and-continue handling, but `used_tokens`/`used_usd_micro` are advanced
+    /// regardless so the in-memory ceilings stay honest even if persistence hiccups.
     // planned consumer: supersession LLM lane (P1) + communities (P4) — the two ops
     // that spend tokens call this after an LLM/graph pass. Exercised by unit test now.
     #[allow(dead_code)]
@@ -101,10 +128,12 @@ impl ConsolidationBudget {
             model,
             tokens_input,
             tokens_output,
+            cost_usd_micro,
         } = params;
         self.used_tokens = self
             .used_tokens
             .saturating_add(tokens_input.saturating_add(tokens_output));
+        self.used_usd_micro = self.used_usd_micro.saturating_add(cost_usd_micro.unwrap_or(0));
 
         let now = chrono::Utc::now().timestamp();
         graph
@@ -113,7 +142,7 @@ impl ConsolidationBudget {
                 "INSERT OR REPLACE INTO dream_pass_budget_usage \
                  (pass_run_id, pass_name, provider, model, tokens_input, tokens_output, \
                   cost_usd_micro, recorded_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 libsql::params![
                     pass_run_id,
                     pass_name,
@@ -121,6 +150,10 @@ impl ConsolidationBudget {
                     model,
                     tokens_input as i64,
                     tokens_output as i64,
+                    // Saturating: a USD-micro cost above i64::MAX (~$9.2e12) is
+                    // unreachable in practice, but a silent `as i64` would wrap to a
+                    // negative ledger value — clamp instead (code-review F1).
+                    cost_usd_micro.map(|c| i64::try_from(c).unwrap_or(i64::MAX)),
                     now,
                 ],
             )
@@ -142,6 +175,9 @@ pub(crate) struct BudgetRecordParams<'a> {
     pub(crate) model: &'a str,
     pub(crate) tokens_input: u64,
     pub(crate) tokens_output: u64,
+    /// TD-060: real USD-micro cost when known; `None` for $0-cost local Ollama ops
+    /// (matches the ledger's pre-existing nullable `cost_usd_micro` column).
+    pub(crate) cost_usd_micro: Option<u64>,
 }
 
 // ─── Idempotency-key helpers (F-2, DoD-P0.2) ────────────────────────────────────
@@ -256,6 +292,12 @@ pub(crate) struct ConsolidationSummary {
     pub(crate) facts_archived: usize,
     /// Aggregated non-fatal warnings across all four ops.
     pub(crate) warnings: Vec<String>,
+    /// TD-060: `true` when ANY op was skipped this run because either the token or
+    /// USD-micro ceiling would have been exceeded (`mod.rs`'s `skip()` sets this on
+    /// every skip, regardless of which ceiling tripped). Typed field, not a
+    /// `warnings` string, per `llm-output-parse-loudly`'s "required fields have no
+    /// silent default" discipline applied to run-level operator signals.
+    pub(crate) budget_exhausted: bool,
 }
 
 // ─── Uniform decision telemetry (ADR-070 Fork 2/3) ──────────────────────────────
@@ -367,6 +409,8 @@ mod tests {
         let b = ConsolidationBudget {
             ceiling_tokens: 1_000,
             used_tokens: 400,
+            ceiling_usd_micro: None,
+            used_usd_micro: 0,
         };
         // used + projected == ceiling → allowed (soft, inclusive).
         assert!(b.check(600), "used(400)+proj(600)=1000 == ceiling → allow");
@@ -383,6 +427,8 @@ mod tests {
         let b = ConsolidationBudget {
             ceiling_tokens: 1_000,
             used_tokens: 10,
+            ceiling_usd_micro: None,
+            used_usd_micro: 0,
         };
         // A pathological projected near u64::MAX must saturate, never wrap → deny.
         assert!(!b.check(u64::MAX), "saturating add must deny, not wrap");
@@ -390,18 +436,51 @@ mod tests {
 
     #[test]
     fn budget_new_none_is_unbounded() {
-        let b = ConsolidationBudget::new(None);
+        let b = ConsolidationBudget::new(None, None);
         assert_eq!(b.ceiling_tokens, u64::MAX);
         assert!(
             b.check(1_000_000_000),
             "unbounded budget allows any projected"
         );
+        assert!(
+            b.check_usd(1_000_000_000),
+            "unbounded usd budget allows any projected"
+        );
     }
+
+    // ── USD budget (TD-060) ─────────────────────────────────────────────────────
+
+    #[test]
+    fn budget_usd_allows_within_ceiling_denies_over() {
+        let b = ConsolidationBudget {
+            ceiling_tokens: u64::MAX,
+            used_tokens: 0,
+            ceiling_usd_micro: Some(1_000),
+            used_usd_micro: 400,
+        };
+        // used + projected == ceiling → allowed (soft, inclusive) — mirrors `check`.
+        assert!(
+            b.check_usd(600),
+            "used(400)+proj(600)=1000 == ceiling → allow"
+        );
+        // used + projected > ceiling → denied.
+        assert!(
+            !b.check_usd(601),
+            "used(400)+proj(601)=1001 > ceiling → deny"
+        );
+        assert!(
+            b.check_usd(0),
+            "zero projected always allowed under a positive ceiling"
+        );
+    }
+
+    // `budget_exhausted_flag_set_on_usd_skip` lives in `mod.rs`'s test module — it
+    // exercises the private `skip()` fn, which is `mod.rs`-local (impl-spec §4a DoD).
 
     #[tokio::test]
     async fn budget_record_writes_ledger_row_and_advances_used() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
-        let mut budget = ConsolidationBudget::new(Some(10_000));
+        let mut budget = ConsolidationBudget::new(Some(10_000), Some(5_000_000));
 
         budget
             .record(BudgetRecordParams {
@@ -412,17 +491,19 @@ mod tests {
                 model: "gemma4:e4b",
                 tokens_input: 120,
                 tokens_output: 30,
+                cost_usd_micro: Some(42),
             })
             .await
             .expect("record");
 
         assert_eq!(budget.used_tokens, 150, "used advanced by input+output");
+        assert_eq!(budget.used_usd_micro, 42, "usd advanced by cost_usd_micro");
 
         // Ledger row landed in the migration-016 table.
         let mut rows = graph
             .conn
             .query(
-                "SELECT provider, model, tokens_input, tokens_output \
+                "SELECT provider, model, tokens_input, tokens_output, cost_usd_micro \
                  FROM dream_pass_budget_usage \
                  WHERE pass_run_id = 'run-1' AND pass_name = 'consolidation_supersession'",
                 (),
@@ -434,10 +515,49 @@ mod tests {
         let model: String = row.get(1).expect("model");
         let ti: i64 = row.get(2).expect("tokens_input");
         let to: i64 = row.get(3).expect("tokens_output");
+        let cost: i64 = row.get(4).expect("cost_usd_micro");
         assert_eq!(provider, "ollama");
         assert_eq!(model, "gemma4:e4b");
         assert_eq!(ti, 120);
         assert_eq!(to, 30);
+        assert_eq!(cost, 42, "cost_usd_micro is no longer hardcoded NULL");
+    }
+
+    #[tokio::test]
+    async fn budget_record_none_cost_writes_null_and_advances_zero() {
+        // $0-cost local-Ollama path (pre-existing behaviour preserved): None cost →
+        // ledger column NULL, used_usd_micro advances by 0.
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let mut budget = ConsolidationBudget::new(Some(10_000), Some(5_000_000));
+
+        budget
+            .record(BudgetRecordParams {
+                graph: &graph,
+                pass_run_id: "run-2",
+                pass_name: "consolidation_supersession",
+                provider: "ollama",
+                model: "gemma4:e4b",
+                tokens_input: 10,
+                tokens_output: 5,
+                cost_usd_micro: None,
+            })
+            .await
+            .expect("record");
+
+        assert_eq!(budget.used_usd_micro, 0, "None cost advances usd by 0");
+
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT cost_usd_micro FROM dream_pass_budget_usage \
+                 WHERE pass_run_id = 'run-2' AND pass_name = 'consolidation_supersession'",
+                (),
+            )
+            .await
+            .expect("query ledger");
+        let row = rows.next().await.expect("row").expect("ledger row exists");
+        let cost: Option<i64> = row.get(0).expect("cost_usd_micro");
+        assert_eq!(cost, None, "None cost persists as NULL");
     }
 
     // ── Idempotency helpers (DoD-P0.2) ──────────────────────────────────────────

@@ -862,6 +862,7 @@ mod tests {
                 duration_ms: 10,
                 types_discovered: vec![],
                 dream_warnings: vec![],
+                budget_exhausted: false,
             })
         }
 
@@ -883,6 +884,7 @@ mod tests {
                 type_registry_merges: 0,
                 consistency_check_corrected: 0,
                 warnings: vec![],
+                budget_exhausted: false,
             })
         }
 

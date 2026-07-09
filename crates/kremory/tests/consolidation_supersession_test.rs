@@ -205,7 +205,7 @@ async fn run_one_row(row: &Row) -> RowOutcome {
         .expect("id");
     drop(id_rows);
 
-    let mut budget = ConsolidationBudget::new(None);
+    let mut budget = ConsolidationBudget::new(None, None);
     let report = supersession(SupersessionParams {
         graph: &graph,
         group_id: &gid,

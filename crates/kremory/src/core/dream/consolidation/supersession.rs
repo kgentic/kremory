@@ -355,7 +355,7 @@ mod tests {
     }
 
     fn budget() -> ConsolidationBudget {
-        ConsolidationBudget::new(None)
+        ConsolidationBudget::new(None, None)
     }
 
     // ── DoD-P1.3: emit-invariant unit test (pure function, no DB) ────────────────

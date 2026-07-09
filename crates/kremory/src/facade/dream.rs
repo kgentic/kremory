@@ -483,8 +483,10 @@ impl<'a> DreamRequest<'a> {
         // `any_consolidation_enabled()` is false by default and this block is inert
         // (existing dream tests unaffected). Non-fatal: `unwrap_or_default()` folds a
         // dispatcher error into an all-zero summary + the counts land on the four
-        // (already-existing) DreamSummary consolidation fields. Ops are STUBS at P0
-        // (return 0); P1-P4 fill them.
+        // (already-existing) DreamSummary consolidation fields. The four ops
+        // (P1-P4) are fully implemented (doc-drift fix, ADR-071 impl-spec
+        // §"Pre-existing doc drift to fix in passing" — this comment previously said
+        // "Ops are STUBS at P0 (return 0); P1-P4 fill them").
         let consolidation = if opts.any_consolidation_enabled() {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
@@ -534,6 +536,10 @@ impl<'a> DreamRequest<'a> {
         summary.supersessions_recorded = consolidation.supersessions_recorded;
         summary.facts_archived = consolidation.facts_archived;
         summary.warnings.extend(consolidation.warnings);
+        // TD-060 (ADR-071 §Item 4a step 6, Vera HIGH-1): propagate the budget flag
+        // past the internal ConsolidationSummary — without this hop the flag is
+        // set on a struct discarded 4 lines earlier and no consumer can read it.
+        summary.budget_exhausted = consolidation.budget_exhausted;
         summary.duration_ms = dream_start.elapsed().as_millis() as u64;
         Ok(summary)
     }

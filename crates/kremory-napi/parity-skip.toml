@@ -282,6 +282,11 @@ revisit = "never"
 # DreamSummary fields (types_discovered / warnings / entities_reclassified) keep
 # their skips in their own section further below.
 
+[[skip]]
+symbol = "DreamSummary::budget_exhausted"
+reason = "ADR-071 §Item 4a (TD-060) — new consolidation-budget operator signal added this session. napi mirror (JsDreamSummary.budgetExhausted + dream_summary_to_js) is a mechanical follow-up scoped OUT of the ADR-071 Item 4/5 build (guards + o11y counters only, no napi work in this item). Add the mirror alongside the next napi-surface pass."
+revisit = "next napi surface sync"
+
 # ── MemoryBuilder methods ─────────────────────────────────────────────────────
 
 [[skip]]
