@@ -363,6 +363,10 @@ pub struct JsDreamSummary {
     pub cross_episode_merges: f64,
     pub supersessions_recorded: f64,
     pub facts_archived: f64,
+    /// `true` when a consolidation op was skipped because a per-pass budget
+    /// ceiling (token or USD) tripped — distinguishes "nothing to spend" from
+    /// "spend was capped" (ADR-071 §Item 4a / TD-060).
+    pub budget_exhausted: bool,
     pub duration_ms: f64,
     pub types_discovered: Vec<JsTypeProposal>,
     pub entities_reclassified: f64,
@@ -608,6 +612,7 @@ pub fn dream_summary_to_js(s: DreamSummary) -> JsDreamSummary {
         cross_episode_merges: s.cross_episode_merges as f64,
         supersessions_recorded: s.supersessions_recorded as f64,
         facts_archived: s.facts_archived as f64,
+        budget_exhausted: s.budget_exhausted,
         duration_ms: s.duration_ms as f64,
         types_discovered: s
             .types_discovered
