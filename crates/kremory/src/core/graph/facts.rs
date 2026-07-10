@@ -152,6 +152,68 @@ impl TemporalGraph {
         Ok(())
     }
 
+    /// Bound a fact's world-time `valid_to` window (ADR-071 §Item 3, TD-070;
+    /// mechanism corrected by `.ai-docs/adrs/adr-071-adr070-reconciliation-
+    /// amendment-2026-07-09.md` §Amendment C).
+    ///
+    /// Mirrors `invalidate_fact`'s exact shape (single `UPDATE` + the same
+    /// histogram/trace instrumentation) but writes `valid_to` (world/valid-time
+    /// window close), **NOT** `expired_at` (system-time retirement, which is
+    /// what `invalidate_fact` writes). The dream supersession sweep's
+    /// `window_closeout` (`core/dream/consolidation/supersession.rs`) later
+    /// observes this bounded `valid_to` — its SELECT predicate keys on
+    /// `valid_to IS NOT NULL AND valid_to < now AND expired_at IS NULL` — and
+    /// performs the system-time close itself (`expired_at = valid_to`,
+    /// incrementing `supersessions_recorded`). This primitive is the PRODUCER
+    /// half of that two-phase chain. Calling `invalidate_fact` instead for this
+    /// purpose would retire the fact immediately (system-time) while leaving
+    /// `valid_to` NULL — starving `window_closeout`'s predicate forever and
+    /// breaking the producer→consumer chain (Amendment C, Vera cycle-1 ASMP-002).
+    pub async fn bound_valid_to(&self, fact_id: i64, valid_to: DateTime<Utc>) -> Result<()> {
+        let _db_start = Instant::now();
+        let valid_to_str = valid_to.to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE facts SET valid_to = ?1 WHERE id = ?2",
+                libsql::params![valid_to_str, fact_id],
+            )
+            .await?;
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.bound_valid_to_ms").record(_ms);
+        tracing::info!(_ms, "kremory.db.bound_valid_to");
+        Ok(())
+    }
+
+    /// Fetch a single fact by id, scoped to `group_id` (namespace boundary).
+    ///
+    /// Used by `SupersedeRequest::execute()` (ADR-071 §Item 3, TD-070) to read
+    /// the fact's own `valid_from` for the time-inversion guard before calling
+    /// `bound_valid_to`. Returns `Ok(None)` when the id doesn't exist OR exists
+    /// under a different `group_id` — both are legitimate "not found in this
+    /// namespace" outcomes, not an error (mirrors `SupersedeOutcome::NotFound`).
+    pub async fn get_fact_by_id(&self, fact_id: i64, group_id: &str) -> Result<Option<Fact>> {
+        let _db_start = Instant::now();
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, subject_id, predicate, object_id, object_value, properties,
+                        valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                        memory_type, content_hash, access_count
+                 FROM facts
+                 WHERE id = ?1 AND group_id = ?2",
+                libsql::params![fact_id, group_id],
+            )
+            .await?;
+        let fact = match rows.next().await? {
+            Some(row) => Some(row_to_fact(&row)?),
+            None => None,
+        };
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.get_fact_by_id_ms").record(_ms);
+        tracing::info!(_ms, fact_id, group_id, "kremory.db.get_fact_by_id");
+        Ok(fact)
+    }
+
     // === Temporal Queries ===
 
     pub async fn facts_at(&self, time: DateTime<Utc>) -> Result<Vec<Fact>> {

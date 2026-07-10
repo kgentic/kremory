@@ -489,6 +489,68 @@ impl JsMemory {
         Ok(deleted as f64)
     }
 
+    /// Bound a fact's world-time `valid_to` window explicitly (ADR-071 §Item 3,
+    /// TD-070) — the consumer-facing, consumer-EXPLICIT half of the
+    /// supersession gap (auto-detected supersession is deferred, TD-P1-AUTO).
+    ///
+    /// Wraps `Memory::supersede(factId).at(validTo).with_reason(reason?)
+    /// .in_namespace(namespace)`. `validTo` is an RFC-3339 timestamp string; a
+    /// malformed value rejects the returned Promise. When `namespace` is
+    /// omitted, the Memory handle's default namespace is used. If neither is
+    /// set, the call rejects with a namespace-required error.
+    ///
+    /// The dream supersession sweep (`dream({ includeSupersessionSweep: true
+    /// })`) later observes the bounded `validTo` and closes the window
+    /// (`expiredAt = validTo`, `supersessionsRecorded` increments) —
+    /// see `kremory::SupersedeRequest` for the full two-phase mechanism.
+    ///
+    /// Returns the outcome as `"applied"` | `"rejected_time_inversion"` |
+    /// `"not_found"` (mirrors `kremory::SupersedeOutcome` 1:1).
+    #[napi]
+    pub async fn supersede(
+        &self,
+        fact_id: i64,
+        valid_to: String,
+        reason: Option<String>,
+        namespace: Option<String>,
+    ) -> napi::Result<String> {
+        let ns = namespace
+            .as_deref()
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone())
+            .ok_or_else(|| {
+                napi::Error::from_reason(
+                    "kremory supersede failed: namespace required — set per-call or open with defaultNamespace"
+                )
+            })?;
+
+        // Loud parse — caller's malformed timestamp surfaces (mirrors the
+        // `remember` wrapper's `reference_time` handling above).
+        let valid_to_dt = chrono::DateTime::parse_from_rfc3339(&valid_to)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .map_err(|e| {
+                napi::Error::from_reason(format!(
+                    "kremory supersede failed: invalid RFC-3339 validTo {valid_to:?}: {e}"
+                ))
+            })?;
+
+        let mut req = self
+            .inner
+            .supersede(fact_id)
+            .in_namespace(ns)
+            .at(valid_to_dt);
+        if let Some(r) = reason {
+            req = req.with_reason(r);
+        }
+
+        let outcome = req
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory supersede failed: {e}")))?;
+
+        Ok(convert::supersede_outcome_to_js(outcome))
+    }
+
     /// Search memory for context matching `query`.
     ///
     /// Returns up to `opts.k` (default 10) results ranked by relevance.

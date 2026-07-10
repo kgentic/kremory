@@ -74,12 +74,14 @@ pub mod dream;
 pub mod forget;
 pub mod recall;
 pub mod remember;
+pub mod supersede;
 pub mod update;
 
 pub use dream::*;
 pub use forget::*;
 pub use recall::*;
 pub use remember::*;
+pub use supersede::*;
 pub use update::*;
 
 use std::future::IntoFuture;
@@ -668,6 +670,26 @@ impl Memory {
             memory: self,
             namespace: None,
             source_id: None,
+        }
+    }
+
+    /// Bound a fact's world-time `valid_to` window explicitly (ADR-071 §Item
+    /// 3, TD-070) — the consumer-facing, consumer-EXPLICIT half of the
+    /// supersession gap (auto-detected supersession is deferred, TD-P1-AUTO).
+    ///
+    /// Requires `.at(valid_to)` before `.execute()`. The dream supersession
+    /// sweep (`include_supersession_sweep: true`) later observes the bounded
+    /// `valid_to` and closes the window (`expired_at = valid_to`,
+    /// `DreamSummary.supersessions_recorded` increments) — see
+    /// [`supersede::SupersedeRequest`] for the full two-phase mechanism.
+    #[must_use = "SupersedeRequest must call .execute() to run"]
+    pub fn supersede(&self, fact_id: i64) -> SupersedeRequest<'_> {
+        SupersedeRequest {
+            memory: self,
+            fact_id,
+            namespace: None,
+            valid_to: None,
+            reason: None,
         }
     }
 
