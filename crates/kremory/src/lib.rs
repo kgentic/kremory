@@ -63,7 +63,8 @@ pub use core::engine::{engine, engine_init};
 pub use facade::{
     DreamFireAndForget, DreamRequest, DreamSummary, EpisodeEntryBuilder, ForgetRequest, Memory,
     MemoryBuilder, NoEmb, NoLlm, RecallRawRequest, RecallRequest, RecallTemplate,
-    RememberBatchBuilder, RememberRequest, WithEmb, WithLlm, WithLlmTrackedParams,
+    RememberBatchBuilder, RememberRequest, SupersedeOutcome, SupersedeRequest, WithEmb, WithLlm,
+    WithLlmTrackedParams,
 };
 // Dream scheduler + pass API (Phase C, v0.1.1)
 pub use core::ingest::DreamPassOpts;

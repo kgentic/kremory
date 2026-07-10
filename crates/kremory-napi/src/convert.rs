@@ -721,6 +721,21 @@ pub fn cancel_outcome_to_js(o: kremory::CancelOutcome) -> JsCancelOutcome {
     }
 }
 
+/// Convert a substrate `kremory::SupersedeOutcome` (ADR-071 §Item 3, TD-070) to
+/// a JS-friendly discriminated string — `"applied"` | `"rejected_time_inversion"`
+/// | `"not_found"`. Mirrors the 3-way `outcome` label on
+/// `kremory.dream.consolidation.supersede_request_total` 1:1 (same enum, same
+/// 3 values, verified by construction).
+pub fn supersede_outcome_to_js(o: kremory::SupersedeOutcome) -> String {
+    match o {
+        kremory::SupersedeOutcome::Applied => "applied".to_string(),
+        kremory::SupersedeOutcome::RejectedTimeInversion => {
+            "rejected_time_inversion".to_string()
+        }
+        kremory::SupersedeOutcome::NotFound => "not_found".to_string(),
+    }
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
