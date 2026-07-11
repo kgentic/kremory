@@ -872,7 +872,9 @@ mod tests {
         ) -> Result<crate::facade::DreamSummary> {
             Ok(crate::facade::DreamSummary {
                 communities_updated: 0,
-                cross_episode_merges: 0,
+                cross_episode_would_merge: 0,
+                cross_episode_merged: 0,
+                consolidation_ops_ran: crate::facade::ConsolidationOpsRan::default(),
                 supersessions_recorded: 0,
                 facts_archived: 0,
                 duration_ms: 0,

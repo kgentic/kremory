@@ -105,7 +105,7 @@ async fn dream_api_dispatch_compiles_and_succeeds_on_stub() {
         .await
         .expect("run_dream_pass_sync on stub returns Ok");
     assert_eq!(summary.communities_updated, 0);
-    assert_eq!(summary.cross_episode_merges, 0);
+    assert_eq!(summary.cross_episode_would_merge, 0);
     assert_eq!(summary.types_discovered.len(), 0);
     assert_eq!(summary.warnings.len(), 0);
 

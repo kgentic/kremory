@@ -51,6 +51,12 @@ pub struct SupersedeRequest<'a> {
     /// domain-invalidation semantic that would break the `window_closeout`
     /// predicate — Amendment C point 4).
     pub(super) reason: Option<String>,
+    /// D4 (consumer-API hardening): when `true`, `.execute()` runs the deterministic
+    /// `window_closeout` sweep inline right after bounding `valid_to`, retiring
+    /// already-past-dated bounds in one call. Set via [`Self::close_now`]. Default
+    /// `false` — the retirement is otherwise deferred to the next `mem.dream()` with
+    /// `include_supersession_sweep`.
+    pub(super) close_now: bool,
 }
 
 impl<'a> SupersedeRequest<'a> {
@@ -70,6 +76,27 @@ impl<'a> SupersedeRequest<'a> {
     /// Set the namespace scope for this supersede (overrides Memory default).
     pub fn in_namespace(mut self, ns: Namespace) -> Self {
         self.namespace = Some(ns);
+        self
+    }
+
+    /// D4 (consumer-API hardening): retire the bound in ONE call instead of waiting
+    /// for the next `mem.dream()` supersession sweep. After bounding `valid_to`,
+    /// `.execute()` runs the deterministic `window_closeout` inline and returns
+    /// [`SupersedeOutcome::Bounded`] carrying the retirement `retired` count.
+    ///
+    /// **Only ALREADY-PAST-DATED bounds retire** (the `valid_to < now` predicate):
+    /// a bound at a FUTURE `valid_to` cannot be retired yet, so `close_now()` on it
+    /// returns `Bounded { retired: 0 }` (its retirement is deferred to a later dream
+    /// sweep once the window closes). The count is carried IN-BAND (`retired == 0` on
+    /// a future-dated bound) rather than a doc caveat, so a caller can observe the
+    /// deferral without inspecting the sweep — the same honesty D4a fixes for the
+    /// variant name.
+    ///
+    /// NOTE: `window_closeout` is namespace-scoped — the returned `retired` is the
+    /// total retired in the resolved namespace this sweep, which includes any OTHER
+    /// past-dated bounds, not solely this `fact_id`.
+    pub fn close_now(mut self) -> Self {
+        self.close_now = true;
         self
     }
 
@@ -176,11 +203,24 @@ impl<'a> SupersedeRequest<'a> {
 
         counter!(
             "kremory.dream.consolidation.supersede_request_total",
-            "outcome" => "applied"
+            "outcome" => "bounded"
         )
         .increment(1);
 
-        Ok(SupersedeOutcome::Applied)
+        // D4: `execute()` only BOUNDS `valid_to` — retirement is a separate step, so
+        // the honest default is `retired: 0`. When `.close_now()` was requested, run
+        // the deterministic window_closeout inline and carry the real count IN-BAND
+        // (a future-dated bound retires nothing → `retired == 0`, observable without
+        // inspecting the sweep).
+        let retired = if self.close_now {
+            crate::core::dream::consolidation::supersession::window_closeout(tg, &group_id)
+                .await
+                .map_err(MemoryError::Core)?
+        } else {
+            0
+        };
+
+        Ok(SupersedeOutcome::Bounded { retired })
     }
 }
 
@@ -189,11 +229,24 @@ impl<'a> SupersedeRequest<'a> {
 /// silent default" discipline extended to consumer-facing typed results: a
 /// caller must be able to distinguish WHY a supersede didn't apply, not just
 /// that it didn't. Exactly 3 variants, 1:1 with the `outcome` label values on
-/// `kremory.dream.consolidation.supersede_request_total` (ADR-071 §Item 5).
+/// `kremory.dream.consolidation.supersede_request_total` (`bounded` /
+/// `rejected_time_inversion` / `not_found`).
+///
+/// `#[non_exhaustive]` (D4/O5) — the outcome surface is unreleased and may gain
+/// variants; callers match with a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SupersedeOutcome {
-    /// `valid_to` was bounded successfully.
-    Applied,
+    /// `valid_to` was BOUNDED successfully (D4, consumer-API hardening honest
+    /// rename of the former `Applied`). `execute()` only writes `valid_to`; it does
+    /// NOT retire the fact — so `retired` is `0` unless `.close_now()` was called,
+    /// in which case it carries the inline `window_closeout` retirement count (which
+    /// is still `0` for a FUTURE-dated bound whose window has not yet closed).
+    Bounded {
+        /// Facts retired by an inline `.close_now()` sweep (`0` for a plain
+        /// `execute()` or a future-dated bound). Namespace-scoped total.
+        retired: usize,
+    },
     /// The supplied `valid_to` predates the fact's own `valid_from` — a
     /// nonsensical bound, rejected structurally. DB row unchanged.
     RejectedTimeInversion,
@@ -268,7 +321,8 @@ mod supersede_tests {
             .await
             .expect("supersede must succeed");
 
-        assert_eq!(outcome, SupersedeOutcome::Applied);
+        // D4: execute() only BOUNDS — never retires — so retired is 0.
+        assert_eq!(outcome, SupersedeOutcome::Bounded { retired: 0 });
 
         let tg = mem.temporal_graph.as_ref().expect("temporal_graph");
         let group_id = mem.group_id_for_test(&ns);
@@ -281,6 +335,140 @@ mod supersede_tests {
             fact.valid_to.map(|t| t.timestamp()),
             Some(bound_at.timestamp()),
             "DB valid_to must match the supplied bound"
+        );
+    }
+
+    /// D4 (consumer-API hardening) — `.close_now()` on a PAST-dated bound runs the
+    /// inline window_closeout and returns `Bounded { retired: >0 }`, while a
+    /// FUTURE-dated bound in the same namespace is left un-retired (its window has
+    /// not closed). Proves the honest in-band count: the deferral is observable from
+    /// the return (`retired`), not a doc caveat.
+    #[tokio::test]
+    async fn close_now_retires_past_bound_and_leaves_future_bound() {
+        let mem = make_memory().await;
+        let ns = Namespace::new("test-supersede-close-now");
+        let now = chrono::Utc::now();
+        let valid_from = now - Duration::days(30);
+
+        // Seed ONE subject entity + two DISTINCT facts (distinct predicates so the
+        // content hashes differ — the entity PK can only be inserted once).
+        let (past_fact, future_fact) = {
+            let tg = mem.temporal_graph.as_ref().expect("temporal_graph");
+            let group_id = mem.group_id_for_test(&ns);
+            tg.insert_entity_with_group(crate::core::graph::InsertEntityWithGroupParams {
+                id: "entity-close-now-subject",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+                group_id: Some(&group_id),
+            })
+            .await
+            .expect("seed subject entity");
+            let past = tg
+                .insert_fact_with_group(
+                    crate::core::graph::FactInsert::new(
+                        "entity-close-now-subject",
+                        "status",
+                        valid_from,
+                    )
+                    .object_value("active"),
+                    Some(&group_id),
+                )
+                .await
+                .expect("seed past fact");
+            let future = tg
+                .insert_fact_with_group(
+                    crate::core::graph::FactInsert::new(
+                        "entity-close-now-subject",
+                        "role",
+                        valid_from,
+                    )
+                    .object_value("member"),
+                    Some(&group_id),
+                )
+                .await
+                .expect("seed future fact");
+            (past, future)
+        };
+
+        // Bound the FUTURE fact first (no close) — its window is still open.
+        let future_bound = now + Duration::days(10);
+        let out_future = mem
+            .supersede(future_fact)
+            .in_namespace(ns.clone())
+            .at(future_bound)
+            .execute()
+            .await
+            .expect("future supersede must succeed");
+        assert_eq!(
+            out_future,
+            SupersedeOutcome::Bounded { retired: 0 },
+            "plain execute() bounds only — retired 0"
+        );
+
+        // Bound the PAST fact WITH close_now — window is already closed, so the
+        // inline window_closeout retires it. The namespace-scoped sweep retires only
+        // past-dated bounds → exactly the one past fact (future one stays open).
+        let past_bound = now - Duration::days(1);
+        let out_past = mem
+            .supersede(past_fact)
+            .in_namespace(ns.clone())
+            .at(past_bound)
+            .close_now()
+            .execute()
+            .await
+            .expect("past supersede with close_now must succeed");
+        assert_eq!(
+            out_past,
+            SupersedeOutcome::Bounded { retired: 1 },
+            "close_now on a past-dated bound retires exactly the one closed window"
+        );
+
+        // Assert DB state: past fact retired (expired_at set), future fact NOT.
+        let tg = mem.temporal_graph.as_ref().expect("temporal_graph");
+        let group_id = mem.group_id_for_test(&ns);
+        let past = tg
+            .get_fact_by_id(past_fact, &group_id)
+            .await
+            .expect("get past")
+            .expect("past fact exists");
+        assert!(
+            past.expired_at.is_some(),
+            "past-dated bound must be retired (expired_at set) by close_now"
+        );
+        let future = tg
+            .get_fact_by_id(future_fact, &group_id)
+            .await
+            .expect("get future")
+            .expect("future fact exists");
+        assert_eq!(
+            future.expired_at, None,
+            "future-dated bound must be left un-retired (window not yet closed)"
+        );
+    }
+
+    /// D4 — `.close_now()` on a FUTURE-dated bound returns `Bounded { retired: 0 }`
+    /// (nothing to retire yet). The honest zero, observable in-band.
+    #[tokio::test]
+    async fn close_now_on_future_bound_retires_zero() {
+        let mem = make_memory().await;
+        let ns = Namespace::new("test-supersede-close-now-future");
+        let now = chrono::Utc::now();
+        let valid_from = now - Duration::days(10);
+        let fact_id = seed_fact(&mem, &ns, valid_from).await;
+
+        let future_bound = now + Duration::days(5);
+        let outcome = mem
+            .supersede(fact_id)
+            .in_namespace(ns.clone())
+            .at(future_bound)
+            .close_now()
+            .execute()
+            .await
+            .expect("close_now on future bound must succeed");
+        assert_eq!(
+            outcome,
+            SupersedeOutcome::Bounded { retired: 0 },
+            "future-dated bound retires nothing yet — retired 0, deferred to a later sweep"
         );
     }
 

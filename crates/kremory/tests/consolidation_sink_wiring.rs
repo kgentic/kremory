@@ -119,19 +119,18 @@ async fn dream_with_sink(dry_run: bool) -> Vec<(String, String, String, bool)> {
     .await;
 
     let sink = Arc::new(RecordingSink::default());
-    let opts = DreamOpts {
-        // Every reconciliation pass OFF → the null LLM is never called AND canonicalize
-        // can't pre-merge the (embedding-less) pair before cross_episode sees it.
-        include_type_discovery: false,
-        include_consistency_check: false,
-        include_type_registry_collapse: false,
-        include_acronym_nickname_recall: false,
-        include_type_novelty_llm_verify: false,
-        // Only the op under test.
-        include_cross_episode_merges: true,
-        cross_episode_dry_run: dry_run,
-        ..DreamOpts::default()
-    };
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut opts = DreamOpts::default();
+    // Every reconciliation pass OFF → the null LLM is never called AND canonicalize
+    // can't pre-merge the (embedding-less) pair before cross_episode sees it.
+    opts.include_type_discovery = false;
+    opts.include_consistency_check = false;
+    opts.include_type_registry_collapse = false;
+    opts.include_acronym_nickname_recall = false;
+    opts.include_type_novelty_llm_verify = false;
+    // Only the op under test.
+    opts.include_cross_episode_merges = true;
+    opts.cross_episode_dry_run = dry_run;
 
     mem.dream()
         .in_namespace(ns)

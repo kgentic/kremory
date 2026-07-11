@@ -115,27 +115,22 @@ impl RecordReplayEmbedder {
 }
 
 impl kremory::EmbeddingProvider for RecordReplayEmbedder {
-    fn embed<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> impl std::future::Future<Output = kremory::CoreResult<Vec<f32>>> + Send + 'a {
-        async move {
-            if let Some(v) = self.cache.lock().expect("cache lock").get(text).cloned() {
-                return Ok(v);
+    async fn embed(&self, text: &str) -> kremory::CoreResult<Vec<f32>> {
+        if let Some(v) = self.cache.lock().expect("cache lock").get(text).cloned() {
+            return Ok(v);
+        }
+        match &self.inner {
+            Some(inner) => {
+                let v = inner.embed_dyn(text).await?;
+                self.cache
+                    .lock()
+                    .expect("cache lock")
+                    .insert(text.to_string(), v.clone());
+                Ok(v)
             }
-            match &self.inner {
-                Some(inner) => {
-                    let v = inner.embed_dyn(text).await?;
-                    self.cache
-                        .lock()
-                        .expect("cache lock")
-                        .insert(text.to_string(), v.clone());
-                    Ok(v)
-                }
-                None => Err(kremory::CoreError::Embedding(format!(
-                    "embedding cassette MISS for {text:?} — re-record via KREMORY_VCR=record"
-                ))),
-            }
+            None => Err(kremory::CoreError::Embedding(format!(
+                "embedding cassette MISS for {text:?} — re-record via KREMORY_VCR=record"
+            ))),
         }
     }
 }
@@ -148,20 +143,15 @@ impl kremory::EmbeddingProvider for RecordReplayEmbedder {
 struct OllamaEmbedderAdapter(Arc<autoagents_llm::backends::ollama::Ollama>);
 
 impl kremory::EmbeddingProvider for OllamaEmbedderAdapter {
-    fn embed<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> impl std::future::Future<Output = kremory::CoreResult<Vec<f32>>> + Send + 'a {
-        async move {
-            use autoagents_llm::embedding::EmbeddingProvider as AlLmEmbeddingProvider;
-            let prefixed = format!("search_document: {text}");
-            let mut vecs = AlLmEmbeddingProvider::embed(&*self.0, vec![prefixed])
-                .await
-                .map_err(|e| kremory::CoreError::Embedding(e.to_string()))?;
-            vecs.pop().ok_or_else(|| {
-                kremory::CoreError::Embedding("OllamaEmbedderAdapter: empty embed vec".to_string())
-            })
-        }
+    async fn embed(&self, text: &str) -> kremory::CoreResult<Vec<f32>> {
+        use autoagents_llm::embedding::EmbeddingProvider as AlLmEmbeddingProvider;
+        let prefixed = format!("search_document: {text}");
+        let mut vecs = AlLmEmbeddingProvider::embed(&*self.0, vec![prefixed])
+            .await
+            .map_err(|e| kremory::CoreError::Embedding(e.to_string()))?;
+        vecs.pop().ok_or_else(|| {
+            kremory::CoreError::Embedding("OllamaEmbedderAdapter: empty embed vec".to_string())
+        })
     }
 }
 
@@ -246,35 +236,39 @@ async fn build_embedder(mode: VcrMode, cassette_tag: &str) -> Arc<RecordReplayEm
 /// `impl Default for DreamOpts` — every field is set explicitly here so this
 /// helper stays correct even if a future flag's production default changes.
 fn all_flags_dream_opts() -> DreamOpts {
-    DreamOpts {
-        since: None,
-        include_type_discovery: true,
-        include_consistency_check: true,
-        max_episodes_per_run: None,
-        include_type_registry_collapse: true,
-        include_acronym_nickname_recall: true,
-        include_type_novelty_llm_verify: true,
-        // Consolidation sub-phase (ADR-066) is opt-in / default-off and is NOT part
-        // of this reconciliation prod-flip config — held false so this test's
-        // behaviour is unchanged from before consolidation existed.
-        include_community_detection: false,
-        include_cross_episode_merges: false,
-        // Op is off here → dry_run value is cosmetic; `true` matches DreamOpts::default.
-        cross_episode_dry_run: true,
-        include_supersession_sweep: false,
-        include_supersession_llm_nominate: false,
-        include_fact_archival: false,
-        consolidation_budget_tokens: Some(50_000),
-        consolidation_budget_usd_micro: None,
-        archive_grace_days: Some(90),
-        net_mutation_warn_floor: Some(500),
-    }
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`. Every
+    // field is still set explicitly here so this helper stays correct even if a
+    // future flag's production default changes.
+    let mut o = DreamOpts::default();
+    o.since = None;
+    o.include_type_discovery = true;
+    o.include_consistency_check = true;
+    o.max_episodes_per_run = None;
+    o.include_type_registry_collapse = true;
+    o.include_acronym_nickname_recall = true;
+    o.include_type_novelty_llm_verify = true;
+    // Consolidation sub-phase (ADR-066) is opt-in / default-off and is NOT part
+    // of this reconciliation prod-flip config — held false so this test's
+    // behaviour is unchanged from before consolidation existed.
+    o.include_community_detection = false;
+    o.include_cross_episode_merges = false;
+    // Op is off here → dry_run value is cosmetic; `true` matches DreamOpts::default.
+    o.cross_episode_dry_run = true;
+    o.include_supersession_sweep = false;
+    o.include_supersession_llm_nominate = false;
+    o.include_fact_archival = false;
+    o.consolidation_budget_tokens = Some(50_000);
+    o.consolidation_budget_usd_micro = None;
+    o.archive_grace_days = Some(90);
+    o.net_mutation_warn_floor = Some(500);
+    o
 }
 
 // ─── Fixture-planting helpers (shared across E1..E6) ────────────────────────
 
 /// Plant a bare entity (catch-all `entity_type_id = 0`) with a description
 /// property — mirrors `acronym_nickname_recall_s2_spike.rs::insert_entity`.
+#[allow(clippy::too_many_arguments)] // test helper
 async fn insert_entity(graph: &TemporalGraph, id: &str, group_id: &str, description: &str) {
     let props = serde_json::json!({ "name": id, "description": description });
     graph
@@ -291,6 +285,7 @@ async fn insert_entity(graph: &TemporalGraph, id: &str, group_id: &str, descript
 /// Make two entities co-occur via a shared episode mention — the nickname
 /// pair's ONLY nomination path (no structural initial-letter relationship).
 /// Mirrors `acronym_nickname_recall_s2_spike.rs::make_cooccur`.
+#[allow(clippy::too_many_arguments)] // test helper
 async fn make_cooccur(graph: &TemporalGraph, group_id: &str, a: &str, b: &str, content: &str) {
     let ep = graph
         .insert_episode(InsertEpisodeParams {
@@ -318,6 +313,7 @@ async fn make_cooccur(graph: &TemporalGraph, group_id: &str, a: &str, b: &str, c
 /// default vocabulary (mirrors `dream_e2e_real_llm.rs::insert_custom_entity_type`
 /// / `type_registry_collapse_s3_spike.rs::insert_custom_type`), returning the
 /// new row's id. Callers must have run `ensure_default_types_seeded` first.
+#[allow(clippy::too_many_arguments)] // test helper
 async fn insert_custom_type(graph: &TemporalGraph, group_id: &str, name: &str, desc: &str) -> i64 {
     let mut rows = graph
         .conn
@@ -344,6 +340,7 @@ async fn insert_custom_type(graph: &TemporalGraph, group_id: &str, name: &str, d
 /// intermediate step) — mirrors `type_registry_collapse.rs`'s own
 /// `insert_entity_of_type` test helper. Used to attach entities to the
 /// lexical-duplicate / lemma-collision type pairs planted for Site #3.
+#[allow(clippy::too_many_arguments)] // test helper
 async fn insert_entity_of_type(graph: &TemporalGraph, group_id: &str, id: &str, type_id: i64) {
     let now = chrono::Utc::now().to_rfc3339();
     graph

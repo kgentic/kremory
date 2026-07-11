@@ -149,7 +149,12 @@ pub async fn supersession(params: SupersessionParams<'_>) -> Result<OpReport> {
 ///
 /// The whole sweep runs inside ONE `BEGIN IMMEDIATE` so the SELECT + the batch of
 /// `expired_at` writes are atomic (no partial retirement on a mid-sweep failure).
-async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Result<usize> {
+///
+/// **Visibility (D4, consumer-API hardening):** `pub(crate)` so the
+/// `SupersedeRequest::close_now()` builder (`facade/supersede.rs`) can run the
+/// retirement inline for a one-call close of already-past-dated bounds. NOT part of
+/// the stable public API — the consumer entry point is the builder.
+pub(crate) async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Result<usize> {
     // RFC3339 UTC strings sort lexicographically in chronological order, so the
     // `valid_to < now` string compare is a correct temporal compare (all temporal
     // columns are stored via `to_rfc3339()`, e.g. `graph/facts.rs`).

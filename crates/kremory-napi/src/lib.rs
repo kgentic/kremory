@@ -28,10 +28,11 @@ use napi_derive::napi;
 use kremory::{Memory, Namespace, SourceKind};
 
 pub use convert::{
-    JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsDreamOpts, JsDreamPassOpts,
-    JsDreamStatusResult, JsDreamSummary, JsEpisode, JsIngestResult, JsIngestStatusResult,
-    JsMetadataFilter, JsOpenOptions, JsRecallOptions, JsRememberOptions, JsRetrievedContext,
-    JsStructuredFact, JsTypeProposal,
+    JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsConsolidationOpsRan, JsDreamOpts,
+    JsDreamPassOpts, JsDreamStatusResult, JsDreamSummary, JsEpisode, JsIngestResult,
+    JsIngestStatusResult, JsMetadataFilter, JsMutationFilter, JsMutationRecord, JsOpenOptions,
+    JsRecallOptions, JsRememberOptions, JsRestoreArchivedOutcome, JsRetrievedContext,
+    JsStructuredFact, JsSupersedeOutcome, JsTypeProposal, JsUnmergeOutcome, JsUnsupersedeOutcome,
 };
 
 // ── JsMemory ──────────────────────────────────────────────────────────────────
@@ -372,23 +373,31 @@ impl JsMemory {
         Ok(episodes.into_iter().map(convert::episode_to_js).collect())
     }
 
-    /// Trigger the dream-phase batch consolidation (B6).
+    /// Trigger the dream-phase batch consolidation (B6, consumer-API hardening D2).
     ///
-    /// Blocks until the dream completes. Returns a `JsDreamSummary` with
-    /// per-phase accounting. Wraps `Memory::dream()`.
+    /// Blocks until the dream completes. Returns a `JsDreamSummary` with per-phase
+    /// accounting (incl. the D5 `crossEpisodeWouldMerge`/`crossEpisodeMerged` split
+    /// and the D1b `consolidationOpsRan` ran-signal). Wraps `Memory::dream()`,
+    /// threading the full `DreamOptions` consolidation-control surface — every
+    /// consolidation knob (community / archival / supersession / cross-episode mode /
+    /// budgets / grace / warn-floor) is now reachable from JS. An unknown
+    /// `opts.crossEpisodeMode` rejects the Promise (loud parse).
     #[napi]
     pub async fn dream(&self, opts: Option<JsDreamOpts>) -> napi::Result<JsDreamSummary> {
+        // Resolve namespace BEFORE opts is moved into the conversion (namespace is
+        // NOT a DreamOpts field — it routes via `.in_namespace(ns)`).
         let ns = opts
             .as_ref()
             .and_then(|o| o.namespace.as_deref())
             .map(Namespace::new)
             .or_else(|| self.default_namespace.clone());
 
-        let req = if let Some(ns) = ns {
-            self.inner.dream().in_namespace(ns)
-        } else {
-            self.inner.dream()
-        };
+        let rust_opts = convert::js_dream_opts_to_rust(opts)?;
+
+        let mut req = self.inner.dream().opts(rust_opts);
+        if let Some(ns) = ns {
+            req = req.in_namespace(ns);
+        }
 
         let summary = req
             .await
@@ -504,8 +513,16 @@ impl JsMemory {
     /// (`expiredAt = validTo`, `supersessionsRecorded` increments) —
     /// see `kremory::SupersedeRequest` for the full two-phase mechanism.
     ///
-    /// Returns the outcome as `"applied"` | `"rejected_time_inversion"` |
-    /// `"not_found"` (mirrors `kremory::SupersedeOutcome` 1:1).
+    /// When `closeNow == true` (consumer-API hardening D4b), the deterministic
+    /// `window_closeout` sweep runs INLINE right after bounding, retiring
+    /// already-past-dated bounds in this one call — mirrors
+    /// `SupersedeRequest::close_now()`. Only past-dated bounds retire; a
+    /// future-dated bound returns `retired == 0` (deferred to a later dream sweep).
+    ///
+    /// Returns a `JsSupersedeOutcome` `{ outcome, retired }` where `outcome` is
+    /// `"bounded"` | `"rejected_time_inversion"` | `"not_found"` (mirrors the D4a
+    /// honest `kremory::SupersedeOutcome::Bounded` rename) and `retired` is the
+    /// in-band inline-close count (`0` unless `closeNow` retired past-dated bounds).
     #[napi]
     pub async fn supersede(
         &self,
@@ -513,7 +530,8 @@ impl JsMemory {
         valid_to: String,
         reason: Option<String>,
         namespace: Option<String>,
-    ) -> napi::Result<String> {
+        close_now: Option<bool>,
+    ) -> napi::Result<JsSupersedeOutcome> {
         let ns = namespace
             .as_deref()
             .map(Namespace::new)
@@ -542,6 +560,9 @@ impl JsMemory {
         if let Some(r) = reason {
             req = req.with_reason(r);
         }
+        if close_now.unwrap_or(false) {
+            req = req.close_now();
+        }
 
         let outcome = req
             .execute()
@@ -549,6 +570,156 @@ impl JsMemory {
             .map_err(|e| napi::Error::from_reason(format!("kremory supersede failed: {e}")))?;
 
         Ok(convert::supersede_outcome_to_js(outcome))
+    }
+
+    // ── Reversible-graph-mutations (ADR-073 Tier-1) — undo + inspect ──────────
+
+    /// Reverse a prior entity-merge by its `mutationId` (ADR-073 Tier-1, §4.2).
+    ///
+    /// Fully restores the loser entity, its facts, its episodic edges, and the
+    /// keeper's overwritten `access_count` / `ner_confidence`, then records a merge
+    /// NOGOOD so the next `dream()` will NOT re-merge the split pair. Idempotent: a
+    /// second call returns `alreadyUndone = true`. Wraps `Memory::unmerge`.
+    ///
+    /// Obtain the `mutationId` from `mutationHistory` / `listMutations`.
+    #[napi]
+    pub async fn unmerge(&self, mutation_id: i64) -> napi::Result<JsUnmergeOutcome> {
+        let outcome = self
+            .inner
+            .unmerge(mutation_id)
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory unmerge failed: {e}")))?;
+        Ok(convert::unmerge_outcome_to_js(outcome))
+    }
+
+    /// Restore a fact previously moved to `facts_archive` (P2 archival) back into
+    /// the live `facts` table (ADR-073 Tier-1, §4.4). Wraps
+    /// `Memory::restore_archived_fact`.
+    ///
+    /// Idempotent: if the fact is already live, returns `alreadyLive = true` and
+    /// writes nothing.
+    #[napi]
+    pub async fn restore_archived_fact(
+        &self,
+        archived_fact_id: i64,
+    ) -> napi::Result<JsRestoreArchivedOutcome> {
+        let outcome = self
+            .inner
+            .restore_archived_fact(archived_fact_id)
+            .execute()
+            .await
+            .map_err(|e| {
+                napi::Error::from_reason(format!("kremory restoreArchivedFact failed: {e}"))
+            })?;
+        Ok(convert::restore_archived_outcome_to_js(outcome))
+    }
+
+    /// Clear a supersession bound (`valid_to` / `expired_at`) set by `supersede`,
+    /// re-opening the fact as currently-true (ADR-073 Tier-1, §4.5). Wraps
+    /// `Memory::unsupersede`.
+    ///
+    /// Idempotent: a fact with no bound set returns `outcome = "not_superseded"`
+    /// (an honest no-op).
+    #[napi]
+    pub async fn unsupersede(&self, fact_id: i64) -> napi::Result<JsUnsupersedeOutcome> {
+        let outcome = self
+            .inner
+            .unsupersede(fact_id)
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory unsupersede failed: {e}")))?;
+        Ok(convert::unsupersede_outcome_to_js(outcome))
+    }
+
+    /// Inspect the mutations that touched one entity, newest-first (ADR-073 Tier-1,
+    /// §3 "Inspect surface") — the SEE half of the see+fix story. Each record
+    /// carries the `mutationId` to pass to `unmerge`. Includes already-undone
+    /// mutations. Wraps `Memory::mutation_history`.
+    ///
+    /// An entity id is namespace-scoped: pass `namespace` or open the handle with a
+    /// `defaultNamespace`, else the call rejects with a namespace-required error.
+    #[napi]
+    pub async fn mutation_history(
+        &self,
+        entity_id: String,
+        namespace: Option<String>,
+    ) -> napi::Result<Vec<JsMutationRecord>> {
+        let ns = namespace
+            .as_deref()
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone());
+
+        let mut req = self.inner.mutation_history(entity_id);
+        if let Some(ns) = ns {
+            req = req.in_namespace(ns);
+        }
+
+        let records = req
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory mutationHistory failed: {e}")))?;
+
+        Ok(records.into_iter().map(convert::mutation_record_to_js).collect())
+    }
+
+    /// List logged graph mutations, newest-first (ADR-073 Tier-1, §3 "Inspect
+    /// surface"). Each record carries its `mutationId` to undo. Wraps
+    /// `Memory::list_mutations`.
+    ///
+    /// Filter via `opts`: `namespace` scopes to one namespace (else the
+    /// `defaultNamespace`, else ALL namespaces); `kind` restricts the mutation kind
+    /// (unknown tag rejects); `since` sets an RFC3339 `created_at` lower bound
+    /// (malformed rejects); `includeUndone` adds already-reversed mutations
+    /// (default: LIVE / still-reversible only).
+    #[napi]
+    pub async fn list_mutations(
+        &self,
+        opts: Option<JsMutationFilter>,
+    ) -> napi::Result<Vec<JsMutationRecord>> {
+        let mut req = self.inner.list_mutations();
+
+        if let Some(f) = opts {
+            let ns = f
+                .namespace
+                .as_deref()
+                .map(Namespace::new)
+                .or_else(|| self.default_namespace.clone());
+            if let Some(ns) = ns {
+                req = req.in_namespace(ns);
+            }
+            // Parse the kind tag loudly via the substrate enum's snake_case serde —
+            // an unknown tag is a caller error, surfaced not silently dropped.
+            if let Some(ref kind_str) = f.kind {
+                let kind: kremory::MutationKind = serde_json::from_value(
+                    serde_json::Value::String(kind_str.clone()),
+                )
+                .map_err(|e| {
+                    napi::Error::from_reason(format!(
+                        "JsMutationFilter.kind: unknown value {kind_str:?}: {e}"
+                    ))
+                })?;
+                req = req.kind(kind);
+            }
+            if let Some(ref since_str) = f.since {
+                let ts = chrono::DateTime::parse_from_rfc3339(since_str)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map_err(|e| {
+                        napi::Error::from_reason(format!(
+                            "JsMutationFilter.since: invalid RFC-3339 timestamp {since_str:?}: {e}"
+                        ))
+                    })?;
+                req = req.since(ts);
+            }
+            if f.include_undone.unwrap_or(false) {
+                req = req.include_undone(true);
+            }
+        }
+
+        let records = req
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory listMutations failed: {e}")))?;
+
+        Ok(records.into_iter().map(convert::mutation_record_to_js).collect())
     }
 
     /// Search memory for context matching `query`.

@@ -252,7 +252,9 @@ async fn d8_migration_014_idempotent() {
 async fn d6_dream_summary_types_discovered_field_accessible() {
     let summary = kremory::DreamSummary {
         communities_updated: 0,
-        cross_episode_merges: 0,
+        cross_episode_would_merge: 0,
+        cross_episode_merged: 0,
+        consolidation_ops_ran: kremory::ConsolidationOpsRan::default(),
         supersessions_recorded: 0,
         facts_archived: 0,
         aliases_resolved: 0,

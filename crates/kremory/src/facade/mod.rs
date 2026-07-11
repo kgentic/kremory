@@ -117,9 +117,9 @@ use crate::memory::{
     self,
     events::EnrichmentEventSink,
     types::{
-        AwaitOpts, BatchStatus, CancelOutcome, ContextTemplate, DreamHandle, DreamOpts,
-        DreamPhaseResult, DreamStatus, EpisodeCommit, Namespace, NamespacePolicy, RetrievedContext,
-        SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
+        AwaitOpts, BatchStatus, CancelOutcome, ContextTemplate, CrossEpisodeMode, DreamHandle,
+        DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, Namespace, NamespacePolicy,
+        RetrievedContext, SearchOpts, SourceKind, SourceRef, StructuredFact, SubmitOpts,
     },
     ChatProvider, GraphAssertEntityTypeParams, GraphHandle, MemoryError, Result,
 };
@@ -135,6 +135,30 @@ pub struct NoEmb;
 /// Type-state marker: Embedder configured.
 pub struct WithEmb;
 
+// ── ConsolidationOpsRan (D1b) ─────────────────────────────────────────────────
+
+/// Per-op ACTUALLY-RAN signal on [`DreamSummary`] (consumer-API hardening D1b).
+///
+/// With the D1 all-ops-ON defaults a consumer can no longer read an all-zero
+/// consolidation count as "the op was off". This makes the distinction in-band: a
+/// field is `true` iff the op's `DreamOpts.include_*` flag was on AND the op
+/// actually executed (it is `false` when the op was toggled off OR budget-skipped —
+/// a budget skip is separately observable via [`DreamSummary::budget_exhausted`]).
+///
+/// So `communities_updated == 0 && consolidation_ops_ran.community == true` reads
+/// as "community detection ran and found nothing to change", NOT "it was disabled".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConsolidationOpsRan {
+    /// The community-detection op (`include_community_detection`) executed.
+    pub community: bool,
+    /// The cross-episode merge op (`include_cross_episode_merges`) executed.
+    pub cross_episode: bool,
+    /// The fact-archival op (`include_fact_archival`) executed.
+    pub archival: bool,
+    /// The supersession sweep (`include_supersession_sweep`) executed.
+    pub supersession_sweep: bool,
+}
+
 // ── DreamSummary ─────────────────────────────────────────────────────────────
 
 /// Summary returned when a dream phase completes via the facade.
@@ -149,11 +173,12 @@ pub struct WithEmb;
 /// - `warnings` — non-fatal notices from any pass.
 ///
 /// **Consolidation fields (ADR-066 — populated by the CONSOLIDATION sub-phase):**
-/// - `communities_updated`, `cross_episode_merges`, `supersessions_recorded`,
-///   `facts_archived` — filled by `run_consolidation` when the corresponding
-///   `DreamOpts.include_*` op is enabled (all default `false` — opt-in until each
-///   op's adversarial corpus clears its enablement gate). Zero when the op is off or
-///   found nothing to do. (Supersedes the prior F-01 honest-zero note.)
+/// - `communities_updated`, `cross_episode_would_merge`, `cross_episode_merged`,
+///   `supersessions_recorded`, `facts_archived` — filled by `run_consolidation`
+///   when the corresponding `DreamOpts.include_*` op is enabled (all default `true`
+///   since consumer-API hardening D1 — made safe by ADR-073 Tier-1 reversibility).
+///   Zero when the op is off OR ran and found nothing to do — use
+///   `consolidation_ops_ran` (D1b) to tell the two apart.
 ///
 /// Fields wired across ADR-037 §3 D6 (types_discovered/warnings), ADR-046 Option E
 /// E8 (entities_reclassified), and dream-phase-reconciliation-v2 §D3
@@ -161,16 +186,24 @@ pub struct WithEmb;
 #[derive(Debug, Clone)]
 pub struct DreamSummary {
     pub communities_updated: usize,
-    /// Cross-episode merge DECISIONS this pass (not necessarily writes). Under the
-    /// ADR-070 shadow gate (`DreamOpts.cross_episode_dry_run == true`, the default on
-    /// first enablement) the op computes + counts every merge decision but SKIPS the
-    /// fusion — so `cross_episode_merges > 0` does NOT imply entities were actually
-    /// fused. To distinguish, inspect the `DreamOpts` used, or the
-    /// `kremory.dream.consolidation.decision_total{op=cross_episode,mode}` metric
-    /// (`mode=shadow` vs `mode=applied`).
-    pub cross_episode_merges: usize,
+    /// Cross-episode merge DECISIONS this pass — "would-merge" (D5, consumer-API
+    /// hardening). Counts every merge decision the op reached on BOTH the shadow and
+    /// apply branches, so this does NOT imply entities were actually fused. See
+    /// [`Self::cross_episode_merged`] for the count that ACTUALLY committed a fusion
+    /// — the in-band would-merge/merged split (no metrics recorder required).
+    pub cross_episode_would_merge: usize,
+    /// Cross-episode merges that ACTUALLY committed this pass (D5). Equals
+    /// [`Self::cross_episode_would_merge`] in apply mode
+    /// ([`CrossEpisodeMode::Apply`]) and `0` in shadow mode
+    /// ([`CrossEpisodeMode::Shadow`], the default). `would_merge > 0 && merged == 0`
+    /// reads as "the op WOULD have merged N pairs but is in shadow — fused nothing".
+    pub cross_episode_merged: usize,
     pub supersessions_recorded: usize,
     pub facts_archived: usize,
+    /// Per-op ACTUALLY-RAN signal (D1b) — disambiguates "op disabled" from "op ran,
+    /// found nothing" for the all-zero consolidation counts above. See
+    /// [`ConsolidationOpsRan`].
+    pub consolidation_ops_ran: ConsolidationOpsRan,
     pub duration_ms: u64,
     /// Entity types proposed and accepted by Dream Pass 0 type discovery.
     /// Empty when Pass 0 was not run or produced no accepted proposals.
@@ -210,7 +243,13 @@ impl From<DreamPhaseResult> for DreamSummary {
     fn from(r: DreamPhaseResult) -> Self {
         Self {
             communities_updated: r.communities_recomputed,
-            cross_episode_merges: r.cross_meeting_merges,
+            cross_episode_would_merge: r.cross_meeting_merges,
+            // No consolidation dispatcher ran on this `DreamPhaseResult` path (it is
+            // freshly `default()`-constructed before consolidation folds in at the
+            // facade), so the actual-fusion count + ran-signal are all zero/false;
+            // the facade fold site overwrites them with the real values.
+            cross_episode_merged: 0,
+            consolidation_ops_ran: ConsolidationOpsRan::default(),
             supersessions_recorded: r.supersessions_recorded,
             facts_archived: r.facts_archived,
             duration_ms: r.duration_ms,
@@ -239,7 +278,9 @@ impl From<crate::core::ingest::DreamPassSummary> for DreamSummary {
             // DreamPassSummary fields map to DreamSummary where applicable.
             // Fields without a direct mapping are zeroed.
             communities_updated: 0,
-            cross_episode_merges: s.ghost_episodes_retried,
+            cross_episode_would_merge: s.ghost_episodes_retried,
+            cross_episode_merged: 0,
+            consolidation_ops_ran: ConsolidationOpsRan::default(),
             supersessions_recorded: 0,
             facts_archived: 0,
             duration_ms: s.duration_ms,
@@ -707,6 +748,7 @@ impl Memory {
             namespace: None,
             valid_to: None,
             reason: None,
+            close_now: false,
         }
     }
 
@@ -2003,14 +2045,15 @@ mod dream_llm_slot_tests {
         let summary = mem
             .dream()
             .in_namespace(Namespace::new("default"))
-            // ADR-071 Item 1 turned cross_episode ON by default (in SHADOW);
-            // communities/archive follow in Item 2. This Pass-0/type-discovery test pins
-            // ALL consolidation flags OFF so its honest-zeros below stay valid across
-            // both items (shadow/consolidation behaviour is covered elsewhere).
+            // Consumer-API hardening D1 turned ALL FOUR consolidation ops ON by
+            // default. This Pass-0/type-discovery test pins EVERY consolidation flag
+            // OFF so its honest-zeros below stay valid (consolidation behaviour is
+            // covered elsewhere).
             .opts(crate::memory::types::DreamOpts {
                 include_cross_episode_merges: false,
                 include_community_detection: false,
                 include_fact_archival: false,
+                include_supersession_sweep: false,
                 ..Default::default()
             })
             .await
@@ -2037,8 +2080,12 @@ mod dream_llm_slot_tests {
             "communities_updated must be 0 — consolidation pinned OFF here (ADR-071)"
         );
         assert_eq!(
-            summary.cross_episode_merges, 0,
-            "cross_episode_merges must be 0 — consolidation pinned OFF here (ADR-071)"
+            summary.cross_episode_would_merge, 0,
+            "cross_episode_would_merge must be 0 — consolidation pinned OFF here"
+        );
+        assert_eq!(
+            summary.cross_episode_merged, 0,
+            "cross_episode_merged must be 0 — consolidation pinned OFF here"
         );
         assert_eq!(
             summary.supersessions_recorded, 0,

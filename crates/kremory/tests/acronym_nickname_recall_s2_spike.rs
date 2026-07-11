@@ -166,6 +166,7 @@ async fn insert_entity(graph: &TemporalGraph, id: &str, group_id: &str, descript
 /// `acronym_nickname_recall.rs`'s own `cooccurs_true_when_entities_share_episode`
 /// unit test) — this is how a NICKNAME pair with zero structural (initial-
 /// letter) relationship gets nominated by the pre-filter's co-occurrence half.
+#[allow(clippy::too_many_arguments)] // test helper
 async fn make_cooccur(graph: &TemporalGraph, group_id: &str, a: &str, b: &str, content: &str) {
     let ep = graph
         .insert_episode(InsertEpisodeParams {
@@ -556,12 +557,11 @@ async fn full_fixture_s2() {
             )
             .await
             .expect("audit query");
-        let audited_decision: Option<String> =
-            if let Some(row) = rows.next().await.expect("row read") {
-                Some(row.get(0).expect("decision col"))
-            } else {
-                None
-            };
+        let audited_decision: Option<String> = rows
+            .next()
+            .await
+            .expect("row read")
+            .map(|row| row.get(0).expect("decision col"));
 
         let a_survives = entity_exists(&graph.conn, gid, pair.a_id).await;
         let b_survives = entity_exists(&graph.conn, gid, pair.b_id).await;

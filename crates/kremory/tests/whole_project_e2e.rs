@@ -188,27 +188,22 @@ impl RecordReplayEmbedder {
 }
 
 impl kremory::EmbeddingProvider for RecordReplayEmbedder {
-    fn embed<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> impl std::future::Future<Output = kremory::CoreResult<Vec<f32>>> + Send + 'a {
-        async move {
-            if let Some(v) = self.cache.lock().expect("cache lock").get(text).cloned() {
-                return Ok(v);
+    async fn embed(&self, text: &str) -> kremory::CoreResult<Vec<f32>> {
+        if let Some(v) = self.cache.lock().expect("cache lock").get(text).cloned() {
+            return Ok(v);
+        }
+        match &self.inner {
+            Some(inner) => {
+                let v = inner.embed_dyn(text).await?;
+                self.cache
+                    .lock()
+                    .expect("cache lock")
+                    .insert(text.to_string(), v.clone());
+                Ok(v)
             }
-            match &self.inner {
-                Some(inner) => {
-                    let v = inner.embed_dyn(text).await?;
-                    self.cache
-                        .lock()
-                        .expect("cache lock")
-                        .insert(text.to_string(), v.clone());
-                    Ok(v)
-                }
-                None => Err(kremory::CoreError::Embedding(format!(
-                    "embedding cassette MISS for {text:?} — re-record via KREMORY_VCR=record (TD-093)"
-                ))),
-            }
+            None => Err(kremory::CoreError::Embedding(format!(
+                "embedding cassette MISS for {text:?} — re-record via KREMORY_VCR=record (TD-093)"
+            ))),
         }
     }
 }
@@ -458,7 +453,7 @@ async fn whole_project_ingest_to_dream() {
         summary.aliases_resolved,
         summary.entities_reclassified,
         summary.canonicalization_merges,
-        summary.cross_episode_merges,
+        summary.cross_episode_would_merge,
         summary.acronym_nickname_merges,
         summary.type_registry_merges,
         summary.consistency_check_corrected,
@@ -497,7 +492,7 @@ async fn whole_project_ingest_to_dream() {
     let entities_after = count_entities(&tg.conn).await;
     let merge_actions = summary.aliases_resolved
         + summary.canonicalization_merges
-        + summary.cross_episode_merges
+        + summary.cross_episode_would_merge
         + summary.acronym_nickname_merges
         + summary.type_registry_merges;
     assert!(

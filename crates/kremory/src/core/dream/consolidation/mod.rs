@@ -99,6 +99,8 @@ pub(crate) async fn run_consolidation(
     // 1. supersession (P1) — build FIRST; feeds archive's `expired_at` input.
     if opts.include_supersession_sweep {
         if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
+            // D1b: the op actually executed (not budget-skipped).
+            summary.ran_supersession_sweep = true;
             let report = supersession::supersession(supersession::SupersessionParams {
                 graph,
                 group_id,
@@ -120,6 +122,7 @@ pub(crate) async fn run_consolidation(
     // 2. archive (P2) — consumes supersession's `expired_at` output.
     if opts.include_fact_archival {
         if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
+            summary.ran_fact_archival = true; // D1b
             let grace_days = opts.archive_grace_days.unwrap_or(0);
             let report = archive::archive(graph, group_id, grace_days).await;
             fold(&mut summary.facts_archived, report, &mut summary.warnings);
@@ -132,6 +135,7 @@ pub(crate) async fn run_consolidation(
     //    only handles the exact/fuzzy cases canonicalize's cosine band missed.
     if opts.include_cross_episode_merges {
         if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
+            summary.ran_cross_episode = true; // D1b
             let report =
                 cross_episode::cross_episode(graph, group_id, opts.cross_episode_dry_run).await;
             // Orchestrator-fires the consumer event for each merge decision (ADR-070
@@ -148,6 +152,11 @@ pub(crate) async fn run_consolidation(
                     });
                 }
             }
+            // D5: carry the actual-fusion count (would-merge/merged split) before
+            // `fold` consumes the report. `count` (would-merge) is folded below.
+            if let Ok(op) = &report {
+                summary.cross_episode_merged = op.merged;
+            }
             fold(
                 &mut summary.cross_episode_merges,
                 report,
@@ -161,6 +170,7 @@ pub(crate) async fn run_consolidation(
     // 4. communities (P4) — LAST; benefits from a settled entity population.
     if opts.include_community_detection {
         if budget.check(OP_TOKEN_PROJECTION) && budget.check_usd(OP_USD_PROJECTION) {
+            summary.ran_community_detection = true; // D1b
             let report = communities::communities(graph, group_id).await;
             fold(
                 &mut summary.communities_updated,
@@ -286,6 +296,70 @@ mod tests {
         .await
         .expect("run_consolidation");
         assert_eq!(summary, ConsolidationSummary::default());
+    }
+
+    #[test]
+    fn dream_opts_default_all_four_consolidation_ops_enabled() {
+        // D1 (consumer-API hardening): ALL FOUR consolidation ops default ON, so
+        // `any_consolidation_enabled()` is true for a bare default. (This is the
+        // keep-on-since-Tier-1 posture — the inverse of the spec's original
+        // defaults-off; see dream-consumer-api-hardening-arch-spec.)
+        let d = DreamOpts::default();
+        assert!(d.include_community_detection, "community default ON (D1)");
+        assert!(d.include_cross_episode_merges, "cross_episode default ON (D1)");
+        assert!(d.include_fact_archival, "archival default ON (D1)");
+        assert!(
+            d.include_supersession_sweep,
+            "supersession sweep default ON (D1 — flipped from false)"
+        );
+        assert!(
+            d.any_consolidation_enabled(),
+            "default DreamOpts enables the consolidation dispatcher"
+        );
+        // The optional LLM-nominate lane stays OFF (unsafe without a
+        // functional-predicate registry) — it is not one of the four enabling flags.
+        assert!(
+            !d.include_supersession_llm_nominate,
+            "LLM-nominate lane stays default OFF"
+        );
+    }
+
+    #[tokio::test]
+    async fn ops_ran_signal_reflects_disabled_vs_ran() {
+        // D1b (consumer-API hardening): the per-op ran-signal distinguishes "op
+        // disabled" from "op ran, found nothing". Enable supersession + archival,
+        // disable cross_episode + community; on an empty graph every count is 0, but
+        // the ran flags must mirror which ops actually executed.
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let opts = DreamOpts {
+            include_supersession_sweep: true,
+            include_fact_archival: true,
+            include_cross_episode_merges: false,
+            include_community_detection: false,
+            ..DreamOpts::default()
+        };
+        let summary = run_consolidation(RunConsolidationParams {
+            graph: &graph,
+            group_id: "g_ran_signal",
+            opts: &opts,
+            model_id: "gemma4:e4b",
+            sink: None,
+        })
+        .await
+        .expect("run_consolidation");
+        assert!(summary.ran_supersession_sweep, "supersession enabled → ran");
+        assert!(summary.ran_fact_archival, "archival enabled → ran");
+        assert!(
+            !summary.ran_cross_episode,
+            "cross_episode disabled → did not run"
+        );
+        assert!(
+            !summary.ran_community_detection,
+            "community disabled → did not run"
+        );
+        // Counts are all zero (empty graph) — the ran-signal is what disambiguates.
+        assert_eq!(summary.supersessions_recorded, 0);
+        assert_eq!(summary.cross_episode_merged, 0);
     }
 
     #[tokio::test]
@@ -417,8 +491,7 @@ mod tests {
             cross_episode_merges,
             supersessions_recorded,
             facts_archived,
-            warnings: Vec::new(),
-            budget_exhausted: false,
+            ..ConsolidationSummary::default()
         }
     }
 

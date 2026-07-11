@@ -350,19 +350,50 @@ pub struct JsTypeProposal {
     pub justification: String,
 }
 
+/// Per-op ACTUALLY-RAN signal on `DreamSummary` (consumer-API hardening D1b).
+///
+/// Mirrors substrate `kremory::ConsolidationOpsRan`. With the all-ops-ON dream
+/// defaults, a consumer can no longer read an all-zero consolidation count as
+/// "the op was off" — a field here is `true` iff the op's `include_*` flag was on
+/// AND the op executed. So `communities_updated == 0 && consolidationOpsRan.community
+/// == true` reads as "community detection ran and found nothing", NOT "disabled".
+#[napi(object, js_name = "ConsolidationOpsRan")]
+pub struct JsConsolidationOpsRan {
+    /// The community-detection op (`includeCommunityDetection`) executed.
+    pub community: bool,
+    /// The cross-episode merge op (`crossEpisodeMode != "off"`) executed.
+    pub cross_episode: bool,
+    /// The fact-archival op (`includeFactArchival`) executed.
+    pub archival: bool,
+    /// The supersession sweep (`includeSupersessionSweep`) executed.
+    pub supersession_sweep: bool,
+}
+
 /// Summary returned by `Memory.dream`.
 ///
-/// Field names mirror the substrate `DreamSummary` struct exactly. The
-/// honest-zero consolidation fields (`communities_updated`, `cross_episode_merges`,
-/// `supersessions_recorded`, `facts_archived`) are always 0 until graph
-/// consolidation ships (F-01). All numeric fields are safe as JS `number` (f64) —
-/// usize/u64 values far below 2^53 at practical memory scale.
+/// Field names mirror the substrate `DreamSummary` struct exactly. All numeric
+/// fields are safe as JS `number` (f64) — usize/u64 values far below 2^53 at
+/// practical memory scale.
+///
+/// The `crossEpisodeWouldMerge` / `crossEpisodeMerged` split (D5) is the in-band
+/// would-merge/did-merge distinction — `wouldMerge` counts every merge DECISION
+/// (both shadow + apply branches), `merged` counts only ACTUAL fusions (equals
+/// `wouldMerge` in apply mode, `0` in shadow). Use `consolidationOpsRan` (D1b) to
+/// tell "op disabled" from "op ran, found nothing" on any all-zero count.
 #[napi(object, js_name = "DreamSummary")]
 pub struct JsDreamSummary {
     pub communities_updated: f64,
-    pub cross_episode_merges: f64,
+    /// Cross-episode merge DECISIONS this pass ("would-merge", D5). Does NOT imply
+    /// entities were fused — see `crossEpisodeMerged`.
+    pub cross_episode_would_merge: f64,
+    /// Cross-episode merges that ACTUALLY committed this pass (D5). Equals
+    /// `crossEpisodeWouldMerge` in apply mode, `0` in shadow (the default).
+    pub cross_episode_merged: f64,
     pub supersessions_recorded: f64,
     pub facts_archived: f64,
+    /// Per-op ran-signal (D1b) — disambiguates "op disabled" from "op ran, found
+    /// nothing" for the all-zero consolidation counts above.
+    pub consolidation_ops_ran: JsConsolidationOpsRan,
     /// `true` when a consolidation op was skipped because a per-pass budget
     /// ceiling (token or USD) tripped — distinguishes "nothing to spend" from
     /// "spend was capped" (ADR-071 §Item 4a / TD-060).
@@ -378,11 +409,128 @@ pub struct JsDreamSummary {
     pub warnings: Vec<String>,
 }
 
-/// Options for `JsMemory.dream`. All fields are optional.
+/// Options for `JsMemory.dream`. All fields are optional — omit to use the
+/// substrate `DreamOpts::default()` (consumer-API hardening D1: all four
+/// consolidation ops default ON, made safe by ADR-073 Tier-1 reversibility).
+///
+/// # DreamOpts field enumeration (D2 / `schemas-enumerate-touching-layers`)
+///
+/// The substrate `DreamOpts` has 17 pub fields. Each is either EXPOSED here or
+/// deliberately OMITTED with a reason:
+///
+/// **Exposed (consolidation control — the D2 binding-parity surface):**
+/// `includeCommunityDetection`, `includeFactArchival`, `includeSupersessionSweep`,
+/// `includeSupersessionLlmNominate`, `crossEpisodeMode` (the honest tri-state that
+/// maps onto `include_cross_episode_merges` + `cross_episode_dry_run` per O1 —
+/// exposed as ONE string, never the two raw bools, to prevent the illegal
+/// `apply`+`dry_run` combo), `archiveGraceDays`, `netMutationWarnFloor`,
+/// `consolidationBudgetTokens`, `consolidationBudgetUsdMicro`.
+///
+/// **Omitted (with reason):**
+/// - `since`, `maxEpisodesPerRun` — run-scoping filters; the napi `dream()` operates
+///   over all un-dreamed episodes. Per-run scoping is reachable via
+///   `runDreamPassSync`'s `DreamPassOptions.maxEpisodesPerRun`; a timestamp `since`
+///   filter is deferred (v0.2.0).
+/// - `includeTypeDiscovery`, `includeConsistencyCheck`, `includeTypeRegistryCollapse`,
+///   `includeAcronymNicknameRecall`, `includeTypeNoveltyLlmVerify` — RECONCILIATION
+///   pass toggles (a different concern from the consolidation sub-phase this D2
+///   surface targets). All default-ON; type-discovery is separately tunable via
+///   `runDreamPassSync`'s `DreamPassOptions.includeTypeDiscovery`. Exposing the full
+///   reconciliation-pass matrix on `dream()` is deferred (v0.2.0).
 #[napi(object, js_name = "DreamOptions")]
 pub struct JsDreamOpts {
     /// Namespace to dream within. `null`/omit for Memory handle's default.
     pub namespace: Option<String>,
+    /// Run the community-detection consolidation op (zero-LLM label propagation).
+    /// Default `true`.
+    pub include_community_detection: Option<bool>,
+    /// Run the fact-archival consolidation op (MOVE long-expired unreferenced facts
+    /// into `facts_archive`; reversible via `restoreArchivedFact`). Default `true`.
+    pub include_fact_archival: Option<bool>,
+    /// Run the supersession sweep (deterministic world-time window close-out;
+    /// reversible via `unsupersede`). Default `true`.
+    pub include_supersession_sweep: Option<bool>,
+    /// Also run supersession's OPT-IN LLM-nominated value-change lane (only
+    /// meaningful when `includeSupersessionSweep` is on). Default `false`.
+    pub include_supersession_llm_nominate: Option<bool>,
+    /// Cross-episode entity-merge control (O1). One of `"off"` | `"shadow"` |
+    /// `"apply"` — the honest tri-state that maps onto the substrate's coupled
+    /// `include_cross_episode_merges` + `cross_episode_dry_run` bools. Default
+    /// (omit) = the substrate default (`"shadow"` — computes decisions, fuses
+    /// nothing). An unknown value rejects the `dream()` Promise.
+    pub cross_episode_mode: Option<String>,
+    /// Grace window (days) before an expired fact is archival-eligible. Default `90`.
+    pub archive_grace_days: Option<f64>,
+    /// WARN-only floor on the aggregate destructive-mutation count. Default `500`.
+    pub net_mutation_warn_floor: Option<f64>,
+    /// Per-run token budget ceiling for the consolidation sub-phase (soft
+    /// partial-abort). Default `50000`.
+    pub consolidation_budget_tokens: Option<f64>,
+    /// Per-run USD-micro budget ceiling. INERT today (every op's per-call USD
+    /// projection is 0 — the effective budget is token-based); reserved for a
+    /// future real cost source (D6). Default: no USD cap.
+    pub consolidation_budget_usd_micro: Option<f64>,
+}
+
+/// Convert JS `DreamOptions` to substrate `DreamOpts` via FIELD MUTATION seeded
+/// from `DreamOpts::default()` (compatible with the substrate's `#[non_exhaustive]`
+/// posture — never a struct literal). Template = `js_dream_pass_opts_to_rust`.
+///
+/// `namespace` is NOT consumed here — it is resolved separately by `dream()`.
+/// An unknown `cross_episode_mode` string fails LOUDLY (`llm-output-parse-loudly`
+/// extended to consumer input) rather than silently defaulting.
+pub fn js_dream_opts_to_rust(js: Option<JsDreamOpts>) -> napi::Result<kremory::DreamOpts> {
+    let mut base = kremory::DreamOpts::default();
+    let Some(o) = js else {
+        return Ok(base);
+    };
+    if let Some(v) = o.include_community_detection {
+        base.include_community_detection = v;
+    }
+    if let Some(v) = o.include_fact_archival {
+        base.include_fact_archival = v;
+    }
+    if let Some(v) = o.include_supersession_sweep {
+        base.include_supersession_sweep = v;
+    }
+    if let Some(v) = o.include_supersession_llm_nominate {
+        base.include_supersession_llm_nominate = v;
+    }
+    if let Some(v) = o.archive_grace_days {
+        base.archive_grace_days = Some(v as u32);
+    }
+    if let Some(v) = o.net_mutation_warn_floor {
+        base.net_mutation_warn_floor = Some(v as usize);
+    }
+    if let Some(v) = o.consolidation_budget_tokens {
+        base.consolidation_budget_tokens = Some(v as u64);
+    }
+    if let Some(v) = o.consolidation_budget_usd_micro {
+        base.consolidation_budget_usd_micro = Some(v as u64);
+    }
+    // O1: cross_episode as a single mode string, mapped onto the two coupled bools
+    // (never exposed raw — prevents the illegal apply+dry_run combination). Parse
+    // loudly: an unknown value is a caller error, surfaced not silently defaulted.
+    if let Some(mode) = o.cross_episode_mode.as_deref() {
+        match mode {
+            "off" => base.include_cross_episode_merges = false,
+            "shadow" => {
+                base.include_cross_episode_merges = true;
+                base.cross_episode_dry_run = true;
+            }
+            "apply" => {
+                base.include_cross_episode_merges = true;
+                base.cross_episode_dry_run = false;
+            }
+            other => {
+                return Err(napi::Error::from_reason(format!(
+                    "JsDreamOpts.cross_episode_mode: unknown value {other:?} \
+                     (expected \"off\" | \"shadow\" | \"apply\")"
+                )));
+            }
+        }
+    }
+    Ok(base)
 }
 
 /// Options for `JsMemory.runDreamPassSync` (Phase C DoD C2 / C7).
@@ -609,9 +757,16 @@ pub fn episode_to_js(ep: kremory::core::schema::Episode) -> JsEpisode {
 pub fn dream_summary_to_js(s: DreamSummary) -> JsDreamSummary {
     JsDreamSummary {
         communities_updated: s.communities_updated as f64,
-        cross_episode_merges: s.cross_episode_merges as f64,
+        cross_episode_would_merge: s.cross_episode_would_merge as f64,
+        cross_episode_merged: s.cross_episode_merged as f64,
         supersessions_recorded: s.supersessions_recorded as f64,
         facts_archived: s.facts_archived as f64,
+        consolidation_ops_ran: JsConsolidationOpsRan {
+            community: s.consolidation_ops_ran.community,
+            cross_episode: s.consolidation_ops_ran.cross_episode,
+            archival: s.consolidation_ops_ran.archival,
+            supersession_sweep: s.consolidation_ops_ran.supersession_sweep,
+        },
         budget_exhausted: s.budget_exhausted,
         duration_ms: s.duration_ms as f64,
         types_discovered: s
@@ -726,19 +881,218 @@ pub fn cancel_outcome_to_js(o: kremory::CancelOutcome) -> JsCancelOutcome {
     }
 }
 
-/// Convert a substrate `kremory::SupersedeOutcome` (ADR-071 §Item 3, TD-070) to
-/// a JS-friendly discriminated string — `"applied"` | `"rejected_time_inversion"`
-/// | `"not_found"`. Mirrors the 3-way `outcome` label on
-/// `kremory.dream.consolidation.supersede_request_total` 1:1 (same enum, same
-/// 3 values, verified by construction).
-pub fn supersede_outcome_to_js(o: kremory::SupersedeOutcome) -> String {
+/// Outcome of `JsMemory.supersede` (ADR-071 §Item 3, consumer-API hardening D4).
+///
+/// `outcome` is one of `"bounded"` | `"rejected_time_inversion"` | `"not_found"`
+/// (mirrors `kremory::SupersedeOutcome` + the `outcome` label on
+/// `kremory.dream.consolidation.supersede_request_total` 1:1). The honest rename
+/// `Applied` → `Bounded` (D4a): `execute()` only BOUNDS `valid_to`; it does not
+/// retire the fact. `retired` carries the inline `.closeNow()` window-closeout
+/// count IN-BAND (D4b) — `0` for a plain supersede OR a future-dated bound whose
+/// window has not yet closed, so a consumer observes the deferral from the return
+/// value, not a doc caveat.
+#[napi(object, js_name = "SupersedeOutcome")]
+pub struct JsSupersedeOutcome {
+    /// `"bounded"` | `"rejected_time_inversion"` | `"not_found"`.
+    pub outcome: String,
+    /// Facts retired by an inline `.closeNow()` sweep (`0` otherwise).
+    /// Namespace-scoped total.
+    pub retired: f64,
+}
+
+/// Convert a substrate `kremory::SupersedeOutcome` to `JsSupersedeOutcome`.
+pub fn supersede_outcome_to_js(o: kremory::SupersedeOutcome) -> JsSupersedeOutcome {
     match o {
-        kremory::SupersedeOutcome::Applied => "applied".to_string(),
-        kremory::SupersedeOutcome::RejectedTimeInversion => {
-            "rejected_time_inversion".to_string()
-        }
-        kremory::SupersedeOutcome::NotFound => "not_found".to_string(),
+        kremory::SupersedeOutcome::Bounded { retired } => JsSupersedeOutcome {
+            outcome: "bounded".to_string(),
+            retired: retired as f64,
+        },
+        kremory::SupersedeOutcome::RejectedTimeInversion => JsSupersedeOutcome {
+            outcome: "rejected_time_inversion".to_string(),
+            retired: 0.0,
+        },
+        kremory::SupersedeOutcome::NotFound => JsSupersedeOutcome {
+            outcome: "not_found".to_string(),
+            retired: 0.0,
+        },
+        // Non-exhaustive guard: a variant added after this build maps to an honest
+        // "unknown" marker (never a silent mis-label as "bounded").
+        _ => JsSupersedeOutcome {
+            outcome: "unknown".to_string(),
+            retired: 0.0,
+        },
     }
+}
+
+// ── Reversible-graph-mutations (ADR-073 Tier-1) outcome + inspect mirrors ──────
+
+/// Outcome of `JsMemory.unmerge` — mirrors `kremory::UnmergeOutcome`. Every count
+/// is the ACTUAL number reversed (success-signal honesty, §3.1). All counts as JS
+/// `number` (f64): usize values far below 2^53 at practical scale.
+#[napi(object, js_name = "UnmergeOutcome")]
+pub struct JsUnmergeOutcome {
+    /// The restored loser entity id (the entity that had been hard-DELETEd).
+    pub restored_entity: String,
+    /// The keeper whose overwritten access_count / ner_confidence were restored.
+    pub keeper: String,
+    /// Facts whose endpoint + corroboration_inert flag were reverted.
+    pub facts_repointed: f64,
+    /// Episodic edges re-inserted (collided) or re-pointed back (non-collided).
+    pub edges_restored: f64,
+    /// Entities whose reconciler-freeze stamp was re-opened.
+    pub entities_reopened: f64,
+    /// A NOGOOD was recorded for the split pair (next `dream()` will not re-merge).
+    pub nogood_recorded: bool,
+    /// `true` if the mutation was already undone — an idempotent no-op (all counts
+    /// zero, `nogoodRecorded = false`), never a re-application.
+    pub already_undone: bool,
+}
+
+/// Convert a substrate `kremory::UnmergeOutcome` to `JsUnmergeOutcome`.
+pub fn unmerge_outcome_to_js(o: kremory::UnmergeOutcome) -> JsUnmergeOutcome {
+    JsUnmergeOutcome {
+        restored_entity: o.restored_entity,
+        keeper: o.keeper,
+        facts_repointed: o.facts_repointed as f64,
+        edges_restored: o.edges_restored as f64,
+        entities_reopened: o.entities_reopened as f64,
+        nogood_recorded: o.nogood_recorded,
+        already_undone: o.already_undone,
+    }
+}
+
+/// Outcome of `JsMemory.restoreArchivedFact` — mirrors
+/// `kremory::RestoreArchivedOutcome`.
+#[napi(object, js_name = "RestoreArchivedOutcome")]
+pub struct JsRestoreArchivedOutcome {
+    /// The `facts` row id restored from `facts_archive`.
+    pub restored_fact_id: i64,
+    /// `true` if the fact was already live — an honest no-op, nothing restored.
+    pub already_live: bool,
+}
+
+/// Convert a substrate `kremory::RestoreArchivedOutcome` to
+/// `JsRestoreArchivedOutcome`.
+pub fn restore_archived_outcome_to_js(
+    o: kremory::RestoreArchivedOutcome,
+) -> JsRestoreArchivedOutcome {
+    JsRestoreArchivedOutcome {
+        restored_fact_id: o.restored_fact_id,
+        already_live: o.already_live,
+    }
+}
+
+/// Outcome of `JsMemory.unsupersede` — mirrors `kremory::UnsupersedeOutcome`.
+///
+/// `outcome` is `"cleared"` (a bound was cleared, fact re-opened as
+/// currently-true) or `"not_superseded"` (no bound was set — honest no-op). The
+/// `clearedValidTo` / `clearedExpiredAt` booleans record WHICH bound(s) were
+/// cleared (both `false` for `"not_superseded"`).
+#[napi(object, js_name = "UnsupersedeOutcome")]
+pub struct JsUnsupersedeOutcome {
+    /// `"cleared"` | `"not_superseded"`.
+    pub outcome: String,
+    /// The fact id this un-supersede targeted.
+    pub fact_id: i64,
+    /// `true` if the world-time `valid_to` bound was cleared.
+    pub cleared_valid_to: bool,
+    /// `true` if the system-time `expired_at` bound was cleared.
+    pub cleared_expired_at: bool,
+}
+
+/// Convert a substrate `kremory::UnsupersedeOutcome` to `JsUnsupersedeOutcome`.
+pub fn unsupersede_outcome_to_js(o: kremory::UnsupersedeOutcome) -> JsUnsupersedeOutcome {
+    match o {
+        kremory::UnsupersedeOutcome::Cleared {
+            fact_id,
+            cleared_valid_to,
+            cleared_expired_at,
+        } => JsUnsupersedeOutcome {
+            outcome: "cleared".to_string(),
+            fact_id,
+            cleared_valid_to,
+            cleared_expired_at,
+        },
+        kremory::UnsupersedeOutcome::NotSuperseded { fact_id } => JsUnsupersedeOutcome {
+            outcome: "not_superseded".to_string(),
+            fact_id,
+            cleared_valid_to: false,
+            cleared_expired_at: false,
+        },
+        // Non-exhaustive guard: unknown future variant maps to an honest marker
+        // with fact_id = -1 (no real fact id is negative).
+        _ => JsUnsupersedeOutcome {
+            outcome: "unknown".to_string(),
+            fact_id: -1,
+            cleared_valid_to: false,
+            cleared_expired_at: false,
+        },
+    }
+}
+
+/// A single logged graph mutation from `JsMemory.mutationHistory` /
+/// `JsMemory.listMutations` — mirrors `kremory::MutationRecord` (the consumer
+/// INSPECT view, §3). Carries the `mutationId` to pass to `unmerge` (or the
+/// matching undo method for the kind).
+#[napi(object, js_name = "MutationRecord")]
+pub struct JsMutationRecord {
+    /// The `graph_mutation_log.id` — pass to `unmerge` to reverse the mutation.
+    pub mutation_id: i64,
+    /// The mutation kind tag, e.g. `"entity_merge"` | `"fact_supersede"` |
+    /// `"fact_archive"` | `"entity_edit"` | … (mirrors `kremory::MutationKind`).
+    pub kind: String,
+    /// RFC3339 timestamp when the mutation was applied.
+    pub created_at: String,
+    /// `true` once the mutation has been reversed.
+    pub undone: bool,
+    /// The namespace (group) this mutation scoped.
+    pub group_id: String,
+    /// Entity ids this mutation touched. For `entity_merge` this is `[keeper, loser]`.
+    pub affected_entities: Vec<String>,
+    /// A short human/agent-readable summary of what the mutation did.
+    pub summary: String,
+}
+
+/// Render a `kremory::MutationKind` to its snake_case tag string. Uses serde (the
+/// enum's `rename_all = "snake_case"` derive) so the tag matches the substrate's
+/// `graph_mutation_log.kind` values 1:1 without reaching for the `pub(crate)`
+/// `as_tag` helper. A serialize failure (unreachable for a unit enum) surfaces as
+/// `"unknown"` rather than a panic.
+fn mutation_kind_to_str(k: kremory::MutationKind) -> String {
+    serde_json::to_value(k)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Convert a substrate `kremory::MutationRecord` to `JsMutationRecord`.
+pub fn mutation_record_to_js(r: kremory::MutationRecord) -> JsMutationRecord {
+    JsMutationRecord {
+        mutation_id: r.mutation_id,
+        kind: mutation_kind_to_str(r.kind),
+        created_at: r.created_at,
+        undone: r.undone,
+        group_id: r.group_id,
+        affected_entities: r.affected_entities,
+        summary: r.summary,
+    }
+}
+
+/// Filter for `JsMemory.listMutations` — mirrors `kremory::MutationFilter`. All
+/// fields optional.
+#[napi(object, js_name = "MutationFilter")]
+pub struct JsMutationFilter {
+    /// Restrict to one namespace. Omit → the Memory handle's default, else ALL
+    /// namespaces.
+    pub namespace: Option<String>,
+    /// Restrict to one mutation kind tag (e.g. `"entity_merge"`). An unknown tag
+    /// rejects the Promise. Omit → every kind.
+    pub kind: Option<String>,
+    /// Only mutations at/after this RFC3339 timestamp (`created_at >=`). Omit → no
+    /// lower bound. A malformed timestamp rejects the Promise.
+    pub since: Option<String>,
+    /// Include already-undone mutations. Default `false` (live/still-reversible only).
+    pub include_undone: Option<bool>,
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

@@ -266,7 +266,15 @@ pub struct CrossEpisodeMerge {
 pub struct OpReport {
     /// The op's own mutation count (supersessions / archived / merges / communities
     /// updated — interpreted by the caller which op produced it).
+    ///
+    /// For `cross_episode` this counts merge DECISIONS regardless of `dry_run`
+    /// (would-merge) — see [`OpReport::merged`] for the count that ACTUALLY fused.
     pub count: usize,
+    /// Cross-episode only (D5, consumer-API hardening): the subset of `count`
+    /// decisions that ACTUALLY committed a fusion (`!dry_run`). Equals `count` in
+    /// apply mode, `0` in shadow mode. Every other op leaves this `0` (they have no
+    /// dry_run axis; their `count` is already the applied count).
+    pub merged: usize,
     /// Non-fatal notices (budget skip, degraded mode, …) folded into the
     /// `DreamSummary.warnings` surface (`facade/mod.rs`).
     pub warnings: Vec<String>,
@@ -287,9 +295,24 @@ pub struct OpReport {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ConsolidationSummary {
     pub(crate) communities_updated: usize,
+    /// Cross-episode merge DECISIONS this run (would-merge; counts on both dry_run
+    /// branches). D5: folds to `DreamSummary.cross_episode_would_merge`.
     pub(crate) cross_episode_merges: usize,
+    /// Cross-episode fusions that ACTUALLY committed this run (`!dry_run`) — the
+    /// subset of `cross_episode_merges` that mutated the graph (D5, consumer-API
+    /// hardening). Folds to `DreamSummary.cross_episode_merged`.
+    pub(crate) cross_episode_merged: usize,
     pub(crate) supersessions_recorded: usize,
     pub(crate) facts_archived: usize,
+    /// D1b (consumer-API hardening) — per-op ACTUALLY-RAN signal, so a consumer can
+    /// tell "op disabled" from "op ran, found nothing" when a count is zero (an
+    /// all-zero count is otherwise ambiguous). `true` iff the op's `include_*` flag
+    /// was on AND it executed (not budget-skipped). The facade folds these into
+    /// `DreamSummary.consolidation_ops_ran`.
+    pub(crate) ran_supersession_sweep: bool,
+    pub(crate) ran_fact_archival: bool,
+    pub(crate) ran_cross_episode: bool,
+    pub(crate) ran_community_detection: bool,
     /// Aggregated non-fatal warnings across all four ops.
     pub(crate) warnings: Vec<String>,
     /// TD-060: `true` when ANY op was skipped this run because either the token or

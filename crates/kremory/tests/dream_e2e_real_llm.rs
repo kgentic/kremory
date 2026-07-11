@@ -140,30 +140,25 @@ impl RecordReplayEmbedder {
 }
 
 impl kremory::EmbeddingProvider for RecordReplayEmbedder {
-    fn embed<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> impl std::future::Future<Output = kremory::CoreResult<Vec<f32>>> + Send + 'a {
-        async move {
-            // Cache hit (all texts in replay; already-seen texts in record).
-            if let Some(v) = self.cache.lock().expect("cache lock").get(text).cloned() {
-                return Ok(v);
+    async fn embed(&self, text: &str) -> kremory::CoreResult<Vec<f32>> {
+        // Cache hit (all texts in replay; already-seen texts in record).
+        if let Some(v) = self.cache.lock().expect("cache lock").get(text).cloned() {
+            return Ok(v);
+        }
+        match &self.inner {
+            // record: delegate to real nomic, then memoise (no lock held across await).
+            Some(inner) => {
+                let v = inner.embed_dyn(text).await?;
+                self.cache
+                    .lock()
+                    .expect("cache lock")
+                    .insert(text.to_string(), v.clone());
+                Ok(v)
             }
-            match &self.inner {
-                // record: delegate to real nomic, then memoise (no lock held across await).
-                Some(inner) => {
-                    let v = inner.embed_dyn(text).await?;
-                    self.cache
-                        .lock()
-                        .expect("cache lock")
-                        .insert(text.to_string(), v.clone());
-                    Ok(v)
-                }
-                // replay: a miss means the cassette is stale for this fixture.
-                None => Err(kremory::CoreError::Embedding(format!(
-                    "embedding cassette MISS for {text:?} — re-record via KREMORY_VCR=record (TD-093)"
-                ))),
-            }
+            // replay: a miss means the cassette is stale for this fixture.
+            None => Err(kremory::CoreError::Embedding(format!(
+                "embedding cassette MISS for {text:?} — re-record via KREMORY_VCR=record (TD-093)"
+            ))),
         }
     }
 }
@@ -173,11 +168,8 @@ impl kremory::EmbeddingProvider for RecordReplayEmbedder {
 struct OllamaEmbedderAdapter(Arc<autoagents_llm::backends::ollama::Ollama>);
 
 impl kremory::EmbeddingProvider for OllamaEmbedderAdapter {
-    fn embed<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> impl std::future::Future<Output = kremory::CoreResult<Vec<f32>>> + Send + 'a {
-        async move {
+    async fn embed(&self, text: &str) -> kremory::CoreResult<Vec<f32>> {
+        {
             use autoagents_llm::embedding::EmbeddingProvider as AlLmEmbeddingProvider;
             // nomic-embed-text REQUIRES a task prefix; without it, short strings
             // ("Person", "Date", …) collapse to near-identical vectors (cosine
@@ -258,6 +250,7 @@ async fn entity_type_id_by_name(graph: &TemporalGraph, group_id: &str, name: &st
 }
 
 /// Insert a custom (wrong-on-purpose) entity type into the registry, returning its id.
+#[allow(clippy::too_many_arguments)] // test helper
 async fn insert_custom_entity_type(
     graph: &TemporalGraph,
     group_id: &str,
