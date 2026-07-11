@@ -727,3 +727,102 @@ pub(crate) async fn migrate_020_facts_corroboration_inert(
     );
     Ok(())
 }
+
+// ─── Migration 021 ─────────────────────────────────────────────────────────
+
+/// Migration 021 (reversible-graph-mutations arch-spec §2.1/§2.2 + §8.4):
+/// provenance + anti-re-merge substrate for Stage-1 reversible graph mutations.
+///
+/// Two new tables:
+///
+/// 1. **`graph_mutation_log`** (§2.1) — one generic, kind-tagged provenance row
+///    per destructive graph mutation. Written INSIDE the mutation's own
+///    `BEGIN IMMEDIATE` (later sub-phase), so the snapshot and the mutation
+///    share one commit boundary and provenance can never diverge. `pre_state` /
+///    `inputs` are per-kind structured JSON emitted by the substrate itself
+///    (never LLM-authored). `undone_at` is NULL while the mutation is live and
+///    is stamped (RFC3339) when reversed — it also acts as the anti-re-merge
+///    flag for the merge kind. Indexes serve the `(kind, group_id, undone_at)`
+///    undo/nogood lookups and the `created_at`-keyed GC/retention scan.
+///
+/// 2. **`merge_nogood`** (§8.4 durable marker) — a sorted-pair anti-re-merge
+///    record so an `unmerge`d pair is not silently re-merged by the next
+///    `dream()`. `(pair_lo, pair_hi)` hold the **sorted** unordered pair
+///    (`lo`, `hi`) so a keeper/loser role-flip between passes cannot evade the
+///    ban (they are NOT loser/keeper — the merge's role assignment is discarded
+///    at the nogood layer, spec §2.3/§6.2); the composite
+///    `PRIMARY KEY (group_id, pair_lo, pair_hi)` enforces namespace-scoped
+///    uniqueness AND serves as the index for the `contains(sort(a, b))`
+///    membership lookup.
+///
+/// FOUNDATION ONLY: this migration installs the schema. Snapshot capture (the
+/// in-txn INSERT), undo replay, and nogood consultation are wired in later
+/// sub-phases.
+///
+/// Idempotent: every statement is `IF NOT EXISTS` and safe to re-run on an
+/// already-migrated db (mirrors migration 017/018/019 style).
+pub(crate) async fn migrate_021_graph_mutation_log(
+    conn: &libsql::Connection,
+) -> crate::core::error::Result<()> {
+    fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
+        move |e| {
+            crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_021 step `{name}` failed: {e}"
+            ))
+        }
+    }
+
+    // 1. graph_mutation_log — kind-tagged in-txn provenance row (§2.1).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS graph_mutation_log ( \
+             id INTEGER PRIMARY KEY AUTOINCREMENT, \
+             kind TEXT NOT NULL, \
+             group_id TEXT NOT NULL, \
+             created_at TEXT NOT NULL, \
+             undone_at TEXT, \
+             enabled_at_time INTEGER NOT NULL DEFAULT 1, \
+             pre_state TEXT NOT NULL, \
+             inputs TEXT NOT NULL \
+         )",
+        (),
+    )
+    .await
+    .map_err(step("create_graph_mutation_log"))?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gml_kind_group \
+         ON graph_mutation_log(kind, group_id, undone_at)",
+        (),
+    )
+    .await
+    .map_err(step("create_idx_gml_kind_group"))?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gml_created ON graph_mutation_log(created_at)",
+        (),
+    )
+    .await
+    .map_err(step("create_idx_gml_created"))?;
+
+    // 2. merge_nogood — sorted-pair anti-re-merge marker (§8.4). The composite
+    //    PK doubles as the namespace-scoped `contains(sort(a, b))` lookup index.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS merge_nogood ( \
+             pair_lo TEXT NOT NULL, \
+             pair_hi TEXT NOT NULL, \
+             group_id TEXT NOT NULL, \
+             created_at TEXT NOT NULL, \
+             PRIMARY KEY (group_id, pair_lo, pair_hi) \
+         )",
+        (),
+    )
+    .await
+    .map_err(step("create_merge_nogood"))?;
+
+    tracing::info!(
+        target: "kremory::migrations",
+        migration = "021",
+        "migrate_021: graph_mutation_log + merge_nogood (reversible-graph-mutations substrate) installed"
+    );
+    Ok(())
+}

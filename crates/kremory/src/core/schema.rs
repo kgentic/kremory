@@ -220,6 +220,15 @@ impl<'a> BeginGuard<'a> {
         }
     }
 
+    /// `true` when this guard opened the transaction (so `commit()` performs the
+    /// real `COMMIT` here); `false` for a nested call whose durable commit belongs
+    /// to the outer transaction. Callers use this to place post-commit
+    /// observability correctly — a counter summarising a durable write must only
+    /// fire once the write is actually committed (never mid-txn).
+    pub(crate) fn opened(&self) -> bool {
+        self.opened
+    }
+
     /// Commit the transaction. No-op when this guard did not open a transaction
     /// (nested call with an outer transaction already active).
     pub async fn commit(mut self) -> Result<()> {
@@ -731,6 +740,13 @@ impl TemporalGraph {
         // Additive, PRAGMA-guarded, mirrors migration 016's is_dream_generated idiom.
         // Idempotent: PRAGMA-guarded ADD COLUMN.
         crate::core::migrations::migrate_020_facts_corroboration_inert(&self.conn).await?;
+
+        // Migration 021 (reversible-graph-mutations arch-spec §2.1/§2.2/§8.4):
+        // provenance + anti-re-merge substrate — `graph_mutation_log` (kind-tagged
+        // in-txn snapshot log) + `merge_nogood` (sorted-pair anti-re-merge marker).
+        // FOUNDATION ONLY: schema install; snapshot capture + undo replay are wired
+        // in later sub-phases. Idempotent: CREATE TABLE/INDEX IF NOT EXISTS.
+        crate::core::migrations::migrate_021_graph_mutation_log(&self.conn).await?;
 
         Ok(())
     }

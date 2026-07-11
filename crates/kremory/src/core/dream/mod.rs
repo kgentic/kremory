@@ -27,6 +27,12 @@ pub(crate) mod idempotency;
 /// `dream-adversarial-corpora-and-metrics-2026-07-02.md` §3 step 0, H1).
 pub(crate) mod metrics_util;
 pub(crate) mod proposed_type;
+/// Reversible-graph-mutations provenance types (arch-spec
+/// `reversible-graph-mutations-arch-spec-2026-07-10.md` §2.3 + §3.1) — the
+/// Stage-1 `graph_mutation_log` snapshot shapes + honest undo outcome types.
+/// FOUNDATION ONLY: schema-layer types; capture + undo behaviour lands in later
+/// sub-phases.
+pub(crate) mod provenance;
 pub mod reclassify;
 /// Site #3 (ADR-063 spec §4) — type-registry post-hoc collapse. Gated behind
 /// `DreamOpts::include_type_registry_collapse`, default `true` (VALIDATED
@@ -147,3 +153,21 @@ pub use consolidation::cross_episode::cross_episode;
 // above. `feature = "test-utils"`-gated. NOT part of the stable public API contract.
 #[cfg(any(test, feature = "test-utils"))]
 pub use consolidation::communities::communities;
+// Reversible-graph-mutations reversal core (sub-phase 1c, arch-spec §4.2 / §4.4 /
+// §4.5 / §6). `unmerge` / `restore_archived_fact` / `unsupersede` /
+// `load_merge_nogoods` are `pub` + `#[doc(hidden)]` inside the (`pub(crate)`)
+// `provenance::reversal` module — same E0365 visibility requirement as every other
+// re-export in this block (an external integration-test binary
+// `tests/reversible_unmerge.rs` cannot import a `pub(crate)` item). NOT part of the
+// stable public API contract; the consumer surface is the `Memory` facade.
+#[cfg(any(test, feature = "test-utils"))]
+pub use provenance::reversal::{
+    load_merge_nogoods, restore_archived_fact, unmerge, unsupersede,
+};
+// Consumer INSPECT surface (Tier-1, arch-spec §3 "Inspect surface"). `pub` +
+// `#[doc(hidden)]` inside the (`pub(crate)`) `provenance::inspect` module — same
+// E0365 visibility requirement as the reversal re-exports above (the external
+// `tests/reversible_inspect.rs` binary cannot import `pub(crate)` items). NOT part
+// of the stable public API contract; the consumer surface is the `Memory` facade.
+#[cfg(any(test, feature = "test-utils"))]
+pub use provenance::inspect::{list_mutations, mutation_history};

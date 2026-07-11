@@ -2049,6 +2049,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "autoagents-llm",
+ "base64 0.22.1",
  "bumpalo",
  "chrono",
  "dashmap",

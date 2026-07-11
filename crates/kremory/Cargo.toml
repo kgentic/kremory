@@ -97,6 +97,10 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 anyhow = "1"
 thiserror = "2"
+# base64: faithful transport of the entities.embedding BLOB through the
+# graph_mutation_log.pre_state JSON snapshot (reversible-graph-mutations §2.3).
+# Already resolved transitively at 0.22.1 — no new lockfile entry.
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 petgraph = "0.7"
 # libSQL: native vectors (F32_BLOB + DiskANN) + FTS5 + SQL. Replaces rusqlite + sqlite-vec.

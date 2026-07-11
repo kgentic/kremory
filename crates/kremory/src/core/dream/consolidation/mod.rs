@@ -405,6 +405,7 @@ mod tests {
 
     // ── Net-mutation warn guard (TD-106) ────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
     fn summary_with(
         cross_episode_merges: usize,
         supersessions_recorded: usize,

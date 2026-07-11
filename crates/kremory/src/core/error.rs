@@ -385,6 +385,22 @@ pub enum Error {
         episode_id: i64,
         elapsed: std::time::Duration,
     },
+
+    // ── Reversible-graph-mutations LIFO guard (arch-spec §4.2, Quinn M1) ──────
+    /// `unmerge` was called out of order on a CHAINED merge. A later, still-live
+    /// `entity_merge` (`blocking_mutation_id`) re-used one of this mutation's
+    /// endpoints (its keeper or loser), so it re-pointed facts/edges THROUGH the
+    /// shared endpoint. Reversing `mutation_id` first would leave a broken fact
+    /// chain. Chained merges must be unwound Last-In-First-Out: unmerge
+    /// `blocking_mutation_id` (and any later chained merges) FIRST.
+    #[error(
+        "unmerge out of order: mutation {mutation_id} is chained under still-live \
+         merge {blocking_mutation_id} — unmerge later chained merges FIRST (LIFO)"
+    )]
+    UnmergeOutOfOrder {
+        mutation_id: i64,
+        blocking_mutation_id: i64,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
