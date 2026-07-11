@@ -1,0 +1,39 @@
+# FRESH-CRATE consumer E2E for kremory — installs kremory exactly as an external
+# consumer would (path dep on the unpublished crate), drives the PUBLIC SDK against
+# a REAL Ollama LLM, and asserts on behaviour AND observability.
+#
+# Standalone workspace (empty [workspace] table) so this crate is NOT pulled into
+# the kremory workspace as a member. Build with:
+#   CARGO_TARGET_DIR=~/kremory-adr073-cascade/target \
+#     cargo run --manifest-path e2e-consumer/Cargo.toml
+[package]
+name = "kremory-e2e-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Own workspace root — keeps this crate out of the kremory workspace members list.
+[workspace]
+
+[dependencies]
+# kremory via PATH, as an external consumer with no crates.io release available.
+# Default features are empty (per crate Cargo.toml) — a real consumer opts into
+# nothing extra here: with_ollama needs no feature flag (autoagents-llm is a
+# REQUIRED, non-optional dep with ollama/openai/anthropic backends always on).
+kremory = { path = "../crates/kremory" }
+
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tempfile = "3"
+
+# O11y capture. VERSION-LOCKED to kremory's own metrics stack: the global
+# recorder registry is keyed by the `metrics` crate MINOR version, so a mismatch
+# would silently capture ZERO of kremory's emissions. kremory = metrics 0.24 +
+# metrics-util 0.18 (see crates/kremory/Cargo.toml).
+metrics = "0.24"
+metrics-util = "0.18"
+
+# KREMORY_DEBUG traces. kremory emits via `tracing`; a subscriber is needed to
+# see them. tracing-subscriber is NOT re-exported by kremory, so a consumer must
+# add it themselves (DX note).
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

@@ -254,17 +254,37 @@ async fn unmerge_txn(graph: &TemporalGraph, mutation_id: i64) -> Result<UnmergeO
     // (c) Restore the keeper's PRE-merge access_count + ner_confidence (§4.2 step 2)
     //     — SET the snapshotted values (noisy-OR is non-invertible; subtracting is
     //     lossy), NOT subtract the loser back.
-    conn.execute(
-        "UPDATE entities SET access_count = ?1, ner_confidence = ?2 \
-         WHERE id = ?3 AND group_id = ?4",
-        libsql::params![
-            pre.keeper_pre.access_count,
-            pre.keeper_pre.ner_confidence,
-            keeper_id.clone(),
-            group_id.clone(),
-        ],
-    )
-    .await?;
+    let keeper_restored = conn
+        .execute(
+            "UPDATE entities SET access_count = ?1, ner_confidence = ?2 \
+             WHERE id = ?3 AND group_id = ?4",
+            libsql::params![
+                pre.keeper_pre.access_count,
+                pre.keeper_pre.ner_confidence,
+                keeper_id.clone(),
+                group_id.clone(),
+            ],
+        )
+        .await?;
+    // LOUD-on-stale (§4.2, honest-outcome): the keeper is the entity the merge
+    // folded the loser INTO — its overwritten access_count / ner_confidence are what
+    // this UPDATE sets back. If the keeper was RENAMED or DELETED between the merge
+    // and this unmerge (a cross-kind chain, e.g. `merge(A→B) → rename(B→C) →
+    // unmerge`), the UPDATE matches ZERO rows: the restore silently no-ops and the
+    // returned `UnmergeOutcome` would name a `keeper` that no longer exists — a false
+    // success masking cross-kind-chain corruption. Fail LOUD instead; the whole
+    // reversal rolls back (the loser re-INSERT above is undone with it) so the
+    // consumer learns the merge is no longer cleanly reversible.
+    if keeper_restored == 0 {
+        return Err(Error::UndoStale {
+            mutation_id,
+            reason: format!(
+                "keeper entity `{keeper_id}` no longer exists in namespace \
+                 `{group_id}` (renamed or deleted after the merge) — cannot restore \
+                 its pre-merge access_count / ner_confidence"
+            ),
+        });
+    }
 
     // (d) Un-repoint facts keeper→loser + restore the PRIOR corroboration_inert
     //     (§4.2 step 3) — a fact inert BEFORE the merge stays inert; one made inert
@@ -279,12 +299,18 @@ async fn unmerge_txn(graph: &TemporalGraph, mutation_id: i64) -> Result<UnmergeO
                 "UPDATE facts SET object_id = ?1, corroboration_inert = ?2 WHERE id = ?3"
             }
         };
-        conn.execute(
-            sql,
-            libsql::params![loser_id.clone(), rf.prior_corroboration_inert, rf.fact_id],
-        )
-        .await?;
-        facts_repointed += 1;
+        // Gate the count on the affected-row count, matching the non-collided edges
+        // path below (L1, honest outcome): a fact externally DELETEd between merge and
+        // unmerge affects ZERO rows — never claim a re-point that didn't happen.
+        let updated = conn
+            .execute(
+                sql,
+                libsql::params![loser_id.clone(), rf.prior_corroboration_inert, rf.fact_id],
+            )
+            .await?;
+        if updated > 0 {
+            facts_repointed += 1;
+        }
     }
 
     // (e) Episodic edges (§4.2 step 4): collided → re-INSERT the dropped loser edge
@@ -526,7 +552,12 @@ async fn restore_archived_txn(
         rows.next().await?.is_some()
     };
     if !in_archive {
-        counter!("kremory.graph.restore_archived_total", "outcome" => "not_found").increment(1);
+        // No mid-txn counter here (ADR-070 / Rule-19 rollback-overcount): this runs
+        // INSIDE `restore_archived_txn`, and when nested under `undo_delete_*` the
+        // OUTER txn rolls back on this `Err` while a fired increment could NOT — it
+        // would overcount a "restore" that never durably happened. The `Err`
+        // propagation IS the honest signal; the post-commit `applied` / `already_live`
+        // counter in `restore_archived_fact` covers the durable outcomes.
         return Err(Error::Other(anyhow::anyhow!(
             "restore_archived_fact: no facts_archive row with id {archived_fact_id}"
         )));

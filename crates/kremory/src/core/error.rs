@@ -402,6 +402,20 @@ pub enum Error {
         blocking_mutation_id: i64,
     },
 
+    /// An undo could not be applied faithfully because the world CHANGED
+    /// underneath the snapshot: the entity the reversal must write onto no longer
+    /// exists in the form the snapshot assumed. The canonical case is `unmerge`
+    /// when the keeper a merge folded the loser into was RENAMED or DELETED
+    /// between the merge and the unmerge (a cross-kind chain, e.g.
+    /// `merge(A→B) → rename(B→C) → unmerge`): restoring the keeper's overwritten
+    /// `access_count` / `ner_confidence` would match zero rows. Rather than report
+    /// a FALSE success (an outcome naming a keeper that no longer exists), the undo
+    /// fails LOUD and the whole reversal rolls back, so the consumer learns the
+    /// mutation is no longer cleanly reversible. `mutation_id` is the row that could
+    /// not be reversed; `reason` names the stale precondition.
+    #[error("undo stale: mutation {mutation_id} cannot be reversed — {reason}")]
+    UndoStale { mutation_id: i64, reason: String },
+
     // ── Reversible-graph-mutations edit-entity cascade (arch-spec §4.3) ────────
     /// `edit_entity(...).rename(new_id)` targeted an id that ALREADY exists in the
     /// namespace. A rekey INTO an existing entity would silently FUSE two distinct

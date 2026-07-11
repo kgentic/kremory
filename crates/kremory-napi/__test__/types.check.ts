@@ -17,6 +17,8 @@ import type {
   StructuredFact,
   Episode,
   DreamSummary,
+  ConsolidationOpsRan,
+  TypeProposal,
   DreamOptions,
   MetadataFilter,
   BatchOptions,
@@ -163,15 +165,50 @@ function _checkEpisode(ep: Episode): void {
 
 function _checkDreamSummary(s: DreamSummary): void {
   const _cu: number = s.communitiesUpdated;
-  const _cem: number = s.crossEpisodeMerges;
+  // ADR-073 Tier-0 D5: the old `crossEpisodeMerges` field was split into a
+  // would-merge / did-merge pair. Assert both.
+  const _cewm: number = s.crossEpisodeWouldMerge;
+  const _cem: number = s.crossEpisodeMerged;
   const _sr: number = s.supersessionsRecorded;
   const _fa: number = s.factsArchived;
+  // ADR-073 Tier-0 D1b: per-op ran-signal disambiguates "op disabled" from
+  // "op ran, found nothing" on the all-zero consolidation counts above.
+  const _ran: ConsolidationOpsRan = s.consolidationOpsRan;
+  const _ranCommunity: boolean = _ran.community;
+  const _ranCrossEpisode: boolean = _ran.crossEpisode;
+  const _ranArchival: boolean = _ran.archival;
+  const _ranSupersession: boolean = _ran.supersessionSweep;
+  // ADR-071 §Item 4a / TD-060: budget-ceiling trip flag.
+  const _be: boolean = s.budgetExhausted;
   const _dm: number = s.durationMs;
+  // Reconciliation-pass accounting (mirrors substrate DreamSummary exactly).
+  const _td: TypeProposal[] = s.typesDiscovered;
+  const _er: number = s.entitiesReclassified;
+  const _ar: number = s.aliasesResolved;
+  const _cm: number = s.canonicalizationMerges;
+  const _an: number = s.acronymNicknameMerges;
+  const _trm: number = s.typeRegistryMerges;
+  const _ccc: number = s.consistencyCheckCorrected;
+  const _warnings: string[] = s.warnings;
   void _cu;
+  void _cewm;
   void _cem;
   void _sr;
   void _fa;
+  void _ranCommunity;
+  void _ranCrossEpisode;
+  void _ranArchival;
+  void _ranSupersession;
+  void _be;
   void _dm;
+  void _td;
+  void _er;
+  void _ar;
+  void _cm;
+  void _an;
+  void _trm;
+  void _ccc;
+  void _warnings;
 }
 
 const _dreamOpts: DreamOptions = { namespace: 'check' };

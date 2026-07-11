@@ -23,6 +23,27 @@ use kremory::core::dream::{list_mutations, mutation_history, unmerge};
 use kremory::core::graph::InsertEntityWithGroupParams;
 use kremory::core::schema::TemporalGraph;
 use kremory::facade::{MutationFilter, MutationKind};
+use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+/// Sum a counter's recorded value across all label sets from a local metrics snapshot.
+fn counter_total(
+    snapshot: &[(
+        metrics_util::CompositeKey,
+        Option<metrics::Unit>,
+        Option<metrics::SharedString>,
+        DebugValue,
+    )],
+    name: &str,
+) -> u64 {
+    snapshot
+        .iter()
+        .filter(|(k, _, _, _)| k.key().name() == name)
+        .filter_map(|(_, _, _, v)| match v {
+            DebugValue::Counter(c) => Some(*c),
+            _ => None,
+        })
+        .sum()
+}
 
 const GROUP: &str = "meeting_42";
 // Same surface-variant pair the reversal tests use — L5 canonicalize needs name
@@ -119,6 +140,34 @@ async fn mutation_history_lists_merge() {
     assert_eq!(hist_after.len(), 1, "the record is still in history after undo");
     assert!(hist_after[0].undone, "record now shows undone = true");
     assert_eq!(hist_after[0].mutation_id, mutation_id);
+}
+
+/// F4 (o11y honesty) — one `mutation_history` consumer call must emit EXACTLY one
+/// `inspect_query_total` increment. Before the fix `mutation_history` called
+/// `list_mutations` internally, firing BOTH `op=list_mutations` AND
+/// `op=mutation_history` for a single consumer call (double-count). The shared
+/// counter-free `query_mutations` helper collapses it back to one.
+#[tokio::test]
+async fn mutation_history_emits_single_inspect_counter() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    let _mutation_id = merge_and_log_id(&graph).await;
+
+    // Exactly ONE consumer call.
+    let _ = mutation_history(&graph, LOSER, GROUP)
+        .await
+        .expect("mutation_history");
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let n = counter_total(&snapshot, "kremory.graph.inspect_query_total");
+    assert_eq!(
+        n, 1,
+        "one mutation_history() call must emit exactly one inspect_query_total \
+         increment (not double-counted via the internal list_mutations query); got {n}"
+    );
 }
 
 #[tokio::test]

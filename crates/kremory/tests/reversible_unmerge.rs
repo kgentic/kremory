@@ -24,7 +24,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use kremory::core::canonicalization::{canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD};
-use kremory::core::dream::{restore_archived_fact, unmerge, unsupersede};
+use kremory::core::dream::{
+    delete_entity, edit_entity, restore_archived_fact, unmerge, unsupersede, DeleteEntityParams,
+    EntityEditOp, EntityEditParams,
+};
 use kremory::core::graph::{
     InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
 };
@@ -547,6 +550,155 @@ async fn unmerge_chained_merges_lifo() {
     assert!(present.contains(&A), "A restored");
     assert!(present.contains(&K1), "K1 restored");
     assert!(present.contains(&K2), "K2 present (top keeper)");
+}
+
+/// The `graph_mutation_log.id` of the single `entity_merge` row.
+async fn one_merge_log_id(graph: &TemporalGraph) -> i64 {
+    let mut rows = graph
+        .conn
+        .query("SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'", ())
+        .await
+        .expect("log query");
+    rows.next()
+        .await
+        .expect("row")
+        .expect("one entity_merge row")
+        .get::<i64>(0)
+        .expect("id")
+}
+
+/// The `undone_at` of a mutation-log row (NULL when still live).
+async fn mutation_undone_at(graph: &TemporalGraph, mutation_id: i64) -> Option<String> {
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT undone_at FROM graph_mutation_log WHERE id = ?1",
+            libsql::params![mutation_id],
+        )
+        .await
+        .expect("undone query");
+    rows.next()
+        .await
+        .expect("row")
+        .expect("log row")
+        .get::<Option<String>>(0)
+        .expect("undone_at")
+}
+
+/// Drive the real canonicalize merge (loser folded into keeper) and return the
+/// resulting `entity_merge` mutation id. No facts/edges — the merge itself is all the
+/// F1 stale-keeper proofs need.
+async fn merge_keeper_loser(graph: &TemporalGraph) -> i64 {
+    insert_embedded(
+        graph,
+        KEEPER,
+        "A detailed description of Alice Johnson, software engineer at Acme Corp.",
+    )
+    .await;
+    insert_embedded(graph, LOSER, "Alice.").await;
+    let report = canonicalize_surface_forms(graph, GROUP, L5_CANONICALIZATION_THRESHOLD)
+        .await
+        .expect("canonicalize");
+    assert_eq!(report.merges_applied, 1, "one merge (loser folded into keeper)");
+    one_merge_log_id(graph).await
+}
+
+/// F1 (correctness/honesty) — the keeper is RENAMED out from under the merge snapshot
+/// (`merge(A→B) → rename(B→C) → unmerge`). The keeper-restore UPDATE would match zero
+/// rows, so unmerge MUST fail LOUD with `Error::UndoStale` rather than report a false
+/// success naming a keeper that no longer exists. Governing spec §4.2.
+#[tokio::test]
+async fn unmerge_stale_keeper_rename_errors_loudly() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    let mutation_id = merge_keeper_loser(&graph).await;
+
+    // Cross-kind chain: RENAME the keeper (rekeys every FK; the old keeper id is gone).
+    const RENAMED: &str = "alice johnson renamed";
+    edit_entity(
+        &graph,
+        EntityEditParams {
+            entity_id: KEEPER.to_string(),
+            group_id: GROUP.to_string(),
+            op: EntityEditOp::Rename {
+                new_id: RENAMED.to_string(),
+            },
+        },
+    )
+    .await
+    .expect("rename keeper");
+
+    match unmerge(&graph, mutation_id).await {
+        Err(kremory::core::error::Error::UndoStale {
+            mutation_id: mid,
+            reason,
+        }) => {
+            assert_eq!(mid, mutation_id, "UndoStale names the un-reversible mutation");
+            assert!(
+                reason.contains(KEEPER),
+                "reason names the missing keeper `{KEEPER}`: {reason}"
+            );
+        }
+        other => panic!("expected UndoStale on renamed keeper, got {other:?}"),
+    }
+
+    // Atomic: the failed unmerge rolled back — the loser was NOT resurrected and the
+    // merge is still live (no false `undone_at`).
+    assert!(
+        read_entity_snap(&graph, LOSER).await.is_none(),
+        "loser not resurrected by the rolled-back unmerge"
+    );
+    assert!(
+        mutation_undone_at(&graph, mutation_id).await.is_none(),
+        "failed unmerge left the mutation un-reversed"
+    );
+    // The renamed keeper is untouched (still present under the new id).
+    assert!(
+        read_entity_snap(&graph, RENAMED).await.is_some(),
+        "renamed keeper still present under its new id"
+    );
+}
+
+/// F1 (correctness/honesty) — the keeper is DELETEd out from under the merge snapshot
+/// (`merge(A→B) → delete(B) → unmerge`). Same loud-fail contract as the rename case:
+/// `Error::UndoStale`, not a false success. Governing spec §4.2.
+#[tokio::test]
+async fn unmerge_deleted_keeper_errors_loudly() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    let mutation_id = merge_keeper_loser(&graph).await;
+
+    // Cross-kind chain: reversibly DELETE the keeper.
+    delete_entity(
+        &graph,
+        DeleteEntityParams {
+            entity_id: KEEPER.to_string(),
+            group_id: GROUP.to_string(),
+        },
+    )
+    .await
+    .expect("delete keeper");
+
+    match unmerge(&graph, mutation_id).await {
+        Err(kremory::core::error::Error::UndoStale {
+            mutation_id: mid,
+            reason,
+        }) => {
+            assert_eq!(mid, mutation_id);
+            assert!(
+                reason.contains(KEEPER),
+                "reason names the missing keeper `{KEEPER}`: {reason}"
+            );
+        }
+        other => panic!("expected UndoStale on deleted keeper, got {other:?}"),
+    }
+
+    assert!(
+        read_entity_snap(&graph, LOSER).await.is_none(),
+        "loser not resurrected by the rolled-back unmerge"
+    );
+    assert!(
+        mutation_undone_at(&graph, mutation_id).await.is_none(),
+        "merge still live after the failed unmerge"
+    );
 }
 
 #[tokio::test]

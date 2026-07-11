@@ -723,6 +723,8 @@ async fn delete_fact_txn(graph: &TemporalGraph, fact_id: i64) -> Result<DeleteFa
 
     Ok(DeleteFactOutcome {
         fact_id,
+        // Forward delete archives the fact; it restores nothing.
+        fact_restored: false,
         neighbors_retracted: retracted_neighbors.len(),
         entities_reopened,
         mutation_id,
@@ -856,8 +858,13 @@ async fn undo_delete_entity_txn(
     //     participates in this txn (no double-count).
     let mut facts_restored = 0usize;
     for fid in &pre.archived_fact_ids {
-        restore_archived_fact(graph, *fid).await?;
-        facts_restored += 1;
+        // Honest count (§3.1): `restore_archived_fact` no-ops when the fact is ALREADY
+        // live (its `already_live` flag). Count only facts this undo actually moved
+        // back out of the archive — never a no-op restore.
+        let restored = restore_archived_fact(graph, *fid).await?;
+        if !restored.already_live {
+            facts_restored += 1;
+        }
     }
 
     // (c) Re-insert the entity's episodic edges.
@@ -997,6 +1004,8 @@ async fn undo_delete_fact_txn(
     if undone_at.is_some() {
         return Ok(DeleteFactOutcome {
             fact_id: pre.archived_fact_id,
+            // Whole mutation already reversed → this call restored nothing.
+            fact_restored: false,
             neighbors_retracted: 0,
             entities_reopened: 0,
             mutation_id,
@@ -1004,8 +1013,11 @@ async fn undo_delete_fact_txn(
         });
     }
 
-    // Restore the archived fact (facts_archive → facts + facts_fts).
-    restore_archived_fact(graph, pre.archived_fact_id).await?;
+    // Restore the archived fact (facts_archive → facts + facts_fts). Bind the outcome
+    // so the returned `fact_restored` is HONEST: `restore_archived_fact` no-ops when
+    // the fact is ALREADY live (nothing moved out of the archive), so a no-op restore
+    // is not reported as a real one.
+    let restored = restore_archived_fact(graph, pre.archived_fact_id).await?;
 
     // Un-retract the neighbours' community memberships + re-open their freeze.
     let mut neighbors_restored = 0usize;
@@ -1024,6 +1036,9 @@ async fn undo_delete_fact_txn(
 
     Ok(DeleteFactOutcome {
         fact_id: pre.archived_fact_id,
+        // Honest: `true` only if the fact was genuinely moved out of the archive here
+        // (`false` if `restore_archived_fact` found it already live — a no-op restore).
+        fact_restored: !restored.already_live,
         neighbors_retracted: neighbors_restored,
         entities_reopened,
         mutation_id,
