@@ -30,6 +30,10 @@
 //! rely on FK enforcement to catch an omission. The same UPDATE also snapshots the
 //! affected ids so [`undo_entity_edit`] reverses precisely.
 //!
+//! Q5: `identity_verdict_audit.candidate_a` / `.candidate_b` (TEXT entity ids, no FK)
+//! are DELIBERATELY excluded from the rekey — they are pure adjudication history that
+//! must reference the id-at-decision-time, not be rewritten by a later rename.
+//!
 //! ## Provenance + undo
 //!
 //! Before the destructive writes, an `entity_edit` [`EntityEditPreState`] snapshot
@@ -300,7 +304,7 @@ async fn collect_affected_ids(
 /// under IMMEDIATE FK enforcement an intermediate statement would violate. Deferring
 /// makes the whole rekey atomic w.r.t. FK checks; the pragma auto-resets at the next
 /// COMMIT/ROLLBACK. Harmless no-op when FKs are OFF (production, §4.3 V5).
-async fn defer_foreign_keys(conn: &libsql::Connection) -> Result<()> {
+pub(super) async fn defer_foreign_keys(conn: &libsql::Connection) -> Result<()> {
     conn.execute("PRAGMA defer_foreign_keys = ON", ()).await?;
     Ok(())
 }
@@ -311,7 +315,11 @@ async fn defer_foreign_keys(conn: &libsql::Connection) -> Result<()> {
 /// re-processes it (§6.1). `dream_idempotency_keys.entity_id` is the INTEGER rowid
 /// (`defs_g1.rs:80`), resolved from the entity's CURRENT id. Returns 1 if the
 /// entity was found + any keys dropped (0 otherwise), for the honest outcome count.
-async fn reopen_freeze(conn: &libsql::Connection, entity_id: &str, group_id: &str) -> Result<usize> {
+pub(super) async fn reopen_freeze(
+    conn: &libsql::Connection,
+    entity_id: &str,
+    group_id: &str,
+) -> Result<usize> {
     let rowid: Option<i64> = {
         let mut rows = conn
             .query(
@@ -510,6 +518,7 @@ async fn retype_txn(
         communities_repointed: communities as usize,
         entities_reopened,
         mutation_id,
+        already_undone: false,
     })
 }
 
@@ -627,6 +636,7 @@ async fn rename_txn(
         communities_repointed: counts.communities,
         entities_reopened,
         mutation_id,
+        already_undone: false,
     })
 }
 
@@ -707,7 +717,10 @@ pub async fn undo_entity_edit(
         }
     };
     guard.commit().await?;
-    if committed_here {
+    // Q3: an already-undone edit is a no-op — its counter must NOT fire (matching the
+    // `unmerge` / delete-undo `!already_undone` precedent), else a repeat undo inflates
+    // `mutation_undone_total`.
+    if committed_here && !outcome.already_undone {
         counter!(
             "kremory.graph.mutation_undone_total",
             "kind" => "entity_edit",
@@ -768,6 +781,7 @@ async fn undo_entity_edit_txn(
             communities_repointed: 0,
             entities_reopened: 0,
             mutation_id,
+            already_undone: true,
         });
     }
 
@@ -896,6 +910,7 @@ async fn undo_rename(
         communities_repointed,
         entities_reopened,
         mutation_id: 0,
+        already_undone: false,
     })
 }
 
@@ -945,5 +960,6 @@ async fn undo_retype(
         communities_repointed,
         entities_reopened,
         mutation_id: 0,
+        already_undone: false,
     })
 }

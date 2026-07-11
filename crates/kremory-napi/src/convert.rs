@@ -1067,6 +1067,9 @@ pub struct JsEditEntityOutcome {
     pub entities_reopened: f64,
     /// The `graph_mutation_log.id` — pass to `undoEntityEdit` to reverse.
     pub mutation_id: i64,
+    /// `true` if `undoEntityEdit` found the mutation already reversed — a zero-count
+    /// idempotent no-op. Always `false` for a forward `editEntity`.
+    pub already_undone: bool,
 }
 
 /// Convert a substrate `kremory::EditEntityOutcome` to `JsEditEntityOutcome`.
@@ -1081,6 +1084,75 @@ pub fn edit_entity_outcome_to_js(o: kremory::EditEntityOutcome) -> JsEditEntityO
         communities_repointed: o.communities_repointed as f64,
         entities_reopened: o.entities_reopened as f64,
         mutation_id: o.mutation_id,
+        already_undone: o.already_undone,
+    }
+}
+
+/// Outcome of `JsMemory.deleteEntity` / `JsMemory.undoDeleteEntity` — mirrors
+/// `kremory::DeleteEntityOutcome` (ADR-073 Tier-2b, §4.4). Every count is the ACTUAL
+/// rows affected (success-signal honesty). On a forward delete the counts are what was
+/// retracted/removed; on an undo they are the inverse (rows restored). Counts as JS
+/// `number` (f64): usize values far below 2^53 at practical scale.
+#[napi(object, js_name = "DeleteEntityOutcome")]
+pub struct JsDeleteEntityOutcome {
+    /// The deleted (or, on undo, restored) entity id.
+    pub entity_id: String,
+    /// Facts archived (forward) or restored from archive (undo) — never hard-deleted.
+    pub facts_retracted: f64,
+    /// Episodic edges removed (forward) or re-inserted (undo).
+    pub edges_removed: f64,
+    /// The entity's OWN community memberships removed (forward) or restored (undo).
+    pub communities_removed: f64,
+    /// Neighbours whose community membership the retract-on-zero cascade retracted
+    /// (forward) or restored (undo).
+    pub neighbors_retracted: f64,
+    /// Entities whose reconciler-freeze stamp was re-opened.
+    pub entities_reopened: f64,
+    /// The `graph_mutation_log.id` — pass to `undoDeleteEntity` to reverse.
+    pub mutation_id: i64,
+    /// `true` if the mutation was already undone — a zero-count idempotent no-op.
+    pub already_undone: bool,
+}
+
+/// Convert a substrate `kremory::DeleteEntityOutcome` to `JsDeleteEntityOutcome`.
+pub fn delete_entity_outcome_to_js(o: kremory::DeleteEntityOutcome) -> JsDeleteEntityOutcome {
+    JsDeleteEntityOutcome {
+        entity_id: o.entity_id,
+        facts_retracted: o.facts_retracted as f64,
+        edges_removed: o.edges_removed as f64,
+        communities_removed: o.communities_removed as f64,
+        neighbors_retracted: o.neighbors_retracted as f64,
+        entities_reopened: o.entities_reopened as f64,
+        mutation_id: o.mutation_id,
+        already_undone: o.already_undone,
+    }
+}
+
+/// Outcome of `JsMemory.deleteFact` / `JsMemory.undoDeleteFact` — mirrors
+/// `kremory::DeleteFactOutcome` (ADR-073 Tier-2b, §4.5).
+#[napi(object, js_name = "DeleteFactOutcome")]
+pub struct JsDeleteFactOutcome {
+    /// The deleted (or, on undo, restored) fact id.
+    pub fact_id: i64,
+    /// Neighbours (endpoint entities) whose community membership the cascade retracted
+    /// (forward) or restored (undo).
+    pub neighbors_retracted: f64,
+    /// Entities whose reconciler-freeze stamp was re-opened.
+    pub entities_reopened: f64,
+    /// The `graph_mutation_log.id` — pass to `undoDeleteFact` to reverse.
+    pub mutation_id: i64,
+    /// `true` if the mutation was already undone — a zero-count idempotent no-op.
+    pub already_undone: bool,
+}
+
+/// Convert a substrate `kremory::DeleteFactOutcome` to `JsDeleteFactOutcome`.
+pub fn delete_fact_outcome_to_js(o: kremory::DeleteFactOutcome) -> JsDeleteFactOutcome {
+    JsDeleteFactOutcome {
+        fact_id: o.fact_id,
+        neighbors_retracted: o.neighbors_retracted as f64,
+        entities_reopened: o.entities_reopened as f64,
+        mutation_id: o.mutation_id,
+        already_undone: o.already_undone,
     }
 }
 

@@ -90,7 +90,8 @@ pub use update::*;
 // from the (`pub(crate)`) provenance module so `Memory::unmerge` /
 // `restore_archived_fact` / `unsupersede` return a nameable public type.
 pub use crate::core::dream::provenance::{
-    EditEntityOutcome, RestoreArchivedOutcome, UnmergeOutcome, UnsupersedeOutcome,
+    DeleteEntityOutcome, DeleteFactOutcome, EditEntityOutcome, RestoreArchivedOutcome,
+    UnmergeOutcome, UnsupersedeOutcome,
 };
 
 // Reversible-graph-mutations consumer INSPECT surface (arch-spec §3 "Inspect
@@ -823,6 +824,63 @@ impl Memory {
     #[must_use = "UndoEntityEditRequest must call .execute() to run"]
     pub fn undo_entity_edit(&self, mutation_id: i64) -> UndoEntityEditRequest<'_> {
         UndoEntityEditRequest {
+            memory: self,
+            mutation_id,
+        }
+    }
+
+    /// Delete an entity, reversibly (reversible-graph-mutations arch-spec §4.4).
+    /// The entity's facts are ARCHIVED (recoverable — never hard-deleted), its
+    /// edges / community membership / FTS / row are removed, and any neighbour whose
+    /// live-fact support drops to zero has its DERIVED community membership retracted
+    /// (the base entity is never auto-deleted). Undoable via
+    /// [`undo_delete_entity`](Self::undo_delete_entity) with the returned
+    /// `DeleteEntityOutcome.mutation_id`. Must call `.execute()` (destructive op).
+    #[must_use = "DeleteEntityRequest must call .execute() to run"]
+    pub fn delete_entity<'a>(
+        &'a self,
+        entity_id: impl Into<String> + 'a,
+    ) -> DeleteEntityRequest<'a> {
+        DeleteEntityRequest {
+            memory: self,
+            entity_id: entity_id.into(),
+            namespace: None,
+        }
+    }
+
+    /// Delete a single fact, reversibly (reversible-graph-mutations arch-spec §4.5).
+    /// The fact is archived (recoverable via
+    /// [`restore_archived_fact`](Self::restore_archived_fact)); either endpoint whose
+    /// support drops to zero has its DERIVED community membership retracted. Undoable
+    /// via [`undo_delete_fact`](Self::undo_delete_fact). A fact id is global. Must
+    /// call `.execute()`.
+    #[must_use = "DeleteFactRequest must call .execute() to run"]
+    pub fn delete_fact(&self, fact_id: i64) -> DeleteFactRequest<'_> {
+        DeleteFactRequest {
+            memory: self,
+            fact_id,
+        }
+    }
+
+    /// Reverse a prior `delete_entity` from its provenance snapshot (arch-spec §4.4)
+    /// — re-inserts the entity + FTS, restores its archived facts + episodic edges,
+    /// and un-retracts every community membership the cascade retracted. Pass the
+    /// `mutation_id` from the `DeleteEntityOutcome` (or `mutation_history` /
+    /// `list_mutations`). Idempotent. Must call `.execute()`.
+    #[must_use = "UndoDeleteEntityRequest must call .execute() to run"]
+    pub fn undo_delete_entity(&self, mutation_id: i64) -> UndoDeleteEntityRequest<'_> {
+        UndoDeleteEntityRequest {
+            memory: self,
+            mutation_id,
+        }
+    }
+
+    /// Reverse a prior `delete_fact` from its provenance snapshot (arch-spec §4.5) —
+    /// restores the archived fact + un-retracts any neighbour the cascade retracted.
+    /// Idempotent. Must call `.execute()`.
+    #[must_use = "UndoDeleteFactRequest must call .execute() to run"]
+    pub fn undo_delete_fact(&self, mutation_id: i64) -> UndoDeleteFactRequest<'_> {
+        UndoDeleteFactRequest {
             memory: self,
             mutation_id,
         }

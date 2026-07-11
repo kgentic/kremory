@@ -71,8 +71,8 @@ pub use facade::{
 // the napi binding (kremory-napi) can name them 1:1, matching the crate-root
 // convention already used for `SupersedeOutcome` / `DreamSummary`.
 pub use facade::{
-    EditEntityOutcome, MutationFilter, MutationKind, MutationRecord, RestoreArchivedOutcome,
-    UnmergeOutcome, UnsupersedeOutcome,
+    DeleteEntityOutcome, DeleteFactOutcome, EditEntityOutcome, MutationFilter, MutationKind,
+    MutationRecord, RestoreArchivedOutcome, UnmergeOutcome, UnsupersedeOutcome,
 };
 // Dream scheduler + pass API (Phase C, v0.1.1)
 pub use core::ingest::DreamPassOpts;
