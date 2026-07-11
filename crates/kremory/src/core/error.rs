@@ -431,6 +431,19 @@ pub enum Error {
     /// diagnostic (the missing entity id or `entity_edit` mutation id).
     #[error("entity edit not found: {detail}")]
     EntityEditNotFound { detail: String },
+
+    // ── Reversible-graph-mutations delete cascade (arch-spec §4.4 / §4.5) ──────
+    /// `delete_entity(...)` / `undo_delete_entity(...)` targeted an entity or an
+    /// `entity_delete` mutation-log row that does not exist. Deleting a
+    /// non-existent entity (or reversing a delete that was never logged) is a
+    /// caller bug, never a silent no-op (parse-loudly). `detail` names which.
+    #[error("entity delete not found: {detail}")]
+    EntityDeleteNotFound { detail: String },
+
+    /// `delete_fact(...)` / `undo_delete_fact(...)` targeted a fact or a
+    /// `fact_delete` mutation-log row that does not exist. `detail` names which.
+    #[error("fact delete not found: {detail}")]
+    FactDeleteNotFound { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

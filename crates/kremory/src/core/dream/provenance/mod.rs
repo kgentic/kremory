@@ -54,6 +54,14 @@ pub(crate) mod inspect;
 /// column-set a single source of truth.
 pub(crate) mod edit;
 
+/// Deterministic DELETE cascade (Tier-2b) — `delete_entity` / `delete_fact`
+/// (reachability-based retract-on-zero + provenance snapshot + reconciler-freeze
+/// re-open) and their inverses `undo_delete_entity` / `undo_delete_fact` (arch-spec
+/// §4.4 / §4.5 / §2.3 `entity_delete` / `fact_delete`). A delete is REVERSIBLE:
+/// facts are ARCHIVED (not hard-deleted) so they restore by id, and the deleted
+/// entity row + its edges + community memberships are snapshotted for exact undo.
+pub(crate) mod delete;
+
 // The public inspect DATA types are re-exported at the module path (mirroring the
 // honest outcome types below) so the `Memory` facade can `pub use` them 1:1.
 pub use inspect::{MutationFilter, MutationRecord};
@@ -333,13 +341,77 @@ pub(crate) struct EditInputs {
     pub(crate) new_type_id: i64,
 }
 
-// NOTE (foundation scope): `MutationKind::EntityDelete` / `FactDelete` carry a
-// `pre_state` of "the full deleted row(s) + the reachable dependent set"
-// (§2.3 / §4.4 / §4.5). The concrete field list for those cascade snapshots is
-// defined with the Tier-3 cascade sub-phase that produces them; the kind
-// variants exist here so the discriminator is complete, but their pre_state
-// structs are deliberately not pre-built (their shape is under-specified until
-// the cascade is designed — no speculative schema).
+// ─── entity_delete / fact_delete snapshots (Tier-2b cascade, §2.3 / §4.4 / §4.5) ─
+
+/// A deleted `episodic_edges` row captured for a `delete_entity` undo (§4.4). The
+/// `entity_id` is the deleted entity (known from the enclosing snapshot's
+/// `entity_row.id`), so only the per-edge presence key + the non-key columns undo
+/// needs to re-INSERT the row are captured (the `id` is `AUTOINCREMENT`, not
+/// preserved).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct DeletedEpisodicEdge {
+    pub(crate) episode_id: i64,
+    pub(crate) entity_group_id: String,
+    pub(crate) role: String,
+    pub(crate) recorded_at: String,
+}
+
+/// A NEIGHBOUR whose DERIVED artifact (community membership) a retract-on-zero
+/// cascade retracted (§4.4 / §4.5 — B5/DRed) because the delete dropped its
+/// live-fact support to zero. `prior_community_id` is snapshotted so undo restores
+/// the membership exactly. The base entity is NEVER auto-deleted — only its derived
+/// artifacts are retracted (HippoRAG #17 reference-count discipline: teardown the
+/// derived, keep the base).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RetractedNeighbor {
+    pub(crate) entity_id: String,
+    pub(crate) prior_community_id: i64,
+}
+
+/// `pre_state` for `MutationKind::EntityDelete` (§4.4). Everything an undo needs to
+/// fully restore the deleted entity: its full row (reuses [`LoserEntityRow`] — the
+/// same 11 live `entities` columns a merge snapshots), the facts ARCHIVED (restorable
+/// by id, never hard-deleted), its episodic edges, its OWN community membership, and
+/// the neighbours whose derived artifacts the retract-on-zero cascade retracted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct EntityDeletePreState {
+    pub(crate) entity_row: LoserEntityRow,
+    pub(crate) archived_fact_ids: Vec<i64>,
+    pub(crate) episodic_edges: Vec<DeletedEpisodicEdge>,
+    pub(crate) prior_community_id: Option<i64>,
+    pub(crate) retracted_neighbors: Vec<RetractedNeighbor>,
+}
+
+/// `inputs` for `MutationKind::EntityDelete` — the derivation source for the
+/// consumer INSPECT summary (§3), NOT the undo payload (that is
+/// [`EntityDeletePreState`]). Our OWN structured emit (never LLM-authored, §2.1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct DeleteEntityInputs {
+    pub(crate) entity_id: String,
+    pub(crate) facts_retracted: usize,
+}
+
+/// `pre_state` for `MutationKind::FactDelete` (§4.5). The fact is ARCHIVED
+/// (restorable by id via `restore_archived_fact`); undo restores it + un-retracts
+/// any neighbour whose support the deletion dropped to zero. `object_id` is `None`
+/// for a literal-object fact (`facts.object_id IS NULL`, `object_value` carries the
+/// literal).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FactDeletePreState {
+    pub(crate) archived_fact_id: i64,
+    pub(crate) subject_id: String,
+    pub(crate) object_id: Option<String>,
+    pub(crate) retracted_neighbors: Vec<RetractedNeighbor>,
+}
+
+/// `inputs` for `MutationKind::FactDelete` — the derivation source for the consumer
+/// INSPECT summary (§3), NOT the undo payload. Our OWN structured emit (§2.1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct DeleteFactInputs {
+    pub(crate) fact_id: i64,
+    pub(crate) subject_id: String,
+    pub(crate) object_id: Option<String>,
+}
 
 // ─── honest outcome types (§3.1) ────────────────────────────────────────────
 
@@ -405,6 +477,64 @@ pub struct EditEntityOutcome {
     /// the newly recorded row (pass it to `undo_entity_edit` to reverse); for an
     /// undo, the id of the row that was reversed (its `undone_at` is now set).
     pub mutation_id: i64,
+    /// `true` if `undo_entity_edit` found the mutation already reversed — a
+    /// zero-count idempotent no-op (never a double-reversal). Always `false` for a
+    /// forward `edit_entity`. Mirrors the `unmerge` / delete-undo `already_undone`
+    /// precedent so the undo counter is not inflated by a repeat call.
+    pub already_undone: bool,
+}
+
+/// Returned by `delete_entity(...)` and its inverse `undo_delete_entity(...)`
+/// (§4.4). Every count is the ACTUAL number of rows affected (success-signal
+/// honesty, §3.1), never a bare `Applied`. On a FORWARD delete the counts are what
+/// was retracted/removed; on an UNDO they are the inverse — the rows RESTORED (facts
+/// un-archived, edges re-inserted, memberships restored) — mirroring the
+/// `EditEntityOutcome` forward/undo reuse precedent.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DeleteEntityOutcome {
+    /// The deleted (or, on undo, restored) entity id.
+    pub entity_id: String,
+    /// Facts ARCHIVED (forward) or restored from archive (undo) — never hard-deleted,
+    /// so a delete is always recoverable.
+    pub facts_retracted: usize,
+    /// Episodic edges removed (forward) or re-inserted (undo).
+    pub edges_removed: usize,
+    /// The entity's OWN community memberships removed (forward) or restored (undo)
+    /// — 0 or 1.
+    pub communities_removed: usize,
+    /// NEIGHBOURS whose community membership the retract-on-zero cascade retracted
+    /// (forward) or restored (undo) because the delete dropped their live-fact
+    /// support to zero.
+    pub neighbors_retracted: usize,
+    /// Entities whose reconciler-freeze stamp was re-opened (§6.1) so the next
+    /// `dream()` re-processes them.
+    pub entities_reopened: usize,
+    /// The `graph_mutation_log.id` of the `entity_delete` row — for a forward delete,
+    /// the newly recorded row (pass it to `undo_delete_entity`); for an undo, the id
+    /// of the row reversed (its `undone_at` is now set).
+    pub mutation_id: i64,
+    /// `true` if the mutation was already undone — a zero-count idempotent no-op.
+    pub already_undone: bool,
+}
+
+/// Returned by `delete_fact(...)` and its inverse `undo_delete_fact(...)` (§4.5).
+/// Every count is the ACTUAL number of rows affected (success-signal honesty).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DeleteFactOutcome {
+    /// The deleted (or, on undo, restored) fact id.
+    pub fact_id: i64,
+    /// NEIGHBOURS (endpoint entities) whose community membership the retract-on-zero
+    /// cascade retracted (forward) or restored (undo).
+    pub neighbors_retracted: usize,
+    /// Entities whose reconciler-freeze stamp was re-opened (§6.1).
+    pub entities_reopened: usize,
+    /// The `graph_mutation_log.id` of the `fact_delete` row — pass to
+    /// `undo_delete_fact` to reverse (forward), or the reversed row's id (undo).
+    pub mutation_id: i64,
+    /// `true` if the mutation was already undone — a zero-count idempotent no-op.
+    pub already_undone: bool,
 }
 
 /// Returned by `unsupersede(...)` (§3.1).

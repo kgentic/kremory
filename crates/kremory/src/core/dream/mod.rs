@@ -180,3 +180,14 @@ pub use provenance::inspect::{list_mutations, mutation_history};
 // the consumer surface is the `Memory` facade.
 #[cfg(any(test, feature = "test-utils"))]
 pub use provenance::edit::{edit_entity, undo_entity_edit, EntityEditOp, EntityEditParams};
+// Reversible-graph-mutations DELETE cascade (Tier-2b, arch-spec §4.4 / §4.5).
+// `delete_entity` / `delete_fact` / `undo_delete_entity` / `undo_delete_fact` + the
+// `DeleteEntityParams` caller shape are `pub` + `#[doc(hidden)]` inside the
+// (`pub(crate)`) `provenance::delete` module — same E0365 visibility requirement as
+// the reversal / edit re-exports above (the external `tests/reversible_delete.rs`
+// binary cannot import a `pub(crate)` item). NOT part of the stable public API
+// contract; the consumer surface is the `Memory` facade.
+#[cfg(any(test, feature = "test-utils"))]
+pub use provenance::delete::{
+    delete_entity, delete_fact, undo_delete_entity, undo_delete_fact, DeleteEntityParams,
+};

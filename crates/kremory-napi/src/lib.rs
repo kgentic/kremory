@@ -28,12 +28,12 @@ use napi_derive::napi;
 use kremory::{Memory, Namespace, SourceKind};
 
 pub use convert::{
-    JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsConsolidationOpsRan, JsDreamOpts,
-    JsDreamPassOpts, JsDreamStatusResult, JsDreamSummary, JsEditEntityOptions, JsEditEntityOutcome,
-    JsEpisode, JsIngestResult, JsIngestStatusResult, JsMetadataFilter, JsMutationFilter,
-    JsMutationRecord, JsOpenOptions, JsRecallOptions, JsRememberOptions, JsRestoreArchivedOutcome,
-    JsRetrievedContext, JsStructuredFact, JsSupersedeOutcome, JsTypeProposal, JsUnmergeOutcome,
-    JsUnsupersedeOutcome,
+    JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsConsolidationOpsRan, JsDeleteEntityOutcome,
+    JsDeleteFactOutcome, JsDreamOpts, JsDreamPassOpts, JsDreamStatusResult, JsDreamSummary,
+    JsEditEntityOptions, JsEditEntityOutcome, JsEpisode, JsIngestResult, JsIngestStatusResult,
+    JsMetadataFilter, JsMutationFilter, JsMutationRecord, JsOpenOptions, JsRecallOptions,
+    JsRememberOptions, JsRestoreArchivedOutcome, JsRetrievedContext, JsStructuredFact,
+    JsSupersedeOutcome, JsTypeProposal, JsUnmergeOutcome, JsUnsupersedeOutcome,
 };
 
 // ── JsMemory ──────────────────────────────────────────────────────────────────
@@ -692,6 +692,82 @@ impl JsMemory {
             .await
             .map_err(|e| napi::Error::from_reason(format!("kremory undoEntityEdit failed: {e}")))?;
         Ok(convert::edit_entity_outcome_to_js(outcome))
+    }
+
+    /// Delete an entity, reversibly (ADR-073 Tier-2b, §4.4). Archives the entity's
+    /// facts (recoverable — never hard-deleted), removes its edges / community
+    /// membership / FTS / row, and retracts the DERIVED artifacts of neighbours whose
+    /// live-fact support drops to zero. Reverse via `undoDeleteEntity` with the
+    /// returned `mutationId`. `namespace` scopes the entity (else the handle default).
+    /// Wraps `Memory::delete_entity`.
+    #[napi]
+    pub async fn delete_entity(
+        &self,
+        entity_id: String,
+        namespace: Option<String>,
+    ) -> napi::Result<JsDeleteEntityOutcome> {
+        let ns = namespace
+            .as_deref()
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone());
+        let mut req = self.inner.delete_entity(entity_id);
+        if let Some(ns) = ns {
+            req = req.in_namespace(ns);
+        }
+        let outcome = req
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory deleteEntity failed: {e}")))?;
+        Ok(convert::delete_entity_outcome_to_js(outcome))
+    }
+
+    /// Delete a single fact, reversibly (ADR-073 Tier-2b, §4.5). The fact is archived
+    /// (recoverable via `restoreArchivedFact`); either endpoint whose support drops to
+    /// zero has its DERIVED community membership retracted. Reverse via `undoDeleteFact`.
+    /// A fact id is global (not namespace-scoped). Wraps `Memory::delete_fact`.
+    #[napi]
+    pub async fn delete_fact(&self, fact_id: i64) -> napi::Result<JsDeleteFactOutcome> {
+        let outcome = self
+            .inner
+            .delete_fact(fact_id)
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory deleteFact failed: {e}")))?;
+        Ok(convert::delete_fact_outcome_to_js(outcome))
+    }
+
+    /// Reverse a prior `deleteEntity` from its provenance snapshot (ADR-073 Tier-2b,
+    /// §4.4) — re-inserts the entity + FTS, restores its archived facts + episodic
+    /// edges, and un-retracts every community membership the cascade retracted.
+    /// Idempotent. Wraps `Memory::undo_delete_entity`.
+    #[napi]
+    pub async fn undo_delete_entity(
+        &self,
+        mutation_id: i64,
+    ) -> napi::Result<JsDeleteEntityOutcome> {
+        let outcome = self
+            .inner
+            .undo_delete_entity(mutation_id)
+            .execute()
+            .await
+            .map_err(|e| {
+                napi::Error::from_reason(format!("kremory undoDeleteEntity failed: {e}"))
+            })?;
+        Ok(convert::delete_entity_outcome_to_js(outcome))
+    }
+
+    /// Reverse a prior `deleteFact` from its provenance snapshot (ADR-073 Tier-2b,
+    /// §4.5) — restores the archived fact + un-retracts any neighbour the cascade
+    /// retracted. Idempotent. Wraps `Memory::undo_delete_fact`.
+    #[napi]
+    pub async fn undo_delete_fact(&self, mutation_id: i64) -> napi::Result<JsDeleteFactOutcome> {
+        let outcome = self
+            .inner
+            .undo_delete_fact(mutation_id)
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory undoDeleteFact failed: {e}")))?;
+        Ok(convert::delete_fact_outcome_to_js(outcome))
     }
 
     /// Inspect the mutations that touched one entity, newest-first (ADR-073 Tier-1,

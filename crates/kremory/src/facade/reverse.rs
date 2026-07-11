@@ -17,8 +17,12 @@ use std::future::IntoFuture;
 
 use super::*;
 
+use crate::core::dream::provenance::delete::DeleteEntityParams;
 use crate::core::dream::provenance::edit::{EntityEditOp, EntityEditParams};
-use crate::core::dream::provenance::{inspect, EditEntityOutcome, MutationKind, MutationRecord};
+use crate::core::dream::provenance::{
+    inspect, DeleteEntityOutcome, DeleteFactOutcome, EditEntityOutcome, MutationKind,
+    MutationRecord,
+};
 use crate::memory::engine_handle::namespace_to_group_id;
 
 // ── UnmergeRequest ─────────────────────────────────────────────────────────
@@ -239,6 +243,148 @@ impl UndoEntityEditRequest<'_> {
             )
         })?;
         crate::core::dream::provenance::edit::undo_entity_edit(tg, self.mutation_id)
+            .await
+            .map_err(MemoryError::Core)
+    }
+}
+
+// ── DeleteEntityRequest (§4.4 — reversible delete cascade) ──────────────────
+
+/// Delete an entity, reversibly (§4.4). Obtain via `mem.delete_entity(entity_id)`.
+/// Archives the entity's facts (recoverable — never hard-deleted), removes its edges
+/// / community membership / FTS / row, and retracts the DERIVED artifacts of
+/// neighbours whose live-fact support drops to zero. Undoable via
+/// `undo_delete_entity(mutation_id)`. Must call `.execute()` (destructive op).
+pub struct DeleteEntityRequest<'a> {
+    pub(super) memory: &'a Memory,
+    pub(super) entity_id: String,
+    pub(super) namespace: Option<Namespace>,
+}
+
+impl<'a> DeleteEntityRequest<'a> {
+    /// Scope the entity to `ns` (overrides the `Memory` default namespace).
+    pub fn in_namespace(mut self, ns: Namespace) -> Self {
+        self.namespace = Some(ns);
+        self
+    }
+
+    /// Execute the delete.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Memory` lacks a `TemporalGraph`, if the namespace cannot be
+    /// resolved, or if the entity does not exist (`EntityDeleteNotFound`).
+    pub async fn execute(self) -> Result<DeleteEntityOutcome> {
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::delete_entity requires a Memory constructed via the builder/providers \
+                 path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        let ns = self.memory.resolve_namespace(self.namespace)?;
+        let group_id = namespace_to_group_id(&ns);
+        crate::core::dream::provenance::delete::delete_entity(
+            tg,
+            DeleteEntityParams {
+                entity_id: self.entity_id,
+                group_id,
+            },
+        )
+        .await
+        .map_err(MemoryError::Core)
+    }
+}
+
+// ── DeleteFactRequest (§4.5 — reversible fact delete) ───────────────────────
+
+/// Delete a single fact, reversibly (§4.5). Obtain via `mem.delete_fact(fact_id)`.
+/// The fact is archived (recoverable via `restore_archived_fact`) and the DERIVED
+/// artifacts of either endpoint whose support drops to zero are retracted. Undoable
+/// via `undo_delete_fact(mutation_id)`. A fact id is global (not namespace-scoped).
+/// Must call `.execute()`.
+pub struct DeleteFactRequest<'a> {
+    pub(super) memory: &'a Memory,
+    pub(super) fact_id: i64,
+}
+
+impl DeleteFactRequest<'_> {
+    /// Execute the delete.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Memory` lacks a `TemporalGraph`, or if `fact_id` names no
+    /// fact (`FactDeleteNotFound`).
+    pub async fn execute(self) -> Result<DeleteFactOutcome> {
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::delete_fact requires a Memory constructed via the builder/providers \
+                 path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        crate::core::dream::provenance::delete::delete_fact(tg, self.fact_id)
+            .await
+            .map_err(MemoryError::Core)
+    }
+}
+
+// ── UndoDeleteEntityRequest / UndoDeleteFactRequest (§4.4 / §4.5) ────────────
+
+/// Reverse a prior `delete_entity` from its provenance snapshot (§4.4). Obtain via
+/// `mem.undo_delete_entity(mutation_id)`. Idempotent: a second call is a zero-count
+/// no-op. Must call `.execute()`.
+pub struct UndoDeleteEntityRequest<'a> {
+    pub(super) memory: &'a Memory,
+    pub(super) mutation_id: i64,
+}
+
+impl UndoDeleteEntityRequest<'_> {
+    /// Execute the reversal.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Memory` lacks a `TemporalGraph`, if `mutation_id` names no
+    /// `entity_delete` log row (`EntityDeleteNotFound`), or if the snapshot fails to
+    /// deserialize (parse-loudly).
+    pub async fn execute(self) -> Result<DeleteEntityOutcome> {
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::undo_delete_entity requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        crate::core::dream::provenance::delete::undo_delete_entity(tg, self.mutation_id)
+            .await
+            .map_err(MemoryError::Core)
+    }
+}
+
+/// Reverse a prior `delete_fact` from its provenance snapshot (§4.5). Obtain via
+/// `mem.undo_delete_fact(mutation_id)`. Idempotent. Must call `.execute()`.
+pub struct UndoDeleteFactRequest<'a> {
+    pub(super) memory: &'a Memory,
+    pub(super) mutation_id: i64,
+}
+
+impl UndoDeleteFactRequest<'_> {
+    /// Execute the reversal.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Memory` lacks a `TemporalGraph`, if `mutation_id` names no
+    /// `fact_delete` log row (`FactDeleteNotFound`), or if the snapshot fails to
+    /// deserialize (parse-loudly).
+    pub async fn execute(self) -> Result<DeleteFactOutcome> {
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::undo_delete_fact requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        crate::core::dream::provenance::delete::undo_delete_fact(tg, self.mutation_id)
             .await
             .map_err(MemoryError::Core)
     }

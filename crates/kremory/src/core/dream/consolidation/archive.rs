@@ -48,7 +48,7 @@ struct ArchiveCandidate {
 /// 18 are a direct projection of the matching `facts` columns. `facts_archive`
 /// intentionally OMITS `facts.embedding` + `facts.access_count` (deprecated, always
 /// 0) — hence a PROJECTED list, never `SELECT *` (Quinn-P0 note, P2.3).
-const ARCHIVE_INSERT_SQL: &str = "INSERT INTO facts_archive \
+pub(crate) const ARCHIVE_INSERT_SQL: &str = "INSERT INTO facts_archive \
      (id, subject_id, predicate, object_id, object_value, properties, \
       valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, \
       source_episode_id, memory_type, content_hash, subject_group_id, object_group_id, \

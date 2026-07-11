@@ -25,7 +25,7 @@ use metrics::counter;
 use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
-use super::{EditInputs, MergeInputs, MutationKind};
+use super::{DeleteEntityInputs, DeleteFactInputs, EditInputs, MergeInputs, MutationKind};
 
 // ─── consumer-facing view (§3 inspect surface) ──────────────────────────────
 
@@ -124,6 +124,33 @@ fn derive_view(kind: MutationKind, inputs_json: &str) -> Result<(Vec<String>, St
                 );
                 Ok((vec![inputs.old_id], summary))
             }
+        }
+        MutationKind::EntityDelete => {
+            let inputs: DeleteEntityInputs = serde_json::from_str(inputs_json).map_err(|e| {
+                Error::Other(anyhow::anyhow!(
+                    "inspect: deserialize entity_delete inputs (mutation un-classifiable): {e}"
+                ))
+            })?;
+            let summary = format!(
+                "deleted entity '{}' — retracted {} fact(s)",
+                inputs.entity_id, inputs.facts_retracted
+            );
+            Ok((vec![inputs.entity_id], summary))
+        }
+        MutationKind::FactDelete => {
+            let inputs: DeleteFactInputs = serde_json::from_str(inputs_json).map_err(|e| {
+                Error::Other(anyhow::anyhow!(
+                    "inspect: deserialize fact_delete inputs (mutation un-classifiable): {e}"
+                ))
+            })?;
+            // Both endpoint entities are the consumer's locate keys (object may be a
+            // literal → absent).
+            let mut affected = vec![inputs.subject_id.clone()];
+            if let Some(obj) = inputs.object_id.clone() {
+                affected.push(obj);
+            }
+            let summary = format!("deleted fact {} (subject '{}')", inputs.fact_id, inputs.subject_id);
+            Ok((affected, summary))
         }
         other => Ok((Vec::new(), format!("{} mutation", other.as_tag()))),
     }
