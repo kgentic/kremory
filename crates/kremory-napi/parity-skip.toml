@@ -448,3 +448,45 @@ symbol = "Memory::send_batched"
 reason = "v0.2.3 follow-up (2026-06-15): send_batched now routes through BackgroundIngestorGraphHandle when sink is configured (arch spec §3.2 Option A), fixing Quinn MED-3 / Phase 7 facade gap. JS binding still deferred: napi Memory does not expose sink configuration (MemoryBuilder::with_sink is also skipped above). When napi sink binding lands (v0.3.0), send_batched will naturally get BatchTracker + on_batch_phase2_complete via the same BackgroundIngestorGraphHandle path."
 revisit = "v0.3.0"
 
+
+# ── Reversible-graph-mutations reversal core (sub-phase 1c) ───────────────────
+# Arch-spec reversible-graph-mutations-2026-07-10 §3.4 requires napi mirrors
+# (JsUnmergeOutcome / JsRestoreOutcome / JsUnsupersedeOutcome + bindings), but
+# the sub-phase 1c substrate build EXPLICITLY defers the napi mirror to a later
+# Tier-0 phase (the mirror is mechanical: one Promise<Js*Outcome> per method).
+# These skips are the ADR-031-sanctioned deferral, NOT a permanent omission.
+
+[[skip]]
+symbol = "Memory::unmerge"
+reason = "Reversible-graph-mutations §3.4: napi mirror unmerge(mutationId): Promise<JsUnmergeOutcome> deferred to the Tier-0 napi phase (sub-phase 1c is the substrate build; napi mirrors are explicitly out-of-scope per the sub-phase brief). Mechanical mirror — one Promise<JsUnmergeOutcome> binding."
+revisit = "reversible-graph-mutations Tier-0 napi phase"
+
+[[skip]]
+symbol = "Memory::restore_archived_fact"
+reason = "Reversible-graph-mutations §3.4: napi mirror restoreArchivedFact(archivedFactId): Promise<JsRestoreOutcome> deferred to the Tier-0 napi phase (sub-phase 1c substrate build; napi mirrors out-of-scope per the sub-phase brief). Mechanical mirror."
+revisit = "reversible-graph-mutations Tier-0 napi phase"
+
+[[skip]]
+symbol = "Memory::unsupersede"
+reason = "Reversible-graph-mutations §3.4: napi mirror unsupersede(factId): Promise<JsUnsupersedeOutcome> deferred to the Tier-0 napi phase (sub-phase 1c substrate build; napi mirrors out-of-scope per the sub-phase brief). Mechanical mirror."
+revisit = "reversible-graph-mutations Tier-0 napi phase"
+
+# ── Reversible-graph-mutations consumer INSPECT surface (Tier-1 SEE half) ─────
+# Arch-spec §3 "Inspect surface". The read-only inspect methods return
+# Vec<MutationRecord>; the napi mirror (mutationHistory / listMutations returning
+# JsMutationRecord[]) is EXPLICITLY deferred to the Tier-0 napi phase alongside
+# the reversal mirrors above. Mechanical — one JsMutationRecord napi(object) +
+# two Promise<JsMutationRecord[]> bindings. The builder methods
+# (MutationHistoryRequest / ListMutationsRequest) + the data types
+# (MutationRecord / MutationFilter / MutationKind) are NOT parity-tracked types,
+# so only the two Memory entry points need a skip.
+
+[[skip]]
+symbol = "Memory::mutation_history"
+reason = "Reversible-graph-mutations §3 Inspect surface: napi mirror mutationHistory(entityId, opts?): Promise<JsMutationRecord[]> deferred to the Tier-0 napi phase (Tier-1 substrate build; napi mirrors out-of-scope per the pass brief). Mechanical mirror."
+revisit = "reversible-graph-mutations Tier-0 napi phase"
+
+[[skip]]
+symbol = "Memory::list_mutations"
+reason = "Reversible-graph-mutations §3 Inspect surface: napi mirror listMutations(opts?): Promise<JsMutationRecord[]> deferred to the Tier-0 napi phase (Tier-1 substrate build; napi mirrors out-of-scope per the pass brief). Mechanical mirror."
+revisit = "reversible-graph-mutations Tier-0 napi phase"

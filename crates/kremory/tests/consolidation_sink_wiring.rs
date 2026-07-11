@@ -13,6 +13,8 @@
 //! - The planted entity pair has NO embeddings, so reconciliation's `canonicalize`
 //!   cosine band cannot pre-merge it — it survives to `cross_episode`, which merges it
 //!   on label + shared-neighbour structure.
+// Test binary — CLAUDE.md rule 5 exempts test files from the strict-typing lints.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod helpers;
 

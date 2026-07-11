@@ -24,10 +24,16 @@
 //! [`crate::core::schema::TemporalGraph`] (via the `canonicalize_surface_forms`
 //! free-function) so it can also be unit-tested without a full dream-phase harness.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use metrics::counter;
 use tracing;
 
-use crate::core::error::Result;
+use crate::core::dream::provenance::{
+    EntityMergePreState, EpisodicEdgeCols, EpisodicEdgeSnapshot, FactEndpoint, KeeperPre,
+    LoserEntityRow, MergeInputs, MergeSite, RepointedFact,
+};
+use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
 // ─── Threshold constant ───────────────────────────────────────────────────────
@@ -224,6 +230,12 @@ pub async fn canonicalize_surface_forms(
         current
     }
 
+    // Anti-re-merge nogood (Site #2 of THREE, spec §6.2 V3 fix): load the
+    // group's split-pair bans ONCE before the merge loop; a pair `unmerge`
+    // recorded must NOT be re-merged here on the next `dream()`.
+    let nogoods =
+        crate::core::dream::provenance::reversal::load_merge_nogoods(graph, group_id).await?;
+
     let mut merges_applied = 0usize;
 
     for (loser_id, raw_keeper_id) in &loser_to_keeper {
@@ -231,6 +243,19 @@ pub async fn canonicalize_surface_forms(
 
         // Skip self-merges (shouldn't happen, but guard defensively).
         if loser_id == &effective_keeper {
+            continue;
+        }
+
+        // Nogood guard (spec §6.2, Site #2): drop a split pair before the merge.
+        if nogoods.contains(&crate::core::dream::provenance::reversal::sorted_pair(
+            loser_id,
+            &effective_keeper,
+        )) {
+            counter!(
+                "kremory.graph.merge_nogood_skip_total",
+                "site" => "canonicalize",
+            )
+            .increment(1);
             continue;
         }
 
@@ -365,7 +390,18 @@ async fn find_merge_pairs(
 /// pairwise cosine merges are not LLM-adjudicated, so no `identity_verdict_audit`
 /// row is written for them (ADR-063 spec §5.2: "audit only LLM-touched decisions").
 async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> Result<()> {
-    apply_entity_merge(graph, loser_id, keeper_id).await
+    apply_entity_merge(
+        graph,
+        EntityMergeParams {
+            loser_id,
+            keeper_id,
+            site: MergeSite::Canonicalize,
+            // L5 surface-form merges are pairwise-cosine + lexical-variant gated,
+            // NOT structural-corroboration driven (spec §2.3, Quinn L3).
+            structural_signal: false,
+        },
+    )
+    .await
 }
 
 /// The shared structural entity-merge executor (ADR-066 spec DoD-P0.3).
@@ -384,18 +420,43 @@ async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> 
 /// structural-corroboration merges these two callers perform are not LLM-adjudicated.
 pub(crate) async fn apply_entity_merge(
     graph: &TemporalGraph,
-    loser_id: &str,
-    keeper_id: &str,
+    params: EntityMergeParams<'_>,
 ) -> Result<()> {
+    let EntityMergeParams {
+        loser_id,
+        keeper_id,
+        site,
+        structural_signal,
+    } = params;
     apply_merge_with_audit(
         graph,
         ApplyMergeWithAuditParams {
             loser_id,
             keeper_id,
             audit: None,
+            site,
+            structural_signal,
         },
     )
     .await
+}
+
+/// Bundled parameters for [`apply_entity_merge`] — args-as-object per TD-042
+/// (`clippy.toml` `too-many-arguments-threshold = 3`; `#[allow]` banned in src).
+/// Threads the merge `site` (reversible-graph-mutations spec §2.3) through the
+/// shared structural-merge entry without exceeding the arg-count bar.
+pub(crate) struct EntityMergeParams<'a> {
+    pub(crate) loser_id: &'a str,
+    pub(crate) keeper_id: &'a str,
+    pub(crate) site: MergeSite,
+    /// Whether a deterministic STRUCTURAL corroboration signal drove this merge
+    /// (reversible-graph-mutations spec §2.3 — recorded into
+    /// `graph_mutation_log.inputs.structural_signal`, the SEE-surface honesty
+    /// the inspect view reports, Quinn L3). `true` for cross-episode structural
+    /// merges (the corroboration gate); `false` for L5's pairwise-cosine surface
+    /// merges (no structural signal). Threaded from the call-site rather than
+    /// derived from `audit` (which is `None` on both non-LLM sites).
+    pub(crate) structural_signal: bool,
 }
 
 /// One `identity_verdict_audit` row to write INSIDE the same `BEGIN IMMEDIATE`
@@ -431,6 +492,16 @@ pub(crate) struct ApplyMergeWithAuditParams<'a> {
     pub(crate) loser_id: &'a str,
     pub(crate) keeper_id: &'a str,
     pub(crate) audit: Option<IdentityVerdictAuditRow<'a>>,
+    /// Which merge-producing site fired this merge — recorded into the
+    /// `graph_mutation_log` row's `inputs.site` (reversible-graph-mutations
+    /// spec §2.3), the provenance the nogood + undo consume in later sub-phases.
+    pub(crate) site: MergeSite,
+    /// Whether a deterministic STRUCTURAL corroboration signal drove this merge
+    /// — recorded into `inputs.structural_signal` (spec §2.3, Quinn L3). `true`
+    /// for the cross-episode structural gate and Site #5's structural pre-filter;
+    /// `false` for L5 pairwise cosine. Threaded from the call-site (not derived
+    /// from `audit`, which is `None` on the non-LLM sites).
+    pub(crate) structural_signal: bool,
 }
 
 /// [`apply_merge`] extended with an OPTIONAL `identity_verdict_audit` INSERT
@@ -448,8 +519,13 @@ pub(crate) async fn apply_merge_with_audit(
         loser_id,
         keeper_id,
         audit,
+        site,
+        structural_signal,
     } = params;
     let guard = graph.begin_immediate_if_needed().await?;
+    // Whether THIS guard opened the txn — decides post-commit o11y placement
+    // (spec §8.1: the snapshot counter fires only after the durable commit).
+    let committed_here = guard.opened();
 
     // Collect loser's access_count + ner_confidence before deletion. Site #6
     // (ADR-063): the loser's confidence is combined into the keeper via noisy-OR,
@@ -471,6 +547,36 @@ pub(crate) async fn apply_merge_with_audit(
             _ => (0, None),
         },
         Err(_) => (0, None),
+    };
+
+    // ─── Reversible-graph-mutations snapshot (sub-phase 1b, spec §4) ─────────
+    // Capture the COMPLETE pre-state and INSERT the `graph_mutation_log` row
+    // BEFORE the destructive block below, on `graph.conn` — the SAME connection
+    // the destructive statements use, inside the `guard` transaction opened
+    // above. The snapshot INSERT therefore commits atomically with the merge
+    // (or rolls back with it via the r1..r7 chain / the early-rollback here), so
+    // provenance can never diverge from what the merge actually destroyed
+    // (spec §1 / §8.1). Capture-BEFORE-destroy is load-bearing: the loser row,
+    // its facts' prior `corroboration_inert`, the keeper's pre-overwrite values,
+    // and the episodic-edge collision flags only exist until the UPDATEs below
+    // run (spec §2.3 / §2.4 DERIVATION deps).
+    let snapshot_group_id = match snapshot_merge_pre_state(
+        graph,
+        MergeSnapshotParams {
+            loser_id,
+            keeper_id,
+            site,
+            audit: audit.as_ref(),
+            structural_signal,
+        },
+    )
+    .await
+    {
+        Ok(group_id) => group_id,
+        Err(e) => {
+            let _ = guard.rollback().await;
+            return Err(e);
+        }
     };
 
     // Remap facts.subject_id — ADR-067 §C0 (V1): also stamp `corroboration_inert = 1`
@@ -653,6 +759,34 @@ pub(crate) async fn apply_merge_with_audit(
     match r7 {
         Ok(_) => {
             guard.commit().await?;
+            // Spec §8.1: the `graph_mutation_log` row is a durable in-txn write
+            // (correct on rollback); its SUMMARY counter must fire only AFTER the
+            // real commit, never mid-txn. When `committed_here` is false the
+            // durable commit belongs to an outer txn (no current caller nests —
+            // all three merge sites open their own txn) so the counter would move
+            // to that outer committer; today it is always `true`.
+            if committed_here {
+                // Spec §8.2 canonical mutation-log counter (renamed from the
+                // sub-phase-1b `kremory.dream.provenance.snapshot_total`). Label set
+                // is `{kind, source}` ONLY — `group_id` is UNBOUNDED cardinality and
+                // MUST NOT be a metric label (ADR-071 Item 5 discipline; spec §8.2
+                // reconciled). It is carried as a `tracing::` event FIELD instead, so
+                // per-namespace attribution stays observable without exploding the
+                // metric's label dimension.
+                counter!(
+                    "kremory.graph.mutation_logged_total",
+                    "kind" => "entity_merge",
+                    "source" => "entity_merge_executor",
+                )
+                .increment(1);
+                tracing::debug!(
+                    target: "kremory.graph.provenance",
+                    kind = "entity_merge",
+                    group_id = %snapshot_group_id,
+                    source = "entity_merge_executor",
+                    "kremory.graph.mutation_logged: reversible-mutation provenance row committed"
+                );
+            }
             Ok(())
         }
         Err(e) => {
@@ -660,6 +794,269 @@ pub(crate) async fn apply_merge_with_audit(
             Err(e.into())
         }
     }
+}
+
+/// Capture the COMPLETE `entity_merge` pre-state (spec §2.3) and INSERT the
+/// `graph_mutation_log` row, on `graph.conn` — the SAME connection/txn as the
+/// destructive merge statements (the caller holds an open `BeginGuard`), so the
+/// snapshot commits atomically with the merge (spec §4 / §8.1). MUST be called
+/// BEFORE the destructive block: every captured value (loser row, per-fact
+/// prior `corroboration_inert`, keeper's pre-overwrite `access_count` /
+/// `ner_confidence`, per-edge collision flag) only exists until the merge's
+/// UPDATEs run (spec §2.4 DERIVATION deps).
+///
+/// A missing loser or keeper entity is a hard `Error` (parse-loudly, spec §2.1):
+/// a merge whose endpoints we cannot snapshot could not be reversed, so we fail
+/// loudly rather than persist an un-undoable log row.
+/// Bundled parameters for [`snapshot_merge_pre_state`] — args-as-object per
+/// TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`).
+struct MergeSnapshotParams<'a> {
+    loser_id: &'a str,
+    keeper_id: &'a str,
+    site: MergeSite,
+    audit: Option<&'a IdentityVerdictAuditRow<'a>>,
+    /// The authoritative structural-corroboration bool for `inputs.structural_signal`
+    /// (spec §2.3, Quinn L3) — threaded from the call-site, NOT derived from
+    /// `audit` (which is `None` on the non-LLM structural sites).
+    structural_signal: bool,
+}
+
+async fn snapshot_merge_pre_state(
+    graph: &TemporalGraph,
+    params: MergeSnapshotParams<'_>,
+) -> Result<String> {
+    let MergeSnapshotParams {
+        loser_id,
+        keeper_id,
+        site,
+        audit,
+        structural_signal,
+    } = params;
+    // (1) loser entity row — all 11 live columns (spec §2.3(1); no `label`,
+    //     dropped Mig 009). The merge's loser DELETE is `WHERE id = loser` (no
+    //     group filter), so the snapshot SELECT matches that predicate exactly.
+    let loser_entity_row = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT id, group_id, properties, embedding, recorded_at, updated_at, \
+                        access_count, entity_type_id, entity_type_source, \
+                        entity_type_assigned_at, ner_confidence \
+                 FROM entities WHERE id = ?1",
+                libsql::params![loser_id],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Err(Error::Other(anyhow::anyhow!(
+                "reversible-mutations snapshot: loser entity `{loser_id}` not found — \
+                 cannot capture a reversible pre-state for this merge"
+            )));
+        };
+        // `embedding` is an F32_BLOB; capture the raw bytes faithfully and
+        // base64-encode for JSON transport (spec §2.3(1)). A missed byte here is
+        // silent embedding loss on undo — the exact failure this sub-phase guards.
+        let embedding: Option<Vec<u8>> = row.get::<Option<Vec<u8>>>(3)?;
+        LoserEntityRow {
+            id: row.get::<String>(0)?,
+            group_id: row.get::<String>(1)?,
+            properties: row.get::<Option<String>>(2)?,
+            embedding_b64: embedding.as_deref().map(|b| BASE64_STANDARD.encode(b)),
+            recorded_at: row.get::<String>(4)?,
+            updated_at: row.get::<Option<String>>(5)?,
+            access_count: row.get::<i64>(6)?,
+            entity_type_id: row.get::<i64>(7)?,
+            entity_type_source: row.get::<Option<String>>(8)?,
+            entity_type_assigned_at: row.get::<Option<String>>(9)?,
+            ner_confidence: row.get::<Option<f64>>(10)?,
+        }
+    };
+    let group_id = loser_entity_row.group_id.clone();
+
+    // (2) keeper's PRE-merge access_count + ner_confidence (spec §2.3(2)) —
+    //     captured BEFORE the merge's accumulate + noisy-OR overwrite (both
+    //     non-invertible), so undo restores these exact values, not a subtraction.
+    let keeper_pre = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT access_count, ner_confidence FROM entities WHERE id = ?1",
+                libsql::params![keeper_id],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Err(Error::Other(anyhow::anyhow!(
+                "reversible-mutations snapshot: keeper entity `{keeper_id}` not found — \
+                 cannot capture a reversible pre-state for this merge"
+            )));
+        };
+        KeeperPre {
+            id: keeper_id.to_string(),
+            access_count: row.get::<i64>(0)?,
+            ner_confidence: row.get::<Option<f64>>(1)?,
+        }
+    };
+
+    // (3) facts re-pointed loser→keeper (spec §2.3(3)). The merge stamps each
+    //     `corroboration_inert = 1`; capture the PRIOR flag per (fact_id,
+    //     endpoint) so undo restores it — a fact already inert from an EARLIER
+    //     merge must NOT be cleared (the monotone-undo trap, §12 CH-3). The two
+    //     SELECT predicates match the merge's endpoint UPDATEs exactly (subject
+    //     then object), no group filter. A self-referential fact (loser on BOTH
+    //     endpoints) is captured twice, once per endpoint — correct, undo reverts
+    //     both.
+    let mut repointed_facts: Vec<RepointedFact> = Vec::new();
+    {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT id, corroboration_inert FROM facts WHERE subject_id = ?1",
+                libsql::params![loser_id],
+            )
+            .await?;
+        while let Some(row) = rows.next().await? {
+            repointed_facts.push(RepointedFact {
+                fact_id: row.get::<i64>(0)?,
+                endpoint: FactEndpoint::Subject,
+                prior_corroboration_inert: row.get::<i64>(1)?,
+            });
+        }
+    }
+    {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT id, corroboration_inert FROM facts WHERE object_id = ?1",
+                libsql::params![loser_id],
+            )
+            .await?;
+        while let Some(row) = rows.next().await? {
+            repointed_facts.push(RepointedFact {
+                fact_id: row.get::<i64>(0)?,
+                endpoint: FactEndpoint::Object,
+                prior_corroboration_inert: row.get::<i64>(1)?,
+            });
+        }
+    }
+
+    // (4) loser episodic_edges remapped/orphan-deleted by the merge (spec
+    //     §2.3(4)). Capture every loser edge FIRST (drain the cursor), THEN
+    //     compute its `collided` flag: does the keeper ALREADY own an edge for
+    //     the same (episode_id, entity_group_id)? Under
+    //     UNIQUE(episode_id, entity_id, entity_group_id) (Mig 017) the merge's
+    //     `UPDATE OR IGNORE` drops a colliding loser edge (undo re-INSERTs it
+    //     under the loser) and re-points a non-colliding one (undo re-points it
+    //     back) — §4.2 step 4. Cursors never overlap: the loser edges are drained
+    //     into a Vec before the per-edge collision sub-queries run.
+    let loser_edges: Vec<(i64, String, String, String, String)> = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT episode_id, entity_group_id, entity_id, role, recorded_at \
+                 FROM episodic_edges WHERE entity_id = ?1",
+                libsql::params![loser_id],
+            )
+            .await?;
+        let mut v = Vec::new();
+        while let Some(row) = rows.next().await? {
+            v.push((
+                row.get::<i64>(0)?,
+                row.get::<String>(1)?,
+                row.get::<String>(2)?,
+                row.get::<String>(3)?,
+                row.get::<String>(4)?,
+            ));
+        }
+        v
+    };
+    let mut episodic_edges: Vec<EpisodicEdgeSnapshot> = Vec::with_capacity(loser_edges.len());
+    for (episode_id, entity_group_id, entity_id, role, recorded_at) in loser_edges {
+        let collided = {
+            let mut rows = graph
+                .conn
+                .query(
+                    "SELECT 1 FROM episodic_edges \
+                     WHERE entity_id = ?1 AND episode_id = ?2 AND entity_group_id = ?3 \
+                     LIMIT 1",
+                    libsql::params![keeper_id, episode_id, entity_group_id.clone()],
+                )
+                .await?;
+            rows.next().await?.is_some()
+        };
+        episodic_edges.push(EpisodicEdgeSnapshot {
+            episode_id,
+            entity_group_id,
+            collided,
+            cols: EpisodicEdgeCols {
+                entity_id,
+                role,
+                recorded_at,
+            },
+        });
+    }
+
+    let pre_state = EntityMergePreState {
+        loser_entity_row,
+        keeper_pre,
+        repointed_facts,
+        episodic_edges,
+    };
+
+    // `inputs`: the SORTED unordered pair is the nogood key (spec §6.2 / §2.3) —
+    // a keeper/loser role-flip between passes cannot evade the anti-re-merge ban.
+    // `cosine` comes from the `audit` row when present (Site #5 passes it; the
+    // structural/cosine sites pass `audit = None`). `structural_signal` is the
+    // AUTHORITATIVE bool threaded from the call-site (Quinn L3) — it is accurate
+    // even on the `audit = None` cross-episode path, so the inspect SEE-surface
+    // reports the merge's real provenance.
+    let (pair_lo, pair_hi) = if loser_id <= keeper_id {
+        (loser_id.to_string(), keeper_id.to_string())
+    } else {
+        (keeper_id.to_string(), loser_id.to_string())
+    };
+    let inputs = MergeInputs {
+        pair_lo,
+        pair_hi,
+        keeper: keeper_id.to_string(),
+        loser: loser_id.to_string(),
+        site,
+        cosine: audit.and_then(|a| a.cosine).map(f64::from),
+        structural_signal,
+    };
+
+    // Our OWN structured emit (never LLM-authored, spec §2.1) — serialization is
+    // deterministic; a failure is a hard error, never a silent skip.
+    let pre_state_json = serde_json::to_string(&pre_state)
+        .map_err(|e| Error::Other(anyhow::anyhow!("serialize merge pre_state: {e}")))?;
+    let inputs_json = serde_json::to_string(&inputs)
+        .map_err(|e| Error::Other(anyhow::anyhow!("serialize merge inputs: {e}")))?;
+
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        tracing::debug!(
+            target: "kremory.graph.provenance",
+            kind = "entity_merge",
+            group_id = %group_id,
+            pre_state = %pre_state_json,
+            inputs = %inputs_json,
+            "reversible-mutations merge snapshot captured (pre-destroy)"
+        );
+    }
+
+    // INSERT on `graph.conn` = the SAME txn as the destructive block (spec §2.1
+    // / §8.1). `undone_at` (NULL = live) + `enabled_at_time` (DEFAULT 1) take
+    // their DDL defaults; `kind` is the fixed `entity_merge` string.
+    let now = chrono::Utc::now().to_rfc3339();
+    graph
+        .conn
+        .execute(
+            "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            libsql::params!["entity_merge", group_id.clone(), now, pre_state_json, inputs_json],
+        )
+        .await?;
+
+    // Return the namespace this merge scoped, for the post-commit
+    // `mutation_logged_total{group_id}` label (spec §8.2).
+    Ok(group_id)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1209,8 +1606,16 @@ mod tests {
         let remapped_id = fact_id_of(&graph, "loser", "knows").await;
         let untouched_id = fact_id_of(&graph, "untouched_subject", "knows").await;
 
-        apply_entity_merge(&graph, "loser", "keeper")
-            .await
+        apply_entity_merge(
+            &graph,
+            EntityMergeParams {
+                loser_id: "loser",
+                keeper_id: "keeper",
+                site: MergeSite::Canonicalize,
+                structural_signal: false,
+            },
+        )
+        .await
             .expect("merge");
 
         // The remapped fact's endpoint is now `keeper` (subject_id rewritten) AND it
@@ -1243,8 +1648,16 @@ mod tests {
         plant_fact_rel(&graph, gid, "asserter", "knows", "loser").await;
         let remapped_id = fact_id_of(&graph, "asserter", "knows").await;
 
-        apply_entity_merge(&graph, "loser", "keeper")
-            .await
+        apply_entity_merge(
+            &graph,
+            EntityMergeParams {
+                loser_id: "loser",
+                keeper_id: "keeper",
+                site: MergeSite::Canonicalize,
+                structural_signal: false,
+            },
+        )
+        .await
             .expect("merge");
 
         assert_eq!(

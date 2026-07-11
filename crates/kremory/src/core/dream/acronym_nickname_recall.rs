@@ -240,6 +240,13 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
     // ── Step 4/5: write_gate decision per pair + atomic writes (spec §3.3) ───
     let run_id = uuid::Uuid::new_v4().to_string();
 
+    // Anti-re-merge nogood (Site #5 of THREE — the V3-fix bypass, spec §6.2): load
+    // the group's split-pair bans ONCE before the write loop. Site #5's
+    // `WriteDecision::Merge` arm calls `apply_merge_with_audit` directly, so without
+    // this guard an `unmerge`d pair would silently re-merge through it.
+    let nogoods =
+        crate::core::dream::provenance::reversal::load_merge_nogoods(graph, group_id).await?;
+
     for (pair_id, pair) in nominated.iter().enumerate() {
         let verdict = verdicts_by_pair_id.get(&pair_id).cloned();
         let decision = write_gate(WriteGateInputs {
@@ -260,6 +267,21 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
 
         match decision {
             WriteDecision::Merge => {
+                // Nogood guard (spec §6.2, Site #5): a split pair `unmerge` recorded
+                // must NOT re-merge through this bypass. Site #5 keeps `pair.a` and
+                // remaps `pair.b`, so `sorted_pair(pair.a, pair.b)` is the same
+                // sorted-pair nogood key written at merge time.
+                if nogoods.contains(&crate::core::dream::provenance::reversal::sorted_pair(
+                    &pair.a, &pair.b,
+                )) {
+                    report.rejected += 1;
+                    counter!(
+                        "kremory.graph.merge_nogood_skip_total",
+                        "site" => "site5",
+                    )
+                    .increment(1);
+                    continue;
+                }
                 // spec §3.3: reuse `canonicalization::apply_merge`'s exact
                 // destructive remap. Keeper = whichever id `apply_merge`
                 // treats as `keeper_id` — Site #5 has no cosine/description-
@@ -279,6 +301,13 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                     crate::core::canonicalization::ApplyMergeWithAuditParams {
                         loser_id: &pair.b,
                         keeper_id: &pair.a,
+                        site: crate::core::dream::provenance::MergeSite::Site5AcronymNickname,
+                        // Site #5 nominates via the deterministic structural
+                        // pre-filter (initialism / graph co-occurrence), so the
+                        // merge carries a structural signal (spec §2.3, Quinn L3) —
+                        // threaded explicitly, mirroring the audit row's
+                        // `structural_signal: true` below.
+                        structural_signal: true,
                         audit: Some(crate::core::canonicalization::IdentityVerdictAuditRow {
                             site: SITE_LABEL,
                             group_id,
@@ -1169,6 +1198,94 @@ mod tests {
         assert!(
             rows.next().await.expect("row iter").is_none(),
             "exactly one audit row — no extras"
+        );
+    }
+
+    /// Reversible-graph-mutations §6.2 V3-fix proof (Site #5): merge → `unmerge`
+    /// → re-run the SAME pass → the split pair is NOT re-merged. Site #5's
+    /// `WriteDecision::Merge` arm was the previously-UNGUARDED bypass; this test
+    /// enumerates it so a regression re-opening the bypass fails here.
+    #[tokio::test]
+    async fn nogood_prevents_remerge_site5() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        insert_entity(&graph, "IBM", "g_ng5", "A technology company.").await;
+        insert_entity(
+            &graph,
+            "International Business Machines",
+            "g_ng5",
+            "A technology company headquartered in New York.",
+        )
+        .await;
+
+        let llm = ScriptedVerdictProvider {
+            json: r#"{"verdicts":[{"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"same company, acronym"}]}"#
+                .to_string(),
+        };
+
+        // ── First pass: the pair merges (write_gate row 5) ──
+        let r1 = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g_ng5",
+                model_id: "test-model",
+            },
+        )
+        .await
+        .expect("first acronym pass");
+        assert_eq!(r1.merges_applied, 1, "first pass merges the acronym pair");
+        assert_eq!(count_entities(&conn, "g_ng5").await, 1, "one entity after merge");
+
+        // ── unmerge: reverse it + record the nogood (site = site5) ──
+        let mutation_id: i64 = {
+            let mut rows = conn
+                .query(
+                    "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'",
+                    (),
+                )
+                .await
+                .expect("log query");
+            rows.next()
+                .await
+                .expect("row")
+                .expect("one entity_merge row")
+                .get::<i64>(0)
+                .expect("id")
+        };
+        let outcome = crate::core::dream::provenance::reversal::unmerge(&graph, mutation_id)
+            .await
+            .expect("unmerge");
+        assert!(outcome.nogood_recorded, "unmerge records the nogood");
+        assert_eq!(
+            count_entities(&conn, "g_ng5").await,
+            2,
+            "both entities restored after unmerge"
+        );
+
+        // ── Second pass: the SAME merge is now blocked by the Site #5 nogood ──
+        let r2 = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g_ng5",
+                model_id: "test-model",
+            },
+        )
+        .await
+        .expect("second acronym pass");
+        assert_eq!(
+            r2.merges_applied, 0,
+            "Site #5 nogood must block the re-merge (V3 fix)"
+        );
+        assert_eq!(
+            r2.rejected, 1,
+            "the nogood-skipped pair is counted as rejected"
+        );
+        assert_eq!(
+            count_entities(&conn, "g_ng5").await,
+            2,
+            "both entities survive — the split pair was NOT re-merged"
         );
     }
 

@@ -65,7 +65,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use metrics::counter;
 
-use crate::core::canonicalization::apply_entity_merge;
+use crate::core::canonicalization::{EntityMergeParams, apply_entity_merge};
 use crate::core::error::Result;
 use crate::core::graph::InsertEntityWithGroupParams;
 use crate::core::schema::TemporalGraph;
@@ -256,8 +256,27 @@ pub async fn cross_episode(
     // this run can never manufacture new eligibility mid-pass (the non-convergence
     // trap). Idempotency (P-INV5) then follows: after this run each identity cluster is
     // one entity, so the next run admits no eligible pair.
+    // Anti-re-merge nogood (Site #1 of THREE, spec §6.2 V3 fix): load the group's
+    // split-pair bans ONCE before the gate loop (like `load_entity_slots`); a pair
+    // `unmerge` recorded must NOT be re-merged here on the next `dream()`.
+    let nogoods =
+        crate::core::dream::provenance::reversal::load_merge_nogoods(graph, group_id).await?;
+
     let mut eligible: Vec<Candidate> = Vec::new();
     for cand in &candidates {
+        // Nogood guard (spec §6.2, Site #1): drop a split pair before it is gated —
+        // exactly like a homonym drop, so it never reaches the clique cover.
+        if nogoods.contains(&crate::core::dream::provenance::reversal::sorted_pair(
+            &cand.keeper,
+            &cand.loser,
+        )) {
+            counter!(
+                "kremory.graph.merge_nogood_skip_total",
+                "site" => "cross_episode",
+            )
+            .increment(1);
+            continue;
+        }
         // Episode-span gate (P3.2 / P-INV2): the pair must span ≥ 2 DISTINCT episodes.
         // A pair confined to ONE shared episode is a single mention, not recurrence.
         if !spans_distinct_episodes(&slots, &cand.keeper, &cand.loser) {
@@ -409,7 +428,19 @@ pub async fn cross_episode(
             // counted (`report.count`) + emitted (`emit_decision`, mode=Shadow), but the
             // destructive `apply_entity_merge` fusion is SKIPPED — no entity is fused.
             if !dry_run {
-                apply_entity_merge(graph, loser, &keeper).await?;
+                apply_entity_merge(
+                    graph,
+                    EntityMergeParams {
+                        loser_id: loser,
+                        keeper_id: &keeper,
+                        site: crate::core::dream::provenance::MergeSite::CrossEpisode,
+                        // Cross-episode fusion only fires past the structural
+                        // rarity-weighted corroboration gate (ADR-067 F2), so the
+                        // merge is structurally corroborated (spec §2.3, Quinn L3).
+                        structural_signal: true,
+                    },
+                )
+                .await?;
             }
             match clique_path {
                 MergePath::Exact => exact_merges += 1,
@@ -1651,6 +1682,7 @@ mod tests {
                 r.get::<i64>(2).expect("corroboration_inert"),
             )
         }
+        #[allow(clippy::too_many_arguments)] // test helper; 4 legit params (test files exempt per CLAUDE.md)
         async fn fact_id_where(graph: &TemporalGraph, gid: &str, col: &str, val: &str) -> i64 {
             // `col` is a hard-coded test literal ("subject_id"/"object_id") — no injection.
             let sql = format!("SELECT id FROM facts WHERE group_id = ?1 AND {col} = ?2");
@@ -1681,8 +1713,16 @@ mod tests {
         let obj_fact = fact_id_where(&graph, gid, "object_id", "loser").await;
 
         // Merge loser → keeper (stamps both facts corroboration_inert = 1).
-        apply_entity_merge(&graph, "loser", "keeper")
-            .await
+        apply_entity_merge(
+            &graph,
+            EntityMergeParams {
+                loser_id: "loser",
+                keeper_id: "keeper",
+                site: crate::core::dream::provenance::MergeSite::CrossEpisode,
+                structural_signal: true,
+            },
+        )
+        .await
             .expect("apply_entity_merge");
         assert!(
             !entities_in_group(&graph, gid)

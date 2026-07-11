@@ -693,6 +693,7 @@ mod tests {
     /// Does `decision_total` carry exactly the `(op, mode, outcome)` labels with the
     /// given count? Filters a `DebuggingRecorder` snapshot (the reuse pattern from
     /// `tests/consolidation_supersession_test.rs`).
+    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
     fn decision_counter(
         snapshotter: &metrics_util::debugging::Snapshotter,
         op: &str,

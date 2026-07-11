@@ -74,6 +74,7 @@ pub mod dream;
 pub mod forget;
 pub mod recall;
 pub mod remember;
+pub mod reverse;
 pub mod supersede;
 pub mod update;
 
@@ -81,8 +82,24 @@ pub use dream::*;
 pub use forget::*;
 pub use recall::*;
 pub use remember::*;
+pub use reverse::*;
 pub use supersede::*;
 pub use update::*;
+
+// Reversible-graph-mutations honest outcome types (arch-spec §3.1) — re-exported
+// from the (`pub(crate)`) provenance module so `Memory::unmerge` /
+// `restore_archived_fact` / `unsupersede` return a nameable public type.
+pub use crate::core::dream::provenance::{
+    RestoreArchivedOutcome, UnmergeOutcome, UnsupersedeOutcome,
+};
+
+// Reversible-graph-mutations consumer INSPECT surface (arch-spec §3 "Inspect
+// surface") — the SEE half of the see+fix story. `MutationRecord` is the
+// consumer-facing view a `mutation_history` / `list_mutations` query returns;
+// `MutationKind` tags it; `MutationFilter` shapes `list_mutations`.
+pub use crate::core::dream::provenance::{
+    MutationFilter, MutationKind, MutationRecord,
+};
 
 use std::future::IntoFuture;
 use std::path::Path;
@@ -690,6 +707,85 @@ impl Memory {
             namespace: None,
             valid_to: None,
             reason: None,
+        }
+    }
+
+    /// Reverse a prior entity-merge, fully restoring the loser entity, its facts,
+    /// its episodic edges, and the keeper's overwritten `access_count` /
+    /// `ner_confidence` (reversible-graph-mutations arch-spec §4.2). Records a
+    /// merge NOGOOD so the next `dream()` will NOT re-merge the split pair (§6.2).
+    ///
+    /// Idempotent: a second call returns `already_undone = true`. Must call
+    /// `.execute()` (mutating op).
+    #[must_use = "UnmergeRequest must call .execute() to run"]
+    pub fn unmerge(&self, mutation_id: i64) -> UnmergeRequest<'_> {
+        UnmergeRequest {
+            memory: self,
+            mutation_id,
+        }
+    }
+
+    /// Restore a fact previously moved to `facts_archive` (P2 archival) back into
+    /// `facts` (arch-spec §3.2 / §4.4). Idempotent: `already_live = true` when the
+    /// fact is already live. Must call `.execute()`.
+    #[must_use = "RestoreArchivedRequest must call .execute() to run"]
+    pub fn restore_archived_fact(&self, archived_fact_id: i64) -> RestoreArchivedRequest<'_> {
+        RestoreArchivedRequest {
+            memory: self,
+            archived_fact_id,
+        }
+    }
+
+    /// Clear a supersession bound (`valid_to` / `expired_at`) set by
+    /// `supersede(...)`, re-opening the fact as currently-true (arch-spec §4.5).
+    /// Idempotent: `NotSuperseded` when no bound was set. Must call `.execute()`.
+    #[must_use = "UnsupersedeRequest must call .execute() to run"]
+    pub fn unsupersede(&self, fact_id: i64) -> UnsupersedeRequest<'_> {
+        UnsupersedeRequest {
+            memory: self,
+            fact_id,
+        }
+    }
+
+    /// Inspect the mutations `dream()` applied to a single entity — the **SEE**
+    /// half of the reversible-mutation story (arch-spec §3 "Inspect surface").
+    ///
+    /// Returns a newest-first `Vec<MutationRecord>` of every logged graph mutation
+    /// that touched `entity_id` (for an `entity_merge`, whether the entity was the
+    /// loser OR the keeper), each carrying the `mutation_id` to pass to
+    /// [`unmerge`](Self::unmerge). Includes already-undone mutations
+    /// (`undone = true`), so a reversed merge is still visible.
+    ///
+    /// Namespace: `.in_namespace(ns)` or a `default_namespace` on the builder is
+    /// required (an entity id is namespace-scoped). Read-only — `.await` it.
+    #[must_use = "MutationHistoryRequest must be .await-ed"]
+    pub fn mutation_history<'a>(
+        &'a self,
+        entity_id: impl Into<String> + 'a,
+    ) -> MutationHistoryRequest<'a> {
+        MutationHistoryRequest {
+            memory: self,
+            entity_id: entity_id.into(),
+            namespace: None,
+        }
+    }
+
+    /// List the mutations `dream()` applied, newest-first — the **SEE** surface
+    /// for a whole namespace (arch-spec §3 "Inspect surface").
+    ///
+    /// Returns `Vec<MutationRecord>` (each carrying its `mutation_id` to undo).
+    /// Filter with `.kind(k)` / `.since(ts)` / `.include_undone(true)`; scope with
+    /// `.in_namespace(ns)` (else the `default_namespace`, else ALL namespaces).
+    /// Default view is LIVE (still-reversible) mutations only. Read-only —
+    /// `.await` it.
+    #[must_use = "ListMutationsRequest must be .await-ed"]
+    pub fn list_mutations(&self) -> ListMutationsRequest<'_> {
+        ListMutationsRequest {
+            memory: self,
+            namespace: None,
+            kind: None,
+            since: None,
+            include_undone: false,
         }
     }
 
