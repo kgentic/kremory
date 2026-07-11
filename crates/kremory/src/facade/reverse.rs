@@ -17,7 +17,8 @@ use std::future::IntoFuture;
 
 use super::*;
 
-use crate::core::dream::provenance::{inspect, MutationKind, MutationRecord};
+use crate::core::dream::provenance::edit::{EntityEditOp, EntityEditParams};
+use crate::core::dream::provenance::{inspect, EditEntityOutcome, MutationKind, MutationRecord};
 use crate::memory::engine_handle::namespace_to_group_id;
 
 // ── UnmergeRequest ─────────────────────────────────────────────────────────
@@ -121,6 +122,123 @@ impl UnsupersedeRequest<'_> {
             )
         })?;
         crate::core::dream::provenance::reversal::unsupersede(tg, self.fact_id)
+            .await
+            .map_err(MemoryError::Core)
+    }
+}
+
+// ── EditEntityRequest (§4.3 — the diarization rename/retype cascade) ─────────
+
+/// Edit an entity (retype or rename/rekey) with full FK-propagation + provenance
+/// (§4.3). Obtain via `mem.edit_entity(entity_id)`, then set exactly one of
+/// `.rename(new_id)` / `.retype(type_id)`. Must call `.execute()`.
+pub struct EditEntityRequest<'a> {
+    pub(super) memory: &'a Memory,
+    pub(super) entity_id: String,
+    pub(super) namespace: Option<Namespace>,
+    pub(super) new_id: Option<String>,
+    pub(super) new_type_id: Option<i64>,
+}
+
+impl<'a> EditEntityRequest<'a> {
+    /// Scope the entity to `ns` (overrides the `Memory` default namespace).
+    pub fn in_namespace(mut self, ns: Namespace) -> Self {
+        self.namespace = Some(ns);
+        self
+    }
+
+    /// Rename (REKEY) the entity to `new_id`, re-pointing every dependent FK. A
+    /// rename INTO an existing id errors `EntityEditConflict`. Mutually exclusive
+    /// with `.retype(...)`.
+    #[must_use]
+    pub fn rename(mut self, new_id: impl Into<String>) -> Self {
+        self.new_id = Some(new_id.into());
+        self
+    }
+
+    /// Re-type the entity to `type_id` (pins it `ConsumerPinned`, invalidates its
+    /// community membership, re-opens the freeze). Mutually exclusive with
+    /// `.rename(...)`.
+    #[must_use]
+    pub fn retype(mut self, type_id: i64) -> Self {
+        self.new_type_id = Some(type_id);
+        self
+    }
+
+    /// Execute the edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Memory` lacks a `TemporalGraph`, if the namespace cannot
+    /// be resolved, if neither/both of `rename`/`retype` were set
+    /// (`EntityEditInvalid`), if the entity does not exist (`EntityEditNotFound`),
+    /// or if a rename targets an occupied id (`EntityEditConflict`).
+    pub async fn execute(self) -> Result<EditEntityOutcome> {
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::edit_entity requires a Memory constructed via the builder/providers \
+                 path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        let op = match (self.new_id, self.new_type_id) {
+            (Some(new_id), None) => EntityEditOp::Rename { new_id },
+            (None, Some(new_type_id)) => EntityEditOp::Retype { new_type_id },
+            (None, None) => {
+                return Err(MemoryError::Core(crate::core::error::Error::EntityEditInvalid {
+                    detail: "specify exactly one of .rename(new_id) or .retype(type_id)".into(),
+                }));
+            }
+            (Some(_), Some(_)) => {
+                return Err(MemoryError::Core(crate::core::error::Error::EntityEditInvalid {
+                    detail: ".rename(new_id) and .retype(type_id) are mutually exclusive — \
+                             call one per edit"
+                        .into(),
+                }));
+            }
+        };
+        let ns = self.memory.resolve_namespace(self.namespace)?;
+        let group_id = namespace_to_group_id(&ns);
+        crate::core::dream::provenance::edit::edit_entity(
+            tg,
+            EntityEditParams {
+                entity_id: self.entity_id,
+                group_id,
+                op,
+            },
+        )
+        .await
+        .map_err(MemoryError::Core)
+    }
+}
+
+// ── UndoEntityEditRequest (§4.3 — reverse a prior edit) ─────────────────────
+
+/// Reverse a prior `edit_entity` from its provenance snapshot (§4.3). Obtain via
+/// `mem.undo_entity_edit(mutation_id)`. Idempotent: a second call is a zero-count
+/// no-op. Must call `.execute()`.
+pub struct UndoEntityEditRequest<'a> {
+    pub(super) memory: &'a Memory,
+    pub(super) mutation_id: i64,
+}
+
+impl UndoEntityEditRequest<'_> {
+    /// Execute the reversal.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Memory` lacks a `TemporalGraph`, if `mutation_id` names
+    /// no `entity_edit` log row (`EntityEditNotFound`), or if the snapshot fails to
+    /// deserialize (parse-loudly).
+    pub async fn execute(self) -> Result<EditEntityOutcome> {
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::undo_entity_edit requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        crate::core::dream::provenance::edit::undo_entity_edit(tg, self.mutation_id)
             .await
             .map_err(MemoryError::Core)
     }

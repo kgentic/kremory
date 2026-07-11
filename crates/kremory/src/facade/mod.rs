@@ -90,7 +90,7 @@ pub use update::*;
 // from the (`pub(crate)`) provenance module so `Memory::unmerge` /
 // `restore_archived_fact` / `unsupersede` return a nameable public type.
 pub use crate::core::dream::provenance::{
-    RestoreArchivedOutcome, UnmergeOutcome, UnsupersedeOutcome,
+    EditEntityOutcome, RestoreArchivedOutcome, UnmergeOutcome, UnsupersedeOutcome,
 };
 
 // Reversible-graph-mutations consumer INSPECT surface (arch-spec §3 "Inspect
@@ -786,6 +786,45 @@ impl Memory {
         UnsupersedeRequest {
             memory: self,
             fact_id,
+        }
+    }
+
+    /// Edit an entity — retype or rename — with full FK-propagation, provenance
+    /// snapshot, and reconciler-freeze re-open (reversible-graph-mutations
+    /// arch-spec §4.3). Completes the diarization flow: after `unmerge`, rename
+    /// `"Speaker 1"` to `"Alice"` and every one of its facts / episodic edges /
+    /// archived facts / community membership re-points to `alice`.
+    ///
+    /// Choose exactly one operation on the builder:
+    /// - `.rename(new_id)` — REKEY the entity's id (rejects renaming INTO an
+    ///   existing id with `Error::EntityEditConflict`; merge explicitly instead).
+    /// - `.retype(type_id)` — change the entity's type (pins it `ConsumerPinned`).
+    ///
+    /// The edit is undoable via [`undo_entity_edit`](Self::undo_entity_edit) with
+    /// the returned `EditEntityOutcome.mutation_id`. Must call `.execute()`.
+    #[must_use = "EditEntityRequest must call .execute() to run"]
+    pub fn edit_entity<'a>(
+        &'a self,
+        entity_id: impl Into<String> + 'a,
+    ) -> EditEntityRequest<'a> {
+        EditEntityRequest {
+            memory: self,
+            entity_id: entity_id.into(),
+            namespace: None,
+            new_id: None,
+            new_type_id: None,
+        }
+    }
+
+    /// Reverse a prior `edit_entity` (retype or rename/rekey) from its provenance
+    /// snapshot (arch-spec §4.3). Pass the `mutation_id` from the
+    /// `EditEntityOutcome` (or from `mutation_history` / `list_mutations`).
+    /// Idempotent: a second call is a zero-count no-op. Must call `.execute()`.
+    #[must_use = "UndoEntityEditRequest must call .execute() to run"]
+    pub fn undo_entity_edit(&self, mutation_id: i64) -> UndoEntityEditRequest<'_> {
+        UndoEntityEditRequest {
+            memory: self,
+            mutation_id,
         }
     }
 
