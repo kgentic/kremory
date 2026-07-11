@@ -213,11 +213,13 @@ fn select_keeper<'a>(id_a: &'a str, id_b: &'a str) -> (&'a str, &'a str) {
 ///
 /// `dry_run` (ADR-070 Stage 2 shadow gate): when `true`, every clique-cover + F2
 /// corroboration decision is computed and emitted EXACTLY as it would live, but the
-/// `apply_entity_merge` write is SKIPPED — no entity is fused. `report.count` is
-/// incremented identically either way (it counts DECISIONS, not writes), so
-/// `DreamSummary.cross_episode_merges` under shadow mode tells an operator "the op
-/// WOULD have merged N pairs" (ADR-070 §2.3 DoD-2.3.1). The `mode` label on every
-/// `emit_decision` (`shadow`/`applied`) is how a consumer distinguishes the two.
+/// `apply_entity_merge` write is SKIPPED — no entity is fused. `report.count`
+/// (would-merge) is incremented identically either way (it counts DECISIONS, not
+/// writes), so `DreamSummary.cross_episode_would_merge` under shadow mode tells an
+/// operator "the op WOULD have merged N pairs" (ADR-070 §2.3 DoD-2.3.1), while
+/// `report.merged` / `DreamSummary.cross_episode_merged` (D5) counts the fusions
+/// that ACTUALLY committed (0 in shadow). The `mode` label on every
+/// `emit_decision` (`shadow`/`applied`) also distinguishes the two.
 ///
 /// Args count = 3 — plain args, no params struct needed (TD-042 threshold 3).
 #[doc(hidden)]
@@ -411,6 +413,10 @@ pub async fn cross_episode(
     let mut claimed: BTreeSet<String> = BTreeSet::new();
     let mut exact_merges = 0usize;
     let mut fuzzy_merges = 0usize;
+    // D5 (consumer-API hardening): decisions that ACTUALLY fused (`!dry_run`) — the
+    // in-band would-merge/merged split. Counts only when the destructive
+    // `apply_entity_merge` write below fired; stays 0 in shadow mode.
+    let mut applied_merges = 0usize;
     for clique in &all_cliques {
         if clique.iter().any(|m| claimed.contains(m)) {
             continue; // overlaps an already-accepted clique — deferred, not merged.
@@ -441,6 +447,8 @@ pub async fn cross_episode(
                     },
                 )
                 .await?;
+                // D5: this decision actually fused an entity (apply mode).
+                applied_merges += 1;
             }
             match clique_path {
                 MergePath::Exact => exact_merges += 1,
@@ -488,6 +496,9 @@ pub async fn cross_episode(
     );
 
     report.count = exact_merges + fuzzy_merges;
+    // D5: would-merge (`count`) vs merged (`applied_merges`). In shadow mode
+    // `applied_merges == 0` while `count` reflects the decisions the op WOULD apply.
+    report.merged = applied_merges;
     Ok(report)
 }
 
@@ -1517,6 +1528,17 @@ mod tests {
             "report.count is identical across dry_run true/false"
         );
         assert_eq!(report_applied.count, 1, "the corroborated pair is one decision");
+        // (a2) D5 (consumer-API hardening): would-merge (`count`) vs merged
+        // (`applied_merges`) DIVERGE across modes — applied fused 1, shadow fused 0,
+        // while both DECIDED 1. This is the in-band split.
+        assert_eq!(
+            report_applied.merged, 1,
+            "apply mode: report.merged == count (the decision actually fused)"
+        );
+        assert_eq!(
+            report_shadow.merged, 0,
+            "shadow mode: report.merged == 0 (decided but fused nothing)"
+        );
         // (b) entity ROW count: applied fuses (−1); shadow leaves it untouched.
         assert_eq!(
             entities_after_applied,

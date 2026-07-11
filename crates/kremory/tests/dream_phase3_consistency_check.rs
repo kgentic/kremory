@@ -91,10 +91,9 @@ async fn dream_skips_consistency_check_when_opted_out() {
         .await
         .expect("Memory::open must succeed");
 
-    let opts = kremory::DreamOpts {
-        include_consistency_check: false,
-        ..Default::default()
-    };
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut opts = kremory::DreamOpts::default();
+    opts.include_consistency_check = false;
     mem.dream()
         .opts(opts)
         .await

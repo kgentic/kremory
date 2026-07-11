@@ -116,8 +116,9 @@ async fn supersede_then_dream_closes_window() {
         .expect("mem.supersede(...).execute() must succeed");
     assert_eq!(
         outcome,
-        SupersedeOutcome::Applied,
-        "supersede must apply (bound_at is after valid_from and fact exists)"
+        // D4: execute() bounds only — retirement is deferred to the dream sweep below.
+        SupersedeOutcome::Bounded { retired: 0 },
+        "supersede must bound (bound_at is after valid_from and fact exists)"
     );
 
     let mid = graph
@@ -139,20 +140,20 @@ async fn supersede_then_dream_closes_window() {
 
     // ── Phase 2: CONSUMER — a REAL mem.dream() call with
     // include_supersession_sweep: true closes the window. ───────────────────
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut opts = DreamOpts::default();
+    opts.include_type_discovery = false;
+    opts.include_consistency_check = false;
+    opts.include_type_registry_collapse = false;
+    opts.include_acronym_nickname_recall = false;
+    opts.include_type_novelty_llm_verify = false;
+    opts.include_community_detection = false;
+    opts.include_cross_episode_merges = false;
+    opts.include_supersession_sweep = true;
     let summary = mem
         .dream()
         .in_namespace(ns)
-        .opts(DreamOpts {
-            include_type_discovery: false,
-            include_consistency_check: false,
-            include_type_registry_collapse: false,
-            include_acronym_nickname_recall: false,
-            include_type_novelty_llm_verify: false,
-            include_community_detection: false,
-            include_cross_episode_merges: false,
-            include_supersession_sweep: true,
-            ..Default::default()
-        })
+        .opts(opts)
         .await
         .expect("mem.dream() with include_supersession_sweep must succeed");
 

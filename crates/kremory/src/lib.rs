@@ -61,10 +61,18 @@ pub use core::engine::{engine, engine_init};
 
 // ── Facade re-exports (Tier 1 / Tier 2 public surface — Story A.8) ───────────
 pub use facade::{
-    DreamFireAndForget, DreamRequest, DreamSummary, EpisodeEntryBuilder, ForgetRequest, Memory,
-    MemoryBuilder, NoEmb, NoLlm, RecallRawRequest, RecallRequest, RecallTemplate,
-    RememberBatchBuilder, RememberRequest, SupersedeOutcome, SupersedeRequest, WithEmb, WithLlm,
-    WithLlmTrackedParams,
+    ConsolidationOpsRan, DreamFireAndForget, DreamRequest, DreamSummary, EpisodeEntryBuilder,
+    ForgetRequest, Memory, MemoryBuilder, NoEmb, NoLlm, RecallRawRequest, RecallRequest,
+    RecallTemplate, RememberBatchBuilder, RememberRequest, SupersedeOutcome, SupersedeRequest,
+    WithEmb, WithLlm, WithLlmTrackedParams,
+};
+// Reversible-graph-mutations (ADR-073 Tier-1) consumer surface — the honest
+// reversal outcome types + the inspect view. Re-exported at the crate root so
+// the napi binding (kremory-napi) can name them 1:1, matching the crate-root
+// convention already used for `SupersedeOutcome` / `DreamSummary`.
+pub use facade::{
+    MutationFilter, MutationKind, MutationRecord, RestoreArchivedOutcome, UnmergeOutcome,
+    UnsupersedeOutcome,
 };
 // Dream scheduler + pass API (Phase C, v0.1.1)
 pub use core::ingest::DreamPassOpts;
@@ -85,8 +93,8 @@ pub use memory::{
 pub use memory::types::{ImmutabilityLevel, InvalidPolicyError, NamespacePolicy};
 // Handle / lifecycle types (facade + substrate consumers)
 pub use memory::types::{
-    AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamMode, DreamOpts,
-    DreamStatus, EpisodeCommit, SubmitOpts,
+    AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, CrossEpisodeMode, DreamHandle, DreamMode,
+    DreamOpts, DreamStatus, EpisodeCommit, SubmitOpts,
 };
 pub use memory::IngestStatus;
 // Event sinks + event types (Tier 2 consumers)

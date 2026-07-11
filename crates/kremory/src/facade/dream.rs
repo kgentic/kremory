@@ -58,6 +58,35 @@ impl<'a> DreamRequest<'a> {
         self
     }
 
+    /// L1 opinionated control for the cross-episode entity-merge op (consumer-API
+    /// hardening D3). Maps the honest tri-state [`CrossEpisodeMode`] onto the two
+    /// coupled `DreamOpts` bools so a consumer never has to reason about which bool
+    /// combination means what:
+    ///
+    /// - [`CrossEpisodeMode::Off`] → `include_cross_episode_merges = false`
+    /// - [`CrossEpisodeMode::Shadow`] → `include = true`, `dry_run = true`
+    /// - [`CrossEpisodeMode::Apply`] → `include = true`, `dry_run = false`
+    ///
+    /// Composes with any `DreamOpts` already set via [`Self::opts`] — only the two
+    /// cross_episode fields are overwritten; every other knob is preserved. Flows
+    /// through both the awaited and `fire_and_forget` paths.
+    pub fn cross_episode(mut self, mode: CrossEpisodeMode) -> Self {
+        let mut opts = self.opts.take().unwrap_or_default();
+        match mode {
+            CrossEpisodeMode::Off => opts.include_cross_episode_merges = false,
+            CrossEpisodeMode::Shadow => {
+                opts.include_cross_episode_merges = true;
+                opts.cross_episode_dry_run = true;
+            }
+            CrossEpisodeMode::Apply => {
+                opts.include_cross_episode_merges = true;
+                opts.cross_episode_dry_run = false;
+            }
+        }
+        self.opts = Some(opts);
+        self
+    }
+
     async fn execute_blocking(self) -> Result<DreamSummary> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
         let sink = self.memory.resolve_sink(self.sink);
@@ -535,9 +564,18 @@ impl<'a> DreamRequest<'a> {
         // DreamSummary consolidation fields, replacing their honest-zeros. Inert
         // (all zero) unless a consolidation op was enabled + fired.
         summary.communities_updated = consolidation.communities_updated;
-        summary.cross_episode_merges = consolidation.cross_episode_merges;
+        // D5: would-merge (decisions) vs merged (actual fusions) — in-band split.
+        summary.cross_episode_would_merge = consolidation.cross_episode_merges;
+        summary.cross_episode_merged = consolidation.cross_episode_merged;
         summary.supersessions_recorded = consolidation.supersessions_recorded;
         summary.facts_archived = consolidation.facts_archived;
+        // D1b: per-op actually-ran signal (disambiguates disabled vs ran-empty).
+        summary.consolidation_ops_ran = crate::facade::ConsolidationOpsRan {
+            community: consolidation.ran_community_detection,
+            cross_episode: consolidation.ran_cross_episode,
+            archival: consolidation.ran_fact_archival,
+            supersession_sweep: consolidation.ran_supersession_sweep,
+        };
         summary.warnings.extend(consolidation.warnings);
         // TD-060 (ADR-071 §Item 4a step 6, Vera HIGH-1): propagate the budget flag
         // past the internal ConsolidationSummary — without this hop the flag is
@@ -590,5 +628,78 @@ impl<'a> IntoFuture for DreamFireAndForget<'a> {
             })
             .await
         })
+    }
+}
+
+#[cfg(test)]
+mod cross_episode_mode_tests {
+    //! D3 (consumer-API hardening): `DreamRequest::cross_episode(mode)` maps the
+    //! honest tri-state onto the two coupled `DreamOpts` bools.
+    use std::sync::Arc;
+
+    use crate::core::provider::{DynEmbeddingProvider, MockChatProvider, NullEmbeddingProvider};
+    use crate::memory::types::CrossEpisodeMode;
+
+    use super::Memory;
+
+    async fn make_memory() -> Memory {
+        let llm: Arc<dyn crate::memory::ChatProvider> = Arc::new(MockChatProvider::null());
+        let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
+        Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .await
+            .expect("Memory must build")
+    }
+
+    #[tokio::test]
+    async fn cross_episode_mode_maps_to_opts_bools() {
+        let mem = make_memory().await;
+
+        let off = mem
+            .dream()
+            .cross_episode(CrossEpisodeMode::Off)
+            .opts
+            .expect("opts set");
+        assert!(!off.include_cross_episode_merges, "Off → include=false");
+
+        let shadow = mem
+            .dream()
+            .cross_episode(CrossEpisodeMode::Shadow)
+            .opts
+            .expect("opts set");
+        assert!(shadow.include_cross_episode_merges, "Shadow → include=true");
+        assert!(shadow.cross_episode_dry_run, "Shadow → dry_run=true");
+
+        let apply = mem
+            .dream()
+            .cross_episode(CrossEpisodeMode::Apply)
+            .opts
+            .expect("opts set");
+        assert!(apply.include_cross_episode_merges, "Apply → include=true");
+        assert!(!apply.cross_episode_dry_run, "Apply → dry_run=false");
+    }
+
+    #[tokio::test]
+    async fn cross_episode_preserves_other_opts_set_via_opts() {
+        // Composing with a prior `.opts(...)` must overwrite ONLY the two
+        // cross_episode fields, preserving every other knob.
+        let mem = make_memory().await;
+        let base = crate::memory::types::DreamOpts {
+            include_community_detection: false,
+            include_fact_archival: false,
+            ..Default::default()
+        };
+        let composed = mem
+            .dream()
+            .opts(base)
+            .cross_episode(CrossEpisodeMode::Apply)
+            .opts
+            .expect("opts set");
+        assert!(composed.include_cross_episode_merges);
+        assert!(!composed.cross_episode_dry_run);
+        // Untouched knobs preserved from the base opts.
+        assert!(!composed.include_community_detection, "community preserved");
+        assert!(!composed.include_fact_archival, "archival preserved");
     }
 }

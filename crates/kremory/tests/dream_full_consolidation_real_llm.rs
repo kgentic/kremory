@@ -264,18 +264,18 @@ async fn build_vcr_pair(
 /// dream call, matching the isolated `consolidation_archive_real_llm.rs` trigger
 /// arm's planting convention.
 fn all_consolidation_on() -> DreamOpts {
-    DreamOpts {
-        include_community_detection: true,
-        include_cross_episode_merges: true,
-        // dry_run=false → exercise REAL fusion (this real-LLM harness asserts merges +
-        // idempotency, which require the destructive write to actually commit, not shadow).
-        cross_episode_dry_run: false,
-        include_supersession_sweep: true,
-        include_supersession_llm_nominate: false,
-        include_fact_archival: true,
-        archive_grace_days: Some(0),
-        ..DreamOpts::default()
-    }
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut o = DreamOpts::default();
+    o.include_community_detection = true;
+    o.include_cross_episode_merges = true;
+    // dry_run=false → exercise REAL fusion (this real-LLM harness asserts merges +
+    // idempotency, which require the destructive write to actually commit, not shadow).
+    o.cross_episode_dry_run = false;
+    o.include_supersession_sweep = true;
+    o.include_supersession_llm_nominate = false;
+    o.include_fact_archival = true;
+    o.archive_grace_days = Some(0);
+    o
 }
 
 // ── Direct-SQL helpers (targeted SELECTs, not the API under test) ─────────────
@@ -530,7 +530,7 @@ async fn happy_path() {
         "[full-consolidation-happy] communities_updated={} cross_episode_merges={} \
          supersessions_recorded={} facts_archived={} warnings={:?}",
         summary.communities_updated,
-        summary.cross_episode_merges,
+        summary.cross_episode_would_merge,
         summary.supersessions_recorded,
         summary.facts_archived,
         summary.warnings,
@@ -558,10 +558,10 @@ async fn happy_path() {
     // explicitly (not just omitted) so a future false-merge/false-archive
     // regression fails loudly.
     assert_eq!(
-        summary.cross_episode_merges, 0,
+        summary.cross_episode_would_merge, 0,
         "happy_path: cross_episode_merges must be the HONEST ZERO (distinct-domain real ingest \
          has no recurring name-slug across episodes); got {}",
-        summary.cross_episode_merges
+        summary.cross_episode_would_merge
     );
     assert_eq!(
         summary.supersessions_recorded, 0,
@@ -680,7 +680,7 @@ async fn homonym_trap_no_wrong_merge() {
 
     eprintln!(
         "[full-consolidation-homonym] cross_episode_merges={} communities_updated={}",
-        summary.cross_episode_merges, summary.communities_updated
+        summary.cross_episode_would_merge, summary.communities_updated
     );
 
     // The homonym pair must BOTH survive — the system-level RISK-001 proof.
@@ -697,10 +697,10 @@ async fn homonym_trap_no_wrong_merge() {
     // candidate pair is the homonym pair, which the guard must reject → the
     // system-level merge count is the HONEST ZERO.
     assert_eq!(
-        summary.cross_episode_merges, 0,
+        summary.cross_episode_would_merge, 0,
         "HOMONYM SAFETY VIOLATION: cross_episode_merges must be 0 (the only candidate pair in \
          this fixture is the guarded homonym pair); got {}",
-        summary.cross_episode_merges
+        summary.cross_episode_would_merge
     );
 
     // The real-ingest entity population is untouched by the planted homonym scenario.
@@ -754,7 +754,7 @@ async fn idempotency() {
          communities_updated={} cross_episode_merges={} supersessions_recorded={} \
          facts_archived={}",
         summary1.communities_updated,
-        summary1.cross_episode_merges,
+        summary1.cross_episode_would_merge,
         summary1.supersessions_recorded,
         summary1.facts_archived,
     );
@@ -773,7 +773,7 @@ async fn idempotency() {
          communities_updated={} cross_episode_merges={} supersessions_recorded={} \
          facts_archived={}",
         summary2.communities_updated,
-        summary2.cross_episode_merges,
+        summary2.cross_episode_would_merge,
         summary2.supersessions_recorded,
         summary2.facts_archived,
     );
@@ -782,10 +782,10 @@ async fn idempotency() {
     // over the graph shape) must report ZERO new work on the second run — the
     // graph didn't change between calls, so there is nothing left to consolidate.
     assert_eq!(
-        summary2.cross_episode_merges, 0,
+        summary2.cross_episode_would_merge, 0,
         "idempotency: cross_episode_merges must be 0 on the second dream() call (no new \
          candidate pairs on an unchanged graph); got {}",
-        summary2.cross_episode_merges
+        summary2.cross_episode_would_merge
     );
     assert_eq!(
         summary2.supersessions_recorded, 0,

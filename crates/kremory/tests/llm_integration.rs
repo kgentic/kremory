@@ -543,19 +543,19 @@ async fn dream_phase_returns_ok_summary() {
             .unwrap_or_else(|e| panic!("episode {i} must succeed: {e}"));
     }
 
+    // ADR-071 Item 1 turned cross_episode ON by default (in SHADOW); communities/
+    // archive follow in Item 2. This reconciliation-focused end-to-end test pins ALL
+    // consolidation flags OFF so its honest-zeros below stay valid across both items
+    // — the new default's shadow behaviour is covered by the P3 corpus gate +
+    // cross_episode shadow unit tests + dream_full_consolidation_real_llm (all-on).
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut dream_opts = kremory::memory::types::DreamOpts::default();
+    dream_opts.include_cross_episode_merges = false;
+    dream_opts.include_community_detection = false;
+    dream_opts.include_fact_archival = false;
     let summary = mem
         .dream()
-        // ADR-071 Item 1 turned cross_episode ON by default (in SHADOW); communities/
-        // archive follow in Item 2. This reconciliation-focused end-to-end test pins ALL
-        // consolidation flags OFF so its honest-zeros below stay valid across both items
-        // — the new default's shadow behaviour is covered by the P3 corpus gate +
-        // cross_episode shadow unit tests + dream_full_consolidation_real_llm (all-on).
-        .opts(kremory::memory::types::DreamOpts {
-            include_cross_episode_merges: false,
-            include_community_detection: false,
-            include_fact_archival: false,
-            ..Default::default()
-        })
+        .opts(dream_opts)
         .await
         .expect("dream() must return Ok after F-01 retirement");
 
@@ -565,7 +565,7 @@ async fn dream_phase_returns_ok_summary() {
         "communities_updated must be 0 — consolidation pinned OFF here (ADR-071)"
     );
     assert_eq!(
-        summary.cross_episode_merges, 0,
+        summary.cross_episode_would_merge, 0,
         "cross_episode_merges must be 0 — consolidation pinned OFF here (ADR-071)"
     );
     assert_eq!(

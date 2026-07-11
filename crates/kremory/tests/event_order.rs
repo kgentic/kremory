@@ -261,7 +261,9 @@ impl GraphHandle for StubIngestingHandle {
     ) -> kremory::memory::types::Result<kremory::DreamSummary> {
         Ok(kremory::DreamSummary {
             communities_updated: 0,
-            cross_episode_merges: 0,
+            cross_episode_would_merge: 0,
+            cross_episode_merged: 0,
+            consolidation_ops_ran: kremory::ConsolidationOpsRan::default(),
             supersessions_recorded: 0,
             facts_archived: 0,
             aliases_resolved: 0,
@@ -569,7 +571,9 @@ async fn submit_episode_contradiction_events_reach_sink() {
         ) -> kremory::memory::types::Result<kremory::DreamSummary> {
             Ok(kremory::DreamSummary {
                 communities_updated: 0,
-                cross_episode_merges: 0,
+                cross_episode_would_merge: 0,
+                cross_episode_merged: 0,
+                consolidation_ops_ran: kremory::ConsolidationOpsRan::default(),
                 supersessions_recorded: 0,
                 facts_archived: 0,
                 aliases_resolved: 0,

@@ -285,13 +285,13 @@ async fn p2_archive_enablement_smoke_fires_inside_full_dream_call() {
         "candidate fact must be live in `facts` before dream()"
     );
 
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut opts = DreamOpts::default();
+    opts.include_fact_archival = true;
     let summary = mem
         .dream()
         .in_namespace(ns)
-        .opts(DreamOpts {
-            include_fact_archival: true,
-            ..Default::default()
-        })
+        .opts(opts)
         .await
         .expect("mem.dream() with include_fact_archival must succeed");
 
@@ -327,13 +327,13 @@ async fn p4_communities_enablement_smoke_fires_inside_full_dream_call() {
 
     plant_two_triangle_bridge(&graph, &gid).await;
 
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut opts = DreamOpts::default();
+    opts.include_community_detection = true;
     let summary = mem
         .dream()
         .in_namespace(ns)
-        .opts(DreamOpts {
-            include_community_detection: true,
-            ..Default::default()
-        })
+        .opts(opts)
         .await
         .expect("mem.dream() with include_community_detection must succeed");
 
@@ -382,9 +382,11 @@ async fn p4_communities_deterministic_recompute_is_stable() {
 
     plant_two_triangle_bridge(&graph, &gid).await;
 
-    let opts = || DreamOpts {
-        include_community_detection: true,
-        ..Default::default()
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let opts = || {
+        let mut o = DreamOpts::default();
+        o.include_community_detection = true;
+        o
     };
 
     let first = mem

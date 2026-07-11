@@ -70,10 +70,9 @@ fn dream_opts_f3_max_episodes_per_run_default() {
         "F3: max_episodes_per_run default must be None"
     );
 
-    let opts_capped = DreamOpts {
-        max_episodes_per_run: Some(3),
-        ..DreamOpts::default()
-    };
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut opts_capped = DreamOpts::default();
+    opts_capped.max_episodes_per_run = Some(3);
     assert_eq!(
         opts_capped.max_episodes_per_run,
         Some(3),
@@ -135,10 +134,9 @@ fn dream_opts_f6_batch_cap_config_roundtrip() {
 
     // 1 < MAX_PROPOSALS (5) → triggers pass0 cap.
     // 1 < MAX_RECLASSIFY_BATCH (20) → triggers pass2 cap.
-    let opts = DreamOpts {
-        max_episodes_per_run: Some(1),
-        ..DreamOpts::default()
-    };
+    // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
+    let mut opts = DreamOpts::default();
+    opts.max_episodes_per_run = Some(1);
     assert_eq!(opts.max_episodes_per_run, Some(1));
     assert!(
         opts.include_type_discovery,

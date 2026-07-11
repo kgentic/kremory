@@ -680,7 +680,15 @@ pub struct CancelOutcome {
 /// Options for `submit_dream_phase` batch consolidation.
 ///
 /// Per ADR §4.7 / ADR-037 §3 (D6).
+///
+/// `#[non_exhaustive]` (consumer-API hardening O5, dream-consumer-api-hardening
+/// spec §5) — this struct gains fields frequently (17 and counting). External
+/// callers construct it from `DreamOpts::default()` + the `DreamRequest::opts` /
+/// `DreamRequest::cross_episode` builders (or field-mutation), never a struct
+/// literal, so new fields never break a consumer. The napi mirror
+/// (`js_dream_opts_to_rust`) is already field-mutation-based and thus compatible.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DreamOpts {
     /// Only consolidate episodes committed after this timestamp.
     /// `None` = consolidate all un-dreamed episodes in scope.
@@ -777,9 +785,11 @@ pub struct DreamOpts {
     /// deterministic in-Rust label propagation over the entity co-occurrence graph,
     /// persisting `entity_communities` + `community_summaries`. Zero-LLM.
     ///
-    /// DEFAULT `false` — opt-in until its adversarial corpus clears an enablement
-    /// gate (spec §6). Unlike the reconciliation passes (validated `true`),
-    /// consolidation ships opt-in for a graph-global mutating sweep.
+    /// DEFAULT `true` (consumer-API hardening D1) — all four consolidation ops
+    /// default ON, made safe by ADR-073 Tier-1 reversibility. Community detection
+    /// is a full-recompute (wipe-then-rebuild) with no accumulated corruption, so
+    /// it is intrinsically reversible. Toggle off with `false` to skip the
+    /// graph-global co-occurrence partition on a given dream cycle.
     pub include_community_detection: bool,
     /// Run the CONSOLIDATION cross-episode entity-merge op (ADR-066 §2.2, spec P3)
     /// — merge the SAME referent re-extracted verbatim (or trivially fuzzy) across
@@ -788,7 +798,16 @@ pub struct DreamOpts {
     /// never merges (homonymy guard, R-01b). Zero-LLM; delegates the structural
     /// merge to the shared `apply_entity_merge` executor.
     ///
-    /// DEFAULT `false` — opt-in (spec §6).
+    /// DEFAULT `true` (consumer-API hardening D1), landing in SHADOW by
+    /// construction (`cross_episode_dry_run: true` below) — the op computes every
+    /// merge decision + emits telemetry but fuses nothing until a consumer opts
+    /// into apply. A fused merge is reversible via ADR-073 Tier-1
+    /// (`mem.unmerge(...)` / nogood), which is what makes default-ON safe.
+    ///
+    /// **Prefer the `CrossEpisodeMode` builder** (`DreamRequest::cross_episode`) —
+    /// it maps the tri-state Off/Shadow/Apply onto this flag + `cross_episode_dry_run`
+    /// as one honest control. Setting these two raw bools directly is the L2 escape
+    /// hatch (ADR-038) for callers who need to compose `DreamOpts` manually.
     pub include_cross_episode_merges: bool,
     /// Shadow-mode gate for the CONSOLIDATION cross-episode merge op (ADR-070 Stage 2
     /// of the enablement ratchet). When `true` (and `include_cross_episode_merges` is
@@ -815,7 +834,10 @@ pub struct DreamOpts {
     /// `valid_to` has passed but were never marked expired). Zero-LLM,
     /// pure date-compare, orthogonal to ingest's same-object dedup.
     ///
-    /// DEFAULT `false` — opt-in (spec §6).
+    /// DEFAULT `true` (consumer-API hardening D1). Zero-LLM, pure date-compare;
+    /// only retires facts whose `valid_to` has demonstrably passed, and the bound
+    /// can be re-opened (`mem.unsupersede`). Toggle off with `false` to skip the
+    /// window close-out on a given dream cycle.
     pub include_supersession_sweep: bool,
     /// Also run supersession's OPT-IN LLM-nominated value-change lane (ADR-066
     /// §2.3, spec P1.3) — only meaningful when `include_supersession_sweep` is
@@ -833,7 +855,10 @@ pub struct DreamOpts {
     /// DELETE in one transaction), gated by a ref-count "orphans nothing" guard.
     /// Zero-LLM.
     ///
-    /// DEFAULT `false` — opt-in (spec §6).
+    /// DEFAULT `true` (consumer-API hardening D1). Append-only MOVE into
+    /// `facts_archive` (recoverable), guarded by the ref-count "orphans nothing"
+    /// check — reversible by design. Toggle off with `false` to keep long-expired
+    /// facts in the live table.
     pub include_fact_archival: bool,
     /// Per-run token budget ceiling for the consolidation sub-phase (ADR-066 §2.5
     /// F-1, spec P0.1). Soft partial-abort: an op whose projected spend would push
@@ -853,6 +878,15 @@ pub struct DreamOpts {
     ///
     /// DEFAULT `None` — the ADR leaves a conservative non-`None` default as a
     /// product/UX call it does not make; this spec does not invent one.
+    ///
+    /// **INERT TODAY (D6, consumer-API hardening):** USD-budget enforcement does
+    /// nothing at present. Every op's per-call USD projection is `0`
+    /// (`OP_USD_PROJECTION`, `consolidation/mod.rs`), so `check_usd` never denies —
+    /// the effective budget is **token-based** (`consolidation_budget_tokens`). This
+    /// field is reserved for the day a real per-call cost source is wired
+    /// (`TokenTrackingChatProvider` → AutoAgents `usage` → a rate table); until
+    /// then it is recorded in the ledger but never enforces a ceiling. Most
+    /// local-Ollama runs are $0-cost and never need one regardless.
     pub consolidation_budget_usd_micro: Option<u64>,
     /// Grace window (days) before an expired fact becomes archival-eligible
     /// (ADR-066 §2.4, spec P2.1). A fact is a candidate only when
@@ -877,12 +911,43 @@ pub struct DreamOpts {
     pub net_mutation_warn_floor: Option<usize>,
 }
 
+/// L1 opinionated control (ADR-038) for the cross-episode entity-merge op — the
+/// honest tri-state that the two raw `DreamOpts` bools
+/// (`include_cross_episode_merges` + `cross_episode_dry_run`) encode implicitly.
+///
+/// Set via [`DreamRequest::cross_episode`](crate::DreamRequest::cross_episode).
+/// Prefer this over toggling the raw bools directly (the raw fields remain the L2
+/// escape hatch for callers composing a full `DreamOpts`).
+///
+/// | Mode | `include_cross_episode_merges` | `cross_episode_dry_run` | Effect |
+/// |---|---|---|---|
+/// | `Off` | `false` | — | op does not run |
+/// | `Shadow` | `true` | `true` | compute + emit decisions, fuse nothing |
+/// | `Apply` | `true` | `false` | compute + fuse (reversible via ADR-073 unmerge) |
+///
+/// Only cross_episode carries this shadow/apply distinction — the other three
+/// consolidation ops have no `dry_run` axis, so a mode enum on them would be dead
+/// structure (a plain `include_*` bool is the honest surface there).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CrossEpisodeMode {
+    /// The cross-episode merge op does not run.
+    Off,
+    /// The op computes every merge decision + emits telemetry, but fuses no
+    /// entities (shadow gate, ADR-070 Stage 2).
+    Shadow,
+    /// The op computes AND commits merges. Each fusion is reversible via ADR-073
+    /// Tier-1 (`mem.unmerge` / nogood).
+    Apply,
+}
+
 impl DreamOpts {
     /// True when ANY of the four CONSOLIDATION ops is enabled (ADR-066 spec §5).
     ///
     /// The facade uses this to skip the whole `run_consolidation` dispatcher when
-    /// no op is on — so with the all-`false` defaults, consolidation is inert and
-    /// the existing reconciliation-only dream path is unaffected.
+    /// no op is on. With the consumer-API-hardening D1 defaults (all four ops ON)
+    /// this returns `true` by default — the dispatcher runs. Explicitly toggling
+    /// every op off restores the inert reconciliation-only path.
     ///
     /// `include_supersession_llm_nominate` is NOT itself an enabling flag — it only
     /// modifies the supersession sweep's behaviour, so it is excluded here (an
@@ -916,8 +981,14 @@ impl Default for DreamOpts {
             // site2_corpus_audit.md. The single miss (s2-025 Employer/Company)
             // is an orthogonal LLM-judgment miss tracked by a follow-up TD.
             include_type_novelty_llm_verify: true,
-            // CONSOLIDATION sub-phase (ADR-066 §5) — ops default OFF until each op's
-            // own enablement gate clears (spec §6).
+            // CONSOLIDATION sub-phase (ADR-066 §5) — ALL FOUR ops default ON. Made
+            // safe by ADR-073 Tier-1 (reversible graph mutations: provenance +
+            // unmerge + nogood + inspect) — every destructive consolidation write is
+            // now reversible, so an embedded library can settle-and-improve the graph
+            // by default without stranding a consumer's data. Toggle any op off via
+            // its `include_*` knob (this is the "keep-on + honest surfaces" posture,
+            // NOT ADR-071's original defaults-off — see the consumer-API hardening
+            // spec `.ai-docs/specs/dream-consumer-api-hardening-arch-spec-2026-07-10.md`).
             //
             // ADR-071 Item 2: P4 communities has NO Wilson-LB gate (unlike Item 1's
             // P3 corpus gate) — the mechanical proof is the reversibility argument:
@@ -939,7 +1010,14 @@ impl Default for DreamOpts {
             // observed, no entity fused) until an operator explicitly sets this `false`
             // to reach Stage 5 (apply). Irrelevant while the op is off (default).
             cross_episode_dry_run: true,
-            include_supersession_sweep: false,
+            // Consumer-API hardening (D1): the deterministic world-time
+            // window-closeout sweep defaults ON alongside the other three ops.
+            // Reversible via `mem.unsupersede(fact_id)` (ADR-071 §Item 3 companion) —
+            // the sweep only sets `expired_at = valid_to` on already-past-dated
+            // bounds, and a bounded window can be re-opened. The optional
+            // LLM-nominate value-change lane stays OFF (unsafe without a
+            // functional-predicate registry — see field doc).
+            include_supersession_sweep: true,
             include_supersession_llm_nominate: false,
             // ADR-071 Item 2: P2 archive has NO Wilson-LB gate (unlike Item 1's P3
             // corpus gate) — the mechanical proof is the reversibility argument:

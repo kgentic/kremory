@@ -206,7 +206,8 @@ async fn trigger_pass(graph: &Arc<dyn GraphHandle>, opts: DreamPassOpts) {
             tracing::info!(
                 elapsed_ms,
                 communities_updated = summary.communities_updated,
-                cross_episode_merges = summary.cross_episode_merges,
+                cross_episode_would_merge = summary.cross_episode_would_merge,
+                cross_episode_merged = summary.cross_episode_merged,
                 supersessions_recorded = summary.supersessions_recorded,
                 facts_archived = summary.facts_archived,
                 types_discovered = summary.types_discovered.len(),
