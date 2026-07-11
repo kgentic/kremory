@@ -748,6 +748,14 @@ impl TemporalGraph {
         // in later sub-phases. Idempotent: CREATE TABLE/INDEX IF NOT EXISTS.
         crate::core::migrations::migrate_021_graph_mutation_log(&self.conn).await?;
 
+        // Migration 022 (ADR-072 seq1 impl-spec §1): `episodes_fts` — BM25/FTS5
+        // content-search substrate over raw `episodes.content`. Feature-gated:
+        // only compiled + called behind `content-search`; default build is
+        // unaffected (two-lever gating model, ADR-072 §6 Finding 3).
+        // Idempotent: CREATE VIRTUAL TABLE IF NOT EXISTS + guarded backfill.
+        #[cfg(feature = "content-search")]
+        crate::core::migrations::migrate_022_episodes_content_recall(&self.conn).await?;
+
         Ok(())
     }
 

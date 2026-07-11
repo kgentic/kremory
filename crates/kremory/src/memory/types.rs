@@ -528,6 +528,42 @@ impl RetrievedContext {
     }
 }
 
+/// One BM25-ranked passage from `.content()` recall (ADR-072 seq1 — raw
+/// full-text search over `episodes.content`, no LLM, no embeddings).
+///
+/// `ContentPassage` is a **distinct projection**, not an extension of
+/// [`RetrievedContext`] — the entity-shaped `#[non_exhaustive]`
+/// `RetrievedContext` contract (`entity_id`/`entity_name`/`entity_type_id`)
+/// carries no slot for a text passage, and is deliberately untouched by seq1
+/// (ADR-072 §6b: "does NOT extend the entity-shaped RetrievedContext").
+/// Obtained via `mem.recall(query).content().await?` — the sibling terminal
+/// of `.raw()` (`facade::recall::RecallRequest::content`).
+///
+/// Feature-gated behind `content-search` (ADR-072 §6 Finding 3 two-lever
+/// gating model) — this type does not exist in the default build.
+#[cfg(feature = "content-search")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ContentPassage {
+    /// The `episodes.id` (`INTEGER PRIMARY KEY AUTOINCREMENT`) this passage
+    /// was recalled from.
+    pub episode_id: i64,
+    /// An FTS5 `snippet()` extract of `episodes.content` around the matched
+    /// term(s) — NOT the full episode body.
+    pub snippet: String,
+    /// BM25 relevance score from the `episodes_fts` `rank` hidden column
+    /// (lower = more relevant, matching kremory's existing FTS score
+    /// convention — `core::search::SearchHit::score` doc: "lower = more
+    /// relevant"). NOT fused with vector/entity/fact scores — seq1 is a
+    /// BM25-only parallel arm (ADR-072 §6b).
+    pub score: f32,
+    /// Attribution back to the originating episode. `kind` is always
+    /// [`SourceKind::Episode`]; `occurred_at` is the episode's own
+    /// `timestamp` (world-time of the source event, not the DB audit
+    /// `recorded_at`).
+    pub source_ref: SourceRef,
+}
+
 /// Template strategy for `context_block` — which dimension of the retrieved
 /// results to render into the final string handed to the LLM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
