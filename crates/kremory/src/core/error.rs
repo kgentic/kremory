@@ -401,6 +401,36 @@ pub enum Error {
         mutation_id: i64,
         blocking_mutation_id: i64,
     },
+
+    // ── Reversible-graph-mutations edit-entity cascade (arch-spec §4.3) ────────
+    /// `edit_entity(...).rename(new_id)` targeted an id that ALREADY exists in the
+    /// namespace. A rekey INTO an existing entity would silently FUSE two distinct
+    /// entities (the loser's FKs would land on the existing keeper); the cascade
+    /// refuses and returns this structured error so the consumer chooses to `merge`
+    /// explicitly instead (ADR-059 structured write-steering — never a silent
+    /// auto-merge). `from` is the source id, `existing` the occupied target id.
+    #[error(
+        "entity edit conflict: cannot rename '{from}' to '{existing}' — an entity \
+         with id '{existing}' already exists in namespace '{group_id}'; merge the \
+         two explicitly instead of renaming into an occupied id"
+    )]
+    EntityEditConflict {
+        from: String,
+        existing: String,
+        group_id: String,
+    },
+
+    /// `edit_entity(...)` was built with neither a `.rename(...)` nor a
+    /// `.retype(...)` target (or with both). Exactly one edit operation is
+    /// required per call. `detail` names which invariant was violated.
+    #[error("entity edit request invalid: {detail}")]
+    EntityEditInvalid { detail: String },
+
+    /// `edit_entity(...)` / `undo_entity_edit(...)` targeted an entity or a
+    /// mutation-log row that does not exist. `detail` carries the specific
+    /// diagnostic (the missing entity id or `entity_edit` mutation id).
+    #[error("entity edit not found: {detail}")]
+    EntityEditNotFound { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

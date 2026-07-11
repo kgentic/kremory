@@ -25,7 +25,7 @@ use metrics::counter;
 use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
-use super::{MergeInputs, MutationKind};
+use super::{EditInputs, MergeInputs, MutationKind};
 
 // ─── consumer-facing view (§3 inspect surface) ──────────────────────────────
 
@@ -104,6 +104,26 @@ fn derive_view(kind: MutationKind, inputs_json: &str) -> Result<(Vec<String>, St
             // `[keeper, loser]` — the pair the consumer locates by id (§6.2 the
             // nogood is over the sorted pair; the human view keeps role order).
             Ok((vec![inputs.keeper, inputs.loser], summary))
+        }
+        MutationKind::EntityEdit => {
+            let inputs: EditInputs = serde_json::from_str(inputs_json).map_err(|e| {
+                Error::Other(anyhow::anyhow!(
+                    "inspect: deserialize entity_edit inputs (mutation un-classifiable): {e}"
+                ))
+            })?;
+            if inputs.rekey {
+                // Rename/rekey — both the old and the (now-live) new id are the
+                // consumer's locate keys.
+                let summary = format!("renamed '{}' → '{}'", inputs.old_id, inputs.new_id);
+                Ok((vec![inputs.new_id, inputs.old_id], summary))
+            } else {
+                // Retype — id unchanged.
+                let summary = format!(
+                    "re-typed '{}' (type {} → {})",
+                    inputs.old_id, inputs.old_type_id, inputs.new_type_id
+                );
+                Ok((vec![inputs.old_id], summary))
+            }
         }
         other => Ok((Vec::new(), format!("{} mutation", other.as_tag()))),
     }

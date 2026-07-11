@@ -29,10 +29,11 @@ use kremory::{Memory, Namespace, SourceKind};
 
 pub use convert::{
     JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsConsolidationOpsRan, JsDreamOpts,
-    JsDreamPassOpts, JsDreamStatusResult, JsDreamSummary, JsEpisode, JsIngestResult,
-    JsIngestStatusResult, JsMetadataFilter, JsMutationFilter, JsMutationRecord, JsOpenOptions,
-    JsRecallOptions, JsRememberOptions, JsRestoreArchivedOutcome, JsRetrievedContext,
-    JsStructuredFact, JsSupersedeOutcome, JsTypeProposal, JsUnmergeOutcome, JsUnsupersedeOutcome,
+    JsDreamPassOpts, JsDreamStatusResult, JsDreamSummary, JsEditEntityOptions, JsEditEntityOutcome,
+    JsEpisode, JsIngestResult, JsIngestStatusResult, JsMetadataFilter, JsMutationFilter,
+    JsMutationRecord, JsOpenOptions, JsRecallOptions, JsRememberOptions, JsRestoreArchivedOutcome,
+    JsRetrievedContext, JsStructuredFact, JsSupersedeOutcome, JsTypeProposal, JsUnmergeOutcome,
+    JsUnsupersedeOutcome,
 };
 
 // ── JsMemory ──────────────────────────────────────────────────────────────────
@@ -630,6 +631,67 @@ impl JsMemory {
             .await
             .map_err(|e| napi::Error::from_reason(format!("kremory unsupersede failed: {e}")))?;
         Ok(convert::unsupersede_outcome_to_js(outcome))
+    }
+
+    /// Edit an entity — retype or rename — with full FK-propagation, provenance,
+    /// and reconciler-freeze re-open (ADR-073 Tier-2a, §4.3). Completes the
+    /// diarization flow (rename `"Speaker 1"` → `"Alice"` propagating to all its
+    /// facts). Wraps `Memory::edit_entity`.
+    ///
+    /// Set exactly one of `opts.newId` (rename/rekey — rejects an occupied id) or
+    /// `opts.typeId` (retype). `opts.namespace` scopes the entity (else the handle
+    /// default). Reverse via `undoEntityEdit` with the returned `mutationId`.
+    #[napi]
+    pub async fn edit_entity(
+        &self,
+        entity_id: String,
+        opts: Option<JsEditEntityOptions>,
+    ) -> napi::Result<JsEditEntityOutcome> {
+        let opts = opts.unwrap_or(JsEditEntityOptions {
+            new_id: None,
+            type_id: None,
+            namespace: None,
+        });
+        let ns = opts
+            .namespace
+            .as_deref()
+            .map(Namespace::new)
+            .or_else(|| self.default_namespace.clone());
+
+        let mut req = self.inner.edit_entity(entity_id);
+        if let Some(ns) = ns {
+            req = req.in_namespace(ns);
+        }
+        if let Some(new_id) = opts.new_id {
+            req = req.rename(new_id);
+        }
+        if let Some(type_id) = opts.type_id {
+            req = req.retype(type_id);
+        }
+
+        let outcome = req
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory editEntity failed: {e}")))?;
+        Ok(convert::edit_entity_outcome_to_js(outcome))
+    }
+
+    /// Reverse a prior `editEntity` from its provenance snapshot (ADR-073 Tier-2a,
+    /// §4.3). Pass the `mutationId` from the `EditEntityOutcome` (or from
+    /// `mutationHistory` / `listMutations`). Idempotent. Wraps
+    /// `Memory::undo_entity_edit`.
+    #[napi]
+    pub async fn undo_entity_edit(
+        &self,
+        mutation_id: i64,
+    ) -> napi::Result<JsEditEntityOutcome> {
+        let outcome = self
+            .inner
+            .undo_entity_edit(mutation_id)
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory undoEntityEdit failed: {e}")))?;
+        Ok(convert::edit_entity_outcome_to_js(outcome))
     }
 
     /// Inspect the mutations that touched one entity, newest-first (ADR-073 Tier-1,

@@ -171,3 +171,12 @@ pub use provenance::reversal::{
 // of the stable public API contract; the consumer surface is the `Memory` facade.
 #[cfg(any(test, feature = "test-utils"))]
 pub use provenance::inspect::{list_mutations, mutation_history};
+// Reversible-graph-mutations EDIT-ENTITY cascade (Tier-2a, arch-spec §4.3).
+// `edit_entity` / `undo_entity_edit` + the `EntityEditParams` / `EntityEditOp`
+// caller shapes are `pub` + `#[doc(hidden)]` inside the (`pub(crate)`)
+// `provenance::edit` module — same E0365 visibility requirement as the reversal +
+// inspect re-exports above (the external `tests/reversible_edit_entity.rs` binary
+// cannot import a `pub(crate)` item). NOT part of the stable public API contract;
+// the consumer surface is the `Memory` facade.
+#[cfg(any(test, feature = "test-utils"))]
+pub use provenance::edit::{edit_entity, undo_entity_edit, EntityEditOp, EntityEditParams};

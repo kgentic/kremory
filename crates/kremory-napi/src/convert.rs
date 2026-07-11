@@ -1030,6 +1030,60 @@ pub fn unsupersede_outcome_to_js(o: kremory::UnsupersedeOutcome) -> JsUnsupersed
     }
 }
 
+/// Options for `JsMemory.editEntity` — set exactly one of `newId` (rename/rekey)
+/// or `typeId` (retype). `namespace` scopes the entity (else the handle default).
+#[napi(object, js_name = "EditEntityOptions")]
+pub struct JsEditEntityOptions {
+    /// Rename/REKEY target id. Mutually exclusive with `typeId`.
+    pub new_id: Option<String>,
+    /// Retype target `entity_type_id`. Mutually exclusive with `newId`.
+    pub type_id: Option<i64>,
+    /// Namespace scope. Omit → the Memory handle's `defaultNamespace`.
+    pub namespace: Option<String>,
+}
+
+/// Outcome of `JsMemory.editEntity` / `JsMemory.undoEntityEdit` — mirrors
+/// `kremory::EditEntityOutcome`. Every count is the ACTUAL rows affected
+/// (success-signal honesty, §3.1). Counts as JS `number` (f64): usize values far
+/// below 2^53 at practical scale.
+#[napi(object, js_name = "EditEntityOutcome")]
+pub struct JsEditEntityOutcome {
+    /// The entity id AFTER the edit (new id for a rename; unchanged for a retype;
+    /// the restored prior id for an undo).
+    pub entity_id: String,
+    /// `true` if this was a rename/rekey (id changed, FKs re-pointed).
+    pub rekeyed: bool,
+    /// `true` if the entity's type was changed (retype).
+    pub retyped: bool,
+    /// `facts` rows re-pointed (subject + object). Zero for a retype.
+    pub facts_repointed: f64,
+    /// `facts_archive` rows re-pointed. Zero for a retype.
+    pub archived_repointed: f64,
+    /// `episodic_edges` rows re-pointed. Zero for a retype.
+    pub edges_repointed: f64,
+    /// `entity_communities` rows re-pointed (rename) or invalidated (retype).
+    pub communities_repointed: f64,
+    /// Entities whose reconciler-freeze stamp was re-opened.
+    pub entities_reopened: f64,
+    /// The `graph_mutation_log.id` — pass to `undoEntityEdit` to reverse.
+    pub mutation_id: i64,
+}
+
+/// Convert a substrate `kremory::EditEntityOutcome` to `JsEditEntityOutcome`.
+pub fn edit_entity_outcome_to_js(o: kremory::EditEntityOutcome) -> JsEditEntityOutcome {
+    JsEditEntityOutcome {
+        entity_id: o.entity_id,
+        rekeyed: o.rekeyed,
+        retyped: o.retyped,
+        facts_repointed: o.facts_repointed as f64,
+        archived_repointed: o.archived_repointed as f64,
+        edges_repointed: o.edges_repointed as f64,
+        communities_repointed: o.communities_repointed as f64,
+        entities_reopened: o.entities_reopened as f64,
+        mutation_id: o.mutation_id,
+    }
+}
+
 /// A single logged graph mutation from `JsMemory.mutationHistory` /
 /// `JsMemory.listMutations` — mirrors `kremory::MutationRecord` (the consumer
 /// INSPECT view, §3). Carries the `mutationId` to pass to `unmerge` (or the

@@ -46,6 +46,14 @@ pub(crate) mod reversal;
 /// half of the see+fix story: locate a mutation + its `mutation_id` to undo.
 pub(crate) mod inspect;
 
+/// Deterministic EDIT-ENTITY cascade (Tier-2a) — `edit_entity` (retype /
+/// rename-rekey with full FK propagation + provenance snapshot + freeze re-open)
+/// and its inverse `undo_entity_edit` (arch-spec §4.3 / §2.3 `entity_edit`). The
+/// forward op and its undo live together because they share the FK-rekey helper
+/// (undo is the inverse rekey), so keeping them in one module keeps the rekey
+/// column-set a single source of truth.
+pub(crate) mod edit;
+
 // The public inspect DATA types are re-exported at the module path (mirroring the
 // honest outcome types below) so the `Memory` facade can `pub use` them 1:1.
 pub use inspect::{MutationFilter, MutationRecord};
@@ -282,7 +290,6 @@ pub(crate) struct FactArchivePreState {
 /// (§2.3 `entity_edit`). The `entity_id` is `old_id`/`new_id`, known from the
 /// enclosing edit, so only the per-episode key is snapshotted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)] // planned consumer: `edit-entity` rename/rekey cascade sub-phase (Tier 3, §4.3).
 pub(crate) struct EpisodeEdgeKey {
     pub(crate) episode_id: i64,
     pub(crate) entity_group_id: String,
@@ -295,7 +302,6 @@ pub(crate) struct EpisodeEdgeKey {
 /// ids too — a rekey that skips `facts_archive` would leave dangling ids that
 /// `restore_archived_fact` would resurrect pointing at the dead id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)] // planned consumer: `edit-entity` retype/rename cascade sub-phase (Tier 3, §4.3).
 pub(crate) struct EntityEditPreState {
     pub(crate) old_id: String,
     pub(crate) new_id: String,
@@ -311,6 +317,20 @@ pub(crate) struct EntityEditPreState {
     pub(crate) prior_type_source: Option<String>,
     pub(crate) prior_type_assigned_at: Option<String>,
     pub(crate) prior_community_id: Option<i64>,
+}
+
+/// `inputs` for `MutationKind::EntityEdit` (§2.3) — the derivation source for the
+/// consumer INSPECT summary (§3), NOT the undo payload (that is
+/// [`EntityEditPreState`]). Our OWN structured emit (never LLM-authored, §2.1) so
+/// it round-trips through serde; parse-loudly at the inspect boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct EditInputs {
+    pub(crate) old_id: String,
+    pub(crate) new_id: String,
+    /// `true` for a rename/rekey (id changed); `false` for a retype.
+    pub(crate) rekey: bool,
+    pub(crate) old_type_id: i64,
+    pub(crate) new_type_id: i64,
 }
 
 // NOTE (foundation scope): `MutationKind::EntityDelete` / `FactDelete` carry a
@@ -352,6 +372,39 @@ pub struct RestoreArchivedOutcome {
     pub restored_fact_id: i64,
     /// `true` if the fact was already live — honest no-op, nothing restored.
     pub already_live: bool,
+}
+
+/// Returned by `edit_entity(...)` and its inverse `undo_entity_edit(...)` (§4.3).
+/// Every count is the ACTUAL number of rows re-pointed / affected (success-signal
+/// honesty, §3.1), never a bare `Applied`. A `retype` leaves the FK counts zero
+/// (id unchanged); a `rename`/rekey populates them.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct EditEntityOutcome {
+    /// The entity id AFTER the edit — the new id for a rename, the unchanged id
+    /// for a retype (or the RESTORED prior id for an undo).
+    pub entity_id: String,
+    /// `true` if this was a rename/rekey (id changed, FKs re-pointed).
+    pub rekeyed: bool,
+    /// `true` if the entity's `entity_type_id` was changed (retype).
+    pub retyped: bool,
+    /// `facts` rows re-pointed (subject + object endpoints). Zero for a retype.
+    pub facts_repointed: usize,
+    /// `facts_archive` rows re-pointed (V5 — archived facts carry TEXT endpoint
+    /// ids too, so a rekey MUST update them). Zero for a retype.
+    pub archived_repointed: usize,
+    /// `episodic_edges` rows re-pointed. Zero for a retype.
+    pub edges_repointed: usize,
+    /// `entity_communities` rows re-pointed (rename) or invalidated (retype
+    /// drops membership so community detection re-places the re-typed entity).
+    pub communities_repointed: usize,
+    /// Entities whose reconciler-freeze stamp was re-opened (§6.1) so the next
+    /// `dream()` re-processes the edited entity.
+    pub entities_reopened: usize,
+    /// The `graph_mutation_log.id` of the `entity_edit` row — for a forward edit,
+    /// the newly recorded row (pass it to `undo_entity_edit` to reverse); for an
+    /// undo, the id of the row that was reversed (its `undone_at` is now set).
+    pub mutation_id: i64,
 }
 
 /// Returned by `unsupersede(...)` (§3.1).
