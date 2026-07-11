@@ -164,6 +164,32 @@ impl<'a> ForgetRequest<'a> {
                     .map_err(MemoryError::Core)?
             };
 
+            // ADR-072 §11 (RISK-003 boy-scout): drop this source_id's
+            // `episodes_fts` shadow rows BEFORE the `episodes` rows
+            // themselves are deleted below — `episodes_fts` is an
+            // external-content FTS5 table keyed on `episodes.id`
+            // (Migration 022); once the episode row is gone, `rowid IN
+            // (SELECT id FROM episodes WHERE ...)` can no longer resolve
+            // which ids to purge. This is the ONLY code path in the crate
+            // that issues `DELETE FROM episodes` (`by_source_id` is 1:1 with
+            // source_id, never shared) — `core/graph/queries.rs::batch_forget`
+            // never touches the `episodes` table itself, so it cannot host
+            // this cascade (contrary to the seq1 impl-spec's citation of
+            // `queries.rs:306`; verified against current HEAD — see commit
+            // message / session report). Mirrors the sole existing purge
+            // precedent (`facts_fts` cleanup in dream `archive.rs::move_fact`,
+            // RISK-003) — that gap does NOT auto-generalize to shadow FTS
+            // tables (ADR-072 §11).
+            #[cfg(feature = "content-search")]
+            let episodes_fts_purged: u64 = conn
+                .execute(
+                    "DELETE FROM episodes_fts WHERE rowid IN \
+                     (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
+                    libsql::params![sid.clone(), group_id.clone()],
+                )
+                .await
+                .map_err(CoreError::Database)?;
+
             // Quinn C3 — spec §G8 says "only the episode row(s) AND edges
             // exclusively owned by this source_id are removed". Episode rows
             // are 1:1 with source_id (not shared across consumers), so
@@ -185,6 +211,19 @@ impl<'a> ForgetRequest<'a> {
             )
             .await
             .map_err(CoreError::Database)?;
+
+            // Rule 19: emitted after the DELETE that actually removes the
+            // `episodes_fts` rows (this sequence has no enclosing explicit
+            // transaction today — each statement auto-commits — so "post-
+            // commit" here means "after the purge statement returned Ok",
+            // the same spirit as the txn-wrapped post-commit pattern
+            // elsewhere (`core/dream/consolidation/supersession.rs::
+            // window_closeout`) even though there is no rollback path to
+            // overcount in this specific sequence).
+            #[cfg(feature = "content-search")]
+            metrics::counter!("kremory.content_index.episode_purged_total")
+                .increment(episodes_fts_purged);
+
             return Ok(entities_deleted);
         }
 
@@ -279,6 +318,23 @@ mod forget_by_source_id_tests {
             .expect("episode id row must exist")
             .get::<i64>(0)
             .expect("episode id column");
+
+        // ADR-072 seq1: this raw-SQL seed bypasses `insert_episode_with_group`
+        // (the only production path that populates `episodes_fts`), so restore
+        // the "episode row ⟹ episodes_fts row" invariant explicitly here.
+        // Mechanically verified (2026-07-11): `DELETE`/the `'delete'` special
+        // command against an EXTERNAL CONTENT fts5 table for a rowid that was
+        // NEVER inserted raises `SQLITE_CORRUPT_VTAB` ("database disk image is
+        // malformed") — not a no-op. Without this sync, the `episodes_fts`
+        // purge cascade this test module exercises (`by_source_id`) would
+        // fail on every seeded episode.
+        #[cfg(feature = "content-search")]
+        conn.execute(
+            "INSERT INTO episodes_fts(rowid, content) VALUES (?1, ?2)",
+            libsql::params![episode_id, "seed"],
+        )
+        .await
+        .expect("episodes_fts seed sync must succeed");
 
         // Wire the episodic_edge. Migration 006 enforces composite FK
         // (entity_id, entity_group_id) → entities(id, group_id), so we must

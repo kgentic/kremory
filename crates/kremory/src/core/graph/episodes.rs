@@ -105,6 +105,33 @@ pub struct InsertEpisodicEdgeParams<'a> {
 }
 
 impl TemporalGraph {
+    /// ADR-072 seq1 impl-spec §1: index one episode's verbatim content into
+    /// `episodes_fts` (Migration 022, external-content FTS5 shadow of
+    /// `episodes.content`, `content_rowid='id'`).
+    ///
+    /// Deliberately NOT transactionally coupled to the `episodes` INSERT
+    /// (unlike `entities`+`entities_fts`, `core/graph/entities.rs:51`): the
+    /// migration's backfill step is `WHERE NOT EXISTS`-guarded and re-runs on
+    /// every `TemporalGraph::open*` call, so a crash between the two INSERTs
+    /// self-heals on next open (see `migrations/defs_i.rs` module doc) — the
+    /// same safety net every idempotent-backfill migration in this crate
+    /// already relies on. Errors are NOT swallowed (Rule 19/21 — no silent
+    /// `let _ = ...`): a real SQL failure here means the episode landed in the
+    /// graph but is unsearchable via content-search until next reopen, which
+    /// is a real consistency signal worth propagating.
+    #[cfg(feature = "content-search")]
+    async fn index_episode_content(&self, episode_id: i64, content: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO episodes_fts(rowid, content) VALUES (?1, ?2)",
+                libsql::params![episode_id, content],
+            )
+            .await?;
+        counter!("kremory.content_index.episode_indexed_total").increment(1);
+        tracing::debug!(episode_id, "kremory.content_index.episode_indexed");
+        Ok(())
+    }
+
     pub async fn insert_episode(&self, params: InsertEpisodeParams<'_>) -> Result<i64> {
         let InsertEpisodeParams {
             content,
@@ -129,6 +156,8 @@ impl TemporalGraph {
                 operation: "insert_episode",
             })?;
         let episode_id = row.get::<i64>(0)?;
+        #[cfg(feature = "content-search")]
+        self.index_episode_content(episode_id, content).await?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.db.insert_episode_ms").record(_ms);
         tracing::info!(_ms, episode_id, "kremory.db.insert_episode");
@@ -199,6 +228,8 @@ impl TemporalGraph {
                 operation: "insert_episode_with_group",
             })?;
         let episode_id = row.get::<i64>(0)?;
+        #[cfg(feature = "content-search")]
+        self.index_episode_content(episode_id, content).await?;
         let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.db.insert_episode_with_group_ms").record(_ms);
         tracing::info!(_ms, episode_id, "kremory.db.insert_episode_with_group");
