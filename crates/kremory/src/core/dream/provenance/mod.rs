@@ -525,6 +525,13 @@ pub struct DeleteEntityOutcome {
 pub struct DeleteFactOutcome {
     /// The deleted (or, on undo, restored) fact id.
     pub fact_id: i64,
+    /// `true` only when an UNDO actually moved the fact back out of the archive.
+    /// `false` on a forward `delete_fact` (which archives, restoring nothing) and on
+    /// an undo that found the fact ALREADY live — an honest no-op restore (the archived
+    /// fact had been restored out-of-band), so the undo is not misreported as having
+    /// restored it. Distinct from `already_undone`, which flags the WHOLE mutation as
+    /// previously reversed (§3.1 success-signal honesty).
+    pub fact_restored: bool,
     /// NEIGHBOURS (endpoint entities) whose community membership the retract-on-zero
     /// cascade retracted (forward) or restored (undo).
     pub neighbors_retracted: usize,

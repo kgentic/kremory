@@ -13,10 +13,14 @@
 //! ## Quick start (Tier 1)
 //!
 //! ```rust,no_run
-//! use kremory::Memory;
+//! use kremory::{Memory, Namespace};
 //! # async fn ex() -> kremory::memory::Result<()> {
 //! let mem = Memory::with_ollama("./agent.db").await?;
-//! mem.remember("User prefers concise replies").await?;
+//! // `remember(...)` requires a namespace: call `.in_namespace(ns)` on the
+//! // request (or set a `default_namespace` on the builder — see Tier 2 below).
+//! mem.remember("User prefers concise replies")
+//!     .in_namespace(Namespace::new("agent"))
+//!     .await?;
 //! let context: String = mem.recall("what does user prefer?").await?;
 //! # Ok(())
 //! # }
@@ -184,6 +188,25 @@ pub struct ConsolidationOpsRan {
 /// Fields wired across ADR-037 §3 D6 (types_discovered/warnings), ADR-046 Option E
 /// E8 (entities_reclassified), and dream-phase-reconciliation-v2 §D3
 /// (aliases_resolved, canonicalization_merges, consistency_check_corrected).
+///
+/// # Observability — metrics stack version lock
+///
+/// The counters kremory emits (`kremory.*` via the [`metrics`] facade) register
+/// against the process-global recorder. To READ those counters from a consumer's
+/// own recorder/exporter you MUST pin the SAME minor versions kremory links, or
+/// the registries silently do not share and you capture ZERO:
+///
+/// ```toml
+/// metrics = "0.24"       # must match kremory's metrics minor
+/// metrics-util = "0.18"  # must match kremory's metrics-util minor
+/// ```
+///
+/// A minor-version mismatch (e.g. `metrics = "0.23"`) links a second, incompatible
+/// global recorder — kremory's `counter!`/`histogram!` calls hit a registry your
+/// exporter never sees. Every count reads `0`. The all-in-band fields on this
+/// struct (the D5 would-merge/merged split, [`ConsolidationOpsRan`],
+/// [`Self::budget_exhausted`]) are readable WITHOUT any metrics recorder — prefer
+/// them when you only need the dream accounting.
 #[derive(Debug, Clone)]
 pub struct DreamSummary {
     pub communities_updated: usize,

@@ -63,3 +63,13 @@ repomix-*.xml
 .ai-docs/_attachments/
 
 spike/community_detect_bin
+
+# e2e consumer artifacts
+*.node
+e2e-consumer/target/
+e2e-consumer/*.log
+e2e-consumer-napi/node_modules/
+e2e-consumer-napi/*.log
+crates/kremory-napi/*.node
+crates/kremory-napi/index.js
+crates/kremory-napi/index.d.ts

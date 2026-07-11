@@ -1134,6 +1134,11 @@ pub fn delete_entity_outcome_to_js(o: kremory::DeleteEntityOutcome) -> JsDeleteE
 pub struct JsDeleteFactOutcome {
     /// The deleted (or, on undo, restored) fact id.
     pub fact_id: i64,
+    /// `true` only when an undo actually moved the fact back out of the archive.
+    /// `false` on a forward `deleteFact` (archives, restores nothing) and on an undo
+    /// that found the fact already live (an honest no-op restore). Distinct from
+    /// `already_undone`, which flags the whole mutation as previously reversed.
+    pub fact_restored: bool,
     /// Neighbours (endpoint entities) whose community membership the cascade retracted
     /// (forward) or restored (undo).
     pub neighbors_retracted: f64,
@@ -1149,6 +1154,7 @@ pub struct JsDeleteFactOutcome {
 pub fn delete_fact_outcome_to_js(o: kremory::DeleteFactOutcome) -> JsDeleteFactOutcome {
     JsDeleteFactOutcome {
         fact_id: o.fact_id,
+        fact_restored: o.fact_restored,
         neighbors_retracted: o.neighbors_retracted as f64,
         entities_reopened: o.entities_reopened as f64,
         mutation_id: o.mutation_id,

@@ -193,6 +193,29 @@ pub async fn list_mutations(
     graph: &TemporalGraph,
     filter: MutationFilter,
 ) -> Result<Vec<MutationRecord>> {
+    let out = query_mutations(graph, &filter).await?;
+    tracing::debug!(
+        target: "kremory.graph.provenance",
+        group_id = ?filter.group_id,
+        kind = ?filter.kind,
+        include_undone = filter.include_undone,
+        returned = out.len(),
+        "kremory.graph.list_mutations"
+    );
+    counter!("kremory.graph.inspect_query_total", "op" => "list_mutations").increment(1);
+    Ok(out)
+}
+
+/// The shared filtered-SELECT over `graph_mutation_log` behind both
+/// [`list_mutations`] and [`mutation_history`]. Emits NO counter and NO tracing —
+/// each public entry point emits its OWN single `inspect_query_total` increment, so
+/// one consumer call maps to exactly one counter (previously `mutation_history`
+/// double-counted by calling `list_mutations` internally, firing both
+/// `op=list_mutations` AND `op=mutation_history` for a single consumer call).
+async fn query_mutations(
+    graph: &TemporalGraph,
+    filter: &MutationFilter,
+) -> Result<Vec<MutationRecord>> {
     let mut sql = String::from(
         "SELECT id, kind, group_id, created_at, undone_at, inputs \
          FROM graph_mutation_log WHERE 1 = 1",
@@ -224,15 +247,6 @@ pub async fn list_mutations(
     while let Some(row) = rows.next().await? {
         out.push(build_record(&row)?);
     }
-    tracing::debug!(
-        target: "kremory.graph.provenance",
-        group_id = ?filter.group_id,
-        kind = ?filter.kind,
-        include_undone = filter.include_undone,
-        returned = out.len(),
-        "kremory.graph.list_mutations"
-    );
-    counter!("kremory.graph.inspect_query_total", "op" => "list_mutations").increment(1);
     Ok(out)
 }
 
@@ -252,9 +266,13 @@ pub async fn mutation_history(
     entity_id: &str,
     group_id: &str,
 ) -> Result<Vec<MutationRecord>> {
-    let all = list_mutations(
+    // Call the shared query helper directly (NOT `list_mutations`) so this consumer
+    // call emits exactly ONE `inspect_query_total{op=mutation_history}` increment —
+    // routing through `list_mutations` would additionally fire `op=list_mutations`,
+    // double-counting one consumer call.
+    let all = query_mutations(
         graph,
-        MutationFilter {
+        &MutationFilter {
             group_id: Some(group_id.to_string()),
             kind: None,
             since: None,
