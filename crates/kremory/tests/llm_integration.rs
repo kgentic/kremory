@@ -1475,10 +1475,23 @@ async fn with_llm_tracked_emits_chat_metrics() {
         .await
         .expect("Memory::open must succeed");
 
-    mem.remember("Eve leads the security team.")
+    let commit = mem
+        .remember("Eve leads the security team.")
         .from_chat("g-v012-8-session")
         .await
         .expect("remember must succeed");
+
+    // The tracked chat call that emits `kremory_core_tokens_total` runs during
+    // DEFERRED (Phase 2, background) extraction — after remember() returns. Wait
+    // for the episode to finish processing before snapshotting, else the counter
+    // has not been emitted yet.
+    let episode_id: i64 = commit
+        .episode_entity_id
+        .parse()
+        .expect("episode_entity_id must parse to an i64 rowid");
+    mem.wait_for_processing(episode_id, std::time::Duration::from_secs(30))
+        .await
+        .expect("wait_for_processing must complete");
 
     let snapshot = snapshotter.snapshot().into_vec();
     let has_token_counter = snapshot.iter().any(|(k, _, _, _)| {
@@ -1538,10 +1551,22 @@ async fn tier_1_with_ollama_auto_emits_chat_metrics() {
         .await
         .expect("Memory::open must succeed");
 
-    mem.remember("Frank is a principal engineer at Acme.")
+    let commit = mem
+        .remember("Frank is a principal engineer at Acme.")
         .from_chat("g-v012-9-session")
         .await
         .expect("remember must succeed");
+
+    // The tracked chat call emitting `kremory_core_tokens_total` runs during
+    // DEFERRED (Phase 2, background) extraction — wait for completion before
+    // snapshotting metrics.
+    let episode_id: i64 = commit
+        .episode_entity_id
+        .parse()
+        .expect("episode_entity_id must parse to an i64 rowid");
+    mem.wait_for_processing(episode_id, std::time::Duration::from_secs(30))
+        .await
+        .expect("wait_for_processing must complete");
 
     let snapshot = snapshotter.snapshot().into_vec();
 
