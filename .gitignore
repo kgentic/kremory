@@ -73,3 +73,7 @@ e2e-consumer-napi/*.log
 crates/kremory-napi/*.node
 crates/kremory-napi/index.js
 crates/kremory-napi/index.d.ts
+
+# stray test rlib artifact
+libqtest_arity.rlib
+*.rlib
