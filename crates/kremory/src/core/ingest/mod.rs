@@ -947,6 +947,24 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Full pipeline: text → chunk → extract → resolve → contradict → store.
     /// Uses the engine's configured `EntityExtractor`. For a caller-supplied
     /// extractor, use `ingest_with()`.
+    ///
+    /// ## Cause-fix (2026-07-12): must NOT hardcode GLiNER when `ner` is compiled
+    ///
+    /// This function previously special-cased `#[cfg(feature = "ner")]` to always
+    /// dispatch through `crate::core::ner::ner_singleton()` — a bare, LLM-less
+    /// `GlinerExtractor` — regardless of `self.extractor`. That silently discarded
+    /// whatever extractor the builder actually selected (`ExtractorKind::IntegerId`
+    /// default, `GlinerLlm` when `.with_gliner()` was requested, or `Custom` for any
+    /// BYOE consumer via `.with_extractor()`), and `GlinerExtractor::extract` always
+    /// returns `facts: vec![]` — so every fact-producing extraction path was a no-op
+    /// under `--features ner` / `--all-features`. `self.extractor` is *already* the
+    /// correctly-resolved `ExtractorKind` for this Engine (set once in `new` /
+    /// `with_extractor` / `with_custom_extractor_no_llm` per the builder's knobs —
+    /// `ExtractorKind::GlinerLlm` is the intentional GLiNER-opt-in path, constructed
+    /// with its own dedicated `GlinerExtractor`, independent of the process-wide
+    /// `ner_singleton()` used by the separate Phase-1-only `ingest_phase1_ner` /
+    /// background NER pass). There is no scenario where bypassing it is correct;
+    /// always dispatch through the configured extractor, feature-gate or not.
     pub async fn ingest(&self, params: IngestParams<'_>) -> Result<IngestionResult> {
         let IngestParams {
             text,
@@ -955,41 +973,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             content_type,
             source_params,
         } = params;
-        #[cfg(feature = "ner")]
-        {
-            // MNT-001: use the process-wide singleton from ner::ner_singleton() so
-            // both ingest_with and ingest_phase1_ner share a single loaded model
-            // (~650 MB INT8). Previously this path had its own OnceLock, risking
-            // double model load (~1.3 GB) when both paths were used in the same process.
-            let extractor = crate::core::ner::ner_singleton()?;
-            return self
-                .ingest_with(
-                    extractor,
-                    crate::core::ingest::IngestWithParams {
-                        text,
-                        reference_time,
-                        group_id,
-                        content_type,
-                        source_params,
-                    },
-                )
-                .await;
-        }
-        #[cfg(not(feature = "ner"))]
-        {
-            let extractor = Arc::clone(&self.extractor);
-            self.ingest_with(
-                &extractor,
-                crate::core::ingest::IngestWithParams {
-                    text,
-                    reference_time,
-                    group_id,
-                    content_type,
-                    source_params,
-                },
-            )
-            .await
-        }
+        let extractor = Arc::clone(&self.extractor);
+        self.ingest_with(
+            &extractor,
+            crate::core::ingest::IngestWithParams {
+                text,
+                reference_time,
+                group_id,
+                content_type,
+                source_params,
+            },
+        )
+        .await
     }
 }
 

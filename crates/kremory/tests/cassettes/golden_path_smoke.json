@@ -3,10 +3,16 @@
   "model": "gemma4-e2b:latest",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "20272a18133d24152d301204360984c94931d98803098324ab68d7317287fd9e": [
+    "0415696fb88f8fb739ca58849019d9c185f28f7ae2ae98f5e7aff8f83269f6e4": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"items\": [\n    {\n      \"subject\": \"Alice, works_at, Acme Corp, in, London, is_entity_ref_subject_ref_object_ref_is_entity_ref_confidence\"\n    }\n  ]\n}"
+        "response_text": "\n\n```json\n[\n  {\n    \"subject\": \"Alice\",\n    \"predicate\": \"works at\",\n    \"object\": \"Acme Corp\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Alice\",\n    \"predicate\": \"works in\",\n    \"object\": \"London\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.90\n  },\n  {\n    \"subject\": \"Acme Corp\",\n    \"predicate\": \"is located in\",\n    \"object\": \"London\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.85\n  }\n]\n```"
+      }
+    ],
+    "36a0205b30a37c7cc0ef4bc42aecddf2850f88f20303e69174621a455271fa20": [
+      {
+        "call_index": 0,
+        "response_text": "\n\n```json\n{\"entities\": [{\"name\": \"Alice\", \"entity_type_id\": 1}, {\"name\": \"Acme Corp\", \"entity_type_id\": 2}, {\"name\": \"London\", \"entity_type_id\": 3}]}\n```"
       }
     ],
     "900908ab2b449403cd7233cc2bef5e51527d2eb04e56a74b4a03b4c3bb012f8c": [
@@ -29,12 +35,24 @@
       {
         "call_index": 4,
         "response_text": "\""
+      },
+      {
+        "call_index": 5,
+        "response_text": "\""
+      },
+      {
+        "call_index": 6,
+        "response_text": "\""
+      },
+      {
+        "call_index": 7,
+        "response_text": "\""
       }
     ],
-    "f5cb0a21b8a8f002e65f9765a99bef727bfe14e608509855a1d5182cb8f8758b": [
+    "c9a9be4dc03eb072e788a5711a41455e994ffce83cf21de35ee3bcbff1fa57af": [
       {
         "call_index": 0,
-        "response_text": "{\"entities\": [{\"entity_type_id\": 10, \"name\": \"Court of Appeal\"}, {\"entity_type_id\": 2, \"name\": \"Acme Corp\"}, {\"entity_type_id\": 3, \"name\": \"London\"}]}"
+        "response_text": ""
       }
     ]
   }
