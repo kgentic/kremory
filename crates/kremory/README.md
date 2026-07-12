@@ -260,6 +260,53 @@ See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for 
 
 ---
 
+## Reversible dream — see, trust, undo
+
+`dream()` mutates the graph by default — all consolidation ops (community detection, cross-episode merges, supersession sweep, fact archival) are ON. That is safe because **every destructive mutation is reversible** (ADR-073). You can always SEE what changed and UNDO it.
+
+```rust
+use kremory::{Memory, Namespace};
+
+let ns = Namespace::new("agent");
+
+// dream() consolidates by default — all ops ON, all reversible.
+let summary = mem.dream().await?;
+println!("communities updated: {}", summary.communities_updated);
+
+// SEE what dream() did to one entity (newest-first) …
+let history = mem.mutation_history("alice j").in_namespace(ns.clone()).await?;
+for record in &history {
+    println!("{}: {}", record.mutation_id, record.summary);
+}
+
+// … or list every mutation in a namespace.
+let all = mem.list_mutations().in_namespace(ns.clone()).await?;
+
+// UNDO any of them uniformly by mutation_id — the dispatcher routes by kind.
+if let Some(record) = history.first() {
+    let outcome = mem.undo(record.mutation_id).execute().await?;
+    println!("reversed: {outcome:?}");
+}
+```
+
+### The undo surface
+
+| Method | Reverses | Notes |
+|---|---|---|
+| `mem.undo(mutation_id)` | **any** logged mutation | The recommended umbrella — reads the kind and dispatches. Idempotent. |
+| `mem.unmerge(mutation_id)` | an `entity_merge` | Restores the split pair + records a `merge_nogood` so the next `dream()` will **not** re-merge them. |
+| `mem.undo_entity_edit(mutation_id)` | an `edit_entity` (rename/retype) | Inverse FK-rekey from the snapshot. |
+| `mem.undo_delete_entity(mutation_id)` | a `delete_entity` | Un-archives facts, re-inserts edges + membership. |
+| `mem.undo_delete_fact(mutation_id)` | a `delete_fact` | Restores the archived fact + un-retracts neighbours. |
+| `mem.unsupersede(fact_id)` | a supersession bound | Takes a `fact_id` (not a `mutation_id`). |
+| `mem.restore_archived_fact(archived_fact_id)` | a P2 archive | Takes an `archived_fact_id`. |
+
+Every undo returns an **honest outcome** (the actual counts reversed, never a bare "ok"), is **idempotent** (a second undo is a zero-count no-op, never a double-restore), and is **fully deterministic** (replayed from an in-transaction snapshot — no LLM).
+
+**Tracked-kind boundary:** four of the eight `MutationKind`s are logged and reversible via `undo()` (`entity_merge`, `entity_edit`, `entity_delete`, `fact_delete`); the other four are reserved (not yet produced), so `list_mutations().kind(<reserved>)` is empty by construction and `undo()` on such a row is a loud `UndoUnsupportedKind`.
+
+---
+
 ## Observability (v0.1.2+)
 
 kremory emits structured metrics + tracing spans for every LLM and embedding call when you wire BYOM providers via Tier 1 shortcuts or `with_llm_tracked`. The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) auto-wrap providers in `TokenTrackingChatProvider` internally.

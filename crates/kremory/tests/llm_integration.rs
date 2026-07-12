@@ -555,7 +555,7 @@ async fn dream_phase_returns_ok_summary() {
     dream_opts.include_fact_archival = false;
     let summary = mem
         .dream()
-        .opts(dream_opts)
+        .with_opts(dream_opts)
         .await
         .expect("dream() must return Ok after F-01 retirement");
 

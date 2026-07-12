@@ -522,7 +522,7 @@ async fn happy_path() {
     // surface this file exists to prove.
     let summary = mem
         .dream()
-        .opts(all_consolidation_on())
+        .with_opts(all_consolidation_on())
         .await
         .expect("mem.dream() with all consolidation ops ON must succeed end-to-end");
 
@@ -589,7 +589,7 @@ async fn happy_path() {
     //    label-propagation op re-converges to the identical result). ────────────
     let summary2 = mem
         .dream()
-        .opts(all_consolidation_on())
+        .with_opts(all_consolidation_on())
         .await
         .expect("second mem.dream() call must also succeed");
     let community_count2 = persisted_community_count(&tg, &group_id).await;
@@ -674,7 +674,7 @@ async fn homonym_trap_no_wrong_merge() {
     // through supersession → archive → cross_episode → communities in one pass.
     let summary = mem
         .dream()
-        .opts(all_consolidation_on())
+        .with_opts(all_consolidation_on())
         .await
         .expect("mem.dream() with all consolidation ops ON must succeed over the homonym fixture");
 
@@ -744,7 +744,7 @@ async fn idempotency() {
     // First dream() call settles the graph (reconciliation + consolidation).
     let summary1 = mem
         .dream()
-        .opts(all_consolidation_on())
+        .with_opts(all_consolidation_on())
         .await
         .expect("first mem.dream() call must succeed");
     let community_count1 = persisted_community_count(&tg, &group_id).await;
@@ -763,7 +763,7 @@ async fn idempotency() {
     // planted scenarios, nothing changed in between.
     let summary2 = mem
         .dream()
-        .opts(all_consolidation_on())
+        .with_opts(all_consolidation_on())
         .await
         .expect("second mem.dream() call must succeed");
     let community_count2 = persisted_community_count(&tg, &group_id).await;

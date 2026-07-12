@@ -77,6 +77,24 @@ pub use inspect::{MutationFilter, MutationRecord};
 /// `#[non_exhaustive]`: Stage 2 reserves an additive `derived_write` kind
 /// (§2.1) and future consolidation ops become new kinds with zero schema
 /// change (§5 D1) — new variants must not be a breaking change.
+///
+/// # Tracked-kind boundary (4 of 8 are logged today)
+///
+/// Only FOUR variants are currently PRODUCED into `graph_mutation_log`, and hence
+/// LOGGED, listable (via `Memory::list_mutations` / `mutation_history`), and
+/// reversible through the unified `Memory::undo` dispatcher:
+/// [`EntityMerge`](Self::EntityMerge), [`EntityEdit`](Self::EntityEdit),
+/// [`EntityDelete`](Self::EntityDelete), [`FactDelete`](Self::FactDelete).
+///
+/// The other four — [`FactSupersede`](Self::FactSupersede),
+/// [`FactArchive`](Self::FactArchive), [`CommunityAssign`](Self::CommunityAssign),
+/// [`CanonicalForm`](Self::CanonicalForm) — are RESERVED: they are not written to
+/// the log yet, so `list_mutations(kind = <reserved>)` returns empty BY
+/// CONSTRUCTION, and `Memory::undo` on a would-be row of that kind is a loud
+/// `Error::UndoUnsupportedKind`. (`FactSupersede` / `FactArchive` are still
+/// reversible — via `Memory::unsupersede` / `Memory::restore_archived_fact`, which
+/// take a domain `fact_id` / `archived_fact_id`, not a `mutation_id`.) The runtime
+/// enforcement of this boundary is the `undo` dispatcher's loud error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

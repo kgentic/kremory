@@ -95,7 +95,7 @@ async fn dream_skips_consistency_check_when_opted_out() {
     let mut opts = kremory::DreamOpts::default();
     opts.include_consistency_check = false;
     mem.dream()
-        .opts(opts)
+        .with_opts(opts)
         .await
         .expect("dream must succeed with consistency_check opted out");
 

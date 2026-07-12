@@ -134,7 +134,7 @@ async fn dream_with_sink(dry_run: bool) -> Vec<(String, String, String, bool)> {
 
     mem.dream()
         .in_namespace(ns)
-        .opts(opts)
+        .with_opts(opts)
         .with_event_sink(sink.clone() as Arc<dyn EnrichmentEventSink>)
         .await
         .expect("mem.dream() must succeed");
