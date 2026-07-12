@@ -776,13 +776,79 @@ impl Memory {
         }
     }
 
+    /// Reverse ANY logged, reversible mutation by its `mutation_id` — the unified
+    /// undo umbrella (ADR-073 DX R1/R2, ADR-038 "one recommended entry point").
+    ///
+    /// Reads the `graph_mutation_log` row for `mutation_id`, matches on its kind,
+    /// and dispatches to the correct per-kind undo, returning the honest
+    /// [`UndoOutcome`]. This is the method to reach for after iterating
+    /// [`list_mutations`](Self::list_mutations) / [`mutation_history`](Self::mutation_history):
+    /// a consumer can uniformly `mem.undo(record.mutation_id)` without switching on
+    /// the kind by hand. The per-kind methods ([`unmerge`](Self::unmerge),
+    /// [`undo_entity_edit`](Self::undo_entity_edit),
+    /// [`undo_delete_entity`](Self::undo_delete_entity),
+    /// [`undo_delete_fact`](Self::undo_delete_fact)) still work and remain the
+    /// escape hatch when you already know the kind.
+    ///
+    /// Only the four LOGGED kinds dispatch (`entity_merge` / `entity_edit` /
+    /// `entity_delete` / `fact_delete`). The other four [`MutationKind`] variants
+    /// are RESERVED (never produced into the log today), so a would-be row of that
+    /// kind returns a loud `Error::UndoUnsupportedKind` — see [`UndoRequest`].
+    ///
+    /// Optional `.in_namespace(ns)` guards the undo to the mutation's original
+    /// namespace. Must call `.execute()` (mutating op).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use kremory::{Memory, Namespace};
+    /// # async fn ex(mem: Memory) -> kremory::memory::Result<()> {
+    /// // SEE what dream() did, then UNDO the most recent mutation uniformly.
+    /// let history = mem.mutation_history("alice")
+    ///     .in_namespace(Namespace::new("agent"))
+    ///     .await?;
+    /// if let Some(rec) = history.first() {
+    ///     let outcome = mem.undo(rec.mutation_id).execute().await?;
+    ///     println!("reversed: {outcome:?}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use = "UndoRequest must call .execute() to run"]
+    pub fn undo(&self, mutation_id: i64) -> UndoRequest<'_> {
+        UndoRequest {
+            memory: self,
+            mutation_id,
+            namespace: None,
+        }
+    }
+
     /// Reverse a prior entity-merge, fully restoring the loser entity, its facts,
     /// its episodic edges, and the keeper's overwritten `access_count` /
     /// `ner_confidence` (reversible-graph-mutations arch-spec §4.2). Records a
     /// merge NOGOOD so the next `dream()` will NOT re-merge the split pair (§6.2).
     ///
     /// Idempotent: a second call returns `already_undone = true`. Must call
-    /// `.execute()` (mutating op).
+    /// `.execute()` (mutating op). Prefer [`undo`](Self::undo) when iterating
+    /// [`list_mutations`](Self::list_mutations) — it dispatches by kind for you.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use kremory::{Memory, Namespace};
+    /// # async fn ex(mem: Memory) -> kremory::memory::Result<()> {
+    /// // Find a merge in an entity's history, then split the pair back apart.
+    /// let history = mem.mutation_history("alice j")
+    ///     .in_namespace(Namespace::new("agent"))
+    ///     .await?;
+    /// if let Some(rec) = history.first() {
+    ///     let outcome = mem.unmerge(rec.mutation_id).execute().await?;
+    ///     println!("restored '{}' (nogood recorded: {})",
+    ///         outcome.restored_entity, outcome.nogood_recorded);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use = "UnmergeRequest must call .execute() to run"]
     pub fn unmerge(&self, mutation_id: i64) -> UnmergeRequest<'_> {
         UnmergeRequest {
@@ -826,6 +892,23 @@ impl Memory {
     ///
     /// The edit is undoable via [`undo_entity_edit`](Self::undo_entity_edit) with
     /// the returned `EditEntityOutcome.mutation_id`. Must call `.execute()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use kremory::{Memory, Namespace};
+    /// # async fn ex(mem: Memory) -> kremory::memory::Result<()> {
+    /// // Rename a diarization placeholder; every fact / edge re-points to the new id.
+    /// let edit = mem.edit_entity("Speaker 1")
+    ///     .rename("alice")
+    ///     .in_namespace(Namespace::new("meeting"))
+    ///     .execute()
+    ///     .await?;
+    /// // ...and reverse it later via the returned mutation_id.
+    /// mem.undo_entity_edit(edit.mutation_id).execute().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use = "EditEntityRequest must call .execute() to run"]
     pub fn edit_entity<'a>(
         &'a self,
@@ -920,6 +1003,11 @@ impl Memory {
     ///
     /// Namespace: `.in_namespace(ns)` or a `default_namespace` on the builder is
     /// required (an entity id is namespace-scoped). Read-only — `.await` it.
+    ///
+    /// Only the four LOGGED [`MutationKind`]s appear here (`EntityMerge` /
+    /// `EntityEdit` / `EntityDelete` / `FactDelete`); the other four are reserved
+    /// and never surface — see [`list_mutations`](Self::list_mutations) for the
+    /// tracked-kind boundary.
     #[must_use = "MutationHistoryRequest must be .await-ed"]
     pub fn mutation_history<'a>(
         &'a self,
@@ -935,11 +1023,23 @@ impl Memory {
     /// List the mutations `dream()` applied, newest-first — the **SEE** surface
     /// for a whole namespace (arch-spec §3 "Inspect surface").
     ///
-    /// Returns `Vec<MutationRecord>` (each carrying its `mutation_id` to undo).
-    /// Filter with `.kind(k)` / `.since(ts)` / `.include_undone(true)`; scope with
-    /// `.in_namespace(ns)` (else the `default_namespace`, else ALL namespaces).
-    /// Default view is LIVE (still-reversible) mutations only. Read-only —
-    /// `.await` it.
+    /// Returns `Vec<MutationRecord>` (each carrying its `mutation_id` to undo via
+    /// [`undo`](Self::undo)). Filter with `.kind(k)` / `.since(ts)` /
+    /// `.include_undone(true)`; scope with `.in_namespace(ns)` (else the
+    /// `default_namespace`, else ALL namespaces). Default view is LIVE
+    /// (still-reversible) mutations only. Read-only — `.await` it.
+    ///
+    /// # Tracked-kind boundary (4 of 8)
+    ///
+    /// Only FOUR [`MutationKind`] variants are currently LOGGED (hence listable and
+    /// reversible via [`undo`](Self::undo)): `EntityMerge`, `EntityEdit`,
+    /// `EntityDelete`, `FactDelete`. The other four (`FactSupersede`, `FactArchive`,
+    /// `CommunityAssign`, `CanonicalForm`) are RESERVED — not yet produced into the
+    /// `graph_mutation_log` — so `list_mutations().kind(<a reserved kind>)` returns
+    /// EMPTY by construction (not "nothing changed"). `FactSupersede` / `FactArchive`
+    /// are themselves reversible, but through the domain-id methods
+    /// [`unsupersede`](Self::unsupersede) / [`restore_archived_fact`](Self::restore_archived_fact),
+    /// not this inspect+undo surface.
     #[must_use = "ListMutationsRequest must be .await-ed"]
     pub fn list_mutations(&self) -> ListMutationsRequest<'_> {
         ListMutationsRequest {
@@ -953,8 +1053,26 @@ impl Memory {
 
     /// Run batch consolidation (dream phase).
     ///
-    /// Default: blocks until done (returns `DreamSummary`).
-    /// Use `.fire_and_forget()` to return `DreamHandle` without blocking.
+    /// Default: blocks until done (returns [`DreamSummary`]). All consolidation ops
+    /// default ON and are REVERSIBLE (ADR-073) — inspect what changed with
+    /// [`mutation_history`](Self::mutation_history) / [`list_mutations`](Self::list_mutations),
+    /// reverse anything with [`undo`](Self::undo). Use `.fire_and_forget()` to
+    /// return a `DreamHandle` without blocking, or `.cross_episode(mode)` /
+    /// `.with_opts(opts)` to tune the consolidation surface.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use kremory::Memory;
+    /// # async fn ex(mem: Memory) -> kremory::memory::Result<()> {
+    /// let summary = mem.dream().await?;
+    /// println!(
+    ///     "communities updated: {}, entities reclassified: {}",
+    ///     summary.communities_updated, summary.entities_reclassified,
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use = "DreamRequest must be .await-ed or have a terminal called"]
     pub fn dream(&self) -> DreamRequest<'_> {
         DreamRequest {
@@ -2169,7 +2287,7 @@ mod dream_llm_slot_tests {
             // default. This Pass-0/type-discovery test pins EVERY consolidation flag
             // OFF so its honest-zeros below stay valid (consolidation behaviour is
             // covered elsewhere).
-            .opts(crate::memory::types::DreamOpts {
+            .with_opts(crate::memory::types::DreamOpts {
                 include_cross_episode_merges: false,
                 include_community_detection: false,
                 include_fact_archival: false,

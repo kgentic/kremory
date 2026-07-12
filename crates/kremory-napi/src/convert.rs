@@ -11,20 +11,30 @@ use kremory::{DreamSummary, Namespace, RetrievedContext};
 
 /// GLiNER configuration passed via `MemoryOpenOptionsJs.gliner` (ADR-039 Part 10).
 ///
-/// Mirrors `kremory::core::extraction::GlinerConfig`. Currently a placeholder —
-/// all knobs are reserved for future tuning (threshold, model path, batch size).
-/// An empty `{}` object in JS is the standard way to enable GLiNER with defaults.
+/// # ⚠ Reserved / inert knobs — presence is the ONLY live signal
+///
+/// The PRESENCE of a `gliner` object is what enables `ExtractorKind::GlinerLlm`;
+/// its FIELDS are currently RESERVED and inert on the wire. The substrate
+/// `with_gliner()` builder takes no config argument today, so `modelPath` and
+/// `threshold` are accepted but NOT threaded through — pass `{}` to enable GLiNER
+/// with substrate defaults. To tune the span threshold today, set the
+/// `KREMORY_GLINER_THRESHOLD` env var (the substrate reads it, falling back to
+/// 0.3). These fields are retained (not removed) so the JS shape is forward-stable
+/// for when `GlinerConfig` gains public tuning knobs (ADR-039 §A6); they will
+/// become live then.
 ///
 /// Requires kremory-napi built with `--features ner`. Passing this field on a
 /// non-ner build causes `Memory.open` to return an error.
 #[napi(object, js_name = "GlinerConfig")]
 #[derive(Default)]
 pub struct GlinerConfigJs {
-    /// Model file path override. `null` = use default bundled model.
+    /// RESERVED / inert — model file path override. Not threaded to the substrate
+    /// today (`with_gliner()` takes no arg); reserved for a future ADR-039 §A6
+    /// tuning surface. `null` = use default bundled model.
     pub model_path: Option<String>,
-    /// Span-detection confidence threshold in `[0.0, 1.0]`.
-    /// `null` = use substrate default (reads `KREMORY_GLINER_THRESHOLD` env,
-    /// falls back to 0.3).
+    /// RESERVED / inert — span-detection confidence threshold in `[0.0, 1.0]`. Not
+    /// threaded to the substrate today; set `KREMORY_GLINER_THRESHOLD` env instead
+    /// (substrate default `0.3`). Reserved for a future ADR-039 §A6 tuning surface.
     pub threshold: Option<f64>,
 }
 
@@ -1160,6 +1170,71 @@ pub fn delete_fact_outcome_to_js(o: kremory::DeleteFactOutcome) -> JsDeleteFactO
         mutation_id: o.mutation_id,
         already_undone: o.already_undone,
     }
+}
+
+/// Outcome of `JsMemory.undo` — the unified undo dispatcher (ADR-073 DX R1/R2).
+/// Mirrors `kremory::UndoOutcome` as a FLAT JS object carrying the dispatched
+/// `kind` PLUS exactly one populated per-kind outcome field (the other three are
+/// omitted). A JS consumer switches on `kind`, then reads the matching field:
+///
+/// ```js
+/// const r = await mem.undo(mutationId);
+/// switch (r.kind) {
+///   case "unmerge":       console.log(r.unmerge.restoredEntity); break;
+///   case "edit_entity":   console.log(r.editEntity.entityId);    break;
+///   case "delete_entity": console.log(r.deleteEntity.entityId);  break;
+///   case "delete_fact":   console.log(r.deleteFact.factId);      break;
+/// }
+/// ```
+#[napi(object, js_name = "UndoOutcome")]
+pub struct JsUndoOutcome {
+    /// Which per-kind undo ran: `"unmerge"` | `"edit_entity"` | `"delete_entity"`
+    /// | `"delete_fact"` (mirrors the `kremory::UndoOutcome` variant).
+    pub kind: String,
+    /// Populated iff `kind === "unmerge"`.
+    pub unmerge: Option<JsUnmergeOutcome>,
+    /// Populated iff `kind === "edit_entity"`.
+    pub edit_entity: Option<JsEditEntityOutcome>,
+    /// Populated iff `kind === "delete_entity"`.
+    pub delete_entity: Option<JsDeleteEntityOutcome>,
+    /// Populated iff `kind === "delete_fact"`.
+    pub delete_fact: Option<JsDeleteFactOutcome>,
+}
+
+/// Convert a substrate `kremory::UndoOutcome` to `JsUndoOutcome` (flat object with
+/// a `kind` discriminator + the one populated per-kind outcome field).
+pub fn undo_outcome_to_js(o: kremory::UndoOutcome) -> JsUndoOutcome {
+    let mut js = JsUndoOutcome {
+        kind: String::new(),
+        unmerge: None,
+        edit_entity: None,
+        delete_entity: None,
+        delete_fact: None,
+    };
+    match o {
+        kremory::UndoOutcome::Unmerge(u) => {
+            js.kind = "unmerge".to_string();
+            js.unmerge = Some(unmerge_outcome_to_js(u));
+        }
+        kremory::UndoOutcome::EditEntity(e) => {
+            js.kind = "edit_entity".to_string();
+            js.edit_entity = Some(edit_entity_outcome_to_js(e));
+        }
+        kremory::UndoOutcome::DeleteEntity(d) => {
+            js.kind = "delete_entity".to_string();
+            js.delete_entity = Some(delete_entity_outcome_to_js(d));
+        }
+        kremory::UndoOutcome::DeleteFact(d) => {
+            js.kind = "delete_fact".to_string();
+            js.delete_fact = Some(delete_fact_outcome_to_js(d));
+        }
+        // Non-exhaustive guard: a future log-dispatchable kind maps to an honest
+        // "unknown" marker with every outcome field omitted (never a mis-label).
+        _ => {
+            js.kind = "unknown".to_string();
+        }
+    }
+    js
 }
 
 /// A single logged graph mutation from `JsMemory.mutationHistory` /

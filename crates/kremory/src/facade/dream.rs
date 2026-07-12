@@ -53,7 +53,10 @@ impl<'a> DreamRequest<'a> {
     }
 
     /// Escape hatch: set raw `DreamOpts` directly.
-    pub fn opts(mut self, opts: DreamOpts) -> Self {
+    ///
+    /// Named `with_opts` (not `opts`) so the builder verb is distinct from the
+    /// `opts` field it sets (DX1 — a method named `opts` reads like a getter).
+    pub fn with_opts(mut self, opts: DreamOpts) -> Self {
         self.opts = Some(opts);
         self
     }
@@ -67,9 +70,9 @@ impl<'a> DreamRequest<'a> {
     /// - [`CrossEpisodeMode::Shadow`] → `include = true`, `dry_run = true`
     /// - [`CrossEpisodeMode::Apply`] → `include = true`, `dry_run = false`
     ///
-    /// Composes with any `DreamOpts` already set via [`Self::opts`] — only the two
-    /// cross_episode fields are overwritten; every other knob is preserved. Flows
-    /// through both the awaited and `fire_and_forget` paths.
+    /// Composes with any `DreamOpts` already set via [`Self::with_opts`] — only the
+    /// two cross_episode fields are overwritten; every other knob is preserved.
+    /// Flows through both the awaited and `fire_and_forget` paths.
     pub fn cross_episode(mut self, mode: CrossEpisodeMode) -> Self {
         let mut opts = self.opts.take().unwrap_or_default();
         match mode {
@@ -682,7 +685,7 @@ mod cross_episode_mode_tests {
 
     #[tokio::test]
     async fn cross_episode_preserves_other_opts_set_via_opts() {
-        // Composing with a prior `.opts(...)` must overwrite ONLY the two
+        // Composing with a prior `.with_opts(...)` must overwrite ONLY the two
         // cross_episode fields, preserving every other knob.
         let mem = make_memory().await;
         let base = crate::memory::types::DreamOpts {
@@ -692,7 +695,7 @@ mod cross_episode_mode_tests {
         };
         let composed = mem
             .dream()
-            .opts(base)
+            .with_opts(base)
             .cross_episode(CrossEpisodeMode::Apply)
             .opts
             .expect("opts set");

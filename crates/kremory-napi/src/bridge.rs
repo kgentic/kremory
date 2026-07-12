@@ -554,13 +554,15 @@ pub(crate) async fn resolve_env_llm() -> napi::Result<Arc<dyn ChatProvider>> {
     };
 
     if let Ok(host) = std::env::var("OLLAMA_HOST") {
-        // Default: qwen2.5:14b — kremory's own structured-output test target
-        // (crates/kremory/src/core/extraction/structured.rs:744,793,909). Metal Q4_K_M
-        // backend, ~9GB, ~14.8B params. Reliable for NuExtract schema. Override via
-        // OLLAMA_CHAT_MODEL env var. Avoid `-mlx` variants pending upstream
-        // autoagents-llm structured-output patches.
+        // Default: gemma4:e4b — ALIGNED with the Rust `Memory::with_ollama` default
+        // (facade/mod.rs) and the validated-best default (F1 85.7 @ 11.6s per
+        // `project_kremory_validated_model_findings_2026-06-24`). This closes the
+        // N4 binding-parity gap where the napi default (`qwen2.5:14b`) differed from
+        // Rust's, giving the SAME library two default brains depending on binding.
+        // Override via OLLAMA_CHAT_MODEL env var. Avoid `-mlx` variants pending
+        // upstream autoagents-llm structured-output patches.
         let model =
-            std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "qwen2.5:14b".to_string());
+            std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
 
         // Default 30s timeout — Apple Silicon MLX/14B cold-load or model-swap
         // routinely exceeds 10s (kremory facade convention). Override via

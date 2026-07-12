@@ -21,7 +21,7 @@ use crate::core::dream::provenance::delete::DeleteEntityParams;
 use crate::core::dream::provenance::edit::{EntityEditOp, EntityEditParams};
 use crate::core::dream::provenance::{
     inspect, DeleteEntityOutcome, DeleteFactOutcome, EditEntityOutcome, MutationKind,
-    MutationRecord,
+    MutationRecord, UnmergeOutcome,
 };
 use crate::memory::engine_handle::namespace_to_group_id;
 
@@ -515,5 +515,469 @@ impl<'a> IntoFuture for ListMutationsRequest<'a> {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.execute())
+    }
+}
+
+// ── UndoOutcome / UndoRequest (§3.1 — the unified reversal dispatcher, R1/R2) ──
+
+/// What a unified [`Memory::undo`](super::Memory::undo) call ACTUALLY reversed —
+/// one variant per log-dispatchable [`MutationKind`], each wrapping that kind's
+/// HONEST per-op outcome type (§3.1, never a bare `Applied`). This is the return
+/// of the ONE umbrella undo a consumer reaches for after iterating
+/// [`list_mutations`](super::Memory::list_mutations): match the variant when you
+/// need the per-kind counts, or ignore it for fire-and-forget reversal.
+///
+/// `#[non_exhaustive]`: a future log-dispatchable kind becomes a new variant with
+/// zero breaking change (matching the `MutationKind` `#[non_exhaustive]` posture).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum UndoOutcome {
+    /// The mutation was an `entity_merge`; reversed via
+    /// [`unmerge`](super::Memory::unmerge).
+    Unmerge(UnmergeOutcome),
+    /// The mutation was an `entity_edit`; reversed via
+    /// [`undo_entity_edit`](super::Memory::undo_entity_edit).
+    EditEntity(EditEntityOutcome),
+    /// The mutation was an `entity_delete`; reversed via
+    /// [`undo_delete_entity`](super::Memory::undo_delete_entity).
+    DeleteEntity(DeleteEntityOutcome),
+    /// The mutation was a `fact_delete`; reversed via
+    /// [`undo_delete_fact`](super::Memory::undo_delete_fact).
+    DeleteFact(DeleteFactOutcome),
+}
+
+/// The unified undo dispatcher (ADR-073 DX R1/R2). Obtain via
+/// `mem.undo(mutation_id)`.
+///
+/// Reads the `graph_mutation_log` row for `mutation_id`, matches on its `kind`,
+/// and dispatches to the correct per-kind undo — so a consumer iterating
+/// [`list_mutations`](super::Memory::list_mutations) can uniformly
+/// `mem.undo(record.mutation_id)` without first switching on the kind by hand.
+/// Returns the honest [`UndoOutcome`] carrying the reversed op's counts.
+///
+/// # The 4-of-8 honesty boundary
+///
+/// Only the four LOGGED, reversible kinds dispatch here: `entity_merge` →
+/// [`unmerge`](super::Memory::unmerge), `entity_edit` →
+/// [`undo_entity_edit`](super::Memory::undo_entity_edit), `entity_delete` →
+/// [`undo_delete_entity`](super::Memory::undo_delete_entity), `fact_delete` →
+/// [`undo_delete_fact`](super::Memory::undo_delete_fact). The other four
+/// [`MutationKind`] variants (`fact_supersede` / `fact_archive` /
+/// `community_assign` / `canonical_form`) are RESERVED — not produced into the
+/// log today — so a would-be row of that kind returns a LOUD
+/// [`Error::UndoUnsupportedKind`](crate::core::error::Error::UndoUnsupportedKind).
+/// (`fact_supersede` / `fact_archive` are reversible, but via their own domain-id
+/// methods — [`unsupersede`](super::Memory::unsupersede) /
+/// [`restore_archived_fact`](super::Memory::restore_archived_fact) — which take a
+/// `fact_id` / `archived_fact_id`, not a `mutation_id`.)
+///
+/// Must call `.execute()` (mutating op).
+#[must_use = "UndoRequest must call .execute() to run"]
+pub struct UndoRequest<'a> {
+    pub(super) memory: &'a Memory,
+    pub(super) mutation_id: i64,
+    pub(super) namespace: Option<Namespace>,
+}
+
+impl<'a> UndoRequest<'a> {
+    /// Guard the undo to `ns`: the dispatcher verifies the mutation's logged
+    /// `group_id` matches this namespace, returning
+    /// [`Error::UndoWrongNamespace`](crate::core::error::Error::UndoWrongNamespace)
+    /// on a mismatch. Optional — omit it to undo by `mutation_id` alone (a
+    /// `mutation_id` is a global, namespace-independent key).
+    pub fn in_namespace(mut self, ns: Namespace) -> Self {
+        self.namespace = Some(ns);
+        self
+    }
+
+    /// Execute the dispatched reversal.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::MutationNotFound`](crate::core::error::Error::MutationNotFound)
+    ///   — `mutation_id` names no `graph_mutation_log` row.
+    /// - [`Error::UndoWrongNamespace`](crate::core::error::Error::UndoWrongNamespace)
+    ///   — `.in_namespace(ns)` was set and its group differs from the mutation's.
+    /// - [`Error::UndoUnsupportedKind`](crate::core::error::Error::UndoUnsupportedKind)
+    ///   — the row's kind is one of the four reserved (non-log-dispatchable) kinds.
+    /// - Whatever the dispatched per-kind undo returns (e.g.
+    ///   [`Error::UnmergeOutOfOrder`](crate::core::error::Error::UnmergeOutOfOrder)).
+    /// - `Err` if `Memory` was constructed without a `TemporalGraph` (test-stub path).
+    pub async fn execute(self) -> Result<UndoOutcome> {
+        let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::undo requires a Memory constructed via the builder/providers \
+                 path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+
+        // Read the log row's kind + group_id (the ONLY columns dispatch needs).
+        // A missing row is a LOUD MutationNotFound (parse-loudly), never a silent
+        // no-op — reversing a mutation that was never logged is a caller bug.
+        let (kind_tag, group_id): (String, String) = {
+            let mut rows = tg
+                .conn
+                .query(
+                    "SELECT kind, group_id FROM graph_mutation_log WHERE id = ?1",
+                    libsql::params![self.mutation_id],
+                )
+                .await
+                .map_err(|e| MemoryError::Core(CoreError::Database(e)))?;
+            match rows
+                .next()
+                .await
+                .map_err(|e| MemoryError::Core(CoreError::Database(e)))?
+            {
+                Some(row) => (
+                    row.get::<String>(0)
+                        .map_err(|e| MemoryError::Core(CoreError::Database(e)))?,
+                    row.get::<String>(1)
+                        .map_err(|e| MemoryError::Core(CoreError::Database(e)))?,
+                ),
+                None => {
+                    return Err(MemoryError::Core(CoreError::MutationNotFound {
+                        mutation_id: self.mutation_id,
+                    }));
+                }
+            }
+        };
+
+        // Optional namespace guard (C2): an undo targets the mutation's ORIGINAL
+        // namespace. If the caller scoped a namespace, verify it matches the logged
+        // group so we never silently reverse a mutation in an unintended namespace.
+        if let Some(ns) = self.namespace {
+            let requested_group = namespace_to_group_id(&ns);
+            if requested_group != group_id {
+                return Err(MemoryError::Core(CoreError::UndoWrongNamespace {
+                    mutation_id: self.mutation_id,
+                    mutation_group: group_id,
+                    requested_group,
+                }));
+            }
+        }
+
+        // parse-loudly (§2.1): an unrecognised kind tag is a hard error, never
+        // silently skipped — a log row we cannot classify must surface.
+        let kind = MutationKind::from_tag(&kind_tag).map_err(MemoryError::Core)?;
+
+        match kind {
+            MutationKind::EntityMerge => Ok(UndoOutcome::Unmerge(
+                self.memory.unmerge(self.mutation_id).execute().await?,
+            )),
+            MutationKind::EntityEdit => Ok(UndoOutcome::EditEntity(
+                self.memory
+                    .undo_entity_edit(self.mutation_id)
+                    .execute()
+                    .await?,
+            )),
+            MutationKind::EntityDelete => Ok(UndoOutcome::DeleteEntity(
+                self.memory
+                    .undo_delete_entity(self.mutation_id)
+                    .execute()
+                    .await?,
+            )),
+            MutationKind::FactDelete => Ok(UndoOutcome::DeleteFact(
+                self.memory
+                    .undo_delete_fact(self.mutation_id)
+                    .execute()
+                    .await?,
+            )),
+            // The four RESERVED kinds are never produced into the log today; a
+            // would-be row of that kind is loudly unsupported (R3 honesty).
+            other => Err(MemoryError::Core(CoreError::UndoUnsupportedKind {
+                mutation_id: self.mutation_id,
+                kind: other.as_tag().to_string(),
+            })),
+        }
+    }
+}
+
+#[cfg(test)]
+mod undo_dispatch_tests {
+    //! R1/R2 (ADR-073 DX) — `mem.undo(mutation_id)` dispatches each of the four
+    //! LOGGED kinds to the correct per-kind undo (same effect as the per-kind
+    //! method), returns `MutationNotFound` for an unknown id, and returns a loud
+    //! `UndoUnsupportedKind` for a would-be RESERVED-kind row. Deterministic,
+    //! zero-LLM — fast tier, no VCR (`llm-test-pyramid-vcr-seams`).
+
+    use std::sync::Arc;
+
+    use crate::core::canonicalization::{canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD};
+    use crate::core::error::Error as CoreError;
+    use crate::core::graph::InsertEntityWithGroupParams;
+    use crate::core::provider::{DynEmbeddingProvider, MockChatProvider, NullEmbeddingProvider};
+
+    use super::{namespace_to_group_id, MemoryError, Namespace, UndoOutcome};
+    use crate::facade::Memory;
+
+    async fn make_memory() -> Memory {
+        let llm: Arc<dyn crate::memory::ChatProvider> = Arc::new(MockChatProvider::null());
+        let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
+        Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .await
+            .expect("Memory must build")
+    }
+
+    fn ns() -> Namespace {
+        Namespace::new("agent")
+    }
+
+    fn unit_vec() -> Vec<f32> {
+        let v = 1.0_f32 / (384.0_f32).sqrt();
+        vec![v; 384]
+    }
+
+    async fn insert_bare(mem: &Memory, id: &str) {
+        let group = namespace_to_group_id(&ns());
+        mem.temporal_graph
+            .as_ref()
+            .unwrap()
+            .insert_entity_with_group(InsertEntityWithGroupParams {
+                id,
+                entity_type_id: 0,
+                properties: serde_json::json!({ "name": id }),
+                group_id: Some(group.as_str()),
+            })
+            .await
+            .expect("insert bare entity");
+    }
+
+    async fn insert_embedded(mem: &Memory, id: &str, description: &str) {
+        let group = namespace_to_group_id(&ns());
+        let tg = mem.temporal_graph.as_ref().unwrap();
+        tg.insert_entity_with_group(InsertEntityWithGroupParams {
+            id,
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": id, "description": description }),
+            group_id: Some(group.as_str()),
+        })
+        .await
+        .expect("insert embedded entity");
+        tg.set_entity_embedding(id, &unit_vec())
+            .await
+            .expect("set embedding");
+    }
+
+    /// Drive a real canonicalize merge and return the logged `entity_merge` id.
+    async fn make_merge(mem: &Memory) -> i64 {
+        let group = namespace_to_group_id(&ns());
+        insert_embedded(
+            mem,
+            "alice johnson",
+            "A detailed description of Alice Johnson, engineer at Acme.",
+        )
+        .await;
+        insert_embedded(mem, "alice j", "Alice.").await;
+        let report =
+            canonicalize_surface_forms(mem.temporal_graph.as_ref().unwrap(), &group, L5_CANONICALIZATION_THRESHOLD)
+                .await
+                .expect("canonicalize");
+        assert_eq!(report.merges_applied, 1, "exactly one merge produced");
+        let mut rows = mem
+            .temporal_graph
+            .as_ref()
+            .unwrap()
+            .conn
+            .query(
+                "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'",
+                (),
+            )
+            .await
+            .expect("log query");
+        rows.next()
+            .await
+            .expect("row")
+            .expect("one entity_merge row")
+            .get::<i64>(0)
+            .expect("id")
+    }
+
+    #[tokio::test]
+    async fn undo_routes_entity_merge_to_unmerge() {
+        let mem = make_memory().await;
+        let mutation_id = make_merge(&mem).await;
+
+        let outcome = mem.undo(mutation_id).execute().await.expect("undo merge");
+        match outcome {
+            UndoOutcome::Unmerge(o) => {
+                // Same effect as `mem.unmerge(id)`: the loser is restored + a nogood
+                // is recorded so the next dream() will not re-merge the pair.
+                assert_eq!(o.restored_entity, "alice j", "loser restored");
+                assert_eq!(o.keeper, "alice johnson", "keeper named");
+                assert!(o.nogood_recorded, "unmerge records the anti-re-merge nogood");
+                assert!(!o.already_undone, "first undo is a real reversal");
+            }
+            other => panic!("expected Unmerge, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_routes_entity_edit_to_undo_entity_edit() {
+        let mem = make_memory().await;
+        insert_bare(&mem, "speaker 1").await;
+        let edit = mem
+            .edit_entity("speaker 1")
+            .rename("alice")
+            .in_namespace(ns())
+            .execute()
+            .await
+            .expect("rename");
+        assert!(edit.rekeyed, "rename rekeys");
+
+        let outcome = mem.undo(edit.mutation_id).execute().await.expect("undo edit");
+        match outcome {
+            UndoOutcome::EditEntity(o) => {
+                // Same effect as `mem.undo_entity_edit(id)`: the prior id is restored.
+                assert_eq!(o.entity_id, "speaker 1", "rename undo restores the prior id");
+                assert!(!o.already_undone, "first undo is a real reversal");
+            }
+            other => panic!("expected EditEntity, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_routes_entity_delete_to_undo_delete_entity() {
+        let mem = make_memory().await;
+        insert_bare(&mem, "bob").await;
+        let del = mem
+            .delete_entity("bob")
+            .in_namespace(ns())
+            .execute()
+            .await
+            .expect("delete entity");
+
+        let outcome = mem.undo(del.mutation_id).execute().await.expect("undo delete");
+        match outcome {
+            UndoOutcome::DeleteEntity(o) => {
+                assert_eq!(o.entity_id, "bob", "delete undo names the restored entity");
+                assert!(!o.already_undone, "first undo is a real reversal");
+            }
+            other => panic!("expected DeleteEntity, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_routes_fact_delete_to_undo_delete_fact() {
+        let mem = make_memory().await;
+        let group = namespace_to_group_id(&ns());
+        insert_bare(&mem, "carol").await;
+        insert_bare(&mem, "dave").await;
+        let now = chrono::Utc::now().to_rfc3339();
+        mem.temporal_graph
+            .as_ref()
+            .unwrap()
+            .conn
+            .execute(
+                "INSERT INTO facts \
+                 (subject_id, predicate, object_id, valid_from, recorded_at, group_id, \
+                  subject_group_id, object_group_id, confidence) \
+                 VALUES ('carol', 'knows', 'dave', ?1, ?1, ?2, ?2, ?2, 1.0)",
+                libsql::params![now, group.clone()],
+            )
+            .await
+            .expect("plant fact");
+        let fact_id: i64 = {
+            let mut rows = mem
+                .temporal_graph
+                .as_ref()
+                .unwrap()
+                .conn
+                .query(
+                    "SELECT id FROM facts WHERE subject_id = 'carol' AND object_id = 'dave'",
+                    (),
+                )
+                .await
+                .expect("fact id query");
+            rows.next().await.expect("row").expect("fact").get::<i64>(0).expect("id")
+        };
+
+        let del = mem.delete_fact(fact_id).execute().await.expect("delete fact");
+        let outcome = mem.undo(del.mutation_id).execute().await.expect("undo delete fact");
+        match outcome {
+            UndoOutcome::DeleteFact(o) => {
+                assert_eq!(o.fact_id, fact_id, "delete-fact undo names the restored fact");
+                assert!(o.fact_restored, "the archived fact was moved back to live");
+                assert!(!o.already_undone, "first undo is a real reversal");
+            }
+            other => panic!("expected DeleteFact, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_unknown_id_is_mutation_not_found() {
+        let mem = make_memory().await;
+        let err = mem.undo(999_999).execute().await.expect_err("unknown id must error");
+        match err {
+            MemoryError::Core(CoreError::MutationNotFound { mutation_id }) => {
+                assert_eq!(mutation_id, 999_999);
+            }
+            other => panic!("expected MutationNotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_reserved_kind_is_unsupported_kind() {
+        let mem = make_memory().await;
+        let group = namespace_to_group_id(&ns());
+        let now = chrono::Utc::now().to_rfc3339();
+        // Plant a would-be `fact_supersede` row directly — nothing writes this kind
+        // to the log today (the reserved-kind boundary), so `undo` must refuse it
+        // loudly rather than dispatch.
+        mem.temporal_graph
+            .as_ref()
+            .unwrap()
+            .conn
+            .execute(
+                "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
+                 VALUES ('fact_supersede', ?1, ?2, '{}', '{}')",
+                libsql::params![group, now],
+            )
+            .await
+            .expect("plant reserved-kind row");
+        let planted_id: i64 = {
+            let mut rows = mem
+                .temporal_graph
+                .as_ref()
+                .unwrap()
+                .conn
+                .query("SELECT id FROM graph_mutation_log WHERE kind = 'fact_supersede'", ())
+                .await
+                .expect("planted id query");
+            rows.next().await.expect("row").expect("planted row").get::<i64>(0).expect("id")
+        };
+
+        let err = mem
+            .undo(planted_id)
+            .execute()
+            .await
+            .expect_err("reserved kind must error");
+        match err {
+            MemoryError::Core(CoreError::UndoUnsupportedKind { mutation_id, kind }) => {
+                assert_eq!(mutation_id, planted_id);
+                assert_eq!(kind, "fact_supersede", "the offending kind tag is surfaced");
+            }
+            other => panic!("expected UndoUnsupportedKind, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_wrong_namespace_guard_rejects() {
+        let mem = make_memory().await;
+        let mutation_id = make_merge(&mem).await;
+        // The merge was logged under `ns()`; scoping the undo to a DIFFERENT
+        // namespace must refuse loudly rather than reverse it.
+        let err = mem
+            .undo(mutation_id)
+            .in_namespace(Namespace::new("some-other-namespace"))
+            .execute()
+            .await
+            .expect_err("cross-namespace undo must error");
+        assert!(
+            matches!(err, MemoryError::Core(CoreError::UndoWrongNamespace { .. })),
+            "expected UndoWrongNamespace, got {err:?}"
+        );
     }
 }

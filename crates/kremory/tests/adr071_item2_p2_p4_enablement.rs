@@ -291,7 +291,7 @@ async fn p2_archive_enablement_smoke_fires_inside_full_dream_call() {
     let summary = mem
         .dream()
         .in_namespace(ns)
-        .opts(opts)
+        .with_opts(opts)
         .await
         .expect("mem.dream() with include_fact_archival must succeed");
 
@@ -333,7 +333,7 @@ async fn p4_communities_enablement_smoke_fires_inside_full_dream_call() {
     let summary = mem
         .dream()
         .in_namespace(ns)
-        .opts(opts)
+        .with_opts(opts)
         .await
         .expect("mem.dream() with include_community_detection must succeed");
 
@@ -392,7 +392,7 @@ async fn p4_communities_deterministic_recompute_is_stable() {
     let first = mem
         .dream()
         .in_namespace(ns.clone())
-        .opts(opts())
+        .with_opts(opts())
         .await
         .expect("first mem.dream() call must succeed");
     let hashes_1 = member_hashes(&graph, &gid).await;
@@ -404,7 +404,7 @@ async fn p4_communities_deterministic_recompute_is_stable() {
     let second = mem
         .dream()
         .in_namespace(ns)
-        .opts(opts())
+        .with_opts(opts())
         .await
         .expect("second mem.dream() call must succeed");
     let hashes_2 = member_hashes(&graph, &gid).await;

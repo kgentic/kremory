@@ -72,7 +72,8 @@ pub use facade::{
 // convention already used for `SupersedeOutcome` / `DreamSummary`.
 pub use facade::{
     DeleteEntityOutcome, DeleteFactOutcome, EditEntityOutcome, MutationFilter, MutationKind,
-    MutationRecord, RestoreArchivedOutcome, UnmergeOutcome, UnsupersedeOutcome,
+    MutationRecord, RestoreArchivedOutcome, UndoOutcome, UndoRequest, UnmergeOutcome,
+    UnsupersedeOutcome,
 };
 // Dream scheduler + pass API (Phase C, v0.1.1)
 pub use core::ingest::DreamPassOpts;

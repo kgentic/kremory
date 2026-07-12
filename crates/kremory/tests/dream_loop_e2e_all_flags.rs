@@ -561,7 +561,7 @@ async fn all_sites_fire_together_zero_false_merge() {
     // ── ONE mem.dream() call, ALL FIVE include_* flags explicitly true ──
     let summary = mem
         .dream()
-        .opts(all_flags_dream_opts())
+        .with_opts(all_flags_dream_opts())
         .await
         .expect("mem.dream() must succeed with all flags on");
 
@@ -850,7 +850,7 @@ async fn e2_multi_site_ordering_merge_before_reclassify() {
     // ── ONE mem.dream() call, ALL FIVE include_* flags explicitly true ──
     let summary = mem
         .dream()
-        .opts(all_flags_dream_opts())
+        .with_opts(all_flags_dream_opts())
         .await
         .expect("mem.dream() must succeed with all flags on");
 

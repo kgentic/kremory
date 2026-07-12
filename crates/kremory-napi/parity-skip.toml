@@ -253,8 +253,8 @@ reason = "Explicit block variant; symmetric with fire_and_forget — both deferr
 revisit = "v0.2.0"
 
 [[skip]]
-symbol = "DreamRequest::opts"
-reason = "DreamOpts escape hatch; not on JS surface"
+symbol = "DreamRequest::with_opts"
+reason = "DreamOpts escape hatch; not on JS surface (JS dream(opts) folds DreamOptions into the substrate opts)"
 revisit = "never"
 
 # NOTE (TD-053, 2026-06-25): `Memory::{update_source_uri, update_episode_metadata,

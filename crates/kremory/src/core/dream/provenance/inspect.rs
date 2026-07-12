@@ -188,6 +188,11 @@ fn build_record(row: &libsql::Row) -> Result<MutationRecord> {
 /// string, matching what the executor wrote (§2.1). `include_undone = false`
 /// (the default) adds `undone_at IS NULL` so only still-reversible mutations
 /// surface.
+///
+/// Tracked-kind boundary: only 4 of the 8 [`MutationKind`]s (`EntityMerge` /
+/// `EntityEdit` / `EntityDelete` / `FactDelete`) are ever written to
+/// `graph_mutation_log`, so a `filter.kind` naming one of the four RESERVED kinds
+/// returns EMPTY by construction — see [`MutationKind`] for the full boundary.
 #[doc(hidden)]
 pub async fn list_mutations(
     graph: &TemporalGraph,

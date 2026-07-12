@@ -33,7 +33,7 @@ pub use convert::{
     JsEditEntityOptions, JsEditEntityOutcome, JsEpisode, JsIngestResult, JsIngestStatusResult,
     JsMetadataFilter, JsMutationFilter, JsMutationRecord, JsOpenOptions, JsRecallOptions,
     JsRememberOptions, JsRestoreArchivedOutcome, JsRetrievedContext, JsStructuredFact,
-    JsSupersedeOutcome, JsTypeProposal, JsUnmergeOutcome, JsUnsupersedeOutcome,
+    JsSupersedeOutcome, JsTypeProposal, JsUndoOutcome, JsUnmergeOutcome, JsUnsupersedeOutcome,
 };
 
 // ── JsMemory ──────────────────────────────────────────────────────────────────
@@ -395,7 +395,7 @@ impl JsMemory {
 
         let rust_opts = convert::js_dream_opts_to_rust(opts)?;
 
-        let mut req = self.inner.dream().opts(rust_opts);
+        let mut req = self.inner.dream().with_opts(rust_opts);
         if let Some(ns) = ns {
             req = req.in_namespace(ns);
         }
@@ -574,6 +574,41 @@ impl JsMemory {
     }
 
     // ── Reversible-graph-mutations (ADR-073 Tier-1) — undo + inspect ──────────
+
+    /// Reverse ANY logged, reversible mutation by its `mutationId` — the unified
+    /// undo dispatcher (ADR-073 DX R1/R2). Wraps `Memory::undo`.
+    ///
+    /// Reads the mutation's kind and routes to the correct per-kind undo, returning
+    /// a flat `UndoOutcome` `{ kind, unmerge?, editEntity?, deleteEntity?,
+    /// deleteFact? }` — switch on `kind` and read the matching field. This is the
+    /// method to reach for after iterating `listMutations` / `mutationHistory`
+    /// (uniform `mem.undo(record.mutationId)` without switching on the kind by
+    /// hand). The per-kind methods (`unmerge` / `undoEntityEdit` / `undoDeleteEntity`
+    /// / `undoDeleteFact`) still work as the escape hatch.
+    ///
+    /// Only the four LOGGED kinds dispatch; a would-be row of a reserved kind
+    /// (`fact_supersede` / `fact_archive` / `community_assign` / `canonical_form`)
+    /// rejects the Promise (loud `UndoUnsupportedKind`). The optional `namespace`
+    /// GUARDS the undo to the mutation's original namespace (mismatch rejects) — it
+    /// is only applied when EXPLICITLY passed. The handle default is deliberately
+    /// NOT injected here: a `mutationId` is a global key, so undoing a record from a
+    /// cross-namespace `listMutations` must not be blocked by the handle default.
+    #[napi]
+    pub async fn undo(
+        &self,
+        mutation_id: i64,
+        namespace: Option<String>,
+    ) -> napi::Result<JsUndoOutcome> {
+        let mut req = self.inner.undo(mutation_id);
+        if let Some(ns) = namespace.as_deref().map(Namespace::new) {
+            req = req.in_namespace(ns);
+        }
+        let outcome = req
+            .execute()
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory undo failed: {e}")))?;
+        Ok(convert::undo_outcome_to_js(outcome))
+    }
 
     /// Reverse a prior entity-merge by its `mutationId` (ADR-073 Tier-1, §4.2).
     ///

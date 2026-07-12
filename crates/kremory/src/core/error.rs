@@ -458,6 +458,47 @@ pub enum Error {
     /// `fact_delete` mutation-log row that does not exist. `detail` names which.
     #[error("fact delete not found: {detail}")]
     FactDeleteNotFound { detail: String },
+
+    // ── Reversible-graph-mutations unified undo dispatcher (ADR-073 DX R1/R2) ──
+    /// `undo(mutation_id)` was called with an id that names no `graph_mutation_log`
+    /// row. Reversing a mutation that was never logged is a caller bug, never a
+    /// silent no-op (parse-loudly). `mutation_id` is the unknown id.
+    #[error("mutation not found: no graph_mutation_log row with id {mutation_id}")]
+    MutationNotFound { mutation_id: i64 },
+
+    /// `undo(mutation_id)` matched a `graph_mutation_log` row whose `kind` is not
+    /// one of the four currently log-dispatchable, reversible kinds
+    /// (`entity_merge` / `entity_edit` / `entity_delete` / `fact_delete`). The
+    /// other four [`crate::MutationKind`] variants (`fact_supersede` /
+    /// `fact_archive` / `community_assign` / `canonical_form`) are RESERVED — they
+    /// are not produced into the log today. `fact_supersede` / `fact_archive` are
+    /// reversed via their own domain-id methods (`unsupersede` /
+    /// `restore_archived_fact`), not the unified `undo`. `kind` is the offending
+    /// `graph_mutation_log.kind` tag.
+    #[error(
+        "undo unsupported kind: mutation {mutation_id} has kind '{kind}' which the \
+         unified undo() dispatcher does not reverse — use the kind-specific method \
+         (fact_supersede → unsupersede, fact_archive → restore_archived_fact), or \
+         the kind is reserved / not yet produced"
+    )]
+    UndoUnsupportedKind { mutation_id: i64, kind: String },
+
+    /// `undo(mutation_id).in_namespace(ns)` was scoped to a namespace whose group
+    /// differs from the mutation's logged `group_id`. An undo targets the ORIGINAL
+    /// mutation's namespace; a mismatch is refused LOUDLY rather than silently
+    /// reversing a mutation in a namespace the caller did not intend.
+    /// `mutation_group` is where the mutation was logged; `requested_group` is the
+    /// scope the caller passed.
+    #[error(
+        "undo wrong namespace: mutation {mutation_id} was logged in namespace \
+         '{mutation_group}' but undo was scoped to '{requested_group}' — omit \
+         .in_namespace(...) or pass the mutation's original namespace"
+    )]
+    UndoWrongNamespace {
+        mutation_id: i64,
+        mutation_group: String,
+        requested_group: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

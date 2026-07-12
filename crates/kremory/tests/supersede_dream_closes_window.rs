@@ -14,7 +14,7 @@
 //! 1. `mem.supersede(fact_id).at(valid_to).execute()` — PRODUCER, bounds
 //!    `facts.valid_to` (world-time) via `bound_valid_to` (Amendment C — NOT
 //!    `invalidate_fact`).
-//! 2. `mem.dream().opts(DreamOpts { include_supersession_sweep: true, .. })` —
+//! 2. `mem.dream().with_opts(DreamOpts { include_supersession_sweep: true, .. })` —
 //!    CONSUMER, `window_closeout` observes `valid_to IS NOT NULL AND valid_to <
 //!    now AND expired_at IS NULL AND invalid_at IS NULL AND is_dream_generated =
 //!    0`, sets `expired_at = valid_to`.
@@ -153,7 +153,7 @@ async fn supersede_then_dream_closes_window() {
     let summary = mem
         .dream()
         .in_namespace(ns)
-        .opts(opts)
+        .with_opts(opts)
         .await
         .expect("mem.dream() with include_supersession_sweep must succeed");
 
