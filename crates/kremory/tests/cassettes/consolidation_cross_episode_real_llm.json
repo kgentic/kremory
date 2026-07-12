@@ -6,7 +6,7 @@
     "0b96007a35d9db2d882b03d756fb54406cc1d4ddd77e0684bcb3003a8a4fdaa0": [
       {
         "call_index": 0,
-        "response_text": "[\n  \"flows_through\",\n  \"empties_into\"\n]"
+        "response_text": "```json\n[\n  \"flows through\",\n  \"flows into\"\n]\n```"
       }
     ],
     "1543c7c65f7c1908f5b21f8fc529e34831044bff2265ada508cfa5576430c0f9": [
@@ -19,12 +19,6 @@
       {
         "call_index": 0,
         "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
-      }
-    ],
-    "242d91d944587bdd7444232dc48383d1f06d3726e27308132ac8aa1607f7a9e6": [
-      {
-        "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties_into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.98\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"has_length\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.90\n  }\n]\n```"
       }
     ],
     "35c7f7a5921650c47692cd76061c36a4905b730d51717519b385d2f92e2a7991": [
@@ -51,6 +45,12 @@
         "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
       }
     ],
+    "65379ffc85b804c334415b460ab6d5c07571916aff852f972e34efb1de1bd8b7": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"has length\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.9\n  }\n]\n```"
+      }
+    ],
     "6e8b2373f7a0f11393cb7f40ba9eceda3cc31f28a1e718b1a56cd3cb65335dcf": [
       {
         "call_index": 0,
@@ -60,7 +60,7 @@
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
       {
         "call_index": 0,
-        "response_text": "What can I help you with today? 😊"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 1,
@@ -72,15 +72,15 @@
       },
       {
         "call_index": 3,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 4,
-        "response_text": "Hello! How can I help you today? 😊"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 5,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 6,
@@ -88,7 +88,7 @@
       },
       {
         "call_index": 7,
-        "response_text": "How can I help you today? Whether you have a question, need some creative writing, want to brainstorm ideas, or something else entirely, feel free to let me know! 😊"
+        "response_text": "How can I help you today? Whether you have a question, need some writing done, want to brainstorm some ideas, or just feel like chatting, feel free to let me know! 😊"
       },
       {
         "call_index": 8,
@@ -96,7 +96,7 @@
       },
       {
         "call_index": 9,
-        "response_text": "How can I help you today? 😊"
+        "response_text": "How can I help you today? Whether you have a question, need creative writing, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
       }
     ],
     "7645128d6fe3d956343c88eff94176f12876b1a91be1ec3e0b69cf2449b798ac": [
@@ -108,7 +108,7 @@
     "87db7435bcb9877ece21e609edd032fde597f33a4e5d874032c291c2a2843025": [
       {
         "call_index": 0,
-        "response_text": "[\n  \"founded_by\",\n  \"located_in\"\n]"
+        "response_text": "```json\n[\n  \"founder\",\n  \"location_of_incorporation\"\n]\n```"
       }
     ],
     "a53655324c2603c45593d7b497191ca4ca260c6a280826559b1f1733bc2343d2": [
@@ -121,12 +121,6 @@
       {
         "call_index": 0,
         "response_text": "```json\n{\n  \"verdict\": \"different\"\n}\n```"
-      }
-    ],
-    "c3105fdda83fba3d14d69831fbc9399ae971931c7635819a20678d30df598dcc": [
-      {
-        "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founded_by\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"located_in\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
       }
     ],
     "cbe229f35934f19016f921a736f072cd267b637eb9a9984215956673fc3e16aa": [
@@ -144,7 +138,13 @@
     "e691375f4e4e9a0b2927f1f81edda0386ef007836098f589eb52b84c3838b8b0": [
       {
         "call_index": 0,
-        "response_text": "{\"entities\": [{\"name\": \"Acme Corporation\", \"entity_type_id\": 2}, {\"name\": \"Jane Smith\", \"entity_type_id\": 1}, {\"name\": \"Ohio\", \"entity_type_id\": 3}]}"
+        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Acme Corporation\",\n      \"entity_type_id\": 2\n    },\n    {\n      \"name\": \"Jane Smith\",\n      \"entity_type_id\": 1\n    },\n    {\n      \"name\": \"Ohio\",\n      \"entity_type_id\": 3\n    }\n  ]\n}\n```"
+      }
+    ],
+    "e8d3eb0547e8c094e1de6a53a1ffd4b4a49e8bc623b512cf3a0982bc8ff216e8": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founder\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"location_of_incorporation\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  }\n]\n```"
       }
     ],
     "eae0d20222340f2cfc29f41121b61a0a1f9e51e76865352d5f6d3f672616aa39": [

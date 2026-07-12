@@ -49,6 +49,10 @@ pub use types::{
     RetrievedContext, RetrievedContextNewParams, SearchOpts, SourceKind, SourceRef, StructuredFact,
     SubmitOpts,
 };
+// ADR-072 seq1: `.content()` recall projection. Feature-gated (mirrors the
+// type itself, `memory::types::ContentPassage`).
+#[cfg(feature = "content-search")]
+pub use types::ContentPassage;
 // IngestStatus lives in core::error but is part of the memory API surface.
 pub use crate::core::error::IngestStatus;
 

@@ -79,6 +79,17 @@ unstable-graph = []
 # higher-risk graph surface. Split allows tag adoption without CTE preview.
 # Both promote to stable independently at v0.2.0.
 unstable-tags = []
+# content-search: ADR-072 seq1 — BM25/FTS5 content recall over raw
+# `episodes.content` (no LLM, no embeddings, no chunker; whole episode is the
+# retrievable unit). Gates: Migration 022 (`episodes_fts` external-content FTS5
+# virtual table + backfill), the `content_search` query arm (`core::search`),
+# the `.content()` recall builder terminal + `ContentPassage` projection
+# (parallel BM25-only stream, NOT fused into the entity/fact RRF), and the
+# `episodes_fts` purge-cascade wiring. Off by default — default build and
+# `.raw()`/entity/fact recall are byte-identical whether or not this is
+# enabled (two-lever gating model, ADR-072 §6 Finding 3; a per-episode runtime
+# `index_content` toggle is a later increment, not part of seq1).
+content-search = []
 
 [lib]
 name = "kremory"

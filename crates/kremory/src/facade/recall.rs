@@ -306,6 +306,23 @@ impl<'a> RecallRequest<'a> {
         RecallRawRequest { inner: self }
     }
 
+    /// Return BM25-ranked content passages over raw `episodes.content`
+    /// (ADR-072 seq1) — sibling of `.raw()`. Does **NOT** extend the
+    /// entity-shaped `RetrievedContext` contract; `ContentPassage` is a
+    /// distinct projection (ADR-072 §6b) returned as a separate, unfused
+    /// BM25-only stream (kremory's RRF is pairwise per-type, not a generic
+    /// N-list fuser — `core::search::rrf_fuse_entities`/`rrf_fuse_facts`).
+    ///
+    /// Requires a `Memory` built via the builder/providers path (needs
+    /// `Arc<TemporalGraph>` — same requirement as `.forget()` / the
+    /// `filter_metadata` post-filter). Multi-namespace fan-out
+    /// (`.in_namespaces()`) is not yet supported for this terminal — use
+    /// `.in_namespace()`.
+    #[cfg(feature = "content-search")]
+    pub fn content(self) -> RecallContentRequest<'a> {
+        RecallContentRequest { inner: self }
+    }
+
     /// Escape hatch: set raw `SearchOpts` directly.
     pub fn opts(mut self, opts: SearchOpts) -> Self {
         self.opts = Some(opts);
@@ -678,6 +695,83 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             })
             .await?;
             Ok(filtered)
+        })
+    }
+}
+
+// ── RecallContentRequest (ADR-072 seq1) ───────────────────────────────────────
+
+/// Content-search recall variant — returns `Vec<ContentPassage>` via
+/// BM25-only full-text search over `episodes.content` (ADR-072 seq1). Obtain
+/// via `mem.recall(query).content()` — sibling of `.raw()`. Feature-gated
+/// behind `content-search`.
+#[cfg(feature = "content-search")]
+pub struct RecallContentRequest<'a> {
+    inner: RecallRequest<'a>,
+}
+
+#[cfg(feature = "content-search")]
+impl<'a> IntoFuture for RecallContentRequest<'a> {
+    type Output = Result<Vec<crate::memory::types::ContentPassage>>;
+    type IntoFuture =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send + 'a>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let mut inner = self.inner;
+        Box::pin(async move {
+            inner.check_selectors()?;
+            if let Some(err) = inner.pending_error.take() {
+                return Err(err);
+            }
+
+            // ADR-072 seq1: content-search is single-namespace-only for now.
+            // Multi-namespace fan-out (`.in_namespaces()`) mirrors the entity/
+            // fact path's `execute_multi_namespace` cross-namespace RRF blend —
+            // content passages have no such blend yet (BM25-only, no fusion);
+            // wiring fan-out is a later increment, not part of seq1's scope.
+            if inner.namespaces.is_some() {
+                return Err(MemoryError::Other(
+                    "`.content()` recall does not yet support multi-namespace fan-out \
+                     (in_namespaces); use `.in_namespace()` for content-search (ADR-072 seq1)."
+                        .to_string(),
+                ));
+            }
+
+            let ns = inner.memory.resolve_namespace(inner.namespace.clone())?;
+            // ADR-029a lazy population — same precondition every other recall
+            // terminal enforces before touching the namespace's rows.
+            inner.memory.ensure_namespace_policy(&ns).await?;
+
+            // ADR-072 seq1 bypasses `GraphHandle::graph_search` entirely (that
+            // trait has NO content-search method — adding one would be a
+            // required, breaking addition across every implementor per D.6.4
+            // "no defaults"). Mirrors the existing `apply_metadata_post_filter`
+            // precedent (`facade/recall.rs` above) and `ForgetRequest::execute`
+            // (`facade/forget.rs`): both already reach past the trait straight
+            // to `Memory::temporal_graph` for substrate-level SQL that the
+            // trait's opinionated surface doesn't (yet) cover.
+            let tg = inner.memory.temporal_graph.as_ref().ok_or_else(|| {
+                MemoryError::Other(
+                    "Memory::recall(...).content() requires a Memory constructed via the \
+                     builder/providers path (no Arc<TemporalGraph> attached)"
+                        .to_string(),
+                )
+            })?;
+
+            let group_id = namespace_to_group_id(&ns);
+            let filters = crate::core::search::SearchFilters {
+                group_ids: vec![group_id],
+                ..Default::default()
+            };
+            let limit = inner.k.unwrap_or(10);
+
+            tg.content_search(crate::core::search::ContentSearchParams {
+                query: &inner.query,
+                limit,
+                filters: &filters,
+            })
+            .await
+            .map_err(MemoryError::Core)
         })
     }
 }
