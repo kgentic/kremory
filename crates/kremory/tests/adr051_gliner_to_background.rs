@@ -171,7 +171,14 @@ async fn add_episode_returns_before_gliner_fires() {
     // The lock is released BEFORE the await by using a scoped block so the
     // MutexGuard's lifetime ends before tokio::time::sleep is awaited.
     let mut extractor_called_at: Option<Instant> = None;
-    for _ in 0..100 {
+    // 300 × 50ms = 15s window. The bound is deliberately generous: this asserts
+    // the extractor eventually fires on the BACKGROUND worker (a 2-worker-thread
+    // runtime), which — with no CI and the full suite run under high nextest
+    // parallelism on a loaded machine — can be starved well past a 5s window
+    // before the worker gets a time-slice. In isolation it fires in ~2.6s; the
+    // 15s ceiling tolerates worst-case scheduling without ever passing a real
+    // hang (a worker that NEVER fires still fails).
+    for _ in 0..300 {
         let maybe = {
             let guard_inner = first_call_at.lock().unwrap_or_else(|p| p.into_inner());
             *guard_inner

@@ -18,7 +18,8 @@
 //!
 //! All tests use `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`
 //! and the `drop(ingestor) + tokio::task::spawn_blocking(move || guard.shutdown())`
-//! drain pattern from `wait_for_processing.rs` (canonical L3 pattern).
+//! drain pattern from `wait_for_processing.rs` (canonical L3 pattern), gated on
+//! the caller's own terminal condition via `drain_until_ready` (see below).
 //!
 //! Metric assertions are NOT made here — `DebuggingRecorder` is thread-local and
 //! does NOT capture metrics emitted on the background worker OS thread
@@ -203,55 +204,85 @@ async fn build_ingestor_with_arc_sink(
 // L3 drain helper (from wait_for_processing.rs pattern)
 // ---------------------------------------------------------------------------
 
-/// Drain the ingestor and join the worker OS thread.
+/// Drop `ingestor` (closing the work channel so the worker's `Disconnected` arm
+/// drains anything still queued), then poll the caller-supplied `is_ready`
+/// closure — checking the ACTUAL completion signal for the test at hand — up
+/// to a generous ~15s ceiling, before joining the worker thread via
+/// `guard.shutdown()`.
 ///
-/// Must be called after all `ingestor.send*()` calls are done.
-/// After this returns, all sink callbacks are guaranteed to have fired.
+/// Must be called after all `ingestor.send*()` calls are done. After this
+/// returns, either `is_ready()` was observed true at least once, or the 15s
+/// ceiling was hit — in which case the caller's own assertions fail loudly
+/// rather than silently passing on a truncated drain.
 ///
-/// ## Why the sleep?
+/// ## Why polling the caller's own terminal condition — not a fixed sleep,
+/// not "quiescence", not `queue_depth()`
 ///
-/// `worker_loop` drains the deferred (Phase 2) queue in the `Disconnected`
-/// arm when `drop(ingestor)` closes the channel.  The drain loop respects the
-/// `stop` flag, which is set by `IngestGuard::drop` (→ `guard.shutdown()`).
+/// A fixed sleep (this file's original approach, 300ms) races the worker's
+/// Phase-2 cold start: `ensure_default_types_seeded` (`ingest_with.rs`) runs a
+/// lazy per-namespace entity-type seed on the FIRST ingest into a fresh temp
+/// DB, pushing that first episode's Phase-2 processing out to ~2.6s (observed
+/// via `adr051_gliner_to_background`'s 2.6s extractor-fire) — far past a
+/// 300ms budget, so `Complete` / `BatchPhase2Complete` never lands before
+/// `guard.shutdown()` sets the stop flag and the drain is abandoned mid-flight
+/// at stage `[Pending]`.
 ///
-/// If `guard.shutdown()` is called too quickly after `drop(ingestor)`, the stop
-/// flag can be set BEFORE the deferred drain begins, causing Phase 2 items to be
-/// abandoned.  The 300 ms sleep gives `EmptyArrayLlmClient` (0 ms LLM call)
-/// enough wall-clock time to drain all queued Phase 2 items before stop is set.
+/// `queue_depth()` is NOT a valid completion signal: it is decremented
+/// *before* `ingest()` is called for an item (`deferred_pipeline.rs`
+/// `queued.fetch_sub` precedes `process_item`), so it reads zero while the
+/// (slow, first-episode) processing is still in flight, not at completion.
 ///
-/// This pattern is intentional for Level 3 sink-wiring tests.  Production code
-/// uses `Memory::wait_for_processing` for reliable completion detection.
+/// "Quiescence" (declare done once the sink's event stream stops growing for
+/// a few ticks, independent of what actually happened) is ALSO unsound: a
+/// multi-episode batch can have a natural >150ms gap between one episode's
+/// terminal event and the next episode's first event (`worker_loop`'s
+/// deferred queue is drained one item per 100ms `RecvTimeoutError::Timeout`
+/// tick) that looks identical to "done" — this truncates the drain mid-batch
+/// (empirically reproduced: a 3-episode batch reporting `succeeded=2`).
 ///
-/// Phase 7 follow-up: replace the wall-clock sleep with `queue_depth() == 0`
-/// polling once `BackgroundIngestor` exposes the API in test context.
-/// (Quinn Phase 6 review MED-3 root cause.)
-async fn drain_and_shutdown(
+/// The mechanical reason a truncated drain UNDER-counts (rather than merely
+/// running slow) is `IngestGuard::drop`'s ordering: it sets the `stop` flag
+/// FIRST, then joins the thread (`ingestor.rs` `impl Drop for IngestGuard`).
+/// `worker_loop` re-checks `stop` at the top of its loop AND before draining
+/// each deferred item in the `Disconnected` arm, abandoning whatever remains
+/// as "interrupted" the instant `stop` flips true — so `guard.shutdown()` must
+/// not be invoked until every submitted item has ALREADY reached its terminal
+/// signal. Only the caller (via `is_ready`) knows what that means for a given
+/// test: a single episode's `Complete`, an exact `BatchComplete` for a known
+/// `batch_id`, or — for `ThreadNameCapturingSink`, which has no `RecordingSink`
+/// snapshot to poll — simply "has a thread name been captured".
+///
+/// Mirrors the `first_call_at` polling idiom in `adr051_gliner_to_background.rs`.
+/// The 15s ceiling (300 × 50ms ticks) tolerates worst-case scheduling under
+/// full-suite nextest parallelism with no CI; early-exit the moment `is_ready`
+/// is satisfied keeps the happy path fast (~tens of ms once warm).
+async fn drain_until_ready(
     ingestor: BackgroundIngestor,
     guard: kremory::core::background::IngestGuard,
+    mut is_ready: impl FnMut() -> bool,
 ) {
-    drain_and_shutdown_with_timeout(ingestor, guard, 300).await;
-}
-
-/// Same as [`drain_and_shutdown`] but with a caller-specified drain budget in ms.
-///
-/// Use this when the test's LLM client takes longer than `EmptyArrayLlmClient`
-/// (e.g. `AlwaysFailLlmClient` exhausts the fallback ladder before returning
-/// `Err`, so 300 ms can race the drain).  Quinn Phase 6 review MED-3 fold-in:
-/// single point-of-truth for the drain pattern even when the duration varies.
-async fn drain_and_shutdown_with_timeout(
-    ingestor: BackgroundIngestor,
-    guard: kremory::core::background::IngestGuard,
-    drain_ms: u64,
-) {
-    // Drop the ingestor handle (closes the work channel) — signals Disconnected.
     drop(ingestor);
-    // Allow the worker time to drain the deferred (Phase 2) queue before
-    // guard.shutdown() sets the stop flag.
-    tokio::time::sleep(std::time::Duration::from_millis(drain_ms)).await;
-    // Join the worker thread via spawn_blocking (guard.shutdown() is blocking).
+    for _ in 0..300 {
+        if is_ready() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     tokio::task::spawn_blocking(move || guard.shutdown())
         .await
         .expect("guard.shutdown() panicked");
+}
+
+/// Returns true once `sink` has recorded a `BatchComplete` event for `batch_id`.
+///
+/// `BatchComplete` only fires once the batch tracker sees
+/// `succeeded + failed == total_registered` for that `batch_id` (or the
+/// stop-flag "interrupted" path), so its mere presence IS the correct,
+/// non-racy per-batch completion signal — see `drain_until_ready` doc comment.
+fn batch_complete_seen(sink: &RecordingSink, batch_id: &str) -> bool {
+    sink.snapshot()
+        .iter()
+        .any(|e| matches!(e, SinkEvent::BatchComplete { batch_id: bid, .. } if bid == batch_id))
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +315,10 @@ async fn sink_stage_changes_fire_in_order() {
         )
         .expect("send must not fail");
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        sink.stage_events().contains(&IngestStatus::Complete)
+    })
+    .await;
 
     let stage_events = sink.stage_events();
 
@@ -378,7 +412,10 @@ async fn sink_complete_fires_after_fact_extraction() {
         )
         .expect("send must not fail");
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        sink.stage_events().contains(&IngestStatus::Complete)
+    })
+    .await;
 
     let stage_events = sink.stage_events();
 
@@ -440,7 +477,7 @@ async fn sink_batch_complete_fires_when_all_terminal() {
             .expect("send_batched must not fail");
     }
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || batch_complete_seen(&sink, "batch-v023-1")).await;
 
     let all_events = sink.snapshot();
 
@@ -595,10 +632,11 @@ async fn sink_batch_complete_counts_failed_episodes() {
         )
         .expect("send_batched ep2 must not fail");
 
-    // AlwaysFailLlmClient exhausts the fallback ladder per call → longer drain
-    // budget than EmptyArrayLlmClient (drain_and_shutdown default 300 ms).
-    // Phase 7 will replace this wall-clock sleep with queue_depth() polling.
-    drain_and_shutdown_with_timeout(ingestor, guard, 500).await;
+    // AlwaysFailLlmClient exhausts the fallback ladder per call — the shared
+    // drain_until_ready polls the sink's own BatchComplete event rather than a
+    // fixed budget, so the slower per-call fallback-ladder latency here is
+    // tolerated the same way as the happy-path EmptyArrayLlmClient tests.
+    drain_until_ready(ingestor, guard, || batch_complete_seen(&sink, "batch-v023-2")).await;
 
     let all_events = sink.snapshot();
     let batch_events: Vec<_> = all_events
@@ -673,7 +711,15 @@ async fn sink_thread_context_is_background_worker() {
         )
         .expect("send must not fail");
 
-    drain_and_shutdown(ingestor, guard).await;
+    // ThreadNameCapturingSink has no RecordingSink snapshot to poll — the
+    // completion signal here is simply "has a thread name been captured yet"
+    // (fires on the FIRST on_stage_change, i.e. Pending, which process_item
+    // emits well before the Phase-2 cold-start cost documented on
+    // `drain_until_ready`).
+    drain_until_ready(ingestor, guard, || {
+        thread_sink.captured_thread_name().is_some()
+    })
+    .await;
 
     let captured = thread_sink.captured_thread_name();
 
@@ -751,7 +797,12 @@ async fn sink_ingestion_error_fires_on_ner_fail() {
         )
         .expect("send must not fail");
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        let events = sink.stage_events();
+        events.contains(&IngestStatus::Complete)
+            || events.iter().any(|s| matches!(s, IngestStatus::Failed(_)))
+    })
+    .await;
 
     let stage_events = sink.stage_events();
 
@@ -804,7 +855,12 @@ async fn sink_community_updated_does_not_fire_l3() {
         )
         .expect("send must not fail");
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        let events = sink.stage_events();
+        events.contains(&IngestStatus::Complete)
+            || events.iter().any(|s| matches!(s, IngestStatus::Failed(_)))
+    })
+    .await;
 
     let community_events: Vec<_> = sink
         .snapshot()
@@ -828,7 +884,9 @@ async fn sink_community_updated_does_not_fire_l3() {
 ///
 /// This is a low-cost structural assertion confirming Phase 2 DoD item
 /// "Memory::with_sink() builder" — specifically that the sink field is wired
-/// through the IngestorConfig and accessible on the handle.
+/// through the IngestorConfig and accessible on the handle. No episode is ever
+/// submitted, so there is nothing to drain — a direct drop + shutdown is
+/// correct here (no `drain_until_ready` needed).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sink_accessor_returns_some_when_configured() {
     let recorder = DebuggingRecorder::new();
@@ -879,8 +937,13 @@ async fn sink_batch_complete_fires_on_drain_disconnect() {
             .expect("send_batched must not fail");
     }
 
-    // Drop immediately — worker will drain deferred queue in Disconnected arm.
-    drain_and_shutdown(ingestor, guard).await;
+    // Drop then wait for the batch's own terminal signal (see drain_until_ready
+    // doc comment for why "drop immediately" alone is not the point of this
+    // test — the Disconnected-arm drain is what's under test, not a race).
+    drain_until_ready(ingestor, guard, || {
+        batch_complete_seen(&sink, "batch-v023-drain")
+    })
+    .await;
 
     let all_events = sink.snapshot();
     let batch_events: Vec<_> = all_events
@@ -936,7 +999,10 @@ async fn sink_two_batches_fire_separate_complete_events() {
         .send_batched("batch beta episode one", "batch-v023-beta".to_string())
         .expect("send_batched beta must not fail");
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        batch_complete_seen(&sink, "batch-v023-alpha") && batch_complete_seen(&sink, "batch-v023-beta")
+    })
+    .await;
 
     let all_events = sink.snapshot();
     let batch_events: Vec<_> = all_events
@@ -1001,9 +1067,12 @@ async fn sink_drain_errors_empty_on_success() {
     // Must drain errors before dropping ingestor (drain_errors uses the shared inner).
     let pre_shutdown_errors = ingestor.drain_errors();
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        sink.stage_events().contains(&IngestStatus::Complete)
+    })
+    .await;
 
-    // We drain BEFORE drop because the ingestor is moved into drain_and_shutdown.
+    // We drain BEFORE drop because the ingestor is moved into drain_until_ready.
     // Pre-shutdown errors must be empty.
     assert!(
         pre_shutdown_errors.is_empty(),
@@ -1044,7 +1113,9 @@ async fn sink_drain_errors_empty_on_success() {
 /// ## Strategy
 ///
 /// Submit 5 episodes with a batched send, then immediately drop the ingestor
-/// WITHOUT any drain sleep.  The `IngestGuard::drop` sets the stop flag
+/// WITHOUT any drain wait — this deliberately does NOT use `drain_until_ready`
+/// (the whole point of the test is to race the stop flag against Phase 2, not
+/// to wait for a terminal signal). The `IngestGuard::drop` sets the stop flag
 /// immediately.  `worker_loop` enters the stop-flag arm, drains NER items
 /// into the deferred queue (but does NOT process them), then calls
 /// `fire_interrupted_batches` before breaking.
@@ -1080,11 +1151,11 @@ async fn sink_batch_complete_fires_interrupted_on_stop_flag_drop() {
             .expect("send_batched must not fail");
     }
 
-    // Drop ingestor IMMEDIATELY (no drain sleep) — maximise probability of
+    // Drop ingestor IMMEDIATELY (no drain wait) — maximise probability of
     // stop-flag winning the race before Phase 2 deferred items complete.
     // Even if all 5 complete (EmptyArrayLlmClient is fast), BatchComplete MUST fire.
     drop(ingestor);
-    // Join the worker thread via spawn_blocking (no sleep — tests the stop-flag path).
+    // Join the worker thread via spawn_blocking (no wait — tests the stop-flag path).
     tokio::task::spawn_blocking(move || guard.shutdown())
         .await
         .expect("guard.shutdown() panicked");
@@ -1152,9 +1223,9 @@ where
 // Per `.ai-docs/specs/v0-2-3-followup-implementation-plan-2026-06-15.md` Task 6.
 // Per `.ai-docs/specs/v0-2-3-followup-dual-path-consolidation-arch-spec-2026-06-15.md §5.2`.
 //
-// Wait mechanism: `drop(ingestor) + spawn_blocking(guard.shutdown())` —
-// same drain pattern used by all existing L3 tests in this file.
-// NO tokio::time::sleep per arch spec §5.2 timing note.
+// Wait mechanism: `drop(ingestor) + spawn_blocking(guard.shutdown())` gated on
+// the batch's own terminal signal via `drain_until_ready` — same drain pattern
+// used by all other L3 tests in this file. NO fixed `tokio::time::sleep`.
 // ---------------------------------------------------------------------------
 
 /// `send_batched` × 3 → `BatchPhase2Complete { succeeded: 3, failed: 0 }` fires.
@@ -1176,8 +1247,10 @@ async fn sink_send_batched_fires_on_batch_phase2_complete() {
             .expect("send_batched ok");
     }
 
-    // Drain: use canonical drain_and_shutdown helper (300ms sleep before stop-flag).
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        batch_complete_seen(&sink, "followup-batch-fires")
+    })
+    .await;
 
     // Assert BatchComplete fired with batch_id + succeeded=3.
     let events = sink.snapshot();
@@ -1231,7 +1304,10 @@ async fn sink_send_batched_two_batches_fire_independently() {
         .send_batched("episode b-1", batch_b.clone())
         .expect("send ok");
 
-    drain_and_shutdown(ingestor, guard).await;
+    drain_until_ready(ingestor, guard, || {
+        batch_complete_seen(&sink, "followup-batch-a") && batch_complete_seen(&sink, "followup-batch-b")
+    })
+    .await;
 
     let events = sink.snapshot();
 
@@ -1289,7 +1365,17 @@ async fn sink_unbatched_send_does_not_fire_batch_complete() {
             .expect("send ok");
     }
 
-    drain_and_shutdown(ingestor, guard).await;
+    // No batch_id was used, so there is no BatchComplete to poll for — instead
+    // wait until all 3 episodes have reached a terminal stage (Complete or
+    // Failed), which is the correct per-episode completion signal here.
+    drain_until_ready(ingestor, guard, || {
+        sink.stage_events()
+            .iter()
+            .filter(|s| matches!(s, IngestStatus::Complete | IngestStatus::Failed(_)))
+            .count()
+            >= 3
+    })
+    .await;
 
     // No BatchComplete events should fire for un-batched sends.
     let events = sink.snapshot();

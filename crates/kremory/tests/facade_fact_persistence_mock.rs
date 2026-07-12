@@ -207,10 +207,23 @@ async fn facade_remember_persists_facts_with_mock_extractor() {
         .await
         .expect("Memory::open facade");
 
-    mem.remember("Alice works at Acme Corp.")
+    let commit = mem
+        .remember("Alice works at Acme Corp.")
         .from_chat("mock-session")
         .await
         .expect("remember");
+
+    // Fact extraction is DEFERRED (Phase 2, background worker) — `remember()`
+    // returns after Phase 1 (sync embed+NER), so reading facts immediately races
+    // the deferred extractor and sees 0. Wait for the episode to reach a terminal
+    // processing status before asserting on persisted facts.
+    let episode_id: i64 = commit
+        .episode_entity_id
+        .parse()
+        .expect("episode_entity_id must parse to an i64 rowid");
+    mem.wait_for_processing(episode_id, std::time::Duration::from_secs(30))
+        .await
+        .expect("wait_for_processing must complete");
 
     let graph = mem
         .temporal_graph_for_test()

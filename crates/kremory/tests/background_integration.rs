@@ -485,8 +485,14 @@ async fn deferred_extraction_invoked_after_successful_ner() {
 
     // Poll for errors while the ingestor is alive — we want to catch any
     // NER or deferred failures before closing the channel.
+    // 150 × 100ms = 15s. Gives the background deferred-extraction worker ample
+    // time to consume the scripted responses before shutdown, robust to the
+    // thread starvation seen when the full suite runs under high nextest
+    // parallelism with no CI (2-worker-thread runtime, loaded machine). Breaks
+    // early on the first error; the generous ceiling only affects the no-error
+    // path and never masks a real hang.
     let mut errors_seen = Vec::new();
-    for _ in 0..50 {
+    for _ in 0..150 {
         errors_seen = ingestor.drain_errors();
         if !errors_seen.is_empty() {
             break;
