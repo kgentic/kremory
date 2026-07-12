@@ -1,8 +1,11 @@
 # kremory API Reference
 
-> **v0.1.0** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
+> **v0.3.2** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
 > (`kremory::memory::submit_episode`, etc.) remain public for advanced users; most applications
-> should use the facade described in §1–§9.
+> should use the facade described below. Since v0.1.3 the facade gained a fully-wired dream
+> consolidation phase (§6), reversible graph mutations with a see/undo surface (§6a), opt-in
+> BM25/FTS5 content recall (§5, behind the `content-search` feature), and a feature-flag matrix
+> (§13). The Node/napi binding mirrors the surface in camelCase (§14).
 
 ---
 
@@ -15,7 +18,7 @@ variables are set.
 use kremory::{Memory, Namespace};
 
 // Auto-detect provider from environment:
-//   $OLLAMA_HOST        → Ollama (llama3.1:8b + nomic-embed-text)
+//   $OLLAMA_HOST        → Ollama (gemma4:e4b, reasoning disabled + nomic-embed-text)
 //   $OPENAI_API_KEY     → OpenAI (gpt-4o-mini + text-embedding-3-small)
 //   $ANTHROPIC_API_KEY  → Anthropic LLM + deterministic embedder fallback (warns)
 //   (none)              → Err(Error::NoProviderConfigured) — helpful message included
@@ -56,7 +59,7 @@ tokio::spawn(async move { mem2.remember("Background task").await });
 Skip environment detection; use a named provider directly.
 
 ```rust
-// Ollama at localhost:11434 (default models: llama3.1:8b + nomic-embed-text)
+// Ollama at localhost:11434 (default models: gemma4:e4b with reasoning disabled + nomic-embed-text)
 let mem = Memory::with_ollama("./agent.db").await?;
 
 // Ollama at a custom URL (useful for remote GPU machines)
@@ -378,21 +381,138 @@ let ctx = mem.recall("what was the policy last week?")
     .await?;
 ```
 
+### Content search — BM25/FTS5 over raw episode text (opt-in)
+
+The default recall surface (`.await` / `.raw()` / `.as_template(...)`) searches the **knowledge
+graph** (entities + facts, hybrid vector + keyword). A separate terminal, `.content()`, runs a
+**BM25/FTS5 full-text search over the raw `episodes.content`** — the verbatim ingested text, not
+the extracted graph. It is a sibling of `.raw()` and returns `Vec<ContentPassage>`.
+
+`.content()` is gated behind the **`content-search`** cargo feature (opt-in — the terminal and
+`ContentPassage` type do not exist in the default build):
+
+```toml
+kremory = { version = "0.3", features = ["content-search"] }
+```
+
+```rust
+use kremory::memory::types::ContentPassage;
+
+let passages: Vec<ContentPassage> = mem.recall("async channels decision")
+    .in_namespace(Namespace::new("team-alice"))
+    .k(10)              // FTS row limit (default 10)
+    .content()          // BM25-only terminal — requires the `content-search` feature
+    .await?;
+
+for p in &passages {
+    // p.episode_id : i64        — the source episodes.id
+    // p.snippet    : String     — FTS5 snippet() extract around the match (not the full body)
+    // p.score      : f32        — BM25 rank; LOWER = more relevant (FTS convention)
+    // p.source_ref : SourceRef  — kind == SourceKind::Episode; occurred_at = episode timestamp
+    println!("[{:.3}] episode {}: {}", p.score, p.episode_id, p.snippet);
+}
+```
+
+Notes (ADR-072 seq1):
+
+- **BM25-only** — content passages are a distinct, un-fused stream. They are NOT blended into the
+  entity/fact RRF ranking; `.content()` does not extend the graph-shaped `RetrievedContext`.
+- **Single-namespace only** — use `.in_namespace(...)`. Multi-namespace fan-out (`.in_namespaces`)
+  is not yet supported on this terminal and returns `Err`.
+- Requires a `Memory` built via the builder/providers path (same as `.forget()` / the
+  `filter_metadata` post-filter).
+
 ---
 
 ## §6 — Dream phase + consolidation
 
-The dream phase runs community detection + graph consolidation over all episodes
-in a namespace. Call it periodically (e.g., daily cron, after a bulk import) to
-keep recall quality high as the knowledge graph grows.
+The dream phase is the "settle the graph" pass. Call it periodically (e.g. a daily cron, or after
+a bulk import) to keep recall quality high as the knowledge graph grows. A single `mem.dream()`
+runs two sub-phases:
+
+1. **Reconciliation** — per-entity cleanup: type discovery, alias resolution, reclassification,
+   consistency-check, canonicalization (plus opt-in acronym/nickname recall + type-registry
+   collapse).
+2. **Consolidation** — graph-global cleanup: four ops — community detection, cross-episode entity
+   merge, supersession sweep, fact archival.
+
+**All ops default ON.** This is safe because every destructive mutation is reversible (ADR-073 —
+see §6a): you can always SEE what `dream()` changed and UNDO it. Cross-episode merge is the one
+exception to "ON = commits" — it defaults to **Shadow** mode (computes + reports merge decisions
+but fuses nothing) until you opt into Apply.
 
 ```rust
-// Default: blocks until consolidation complete (~5–60s depending on corpus size)
+// Default: blocks until consolidation complete (~5–60s depending on corpus + models)
 let summary = mem.dream().await?;
-println!("episodes processed: {}", summary.episodes_processed);
-println!("communities updated: {}", summary.communities_updated);
-println!("edges merged: {}", summary.edges_merged);
+
+// Reconciliation counts:
+println!("types discovered:         {}", summary.types_discovered.len());
+println!("entities reclassified:    {}", summary.entities_reclassified);
+println!("aliases resolved:         {}", summary.aliases_resolved);
+println!("canonicalization merges:  {}", summary.canonicalization_merges);
+println!("consistency corrections:  {}", summary.consistency_check_corrected);
+
+// Consolidation counts:
+println!("communities updated:      {}", summary.communities_updated);
+println!("cross-episode WOULD-merge:{}", summary.cross_episode_would_merge); // decisions
+println!("cross-episode MERGED:     {}", summary.cross_episode_merged);      // actual fusions
+println!("supersessions recorded:   {}", summary.supersessions_recorded);
+println!("facts archived:           {}", summary.facts_archived);
+println!("duration_ms:              {}", summary.duration_ms);
 ```
+
+### Reading `DreamSummary` honestly
+
+`DreamSummary` fields are designed so a zero is unambiguous:
+
+- **`cross_episode_would_merge` vs `cross_episode_merged`** — `would_merge` counts every merge
+  *decision* the op reached (both Shadow and Apply); `merged` counts fusions actually *committed*.
+  In the default **Shadow** mode `would_merge` can be `> 0` while `merged == 0` ("it would have
+  merged N pairs, but is in shadow — fused nothing").
+- **`consolidation_ops_ran`** — a `ConsolidationOpsRan { community, cross_episode, archival,
+  supersession_sweep }` struct of booleans. A consolidation count of `0` with the matching flag
+  `true` reads as "the op ran and found nothing to change", NOT "the op was disabled".
+- **`budget_exhausted`** — `true` when the consolidation budget ceiling (token/USD) tripped mid-run
+  and at least one op was skipped.
+
+These in-band signals are readable without any metrics recorder.
+
+### Tuning which ops run — `DreamOpts` + `CrossEpisodeMode`
+
+Toggle individual ops via `DreamOpts` (all fields default `true` except where noted):
+
+```rust
+use kremory::memory::types::{DreamOpts, CrossEpisodeMode};
+
+let opts = DreamOpts {
+    include_community_detection: false,   // skip P4 communities
+    include_fact_archival: false,         // skip P2 archival
+    include_supersession_sweep: true,     // keep the supersession window closeout
+    include_consistency_check: false,     // skip the LLM type-verify pass
+    max_episodes_per_run: Some(500),      // rate-limit LLM spend on large corpora (default: None)
+    ..DreamOpts::default()
+};
+
+let summary = mem.dream().with_opts(opts).await?;
+```
+
+`DreamOpts` is `#[non_exhaustive]` — build it from `DreamOpts::default()` + field mutation, never a
+struct literal.
+
+For the cross-episode merge op, prefer the honest tri-state `CrossEpisodeMode` over toggling the
+two coupled raw bools (`include_cross_episode_merges` + `cross_episode_dry_run`):
+
+```rust
+// Off     → op does not run
+// Shadow  → compute + report merge decisions, fuse nothing (DEFAULT)
+// Apply   → compute + commit merges (each fusion reversible via mem.unmerge — §6a)
+let summary = mem.dream()
+    .cross_episode(CrossEpisodeMode::Apply)
+    .await?;
+```
+
+`.cross_episode(mode)` composes with `.with_opts(...)` — it overwrites only the two cross-episode
+fields and preserves every other knob.
 
 ### Scoped to namespace
 
@@ -401,6 +521,9 @@ let summary = mem.dream()
     .in_namespace(Namespace::new("tenant-acme"))
     .await?;
 ```
+
+> **Namespace policy:** `dream()` mutates the graph, so it is rejected on `AppendOnly` namespaces
+> with `Err(Error::NamespacePolicyViolation { operation: "dream", .. })` (ADR-029b enforcement).
 
 ### Idempotent batch key
 
@@ -425,6 +548,134 @@ let handle: kremory::DreamHandle = mem.dream()
 
 let summary = mem.await_dream(&handle, std::time::Duration::from_secs(120)).await?;
 ```
+
+---
+
+## §6a — Reversibility — see, trust, undo
+
+Because `dream()` mutates the graph by default, kremory ships a **reversibility substrate**
+(ADR-073): every logged destructive mutation can be inspected and undone. Undo is deterministic
+(replayed from an in-transaction snapshot — no LLM), idempotent (a second undo is a zero-count
+no-op, never a double-restore), and returns an **honest outcome** (the actual counts reversed,
+never a bare "ok").
+
+### SEE — inspect what changed
+
+```rust
+use kremory::{MutationRecord, MutationKind};
+
+// Every logged mutation that touched one entity (newest-first, includes already-undone):
+let history: Vec<MutationRecord> = mem.mutation_history("alice j")
+    .in_namespace(Namespace::new("agent"))
+    .await?;
+
+for r in &history {
+    // r.mutation_id: i64, r.kind: MutationKind, r.created_at: String (RFC3339),
+    // r.undone: bool, r.group_id: String, r.affected_entities: Vec<String>, r.summary: String
+    println!("#{} [{}] {}", r.mutation_id, if r.undone { "undone" } else { "live" }, r.summary);
+}
+
+// Or list a whole namespace's mutations, newest-first (LIVE / still-reversible by default):
+let all: Vec<MutationRecord> = mem.list_mutations()
+    .in_namespace(Namespace::new("agent"))
+    .kind(MutationKind::EntityMerge)   // optional: filter to one kind
+    .since(chrono::Utc::now() - chrono::Duration::days(1)) // optional: created_at lower bound
+    .include_undone(true)              // optional: also show reversed mutations (default: false)
+    .await?;
+```
+
+`list_mutations()` without `.in_namespace(...)` falls back to the `default_namespace`, else scans
+**all** namespaces (a valid admin view). Both inspect requests are read-only — `.await` them.
+
+### UNDO — the unified dispatcher + per-kind methods
+
+The recommended entry point is `mem.undo(mutation_id)`: it reads the mutation's kind and dispatches
+to the correct reversal, so you can iterate `list_mutations()` and undo uniformly without switching
+on the kind by hand.
+
+```rust
+use kremory::Namespace;
+
+if let Some(rec) = history.first() {
+    // Optional .in_namespace(ns) GUARDS the undo to the mutation's original namespace.
+    let outcome = mem.undo(rec.mutation_id).execute().await?;
+    println!("reversed: {outcome:?}");   // UndoOutcome::{Unmerge|EditEntity|DeleteEntity|DeleteFact}(..)
+}
+```
+
+`UndoOutcome` is a `#[non_exhaustive]` enum — one variant per log-dispatchable kind, each wrapping
+that kind's honest per-op outcome. The per-kind methods remain available as the escape hatch when
+you already know the kind:
+
+| Method | Reverses | Argument | Honest outcome |
+|---|---|---|---|
+| `mem.undo(mutation_id)` | **any** logged mutation | `mutation_id` | `UndoOutcome` |
+| `mem.unmerge(mutation_id)` | an `entity_merge` | `mutation_id` | `UnmergeOutcome` |
+| `mem.undo_entity_edit(mutation_id)` | an `edit_entity` (rename/retype) | `mutation_id` | `EditEntityOutcome` |
+| `mem.undo_delete_entity(mutation_id)` | a `delete_entity` | `mutation_id` | `DeleteEntityOutcome` |
+| `mem.undo_delete_fact(mutation_id)` | a `delete_fact` | `mutation_id` | `DeleteFactOutcome` |
+| `mem.unsupersede(fact_id)` | a supersession bound | **`fact_id`** | `UnsupersedeOutcome` |
+| `mem.restore_archived_fact(archived_fact_id)` | a P2 fact archive | **`archived_fact_id`** | `RestoreArchivedOutcome` |
+
+Each honest-outcome struct carries the actual counts reversed and an idempotency flag — e.g.
+`UnmergeOutcome { restored_entity, keeper, facts_repointed, edges_restored, entities_reopened,
+nogood_recorded, already_undone }`.
+
+### The `merge_nogood` guarantee
+
+`unmerge` (and `undo()` on an `entity_merge`) does more than split the pair back apart: it records
+a **merge NOGOOD** for the split pair (`UnmergeOutcome.nogood_recorded == true`), so the **next
+`dream()` will not re-merge them**. Undoing a merge is durable, not a one-cycle reprieve.
+
+### The 4-of-8 tracked-kind boundary
+
+There are eight `MutationKind` variants, but only **four are logged today and therefore reversible
+via `undo()`**: `EntityMerge`, `EntityEdit`, `EntityDelete`, `FactDelete`. The other four
+(`FactSupersede`, `FactArchive`, `CommunityAssign`, `CanonicalForm`) are **reserved** — not yet
+produced into the mutation log — so:
+
+- `list_mutations().kind(<a reserved kind>)` returns **empty by construction** (not "nothing
+  changed").
+- `undo(id)` on a would-be row of a reserved kind returns a loud `Error::UndoUnsupportedKind`.
+
+`FactSupersede` / `FactArchive` are themselves reversible — but through their **domain-id** methods
+`unsupersede(fact_id)` / `restore_archived_fact(archived_fact_id)`, not the `mutation_id`-based
+`undo()` surface.
+
+### Direct mutations (also reversible)
+
+Beyond `dream()`, the same reversible substrate backs the direct consumer mutations:
+
+```rust
+// Rename a diarization placeholder — every fact / edge / membership re-points to the new id;
+// undoable via the returned mutation_id.
+let edit = mem.edit_entity("Speaker 1")
+    .rename("alice")                      // XOR .retype(type_id)
+    .in_namespace(Namespace::new("meeting"))
+    .execute()
+    .await?;
+mem.undo_entity_edit(edit.mutation_id).execute().await?;
+
+// Reversible delete — facts are ARCHIVED (recoverable), never hard-deleted.
+let del = mem.delete_entity("bob").in_namespace(ns.clone()).execute().await?;
+mem.undo_delete_entity(del.mutation_id).execute().await?;
+
+let dfact = mem.delete_fact(fact_id).execute().await?;   // fact_id is global
+mem.undo_delete_fact(dfact.mutation_id).execute().await?;
+
+// Explicitly bound a fact's world-time validity window (consumer-driven supersession).
+// .at(valid_to) is REQUIRED (no silent default). The next dream() supersession sweep closes it,
+// or .close_now() retires already-past-dated bounds inline.
+let outcome = mem.supersede(fact_id)
+    .at(chrono::Utc::now())
+    .close_now()
+    .in_namespace(ns)
+    .execute()
+    .await?;   // SupersedeOutcome::{Bounded { retired } | RejectedTimeInversion | NotFound}
+```
+
+`edit_entity` / `delete_*` / `supersede` are all `#[must_use]` builders — nothing happens until you
+call `.execute()`. Like `dream()`, `supersede()` is rejected on `AppendOnly` namespaces.
 
 ---
 
@@ -739,16 +990,67 @@ See [observability.md](observability.md) for full surface.
 
 Hygiene only. No public API changes. `cargo clippy --all-targets --all-features` now passes clean.
 
-### Future — v0.1.x → v0.2.0 (planned)
+### v0.1.3 → v0.3.2 — what changed (high level)
 
-Will introduce cargo features for substrate-only consumers (per [ADR-028](../.ai-docs/adrs/rql/adr-028-defer-crate-split-cargo-features-2026-05-28.md)). Default-feature consumers continue working without changes. Substrate-only consumers will opt in via:
+The changes since v0.1.3 are overwhelmingly **additive** — facade-tier consumer code from v0.1.3
+continues to compile and run. The notable surface + behaviour changes, at the API-surface level:
 
-```toml
-kremory = { version = "0.2", default-features = false, features = ["substrate"] }
-```
+| Area | Change |
+|---|---|
+| **Dream consolidation** (§6) | The dream phase is now fully wired — reconciliation passes (type discovery, aliases, reclassify, consistency-check, canonicalize) + four graph-global consolidation ops (community detection, cross-episode merge, supersession sweep, fact archival). All default ON; cross-episode merge defaults to **Shadow**. `DreamSummary` gained honest per-op fields (the old `episodes_processed` / `edges_merged` fields never existed on the shipped struct — use the fields in §6). |
+| **Reversibility** (§6a) | **NEW** — `mem.mutation_history` / `list_mutations` (SEE), the unified `mem.undo(mutation_id)` dispatcher + per-kind `unmerge` / `undo_entity_edit` / `undo_delete_entity` / `undo_delete_fact` / `unsupersede` / `restore_archived_fact`, plus direct mutations `edit_entity` / `delete_entity` / `delete_fact` / `supersede`. Every destructive mutation is reversible (ADR-073). |
+| **Content recall** (§5) | **NEW** — `mem.recall(q).content()` for BM25/FTS5 search over raw episode text, behind the opt-in `content-search` feature (ADR-072). |
+| **Namespace policy enforcement** | v0.1.4 declared policies; **v0.1.5+ ENFORCES them** (ADR-029b): `dream()` / `forget()` / `supersede()` now return `Error::NamespacePolicyViolation` on `AppendOnly` namespaces. This is a behaviour change if you registered `AppendOnly` policies expecting the v0.1.4 declare-only semantics. |
+| **Multi-namespace recall** | `recall(q).in_namespaces(&[...])` fans out across namespaces with cross-namespace RRF blending. |
+| **Metadata filters** | `recall(q).filter_metadata(key, value)` / `.filter_metadata_in(key, &[..])` post-filter recall by episode metadata. |
+| **Async extraction wait** | `mem.wait_for_processing(episode_id, timeout)` polls an episode to a terminal extraction state (ADR-051). |
+| **Feature flags** (§13) | The crate has an explicit **empty** default feature set + opt-in features (`ner`, `embeddings`, `content-search`, `otel`, `trace`, …). There is no separate `substrate` feature — the facade + substrate free-functions ship in the one default surface. |
+| **Node/napi binding** (§14) | The JS binding mirrors the surface in camelCase, including the undo + inspect surface. |
 
-Full migration guide will land alongside v0.2.0 ship.
+The substrate free-functions (`kremory::memory::submit_episode`, etc.) remain public and unchanged.
 
 ---
 
-*API reference current as of kremory v0.1.3 (2026-05-28). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Crate topology: ADR-028 (supersedes ADR-007 + ADR-008).*
+## §13 — Feature flags
+
+kremory's `default` feature set is **empty** — the full facade + substrate free-functions are
+available with no features enabled. Opt into the surfaces below as needed:
+
+| Feature | Default | Enables |
+|---|---|---|
+| *(default)* | — | Full `Memory` facade, bi-temporal graph, hybrid recall, dream phase, reversibility. BYOM LLM + embedder always available. |
+| `content-search` | off | `mem.recall(q).content()` + the `ContentPassage` type — BM25/FTS5 recall over raw episode text (§5, ADR-072). |
+| `ner` | off | GLiNER hybrid extractor (`.with_gliner()` + `.with_llm(...)`); auto-downloads the ONNX GLiNER model on first use (`ort` / `ndarray` / `tokenizers` / `hf-hub`). |
+| `embeddings` | off | Local ONNX embedding-provider support (`ort` / `ndarray` / `tokenizers` / `hf-hub`). BYOM embedders work without it. |
+| `otel` | off | OTLP export — `tracing-subscriber` + `tracing-opentelemetry` + OTLP exporter; enables `init_telemetry(...)` (see [observability.md](observability.md)). |
+| `trace` | off | Hot-path span emission (ADR D3). Off by default to keep non-OTel throughput overhead near zero. |
+| `unstable-graph` | off | v0.1.6 preview graph surface — `Memory::get_related` traversal (G9). Promotes to stable in a later release. |
+| `unstable-tags` | off | v0.1.6 preview tag surface — `episode_tags` junction + `with_tags` / `filter_tag_any` / `filter_tag_all` (G3.b). |
+| `test-utils` / `llm-smoke` / `llm-integration` | off | Test-harness gating only — not part of the stable consumer surface. |
+
+```toml
+# Example: content recall + OTLP export
+kremory = { version = "0.3", features = ["content-search", "otel"] }
+```
+
+---
+
+## §14 — Node / napi binding
+
+The `kremory-napi` crate exposes the `Memory` facade to Node via napi-rs, mirroring the Rust surface
+in **camelCase**. The reversibility surface is fully mirrored:
+
+- Inspect: `memory.mutationHistory(...)`, `memory.listMutations(...)` → `MutationRecord[]`.
+- Undo: `memory.undo(mutationId)` (the unified dispatcher) plus the per-kind `memory.unmerge` /
+  `memory.undoEntityEdit` / `memory.undoDeleteEntity` / `memory.undoDeleteFact`, and the direct
+  mutations `memory.editEntity` / `memory.deleteEntity` / `memory.deleteFact`.
+- `DreamSummary` mirrors as `JsDreamSummary` with the honest fields (`crossEpisodeWouldMerge` vs
+  `crossEpisodeMerged`, `budgetExhausted`, …).
+
+> **Note:** the `content-search` feature (`.content()` recall) is a Rust-only opt-in at this time —
+> it is not enabled in the current `kremory-napi` build, so `ContentPassage` recall is not yet part
+> of the JS surface. The undo + inspect surface *is* available in JS.
+
+---
+
+*API reference current as of kremory v0.3.2 (2026-07-12). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Dream reversibility: ADR-073. Content recall: ADR-072. Crate topology: ADR-028 (single-crate + cargo features, supersedes ADR-007 + ADR-008).*

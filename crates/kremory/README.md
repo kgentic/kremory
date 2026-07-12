@@ -243,20 +243,23 @@ let ctx = mem.recall("user preferences")
 
 ## Full API reference
 
-See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for the complete reference covering all 12 sections:
+See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for the complete reference:
 
 1. Quickstart
 2. Customizing the LLM/embedder
 3. Namespaces + multi-tenancy
 4. Ingest (`remember`)
-5. Recall
+5. Recall — incl. content search (`.content()`, opt-in `content-search`)
 6. Dream phase + consolidation
+6a. Reversibility — see, trust, undo
 7. Forget (GDPR)
 8. Async patterns (handles + polling)
 9. Event sinks
 10. Advanced — substrate composition
 11. Bi-temporal model
-12. Migration guide
+12. Migration guide (v0.1.3 → v0.3.2)
+13. Feature flags
+14. Node / napi binding
 
 ---
 
