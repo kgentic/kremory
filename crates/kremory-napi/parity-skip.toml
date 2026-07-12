@@ -184,6 +184,11 @@ reason = "Internal raw-mode switcher; napi recall always calls .raw() internally
 revisit = "never"
 
 [[skip]]
+symbol = "RecallRequest::content"
+reason = "ADR-072 seq1 (2026-07-11): new .content() BM25 content-search terminal + ContentPassage projection, feature-gated behind `content-search` (not part of the default build). Foundation-lane scope explicitly deferred napi parity to a later increment (per the seq1 impl-spec 'Explicitly NOT in seq1' + build-sequencing note) — revisit alongside the seq2 dense-embedding arm so both content-RAG surfaces land in kremory-napi together."
+revisit = "v0.2.0 (or seq2, whichever lands first)"
+
+[[skip]]
 symbol = "RecallRequest::opts"
 reason = "SearchOpts escape hatch; not on JS surface"
 revisit = "never"

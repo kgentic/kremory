@@ -433,6 +433,8 @@ mod defs_f;
 mod defs_g1;
 mod defs_g2;
 mod defs_h;
+// defs_i (ADR-072 seq1 impl-spec §1): migrate_022_episodes_content_recall.
+mod defs_i;
 
 pub(crate) use defs_a::*;
 pub(crate) use defs_b::*;
@@ -447,6 +449,11 @@ pub use defs_f::*;
 pub use defs_g1::*;
 pub use defs_g2::*;
 pub(crate) use defs_h::*;
+// defs_i (ADR-072 seq1) is entirely empty when `content-search` is off (its
+// sole item is feature-gated at the same level) — gate the re-export itself
+// too, or the glob becomes a literal "unused import" under `-D warnings`.
+#[cfg(feature = "content-search")]
+pub(crate) use defs_i::*;
 
 #[cfg(test)]
 mod tests;

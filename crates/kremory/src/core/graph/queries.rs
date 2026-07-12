@@ -299,8 +299,13 @@ impl TemporalGraph {
     /// Delete up to 250 entities in transactional 100-item chunks. Story #217.
     ///
     /// Each chunk of up to 100 IDs is wrapped in its own `BEGIN IMMEDIATE`
-    /// transaction. Deletion order per chunk: FTS → episodic_edges → facts →
-    /// entities.
+    /// transaction. Deletion order per chunk: entities_fts → episodic_edges →
+    /// facts_fts → facts → entities. The `facts_fts` step (ADR-072 §11
+    /// boy-scout) closes a pre-existing gap: this hard-delete path previously
+    /// cleaned `entities_fts` but not `facts_fts` — the shadow was only ever
+    /// purged by the dream archive path (`archive.rs::move_fact`, RISK-003).
+    /// It MUST run before the `facts` DELETE so the resolving subquery still
+    /// sees the rows about to be removed.
     ///
     /// Returns the total number of entity rows deleted across all chunks.
     pub async fn batch_forget(&self, entity_ids: &[String]) -> Result<u64> {
@@ -340,6 +345,22 @@ impl TemporalGraph {
                 format!("DELETE FROM episodic_edges WHERE entity_id IN ({placeholders})"),
                 params.clone()
             );
+
+            // 2.5. Facts FTS shadow rows (ADR-072 §11 boy-scout — closes the
+            //      batch_forget↔facts_fts gap RISK-003 names: facts_fts was
+            //      previously cleaned ONLY by the dream archive path
+            //      (`core/dream/consolidation/archive.rs::move_fact`), never
+            //      by this hard-delete path). MUST run BEFORE step 3's
+            //      `facts` DELETE below — the subquery needs the `facts` rows
+            //      to still exist to resolve which fact ids are about to be
+            //      purged. Two IN clauses (mirrors step 3) → params doubled.
+            let sql_facts_fts = format!(
+                "DELETE FROM facts_fts WHERE CAST(fact_id AS INTEGER) IN \
+                 (SELECT id FROM facts WHERE subject_id IN ({placeholders}) OR object_id IN ({placeholders}))"
+            );
+            let mut doubled_for_fts = params.clone();
+            doubled_for_fts.extend_from_slice(&params);
+            try_delete!(sql_facts_fts, doubled_for_fts);
 
             // 3. Facts (subject or object).
             //    Two IN clauses → params must be doubled.

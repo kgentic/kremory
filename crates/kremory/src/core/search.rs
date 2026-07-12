@@ -5,6 +5,11 @@ use tracing;
 
 use crate::core::error::Result;
 use crate::core::schema::{Entity, Fact, TemporalGraph};
+// ADR-072 seq1 impl-spec §2 ("Recall arm — content_search"): the content-RAG
+// projection type + episode source-attribution kind. Both are themselves
+// `#[cfg(feature = "content-search")]`-gated in `memory::types`.
+#[cfg(feature = "content-search")]
+use crate::memory::types::{ContentPassage, SourceKind, SourceRef};
 
 /// A search hit with BM25 relevance score.
 #[derive(Debug, Clone)]
@@ -59,6 +64,16 @@ pub(crate) struct FtsSearchEntitiesNoCountParams<'a> {
 /// Bundled parameters for [`TemporalGraph::fts_search_facts`] — args-as-object
 /// per TD-042 (rust-conventions §too_many_arguments).
 pub struct FtsSearchFactsParams<'a> {
+    pub query: &'a str,
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::content_search`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). ADR-072 seq1 impl-spec
+/// §2. Feature-gated behind `content-search` (mirrors the type it returns).
+#[cfg(feature = "content-search")]
+pub(crate) struct ContentSearchParams<'a> {
     pub query: &'a str,
     pub limit: usize,
     pub filters: &'a SearchFilters,
@@ -342,6 +357,145 @@ impl TemporalGraph {
         histogram!("rql.search.fts_facts_ms").record(_ms);
         tracing::info!(hits = hits_count, _ms, "kremory.search.fts_facts");
         Ok(hits)
+    }
+
+    /// ADR-072 seq1 impl-spec §2 — BM25-only full-text search over raw
+    /// `episodes.content` via the `episodes_fts` external-content shadow
+    /// table (Migration 022). **Parallel arm, NOT fused** into
+    /// `rrf_fuse_entities`/`rrf_fuse_facts` below — kremory's RRF is
+    /// pairwise per-result-type, not a generic N-list fuser (ADR-072 §6b);
+    /// content passages are a third result *type*, returned as their own
+    /// BM25-ranked stream via `.content()` (`facade::recall`).
+    ///
+    /// Scoped by `filters.group_ids` (same `build_group_id_clause` semantics
+    /// as `fts_search_entities`/`fts_search_facts` — namespace-null legacy
+    /// rows are included alongside the matched group).
+    #[cfg(feature = "content-search")]
+    pub(crate) async fn content_search(
+        &self,
+        params: ContentSearchParams<'_>,
+    ) -> Result<Vec<ContentPassage>> {
+        let ContentSearchParams {
+            query,
+            limit,
+            filters,
+        } = params;
+        let _search_start = Instant::now();
+
+        let safe_query = match sanitise_fts5_query(query) {
+            Some(q) => q,
+            None => {
+                let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+                histogram!("kremory.recall.content_search_ms").record(_ms);
+                metrics::counter!(
+                    "kremory.search.empty_result_total",
+                    "arm" => "content",
+                )
+                .increment(1);
+                tracing::debug!(
+                    arm = "content",
+                    _ms,
+                    "kremory.recall.content_search 0 hits (empty sanitised query)"
+                );
+                return Ok(vec![]);
+            }
+        };
+
+        // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit).
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
+
+        let sql = format!(
+            "SELECT e.id, e.timestamp, \
+                    snippet(episodes_fts, 0, '', '', '…', 32), \
+                    episodes_fts.rank \
+             FROM episodes_fts \
+             JOIN episodes AS e ON e.id = episodes_fts.rowid \
+             WHERE episodes_fts MATCH ?1{group_clause} \
+             ORDER BY episodes_fts.rank \
+             LIMIT ?2",
+        );
+
+        let mut sql_params: Vec<libsql::Value> = vec![
+            libsql::Value::from(safe_query.clone()),
+            libsql::Value::from(limit as i64),
+        ];
+        sql_params.extend(group_params);
+
+        // FTS5 MATCH syntax errors surface here (Rule 19 — never swallowed):
+        // `sanitise_fts5_query` quotes every token so this should be rare in
+        // practice, but a genuine parse failure must be loud, not silent.
+        let mut rows = match self.conn.query(&sql, sql_params).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+                metrics::counter!("kremory.recall.content_search_error_total").increment(1);
+                tracing::warn!(
+                    error = %e,
+                    query = %safe_query,
+                    _ms,
+                    "kremory.recall.content_search FTS5 MATCH query failed"
+                );
+                return Err(crate::core::error::Error::Search(format!(
+                    "content_search MATCH query failed: {e}"
+                )));
+            }
+        };
+
+        let mut passages: Vec<ContentPassage> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let episode_id: i64 = row.get(0)?;
+            let ts_str: String = row.get(1)?;
+            let snippet: String = row.get(2)?;
+            let score: f64 = row.get(3)?;
+            let occurred_at: DateTime<Utc> = DateTime::parse_from_rfc3339(&ts_str)
+                .map_err(|e| {
+                    crate::core::error::Error::Parse(format!(
+                        "content_search: episode {episode_id} has unparseable timestamp \
+                         {ts_str:?}: {e}"
+                    ))
+                })?
+                .with_timezone(&Utc);
+            passages.push(ContentPassage {
+                episode_id,
+                snippet,
+                score: score as f32,
+                source_ref: SourceRef {
+                    kind: SourceKind::Episode,
+                    id: episode_id.to_string(),
+                    occurred_at,
+                    published_at: None,
+                },
+            });
+        }
+
+        let hits = passages.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("kremory.recall.content_search_ms").record(_ms);
+        metrics::counter!("kremory.recall.content_search_total").increment(1);
+        // Per-arm attribution (Rule 19 anti-pattern #3 — never a single
+        // aggregate): content's contribution is visible against entity/fact
+        // via the shared `arm` label, even though seq1 does not retrofit the
+        // entity/fact paths with this same counter (out of scope — see
+        // impl-spec DoD #3, entity/fact recall stays byte-identical).
+        metrics::counter!("kremory.recall.results_total", "arm" => "content")
+            .increment(hits as u64);
+        if hits == 0 {
+            tracing::debug!(_ms, "kremory.recall.content_search 0 hits");
+        } else {
+            tracing::info!(hits, _ms, "kremory.recall.content_search");
+        }
+        // KREMORY_DEBUG=1: dump the raw MATCH query + returned passages
+        // (diagnostic-by-env-switch, zero cost when off — mirrors the
+        // existing extraction-payload KREMORY_DEBUG convention).
+        if std::env::var("KREMORY_DEBUG").is_ok() {
+            tracing::debug!(
+                target: "kremory.recall.content_search",
+                query = %safe_query,
+                passages = ?passages,
+                "[KREMORY_DEBUG] content_search raw match + results"
+            );
+        }
+        Ok(passages)
     }
 
     /// Vector similarity search on entity embeddings using cosine distance.
