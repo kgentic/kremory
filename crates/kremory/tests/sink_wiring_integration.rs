@@ -262,7 +262,12 @@ async fn drain_until_ready(
     mut is_ready: impl FnMut() -> bool,
 ) {
     drop(ingestor);
-    for _ in 0..300 {
+    // 600 × 50ms = 30s ceiling — tolerates the fresh-DB cold-start (migrations
+    // 001-022 + seeding) even under the 8-way parallelism of the full-suite run,
+    // where a batch's first-episode processing was observed at ~16s under
+    // contention (exceeding a 15s ceiling). Early-exits via is_ready(), so
+    // uncontended runs stay fast.
+    for _ in 0..600 {
         if is_ready() {
             break;
         }

@@ -60,7 +60,14 @@
 // Test files use expect/unwrap/panic as intentional assertion mechanisms.
 // Consistent with the project-wide test convention (see b1_observability.rs,
 // background_integration.rs et al).
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    // Test-fixture builders (insert_staged_responses / build_mock_handle_with_response)
+    // take >3 params by design; the args-as-object rule applies to src/, not test fixtures.
+    clippy::too_many_arguments
+)]
 
 mod helpers;
 
@@ -804,16 +811,63 @@ async fn namespace_isolation() {
 // Each test builds a fresh EngineGraphHandle, ingests via graph_ingest_episode,
 // then asserts using graph_search — the same verified pattern as namespace_isolation.
 
-/// Build a shared helper: EngineGraphHandle + TemporalGraph with a MockChatProvider
-/// that returns the given entity/fact JSON extraction response.
+/// Register the three `IntegerIdLlmExtractor` (`core::extraction::default_extractor`
+/// — the production-default extractor since commit 5200bec) stage responses for
+/// ONE episode's worth of extraction, into a shared `MockChatProvider` response
+/// map.
 ///
-/// The `response_key` / `response_json` pair is registered so that MockChatProvider
-/// returns `response_json` whenever the prompt contains `response_key`.
+/// ## Why keyed on `Text: {episode_text}<stage trailer>`, not a loose substring
+///
+/// `IntegerIdLlmExtractor::extract` makes THREE separate LLM calls per episode —
+/// entities (`build_entity_prompt`), relationship names
+/// (`build_relation_names_prompt`), then triplets (`build_triplet_prompt`), each
+/// with its own JSON shape (see `core::extraction::parsers::{parse_entities_integer,
+/// parse_relation_names, parse_facts}`). All three prompts embed the literal
+/// episode text via `"Text: {text}"`, immediately followed by a stage-specific
+/// trailer unique to that prompt builder (`"Output a JSON object"` / `"Output a
+/// JSON array of relationship name strings."` / `"Output a concise JSON array of
+/// objects with"` — see `core::extraction::graphiti`). Keying on `"Text:
+/// {episode_text}" + trailer` (rather than just a stage trailer, or just a loose
+/// episode-content substring) disambiguates BOTH which stage AND which episode a
+/// call belongs to in one flat map — required whenever a test drives more than
+/// one ingest through the same mock LLM (e.g. `stub_entity_promoted_on_reingestion`'s
+/// two sequential batches), and avoids the single-shot-JSON-blob mock shape this
+/// helper used before 2026-07-12 (written for a since-replaced 2-stage extractor;
+/// `IntegerIdLlmExtractor`'s Stage 1 parser requires `entity_type_id: <int>`, not
+/// the old `label: <string>` field, so the stale shape silently parsed to zero
+/// entities per Rule 21's loud-no-default JSON parsing).
+fn insert_staged_responses(
+    responses: &mut std::collections::HashMap<String, String>,
+    episode_text: &str,
+    entities_json: &str,
+    relation_names_json: &str,
+    triplets_json: &str,
+) {
+    responses.insert(
+        format!("Text: {episode_text}\n\nOutput a JSON object"),
+        entities_json.to_string(),
+    );
+    responses.insert(
+        format!("Text: {episode_text}\n\nOutput a JSON array of relationship name strings."),
+        relation_names_json.to_string(),
+    );
+    responses.insert(
+        format!("Text: {episode_text}\n\nOutput a concise JSON array of objects with"),
+        triplets_json.to_string(),
+    );
+}
+
+/// Build a shared helper: EngineGraphHandle + TemporalGraph with a MockChatProvider
+/// staged for `IntegerIdLlmExtractor`'s 3-stage protocol for ONE upcoming ingest of
+/// `episode_text`. See `insert_staged_responses` for the exact JSON shapes each of
+/// `entities_json` / `relation_names_json` / `triplets_json` must satisfy.
 #[cfg(feature = "llm-integration")]
 async fn build_mock_handle_with_response(
     db_path: &std::path::Path,
-    response_key: impl Into<String>,
-    response_json: impl Into<String>,
+    episode_text: &str,
+    entities_json: impl Into<String>,
+    relation_names_json: impl Into<String>,
+    triplets_json: impl Into<String>,
 ) -> (
     kremory::memory::engine_handle::EngineGraphHandle,
     Arc<kremory::core::schema::TemporalGraph>,
@@ -825,7 +879,13 @@ async fn build_mock_handle_with_response(
     use std::collections::HashMap;
 
     let mut responses: HashMap<String, String> = HashMap::new();
-    responses.insert(response_key.into(), response_json.into());
+    insert_staged_responses(
+        &mut responses,
+        episode_text,
+        &entities_json.into(),
+        &relation_names_json.into(),
+        &triplets_json.into(),
+    );
 
     let mock_llm: Arc<dyn kremory::memory::ChatProvider + Send + Sync> =
         Arc::new(MockChatProvider::new(responses));
@@ -869,14 +929,13 @@ async fn source_refs_carries_episode_kind() {
     let _guard = metrics::set_default_local_recorder(&recorder);
 
     let tmp = tempfile::tempdir().expect("tempdir");
+    let episode_text = "alice-conference: Alice attended the conference.";
     let (handle, _graph) = build_mock_handle_with_response(
         &tmp.path().join("g_v011_5.db"),
-        "alice-conference",
-        serde_json::json!({
-            "entities": [{"name": "Alice", "label": "Person"}],
-            "relationships": []
-        })
-        .to_string(),
+        episode_text,
+        serde_json::json!({"entities": [{"name": "Alice", "entity_type_id": 1}]}).to_string(),
+        "[]",
+        "[]",
     )
     .await;
 
@@ -894,7 +953,7 @@ async fn source_refs_carries_episode_kind() {
         .graph_ingest_episode(GraphIngestEpisodeParams {
             namespace: &ns,
             source_ref: &source,
-            content: "alice-conference: Alice attended the conference.",
+            content: episode_text,
             structured_facts: &[],
             provider: Arc::clone(&noop_provider),
             batch_id: None,
@@ -957,14 +1016,13 @@ async fn rrf_single_result_scores_one() {
     let _guard = metrics::set_default_local_recorder(&recorder);
 
     let tmp = tempfile::tempdir().expect("tempdir");
+    let episode_text = "zephyr-unique: Zephyr is a unique entity.";
     let (handle, _graph) = build_mock_handle_with_response(
         &tmp.path().join("g_v011_12.db"),
-        "zephyr-unique",
-        serde_json::json!({
-            "entities": [{"name": "Zephyr", "label": "Concept"}],
-            "relationships": []
-        })
-        .to_string(),
+        episode_text,
+        serde_json::json!({"entities": [{"name": "Zephyr", "entity_type_id": 9}]}).to_string(),
+        "[]",
+        "[]",
     )
     .await;
 
@@ -982,7 +1040,7 @@ async fn rrf_single_result_scores_one() {
         .graph_ingest_episode(GraphIngestEpisodeParams {
             namespace: &ns,
             source_ref: &source,
-            content: "zephyr-unique: Zephyr is a unique entity.",
+            content: episode_text,
             structured_facts: &[],
             provider: Arc::clone(&noop_provider),
             batch_id: None,
@@ -1035,15 +1093,14 @@ async fn standalone_entity_has_episodic_edge() {
     let _guard = metrics::set_default_local_recorder(&recorder);
 
     let tmp = tempfile::tempdir().expect("tempdir");
+    let episode_text = "carol-present: Carol was present.";
     let (handle, _graph) = build_mock_handle_with_response(
         &tmp.path().join("g_v011_standalone.db"),
-        "carol-present",
+        episode_text,
         // One entity, zero relationships — standalone entity with no facts.
-        serde_json::json!({
-            "entities": [{"name": "Carol", "label": "Person"}],
-            "relationships": []
-        })
-        .to_string(),
+        serde_json::json!({"entities": [{"name": "Carol", "entity_type_id": 1}]}).to_string(),
+        "[]",
+        "[]",
     )
     .await;
 
@@ -1061,7 +1118,7 @@ async fn standalone_entity_has_episodic_edge() {
         .graph_ingest_episode(GraphIngestEpisodeParams {
             namespace: &ns,
             source_ref: &source,
-            content: "carol-present: Carol was present.",
+            content: episode_text,
             structured_facts: &[],
             provider: Arc::clone(&noop_provider),
             batch_id: None,
@@ -1125,14 +1182,22 @@ async fn stub_entity_inserted_on_forward_reference() {
     let _guard = metrics::set_default_local_recorder(&recorder);
 
     let tmp = tempfile::tempdir().expect("tempdir");
+    let episode_text = "alice-works-with-bob: Alice works with Bob on research.";
     let (handle, _graph) = build_mock_handle_with_response(
         &tmp.path().join("g_v011_stub.db"),
-        "alice-works-with-bob",
-        // Alice in entity list; Bob only referenced in relationship (forward ref).
-        serde_json::json!({
-            "entities": [{"name": "Alice", "label": "Person"}],
-            "relationships": [{"subject": "Alice", "predicate": "works_with", "object": "Bob"}]
-        })
+        episode_text,
+        // Alice in entity list; Bob only referenced in the triplet (forward ref) —
+        // is_entity_ref:true on the "Bob" object is what triggers stub-entity
+        // creation in ingest_with.rs's Phase-2 fact loop.
+        serde_json::json!({"entities": [{"name": "Alice", "entity_type_id": 1}]}).to_string(),
+        serde_json::json!(["works_with"]).to_string(),
+        serde_json::json!([{
+            "subject": "Alice",
+            "predicate": "works_with",
+            "object": "Bob",
+            "is_entity_ref": true,
+            "confidence": 0.9
+        }])
         .to_string(),
     )
     .await;
@@ -1151,7 +1216,7 @@ async fn stub_entity_inserted_on_forward_reference() {
         .graph_ingest_episode(GraphIngestEpisodeParams {
             namespace: &ns,
             source_ref: &source,
-            content: "alice-works-with-bob: Alice works with Bob on research.",
+            content: episode_text,
             structured_facts: &[],
             provider: Arc::clone(&noop_provider),
             batch_id: None,
@@ -1239,25 +1304,35 @@ async fn stub_entity_promoted_on_reingestion() {
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    // Two separate MockChatProvider responses in one handle.
+    // Two separate episodes' worth of IntegerIdLlmExtractor 3-stage responses,
+    // sharing ONE MockChatProvider — insert_staged_responses keys on
+    // "Text: {episode_text}" + stage trailer so batch 1's and batch 2's stage-1
+    // calls (both hitting the SAME stage-1 prompt trailer) don't collide.
+    let batch1_text = "alice-works-with-bob-promoted: Alice works with Bob on research.";
+    let batch2_text = "bob-full-extraction: Bob is a researcher at Stanford.";
     let mut responses: HashMap<String, String> = HashMap::new();
-    // Batch 1: Alice in entity list; Bob only in relationship (forward ref → stub).
-    responses.insert(
-        "alice-works-with-bob-promoted".to_string(),
-        serde_json::json!({
-            "entities": [{"name": "Alice", "label": "Person"}],
-            "relationships": [{"subject": "Alice", "predicate": "works_with", "object": "Bob"}]
-        })
+    // Batch 1: Alice in entity list; Bob only in the triplet (forward ref → stub).
+    insert_staged_responses(
+        &mut responses,
+        batch1_text,
+        &serde_json::json!({"entities": [{"name": "Alice", "entity_type_id": 1}]}).to_string(),
+        &serde_json::json!(["works_with"]).to_string(),
+        &serde_json::json!([{
+            "subject": "Alice",
+            "predicate": "works_with",
+            "object": "Bob",
+            "is_entity_ref": true,
+            "confidence": 0.9
+        }])
         .to_string(),
     );
     // Batch 2: Bob now in full extraction (promoted from stub).
-    responses.insert(
-        "bob-full-extraction".to_string(),
-        serde_json::json!({
-            "entities": [{"name": "Bob", "label": "Person"}],
-            "relationships": []
-        })
-        .to_string(),
+    insert_staged_responses(
+        &mut responses,
+        batch2_text,
+        &serde_json::json!({"entities": [{"name": "Bob", "entity_type_id": 1}]}).to_string(),
+        "[]",
+        "[]",
     );
 
     let mock_llm: Arc<dyn kremory::memory::ChatProvider + Send + Sync> =
@@ -1293,7 +1368,7 @@ async fn stub_entity_promoted_on_reingestion() {
                 occurred_at: chrono::Utc::now(),
                 published_at: None,
             },
-            content: "alice-works-with-bob-promoted: Alice works with Bob on research.",
+            content: batch1_text,
             structured_facts: &[],
             provider: Arc::clone(&noop_provider),
             batch_id: None,
@@ -1316,7 +1391,7 @@ async fn stub_entity_promoted_on_reingestion() {
                 occurred_at: chrono::Utc::now(),
                 published_at: None,
             },
-            content: "bob-full-extraction: Bob is a researcher at Stanford.",
+            content: batch2_text,
             structured_facts: &[],
             provider: Arc::clone(&noop_provider),
             batch_id: None,

@@ -3,22 +3,28 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0de9cc59ce095e0503b4318bd5d1cd2dd1aa5b4be6b4c3996c7fedec9bda178c": [
+    "0cc165a486383d16d15c8e0a9d52a93723344dffe6f4f32567d57732d8d7d0ba": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"One is an abstract idea (Concept), and the other is a specific type of legal/judicial body (Court). They describe different categories.\"}, {\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 1, \"reasoning\": \"One is a broad abstract idea (Concept), while the other is a specific type of commercial entity (Technology Corporation). They are fundamentally different types.\"}]}"
+        "response_text": "{\n  \"decisions\": [\n    {\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    ,\n      \"entity_id\": 1\n    }\n  ]\n}"
       }
     ],
-    "37956a76722fcf8109c3b5e9003b3e3c95c1f55271cf25a90e443f132f8413bd": [
+    "3261b9b3b4154f619bc2f379f37f073a74a761b2cad791f4ae16a0bc004a2c67": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Location is a physical place, while Event is a temporal occurrence or happening.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Location specifies a place, whereas Concept refers to abstract ideas or theories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Location is a geographic place, while Court is a specific type of legal institution.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Location is a place name, while Technology Corporation refers specifically to a business entity.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Date specifies a point or range in time (calendar), while Time specifies a point in time of day or duration.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Date is a calendar measure (day/month/year), which is distinct from an Event (a named happening).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Time is a measure of temporal duration, whereas Quantity is a measure of magnitude or count (often with units).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Event is a specific occurrence, while Concept is an abstract idea or theory.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Event is an occurrence, while Court is a specific type of established legal body.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Event is an occurrence, while Technology Corporation refers specifically to a business entity.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person refers to people, while Organisation refers to groups/institutions. They are distinct categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person are individuals, while Location are geographic places. They describe different types of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person are individuals, while Event are occurrences in time. They are separate semantic categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person are individuals, while Concept refers to abstract ideas or theories. They are not interchangeable.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Organisation refers to formed groups, while Location refers to physical places. They are separate types.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Organisation refers to persistent groups, while Event refers to transient occurrences. They are distinct concepts.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Organisation refers to formalized bodies, while Concept refers to abstract ideas. These are fundamentally different entity types.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 7,\n      \"reasoning\": \"A 'Court' is a specific type of formal group or institution, making it a subtype or specific example that falls under the general category of 'Organisation'.\"\n    },\n    {\n      \"confidence\": 0.85,\n      \"is_same_entity\": true,\n      \"pair_id\": 8,\n      \"reasoning\": \"A 'Technology Corporation' is a highly specific type of 'Organisation' (a company). While narrower, it represents the same semantic category of entity.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Location refers to places, and Event refers to occurrences. They describe fundamentally different types of named entities.\"\n    }\n  ]\n}"
       }
     ],
-    "71ac7381035990399e229dac3a1d4b899fc05f3127225f69e0258ba6c4b0e800": [
+    "5474672aba762a9343dc9b207f7c5f52f6f0c3b2317e79a206bc20ddd1fc5eda": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 2,\n      \"confidence\": 0.9\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.75,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While a 'Technology Corporation' is a type of 'Organisation', the proposed type is much more specific, focusing on the industrial and product nature (hardware/software) of the entity, whereas 'Organisation' is a broad container for any named formal group.\"\n    }\n  ]\n}"
+      }
+    ],
+    "699cde575d3dc475d66e327452450d934b667564e4b64b002008e41e3076433d": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 11,\n      \"confidence\": 0.95\n    }\n  ]\n}"
       }
     ],
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
@@ -36,43 +42,37 @@
       },
       {
         "call_index": 3,
-        "response_text": "How can I help you today?"
-      },
-      {
-        "call_index": 4,
-        "response_text": "Hello! How can I help you today? 😊"
-      },
-      {
-        "call_index": 5,
         "response_text": "How can I help you today? 😊"
       },
       {
+        "call_index": 4,
+        "response_text": "How can I help you today? Whether you have a question, need help with a task, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
+      },
+      {
+        "call_index": 5,
+        "response_text": "What can I help you with today? Whether you have a question, need some creative writing, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
+      },
+      {
         "call_index": 6,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       }
     ],
-    "8508a7816438c03e487267f044424bb47902e23259573e5dbe6daa5d62a67366": [
+    "a3f36776ee40d4d0a36815994d3c99f5295a41d5958c4ae4655f13807e77a6ac": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person refers to an individual, while Organisation refers to a formal group or company.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person refers to an individual, while Location refers to a geographic place.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person refers to an individual, while Event refers to a specific occurrence in time.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person refers to an individual, while Concept refers to an abstract idea or theory.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"While 'Technology Corporation' is a type of 'Organisation', 'Organisation' is broader (e.g., academic institution), so they are not semantically identical.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Organisation refers to a formal group, while Location refers to a geographic place.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Organisation refers to a permanent group/entity, while Event refers to a temporary occurrence.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Organisation refers to a tangible or institutional body, whereas Concept refers to an abstract idea.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"A 'Court' is a specific type of institution, but 'Organisation' is a much broader category that includes universities and corporations, making 'Court' too narrow to be equivalent.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"While 'Technology Corporation' is a type of 'Organisation', 'Organisation' is broader (e.g., academic institution), so they are not semantically identical.\"\n    }\n  ]\n}"
-      }
-    ],
-    "b26e574d03e1f1d3a37616142f9045d92ea4c9f17bdc0b165792ba11338b384b": [
-      {
-        "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"A 'Technology Corporation' is a specific subset of a 'named company, institution, agency, or formal group' described by 'Organisation', making them semantically equivalent for entity type classification.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Location describes physical places, while Concept describes abstract ideas or methodologies.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Location describes geography, while Court describes a specific judicial institution.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Date refers to specific calendar points, while Time refers to points on a clock or durations.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Date is a specific calendar marker, while Event is a temporal occurrence or happening.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Time refers to a point or duration, whereas Quantity refers to measurable amounts, usually with units.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Event is a specific occurrence, while Concept is an abstract idea or theory.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Event is a named occurrence, while Court is a specific judicial organization.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Concept is an abstract idea, whereas Court is a specific type of institution/place.\"\n    }\n  ]\n}"
       }
     ],
     "dfe05a9abef6e36808ce58d43d29a571cde4d2090da6ab848d36eaa55b4a4f0e": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The name 'IBM' is the well-known acronym for 'International Business Machines'.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description of B is the full name corresponding to the common acronym A.\"\n    }\n  ]\n}"
       }
     ],
     "ec2a7dcf6d9efc6921d94fc33fad80089f6c11d99fa8bfdc596b9e584c246ae2": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"The name of a corporation or major technology firm.\",\n      \"justification\": \"Both 'ibm' and 'international business machines' are explicit names of companies.\"\n    ,\n      \"name\": \"Technology Corporation\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"Large technology or industrial corporations that produce hardware and software.\",\n      \"justification\": \"Both 'ibm' and 'international business machines' refer to corporate entities, specifically major technology manufacturers.\"\n    ,\n      \"name\": \"Technology Corporation\"\n    }\n  ]\n}"
       }
     ]
   }
