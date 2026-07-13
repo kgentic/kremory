@@ -41,10 +41,10 @@
     "url": "https://github.com/kgentic/kremory"
   },
   "optionalDependencies": {
-    "@kgentic/kremory-node-win32-x64-msvc": "0.1.7-alpha.1",
-    "@kgentic/kremory-node-darwin-x64": "0.1.7-alpha.1",
-    "@kgentic/kremory-node-linux-x64-gnu": "0.1.7-alpha.1",
-    "@kgentic/kremory-node-darwin-arm64": "0.1.7-alpha.1",
-    "@kgentic/kremory-node-linux-arm64-gnu": "0.1.7-alpha.1"
+    "@kgentic/kremory-node-win32-x64-msvc": "0.4.0",
+    "@kgentic/kremory-node-darwin-x64": "0.4.0",
+    "@kgentic/kremory-node-linux-x64-gnu": "0.4.0",
+    "@kgentic/kremory-node-darwin-arm64": "0.4.0",
+    "@kgentic/kremory-node-linux-arm64-gnu": "0.4.0"
   }
 }
