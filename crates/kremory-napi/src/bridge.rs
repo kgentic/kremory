@@ -2,7 +2,7 @@
 //!
 //! # Design
 //!
-//! aidocs (and other Node.js consumers) own their own embedders (e.g. a 256-dim
+//! Node.js consumers own their own embedders (e.g. a 256-dim
 //! in-process model). To wire a JS-side embedder into kremory's vector index, the
 //! consumer passes a callback `(text: string) => Promise<number[]>` via
 //! `JsOpenOptions.withEmbedder` at `Memory.open` time. This module wraps that

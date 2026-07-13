@@ -1,14 +1,22 @@
 # kremory
 
-**Embed agent memory in your app. Pure Rust. BYOM. Apache-2.0.**
+> Local-first **bi-temporal graph memory** for AI agents, in Rust — remember, dream, recall, and **reverse any mutation**.
 
-Pure Rust agent memory engine. Single binary. No server process. No subscription required to ship.
+[![crates.io](https://img.shields.io/crates/v/kremory.svg)](https://crates.io/crates/kremory)
+[![docs.rs](https://img.shields.io/docsrs/kremory)](https://docs.rs/kremory)
+[![license](https://img.shields.io/crates/l/kremory.svg)](LICENSE)
+![MSRV](https://img.shields.io/badge/MSRV-1.86-blue)
+
+Embeddable agent memory as a single crate. A knowledge graph that tracks how facts change across
+**world-time and system-time**, consolidates itself in a background **dream** phase, and lets you
+**see and undo** every merge / edit / delete it makes. No model weights bundled (bring your own
+LLM + embedder), no server process, no subscription to ship.
 
 ## Install
 
 ```toml
 [dependencies]
-kremory = "0.3"
+kremory = "0.4"
 ```
 
 That's it — no git dependency, no `[patch.crates-io]` stanza. kremory builds against the
@@ -65,7 +73,7 @@ Three modules ship in a single crate:
 
 ---
 
-## Three-tier API (React philosophy)
+## Three-tier API (progressive disclosure)
 
 ```
 Tier 1 — Just works
@@ -265,7 +273,13 @@ See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for 
 
 ## Reversible dream — see, trust, undo
 
-`dream()` mutates the graph by default — all consolidation ops (community detection, cross-episode merges, supersession sweep, fact archival) are ON. That is safe because **every destructive mutation is reversible** (ADR-073). You can always SEE what changed and UNDO it.
+`dream()` consolidates the graph by default: community detection, the supersession sweep, and
+fact archival are **ON and commit**. Cross-episode entity merges are the one exception — they
+default to **Shadow mode** (they compute and *report* merge decisions but fuse nothing), so you
+opt into actual fusion explicitly with `.cross_episode(CrossEpisodeMode::Apply)`. Watch the split
+via `summary.cross_episode_would_merge` (decisions) vs `summary.cross_episode_merged` (committed).
+Committing by default is safe because **every committed mutation is reversible** (ADR-073) — you
+can always SEE what changed and UNDO it.
 
 ```rust
 use kremory::{Memory, Namespace};
@@ -327,7 +341,7 @@ kremory emits structured metrics + tracing spans for every LLM and embedding cal
 **Optional OTLP export** — enable the `otel` cargo feature:
 
 ```toml
-kremory = { version = "0.3", features = ["otel"] }
+kremory = { version = "0.4", features = ["otel"] }
 ```
 
 ```rust
@@ -360,9 +374,43 @@ libSQL (Turso-compatible). Defaults to a local embedded file — no server proce
 
 ## Compared to alternatives
 
-See [docs/comparison.md](https://github.com/kgentic/kremory/blob/main/docs/comparison.md) for the full matrix.
+A structural summary (not a benchmark) — how kremory differs in *shape*, not just numbers:
+
+| | **kremory** | Vector DB + RAG | Graphiti / Zep | Mem0 / Cognee |
+|---|---|---|---|---|
+| Data model | bi-temporal knowledge graph | embeddings over text chunks | temporal knowledge graph | vector + graph |
+| **Reverse a merge / edit / delete (undo)** | ✅ built-in, deterministic | — | — | — |
+| Bi-temporal (world-time *and* system-time) | ✅ | — | partial (valid-time) | — |
+| Runs embedded, no server process | ✅ single libSQL file | varies | needs a graph DB / cloud | SDK → cloud or self-host |
+| Language / footprint | Rust, <1 MB crate | — | Python | Python |
+| Bring your own model (no weights bundled) | ✅ | n/a | ✅ | ✅ |
+| Self-consolidation (a "dream" pass) | ✅ | — | partial | ✅ |
+
+The two rows nobody else fills: **reversible graph mutations** (see [Reversible dream](#reversible-dream--see-trust-undo)) and **full bi-temporal** history (see [Two-Clock Temporal Model](#two-clock-temporal-model)). "—" means *not a headline capability of that tool*, not necessarily impossible.
 
 ---
+
+## Status & maturity
+
+**Pre-1.0 (`0.4.x`), used in earnest but still evolving.** Correctness coverage is strong —
+the full suite runs under every feature combination (default / `ner` / `content-search` /
+all-features) plus real-Ollama end-to-end journeys (`remember → dream → recall → unmerge/edit/
+delete/undo`). What 1.0 still needs: an API freeze, a cross-provider model matrix, and
+load/concurrency/durability testing.
+
+**API stability:** on the pre-1.0 lane, minor releases (`0.3 → 0.4`) may contain breaking
+changes — pin a minor (`kremory = "0.4"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
+
+## When *not* to reach for kremory
+
+- **You want a hosted, zero-config memory API.** kremory is an *embeddable Rust crate* you wire
+  your own LLM + embedder into — not a managed service. (Bring your own model is the point; it's
+  also the work.)
+- **You're not in Rust (or a Node app via the [napi binding](https://www.npmjs.com/package/@kgentic/kremory-node)).** There's no Python SDK.
+- **You need proven horizontal scale / high-concurrency multi-tenant *today*.** Storage is a
+  single embedded libSQL writer; large-scale concurrency is on the 1.0 roadmap, not yet load-tested.
+- **You just want document RAG.** A vector DB is simpler. kremory earns its keep when you need a
+  *graph* that tracks change over time and lets you undo what consolidation did.
 
 ## License
 

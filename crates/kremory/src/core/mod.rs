@@ -4,7 +4,7 @@
 //! dedup, fact invalidation, contradiction handling, hybrid retrieval, bi-temporal
 //! queries, and community detection.
 //!
-//! Corresponds to the former `rql-core` crate (crates/rqlc/).
+//! The substrate core — schema, migrations, ingest, extraction, retrieval, dream.
 //!
 //! # BYOM invariant
 //!

@@ -41,7 +41,7 @@ pub struct ExtractionWindowConfig {
     /// assistant path.  Users with more memory can increase via
     /// `LLM_CONTEXT_SIZE` + `CHUNK_MAX_TOKENS` env vars (see KGT-69 for UI
     /// presets).  Must stay aligned with `max_chunk_chars` in
-    /// `rust-pipeline::PipelineConfig` (1500 chars).
+    /// the host application's pipeline config (1500 chars).
     pub max_tokens: usize,
 
     /// Number of words from the end of `chunk[i]` to prepend to `chunk[i+1]`.

@@ -72,8 +72,7 @@ pub const MIGRATION_003_NAMESPACES_TABLE: Migration = Migration {
 };
 
 /// A single migration definition. Migrations are static — they live in
-/// a slice in the consumer crate (`rql-core/migrations/*` or `tauri-app/
-/// src-tauri/src/migrations/*`).
+/// a slice in the consumer crate's migrations module.
 #[derive(Debug, Clone, Copy)]
 pub struct Migration {
     /// Strictly monotonic version number starting at 1. Must be dense

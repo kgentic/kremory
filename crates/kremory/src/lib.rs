@@ -4,10 +4,10 @@
 //!
 //! - [`facade`] — fluent `Memory` facade: the recommended public API for most consumers.
 //! - [`core`] — graph primitives: episode ingest, extraction, contradiction handling,
-//!   hybrid retrieval, bi-temporal queries, community detection. (was `rql-core`)
+//!   hybrid retrieval, bi-temporal queries, community detection.
 //! - [`memory`] — orchestration layer: multi-tenant scoping, batch consolidation
 //!   recipe (`run_dream_phase`), opinionated retrieval defaults, context-block
-//!   templates. (was `rql-memory`)
+//!   templates.
 //!
 //! # BYOM contract
 //!

@@ -1,6 +1,6 @@
 # kremory API Reference
 
-> **v0.3.2** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
+> **v0.4.0** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
 > (`kremory::memory::submit_episode`, etc.) remain public for advanced users; most applications
 > should use the facade described below. Since v0.1.3 the facade gained a fully-wired dream
 > consolidation phase (§6), reversible graph mutations with a see/undo surface (§6a), opt-in
@@ -1053,4 +1053,4 @@ in **camelCase**. The reversibility surface is fully mirrored:
 
 ---
 
-*API reference current as of kremory v0.3.2 (2026-07-12). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Dream reversibility: ADR-073. Content recall: ADR-072. Crate topology: ADR-028 (single-crate + cargo features, supersedes ADR-007 + ADR-008).*
+*API reference current as of kremory v0.4.0 (2026-07-12). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Dream reversibility: ADR-073. Content recall: ADR-072. Crate topology: ADR-028 (single-crate + cargo features, supersedes ADR-007 + ADR-008).*

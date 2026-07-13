@@ -1,0 +1,20 @@
+# gitleaks config for kremory go-public scans.
+# Extends the default ruleset; allowlists the known false-positive surfaces so a
+# full-history scan is fast + actionable. (`.env` is gitignored + never committed;
+# listed here belt-and-braces.)
+[extend]
+useDefault = true
+
+[allowlist]
+description = "kremory known false positives (build artifacts, test fixtures, local env)"
+paths = [
+  '''^target/''',                              # compiled artifacts (gitignored) — e.g. pem_rfc7468 rmeta test keys
+  '''.*/tests/cassettes/.*\.json$''',          # VCR LLM-response recordings (test fixtures, huge)
+  '''^\.env(\..*)?$''',                         # local secrets, gitignored + never committed
+]
+# eval-canary.yml line-43 "key:" is a GitHub Actions cache key (gguf-…), not a secret,
+# and the whole workflow is commented out — allowlist the cache-key phrasing.
+regexTargets = ["match"]
+regexes = [
+  '''key: gguf-.*''',
+]

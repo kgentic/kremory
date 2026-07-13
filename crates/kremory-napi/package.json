@@ -1,6 +1,6 @@
 {
   "name": "@kgentic/kremory-node",
-  "version": "0.1.7-alpha.1",
+  "version": "0.4.0",
   "description": "Node.js binding for the kremory bi-temporal agent memory engine",
   "main": "index.js",
   "types": "index.d.ts",
