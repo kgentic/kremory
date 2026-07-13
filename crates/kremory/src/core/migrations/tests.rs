@@ -139,9 +139,9 @@ async fn run_parallel_tracks_independent_via_separate_columns() {
         name: "001_rql_baseline",
         sql: "CREATE TABLE rql_entities (id INTEGER PRIMARY KEY)",
     }];
-    let the-host-application_migs = [Migration {
+    let example_migs = [Migration {
         version: 1,
-        name: "001_the-host-application_baseline",
+        name: "001_example_baseline",
         sql: "CREATE TABLE folders (id INTEGER PRIMARY KEY)",
     }];
 
@@ -150,9 +150,9 @@ async fn run_parallel_tracks_independent_via_separate_columns() {
         .await
         .expect("rql run");
     MigrationRunner::new(&conn, "schema_version")
-        .run(&the-host-application_migs)
+        .run(&example_migs)
         .await
-        .expect("the-host-application run");
+        .expect("example run");
 
     let rql_v = MigrationRunner::new(&conn, "rql_schema_version")
         .current_version()

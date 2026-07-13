@@ -3,6 +3,42 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
+## [0.4.0] - 2026-07-12
+
+Minor bump on the pre-1.0 lane (breaking changes permitted). Adds the reversible
+graph-mutation surface (ADR-073) and content recall (ADR-072 seq1), and fixes a
+fact-extraction production bug on the `ner` build.
+
+### Added
+- **Reversible graph mutations (ADR-073)** — `unmerge`, `edit_entity` (rename / re-type
+  with FK + edge + community propagation), `delete_entity` (cascade), and their inverses
+  `undo_entity_edit` / `undo_delete_entity` / undo-of-unmerge, plus `list_mutations`,
+  `mutation_history`, and NOGOOD recording so a reversed merge is not re-proposed. Every op
+  returns an honest outcome struct (repointed / removed / restored counts, `already_undone`
+  idempotency). Mirrored 1:1 on the `kremory-napi` surface.
+- **Content recall (ADR-072 seq1)** — `.content()` terminal on the recall builder performs
+  FTS5/BM25 full-text search over raw episode text (migrate_022 `episodes_fts` virtual table
+  + purge cascade). Gated behind the `content-search` feature.
+
+### Changed
+- **`dream()` consolidation ops default ON** — community detection, cross-episode merge,
+  archival, and the supersession sweep all run by default; tune via `DreamOpts` +
+  `RememberInto::with_opts(...)`. `DreamSummary` reports a `would-merge` vs `did-merge`
+  split and per-op `consolidationOpsRan` flags.
+- **napi parity** — the reversibility + dream surfaces are exposed on `@kgentic/kremory-node`
+  with the same honest return shapes as the Rust facade.
+
+### Fixed
+- **Fact extraction was a silent no-op under `--features ner` / `--all-features`.**
+  `Engine::ingest()` special-cased `#[cfg(feature = "ner")]` to always dispatch through a
+  bare, LLM-less `GlinerExtractor` (`facts: vec![]`), discarding the builder-resolved
+  extractor (`IntegerId` default / `GlinerLlm` / `Custom` BYOE) — so every fact-producing
+  extraction via `ingest()` dropped all relationships on the `ner` build (~100 commits).
+  Now always dispatches through the configured extractor. A regression guard
+  (`engine_ingest_wrapper_dispatches_configured_extractor_persists_facts`) asserts
+  `facts >= 1` through `ingest()` and is ungated so it runs in both the default and `ner`
+  test matrices.
+
 ## [0.3.2] - 2026-06-24
 
 ### Fixed

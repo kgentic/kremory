@@ -14,7 +14,7 @@
 //!   return a `GraphNotBound` error. `kremory_context_block` works
 //!   regardless — it's a pure function over already-fetched results.
 //! - [`KremoryMcpServer::new`] — bind a real `GraphHandle` + `ChatProvider`.
-//!   Downstream consumers (the host application in D.5; aidocs paying SDK) compose
+//!   Downstream consumers (host applications and paying SDK customers) compose
 //!   their concrete graph + LLM client here.
 //!
 //! ## Tools registered (4 — matches kremory::memory's public surface)
@@ -51,7 +51,7 @@ use kremory::memory::{
 use crate::conversions::ConversionError;
 
 // Re-export the kremory trait + provider surface so downstream consumers
-// (the host application, paying SDK customers) depend on this crate alone when
+// (host apps, paying SDK customers) depend on this crate alone when
 // composing a bound server.
 pub use kremory::memory::{ChatProvider as KremoryChatProvider, GraphHandle as KremoryGraphHandle};
 
@@ -199,7 +199,7 @@ impl KremoryMcpServer {
         Self { state: None }
     }
 
-    /// Construct a bound server. Downstream consumers (the host application, paying
+    /// Construct a bound server. Downstream consumers (host apps, paying
     /// SDK customers) supply their concrete graph + LLM client.
     pub fn new(graph: Arc<dyn GraphHandle>, provider: Arc<dyn ChatProvider>) -> Self {
         Self {
@@ -341,7 +341,7 @@ mod tests {
     }
 
     /// Locks the tool-name contract — these strings must remain stable
-    /// for MCP clients (aidocs etc.) wired against them.
+    /// for MCP clients wired against them.
     #[test]
     fn tool_name_contract_pins() {
         const EXPECTED_TOOLS: &[&str] = &[

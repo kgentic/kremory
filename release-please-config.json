@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "separate-pull-requests": false,
+  "include-component-in-tag": true,
+  "packages": {
+    "crates/kremory": {
+      "component": "kremory",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "crates/kremory-napi": {
+      "component": "kremory-napi",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  }
+}

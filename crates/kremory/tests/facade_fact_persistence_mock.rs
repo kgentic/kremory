@@ -20,7 +20,9 @@ use kremory::core::config::PipelineConfig;
 use kremory::core::error::Error as KremoryError;
 use kremory::core::extraction::IntegerIdLlmExtractor;
 use kremory::core::graph::{FactInsert, InsertEntityParams};
-use kremory::core::ingest::{Engine, EngineNewParams, IngestWithParams, SourceParams};
+use kremory::core::ingest::{
+    Engine, EngineNewParams, IngestParams, IngestWithParams, SourceParams,
+};
 use kremory::core::provider::{MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
 use kremory::memory::ChatProvider;
@@ -120,6 +122,61 @@ async fn engine_ingest_writes_facts_in_any_namespace() {
     assert!(
         none >= 1 && some >= 1 && none == some,
         "facts must persist regardless of group_id; group_none={none} vs group_some={some}"
+    );
+}
+
+/// B3 regression guard (2026-07-12) — the ner-gated `Engine::ingest()` dispatch bug.
+///
+/// `Engine::ingest()` (the wrapper that resolves `self.extractor`) previously
+/// special-cased `#[cfg(feature = "ner")]` to ALWAYS route through the process-wide
+/// bare `GlinerExtractor` (`ner_singleton()`, whose `::extract` returns `facts: vec![]`),
+/// discarding the builder-resolved extractor. Under `--features ner` / `--all-features`,
+/// every fact-producing extraction via `ingest()` was a silent no-op — for ~100 commits.
+///
+/// Why nothing caught it: every other fast test in this file calls `ingest_with()`
+/// (which was NEVER buggy — it takes the extractor as an argument), and the full suite
+/// was never RUN under `--features ner` (no CI matrix). This guard closes both holes:
+/// it calls `ingest()` — the exact buggy wrapper — with the Engine's default
+/// `ExtractorKind::IntegerId` (fed the staged mock), and it is **ungated** so it runs in
+/// BOTH the `not(ner)` and `--features ner` matrices. Fixed in `5d2ef4a` (always
+/// `self.ingest_with(&self.extractor, ...)`).
+///
+/// Verified to FAIL on the reintroduced bug (under `--features ner` the wrapper routes to
+/// bare GLiNER → 0 facts → this assertion fires) and PASS on the fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn engine_ingest_wrapper_dispatches_configured_extractor_persists_facts() {
+    let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("graph"));
+    let config = PipelineConfig::builder().build().expect("config");
+    let dim = config.embedding_dim.0;
+    let llm = Arc::new(staged_mock());
+    let engine = Engine::new(EngineNewParams {
+        graph,
+        llm: Arc::clone(&llm),
+        embedder: Arc::new(MockEmbeddingProvider::new(dim)),
+        config,
+        // model: None → PromptOnly so the mock's plain-array stage-3 response parses.
+        model: None,
+    });
+    // Call `ingest()` — the wrapper with the historical cfg dispatch — NOT `ingest_with()`.
+    // Engine::new defaults `self.extractor` to `ExtractorKind::IntegerId(mock)`, which
+    // produces one `works_at` fact from the staged mock.
+    let r = engine
+        .ingest(IngestParams {
+            text: "Alice works at Acme Corp.",
+            reference_time: None,
+            group_id: Some("b3-ner-guard"),
+            content_type: None,
+            source_params: SourceParams::default(),
+        })
+        .await
+        .expect("ingest");
+    assert!(
+        !r.inserted_fact_ids.is_empty(),
+        "Engine::ingest() must persist >=1 fact via the configured extractor \
+         (B3 regression: ner-gated bare-GLiNER dispatch dropped ALL facts); \
+         got {} facts, {} entities",
+        r.inserted_fact_ids.len(),
+        r.upserted_entities.len()
     );
 }
 

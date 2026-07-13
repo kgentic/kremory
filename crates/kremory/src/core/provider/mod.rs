@@ -7,8 +7,8 @@
 //
 // BYOM invariant (ADR-Phase-D.0, 2026-05-18 §7): kremory exposes ONLY the
 // `autoagents-llm` TRAIT surface here. The concrete `LlamaCppProvider`
-// (`autoagents-llamacpp` crate) lives in `rust-pipeline/src/rql_llamacpp.rs`
-// — the consumer binary, not the substrate crate. DoD: `cargo tree -p kremory --edges normal
+// (`autoagents-llamacpp` crate) lives in the host binary crate that co-locates
+// the concrete LLM client — not in this substrate crate. DoD: `cargo tree -p kremory --edges normal
 // | grep autoagents-llamacpp` MUST print 0.
 //
 // autoagents-llm is a required dep (not optional) — kremory::memory's
@@ -224,13 +224,11 @@ pub fn chat_msg_user(content: impl Into<String>) -> ChatMessage {
 }
 
 // ---------------------------------------------------------------------------
-// build_llm — MOVED to `rust-pipeline/src/rql_llamacpp.rs` per ADR-Phase-D.0
-// §7 BYOM invariant. rqlc must not reference `autoagents-llamacpp` in
-// production deps. Consumers (rust-pipeline, tauri-app) import via:
+// build_llm — MOVED to the host binary crate per the BYOM invariant. kremory
+// must not reference `autoagents-llamacpp` in production deps; the host binary
+// that co-locates the concrete `LlamaCppProvider` imports and builds it there.
 //
-//   use rust_pipeline::rql_llamacpp::{build_llm, LlamaCppProvider};
-//
-// In-crate rqlc tests that need a real LlamaCppProvider construct it
+// In-crate tests that need a real LlamaCppProvider construct it
 // directly via the `autoagents-llamacpp` dev-dependency.
 // ---------------------------------------------------------------------------
 

@@ -1,0 +1,4 @@
+{
+  "crates/kremory": "0.4.0",
+  "crates/kremory-napi": "0.4.0"
+}

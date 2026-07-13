@@ -1,7 +1,7 @@
 //! `kremory-mcp-server` — binary entry point for the kremory MCP server.
 //!
 //! Stdio transport, 4 tools registered (see `lib.rs`). Per ADR-Phase-D.0:
-//! consumers (aidocs, future SDK clients) spawn this binary as a
+//! consumers (SDK clients) spawn this binary as a
 //! subprocess and speak JSON-RPC over stdin/stdout.
 //!
 //! ```bash
