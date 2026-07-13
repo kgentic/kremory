@@ -257,7 +257,7 @@ See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for 
 2. Customizing the LLM/embedder
 3. Namespaces + multi-tenancy
 4. Ingest (`remember`)
-5. Recall — incl. content search (`.content()`, opt-in `content-search`)
+5. Recall — incl. full-text (BM25) content search (`.content()`, opt-in `content-search`)
 6. Dream phase + consolidation
 6a. Reversibility — see, trust, undo
 7. Forget (GDPR)
