@@ -1424,4 +1424,185 @@ mod tests {
         // entity_type_name is additive — does not overwrite entity_name.
         assert_eq!(js.entity_type_name, "Organisation");
     }
+
+    // ── ADR-074 review H2: facts must survive the napi wire layer ──────────
+    //
+    // `make_ctx` above (and `RetrievedContext::new()` generally) always
+    // defaults `facts: Vec::new()` — `RetrievedContext` is `#[non_exhaustive]`
+    // and `RetrievedContextNewParams` carries no `facts` field, so a non-empty
+    // fixture cannot be struct-literalled. This drives the REAL recall path
+    // (mode-c pinned fact via `Memory::remember().with_facts().skip_extraction()`
+    // — the same mechanism `kremory`'s own
+    // `with_facts_integration.rs::td116_recall_returns_connected_facts_under_null_embedder`
+    // proves at the facade level) so `retrieved_context_to_js` is exercised
+    // against a genuine, non-empty `RetrievedContext.facts`.
+
+    use std::sync::Arc;
+
+    use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
+    use autoagents_llm::error::LLMError;
+    use kremory::core::provider::NullEmbeddingProvider;
+    use kremory::memory::types::StructuredFact;
+    use kremory::{ChatProvider, Memory, Namespace};
+
+    use super::retrieved_fact_to_js;
+
+    /// `Memory::open(...).with_llm(...)` requires a real `Arc<dyn ChatProvider>`
+    /// even on the pinned-fact `skip_extraction()` path, which never invokes
+    /// it. Errors loudly (not a silent empty response) if that assumption
+    /// ever breaks, so a future regression fails this test with a clear cause
+    /// instead of a confusing downstream symptom.
+    #[derive(Debug, Clone)]
+    struct UnreachableChatProvider;
+
+    #[async_trait::async_trait]
+    impl ChatProvider for UnreachableChatProvider {
+        async fn chat_with_tools(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[Tool]>,
+            _json_schema: Option<StructuredOutputFormat>,
+        ) -> Result<Box<dyn ChatResponse>, LLMError> {
+            Err(LLMError::Generic(
+                "UnreachableChatProvider: chat_with_tools must not be called on a \
+                 skip_extraction() pinned-fact test path"
+                    .to_string(),
+            ))
+        }
+    }
+
+    /// Build an in-memory `Memory` (no live LLM/embedder needed — mirrors
+    /// `with_facts_integration.rs::open_with_ns`, kremory-napi's own crate
+    /// only having `NullEmbeddingProvider` available outside `test-utils`).
+    #[allow(clippy::expect_used)]
+    async fn napi_test_memory() -> Memory {
+        let llm: Arc<dyn ChatProvider> = Arc::new(UnreachableChatProvider);
+        let embedder: Arc<dyn kremory::DynEmbeddingProvider> =
+            Arc::new(NullEmbeddingProvider { dim: 384 });
+        Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .default_namespace(Namespace::new("kremory_napi_h2_tests"))
+            .await
+            .expect("in-memory Memory must build")
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    async fn retrieved_context_to_js_round_trips_a_nonempty_pinned_fact() {
+        let mem = napi_test_memory().await;
+
+        mem.remember("Ada Lovelace wrote the first algorithm.")
+            .with_facts(vec![StructuredFact {
+                subject: "Ada Lovelace".to_string(),
+                predicate: "wrote".to_string(),
+                object: "the first algorithm".to_string(),
+                valid_from: None,
+                valid_to: None,
+                memory_type: None,
+            }])
+            .from_document("napi-h2-doc")
+            .skip_extraction()
+            .await
+            .expect("remember(skip_extraction) should succeed");
+
+        let raw = mem
+            .recall("Ada Lovelace")
+            .raw()
+            .await
+            .expect("raw recall should succeed");
+        let ada = raw
+            .into_iter()
+            .find(|r| r.entity_name == "Ada Lovelace")
+            .expect("Ada Lovelace must be in recall results");
+        assert!(
+            !ada.facts.is_empty(),
+            "H2: recall must surface Ada Lovelace's connected fact before conversion"
+        );
+
+        let js = retrieved_context_to_js(ada);
+        assert!(
+            !js.facts.is_empty(),
+            "H2: retrieved_context_to_js must not drop facts crossing the napi wire"
+        );
+
+        let fact = js
+            .facts
+            .iter()
+            .find(|f| f.predicate == "wrote")
+            .expect("the pinned 'wrote' fact must survive the wire mapping");
+        assert_eq!(fact.fact, "Ada Lovelace wrote the first algorithm");
+        assert_eq!(fact.subject, "Ada Lovelace");
+        assert_eq!(fact.predicate, "wrote");
+        assert_eq!(fact.object, "the first algorithm");
+        assert!(!fact.object_is_entity, "literal object → object_is_entity=false");
+        assert!(!fact.valid_at.is_empty(), "valid_at must be a non-empty RFC-3339 string");
+        assert!(
+            fact.invalid_at.is_none(),
+            "an open-ended pinned fact must have invalid_at=None"
+        );
+        assert!(!fact.recorded_at.is_empty(), "recorded_at must be a non-empty RFC-3339 string");
+        assert!(fact.expired_at.is_none(), "a fresh pinned fact must have expired_at=None");
+        assert_eq!(
+            fact.confidence, 1.0,
+            "caller-pinned facts default to confidence=1.0"
+        );
+        assert!(
+            !fact.source_episode_ids.is_empty(),
+            "source_episode_ids must attribute the fact to its episode"
+        );
+    }
+
+    /// `retrieved_fact_to_js` (the per-fact half of the conversion) round-trips
+    /// every field independently of the containing `RetrievedContext` — the
+    /// same real, non-empty fixture as the test above, but asserting the
+    /// narrower conversion function directly.
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    async fn retrieved_fact_to_js_round_trips_every_field() {
+        let mem = napi_test_memory().await;
+
+        mem.remember("Grace Hopper invented the compiler.")
+            .with_facts(vec![StructuredFact {
+                subject: "Grace Hopper".to_string(),
+                predicate: "invented".to_string(),
+                object: "the compiler".to_string(),
+                valid_from: None,
+                valid_to: None,
+                memory_type: None,
+            }])
+            .from_document("napi-h2-fact-doc")
+            .skip_extraction()
+            .await
+            .expect("remember(skip_extraction) should succeed");
+
+        let raw = mem
+            .recall("Grace Hopper")
+            .raw()
+            .await
+            .expect("raw recall should succeed");
+        let hopper = raw
+            .into_iter()
+            .find(|r| r.entity_name == "Grace Hopper")
+            .expect("Grace Hopper must be in recall results");
+        let fact = hopper
+            .facts
+            .into_iter()
+            .find(|f| f.predicate == "invented")
+            .expect("the pinned 'invented' fact must be present");
+
+        let js = retrieved_fact_to_js(fact);
+        assert_eq!(js.fact, "Grace Hopper invented the compiler");
+        assert_eq!(js.subject, "Grace Hopper");
+        assert_eq!(js.predicate, "invented");
+        assert_eq!(js.object, "the compiler");
+        assert!(!js.object_is_entity);
+        assert!(!js.valid_at.is_empty());
+        assert!(js.invalid_at.is_none());
+        assert!(!js.recorded_at.is_empty());
+        assert!(js.expired_at.is_none());
+        assert_eq!(js.confidence, 1.0);
+        assert!(!js.source_episode_ids.is_empty());
+        assert!(js.score >= 0.0);
+    }
 }

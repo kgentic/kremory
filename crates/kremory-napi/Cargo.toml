@@ -65,6 +65,13 @@ syn = { version = "2", features = ["full", "parsing"] }
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 quote = "1"
+# ADR-074 review H2 — `convert::tests` needs a minimal `kremory::ChatProvider`
+# stub (a real `Arc<dyn ChatProvider>` is required to build a `Memory`, even
+# on the `skip_extraction()` pinned-fact path that never calls it). Mirrors
+# kremory's own `#[async_trait::async_trait] impl ChatProvider` pattern
+# (`crates/kremory/src/core/provider/chat.rs`); already resolved transitively
+# via `kremory`/`autoagents-llm`, so this adds no new download.
+async-trait = "0.1"
 
 [build-dependencies]
 napi-build = "2"
