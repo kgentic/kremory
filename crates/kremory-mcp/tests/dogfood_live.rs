@@ -90,10 +90,12 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
     let tools = client.list_all_tools().await?;
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     println!("tools/list -> {names:?}");
-    let scenario_a_pass = names.len() == 3
+    let scenario_a_pass = names.len() == 5
         && names.contains(&"kremory_remember")
         && names.contains(&"kremory_recall")
-        && names.contains(&"kremory_dream");
+        && names.contains(&"kremory_dream")
+        && names.contains(&"kremory_list_mutations")
+        && names.contains(&"kremory_undo");
 
     let recall_tool = tools.iter().find(|t| t.name == "kremory_recall");
     let recall_schema_ok = if let Some(t) = recall_tool {
@@ -105,7 +107,7 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
         false
     };
     println!(
-        "scenario_a: 3-tool-surface={scenario_a_pass} recall-schema-enums={recall_schema_ok}"
+        "scenario_a: 5-tool-surface={scenario_a_pass} recall-schema-enums={recall_schema_ok}"
     );
 
     // ── SCENARIO B: mode-(a) extraction round-trip (real LLM) ──

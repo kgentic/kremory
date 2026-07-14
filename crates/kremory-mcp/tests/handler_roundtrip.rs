@@ -1,4 +1,4 @@
-//! In-process handler round-trip tests for the floor-3 tool surface.
+//! In-process handler round-trip tests for the floor-5 tool surface.
 //!
 //! Each test constructs a real `kremory::Memory` on an in-memory libSQL db
 //! wired with `MockChatProvider::null()` + `NullEmbeddingProvider` (no live
@@ -30,10 +30,10 @@
 use std::sync::Arc;
 
 use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
-use kremory::{ChatProvider, DynEmbeddingProvider, Memory};
+use kremory::{ChatProvider, DynEmbeddingProvider, Memory, Namespace};
 use kremory_mcp::params::{
-    DreamParams, RecallFormat, RecallParams, RecallTemplateWire, RememberParams, SourceKindWire,
-    StructuredFactWire,
+    DreamParams, ListMutationsParams, RecallFormat, RecallParams, RecallTemplateWire,
+    RememberParams, SourceKindWire, StructuredFactWire, UndoParams,
 };
 use kremory_mcp::KremoryMcpServer;
 use rmcp::handler::server::wrapper::Parameters;
@@ -223,6 +223,112 @@ async fn recall_returns_pinned_entity_after_enrichment() {
     );
 }
 
+// ─── ADR-074 review H2: facts must survive the MCP wire layer ────────────
+
+/// Regression guard for review finding H2: the only prior end-to-end proof
+/// that `facts` survives projection lived in `kremory`'s own
+/// `with_facts_integration.rs` (`td116_recall_returns_connected_facts_...`);
+/// this crate's one same-named-looking test
+/// (`recall_structured_returns_wellformed_payload`) builds no facts fixture
+/// at all, so nothing here ever asserted the MCP wire mapping.
+///
+/// A mode-(c) pinned fact does NOT need the `simulate_enrichment` seam this
+/// module's docs describe for free-text/LLM-extracted entities: TD-113
+/// stamps the FTS-indexed name (`properties["name"]`) and a vector embedding
+/// at PIN time (`ingest_with.rs::make_pinned_entity_recallable`), so the
+/// subject is recall-findable — and its fact attaches — from the pin alone.
+/// Verified empirically before writing this assertion (a probe recall
+/// without `simulate_enrichment` already returned a non-empty `facts` array).
+#[tokio::test]
+async fn recall_structured_surfaces_pinned_fact_with_every_wire_field() {
+    let server = mock_server().await;
+
+    let subject = "Wilhelmina";
+    server
+        .kremory_remember(Parameters(pinned_remember_params("ns-facts-h2", subject)))
+        .await
+        .expect("mode-c remember must succeed");
+
+    let recall = RecallParams {
+        namespace: "ns-facts-h2".into(),
+        thread: None,
+        query: subject.to_string(),
+        k: Some(10),
+        as_of: None,
+        format: RecallFormat::Structured,
+        template: RecallTemplateWire::default(),
+    };
+    let result = server
+        .kremory_recall(Parameters(recall))
+        .await
+        .expect("recall must succeed");
+
+    let structured = result
+        .structured_content
+        .expect("structured recall returns structured payload");
+    let results = structured["results"]
+        .as_array()
+        .expect("results array present");
+    let subject_result = results
+        .iter()
+        .find(|r| r["entity_name"].as_str() == Some(subject))
+        .unwrap_or_else(|| panic!("recall must surface {subject:?}, got: {structured}"));
+
+    let facts = subject_result["facts"]
+        .as_array()
+        .expect("facts field present and typed as an array");
+    assert!(
+        !facts.is_empty(),
+        "H2: {subject}'s pinned 'leads' fact must survive the MCP wire mapping \
+         (RetrievedContext → RetrievedContextWire), got empty facts: {structured}"
+    );
+
+    let fact = facts
+        .iter()
+        .find(|f| f["predicate"].as_str() == Some("leads"))
+        .unwrap_or_else(|| panic!("the pinned 'leads' fact must be present, got: {facts:?}"));
+
+    // Every `RetrievedFactWire` field must round-trip with the pinned triple's
+    // real values — not just be present-and-typed.
+    assert_eq!(fact["fact"].as_str(), Some("Wilhelmina leads design"));
+    assert_eq!(fact["subject"].as_str(), Some("Wilhelmina"));
+    assert_eq!(fact["predicate"].as_str(), Some("leads"));
+    assert_eq!(fact["object"].as_str(), Some("design"));
+    assert_eq!(fact["object_is_entity"].as_bool(), Some(false));
+    assert!(
+        fact["valid_at"].as_str().is_some_and(|s| !s.is_empty()),
+        "valid_at must be a non-empty RFC-3339 string: {fact:?}"
+    );
+    assert!(
+        fact["invalid_at"].is_null(),
+        "an open-ended pinned fact must have invalid_at=null: {fact:?}"
+    );
+    assert!(
+        fact["recorded_at"].as_str().is_some_and(|s| !s.is_empty()),
+        "recorded_at must be a non-empty RFC-3339 string: {fact:?}"
+    );
+    assert!(
+        fact["expired_at"].is_null(),
+        "a fresh pinned fact must have expired_at=null: {fact:?}"
+    );
+    assert_eq!(
+        fact["confidence"].as_f64(),
+        Some(1.0),
+        "caller-pinned facts default to confidence=1.0: {fact:?}"
+    );
+    let source_episode_ids = fact["source_episode_ids"]
+        .as_array()
+        .expect("source_episode_ids present and typed as an array");
+    assert!(
+        !source_episode_ids.is_empty(),
+        "source_episode_ids must attribute the fact to its episode: {fact:?}"
+    );
+    assert!(
+        fact["score"].as_f64().is_some(),
+        "score must be present and numeric: {fact:?}"
+    );
+}
+
 // ─── recall (text format) ─────────────────────────────────────────────────
 
 #[tokio::test]
@@ -300,6 +406,260 @@ async fn dream_returns_summary_outcome() {
     assert!(
         structured["warnings"].is_array(),
         "dream output must carry a warnings array: {structured}"
+    );
+    // G2 — dream must surface WHAT it discovered, not just a count. The mock LLM
+    // may discover zero types, so this asserts the array is present + typed (the
+    // name/description/justification detail is proven by the conversions.rs unit
+    // test `dream_output_carries_type_proposal_detail`).
+    assert!(
+        structured["types_discovered"].is_array(),
+        "dream output must carry a types_discovered array: {structured}"
+    );
+}
+
+// ─── list_mutations / undo (G3 — the reversible-mutations gap closure) ────
+
+/// `kremory_list_mutations` after a `dream()` run must return a well-formed
+/// typed array (`count == results.len()` is N/A here — the tool returns the
+/// array directly, not a `{results, count}` envelope). The mock LLM may
+/// discover/merge nothing, so the load-bearing assertion is shape, not count
+/// — mirrors `recall_structured_returns_wellformed_payload`'s discipline.
+#[tokio::test]
+async fn list_mutations_after_dream_returns_wellformed_array() {
+    let server = mock_server().await;
+    server
+        .kremory_remember(Parameters(pinned_remember_params("ns-list", "Percival")))
+        .await
+        .expect("remember must succeed");
+    server
+        .kremory_dream(Parameters(DreamParams {
+            namespace: "ns-list".into(),
+            thread: None,
+            batch_id: None,
+        }))
+        .await
+        .expect("dream must succeed with the mock LLM");
+
+    let list_params = ListMutationsParams {
+        namespace: "ns-list".into(),
+        thread: None,
+        entity_id: None,
+        kind: None,
+        since: None,
+        include_undone: Some(true),
+    };
+    let result = server
+        .kremory_list_mutations(Parameters(list_params))
+        .await
+        .expect("list_mutations must not error");
+
+    assert_eq!(result.is_error, Some(false));
+    let payload = result
+        .structured_content
+        .expect("list_mutations returns structured payload");
+    assert!(
+        payload.is_array(),
+        "kremory_list_mutations must return a typed array: {payload}"
+    );
+}
+
+/// `MutationRecord` / `UndoOutcome` are `#[non_exhaustive]` facade types
+/// kremory-mcp cannot struct-literal-construct in a unit test (see the
+/// conversions.rs test module docs on this file's counterpart). This test
+/// proves `From<MutationRecord> for MutationRecordWire` and
+/// `TryFrom<UndoOutcome> for UndoOutcomeWire` preserve every field through a
+/// REAL facade round-trip: `edit_entity(...).rename(...)` needs no LLM and
+/// logs a genuine `entity_edit` mutation, which `kremory_list_mutations`
+/// (SEE) then `kremory_undo` (FIX) must surface + reverse with every count
+/// intact — the exact parity-drop class ADR-074 / G2 fixed elsewhere in this
+/// crate.
+#[tokio::test]
+async fn list_mutations_and_undo_roundtrip_entity_edit() {
+    let mem = mock_memory().await;
+    let server = KremoryMcpServer::new(mem.clone());
+
+    let subject = "Reginald";
+    server
+        .kremory_remember(Parameters(pinned_remember_params("ns-undo", subject)))
+        .await
+        .expect("mode-c remember must succeed");
+
+    // Drive a genuine `entity_edit` mutation directly via the facade —
+    // `edit_entity` needs no LLM (unlike merges, which only arise from
+    // dream()'s LLM-driven passes).
+    let ns = Namespace::new("ns-undo");
+    let edit = mem
+        .edit_entity(subject)
+        .in_namespace(ns)
+        .rename("reginald-ii")
+        .execute()
+        .await
+        .expect("edit_entity must succeed");
+    assert!(!edit.already_undone);
+    assert!(edit.rekeyed);
+
+    // SEE: kremory_list_mutations surfaces the logged entity_edit — proves
+    // every MutationRecordWire field survives the projection.
+    let list_params = ListMutationsParams {
+        namespace: "ns-undo".into(),
+        thread: None,
+        entity_id: None,
+        kind: Some("entity_edit".into()),
+        since: None,
+        include_undone: None,
+    };
+    let list_result = server
+        .kremory_list_mutations(Parameters(list_params))
+        .await
+        .expect("list_mutations must not error");
+    let records = list_result
+        .structured_content
+        .expect("list_mutations returns structured payload");
+    let records = records.as_array().expect("results must be an array");
+    assert_eq!(
+        records.len(),
+        1,
+        "expected exactly one live entity_edit mutation: {records:?}"
+    );
+    let record = &records[0];
+    assert_eq!(record["mutation_id"], edit.mutation_id);
+    assert_eq!(record["kind"], "entity_edit");
+    assert_eq!(record["undone"], false);
+    assert_eq!(record["group_id"], "ns-undo");
+    assert!(
+        record["created_at"].as_str().is_some_and(|s| !s.is_empty()),
+        "created_at must be a non-empty RFC3339 string: {record}"
+    );
+    let affected = record["affected_entities"]
+        .as_array()
+        .expect("affected_entities must be an array");
+    assert!(
+        affected
+            .iter()
+            .any(|v| v.as_str() == Some("reginald-ii") || v.as_str() == Some(subject)),
+        "affected_entities must name the edited entity: {affected:?}"
+    );
+    assert!(
+        record["summary"].as_str().is_some_and(|s| !s.is_empty()),
+        "summary must be a non-empty human-readable string: {record}"
+    );
+
+    // FIX: kremory_undo dispatches to undo_entity_edit and preserves every
+    // per-kind count on the wire (the UndoOutcomeWire::EditEntity variant).
+    let undo_params = UndoParams {
+        namespace: "ns-undo".into(),
+        thread: None,
+        mutation_id: edit.mutation_id,
+    };
+    let undo_result = server
+        .kremory_undo(Parameters(undo_params))
+        .await
+        .expect("undo must succeed");
+    assert_eq!(undo_result.is_error, Some(false));
+    let outcome = undo_result
+        .structured_content
+        .expect("undo returns structured payload");
+    assert_eq!(outcome["reversed_kind"], "edit_entity");
+    assert_eq!(
+        outcome["entity_id"], subject,
+        "undo must restore the ORIGINAL entity id: {outcome}"
+    );
+    assert_eq!(outcome["rekeyed"], true);
+    assert_eq!(outcome["retyped"], false);
+    assert_eq!(outcome["mutation_id"], edit.mutation_id);
+    assert_eq!(outcome["already_undone"], false);
+    assert!(
+        outcome["facts_repointed"].is_u64(),
+        "facts_repointed count must survive to the wire: {outcome}"
+    );
+    assert!(
+        outcome["edges_repointed"].is_u64(),
+        "edges_repointed count must survive to the wire: {outcome}"
+    );
+
+    // A second undo of the same mutation_id is an idempotent no-op — the
+    // `already_undone` count survives too.
+    let undo_again = UndoParams {
+        namespace: "ns-undo".into(),
+        thread: None,
+        mutation_id: edit.mutation_id,
+    };
+    let repeat = server
+        .kremory_undo(Parameters(undo_again))
+        .await
+        .expect("repeat undo must not error");
+    let repeat_outcome = repeat
+        .structured_content
+        .expect("repeat undo returns structured payload");
+    assert_eq!(repeat_outcome["already_undone"], true);
+}
+
+/// `kremory_undo` on a `mutation_id` naming no `graph_mutation_log` row must
+/// fail LOUD (`Error::MutationNotFound`, mapped to `internal_error` — the
+/// same facade-error mapping every other tool uses), never silently no-op.
+#[tokio::test]
+async fn undo_nonexistent_mutation_fails_loud() {
+    let server = mock_server().await;
+    let params = UndoParams {
+        namespace: "ns-undo-missing".into(),
+        thread: None,
+        mutation_id: 987_654_321,
+    };
+    let err = server
+        .kremory_undo(Parameters(params))
+        .await
+        .expect_err("undo of a nonexistent mutation_id must error, never silently no-op");
+    assert_eq!(
+        err.code,
+        ErrorCode::INTERNAL_ERROR,
+        "MutationNotFound is a facade error, mapped to internal_error like every other tool: {err:?}"
+    );
+    assert!(
+        err.message.to_lowercase().contains("mutation"),
+        "internal_error must name the mutation-not-found problem: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn list_mutations_rejects_empty_namespace_with_invalid_params() {
+    let server = mock_server().await;
+    let params = ListMutationsParams {
+        namespace: "".into(),
+        thread: None,
+        entity_id: None,
+        kind: None,
+        since: None,
+        include_undone: None,
+    };
+    let err = server
+        .kremory_list_mutations(Parameters(params))
+        .await
+        .expect_err("empty namespace must error");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.to_lowercase().contains("namespace"));
+}
+
+#[tokio::test]
+async fn list_mutations_rejects_unknown_kind_with_invalid_params() {
+    let server = mock_server().await;
+    let params = ListMutationsParams {
+        namespace: "ns-bad-kind".into(),
+        thread: None,
+        entity_id: None,
+        kind: Some("not_a_real_kind".into()),
+        since: None,
+        include_undone: None,
+    };
+    let err = server
+        .kremory_list_mutations(Parameters(params))
+        .await
+        .expect_err("unknown kind string must error");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(
+        err.message.to_lowercase().contains("kind"),
+        "invalid_params must name the offending kind: {}",
+        err.message
     );
 }
 

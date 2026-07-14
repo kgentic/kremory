@@ -1,5 +1,5 @@
-//! MCP wire types — floor-3 tool surface over `kremory::Memory` (ADR
-//! kremory-mcp-rewrite-0.4.0).
+//! MCP wire types — floor-5 tool surface over `kremory::Memory` (ADR
+//! kremory-mcp-rewrite-0.4.0 + G3 reversible-mutations gap closure).
 //!
 //! These duplicate a subset of `kremory`'s facade types with the
 //! `schemars::JsonSchema` derive rmcp's macros need to generate tool input
@@ -7,11 +7,14 @@
 //! boundary, see `feedback_substrate_purity_boundary`). The bidirectional
 //! conversions to/from kremory facade types live in `conversions.rs`.
 //!
-//! Three tools, matching `kremory::Memory`'s three primary entry points:
+//! Five tools, matching `kremory::Memory`'s primary entry points:
 //! - `kremory_remember` — ingest (`Memory::remember`)
 //! - `kremory_recall` — the ONLY search tool; hybrid keyword + semantic +
 //!   graph retrieval (`Memory::recall`)
 //! - `kremory_dream` — batch consolidation (`Memory::dream`)
+//! - `kremory_list_mutations` — the SEE half of the reversible-mutations
+//!   story (`Memory::list_mutations` / `Memory::mutation_history`)
+//! - `kremory_undo` — the unified FIX dispatcher (`Memory::undo`)
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -249,6 +252,20 @@ pub struct ConsolidationOpsRanWire {
     pub supersession_sweep: bool,
 }
 
+/// Wire form of `kremory::TypeProposal` — an entity type proposed AND accepted
+/// by Dream Pass 0 type discovery. Carries the full proposal detail (not just a
+/// count) so an MCP consumer can see WHAT dream learned, mirroring the napi
+/// `JsTypeProposal` surface and the ADR-074 recall→facts detail-carry pattern.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TypeProposalWire {
+    /// Proposed entity-type name (e.g. `"Firm"`).
+    pub name: String,
+    /// One-line description of what the type captures.
+    pub description: String,
+    /// Why Pass 0 proposed this type (the LLM's justification).
+    pub justification: String,
+}
+
 /// Real fields on `kremory::DreamSummary` (verified against
 /// `crates/kremory/src/facade/mod.rs` — the spec §8 provisional guess of
 /// `communities_recomputed`/`cross_episode_merges` used the OLD
@@ -269,14 +286,170 @@ pub struct DreamOutput {
     pub acronym_nickname_merges: usize,
     pub type_registry_merges: usize,
     pub consistency_check_corrected: usize,
-    /// Count of `kremory::core::dream::TypeProposal` entries accepted by
-    /// Pass 0 type discovery (the full proposals are substrate-internal —
-    /// not re-mirrored here to keep the wire surface at floor 3).
-    pub types_discovered_count: usize,
+    /// Entity types proposed AND accepted by Dream Pass 0 type discovery, with
+    /// full proposal detail (name/description/justification). Empty when Pass 0
+    /// did not run or accepted nothing. The count is `types_discovered.len()`.
+    /// (G2 fix — previously a bare `types_discovered_count: usize`, which dropped
+    /// the `TypeProposal` detail on the wire; same parity-drop class as the
+    /// ADR-074 recall→facts bug.)
+    pub types_discovered: Vec<TypeProposalWire>,
     pub consolidation_ops_ran: ConsolidationOpsRanWire,
     pub duration_ms: u64,
     /// `true` when the consolidation budget (token/USD ceiling) was
     /// exhausted this run, skipping at least one op.
     pub budget_exhausted: bool,
     pub warnings: Vec<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// kremory_list_mutations (G3 — the SEE half of the reversible-mutations story)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ListMutationsParams {
+    pub namespace: String,
+    pub thread: Option<String>,
+    /// When set, lists the mutations that touched this ONE entity (as keeper
+    /// OR loser) — routes to `Memory::mutation_history` and always includes
+    /// already-undone mutations, regardless of `include_undone`. `kind` /
+    /// `since` are ignored in this mode (`mutation_history` has no such
+    /// filters). Omit to list namespace-wide via `Memory::list_mutations`.
+    pub entity_id: Option<String>,
+    /// Restrict to one mutation kind, e.g. `"entity_merge"` / `"entity_edit"`
+    /// / `"entity_delete"` / `"fact_delete"` (the four LOGGED kinds — the
+    /// other four `MutationKind` variants are reserved and will always
+    /// return empty). An unrecognised string is rejected as invalid_params.
+    /// Ignored when `entity_id` is set.
+    pub kind: Option<String>,
+    /// RFC 3339 UTC lower bound on `created_at`. Ignored when `entity_id` is
+    /// set.
+    pub since: Option<String>,
+    /// Include already-undone mutations. Default `false` (live / still-
+    /// reversible only). Ignored (always effectively `true`) when
+    /// `entity_id` is set.
+    pub include_undone: Option<bool>,
+}
+
+/// Wire form of `kremory::MutationRecord` — one logged graph mutation, the
+/// **SEE** half of the see+fix story. `kind` is the snake_case tag (see
+/// `kremory::MutationKind`); `mutation_id` is what `kremory_undo` takes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MutationRecordWire {
+    pub mutation_id: i64,
+    pub kind: String,
+    /// RFC 3339 timestamp when the mutation was applied.
+    pub created_at: String,
+    /// `true` once the mutation has been reversed via `kremory_undo`.
+    pub undone: bool,
+    /// The namespace (group) this mutation scoped.
+    pub group_id: String,
+    /// Entity ids this mutation touched (for `entity_merge`, `[keeper, loser]`).
+    pub affected_entities: Vec<String>,
+    /// A short human/agent-readable summary of what the mutation did.
+    pub summary: String,
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// kremory_undo (G3 — the unified FIX dispatcher over Memory::undo)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UndoParams {
+    /// Guards the undo to the mutation's ORIGINAL namespace — a mismatch is
+    /// rejected loudly rather than silently reversing a mutation the caller
+    /// did not intend to touch.
+    pub namespace: String,
+    pub thread: Option<String>,
+    /// The `mutation_id` from a `kremory_list_mutations` record (or from a
+    /// prior `kremory_dream` / `kremory_remember` response).
+    pub mutation_id: i64,
+}
+
+/// Wire mirror of `kremory::UnmergeOutcome` (§3.1) — every field is the
+/// ACTUAL count reversed, never a bare "applied".
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UnmergeOutcomeWire {
+    /// The restored loser entity id (the entity that had been hard-DELETEd).
+    pub restored_entity: String,
+    /// The keeper whose overwritten access_count / ner_confidence were restored.
+    pub keeper: String,
+    pub facts_repointed: usize,
+    pub edges_restored: usize,
+    pub entities_reopened: usize,
+    /// A NOGOOD was recorded for the split pair — the next `dream()` will
+    /// NOT re-merge it.
+    pub nogood_recorded: bool,
+    /// `true` if the mutation was already undone — an idempotent no-op.
+    pub already_undone: bool,
+}
+
+/// Wire mirror of `kremory::EditEntityOutcome` (§4.3).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EditEntityOutcomeWire {
+    /// The entity id AFTER the reversal (the RESTORED prior id for an undo).
+    pub entity_id: String,
+    /// `true` if the reversed edit was a rename/rekey.
+    pub rekeyed: bool,
+    /// `true` if the reversed edit was a retype.
+    pub retyped: bool,
+    pub facts_repointed: usize,
+    pub archived_repointed: usize,
+    pub edges_repointed: usize,
+    pub communities_repointed: usize,
+    pub entities_reopened: usize,
+    pub mutation_id: i64,
+    /// `true` if the mutation was already undone — an idempotent no-op.
+    pub already_undone: bool,
+}
+
+/// Wire mirror of `kremory::DeleteEntityOutcome` (§4.4).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DeleteEntityOutcomeWire {
+    /// The restored entity id.
+    pub entity_id: String,
+    /// Facts restored from archive.
+    pub facts_retracted: usize,
+    /// Episodic edges re-inserted.
+    pub edges_removed: usize,
+    /// The entity's OWN community memberships restored — 0 or 1.
+    pub communities_removed: usize,
+    /// NEIGHBOURS whose community membership was restored by the cascade.
+    pub neighbors_retracted: usize,
+    pub entities_reopened: usize,
+    pub mutation_id: i64,
+    /// `true` if the mutation was already undone — an idempotent no-op.
+    pub already_undone: bool,
+}
+
+/// Wire mirror of `kremory::DeleteFactOutcome` (§4.5).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DeleteFactOutcomeWire {
+    /// The restored fact id.
+    pub fact_id: i64,
+    /// `true` only when the undo actually moved the fact back out of the
+    /// archive (`false` if it was found already live — an honest no-op).
+    pub fact_restored: bool,
+    /// NEIGHBOURS whose community membership was restored by the cascade.
+    pub neighbors_retracted: usize,
+    pub entities_reopened: usize,
+    pub mutation_id: i64,
+    /// `true` if the mutation was already undone — an idempotent no-op.
+    pub already_undone: bool,
+}
+
+/// Wire mirror of `kremory::UndoOutcome` (§3.1) — what `kremory_undo`
+/// ACTUALLY reversed. Internally tagged on `reversed_kind` so every per-kind
+/// count survives to the wire (no flattening to a string — the exact class
+/// of parity-drop bug ADR-074 / G2 fixed elsewhere in this crate).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "reversed_kind", rename_all = "snake_case")]
+pub enum UndoOutcomeWire {
+    /// The mutation was an `entity_merge`.
+    Unmerge(UnmergeOutcomeWire),
+    /// The mutation was an `entity_edit`.
+    EditEntity(EditEntityOutcomeWire),
+    /// The mutation was an `entity_delete`.
+    DeleteEntity(DeleteEntityOutcomeWire),
+    /// The mutation was a `fact_delete`.
+    DeleteFact(DeleteFactOutcomeWire),
 }
