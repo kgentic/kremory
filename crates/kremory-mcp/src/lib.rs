@@ -1,8 +1,9 @@
-//! kremory-mcp — MCP server wrapping kremory's 0.4.0 `Memory` facade as 3
+//! kremory-mcp — MCP server wrapping kremory's 0.4.0 `Memory` facade as 5
 //! JSON-RPC tools over rmcp stdio transport.
 //!
-//! Per the kremory-mcp-rewrite-0.4.0 spec: this crate is the bridge between
-//! MCP clients (e.g. Claude Code, aidocs) and the kremory SDK.
+//! Per the kremory-mcp-rewrite-0.4.0 spec (+ G3 reversible-mutations gap
+//! closure): this crate is the bridge between MCP clients (e.g. Claude Code,
+//! aidocs) and the kremory SDK.
 //!
 //! ## Composition shape
 //!
@@ -12,13 +13,18 @@
 //! missing or Ollama is unreachable at boot, rather than serving a degraded
 //! "graph not bound" stub.
 //!
-//! ## Tools registered (3 — floor-3 tool surface over `Memory`)
+//! ## Tools registered (5 — floor-5 tool surface over `Memory`)
 //!
 //! - `kremory_remember` — ingest (delegates to [`kremory::Memory::remember`])
 //! - `kremory_recall` — the ONLY search tool; hybrid keyword + semantic +
 //!   graph retrieval (delegates to [`kremory::Memory::recall`])
 //! - `kremory_dream` — batch consolidation (delegates to
 //!   [`kremory::Memory::dream`])
+//! - `kremory_list_mutations` — the SEE half of the reversible-mutations
+//!   story: what did `dream()` change? (delegates to
+//!   [`kremory::Memory::list_mutations`] / [`kremory::Memory::mutation_history`])
+//! - `kremory_undo` — the unified FIX dispatcher: reverse any logged mutation
+//!   by `mutation_id` (delegates to [`kremory::Memory::undo`])
 //!
 //! ## Error mapping
 //!
@@ -46,8 +52,9 @@ use kremory::Memory;
 
 use crate::conversions::ConversionError;
 use crate::params::{
-    DreamOutput, DreamParams, RecallFormat, RecallParams, RecallStructuredOutput, RecallTextOutput,
-    RememberOutput, RememberParams,
+    DreamOutput, DreamParams, ListMutationsParams, MutationRecordWire, RecallFormat, RecallParams,
+    RecallStructuredOutput, RecallTextOutput, RememberOutput, RememberParams, UndoOutcomeWire,
+    UndoParams,
 };
 
 // ────────────────────────────────────────────────────────────────────────
@@ -345,6 +352,124 @@ impl KremoryMcpServer {
 
         final_result
     }
+
+    #[tool(
+        name = "kremory_list_mutations",
+        description = "SEE what dream() (or edit/delete calls) changed in a namespace — the read-only inspect half of the reversible-mutations story. Lists logged graph mutations (entity merges, entity edits, entity deletes, fact deletes) newest-first, each carrying a mutation_id you can pass to kremory_undo. Set entity_id to scope to one entity's history (includes already-undone mutations); otherwise lists namespace-wide LIVE (still-reversible) mutations by default. Read-only — never mutates."
+    )]
+    pub async fn kremory_list_mutations(
+        &self,
+        Parameters(params): Parameters<ListMutationsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let start = Instant::now();
+        let namespace = params.namespace.clone();
+        let span = tracing::info_span!(
+            "kremory_mcp.tool",
+            tool = "kremory_list_mutations",
+            namespace = %namespace,
+        );
+        let _enter = span.enter();
+
+        if debug_enabled() {
+            tracing::debug!(
+                target: "kremory_mcp.raw_request",
+                tool = "kremory_list_mutations",
+                request = %serde_json::to_string(&params).unwrap_or_default(),
+            );
+        }
+
+        let result = self.do_list_mutations(params).await;
+        if let Ok(ref wire) = result {
+            if debug_enabled() {
+                tracing::debug!(
+                    target: "kremory_mcp.raw_response",
+                    tool = "kremory_list_mutations",
+                    response = %serde_json::to_string(&wire).unwrap_or_default(),
+                );
+            }
+        }
+
+        // Serialize BEFORE computing the outcome label — see the matching
+        // comment in `kremory_remember` above (Critical Rule 19 #9).
+        let final_result: Result<CallToolResult, ErrorData> = result
+            .map_err(ErrorData::from)
+            .and_then(|wire| wire_to_call_result(&wire, "kremory_list_mutations"));
+        let outcome = match &final_result {
+            Ok(_) => "ok",
+            Err(e) if e.code == ErrorCode::INVALID_PARAMS => "invalid_params",
+            Err(_) => "internal_error",
+        };
+        let duration_ms = start.elapsed().as_millis() as u64;
+        tracing::debug!(duration_ms, outcome, "kremory_list_mutations complete");
+        metrics::counter!(
+            "kremory_mcp.tool.calls",
+            "tool" => "kremory_list_mutations",
+            "outcome" => outcome,
+        )
+        .increment(1);
+
+        final_result
+    }
+
+    #[tool(
+        name = "kremory_undo",
+        description = "FIX — reverse a mutation dream() (or edit/delete calls) applied, by its mutation_id (get one from kremory_list_mutations). Unified dispatcher: routes to the correct reversal for entity merges (un-merge, restoring the split entity), entity edits (undo rename/retype), entity deletes (restore the entity + its archived facts), and fact deletes (restore the fact). Idempotent — undoing an already-undone mutation is a safe no-op. MUTATES the graph; not read-only."
+    )]
+    pub async fn kremory_undo(
+        &self,
+        Parameters(params): Parameters<UndoParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let start = Instant::now();
+        let namespace = params.namespace.clone();
+        let mutation_id = params.mutation_id;
+        let span = tracing::info_span!(
+            "kremory_mcp.tool",
+            tool = "kremory_undo",
+            namespace = %namespace,
+            mutation_id,
+        );
+        let _enter = span.enter();
+
+        if debug_enabled() {
+            tracing::debug!(
+                target: "kremory_mcp.raw_request",
+                tool = "kremory_undo",
+                request = %serde_json::to_string(&params).unwrap_or_default(),
+            );
+        }
+
+        let result = self.do_undo(params).await;
+        if let Ok(ref wire) = result {
+            if debug_enabled() {
+                tracing::debug!(
+                    target: "kremory_mcp.raw_response",
+                    tool = "kremory_undo",
+                    response = %serde_json::to_string(&wire).unwrap_or_default(),
+                );
+            }
+        }
+
+        // Serialize BEFORE computing the outcome label — see the matching
+        // comment in `kremory_remember` above (Critical Rule 19 #9).
+        let final_result: Result<CallToolResult, ErrorData> = result
+            .map_err(ErrorData::from)
+            .and_then(|wire| wire_to_call_result(&wire, "kremory_undo"));
+        let outcome = match &final_result {
+            Ok(_) => "ok",
+            Err(e) if e.code == ErrorCode::INVALID_PARAMS => "invalid_params",
+            Err(_) => "internal_error",
+        };
+        let duration_ms = start.elapsed().as_millis() as u64;
+        tracing::debug!(duration_ms, outcome, "kremory_undo complete");
+        metrics::counter!(
+            "kremory_mcp.tool.calls",
+            "tool" => "kremory_undo",
+            "outcome" => outcome,
+        )
+        .increment(1);
+
+        final_result
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -437,6 +562,51 @@ impl KremoryMcpServer {
         let summary = req.await?;
         Ok(DreamOutput::from(summary))
     }
+
+    async fn do_list_mutations(
+        &self,
+        params: ListMutationsParams,
+    ) -> Result<Vec<MutationRecordWire>, ToolError> {
+        let resolved = params.resolve()?;
+
+        let records = if let Some(entity_id) = resolved.entity_id {
+            self.mem
+                .mutation_history(entity_id)
+                .in_namespace(resolved.namespace)
+                .await?
+        } else {
+            let mut req = self
+                .mem
+                .list_mutations()
+                .in_namespace(resolved.namespace)
+                .include_undone(resolved.include_undone);
+            if let Some(kind) = resolved.kind {
+                req = req.kind(kind);
+            }
+            if let Some(since) = resolved.since {
+                req = req.since(since);
+            }
+            req.await?
+        };
+
+        Ok(records.into_iter().map(Into::into).collect())
+    }
+
+    async fn do_undo(&self, params: UndoParams) -> Result<UndoOutcomeWire, ToolError> {
+        let resolved = params.resolve()?;
+
+        let outcome = self
+            .mem
+            .undo(resolved.mutation_id)
+            .in_namespace(resolved.namespace)
+            .execute()
+            .await?;
+
+        // `UndoOutcome` is `#[non_exhaustive]` — a future log-dispatchable kind
+        // this crate hasn't caught up with yet is a version-skew bug, mapped
+        // loudly to `internal_error` (never silently dropped/defaulted).
+        UndoOutcomeWire::try_from(outcome).map_err(ToolError::Internal)
+    }
 }
 
 #[cfg(test)]
@@ -447,8 +617,14 @@ mod tests {
     /// MCP clients wired against them.
     #[test]
     fn tool_name_contract_pins() {
-        const EXPECTED_TOOLS: &[&str] = &["kremory_remember", "kremory_recall", "kremory_dream"];
-        assert_eq!(EXPECTED_TOOLS.len(), 3);
+        const EXPECTED_TOOLS: &[&str] = &[
+            "kremory_remember",
+            "kremory_recall",
+            "kremory_dream",
+            "kremory_list_mutations",
+            "kremory_undo",
+        ];
+        assert_eq!(EXPECTED_TOOLS.len(), 5);
         for tool in EXPECTED_TOOLS {
             assert!(
                 tool.starts_with("kremory_"),

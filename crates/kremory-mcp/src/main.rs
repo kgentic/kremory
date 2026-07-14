@@ -1,7 +1,8 @@
 //! `kremory-mcp-server` — binary entry point for the kremory MCP server.
 //!
-//! Stdio transport, 3 tools registered (see `lib.rs`): `kremory_remember`,
-//! `kremory_recall`, `kremory_dream`.
+//! Stdio transport, 5 tools registered (see `lib.rs`): `kremory_remember`,
+//! `kremory_recall`, `kremory_dream`, `kremory_list_mutations`,
+//! `kremory_undo`.
 //!
 //! Env-driven mode-(a) construction — no test-mock injection point in this
 //! binary by design (real `Memory` only). Fails loudly (non-zero exit,
@@ -78,7 +79,10 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("failed to open kremory Memory at {db_path}"))?;
 
-    tracing::info!("kremory-mcp-server ready — serving 3 tools (kremory_remember, kremory_recall, kremory_dream) on stdio transport");
+    tracing::info!(
+        "kremory-mcp-server ready — serving 5 tools (kremory_remember, kremory_recall, \
+         kremory_dream, kremory_list_mutations, kremory_undo) on stdio transport"
+    );
 
     let server = KremoryMcpServer::new(Arc::new(mem));
     let (input, output) = stdio();

@@ -3,9 +3,9 @@ name = "kremory-mcp"
 version = "0.1.0"
 edition = "2021"
 
-# kremory-mcp — MCP server crate wrapping kremory's 0.4.0 `Memory` facade as 3
-# JSON-RPC tools (kremory_remember / kremory_recall / kremory_dream) over rmcp
-# stdio transport.
+# kremory-mcp — MCP server crate wrapping kremory's 0.4.0 `Memory` facade as 5
+# JSON-RPC tools (kremory_remember / kremory_recall / kremory_dream /
+# kremory_list_mutations / kremory_undo) over rmcp stdio transport.
 #
 # STATUS (rewritten 2026-07-14 — see kremory-mcp-rewrite-0.4.0 spec): the prior
 # 4-tool surface (kremory_ingest_episode / kremory_run_dream_phase /
@@ -13,7 +13,9 @@ edition = "2021"
 # kremory::memory free-function API and the retired `WorkspaceScope` type.
 # Rewritten onto the floor-3 tool surface over `kremory::Memory` — always
 # bound (no more Option<ServerState> / "graph not bound" ceremony), namespace +
-# thread scoping, hybrid recall as the single search tool.
+# thread scoping, hybrid recall as the single search tool. G3 (2026-07-14)
+# closed the reversible-mutations gap: floor-3 → floor-5 with
+# kremory_list_mutations (SEE) + kremory_undo (unified FIX dispatcher).
 
 [lib]
 name = "kremory_mcp"
