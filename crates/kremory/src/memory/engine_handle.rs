@@ -577,6 +577,35 @@ impl GraphHandle for EngineGraphHandle {
             .await
             .map_err(MemoryError::Core)?;
 
+        // Rule 19 / ADR-074 review H1: observe the fact→entity ownership
+        // projection BEFORE `context.entities` is consumed by the loop below.
+        // This is the exact silent projection/filter shape whose prior version
+        // dropped facts undetected in production (TD-116) — a same-shaped
+        // regression must show up here, not require a re-run of that incident.
+        // A fact "drops" when its `subject_id` doesn't match ANY entity in this
+        // recall's result set (e.g. object-only visibility, ADR-074 review M3) —
+        // computed once, globally, so a fact is counted attached at most once
+        // (never double-counted across the per-entity loop; Rule 19 anti-pattern
+        // #9, "counters that lie").
+        let result_entity_ids: std::collections::HashSet<&str> =
+            context.entities.iter().map(|e| e.id.as_str()).collect();
+        let facts_candidates = context.facts.len();
+        let facts_attached = context
+            .facts
+            .iter()
+            .filter(|f| result_entity_ids.contains(f.subject_id.as_str()))
+            .count();
+        let facts_dropped_ownership = facts_candidates.saturating_sub(facts_attached);
+        metrics::counter!("kremory.recall.facts_attached_total").increment(facts_attached as u64);
+        metrics::counter!("kremory.recall.facts_dropped_ownership_total")
+            .increment(facts_dropped_ownership as u64);
+        tracing::debug!(
+            facts_candidates,
+            facts_attached,
+            facts_dropped_ownership,
+            "kremory.recall.facts_attached"
+        );
+
         // Map ContextResult (Entity + Fact) → Vec<RetrievedContext>.
         // Each entity becomes one RetrievedContext. source_refs are derived
         // from episodic_edges (Bug A fix: v0.1.1 authoritative path).
@@ -668,6 +697,12 @@ impl GraphHandle for EngineGraphHandle {
                         object,
                         object_is_entity,
                         valid_at: f.valid_from,
+                        // NOT `f.invalid_at` (schema.rs:126 — the contradiction-resolver's
+                        // invalidation timestamp, an explicitly DISTINCT concept from
+                        // `valid_to`). The wire-facing "world clock" invalid_at IS
+                        // `Fact.valid_to`; a future "fix" to read `f.invalid_at` here
+                        // would silently break the supersession signal on every
+                        // `RetrievedFact` (ADR-074 review M4).
                         invalid_at: f.valid_to,
                         recorded_at: f.recorded_at,
                         expired_at: f.expired_at,
@@ -988,5 +1023,89 @@ mod tests {
     fn namespace_to_group_id_without_thread() {
         let ns = Namespace::new("ws-1");
         assert_eq!(namespace_to_group_id(&ns), "ws-1");
+    }
+
+    /// ADR-074 review H1 (Rule 19): `graph_search`'s fact→entity ownership
+    /// projection must be observed — this is the exact silent-drop shape
+    /// TD-116 fixed; a regression must show up as a metric delta, not require
+    /// another production incident to notice.
+    #[tokio::test]
+    async fn graph_search_emits_facts_attached_and_dropped_counters() {
+        use crate::core::graph::{FactInsert, InsertEntityParams};
+        use crate::memory::types::SearchOpts;
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let handle = make_handle().await;
+        let now = Utc::now();
+
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "alice",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Alice"}),
+            })
+            .await
+            .expect("insert alice");
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "acme",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Acme"}),
+            })
+            .await
+            .expect("insert acme");
+        handle
+            .engine
+            .graph
+            .insert_fact(FactInsert::new("alice", "works_at", now).object_id("acme"))
+            .await
+            .expect("insert fact");
+
+        let ns = Namespace::new("default");
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        // `set_default_local_recorder` (not `with_local_recorder`) so the guard
+        // can be held across the `.await` inside `graph_search` — see the
+        // identical pattern + rationale in `core::context::tests`.
+        let guard = metrics::set_default_local_recorder(&recorder);
+        let results = handle
+            .graph_search(GraphSearchParams {
+                namespace: &ns,
+                query: "Alice",
+                opts: &SearchOpts::default(),
+            })
+            .await
+            .expect("graph_search ok");
+        drop(guard);
+
+        assert!(!results.is_empty(), "fixture must produce a result");
+        assert!(
+            results.iter().any(|r| !r.facts.is_empty()),
+            "alice's result must carry the works_at fact"
+        );
+
+        let sum_counter = |name: &str| -> u64 {
+            snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .filter(|(k, _, _, _)| k.key().name() == name)
+                .filter_map(|(_, _, _, v)| match v {
+                    DebugValue::Counter(c) => Some(c),
+                    _ => None,
+                })
+                .sum()
+        };
+
+        let attached = sum_counter("kremory.recall.facts_attached_total");
+        let dropped = sum_counter("kremory.recall.facts_dropped_ownership_total");
+        assert!(attached >= 1, "alice's fact must be counted attached");
+        // Every fact in this fixture has its subject (alice) present in the
+        // result set, so none should be dropped by the ownership predicate.
+        assert_eq!(dropped, 0, "no facts should be dropped in this fixture");
     }
 }
