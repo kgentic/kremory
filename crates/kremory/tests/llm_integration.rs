@@ -77,6 +77,7 @@ use std::time::Duration;
 use autoagents_llm::backends::ollama::Ollama;
 use autoagents_llm::builder::LLMBuilder;
 use autoagents_llm::embedding::EmbeddingBuilder;
+use kremory::memory::types::StructuredFact;
 use kremory::memory::ChatProvider;
 use kremory::{DynEmbeddingProvider, Memory, Namespace};
 
@@ -2086,5 +2087,67 @@ async fn c3_kremory_admin_cli_smoke_test() {
         upgrade_out.status.success(),
         "kremory-admin upgrade-namespace must exit 0; stderr: {}",
         String::from_utf8_lossy(&upgrade_out.stderr)
+    );
+}
+
+// ── TD-113 — pinned-fact recall with the REAL semantic embedder ──────────────
+
+/// TD-113 — real-embedder e2e (pyramid apex/depth): a caller-pinned fact
+/// (`skip_extraction`, NO chat-LLM extraction) must be recall-findable with the
+/// production 768-dim `nomic-embed-text` embedder wired.
+///
+/// Complements the deterministic null-embedder DOD test
+/// (`with_facts_integration.rs::td113_pinned_subject_is_recall_findable_by_name_under_null_embedder`),
+/// which isolates the FTS + attribution channels. This test exercises the
+/// VECTOR channel end-to-end — a real 768-dim embedding stamp + real vector
+/// search — which the null embedder (zero vectors → skipped) cannot reach.
+/// No chat-LLM extraction runs (`skip_extraction`), proving spec §3 F1 "no
+/// second LLM": only the embedder (not the chat model) is exercised on the
+/// write path.
+///
+/// `#[ignore]`: requires live Ollama with nomic-embed-text + a chat model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+#[cfg(feature = "llm-integration")]
+async fn td113_pinned_fact_recall_findable_with_real_embedder() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mem = build_mem(&dir, "test-td113-real-emb")
+        .await
+        .expect("Memory::open must succeed");
+
+    mem.remember("Grace Hopper invented the compiler.")
+        .with_facts(vec![StructuredFact {
+            subject: "Grace Hopper".to_string(),
+            predicate: "invented".to_string(),
+            object: "the compiler".to_string(),
+            valid_from: None,
+            valid_to: None,
+            memory_type: None,
+        }])
+        .from_document("td113-real-emb")
+        .skip_extraction()
+        .await
+        .expect("remember(skip_extraction) must succeed");
+
+    let results = mem
+        .recall("Grace Hopper")
+        .raw()
+        .await
+        .expect("recall must succeed");
+
+    assert!(
+        !results.is_empty(),
+        "TD-113: a caller-pinned entity MUST be recall-findable with the real \
+         768-dim embedder wired; got 0 results"
+    );
+    let hopper = results
+        .iter()
+        .find(|r| r.entity_name == "Grace Hopper")
+        .expect("TD-113: the pinned 'Grace Hopper' entity must be in recall results");
+    // Attribution channel: the episodic edge gives the pin a source_ref, without
+    // which it would render empty under the default TemporalFacts template.
+    assert!(
+        !hopper.source_refs.is_empty(),
+        "TD-113 attribution: pinned entity must carry a source_ref (episodic edge)"
     );
 }

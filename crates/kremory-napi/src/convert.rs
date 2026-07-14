@@ -5,7 +5,7 @@
 
 use napi_derive::napi;
 
-use kremory::{DreamSummary, Namespace, RetrievedContext};
+use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact};
 
 // ── Input option structs ──────────────────────────────────────────────────────
 
@@ -657,6 +657,61 @@ pub struct JsCancelOutcome {
     pub partial: Vec<String>,
 }
 
+/// A single connected fact surfaced by recall (ADR-074 / TD-116).
+///
+/// Maps directly to `kremory::RetrievedFact`. Timestamps are RFC-3339 strings
+/// and episode ids are stringified (matching `JsRetrievedContext.source_refs`'s
+/// string convention) for JS ergonomics.
+#[napi(object, js_name = "RetrievedFact")]
+pub struct JsRetrievedFact {
+    /// Natural-language rendering, e.g. `"Grace Hopper invented the compiler"`.
+    pub fact: String,
+    /// Subject entity display name.
+    pub subject: String,
+    /// Relation / predicate.
+    pub predicate: String,
+    /// Object — a literal value, or an object-entity's display name.
+    pub object: String,
+    /// `true` when `object` is an entity (edge), `false` when a literal value.
+    pub object_is_entity: bool,
+    /// World clock: when the fact became true (RFC-3339).
+    pub valid_at: String,
+    /// World clock: when the fact stopped being true, if ever (RFC-3339).
+    pub invalid_at: Option<String>,
+    /// System clock: when the fact was recorded (RFC-3339).
+    pub recorded_at: String,
+    /// System clock: when the fact row was superseded/expired, if ever (RFC-3339).
+    pub expired_at: Option<String>,
+    /// Extraction/caller confidence in `[0, 1]`.
+    pub confidence: f64,
+    /// Source episode id(s) this fact was asserted from (stringified).
+    pub source_episode_ids: Vec<String>,
+    /// Relevance score inherited from the anchoring entity.
+    pub score: f64,
+}
+
+/// Convert a `kremory::RetrievedFact` to the napi-facing `JsRetrievedFact`.
+pub fn retrieved_fact_to_js(f: RetrievedFact) -> JsRetrievedFact {
+    JsRetrievedFact {
+        fact: f.fact,
+        subject: f.subject,
+        predicate: f.predicate,
+        object: f.object,
+        object_is_entity: f.object_is_entity,
+        valid_at: f.valid_at.to_rfc3339(),
+        invalid_at: f.invalid_at.map(|d| d.to_rfc3339()),
+        recorded_at: f.recorded_at.to_rfc3339(),
+        expired_at: f.expired_at.map(|d| d.to_rfc3339()),
+        confidence: f.confidence,
+        source_episode_ids: f
+            .source_episode_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect(),
+        score: f64::from(f.score),
+    }
+}
+
 /// A single retrieved memory context entry from `Memory.recall`.
 ///
 /// Maps directly to `kremory::RetrievedContext`.
@@ -693,6 +748,11 @@ pub struct JsRetrievedContext {
     /// Note: only the namespace string is surfaced. `thread` and `policy` fields
     /// on `kremory::Namespace` are not yet exposed via this binding.
     pub namespace: Option<String>,
+    /// Connected facts anchored on this entity (ADR-074 / TD-116) — the
+    /// LLM-consumable knowledge (natural-language fact strings + structured
+    /// triple + both bi-temporal clocks + confidence + provenance). Empty for
+    /// entities with no connected facts.
+    pub facts: Vec<JsRetrievedFact>,
 }
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
@@ -706,6 +766,7 @@ pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
         .collect::<Vec<_>>();
 
     let namespace = ctx.namespace.map(|ns| ns.namespace);
+    let facts = ctx.facts.into_iter().map(retrieved_fact_to_js).collect();
 
     JsRetrievedContext {
         entity_id: ctx.entity_id,
@@ -717,6 +778,7 @@ pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
         entity_type_id: ctx.entity_type_id,
         entity_type_name: ctx.entity_type_name,
         namespace,
+        facts,
     }
 }
 

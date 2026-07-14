@@ -59,6 +59,17 @@ pub struct IngestWithParams<'a> {
     pub source_params: SourceParams,
 }
 
+/// TD-113: args-as-object for [`Engine::make_pinned_entity_recallable`]
+/// (rust-conventions §too_many_arguments; clippy.toml threshold 3).
+struct PinnedEntityRecall<'a> {
+    /// Entity id (== the literal pinned subject/object text).
+    id: &'a str,
+    /// Namespace the entity + its episodic edge live in (composite-FK scope).
+    group_id: Option<&'a str>,
+    /// Source episode to attribute the entity to.
+    episode_id: i64,
+}
+
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Full pipeline with a caller-supplied extractor.
     /// Any type implementing `EntityExtractor` can be used (a built-in extractor
@@ -133,12 +144,21 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // entities(id, group_id) (schema.rs:1450). A namespace-less `insert_entity`
                 // puts the stub in "default" while the pinned fact below stamps
                 // `subject_group_id = group_id`, so the FK fails and the fact is dropped.
+                // TD-113: stamp the entity's literal name into `properties` so
+                // the FTS seed arm (`entities_fts.properties`) can find a
+                // caller-pinned entity WITHOUT a second LLM. Mode-(a) LLM
+                // extraction is recall-findable precisely because its
+                // `properties["name"]` carries the name text (entities_fts.label
+                // is empty post-Migration-009 — the FTS index is over
+                // `properties` only). A bare `{"stub": false}` stub carried no
+                // name token → recall returned 0. `properties["name"]` also
+                // feeds `graph_search`'s original-case `entity_name` render.
                 if let Err(e) = self
                     .graph
                     .insert_entity_with_group(InsertEntityWithGroupParams {
                         id: &pf.subject,
                         entity_type_id: 0,
-                        properties: serde_json::json!({"stub": false}),
+                        properties: serde_json::json!({"name": pf.subject, "stub": false}),
                         group_id,
                     })
                     .await
@@ -151,13 +171,28 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                     }
                 }
+                // TD-113: stamp the vector channel too — embed the literal
+                // subject text into `entities.embedding` so the vector seed arm
+                // finds the pin under a real embedder. Best-effort + always-run
+                // (not gated on `skip_extraction`): Phase 2 is not guaranteed to
+                // re-cover a pinned subject that never appears in the episode
+                // text, so pins must be findable independent of enrichment. The
+                // embedder is NOT the chat LLM — "no second LLM" (spec §3 F1)
+                // still holds. Also links the entity to its episode (attribution
+                // channel) so it renders under the default TemporalFacts template.
+                self.make_pinned_entity_recallable(PinnedEntityRecall {
+                    id: &pf.subject,
+                    group_id,
+                    episode_id,
+                })
+                .await;
                 if let Some(ref obj_id) = pf.object_id {
                     if let Err(e) = self
                         .graph
                         .insert_entity_with_group(InsertEntityWithGroupParams {
                             id: obj_id,
                             entity_type_id: 0,
-                            properties: serde_json::json!({"stub": false}),
+                            properties: serde_json::json!({"name": obj_id, "stub": false}),
                             group_id,
                         })
                         .await
@@ -170,6 +205,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             );
                         }
                     }
+                    self.make_pinned_entity_recallable(PinnedEntityRecall {
+                        id: obj_id,
+                        group_id,
+                        episode_id,
+                    })
+                    .await;
                 }
 
                 match self
@@ -1561,6 +1602,85 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 fire_failed(&e);
                 Err(e)
             }
+        }
+    }
+
+    /// TD-113: make a caller-pinned entity recall-findable AND attributable
+    /// WITHOUT a second LLM. Recall seeds on entities (`hybrid_search_entities`)
+    /// then renders via the DEFAULT `TemporalFacts` template — so a pin must
+    /// satisfy THREE channels to actually surface, all mirroring mode-(a):
+    ///
+    /// 1. **FTS** — the literal name is stamped into `properties["name"]` at the
+    ///    pin call site (`insert_entity_with_group`); the FTS seed arm indexes
+    ///    `entities_fts.properties` (label is empty post-Migration-009). This is
+    ///    the channel that works even under a null embedder.
+    /// 2. **Vector** — embed the literal name into `entities.embedding`. The
+    ///    embedder is NOT the chat LLM, so spec §3 F1 "no second LLM" holds.
+    /// 3. **Attribution** — link the entity to its source episode via an episodic
+    ///    edge (`role="mention"`). Without it the entity has zero `source_refs`,
+    ///    and the default `TemporalFacts` renderer (which emits output ONLY per
+    ///    source_ref) renders a found entity to `""` — invisible despite the FTS
+    ///    hit. This is the piece the skip-extraction early-return skipped (all
+    ///    other `insert_episodic_edge` calls run AFTER it).
+    ///
+    /// All best-effort per [[observability-first-class]] (success + failure both
+    /// emit a labeled signal): a null/failing embedder still leaves the entity
+    /// FTS-findable + attributed. `set_entity_embedding` + `insert_episodic_edge`
+    /// are UPDATE/INSERT-OR-IGNORE, so they also cover entities that pre-existed
+    /// as bare stubs (the FTS-name INSERT, by contrast, is skipped on Duplicate).
+    async fn make_pinned_entity_recallable(&self, p: PinnedEntityRecall<'_>) {
+        let PinnedEntityRecall {
+            id,
+            group_id,
+            episode_id,
+        } = p;
+        // Channel 2 — vector.
+        match self.embedder.embed(id).await {
+            Ok(embedding) => {
+                if let Err(e) = self.graph.set_entity_embedding(id, &embedding).await {
+                    metrics::counter!("kremory.with_facts.pinned_embedding_stamp_failed")
+                        .increment(1);
+                    tracing::warn!(
+                        entity_id = %id,
+                        error = %e,
+                        "kremory.with_facts.pinned_embedding_stamp_failed"
+                    );
+                } else {
+                    metrics::counter!("kremory.with_facts.pinned_entity_embedded_total")
+                        .increment(1);
+                }
+            }
+            Err(e) => {
+                metrics::counter!("kremory.with_facts.pinned_embedding_failed").increment(1);
+                tracing::warn!(
+                    entity_id = %id,
+                    error = %e,
+                    "kremory.with_facts.pinned_embedding_failed"
+                );
+            }
+        }
+
+        // Channel 3 — attribution. entity_group_id MUST match the entity's
+        // namespace or the Migration-006 composite FK (entity_id, entity_group_id)
+        // silently FK-fails and the edge is dropped.
+        if let Err(e) = self
+            .graph
+            .insert_episodic_edge(InsertEpisodicEdgeParams {
+                episode_id,
+                entity_id: id,
+                entity_group_id: group_id,
+                role: "mention",
+            })
+            .await
+        {
+            metrics::counter!("kremory.with_facts.pinned_episodic_edge_failed").increment(1);
+            tracing::warn!(
+                entity_id = %id,
+                error = %e,
+                "kremory.with_facts.pinned_episodic_edge_failed"
+            );
+        } else {
+            metrics::counter!("kremory.with_facts.pinned_episodic_edge_total").increment(1);
         }
     }
 }

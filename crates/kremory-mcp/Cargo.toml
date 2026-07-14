@@ -3,27 +3,17 @@ name = "kremory-mcp"
 version = "0.1.0"
 edition = "2021"
 
-# kremory-mcp — MCP server crate wrapping kremory::memory's 4 public entry
-# points as JSON-RPC tools over rmcp stdio transport.
+# kremory-mcp — MCP server crate wrapping kremory's 0.4.0 `Memory` facade as 3
+# JSON-RPC tools (kremory_remember / kremory_recall / kremory_dream) over rmcp
+# stdio transport.
 #
-# Per ADR-Phase-D.0 §"rqlm-mcp tool surface" + master plan §3 D.4: this
-# crate is the bridge between MCP clients (e.g. aidocs in
-# kgentic-marketplace) and the kremory SDK.
-#
-# STATUS (verified 2026-06-21 — see TD-048): the 4 tool handlers
-# (kremory_ingest_episode / kremory_run_dream_phase / kremory_search /
-# kremory_context_block) are FULLY WIRED to real kremory::memory functions —
-# NOT "pending D.4b" stubs (the earlier comment here was stale doc-rot).
-#
-# It does NOT build while workspace-EXCLUDED: Cargo `[patch.crates-io]`
-# (root Cargo.toml redirects autoagents-llm → git AutoAgents@main, which carries
-# ChatProvider::model()) applies ONLY to the workspace it is declared in.
-# Excluded → this crate resolves crates.io autoagents-llm 0.3.7 (no .model())
-# → `kremory` lib fails to compile (E0599/E0407, 25 errors). The remaining
-# "D.4b" work is therefore a workspace-MEMBERSHIP step, not handler work:
-# re-add `crates/kremory-mcp` to root `members` so it inherits the patch +
-# shared lock, then run /quality-gate. (SamplingChatProvider / harness-sampled
-# mode lands here too — see adr-harness-sampled-llm-via-mcp-sampling.)
+# STATUS (rewritten 2026-07-14 — see kremory-mcp-rewrite-0.4.0 spec): the prior
+# 4-tool surface (kremory_ingest_episode / kremory_run_dream_phase /
+# kremory_search / kremory_context_block) wrapped the deprecated
+# kremory::memory free-function API and the retired `WorkspaceScope` type.
+# Rewritten onto the floor-3 tool surface over `kremory::Memory` — always
+# bound (no more Option<ServerState> / "graph not bound" ceremony), namespace +
+# thread scoping, hybrid recall as the single search tool.
 
 [lib]
 name = "kremory_mcp"
@@ -35,8 +25,16 @@ path = "src/main.rs"
 
 [dependencies]
 kremory = { path = "../kremory" }
-rmcp = { version = "1.5", features = ["server", "transport-io", "macros"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+# Pinned to 1.8 floor: compile-spike (2026-07-14, spec §7 step 0 / R9) resolved
+# 1.8.0 from the old "1.5" caret and verified the #[tool_router]/#[tool] macro
+# API is unchanged. Floor raised to the verified version to prevent a silent
+# downgrade to an untested 1.5.x given MCP 2026-07-28 spec churn.
+rmcp = { version = "1.8", features = ["server", "transport-io", "macros"] }
+# "net" + "time" added for main.rs's own Ollama-reachability health check
+# (kremory's `with_ollama_at`/`with_ollama_at_model` do NOT probe reachability
+# at construction time — first LLM call errors instead. "Fail fast and loud"
+# requires main.rs to check this itself before serving).
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "net", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1.2"
@@ -45,12 +43,22 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
+# Pinned to match kremory's own `metrics = "0.24"` (facade/mod.rs DreamSummary
+# doc: consumers reading kremory's counters must pin the same minor version).
+metrics = "0.24"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
-# kremory bundles core + memory in one crate; MockChatProvider::null() is
-# available from kremory::core::provider for integration tests.
-# autoagents-llm is a required kremory dep (not optional), so no extra feature flag needed.
-kremory = { path = "../kremory" }
+# kremory bundles core + memory in one crate; MockChatProvider::null() /
+# NullEmbeddingProvider are used by the in-process handler_roundtrip tests.
+# `test-utils` is required — MockChatProvider is `#[cfg(any(test, feature =
+# "test-utils"))]` inside kremory, and `cfg(test)` there only fires for
+# kremory's OWN unit tests, not an external consumer crate's tests.
+kremory = { path = "../kremory", features = ["test-utils"] }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+# Subprocess JSON-RPC test client (tests/subprocess_jsonrpc.rs) — spawns the
+# real binary and speaks MCP over its stdio via rmcp's own client transport.
+rmcp = { version = "1.8", features = ["client", "transport-child-process"] }
+anyhow = "1"

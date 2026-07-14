@@ -3,6 +3,44 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
+## [0.5.0] - 2026-07-14
+
+Minor: the recall response becomes LLM-consumable (returns connected facts),
+plus the recall-findability + vector-index bug fixes surfaced by dogfooding the
+MCP server as kremory's first consumer. Backward-compatible types (additive on
+`#[non_exhaustive]` `RetrievedContext`); the default recall render now emits
+fact sentences, and `RetrievedContext.facts` / napi `RetrievedContext.facts` are
+new. (Rolls up the prepared-but-unpublished 0.4.1 patch.)
+
+### Added
+- **`recall` returns connected facts (TD-116, ADR-074)** — each `RetrievedContext`
+  now carries `facts: Vec<RetrievedFact>`, the LLM-consumable knowledge: a
+  natural-language `fact` string ("Grace Hopper invented the compiler") + the
+  structured triple + BOTH bi-temporal clocks (`valid_at`/`invalid_at` +
+  `recorded_at`/`expired_at`) + confidence + source episode ids + score — richer
+  than any surveyed peer (Graphiti/Zep/Mem0). Surfaced across the Rust facade
+  (`.raw()` + templates), napi (`RetrievedContext.facts` / `RetrievedFact`), and
+  the MCP `format:structured` output. The default `TemporalFacts` render now emits
+  the fact sentences instead of the entity name + type-label summary.
+
+### Fixed
+- **Caller-pinned facts are now recall-findable (TD-113)** — `remember(...).with_facts(...).skip_extraction()`
+  previously pinned facts that `recall` could not return (0 results), undercutting the
+  "no second LLM" path. Pinned entities are now stamped at write time via three channels,
+  all LLM-free: FTS name (`properties["name"]`), a vector embedding of the literal name, and
+  an episodic edge for source attribution (without which a found entity renders empty under
+  the default `TemporalFacts` template).
+- **DiskANN vector index revived (TD-115)** — the `entities` embedding column was declared as
+  a bare `BLOB` by earlier rebuild migrations, which `libsql_vector_idx` rejects; the failed
+  index-create was swallowed, so *all* vector recall had silently fallen back to brute-force
+  (correct but O(n) — no ANN speedup). New idempotent migration `migrate_023` rebuilds the
+  column as `F32_BLOB(dim)` and creates the index loudly; the two prior swallowed index-create
+  sites now emit a `kremory.search.vector_index_create_failed` counter + warning.
+- **Filtered-ANN per-namespace recall shortfall (TD-114)** — `vector_top_k` post-filters
+  `group_id`, so a small-fraction namespace could be under-filled after the filter. The index
+  path now over-fetches scaled by estimated namespace selectivity (capped) and emits
+  `kremory.search.namespace_recall_shortfall_total` on a true ANN-horizon shortfall.
+
 ## [0.4.0] - 2026-07-12
 
 Minor bump on the pre-1.0 lane (breaking changes permitted). Adds the reversible

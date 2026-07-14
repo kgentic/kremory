@@ -406,6 +406,47 @@ fn default_entity_type_name() -> String {
     "Entity".to_string()
 }
 
+/// One connected fact surfaced by recall (ADR-074 / TD-116).
+///
+/// Peer-convergent LLM-facing shape (Graphiti `EntityEdge.fact`, Zep context
+/// facts, Mem0 `memory`): a natural-language `fact` string, the structured
+/// triple, both bi-temporal clocks, confidence, and provenance. Returning both
+/// clocks (world `valid_at`/`invalid_at` and system `recorded_at`/`expired_at`)
+/// alongside `confidence` is ahead of every surveyed peer (see
+/// `.ai-docs/research/recall-response-shape-for-llm-consumers-2026-07-14.md`).
+///
+/// `#[non_exhaustive]` — consumers READ the fields; construction is the recall
+/// path's job (facts are computed by `contextualize`, not caller-built).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RetrievedFact {
+    /// Natural-language rendering, e.g. `"Grace Hopper invented the compiler"`.
+    /// The LLM-consumable payload (Graphiti `edge.fact` analogue).
+    pub fact: String,
+    /// Subject entity display name.
+    pub subject: String,
+    /// Relation / predicate (open-vocabulary, verbatim).
+    pub predicate: String,
+    /// Object — a literal value, or an object-entity's display name.
+    pub object: String,
+    /// `true` when `object` is an entity (edge), `false` when a literal value.
+    pub object_is_entity: bool,
+    /// World clock: when the fact became true (`Fact.valid_from`).
+    pub valid_at: DateTime<Utc>,
+    /// World clock: when the fact stopped being true, if ever (`Fact.valid_to`).
+    pub invalid_at: Option<DateTime<Utc>>,
+    /// System clock: when the fact was recorded (`Fact.recorded_at`).
+    pub recorded_at: DateTime<Utc>,
+    /// System clock: when the fact row was superseded/expired, if ever.
+    pub expired_at: Option<DateTime<Utc>>,
+    /// Extraction/caller confidence in `[0, 1]`.
+    pub confidence: f64,
+    /// Source episode id(s) this fact was asserted from.
+    pub source_episode_ids: Vec<i64>,
+    /// Relevance score inherited from the anchoring entity's recall score.
+    pub score: f32,
+}
+
 /// A single retrieved result composed of an entity, the edges anchoring
 /// it, and the temporal facts that produced it.
 ///
@@ -475,6 +516,18 @@ pub struct RetrievedContext {
     /// (ADR-029c Decision 3). Policy is not fetched per-result.
     #[serde(default)]
     pub namespace: Option<Namespace>,
+
+    /// Connected facts anchored on this entity (ADR-074 / TD-116) — the
+    /// LLM-consumable knowledge. Each carries a natural-language `fact` string,
+    /// the structured triple, both bi-temporal clocks, confidence, and
+    /// provenance. Populated by the recall path from `contextualize`'s computed
+    /// facts (those where this entity is the subject); empty for results built
+    /// via `RetrievedContext::new()` and for pre-TD-116 serialised JSON.
+    ///
+    /// `#[serde(default)]` — additive on a `#[non_exhaustive]` type, so this is
+    /// backward-compatible (old JSON deserialises to an empty vec).
+    #[serde(default)]
+    pub facts: Vec<RetrievedFact>,
 }
 
 /// Bundled parameters for [`RetrievedContext::new`] — args-as-object per
@@ -509,6 +562,7 @@ impl RetrievedContext {
             entity_type_id: 0,
             entity_type_name: default_entity_type_name(),
             namespace: None,
+            facts: Vec::new(),
         }
     }
 

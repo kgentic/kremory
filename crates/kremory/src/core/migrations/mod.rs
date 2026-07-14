@@ -434,6 +434,8 @@ mod defs_g2;
 mod defs_h;
 // defs_i (ADR-072 seq1 impl-spec §1): migrate_022_episodes_content_recall.
 mod defs_i;
+// defs_j (TD-115): migrate_023_vector_index_column_type.
+mod defs_j;
 
 pub(crate) use defs_a::*;
 pub(crate) use defs_b::*;
@@ -453,6 +455,7 @@ pub(crate) use defs_h::*;
 // too, or the glob becomes a literal "unused import" under `-D warnings`.
 #[cfg(feature = "content-search")]
 pub(crate) use defs_i::*;
+pub(crate) use defs_j::*;
 
 #[cfg(test)]
 mod tests;

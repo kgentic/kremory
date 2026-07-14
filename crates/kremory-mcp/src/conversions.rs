@@ -1,52 +1,43 @@
-//! Bidirectional conversions between MCP wire types (this crate) and
-//! kremory core types (`kremory::memory::*`).
-//!
-//! Per D.4 scaffold rationale (lib.rs header): the MCP-side types carry
-//! `JsonSchema` derives required by rmcp's macros; kremory-side types do
-//! not (keeps kremory free of schemars). This module is the conversion
-//! boundary.
+//! Bidirectional conversions between MCP wire types (`params.rs`) and
+//! `kremory` facade types.
 //!
 //! ## Error surface
 //!
-//! Conversions from MCP → rqlm can fail on:
-//! - Unknown enum string values (`source_ref_kind` not in
-//!   {meeting,document,chat}; `template` not in
-//!   {entities,edge_summary,temporal_facts}; `source_kind` filter same)
-//! - Malformed ISO-8601 timestamps (`source_ref_occurred_at`,
-//!   `valid_at`/`invalid_at`, `as_of`)
-//! - Empty `workspace_id`
+//! Conversions from wire → facade can fail on:
+//! - Empty `namespace`
+//! - Malformed RFC 3339 timestamps (`published_at`, `structured_facts[].valid_at`
+//!   / `invalid_at`, `as_of`)
 //!
-//! These map to `ConversionError`. Handler bodies in `lib.rs` translate
-//! these into MCP `ErrorData::invalid_params` so the JSON-RPC client
-//! receives a precise diagnostic.
+//! These map to [`ConversionError`], which `lib.rs` maps to
+//! [`crate::ToolError::InvalidParams`] → MCP `ErrorData::invalid_params`.
+//! `source_kind` / recall `format` / `template` are typed wire enums (see
+//! `params.rs`) — an unknown string there is rejected by `Parameters<T>`'s
+//! own JSON-schema deserialization before it ever reaches this module, so no
+//! `ConversionError` variant is needed for them.
 //!
-//! ## rqlm → MCP
+//! ## facade → wire
 //!
-//! Always infallible — rqlm's enum variants map 1:1 to lower-case
-//! strings; `DateTime<Utc>` always renders to RFC 3339.
+//! Always infallible — facade enum variants map 1:1 to wire strings/enums;
+//! `DateTime<Utc>` always renders to RFC 3339.
 
 use chrono::{DateTime, Utc};
-use kremory::memory::{
-    ContextTemplate, DreamPhaseResult, IngestResult, RetrievedContext, SearchOpts, SourceKind,
-    SourceRef, StructuredFact, WorkspaceScope,
+use kremory::{
+    Namespace, RecallTemplate, RetrievedContext, RetrievedFact, SourceKind, SourceRef,
+    StructuredFact,
 };
 use thiserror::Error;
 
-use crate::{
-    ContextBlockParameters, IngestEpisodeOutput, IngestEpisodeParameters, RetrievedContextOutput,
-    RunDreamPhaseOutput, RunDreamPhaseParameters, SearchParameters, SearchResultsOutput,
-    SourceRefOutput, StructuredFactInput,
+use crate::params::{
+    ConsolidationOpsRanWire, DreamOutput, DreamParams, RecallFormat, RecallParams,
+    RecallTemplateWire, RememberOutput, RememberParams, RetrievedContextWire, RetrievedFactWire,
+    SourceKindWire, SourceRefWire, StructuredFactWire,
 };
 
 #[derive(Debug, Error)]
 pub enum ConversionError {
-    #[error("workspace_id must not be empty")]
-    EmptyWorkspaceId,
-    #[error("unknown source_ref_kind: {0:?} (expected meeting | document | chat)")]
-    UnknownSourceKind(String),
-    #[error("unknown template: {0:?} (expected entities | edge_summary | temporal_facts)")]
-    UnknownTemplate(String),
-    #[error("malformed ISO-8601 timestamp in {field}: {value:?} ({source})")]
+    #[error("namespace must not be empty")]
+    EmptyNamespace,
+    #[error("malformed RFC 3339 timestamp in {field}: {value:?} ({source})")]
     Timestamp {
         field: &'static str,
         value: String,
@@ -57,33 +48,47 @@ pub enum ConversionError {
 
 // ─── primitive conversions ─────────────────────────────────────────────
 
-pub(crate) fn parse_source_kind(s: &str) -> Result<SourceKind, ConversionError> {
-    match s {
-        "meeting" => Ok(SourceKind::Meeting),
-        "document" => Ok(SourceKind::Document),
-        "chat" => Ok(SourceKind::Chat),
-        other => Err(ConversionError::UnknownSourceKind(other.to_string())),
-    }
-}
-
-pub(crate) fn source_kind_to_wire(k: SourceKind) -> &'static str {
+pub(crate) fn source_kind_wire_to_facade(k: SourceKindWire) -> SourceKind {
     match k {
-        SourceKind::Meeting => "meeting",
-        SourceKind::Document => "document",
-        SourceKind::Chat => "chat",
+        SourceKindWire::Document => SourceKind::Document,
+        SourceKindWire::Chat => SourceKind::Chat,
+        // `RememberRequest::from_note` maps to `SourceKind::Document` at the
+        // facade too — "note" is a caller-facing synonym, not a distinct
+        // substrate kind.
+        SourceKindWire::Note => SourceKind::Document,
     }
 }
 
-pub(crate) fn parse_template(s: &str) -> Result<ContextTemplate, ConversionError> {
-    match s {
-        "entities" => Ok(ContextTemplate::Entities),
-        "edge_summary" => Ok(ContextTemplate::EdgeSummary),
-        "temporal_facts" => Ok(ContextTemplate::TemporalFacts),
-        other => Err(ConversionError::UnknownTemplate(other.to_string())),
+fn source_kind_facade_to_wire(k: SourceKind) -> String {
+    match k {
+        SourceKind::Meeting => "meeting".to_string(),
+        SourceKind::Document => "document".to_string(),
+        SourceKind::Chat => "chat".to_string(),
+        SourceKind::Episode => "episode".to_string(),
+        // `SourceKind` is `#[non_exhaustive]` in kremory so it can add
+        // variants without a SemVer break. This arm is forward-compat, not
+        // an expected runtime path — surface it loudly rather than silently
+        // mislabeling a future variant.
+        other => {
+            tracing::warn!(
+                ?other,
+                "unknown SourceKind variant (kremory added a new variant?) — \
+                 wire output defaulting to debug format"
+            );
+            format!("{other:?}").to_lowercase()
+        }
     }
 }
 
-pub(crate) fn parse_timestamp(
+pub(crate) fn recall_template_wire_to_facade(t: RecallTemplateWire) -> RecallTemplate {
+    match t {
+        RecallTemplateWire::Entities => RecallTemplate::Entities,
+        RecallTemplateWire::EdgeSummary => RecallTemplate::EdgeSummary,
+        RecallTemplateWire::TemporalFacts => RecallTemplate::TemporalFacts,
+    }
+}
+
+pub(crate) fn parse_iso8601(
     field: &'static str,
     raw: &str,
 ) -> Result<DateTime<Utc>, ConversionError> {
@@ -96,207 +101,212 @@ pub(crate) fn parse_timestamp(
         })
 }
 
-// ─── compound conversions ──────────────────────────────────────────────
-
-pub(crate) fn build_scope(
-    workspace_id: &str,
-    thread_id: Option<&str>,
-) -> Result<WorkspaceScope, ConversionError> {
-    if workspace_id.is_empty() {
-        return Err(ConversionError::EmptyWorkspaceId);
+pub(crate) fn build_namespace(
+    namespace: &str,
+    thread: Option<&str>,
+) -> Result<Namespace, ConversionError> {
+    if namespace.is_empty() {
+        return Err(ConversionError::EmptyNamespace);
     }
-    Ok(match thread_id {
-        Some(t) => WorkspaceScope::with_thread(workspace_id, t),
-        None => WorkspaceScope::new(workspace_id),
+    Ok(match thread {
+        Some(t) if !t.is_empty() => Namespace::new(namespace).with_thread(t),
+        _ => Namespace::new(namespace),
     })
 }
 
-impl IngestEpisodeParameters {
-    pub fn into_rqlm(
-        self,
-    ) -> Result<(WorkspaceScope, SourceRef, Vec<StructuredFact>, String), ConversionError> {
-        let scope = build_scope(&self.workspace_id, self.thread_id.as_deref())?;
-        let kind = parse_source_kind(&self.source_ref_kind)?;
-        let occurred_at = parse_timestamp("source_ref_occurred_at", &self.source_ref_occurred_at)?;
-        let source_ref = SourceRef {
-            kind,
-            id: self.source_ref_id,
-            occurred_at,
-        };
+// ─── kremory_remember ───────────────────────────────────────────────────
+
+/// Resolved (validated + facade-typed) form of [`RememberParams`]. Pure —
+/// `lib.rs` applies this to the live `Memory::remember(...)` builder chain.
+#[derive(Debug)]
+pub(crate) struct ResolvedRemember {
+    pub namespace: Namespace,
+    pub content: String,
+    pub source_kind: Option<SourceKind>,
+    pub source_id: Option<String>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub facts: Vec<StructuredFact>,
+    pub skip_extraction: bool,
+}
+
+impl RememberParams {
+    pub(crate) fn resolve(self) -> Result<ResolvedRemember, ConversionError> {
+        let namespace = build_namespace(&self.namespace, self.thread.as_deref())?;
+        let published_at = self
+            .published_at
+            .as_deref()
+            .map(|raw| parse_iso8601("published_at", raw))
+            .transpose()?;
         let mut facts = Vec::with_capacity(self.structured_facts.len());
-        for sf in self.structured_facts {
-            facts.push(sf.try_into_rqlm()?);
+        for f in self.structured_facts {
+            facts.push(f.try_into_facade()?);
         }
-        Ok((scope, source_ref, facts, self.content))
+        Ok(ResolvedRemember {
+            namespace,
+            content: self.content,
+            source_kind: self.source_kind.map(source_kind_wire_to_facade),
+            source_id: self.source_id,
+            published_at,
+            facts,
+            skip_extraction: self.skip_extraction,
+        })
     }
 }
 
-impl StructuredFactInput {
-    fn try_into_rqlm(self) -> Result<StructuredFact, ConversionError> {
-        let valid_at = self
+impl StructuredFactWire {
+    fn try_into_facade(self) -> Result<StructuredFact, ConversionError> {
+        let valid_from = self
             .valid_at
             .as_deref()
-            .map(|raw| parse_timestamp("valid_at", raw))
+            .map(|raw| parse_iso8601("structured_facts[].valid_at", raw))
             .transpose()?;
-        let invalid_at = self
+        let valid_to = self
             .invalid_at
             .as_deref()
-            .map(|raw| parse_timestamp("invalid_at", raw))
+            .map(|raw| parse_iso8601("structured_facts[].invalid_at", raw))
             .transpose()?;
         Ok(StructuredFact {
             subject: self.subject,
             predicate: self.predicate,
             object: self.object,
-            valid_at,
-            invalid_at,
+            valid_from,
+            valid_to,
+            memory_type: None,
         })
     }
 }
 
-impl RunDreamPhaseParameters {
-    pub fn into_rqlm(self) -> Result<WorkspaceScope, ConversionError> {
-        build_scope(&self.workspace_id, self.thread_id.as_deref())
+impl From<kremory::EpisodeCommit> for RememberOutput {
+    fn from(c: kremory::EpisodeCommit) -> Self {
+        Self {
+            run_id: c.run_id.map(|u| u.to_string()),
+            episode_entity_id: c.episode_entity_id,
+            committed_at: c.committed_at.to_rfc3339(),
+            stub_entities_inserted: c.stub_entities_inserted,
+        }
     }
 }
 
-impl SearchParameters {
-    pub fn into_rqlm(self) -> Result<(WorkspaceScope, String, SearchOpts), ConversionError> {
-        let scope = build_scope(&self.workspace_id, self.thread_id.as_deref())?;
+// ─── kremory_recall ─────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub(crate) struct ResolvedRecall {
+    pub namespace: Namespace,
+    pub query: String,
+    pub k: Option<usize>,
+    pub as_of: Option<DateTime<Utc>>,
+    pub format: RecallFormat,
+    pub template: RecallTemplate,
+}
+
+impl RecallParams {
+    pub(crate) fn resolve(self) -> Result<ResolvedRecall, ConversionError> {
+        let namespace = build_namespace(&self.namespace, self.thread.as_deref())?;
         let as_of = self
             .as_of
             .as_deref()
-            .map(|raw| parse_timestamp("as_of", raw))
+            .map(|raw| parse_iso8601("as_of", raw))
             .transpose()?;
-        let source_kind = self
-            .source_kind
-            .as_deref()
-            .map(parse_source_kind)
-            .transpose()?;
-        let opts = SearchOpts {
-            limit: self.limit,
+        Ok(ResolvedRecall {
+            namespace,
+            query: self.query,
+            k: self.k,
             as_of,
-            source_kind,
-        };
-        Ok((scope, self.query, opts))
+            format: self.format,
+            template: recall_template_wire_to_facade(self.template),
+        })
     }
 }
 
-impl ContextBlockParameters {
-    pub fn into_rqlm(self) -> Result<(Vec<RetrievedContext>, ContextTemplate), ConversionError> {
-        let template = parse_template(&self.template)?;
-        let results = self
-            .results
-            .into_iter()
-            .map(RetrievedContext::from)
-            .collect();
-        Ok((results, template))
-    }
-}
-
-// ─── rqlm → MCP (infallible) ───────────────────────────────────────────
-
-impl From<IngestResult> for IngestEpisodeOutput {
-    fn from(r: IngestResult) -> Self {
+impl From<RetrievedContext> for RetrievedContextWire {
+    fn from(r: RetrievedContext) -> Self {
         Self {
-            entities_added: r.entities_added,
-            edges_added: r.edges_added,
-            facts_invalidated: r.facts_invalidated,
-            duration_ms: r.duration_ms,
+            entity_id: r.entity_id,
+            entity_name: r.entity_name,
+            summary: r.summary,
+            score: r.score,
+            incomplete: r.incomplete,
+            entity_type_id: r.entity_type_id,
+            entity_type_name: r.entity_type_name,
+            namespace: r.namespace.as_ref().map(|ns| ns.namespace.clone()),
+            source_refs: r.source_refs.into_iter().map(SourceRefWire::from).collect(),
+            facts: r.facts.into_iter().map(RetrievedFactWire::from).collect(),
         }
     }
 }
 
-impl From<DreamPhaseResult> for RunDreamPhaseOutput {
-    fn from(r: DreamPhaseResult) -> Self {
+impl From<RetrievedFact> for RetrievedFactWire {
+    fn from(f: RetrievedFact) -> Self {
         Self {
-            communities_recomputed: r.communities_recomputed,
-            cross_meeting_merges: r.cross_meeting_merges,
-            supersessions_recorded: r.supersessions_recorded,
-            facts_archived: r.facts_archived,
-            duration_ms: r.duration_ms,
+            fact: f.fact,
+            subject: f.subject,
+            predicate: f.predicate,
+            object: f.object,
+            object_is_entity: f.object_is_entity,
+            valid_at: f.valid_at.to_rfc3339(),
+            invalid_at: f.invalid_at.map(|d| d.to_rfc3339()),
+            recorded_at: f.recorded_at.to_rfc3339(),
+            expired_at: f.expired_at.map(|d| d.to_rfc3339()),
+            confidence: f.confidence,
+            source_episode_ids: f.source_episode_ids,
+            score: f.score,
         }
     }
 }
 
-impl From<Vec<RetrievedContext>> for SearchResultsOutput {
-    fn from(results: Vec<RetrievedContext>) -> Self {
+impl From<SourceRef> for SourceRefWire {
+    fn from(s: SourceRef) -> Self {
         Self {
-            results: results.into_iter().map(RetrievedContextOutput::from).collect(),
+            kind: source_kind_facade_to_wire(s.kind),
+            id: s.id,
+            occurred_at: s.occurred_at.to_rfc3339(),
+            published_at: s.published_at.map(|t| t.to_rfc3339()),
         }
     }
 }
 
-impl From<RetrievedContext> for RetrievedContextOutput {
-    fn from(c: RetrievedContext) -> Self {
-        Self {
-            entity_id: c.entity_id,
-            entity_name: c.entity_name,
-            summary: c.summary,
-            score: c.score,
-            source_refs: c
-                .source_refs
-                .into_iter()
-                .map(SourceRefOutput::from)
-                .collect(),
-        }
+// ─── kremory_dream ──────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub(crate) struct ResolvedDream {
+    pub namespace: Namespace,
+    pub batch_id: Option<String>,
+}
+
+impl DreamParams {
+    pub(crate) fn resolve(self) -> Result<ResolvedDream, ConversionError> {
+        let namespace = build_namespace(&self.namespace, self.thread.as_deref())?;
+        Ok(ResolvedDream {
+            namespace,
+            batch_id: self.batch_id,
+        })
     }
 }
 
-impl From<SourceRef> for SourceRefOutput {
-    fn from(r: SourceRef) -> Self {
+impl From<kremory::DreamSummary> for DreamOutput {
+    fn from(d: kremory::DreamSummary) -> Self {
         Self {
-            kind: source_kind_to_wire(r.kind).to_string(),
-            id: r.id,
-            occurred_at: r.occurred_at.to_rfc3339(),
-        }
-    }
-}
-
-// MCP wire SourceRefOutput → rqlm SourceRef. Round-trip support so a
-// caller-supplied `ContextBlockParameters.results` (which may have been
-// fetched via a prior `rqlm_search` call and round-tripped through the
-// MCP boundary) re-enters rqlm with the correct enum/timestamp types.
-//
-// Unlike the other MCP-side wire types, the `source_refs` inside a
-// `ContextBlockParameters.results[i]` get re-converted to `SourceRef`
-// here (infallible-via-expect rejected — bad input from a caller MUST
-// not panic). Returns a partial `SourceRef` with `chat` fallback +
-// Utc::now() for malformed inputs and logs a warning; alternative would
-// be threading TryFrom through context_block's signature, but that
-// changes rqlm's pure-fn shape just for an MCP boundary case.
-impl From<SourceRefOutput> for SourceRef {
-    fn from(o: SourceRefOutput) -> Self {
-        let kind = parse_source_kind(&o.kind).unwrap_or_else(|_| {
-            tracing::warn!(
-                wire_kind = %o.kind,
-                "MCP SourceRefOutput → SourceRef: unknown kind, defaulting to Chat"
-            );
-            SourceKind::Chat
-        });
-        let occurred_at = parse_timestamp("source_refs[].occurred_at", &o.occurred_at)
-            .unwrap_or_else(|_| {
-                tracing::warn!(
-                    wire_ts = %o.occurred_at,
-                    "MCP SourceRefOutput → SourceRef: malformed timestamp, defaulting to now"
-                );
-                Utc::now()
-            });
-        Self {
-            kind,
-            id: o.id,
-            occurred_at,
-        }
-    }
-}
-
-impl From<RetrievedContextOutput> for RetrievedContext {
-    fn from(c: RetrievedContextOutput) -> Self {
-        Self {
-            entity_id: c.entity_id,
-            entity_name: c.entity_name,
-            summary: c.summary,
-            score: c.score,
-            source_refs: c.source_refs.into_iter().map(SourceRef::from).collect(),
+            communities_updated: d.communities_updated,
+            cross_episode_would_merge: d.cross_episode_would_merge,
+            cross_episode_merged: d.cross_episode_merged,
+            supersessions_recorded: d.supersessions_recorded,
+            facts_archived: d.facts_archived,
+            entities_reclassified: d.entities_reclassified,
+            aliases_resolved: d.aliases_resolved,
+            canonicalization_merges: d.canonicalization_merges,
+            acronym_nickname_merges: d.acronym_nickname_merges,
+            type_registry_merges: d.type_registry_merges,
+            consistency_check_corrected: d.consistency_check_corrected,
+            types_discovered_count: d.types_discovered.len(),
+            consolidation_ops_ran: ConsolidationOpsRanWire {
+                community: d.consolidation_ops_ran.community,
+                cross_episode: d.consolidation_ops_ran.cross_episode,
+                archival: d.consolidation_ops_ran.archival,
+                supersession_sweep: d.consolidation_ops_ran.supersession_sweep,
+            },
+            duration_ms: d.duration_ms,
+            budget_exhausted: d.budget_exhausted,
+            warnings: d.warnings,
         }
     }
 }
@@ -304,274 +314,165 @@ impl From<RetrievedContextOutput> for RetrievedContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
-
-    // ─── primitive conversions ──────────────────────────────────────
+    use crate::params::SourceKindWire;
 
     #[test]
-    fn source_kind_parses_lowercase_strings() {
-        assert_eq!(parse_source_kind("meeting").unwrap(), SourceKind::Meeting);
-        assert_eq!(parse_source_kind("document").unwrap(), SourceKind::Document);
-        assert_eq!(parse_source_kind("chat").unwrap(), SourceKind::Chat);
-    }
-
-    #[test]
-    fn source_kind_rejects_unknown_value() {
-        let err = parse_source_kind("Meeting").unwrap_err();
-        assert!(matches!(err, ConversionError::UnknownSourceKind(_)));
-        let msg = format!("{err}");
-        assert!(msg.contains("Meeting"), "error must carry offending value: {msg}");
-    }
-
-    #[test]
-    fn source_kind_to_wire_round_trips() {
-        for kind in [SourceKind::Meeting, SourceKind::Document, SourceKind::Chat] {
-            let wire = source_kind_to_wire(kind);
-            let back = parse_source_kind(wire).unwrap();
-            assert_eq!(back, kind);
-        }
-    }
-
-    #[test]
-    fn template_parses_snake_case_strings() {
-        assert_eq!(parse_template("entities").unwrap(), ContextTemplate::Entities);
+    fn source_kind_wire_maps_note_and_document_to_facade_document() {
         assert_eq!(
-            parse_template("edge_summary").unwrap(),
-            ContextTemplate::EdgeSummary
+            source_kind_wire_to_facade(SourceKindWire::Document),
+            SourceKind::Document
         );
         assert_eq!(
-            parse_template("temporal_facts").unwrap(),
-            ContextTemplate::TemporalFacts
+            source_kind_wire_to_facade(SourceKindWire::Note),
+            SourceKind::Document
+        );
+        assert_eq!(
+            source_kind_wire_to_facade(SourceKindWire::Chat),
+            SourceKind::Chat
         );
     }
 
     #[test]
-    fn template_rejects_unknown_value() {
-        let err = parse_template("EdgeSummary").unwrap_err();
-        assert!(matches!(err, ConversionError::UnknownTemplate(_)));
+    fn parse_iso8601_accepts_rfc3339() {
+        let t = parse_iso8601("published_at", "2026-07-14T10:30:00Z").unwrap();
+        assert_eq!(t.to_rfc3339().as_str()[..10], *"2026-07-14");
     }
 
     #[test]
-    fn parse_timestamp_accepts_rfc3339() {
-        use chrono::Datelike;
-        use chrono::Timelike;
-        let t = parse_timestamp("source_ref_occurred_at", "2026-05-19T10:30:00Z").unwrap();
-        assert_eq!(t.year(), 2026);
-        assert_eq!(t.month(), 5);
-        assert_eq!(t.day(), 19);
-        assert_eq!(t.hour(), 10);
-        assert_eq!(t.minute(), 30);
-        // Round-trip via .to_rfc3339() — what wire-output conversion uses.
-        let round = t.to_rfc3339();
-        assert!(round.starts_with("2026-05-19T10:30:00"));
-    }
-
-    #[test]
-    fn parse_timestamp_rejects_malformed() {
-        let err = parse_timestamp("source_ref_occurred_at", "yesterday at noon").unwrap_err();
+    fn parse_iso8601_rejects_malformed() {
+        let err = parse_iso8601("published_at", "not a date").unwrap_err();
         match err {
             ConversionError::Timestamp { field, value, .. } => {
-                assert_eq!(field, "source_ref_occurred_at");
-                assert_eq!(value, "yesterday at noon");
+                assert_eq!(field, "published_at");
+                assert_eq!(value, "not a date");
             }
             other => panic!("expected Timestamp error, got: {other:?}"),
         }
     }
 
-    // ─── compound conversions ───────────────────────────────────────
-
     #[test]
-    fn build_scope_with_thread() {
-        let s = build_scope("ws-1", Some("thread-a")).unwrap();
-        assert_eq!(s.workspace_id, "ws-1");
-        assert_eq!(s.thread_id.as_deref(), Some("thread-a"));
+    fn build_namespace_rejects_empty() {
+        let err = build_namespace("", None).unwrap_err();
+        assert!(matches!(err, ConversionError::EmptyNamespace));
     }
 
     #[test]
-    fn build_scope_without_thread() {
-        let s = build_scope("ws-1", None).unwrap();
-        assert!(s.thread_id.is_none());
+    fn build_namespace_with_thread() {
+        let ns = build_namespace("ws-1", Some("thread-a")).unwrap();
+        assert_eq!(ns.namespace, "ws-1");
+        assert_eq!(ns.thread.as_deref(), Some("thread-a"));
     }
 
     #[test]
-    fn build_scope_rejects_empty_workspace_id() {
-        let err = build_scope("", None).unwrap_err();
-        assert!(matches!(err, ConversionError::EmptyWorkspaceId));
+    fn build_namespace_without_thread() {
+        let ns = build_namespace("ws-1", None).unwrap();
+        assert!(ns.thread.is_none());
     }
 
     #[test]
-    fn ingest_parameters_into_rqlm_happy_path() {
-        let p = IngestEpisodeParameters {
-            workspace_id: "ws-1".into(),
-            thread_id: None,
-            content: "transcript chunk".into(),
-            source_ref_kind: "meeting".into(),
-            source_ref_id: "mtg-1".into(),
-            source_ref_occurred_at: "2026-05-19T10:00:00Z".into(),
-            structured_facts: vec![StructuredFactInput {
+    fn remember_params_resolve_happy_path() {
+        let p = RememberParams {
+            namespace: "ws-1".into(),
+            thread: None,
+            content: "hello".into(),
+            source_kind: Some(SourceKindWire::Note),
+            source_id: Some("doc-1".into()),
+            published_at: Some("2026-07-14T00:00:00Z".into()),
+            structured_facts: vec![StructuredFactWire {
                 subject: "alice".into(),
                 predicate: "leads".into(),
-                object: "design-team".into(),
-                valid_at: Some("2026-05-01T00:00:00Z".into()),
+                object: "design".into(),
+                valid_at: None,
                 invalid_at: None,
             }],
+            skip_extraction: true,
         };
-        let (scope, source_ref, facts, content) = p.into_rqlm().unwrap();
-        assert_eq!(scope.workspace_id, "ws-1");
-        assert_eq!(source_ref.kind, SourceKind::Meeting);
-        assert_eq!(source_ref.id, "mtg-1");
-        assert_eq!(content, "transcript chunk");
-        assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].subject, "alice");
-        assert!(facts[0].valid_at.is_some());
-        assert!(facts[0].invalid_at.is_none());
+        let resolved = p.resolve().unwrap();
+        assert_eq!(resolved.namespace.namespace, "ws-1");
+        assert_eq!(resolved.source_kind, Some(SourceKind::Document));
+        assert_eq!(resolved.source_id.as_deref(), Some("doc-1"));
+        assert!(resolved.published_at.is_some());
+        assert_eq!(resolved.facts.len(), 1);
+        assert!(resolved.skip_extraction);
     }
 
     #[test]
-    fn ingest_parameters_into_rqlm_rejects_bad_kind() {
-        let p = IngestEpisodeParameters {
-            workspace_id: "ws-1".into(),
-            thread_id: None,
-            content: "x".into(),
-            source_ref_kind: "podcast".into(),
-            source_ref_id: "id".into(),
-            source_ref_occurred_at: "2026-05-19T10:00:00Z".into(),
-            structured_facts: vec![],
-        };
-        let err = p.into_rqlm().unwrap_err();
-        assert!(matches!(err, ConversionError::UnknownSourceKind(_)));
-    }
-
-    #[test]
-    fn ingest_parameters_into_rqlm_rejects_bad_timestamp_in_structured_fact() {
-        let p = IngestEpisodeParameters {
-            workspace_id: "ws-1".into(),
-            thread_id: None,
-            content: "x".into(),
-            source_ref_kind: "meeting".into(),
-            source_ref_id: "id".into(),
-            source_ref_occurred_at: "2026-05-19T10:00:00Z".into(),
-            structured_facts: vec![StructuredFactInput {
+    fn remember_params_resolve_rejects_bad_timestamp_in_structured_fact() {
+        let p = RememberParams {
+            namespace: "ws-1".into(),
+            thread: None,
+            content: "hello".into(),
+            source_kind: None,
+            source_id: None,
+            published_at: None,
+            structured_facts: vec![StructuredFactWire {
                 subject: "s".into(),
                 predicate: "p".into(),
                 object: "o".into(),
                 valid_at: Some("not a date".into()),
                 invalid_at: None,
             }],
+            skip_extraction: false,
         };
-        let err = p.into_rqlm().unwrap_err();
+        let err = p.resolve().unwrap_err();
         match err {
-            ConversionError::Timestamp { field, .. } => assert_eq!(field, "valid_at"),
+            ConversionError::Timestamp { field, .. } => {
+                assert_eq!(field, "structured_facts[].valid_at")
+            }
             other => panic!("expected Timestamp error, got: {other:?}"),
         }
     }
 
     #[test]
-    fn search_parameters_into_rqlm_passes_through_filters() {
-        let p = SearchParameters {
-            workspace_id: "ws-1".into(),
-            thread_id: Some("t-1".into()),
-            query: "go-live decisions".into(),
-            limit: Some(5),
-            as_of: Some("2026-05-01T00:00:00Z".into()),
-            source_kind: Some("document".into()),
+    fn recall_params_resolve_defaults() {
+        let p = RecallParams {
+            namespace: "ws-1".into(),
+            thread: Some("t-1".into()),
+            query: "go-live".into(),
+            k: Some(5),
+            as_of: None,
+            format: RecallFormat::Structured,
+            template: RecallTemplateWire::Entities,
         };
-        let (scope, q, opts) = p.into_rqlm().unwrap();
-        assert_eq!(scope.thread_id.as_deref(), Some("t-1"));
-        assert_eq!(q, "go-live decisions");
-        assert_eq!(opts.limit, Some(5));
-        assert!(opts.as_of.is_some());
-        assert_eq!(opts.source_kind, Some(SourceKind::Document));
+        let resolved = p.resolve().unwrap();
+        assert_eq!(resolved.namespace.thread.as_deref(), Some("t-1"));
+        assert_eq!(resolved.query, "go-live");
+        assert_eq!(resolved.k, Some(5));
+        assert_eq!(resolved.format, RecallFormat::Structured);
+        assert_eq!(resolved.template, RecallTemplate::Entities);
     }
 
     #[test]
-    fn context_block_parameters_into_rqlm() {
-        let p = ContextBlockParameters {
-            results: vec![RetrievedContextOutput {
-                entity_id: "ent-1".into(),
-                entity_name: "Test".into(),
-                summary: "Body".into(),
-                score: 0.9,
-                source_refs: vec![SourceRefOutput {
-                    kind: "meeting".into(),
-                    id: "m-1".into(),
-                    occurred_at: "2026-05-19T10:00:00Z".into(),
-                }],
-            }],
-            template: "entities".into(),
+    fn dream_params_resolve() {
+        let p = DreamParams {
+            namespace: "ws-1".into(),
+            thread: None,
+            batch_id: Some("batch-1".into()),
         };
-        let (results, template) = p.into_rqlm().unwrap();
-        assert_eq!(template, ContextTemplate::Entities);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].source_refs[0].kind, SourceKind::Meeting);
+        let resolved = p.resolve().unwrap();
+        assert_eq!(resolved.namespace.namespace, "ws-1");
+        assert_eq!(resolved.batch_id.as_deref(), Some("batch-1"));
     }
 
     #[test]
-    fn context_block_parameters_rejects_unknown_template() {
-        let p = ContextBlockParameters {
-            results: vec![],
-            template: "bogus".into(),
-        };
-        assert!(matches!(
-            p.into_rqlm().unwrap_err(),
-            ConversionError::UnknownTemplate(_)
-        ));
-    }
-
-    // ─── rqlm → MCP round trips ─────────────────────────────────────
-
-    #[test]
-    fn ingest_result_to_wire_preserves_counts() {
-        let r = IngestResult {
-            entities_added: 3,
-            edges_added: 7,
-            facts_invalidated: 1,
-            duration_ms: 42,
-        };
-        let wire: IngestEpisodeOutput = r.into();
-        assert_eq!(wire.entities_added, 3);
-        assert_eq!(wire.edges_added, 7);
-        assert_eq!(wire.facts_invalidated, 1);
-        assert_eq!(wire.duration_ms, 42);
-    }
-
-    #[test]
-    fn retrieved_context_round_trips_through_wire() {
-        let original = RetrievedContext {
+    fn retrieved_context_wire_maps_fields() {
+        use chrono::TimeZone;
+        let ctx = RetrievedContext::new(kremory::RetrievedContextNewParams {
             entity_id: "ent-1".into(),
-            entity_name: "Roadmap Decision".into(),
-            summary: "Q3 priorities locked".into(),
-            score: 0.92,
+            entity_name: "Alice".into(),
+            summary: "leads design".into(),
+            score: 0.9,
             source_refs: vec![SourceRef {
-                kind: SourceKind::Meeting,
-                id: "mtg-1".into(),
-                occurred_at: Utc.with_ymd_and_hms(2026, 5, 19, 10, 0, 0).unwrap(),
+                kind: SourceKind::Document,
+                id: "doc-1".into(),
+                occurred_at: Utc.with_ymd_and_hms(2026, 7, 14, 0, 0, 0).unwrap(),
+                published_at: None,
             }],
-        };
-        let wire: RetrievedContextOutput = original.clone().into();
-        assert_eq!(wire.source_refs[0].kind, "meeting");
-        assert_eq!(wire.source_refs[0].id, "mtg-1");
-        let back: RetrievedContext = wire.into();
-        assert_eq!(back.entity_id, original.entity_id);
-        assert_eq!(back.source_refs.len(), 1);
-        assert_eq!(back.source_refs[0].kind, original.source_refs[0].kind);
-        assert_eq!(back.source_refs[0].id, original.source_refs[0].id);
-        assert_eq!(
-            back.source_refs[0].occurred_at,
-            original.source_refs[0].occurred_at
-        );
-    }
-
-    #[test]
-    fn source_ref_output_unknown_kind_defaults_to_chat_with_warn() {
-        let bad = SourceRefOutput {
-            kind: "podcast".into(),
-            id: "id".into(),
-            occurred_at: "2026-05-19T10:00:00Z".into(),
-        };
-        // No panic; logs warn + defaults. Verifies the fallback contract
-        // (matches the trace comment in the From impl).
-        let r: SourceRef = bad.into();
-        assert_eq!(r.kind, SourceKind::Chat);
+        });
+        let wire: RetrievedContextWire = ctx.into();
+        assert_eq!(wire.entity_id, "ent-1");
+        assert_eq!(wire.entity_name, "Alice");
+        assert_eq!(wire.source_refs.len(), 1);
+        assert_eq!(wire.source_refs[0].kind, "document");
     }
 }
