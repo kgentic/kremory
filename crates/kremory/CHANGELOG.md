@@ -3,11 +3,25 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
-## [0.4.1] - 2026-07-14
+## [0.5.0] - 2026-07-14
 
-Patch: recall-findability + vector-index fixes surfaced by dogfooding the MCP
-server as kremory's first consumer. All three fixes are backward-compatible
-(migration is idempotent + additive); no API changes.
+Minor: the recall response becomes LLM-consumable (returns connected facts),
+plus the recall-findability + vector-index bug fixes surfaced by dogfooding the
+MCP server as kremory's first consumer. Backward-compatible types (additive on
+`#[non_exhaustive]` `RetrievedContext`); the default recall render now emits
+fact sentences, and `RetrievedContext.facts` / napi `RetrievedContext.facts` are
+new. (Rolls up the prepared-but-unpublished 0.4.1 patch.)
+
+### Added
+- **`recall` returns connected facts (TD-116, ADR-074)** — each `RetrievedContext`
+  now carries `facts: Vec<RetrievedFact>`, the LLM-consumable knowledge: a
+  natural-language `fact` string ("Grace Hopper invented the compiler") + the
+  structured triple + BOTH bi-temporal clocks (`valid_at`/`invalid_at` +
+  `recorded_at`/`expired_at`) + confidence + source episode ids + score — richer
+  than any surveyed peer (Graphiti/Zep/Mem0). Surfaced across the Rust facade
+  (`.raw()` + templates), napi (`RetrievedContext.facts` / `RetrievedFact`), and
+  the MCP `format:structured` output. The default `TemporalFacts` render now emits
+  the fact sentences instead of the entity name + type-label summary.
 
 ### Fixed
 - **Caller-pinned facts are now recall-findable (TD-113)** — `remember(...).with_facts(...).skip_extraction()`
