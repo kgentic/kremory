@@ -170,6 +170,20 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             }
         }
 
+        // Rule 19 / ADR-074 review H1: observe the fact-collection width of
+        // `contextualize`'s output — the upstream half of the same silent
+        // projection/filter shape whose prior version dropped facts undetected
+        // (TD-116). `graph_search` (the consumer) separately counts how many of
+        // these candidates survive the per-entity ownership filter; this
+        // histogram catches a regression further upstream, at collection time.
+        let facts_count = all_facts.len();
+        metrics::histogram!("kremory.contextualize.facts_count").record(facts_count as f64);
+        tracing::debug!(
+            entities = all_entities.len(),
+            facts_count,
+            "kremory.contextualize.facts_collected"
+        );
+
         Ok(ContextResult {
             entities: all_entities,
             facts: all_facts,
@@ -355,5 +369,48 @@ mod tests {
                 "score for {id} out of [0,1]: {score}"
             );
         }
+    }
+
+    /// ADR-074 review H1 (Rule 19): `contextualize` must record the width of
+    /// the fact collection it hands back, so a future silent regression in the
+    /// 1-hop expansion (the exact shape that dropped facts undetected pre-
+    /// TD-116) shows up as a metric drop, not just a passing-looking test.
+    #[tokio::test]
+    async fn test_contextualize_emits_facts_count_histogram() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let rql = setup_graph_with_data().await;
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        // `set_default_local_recorder` (not `with_local_recorder`) — per its own
+        // docs it is "suitable for capturing metrics in asynchronous code,
+        // particularly when using a single-threaded runtime" (`#[tokio::test]`
+        // defaults to a current-thread runtime), because the guard can be held
+        // across `.await` points without requiring a sync closure.
+        let guard = metrics::set_default_local_recorder(&recorder);
+        let ctx = rql.contextualize(ctx_params("Acme")).await.unwrap();
+        drop(guard);
+
+        assert!(!ctx.facts.is_empty(), "fixture must produce facts");
+
+        let recorded: Vec<f64> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter(|(k, _, _, _)| k.key().name() == "kremory.contextualize.facts_count")
+            .filter_map(|(_, _, _, v)| match v {
+                DebugValue::Histogram(samples) => Some(samples),
+                _ => None,
+            })
+            .flatten()
+            .map(|v| v.into_inner())
+            .collect();
+
+        assert_eq!(
+            recorded,
+            vec![ctx.facts.len() as f64],
+            "facts_count histogram must record exactly the returned fact count"
+        );
     }
 }
