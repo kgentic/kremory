@@ -1,316 +1,249 @@
-//! D.5-e2e cycle-2 — subprocess JSON-RPC round-trip against the real
-//! `kremory-mcp-server` binary.
+//! Subprocess JSON-RPC integration tests.
 //!
-//! ## What this catches that `handler_roundtrip.rs` cannot
+//! Spawns the real `kremory-mcp-server` binary and speaks the MCP protocol
+//! over its stdio via rmcp's own client transport.
 //!
-//! `handler_roundtrip.rs` calls the rmcp `#[tool]`-annotated handler
-//! methods directly with `Parameters(...)`. That bypasses the entire
-//! transport stack — JSON-RPC framing, tool registration, capability
-//! advertising, and (critically) the `tracing-subscriber` configuration
-//! that determines whether logs leak onto stdout and corrupt the protocol
-//! stream.
+//! ## Ollama dependency
 //!
-//! This test spawns the actual built `kremory-mcp-server` binary, speaks
-//! line-delimited JSON-RPC over its stdin/stdout, and asserts:
+//! The binary fails loud at boot if its Ollama endpoint is unreachable (see
+//! `src/health.rs`). To exercise `tools/list` WITHOUT a live model, these
+//! tests point `KREMORY_MCP_OLLAMA_URL` at a dummy TCP listener bound in-test
+//! — the boot reachability check is connectivity-only, so a bare listener
+//! satisfies it, and `tools/list` never touches the model or embedder.
 //!
-//! 1. **stdout is clean JSON** — the very first byte of each line is `{`.
-//!    If `FmtSubscriber::with_writer(stderr)` ever drifts back to stdout
-//!    (its default), or someone adds a `println!` to the bin, this test
-//!    fires with a loud "expected JSON, got <prefix>" message before the
-//!    misframing reaches an aidocs MCP host in production.
-//! 2. **`initialize` handshake** completes with a parseable result.
-//! 3. **`tools/list` registers all four tools** under their canonical
-//!    snake_case names — drift catch for tool-name renames.
-//! 4. **`tools/call kremory_context_block`** returns a structured payload on
-//!    the unbound server (this tool is pure — no graph required).
-//! 5. **`tools/call kremory_search` on unbound server returns an error** with
-//!    the right shape (graph-not-bound) — pins the unbound contract
-//!    end-to-end through MCP framing.
+//! `tools/call`, by contrast, DOES exercise the embedder (Phase-1 embed) and
+//! (for the extract path) the LLM — a dummy listener that speaks no HTTP is
+//! not enough. The full tools/call round-trip is therefore `#[ignore]`-gated
+//! and needs a real Ollama at `http://localhost:11434` with `gemma4:e4b` +
+//! `nomic-embed-text` pulled. Run with:
 //!
-//! ## Why line-delimited JSON?
-//!
-//! rmcp 1.7's stdio transport uses `read_until(b'\n', ...)` (see
-//! `rmcp::transport::async_rw`). Each JSON-RPC message is exactly one
-//! newline-terminated line — no Content-Length headers. The test hand-
-//! rolls that framing rather than pulling in rmcp's client; using the
-//! rmcp client would self-roundtrip and miss the stdout-pollution class
-//! of bug this test specifically exists to catch.
+//! ```bash
+//! cargo test -p kremory-mcp --test subprocess_jsonrpc -- --ignored
+//! ```
 
-use std::process::Stdio;
 use std::time::Duration;
 
-use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::time::timeout;
+use anyhow::Result;
+use rmcp::transport::{ConfigureCommandExt, TokioChildProcess};
+use rmcp::ServiceExt;
+use tokio::net::TcpListener;
 
-/// Hard cap on every stdio read — a hung server must fail loudly, not
-/// hang CI for ten minutes.
-const STDIO_READ_TIMEOUT: Duration = Duration::from_secs(10);
+const EXPECTED_TOOLS: &[&str] = &["kremory_remember", "kremory_recall", "kremory_dream"];
 
-/// Spawn the real binary. `env!("CARGO_BIN_EXE_kremory-mcp-server")` is
-/// auto-defined by cargo for integration tests in the same package, and
-/// causes cargo to build the bin before the test runs.
-fn spawn_server() -> (Child, ChildStdin, BufReader<ChildStdout>) {
-    let path = env!("CARGO_BIN_EXE_kremory-mcp-server");
-    let mut child = Command::new(path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        // stderr inherits — tracing logs (info-level handshake messages,
-        // tool dispatch warnings) appear in `cargo test --nocapture`
-        // output without polluting the stdout JSON-RPC stream we read.
-        .stderr(Stdio::inherit())
-        // RUST_LOG=warn so the spawned binary stays quiet unless something
-        // is wrong; warn-level errors still reach stderr for diagnosis.
-        .env("RUST_LOG", "warn")
-        .spawn()
-        .expect("kremory-mcp-server binary must spawn");
-    let stdin = child.stdin.take().expect("stdin pipe");
-    let stdout = BufReader::new(child.stdout.take().expect("stdout pipe"));
-    (child, stdin, stdout)
-}
-
-/// Send one JSON-RPC frame (line-delimited JSON, `\n`-terminated).
-async fn send(stdin: &mut ChildStdin, msg: &Value) {
-    let mut payload = serde_json::to_vec(msg).expect("serialize jsonrpc");
-    payload.push(b'\n');
-    stdin
-        .write_all(&payload)
-        .await
-        .expect("write request to server stdin");
-    stdin.flush().await.expect("flush");
-}
-
-/// Read one JSON-RPC line and assert it parses as a JSON object. Panics
-/// loudly with the offending bytes if the line is not JSON — that's the
-/// stdout-pollution signal.
-///
-/// Blank lines are skipped (they can appear as framing artifacts after a
-/// notification message); the assertion fires only when a non-empty line
-/// fails the `{` start-byte check. This narrows the pollution detector
-/// to actual content rather than empty framing newlines (review finding
-/// MEDIUM, framing edge).
-async fn recv(stdout: &mut BufReader<ChildStdout>) -> Value {
-    loop {
-        let mut line = String::new();
-        let n = timeout(STDIO_READ_TIMEOUT, stdout.read_line(&mut line))
-            .await
-            .expect("server response must arrive within timeout")
-            .expect("read from server stdout must succeed");
-        assert!(
-            n > 0,
-            "server closed stdout before responding — likely panic at startup; check stderr"
-        );
-        let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-        if trimmed.is_empty() {
-            // Framing artifact — keep reading.
-            continue;
-        }
-        assert!(
-            trimmed.starts_with('{'),
-            "stdout pollution detected: expected JSON-RPC frame starting with '{{', got: {trimmed:?}\n\
-             (rmcp stdio framing requires line-delimited JSON. tracing or println! writing to \
-             stdout instead of stderr will produce this failure — check \
-             FmtSubscriber::with_writer in src/main.rs.)"
-        );
-        return serde_json::from_str(trimmed).unwrap_or_else(|e| {
-            panic!("malformed JSON-RPC frame from server: {e}\nraw: {trimmed:?}")
-        });
-    }
-}
-
-/// Minimal MCP initialize → initialized handshake. Required before any
-/// `tools/*` call; rmcp's server-side state machine rejects calls before
-/// the handshake completes.
-async fn initialize(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) {
-    let init = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": { "name": "kremory-mcp-e2e-test", "version": "0.0.1" }
+/// Bind a loopback TCP listener and keep accepting in the background so the
+/// server binary's boot reachability check (a single TCP connect) succeeds.
+/// Returns the `http://127.0.0.1:<port>` URL plus the accept task handle
+/// (held by the caller for the lifetime of the test).
+async fn dummy_ollama() -> Result<(String, tokio::task::JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let url = format!("http://127.0.0.1:{}", addr.port());
+    let handle = tokio::spawn(async move {
+        loop {
+            // Accept and immediately drop — the reachability check only needs
+            // the connect to succeed; it sends no bytes we must answer.
+            if listener.accept().await.is_err() {
+                break;
+            }
         }
     });
-    send(stdin, &init).await;
-    let resp = recv(stdout).await;
-    assert_eq!(resp["id"], json!(1), "initialize response id must echo");
-    assert!(
-        resp.get("result").is_some(),
-        "initialize must return a result, got: {resp}"
-    );
-    let initialized = json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized"
-    });
-    send(stdin, &initialized).await;
+    Ok((url, handle))
 }
 
-/// Graceful subprocess teardown: drop stdin to signal EOF, then await
-/// child exit with a timeout so a hung server is caught by the test
-/// harness rather than the OS timeout.
-async fn shutdown(mut child: Child, stdin: ChildStdin) {
-    drop(stdin); // EOF on stdin → rmcp loop returns → process exits.
-    match timeout(Duration::from_secs(5), child.wait()).await {
-        Ok(Ok(status)) => {
-            // Server may exit clean (0) or with a transport-EOF error.
-            // Either is acceptable for shutdown — we only flag panics
-            // (signal-induced exits surface as != 0 on POSIX).
-            assert!(
-                status.success() || status.code().is_some(),
-                "server exited via signal — likely panic. status: {status:?}"
-            );
-        }
-        Ok(Err(e)) => panic!("waiting for server exit failed: {e}"),
-        Err(_) => {
-            child.start_kill().ok();
-            panic!("server did not exit within 5s of stdin close — hang");
-        }
-    }
+/// Unique temp DB path per test run (no uuid dep — nanos + pid is enough for
+/// test isolation).
+fn temp_db_path(tag: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "kremory-mcp-test-{tag}-{}-{nanos}.db",
+        std::process::id()
+    ))
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn initialize_handshake_returns_clean_jsonrpc() {
-    let (child, mut stdin, mut stdout) = spawn_server();
-    initialize(&mut stdin, &mut stdout).await;
-    shutdown(child, stdin).await;
+/// Spawn the built binary as an MCP server over stdio, pointed at `ollama_url`
+/// plus a fresh temp DB. Returns the connected client (the initialize
+/// handshake is already performed by `().serve(...)`).
+async fn spawn_server(
+    ollama_url: &str,
+    db_path: &std::path::Path,
+) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>> {
+    let bin = env!("CARGO_BIN_EXE_kremory-mcp-server");
+    let db = db_path.to_string_lossy().to_string();
+    let url = ollama_url.to_string();
+    let transport = TokioChildProcess::new(tokio::process::Command::new(bin).configure(|cmd| {
+        cmd.env("KREMORY_MCP_DB_PATH", &db)
+            .env("KREMORY_MCP_OLLAMA_URL", &url)
+            .env("KREMORY_MCP_MODEL_ID", "gemma4:e4b");
+    }))?;
+    let client = ().serve(transport).await?;
+    Ok(client)
 }
 
 #[tokio::test]
-async fn tools_list_advertises_all_four_kremory_tools_under_canonical_names() {
-    let (child, mut stdin, mut stdout) = spawn_server();
-    initialize(&mut stdin, &mut stdout).await;
+async fn initialize_and_list_tools_exposes_floor_3_surface() -> Result<()> {
+    let (url, accept_task) = dummy_ollama().await?;
+    let db = temp_db_path("list");
+    let client = spawn_server(&url, &db).await?;
 
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/list",
-        "params": {}
-    });
-    send(&mut stdin, &req).await;
-    let resp = recv(&mut stdout).await;
-    assert_eq!(resp["id"], json!(2));
-    let tools = resp["result"]["tools"]
-        .as_array()
-        .expect("tools/list must return tools array");
-    let names: Vec<&str> = tools
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
-    let mut sorted = names.clone();
-    sorted.sort();
+    let tools = client.list_all_tools().await?;
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+
     assert_eq!(
-        sorted,
-        vec![
-            "kremory_context_block",
-            "kremory_ingest_episode",
-            "kremory_run_dream_phase",
-            "kremory_search",
+        tools.len(),
+        3,
+        "server must expose exactly the floor-3 tool surface, got {names:?}"
+    );
+    for expected in EXPECTED_TOOLS {
+        assert!(
+            names.contains(expected),
+            "tools/list must contain {expected}, got {names:?}"
+        );
+    }
+
+    // Every tool must advertise a valid (object) input schema.
+    for t in &tools {
+        let schema = serde_json::to_value(t.input_schema.as_ref())?;
+        assert!(
+            schema.is_object(),
+            "tool {} input_schema must be a JSON object: {schema}",
+            t.name
+        );
+    }
+
+    // The recall tool's schema must surface the format + template enum values
+    // (RecallFormat / RecallTemplateWire) so clients can discover them.
+    let recall = tools
+        .iter()
+        .find(|t| t.name == "kremory_recall")
+        .expect("kremory_recall present");
+    let recall_schema = serde_json::to_string(recall.input_schema.as_ref())?;
+    for token in ["structured", "temporal_facts", "edge_summary", "entities"] {
+        assert!(
+            recall_schema.contains(token),
+            "kremory_recall input schema must surface enum value {token:?}: {recall_schema}"
+        );
+    }
+
+    client.cancel().await?;
+    accept_task.abort();
+    let _ = std::fs::remove_file(&db);
+    Ok(())
+}
+
+/// Full `tools/call` round-trip through the real binary. Requires a live
+/// Ollama (`gemma4:e4b` + `nomic-embed-text` pulled) because Phase-1 embed +
+/// LLM extraction run inside the subprocess — a dummy TCP listener cannot
+/// answer those. `#[ignore]` by default; run with `-- --ignored`.
+#[tokio::test]
+#[ignore = "requires a live Ollama at localhost:11434 with gemma4:e4b + nomic-embed-text"]
+async fn tools_call_round_trip_all_three_tools() -> Result<()> {
+    use rmcp::model::CallToolRequestParams;
+
+    let url = "http://localhost:11434".to_string();
+    let db = temp_db_path("call");
+    let client = spawn_server(&url, &db).await?;
+
+    // remember (mode-c pinned path — no LLM extraction, but Phase-1 embed
+    // still hits the real embedder).
+    let remember_args = serde_json::json!({
+        "namespace": "subprocess-ns",
+        "content": "Quenby leads the design team",
+        "source_kind": "note",
+        "source_id": "doc-1",
+        "structured_facts": [
+            {"subject": "Quenby", "predicate": "leads", "object": "design"}
         ],
-        "all four canonical kremory tools must be advertised; got: {names:?}"
+        "skip_extraction": true
+    });
+    let remember = client
+        .call_tool(
+            CallToolRequestParams::new("kremory_remember")
+                .with_arguments(remember_args.as_object().unwrap().clone()),
+        )
+        .await?;
+    assert_eq!(remember.is_error, Some(false), "remember must not error");
+
+    // recall (structured) → must find the pinned entity.
+    let recall_args = serde_json::json!({
+        "namespace": "subprocess-ns",
+        "query": "Quenby",
+        "k": 10,
+        "format": "structured"
+    });
+    let recall = client
+        .call_tool(
+            CallToolRequestParams::new("kremory_recall")
+                .with_arguments(recall_args.as_object().unwrap().clone()),
+        )
+        .await?;
+    assert_eq!(recall.is_error, Some(false), "recall must not error");
+    let recall_body = recall
+        .structured_content
+        .expect("recall structured payload");
+    // NOTE: the deterministic recall>=1 read-path proof lives at the mock tier
+    // (handler_roundtrip::recall_returns_pinned_entity_after_enrichment). Over
+    // the wire we cannot run the enrichment seam, and a `skip_extraction`
+    // pinned entity is not FTS-searchable (its name is populated only by the
+    // enrichment/verify stage `skip_extraction` skips), so here we assert only
+    // that the recall tool returns a well-formed structured payload.
+    let count = recall_body["count"].as_u64().expect("count present");
+    let results = recall_body["results"].as_array().expect("results array");
+    assert_eq!(
+        count as usize,
+        results.len(),
+        "recall count must equal results len: {recall_body}"
     );
 
-    shutdown(child, stdin).await;
+    // dream → returns a summary.
+    let dream_args = serde_json::json!({ "namespace": "subprocess-ns" });
+    let dream = client
+        .call_tool(
+            CallToolRequestParams::new("kremory_dream")
+                .with_arguments(dream_args.as_object().unwrap().clone()),
+        )
+        .await?;
+    assert_eq!(dream.is_error, Some(false), "dream must not error");
+    let dream_body = dream.structured_content.expect("dream structured payload");
+    assert!(
+        dream_body["duration_ms"].is_u64(),
+        "dream output must carry duration_ms: {dream_body}"
+    );
+
+    client.cancel().await?;
+    let _ = std::fs::remove_file(&db);
+    Ok(())
 }
 
+/// Give the boot reachability check time to fail + the process to exit when
+/// nothing is listening — proves the fail-loud boot path (no silent degrade).
 #[tokio::test]
-async fn tools_call_kremory_context_block_works_on_unbound_server() {
-    // context_block is pure (template renderer) — the unbound binary
-    // serves it without a graph. End-to-end: handshake → tools/call →
-    // structured payload reaches the client.
-    let (child, mut stdin, mut stdout) = spawn_server();
-    initialize(&mut stdin, &mut stdout).await;
-
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "tools/call",
-        "params": {
-            "name": "kremory_context_block",
-            "arguments": {
-                "results": [{
-                    "entity_id": "ent-1",
-                    "entity_name": "Roadmap",
-                    "summary": "Q3 priorities locked",
-                    "score": 0.9,
-                    "source_refs": [{
-                        "kind": "meeting",
-                        "id": "mtg-1",
-                        "occurred_at": "2026-05-19T10:00:00Z"
-                    }]
-                }],
-                "template": "entities"
-            }
+async fn server_fails_loud_when_ollama_unreachable() -> Result<()> {
+    let db = temp_db_path("unreachable");
+    // Port 1 on loopback: nothing listening → boot reachability check fails →
+    // the process must exit non-zero BEFORE serving, so the client initialize
+    // handshake cannot complete.
+    let spawn = spawn_server("http://127.0.0.1:1", &db).await;
+    match spawn {
+        Ok(client) => {
+            // If the transport connected, the server must NOT complete a
+            // successful initialize — the binary should have exited. Give it a
+            // moment, then assert a subsequent request fails.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let listed = client.list_all_tools().await;
+            assert!(
+                listed.is_err(),
+                "server must not answer tools/list when Ollama was unreachable at boot"
+            );
+            let _ = client.cancel().await;
         }
-    });
-    send(&mut stdin, &req).await;
-    let resp = recv(&mut stdout).await;
-    assert_eq!(resp["id"], json!(3), "id echo");
-    let result = resp.get("result").unwrap_or_else(|| {
-        panic!("tools/call must return result, got error: {resp}")
-    });
-    let structured = result
-        .get("structuredContent")
-        .expect("kremory_context_block returns structured content");
-    let rendered = structured
-        .get("rendered")
-        .and_then(|v| v.as_str())
-        .expect("rendered field must be a string");
-    assert!(
-        rendered.contains("Roadmap"),
-        "rendered template must mention the entity name: {rendered}"
-    );
-    assert!(
-        rendered.contains("meeting:mtg-1"),
-        "rendered template must include the source ref: {rendered}"
-    );
-
-    shutdown(child, stdin).await;
-}
-
-#[tokio::test]
-async fn tools_call_kremory_search_on_unbound_server_returns_graph_not_bound_error() {
-    // search requires a bound graph. The default `kremory-mcp-server` binary
-    // starts unbound (no `KremoryMcpServer::new`), so this call MUST return
-    // a JSON-RPC tool-error pointing the caller at the bound constructor.
-    // End-to-end pin of the unbound contract through MCP framing.
-    let (child, mut stdin, mut stdout) = spawn_server();
-    initialize(&mut stdin, &mut stdout).await;
-
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 4,
-        "method": "tools/call",
-        "params": {
-            "name": "kremory_search",
-            "arguments": {
-                "workspace_id": "ws-1",
-                "query": "anything"
-            }
+        Err(_) => {
+            // Transport/initialize failed outright — also an acceptable
+            // fail-loud shape (the child exited before the handshake).
         }
-    });
-    send(&mut stdin, &req).await;
-    let resp = recv(&mut stdout).await;
-    assert_eq!(resp["id"], json!(4));
-
-    // rmcp surfaces tool errors EITHER as a JSON-RPC `error` field (when
-    // the handler returns Err(McpError::...)) OR as a result with
-    // `isError: true` + an error message in content. The unbound path
-    // returns Err — assert that shape, then sanity-check the message
-    // names the right contract.
-    let err = resp.get("error").unwrap_or_else(|| {
-        panic!("unbound search must surface as JSON-RPC error, got: {resp}")
-    });
-    let message = err["message"]
-        .as_str()
-        .expect("error message must be a string");
-    assert!(
-        message.contains("kremory_search") || message.contains("KremoryMcpServer::new"),
-        "error must name either the tool or the bound constructor to guide remediation: {message}"
-    );
-
-    shutdown(child, stdin).await;
+    }
+    let _ = std::fs::remove_file(&db);
+    Ok(())
 }
