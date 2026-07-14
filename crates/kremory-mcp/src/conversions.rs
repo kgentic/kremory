@@ -21,13 +21,16 @@
 //! `DateTime<Utc>` always renders to RFC 3339.
 
 use chrono::{DateTime, Utc};
-use kremory::{Namespace, RecallTemplate, RetrievedContext, SourceKind, SourceRef, StructuredFact};
+use kremory::{
+    Namespace, RecallTemplate, RetrievedContext, RetrievedFact, SourceKind, SourceRef,
+    StructuredFact,
+};
 use thiserror::Error;
 
 use crate::params::{
     ConsolidationOpsRanWire, DreamOutput, DreamParams, RecallFormat, RecallParams,
-    RecallTemplateWire, RememberOutput, RememberParams, RetrievedContextWire, SourceKindWire,
-    SourceRefWire, StructuredFactWire,
+    RecallTemplateWire, RememberOutput, RememberParams, RetrievedContextWire, RetrievedFactWire,
+    SourceKindWire, SourceRefWire, StructuredFactWire,
 };
 
 #[derive(Debug, Error)]
@@ -227,6 +230,26 @@ impl From<RetrievedContext> for RetrievedContextWire {
             entity_type_name: r.entity_type_name,
             namespace: r.namespace.as_ref().map(|ns| ns.namespace.clone()),
             source_refs: r.source_refs.into_iter().map(SourceRefWire::from).collect(),
+            facts: r.facts.into_iter().map(RetrievedFactWire::from).collect(),
+        }
+    }
+}
+
+impl From<RetrievedFact> for RetrievedFactWire {
+    fn from(f: RetrievedFact) -> Self {
+        Self {
+            fact: f.fact,
+            subject: f.subject,
+            predicate: f.predicate,
+            object: f.object,
+            object_is_entity: f.object_is_entity,
+            valid_at: f.valid_at.to_rfc3339(),
+            invalid_at: f.invalid_at.map(|d| d.to_rfc3339()),
+            recorded_at: f.recorded_at.to_rfc3339(),
+            expired_at: f.expired_at.map(|d| d.to_rfc3339()),
+            confidence: f.confidence,
+            source_episode_ids: f.source_episode_ids,
+            score: f.score,
         }
     }
 }

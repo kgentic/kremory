@@ -78,6 +78,35 @@ pub struct SourceRefWire {
     pub published_at: Option<String>,
 }
 
+/// Wire form of `kremory::RetrievedFact` (ADR-074 / TD-116) for `kremory_recall`'s
+/// structured output — the LLM-consumable knowledge. Timestamps are RFC-3339
+/// strings.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RetrievedFactWire {
+    /// Natural-language rendering, e.g. `"Grace Hopper invented the compiler"`.
+    pub fact: String,
+    pub subject: String,
+    pub predicate: String,
+    /// Object — a literal value, or an object-entity's display name.
+    pub object: String,
+    /// `true` when `object` is an entity (edge), `false` when a literal value.
+    pub object_is_entity: bool,
+    /// World clock: when the fact became true (RFC-3339).
+    pub valid_at: String,
+    /// World clock: when the fact stopped being true, if ever (RFC-3339).
+    pub invalid_at: Option<String>,
+    /// System clock: when the fact was recorded (RFC-3339).
+    pub recorded_at: String,
+    /// System clock: when the fact row was superseded/expired, if ever (RFC-3339).
+    pub expired_at: Option<String>,
+    /// Extraction/caller confidence in `[0, 1]`.
+    pub confidence: f64,
+    /// Source episode id(s) this fact was asserted from.
+    pub source_episode_ids: Vec<i64>,
+    /// Relevance score inherited from the anchoring entity.
+    pub score: f32,
+}
+
 /// Wire form of `kremory::RetrievedContext` for `kremory_recall`'s structured
 /// output. Fields are read OUT of the real (`#[non_exhaustive]`) facade type
 /// — never constructed as a `RetrievedContext` struct-literal (see
@@ -97,6 +126,9 @@ pub struct RetrievedContextWire {
     /// Namespace group-id this result was retrieved from.
     pub namespace: Option<String>,
     pub source_refs: Vec<SourceRefWire>,
+    /// Connected facts anchored on this entity (ADR-074 / TD-116) — the
+    /// LLM-consumable knowledge. Empty for entities with no connected facts.
+    pub facts: Vec<RetrievedFactWire>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
