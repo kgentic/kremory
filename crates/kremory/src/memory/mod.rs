@@ -46,8 +46,8 @@ pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
     DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, ImmutabilityLevel, IngestResult,
     InvalidPolicyError, MemoryError, MemoryType, Namespace, NamespacePolicy, Result,
-    RetrievedContext, RetrievedContextNewParams, SearchOpts, SourceKind, SourceRef, StructuredFact,
-    SubmitOpts,
+    RetrievedContext, RetrievedContextNewParams, RetrievedFact, SearchOpts, SourceKind, SourceRef,
+    StructuredFact, SubmitOpts,
 };
 // ADR-072 seq1: `.content()` recall projection. Feature-gated (mirrors the
 // type itself, `memory::types::ContentPassage`).
@@ -385,6 +385,15 @@ fn render_entities(results: &[RetrievedContext]) -> String {
         out.push_str(&r.entity_name);
         out.push('\n');
         out.push_str(&r.summary);
+        // ADR-074 / TD-116: list the entity's connected facts (the knowledge)
+        // under its heading, not just the type-label summary.
+        if !r.facts.is_empty() {
+            out.push_str("\n\nFacts:");
+            for f in &r.facts {
+                out.push_str("\n- ");
+                out.push_str(&f.fact);
+            }
+        }
         if !r.source_refs.is_empty() {
             out.push_str("\n\nSources: ");
             for (j, sr) in r.source_refs.iter().enumerate() {
@@ -418,6 +427,19 @@ fn render_edge_summary(results: &[RetrievedContext]) -> String {
     out
 }
 
+/// Emit the `[ns:{group_id}]` attribution marker when results span more than
+/// one namespace (ADR-029c Decision 7). Free fn (not a closure) to avoid a
+/// `&mut out` + `&r` borrow conflict in the render loops.
+fn push_ns_prefix(out: &mut String, r: &RetrievedContext, multi_ns: bool) {
+    if multi_ns {
+        if let Some(group_id) = namespace_group_id(r) {
+            out.push_str("[ns:");
+            out.push_str(&group_id);
+            out.push_str("] ");
+        }
+    }
+}
+
 fn render_temporal_facts(results: &[RetrievedContext]) -> String {
     // Detect multi-namespace context: emit [ns:{group_id}] prefix per result
     // when results span more than one distinct group_id (ADR-029c Decision 7).
@@ -427,20 +449,34 @@ fn render_temporal_facts(results: &[RetrievedContext]) -> String {
         if i > 0 {
             out.push('\n');
         }
-        for sr in &r.source_refs {
-            if multi_ns {
-                if let Some(group_id) = namespace_group_id(r) {
-                    out.push_str("[ns:");
-                    out.push_str(&group_id);
-                    out.push_str("] ");
-                }
+        if r.facts.is_empty() {
+            // No connected facts — fall back to the entity + source_ref line
+            // (preserves pre-TD-116 rendering for fact-less entities).
+            for sr in &r.source_refs {
+                push_ns_prefix(&mut out, r, multi_ns);
+                out.push_str(&r.entity_name);
+                out.push_str(" (valid_at=");
+                out.push_str(&sr.occurred_at.to_rfc3339());
+                out.push_str(") — ");
+                out.push_str(&r.summary);
+                out.push('\n');
             }
-            out.push_str(&r.entity_name);
-            out.push_str(" (valid_at=");
-            out.push_str(&sr.occurred_at.to_rfc3339());
-            out.push_str(") — ");
-            out.push_str(&r.summary);
-            out.push('\n');
+        } else {
+            // ADR-074 / TD-116: render the actual connected facts — the
+            // LLM-consumable knowledge — each with its world-clock validity,
+            // instead of the entity name + type-label summary.
+            for f in &r.facts {
+                push_ns_prefix(&mut out, r, multi_ns);
+                out.push_str(&f.fact);
+                out.push_str(" (valid_at=");
+                out.push_str(&f.valid_at.to_rfc3339());
+                if let Some(inv) = f.invalid_at {
+                    out.push_str(", invalid_at=");
+                    out.push_str(&inv.to_rfc3339());
+                }
+                out.push(')');
+                out.push('\n');
+            }
         }
     }
     out.trim_end_matches('\n').to_string()
@@ -849,6 +885,7 @@ mod tests {
                 entity_type_id: 0,
                 entity_type_name: "Entity".to_string(),
                 namespace: None,
+                facts: vec![],
             }])
         }
 
