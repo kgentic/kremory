@@ -904,6 +904,30 @@ impl TemporalGraph {
         self.run_migrations().await
     }
 
+    /// Invoke `migrate_023_vector_index_column_type` in isolation against
+    /// this already-open handle.
+    ///
+    /// `migrate_023_vector_index_column_type` is `pub(crate)` (it is called
+    /// exactly once, internally, from `run_migrations`) — this wrapper is
+    /// the only way an integration test can drive it directly, which is
+    /// required for the crash-window regression tests
+    /// (`.ai-docs/architecture-review/vera-adr-074-migrate-023-review-2026-07-14.md`
+    /// H3/H4): those tests manually construct a mid-crash DB state (e.g. a
+    /// populated `facts_bak_023` + an empty `facts_new_023` + a dropped live
+    /// `facts` table) and must re-invoke the migration on exactly that
+    /// state, not on a fresh `open_with_dim`.
+    ///
+    /// Only available in `test` builds and when the `test-utils` feature is
+    /// enabled. Never ship this in a production binary.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn run_migrate_023_for_test(&self) -> Result<()> {
+        crate::core::migrations::migrate_023_vector_index_column_type(
+            &self.conn,
+            self.embedding_dim,
+        )
+        .await
+    }
+
     /// Return a shared reference to the per-handle dirty flag.
     ///
     /// For use in tests that need to observe or arm the flag without going
