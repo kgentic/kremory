@@ -442,11 +442,29 @@ impl TemporalGraph {
                 (),
             )
             .await?;
-        // Vector index — may fail on in-memory DBs, non-fatal
-        let _ = self.conn.execute(
+        // Vector index — may legitimately fail on in-memory DBs (non-fatal), but a
+        // real (file-backed, correctly-typed) DB failing here silently regressed to
+        // brute-force search for months (TD-115) because this result was discarded.
+        // Rule 19: capture + count + warn on failure; still non-fatal here (the
+        // authoritative, LOUD create lives in migrate_023, which runs once the
+        // column is guaranteed to be `F32_BLOB(dim)`).
+        if let Err(e) = self.conn.execute(
             "CREATE INDEX IF NOT EXISTS entities_vec_idx ON entities(libsql_vector_idx(embedding, 'metric=cosine'))",
             (),
-        ).await;
+        ).await {
+            metrics::counter!(
+                "kremory.search.vector_index_create_failed",
+                "table" => "entities",
+            )
+            .increment(1);
+            tracing::warn!(
+                target: "kremory::db",
+                error = %e,
+                table = "entities",
+                "kremory.search.vector_index_create_failed — entities_vec_idx did not create; \
+                 vector search will fall back to brute-force until TD-115's migrate_023 runs"
+            );
+        }
         let _ = self
             .conn
             .execute(
@@ -544,11 +562,27 @@ impl TemporalGraph {
                 (),
             )
             .await;
-        // Vector index for fact embeddings — may fail on in-memory DBs, non-fatal
-        let _ = self.conn.execute(
+        // Vector index for fact embeddings — may legitimately fail on in-memory DBs
+        // (non-fatal), but TD-115: a real DB whose `embedding` column is a plain
+        // `BLOB` (not `F32_BLOB(dim)`) fails here silently too. Rule 19: capture +
+        // count + warn. Non-fatal here — migrate_023 is the LOUD authoritative fix.
+        if let Err(e) = self.conn.execute(
             "CREATE INDEX IF NOT EXISTS facts_vec_idx ON facts(libsql_vector_idx(embedding, 'metric=cosine'))",
             (),
-        ).await;
+        ).await {
+            metrics::counter!(
+                "kremory.search.vector_index_create_failed",
+                "table" => "facts",
+            )
+            .increment(1);
+            tracing::warn!(
+                target: "kremory::db",
+                error = %e,
+                table = "facts",
+                "kremory.search.vector_index_create_failed — facts_vec_idx did not create; \
+                 vector search will fall back to brute-force until TD-115's migrate_023 runs"
+            );
+        }
         // FU.1: UNIQUE partial index on content_hash — storage-layer backstop for the
         // TOCTTOU-safe check+insert (partial: NULL allowed for pre-hash-rollout rows).
         self.conn
@@ -755,6 +789,15 @@ impl TemporalGraph {
         // Idempotent: CREATE VIRTUAL TABLE IF NOT EXISTS + guarded backfill.
         #[cfg(feature = "content-search")]
         crate::core::migrations::migrate_022_episodes_content_recall(&self.conn).await?;
+
+        // Migration 023 (TD-115): rebuild entities/facts with a real
+        // `embedding F32_BLOB(dim)` column when the current declared type is
+        // a generic `BLOB` — the DiskANN vector index rejects BLOB columns,
+        // so every migrated DB has been silently falling back to
+        // vector_search_brute_force. Detection-gated per table (no-op when
+        // already F32_BLOB); the vector-index CREATE is LOUD (propagates
+        // Err), unlike every prior migration's best-effort index create.
+        crate::core::migrations::migrate_023_vector_index_column_type(&self.conn, dim).await?;
 
         Ok(())
     }
