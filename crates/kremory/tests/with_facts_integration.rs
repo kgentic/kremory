@@ -375,3 +375,69 @@ fn with_facts_skip_extraction_chain_compiles() {
             .expect("chain should succeed");
     });
 }
+
+/// TD-113 DOD-001 — `remember(skip_extraction) + recall(<subject name>)` MUST
+/// return ≥ 1. This is the regression guard for the fix that stamps the pinned
+/// entity's literal name into the FTS `properties` channel at write time.
+///
+/// Runs under `NullEmbeddingProvider` (zero-vector embeddings) ON PURPOSE: it
+/// proves the FTS channel ALONE restores recall-findability — no embedder, no
+/// second LLM (spec §3 F1). Before the fix, the pinned subject entity carried a
+/// bare `{"stub": false}` properties blob (no name token) + NULL embedding, so
+/// both recall seed arms missed and `recall` returned 0 — the empirically
+/// confirmed gap (dogfood 2026-07-14; `with_facts_pins_facts_and_recall_returns_them`
+/// conceded it by asserting only "recall does not error").
+#[test]
+fn td113_pinned_subject_is_recall_findable_by_name_under_null_embedder() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+
+    rt.block_on(async {
+        let mem = open_with_ns("td113_recall_findable").await;
+
+        // Single pinned triple — subject is an entity, object is a literal
+        // (StructuredFact→PrePinnedFact always sets object_id=None).
+        let facts = vec![StructuredFact {
+            subject: "Grace Hopper".to_string(),
+            predicate: "invented".to_string(),
+            object: "the compiler".to_string(),
+            valid_from: None,
+            valid_to: None,
+            memory_type: None,
+        }];
+
+        mem.remember("Grace Hopper invented the compiler.")
+            .with_facts(facts)
+            .from_document("td113-doc")
+            .skip_extraction()
+            .await
+            .expect("remember(skip_extraction) should succeed");
+
+        // `recall().await` renders the context block to a String (default
+        // `TemporalFacts` template). Pre-fix this was empty: the pinned entity
+        // had (a) no name token in FTS `properties`, (b) NULL embedding, and
+        // (c) no episodic edge → so even a lucky FTS hit rendered to "" because
+        // the default template emits output only per source_ref. Post-fix all
+        // three channels are stamped at write time (no second LLM).
+        let rendered = mem
+            .recall("Grace Hopper")
+            .opts(SearchOpts {
+                limit: Some(10),
+                ..Default::default()
+            })
+            .await
+            .expect("recall should succeed");
+
+        assert!(
+            !rendered.trim().is_empty(),
+            "TD-113: a caller-pinned subject entity MUST be recall-findable by \
+             its literal name (no second LLM); got empty recall"
+        );
+        assert!(
+            rendered.contains("Grace Hopper"),
+            "expected the pinned 'Grace Hopper' entity in the recall block, got: {rendered:?}"
+        );
+    });
+}
