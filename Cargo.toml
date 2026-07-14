@@ -1,11 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/kremory", "crates/kremory-eval", "crates/kremory-admin", "crates/kremory-napi"]
-
-# kremory-mcp excluded until D.4b handler bodies land.
-# Per ADR-Phase-D.0 §"rqlm-mcp tool surface": D.4 ships scaffold only with
-# "pending D.4b" stubs. Re-add to members list at D.4b.
-exclude = [
+members = [
+    "crates/kremory",
+    "crates/kremory-eval",
+    "crates/kremory-admin",
+    "crates/kremory-napi",
+    # MUST stay a member — excluding it rots the crate against facade drift
+    # (10 compile errors accrued invisibly while excluded, 2026-07-13). Workspace
+    # membership is the structural anti-rot fix — same failure class as the ner
+    # ingest() drop. See kremory-mcp-rewrite-0.4.0 spec §1 + R7. Do NOT re-exclude.
     "crates/kremory-mcp",
 ]
 
