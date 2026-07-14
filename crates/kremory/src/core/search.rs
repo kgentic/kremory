@@ -153,6 +153,46 @@ pub struct HybridSearchFactsParams<'a> {
     pub filters: &'a SearchFilters,
 }
 
+/// TD-114: over-fetch plan for a filtered-ANN (`vector_top_k`) query.
+///
+/// `vector_top_k` exposes no predicate argument, so `group_id`/namespace
+/// filtering is a POST-filter applied AFTER the index fetch. Fetching exactly
+/// `limit` from a shared multi-namespace index then leaves fewer than `limit`
+/// after the filter when the namespace is a small fraction of the DB — a silent
+/// per-namespace recall shortfall. This plan scales the index fetch by the
+/// estimated namespace selectivity so ~`limit` survive the post-filter.
+struct IndexFetchPlan {
+    /// `k` to request from `vector_top_k` (≥ the requested `limit`).
+    fetch_k: usize,
+    /// Row count of the target namespace(s); `None` when unfiltered or the count
+    /// query failed. Used only to decide whether an under-fill is a true
+    /// ANN-horizon shortfall (`namespace_rows ≥ limit`) vs a genuinely sparse
+    /// namespace (not a degradation).
+    namespace_rows: Option<i64>,
+}
+
+/// TD-114: args-as-object for [`TemporalGraph::plan_index_fetch`]
+/// (rust-conventions §too_many_arguments; clippy.toml threshold 3).
+struct IndexFetchQuery<'a> {
+    /// Table to size the over-fetch against (`"entities"` | `"facts"`).
+    table: &'a str,
+    /// Requested top-k.
+    limit: usize,
+    filters: &'a SearchFilters,
+}
+
+/// TD-114: args-as-object for [`TemporalGraph::emit_index_shortfall`]
+/// (rust-conventions §too_many_arguments).
+struct IndexShortfall<'a> {
+    /// Arm label for the metric (`"entities"` | `"facts"`).
+    arm: &'a str,
+    plan: &'a IndexFetchPlan,
+    /// Requested top-k.
+    limit: usize,
+    /// Rows actually delivered after the post-filter.
+    delivered: usize,
+}
+
 impl TemporalGraph {
     /// Increment `access_count` for a batch of entity IDs (Story #247).
     ///
@@ -182,6 +222,99 @@ impl TemporalGraph {
                 error = %e,
                 "kremory.search.access_count_update_failed"
             );
+        }
+    }
+
+    /// TD-114: compute the filtered-ANN over-fetch plan for `vector_top_k`.
+    ///
+    /// When a `group_id`/namespace filter is present, estimate the namespace
+    /// selectivity from indexed row counts and scale the index fetch so ~`limit`
+    /// rows survive the post-filter: `k ≈ limit × total / namespace_rows`, capped
+    /// at `total`. Unfiltered or whole-table namespaces short-circuit to `k =
+    /// limit` — the "one DB per project" common case (see TD-114 escape hatch)
+    /// pays nothing. Count-query failures degrade gracefully to `k = limit`
+    /// (prior behaviour), never an error.
+    async fn plan_index_fetch(&self, q: IndexFetchQuery<'_>) -> IndexFetchPlan {
+        let IndexFetchQuery {
+            table,
+            limit,
+            filters,
+        } = q;
+        let base = effective_k(limit, usize::MAX);
+        if filters.group_ids.is_empty() {
+            return IndexFetchPlan {
+                fetch_k: base,
+                namespace_rows: None,
+            };
+        }
+        // Count rows in the target namespace(s) — backed by `idx_entities_group`
+        // / `idx_facts_group` (schema.rs), so this is a cheap indexed count.
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, table, 1);
+        let ns_rows = self
+            .count_rows(
+                &format!("SELECT COUNT(*) FROM {table} WHERE 1=1{group_clause}"),
+                group_params,
+            )
+            .await;
+        let total_rows = self
+            .count_rows(&format!("SELECT COUNT(*) FROM {table}"), vec![])
+            .await;
+        let fetch_k = match (ns_rows, total_rows) {
+            // Only over-fetch when the namespace is a strict fraction of the DB.
+            (Some(ns), Some(total)) if ns > 0 && total > ns => {
+                // Inverse-selectivity scale (u128 to avoid overflow), capped at
+                // total rows — `vector_top_k` tolerates k > index size. Upper
+                // bound widens to `base` when the caller asked for more than
+                // exist (`limit > total`), keeping `clamp` valid (min ≤ max).
+                let scaled = (base as u128).saturating_mul(total as u128) / (ns as u128);
+                (scaled as usize).clamp(base, (total as usize).max(base))
+            }
+            _ => base,
+        };
+        IndexFetchPlan {
+            fetch_k,
+            namespace_rows: ns_rows,
+        }
+    }
+
+    /// Run a `SELECT COUNT(*)`-shaped query and return the scalar. Any failure
+    /// (query error, empty result, non-integer) degrades to `None` so callers
+    /// can fall back to the un-scaled fetch rather than propagating.
+    async fn count_rows(&self, sql: &str, params: Vec<libsql::Value>) -> Option<i64> {
+        let mut rows = self.conn.query(sql, params).await.ok()?;
+        let row = rows.next().await.ok()??;
+        row.get::<i64>(0).ok()
+    }
+
+    /// TD-114: emit the per-namespace recall-shortfall signal for a filtered-ANN
+    /// query. Fires only when the namespace held ENOUGH rows to satisfy the
+    /// request (`namespace_rows ≥ limit`) yet the post-filtered index delivered
+    /// fewer than `limit` — a true ANN-horizon loss, distinct from a genuinely
+    /// sparse namespace (which is not a degradation and stays silent).
+    fn emit_index_shortfall(&self, s: IndexShortfall<'_>) {
+        let IndexShortfall {
+            arm,
+            plan,
+            limit,
+            delivered,
+        } = s;
+        if let Some(ns) = plan.namespace_rows {
+            if ns as usize >= limit && delivered < limit {
+                metrics::counter!(
+                    "kremory.search.namespace_recall_shortfall_total",
+                    "path" => "vector_index",
+                    "arm" => arm.to_owned(),
+                )
+                .increment(1);
+                tracing::warn!(
+                    arm,
+                    requested = limit,
+                    delivered,
+                    namespace_rows = ns,
+                    fetch_k = plan.fetch_k,
+                    "kremory.search.namespace_recall_shortfall filtered-ANN post-filter under-filled requested k"
+                );
+            }
         }
     }
 
@@ -618,8 +751,21 @@ impl TemporalGraph {
             limit,
             filters,
         } = params;
-        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
+        // TD-114: `vector_top_k` has no predicate arg, so `group_id` is a
+        // POST-filter (WHERE below). Over-fetch by estimated namespace
+        // selectivity so ~`limit` survive, then cap with a real LIMIT.
+        let base = effective_k(limit, usize::MAX);
+        let plan = self
+            .plan_index_fetch(IndexFetchQuery {
+                table: "entities",
+                limit,
+                filters,
+            })
+            .await;
+        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=fetch_k).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
+        // Final LIMIT param sits after the variable-count group params.
+        let limit_param = 3 + filters.group_ids.len();
 
         let sql = format!(
             "SELECT e.id, COALESCE(et.name, 'Entity') AS label, e.properties, \
@@ -628,17 +774,17 @@ impl TemporalGraph {
              FROM vector_top_k('entities_vec_idx', vector(?1), ?2) AS v \
              JOIN entities AS e ON e.rowid = v.id \
              LEFT JOIN entity_types et ON et.group_id = e.group_id AND et.id = e.entity_type_id \
-             WHERE 1=1{} \
-             ORDER BY distance ASC",
-            group_clause
+             WHERE 1=1{group_clause} \
+             ORDER BY distance ASC \
+             LIMIT ?{limit_param}"
         );
 
-        let clamped = effective_k(limit, usize::MAX);
         let mut params: Vec<libsql::Value> = vec![
             libsql::Value::from(vec_str.to_owned()),
-            libsql::Value::from(clamped as i64),
+            libsql::Value::from(plan.fetch_k as i64),
         ];
         params.extend(group_params);
+        params.push(libsql::Value::from(base as i64));
 
         let mut rows = self.conn.query(&sql, params).await?;
 
@@ -657,6 +803,12 @@ impl TemporalGraph {
                 score: -distance,
             });
         }
+        self.emit_index_shortfall(IndexShortfall {
+            arm: "entities",
+            plan: &plan,
+            limit: base,
+            delivered: hits.len(),
+        });
         Ok(hits)
     }
 
@@ -852,8 +1004,20 @@ impl TemporalGraph {
             limit,
             filters,
         } = params;
-        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit)
+        // TD-114: `vector_top_k` post-filters `group_id` (no predicate arg), so
+        // over-fetch by estimated namespace selectivity + cap with a real LIMIT.
+        let base = effective_k(limit, usize::MAX);
+        let plan = self
+            .plan_index_fetch(IndexFetchQuery {
+                table: "facts",
+                limit,
+                filters,
+            })
+            .await;
+        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=fetch_k).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "f", 3);
+        // Final LIMIT param sits after the variable-count group params.
+        let limit_param = 3 + filters.group_ids.len();
 
         let sql = format!(
             "SELECT f.id, f.subject_id, f.predicate, f.object_id, f.object_value, f.properties,
@@ -863,17 +1027,17 @@ impl TemporalGraph {
                     vector_distance_cos(f.embedding, vector(?1)) as distance
              FROM vector_top_k('facts_vec_idx', vector(?1), ?2) AS v
              JOIN facts AS f ON f.rowid = v.id
-             WHERE f.expired_at IS NULL{}
-             ORDER BY distance ASC",
-            group_clause
+             WHERE f.expired_at IS NULL{group_clause}
+             ORDER BY distance ASC
+             LIMIT ?{limit_param}"
         );
 
-        let clamped = effective_k(limit, usize::MAX);
         let mut params: Vec<libsql::Value> = vec![
             libsql::Value::from(vec_str.to_owned()),
-            libsql::Value::from(clamped as i64),
+            libsql::Value::from(plan.fetch_k as i64),
         ];
         params.extend(group_params);
+        params.push(libsql::Value::from(base as i64));
 
         let mut rows = self.conn.query(&sql, params).await?;
 
@@ -890,6 +1054,12 @@ impl TemporalGraph {
                 score: -distance,
             });
         }
+        self.emit_index_shortfall(IndexShortfall {
+            arm: "facts",
+            plan: &plan,
+            limit: base,
+            delivered: hits.len(),
+        });
         Ok(hits)
     }
 
@@ -1359,6 +1529,169 @@ mod tests {
     fn effective_k_passthrough_when_no_allowlist() {
         // Caller passes usize::MAX when n_available is unknown.
         assert_eq!(effective_k(10, usize::MAX), 10);
+    }
+
+    // === TD-114: filtered-ANN over-fetch plan ===
+
+    async fn seed_two_namespaces() -> TemporalGraph {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        // 3 rows in "small", 9 in "big" → total 12, small selectivity 3/12.
+        for i in 0..3 {
+            g.insert_entity_with_group(InsertEntityWithGroupParams {
+                id: &format!("s{i}"),
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+                group_id: Some("small"),
+            })
+            .await
+            .unwrap();
+        }
+        for i in 0..9 {
+            g.insert_entity_with_group(InsertEntityWithGroupParams {
+                id: &format!("b{i}"),
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+                group_id: Some("big"),
+            })
+            .await
+            .unwrap();
+        }
+        g
+    }
+
+    #[tokio::test]
+    async fn plan_index_fetch_scales_by_inverse_selectivity_capped_at_total() {
+        let g = seed_two_namespaces().await;
+        // Small namespace: k = 4 × 12/3 = 16, clamped at total rows = 12.
+        let plan = g
+            .plan_index_fetch(IndexFetchQuery {
+                table: "entities",
+                limit: 4,
+                filters: &SearchFilters::for_group("small"),
+            })
+            .await;
+        assert_eq!(
+            plan.fetch_k, 12,
+            "over-fetch scales by inverse selectivity, capped at total rows"
+        );
+        assert_eq!(plan.namespace_rows, Some(3));
+
+        // Regression: when the caller requests more than exist (`limit > total`),
+        // `base > total` — the clamp upper bound must widen to `base` (min ≤ max),
+        // not panic. fetch_k stays at base; the trailing LIMIT caps output.
+        let plan_over = g
+            .plan_index_fetch(IndexFetchQuery {
+                table: "entities",
+                limit: 100,
+                filters: &SearchFilters::for_group("small"),
+            })
+            .await;
+        assert_eq!(
+            plan_over.fetch_k, 100,
+            "limit > total → fetch_k = base, no panic"
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_index_fetch_no_over_fetch_when_unfiltered_or_whole_table() {
+        let g = seed_two_namespaces().await;
+        // Unfiltered → base fetch, no namespace count.
+        let unfiltered = g
+            .plan_index_fetch(IndexFetchQuery {
+                table: "entities",
+                limit: 4,
+                filters: &SearchFilters::new(),
+            })
+            .await;
+        assert_eq!(unfiltered.fetch_k, 4);
+        assert_eq!(unfiltered.namespace_rows, None);
+        // Both namespaces (ns == total) → no over-fetch benefit.
+        let whole = g
+            .plan_index_fetch(IndexFetchQuery {
+                table: "entities",
+                limit: 4,
+                filters: &SearchFilters::for_groups(vec!["small".into(), "big".into()]),
+            })
+            .await;
+        assert_eq!(whole.fetch_k, 4, "ns == total → base fetch");
+        assert_eq!(whole.namespace_rows, Some(12));
+    }
+
+    #[test]
+    fn emit_index_shortfall_fires_only_on_true_ann_horizon_loss() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        fn shortfall_count(snapshotter: &metrics_util::debugging::Snapshotter) -> u64 {
+            snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .filter(|(k, _, _, _)| {
+                    k.key().name() == "kremory.search.namespace_recall_shortfall_total"
+                })
+                .filter_map(|(_, _, _, v)| match v {
+                    DebugValue::Counter(c) => Some(c),
+                    _ => None,
+                })
+                .sum()
+        }
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let g = TemporalGraph::open_in_memory().await.unwrap();
+
+            let recorder = DebuggingRecorder::new();
+            let snap = recorder.snapshotter();
+            metrics::with_local_recorder(&recorder, || {
+                // ns has ENOUGH rows (10 ≥ limit 5) but only 2 delivered → shortfall.
+                g.emit_index_shortfall(IndexShortfall {
+                    arm: "entities",
+                    plan: &IndexFetchPlan {
+                        fetch_k: 40,
+                        namespace_rows: Some(10),
+                    },
+                    limit: 5,
+                    delivered: 2,
+                });
+                assert_eq!(shortfall_count(&snap), 1, "ann-horizon loss must emit");
+
+                // Genuinely sparse namespace (3 < limit 5): under-fill is expected,
+                // NOT a degradation → silent.
+                g.emit_index_shortfall(IndexShortfall {
+                    arm: "entities",
+                    plan: &IndexFetchPlan {
+                        fetch_k: 5,
+                        namespace_rows: Some(3),
+                    },
+                    limit: 5,
+                    delivered: 3,
+                });
+                assert_eq!(
+                    shortfall_count(&snap),
+                    1,
+                    "sparse namespace must stay silent"
+                );
+
+                // Request satisfied (delivered ≥ limit) → silent.
+                g.emit_index_shortfall(IndexShortfall {
+                    arm: "entities",
+                    plan: &IndexFetchPlan {
+                        fetch_k: 40,
+                        namespace_rows: Some(10),
+                    },
+                    limit: 5,
+                    delivered: 5,
+                });
+                assert_eq!(
+                    shortfall_count(&snap),
+                    1,
+                    "satisfied request must stay silent"
+                );
+            });
+        });
     }
 
     #[test]

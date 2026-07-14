@@ -1,324 +1,154 @@
-//! kremory-mcp — MCP server wrapping kremory::memory's 4 public entry points as
+//! kremory-mcp — MCP server wrapping kremory's 0.4.0 `Memory` facade as 3
 //! JSON-RPC tools over rmcp stdio transport.
 //!
-//! Per ADR-Phase-D.0 §"rqlm-mcp tool surface" + master plan §3 D.4 / D.4b.
+//! Per the kremory-mcp-rewrite-0.4.0 spec: this crate is the bridge between
+//! MCP clients (e.g. Claude Code, aidocs) and the kremory SDK.
 //!
-//! ## Composition shape (D.4b)
+//! ## Composition shape
 //!
-//! The server holds `Option<ServerState>` where `ServerState` carries
-//! `Arc<dyn GraphHandle>` + `Arc<dyn ChatProvider>`. Two constructors:
+//! [`KremoryMcpServer`] always holds a bound `Arc<kremory::Memory>` — there
+//! is no "unbound" state. `main.rs` constructs a real `Memory` from env vars
+//! (mode-(a), env-driven) and fails loudly (non-zero exit) if the DB path is
+//! missing or Ollama is unreachable at boot, rather than serving a degraded
+//! "graph not bound" stub.
 //!
-//! - [`KremoryMcpServer::unbound`] — produces an "unbound" server. The
-//!   binary entry point (`main.rs`) uses this so it can spawn over
-//!   stdio for protocol-level smoke testing; tools that need the graph
-//!   return a `GraphNotBound` error. `kremory_context_block` works
-//!   regardless — it's a pure function over already-fetched results.
-//! - [`KremoryMcpServer::new`] — bind a real `GraphHandle` + `ChatProvider`.
-//!   Downstream consumers (host applications and paying SDK customers) compose
-//!   their concrete graph + LLM client here.
+//! ## Tools registered (3 — floor-3 tool surface over `Memory`)
 //!
-//! ## Tools registered (4 — matches kremory::memory's public surface)
-//!
-//! - `kremory_ingest_episode` — delegate to [`kremory::memory::ingest_episode`]
-//! - `kremory_run_dream_phase` — delegate to [`kremory::memory::run_dream_phase`]
-//! - `kremory_search` — delegate to [`kremory::memory::search`]
-//! - `kremory_context_block` — call [`kremory::memory::context_block`] directly
+//! - `kremory_remember` — ingest (delegates to [`kremory::Memory::remember`])
+//! - `kremory_recall` — the ONLY search tool; hybrid keyword + semantic +
+//!   graph retrieval (delegates to [`kremory::Memory::recall`])
+//! - `kremory_dream` — batch consolidation (delegates to
+//!   [`kremory::Memory::dream`])
 //!
 //! ## Error mapping
 //!
-//! - [`conversions::ConversionError`] → MCP `invalid_params` (caller-side
-//!   wire shape problem; client can fix).
-//! - "graph not bound" → MCP `internal_error` with a stable message; the
-//!   binary advertises this state when spawned standalone.
-//! - [`kremory::memory::RqlmError`] → MCP `internal_error` carrying the
-//!   underlying message (Display string). The error path stays open for
-//!   diagnostic relay across the JSON-RPC boundary.
+//! - [`conversions::ConversionError`] (bad wire shape, unparseable
+//!   RFC 3339 timestamp) → MCP `invalid_params`.
+//! - `kremory::MemoryError` (facade error) → MCP `internal_error` carrying
+//!   the underlying `Display` string.
+//!
+//! Both are unified internally as [`ToolError`] so each handler can record
+//! an `outcome` label (`ok` | `invalid_params` | `internal_error`) for the
+//! `kremory_mcp.tool.calls` counter before converting to the final
+//! `ErrorData` (Critical Rule 19 — observability built in at emit, not
+//! bolted on after).
 
 pub mod conversions;
+pub mod params;
+
+use std::sync::Arc;
+use std::time::Instant;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{model::*, tool, tool_router};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
-use kremory::memory::{
-    context_block as kremory_context_block_fn, ingest_episode as kremory_ingest_episode_fn,
-    run_dream_phase as kremory_run_dream_phase_fn, search as kremory_search_fn, ChatProvider,
-    GraphHandle, RqlmError,
-};
+use kremory::Memory;
 
 use crate::conversions::ConversionError;
-
-// Re-export the kremory trait + provider surface so downstream consumers
-// (host apps, paying SDK customers) depend on this crate alone when
-// composing a bound server.
-pub use kremory::memory::{ChatProvider as KremoryChatProvider, GraphHandle as KremoryGraphHandle};
+use crate::params::{
+    DreamOutput, DreamParams, RecallFormat, RecallParams, RecallStructuredOutput, RecallTextOutput,
+    RememberOutput, RememberParams,
+};
 
 // ────────────────────────────────────────────────────────────────────────
-// MCP parameter / output types
-//
-// These duplicate rqlm's types with the added `schemars::JsonSchema`
-// derive so rmcp's macros can generate tool input schemas. The
-// bidirectional conversions to/from rqlm types live in `conversions.rs`.
+// Internal error unification
 // ────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct IngestEpisodeParameters {
-    /// Workspace identifier — required scoping dimension.
-    pub workspace_id: String,
-    /// Optional thread / session ID within the workspace.
-    pub thread_id: Option<String>,
-    /// Raw episode content (transcript, doc chunk, chat message).
-    pub content: String,
-    /// Source-of-truth reference for this episode.
-    pub source_ref_kind: String, // "meeting" | "document" | "chat"
-    pub source_ref_id: String,
-    pub source_ref_occurred_at: String, // ISO-8601 UTC
-    /// Optional caller-supplied facts to pin alongside extraction.
-    #[serde(default)]
-    pub structured_facts: Vec<StructuredFactInput>,
+/// Unifies [`ConversionError`] and `kremory::MemoryError` so handler bodies
+/// can record an observability outcome label BEFORE converting to the final
+/// `rmcp::ErrorData` the JSON-RPC boundary expects.
+#[derive(Debug)]
+enum ToolError {
+    InvalidParams(String),
+    Internal(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct StructuredFactInput {
-    pub subject: String,
-    pub predicate: String,
-    pub object: String,
-    pub valid_at: Option<String>,
-    pub invalid_at: Option<String>,
+impl ToolError {
+    fn outcome_label(&self) -> &'static str {
+        match self {
+            ToolError::InvalidParams(_) => "invalid_params",
+            ToolError::Internal(_) => "internal_error",
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct IngestEpisodeOutput {
-    pub entities_added: usize,
-    pub edges_added: usize,
-    pub facts_invalidated: usize,
-    pub duration_ms: u64,
+impl From<ConversionError> for ToolError {
+    fn from(e: ConversionError) -> Self {
+        ToolError::InvalidParams(e.to_string())
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RunDreamPhaseParameters {
-    pub workspace_id: String,
-    pub thread_id: Option<String>,
+impl From<kremory::MemoryError> for ToolError {
+    fn from(e: kremory::MemoryError) -> Self {
+        ToolError::Internal(e.to_string())
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RunDreamPhaseOutput {
-    pub communities_recomputed: usize,
-    pub cross_meeting_merges: usize,
-    pub supersessions_recorded: usize,
-    pub facts_archived: usize,
-    pub duration_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SearchParameters {
-    pub workspace_id: String,
-    pub thread_id: Option<String>,
-    pub query: String,
-    pub limit: Option<usize>,
-    /// ISO-8601 UTC — when set, returns results valid at that timestamp.
-    pub as_of: Option<String>,
-    /// Optional filter — "meeting" | "document" | "chat".
-    pub source_kind: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SearchResultsOutput {
-    pub results: Vec<RetrievedContextOutput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RetrievedContextOutput {
-    pub entity_id: String,
-    pub entity_name: String,
-    pub summary: String,
-    pub score: f32,
-    pub source_refs: Vec<SourceRefOutput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SourceRefOutput {
-    pub kind: String,
-    pub id: String,
-    pub occurred_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ContextBlockParameters {
-    /// Pre-fetched results from a `rqlm_search` call.
-    pub results: Vec<RetrievedContextOutput>,
-    /// Template strategy — "entities" | "edge_summary" | "temporal_facts".
-    pub template: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ContextBlockOutput {
-    pub rendered: String,
+impl From<ToolError> for ErrorData {
+    fn from(e: ToolError) -> Self {
+        match e {
+            ToolError::InvalidParams(msg) => ErrorData::invalid_params(msg, None),
+            ToolError::Internal(msg) => ErrorData::internal_error(msg, None),
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
 // MCP server
 // ────────────────────────────────────────────────────────────────────────
 
-/// kremory MCP server. Optional state — see crate-level docs for the unbound
-/// vs bound distinction.
+/// kremory MCP server. Always bound to a real `kremory::Memory` — see
+/// crate-level docs.
 #[derive(Clone)]
 pub struct KremoryMcpServer {
-    state: Option<ServerState>,
-}
-
-#[derive(Clone)]
-struct ServerState {
-    graph: Arc<dyn GraphHandle>,
-    provider: Arc<dyn ChatProvider>,
-}
-
-impl Default for KremoryMcpServer {
-    fn default() -> Self {
-        Self::unbound()
-    }
+    mem: Arc<Memory>,
 }
 
 impl std::fmt::Debug for KremoryMcpServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KremoryMcpServer")
-            .field("bound", &self.state.is_some())
-            .finish()
+        f.debug_struct("KremoryMcpServer").finish_non_exhaustive()
     }
 }
 
 impl KremoryMcpServer {
-    /// Construct an unbound server. Tools requiring a graph backend
-    /// (`ingest_episode` / `search` / `run_dream_phase`) return a
-    /// `GraphNotBound` MCP error. `context_block` works regardless.
-    /// Used by the binary entry point so `kremory-mcp-server` can spawn for
-    /// protocol-level smoke testing without a backend.
-    pub fn unbound() -> Self {
-        Self { state: None }
-    }
-
-    /// Construct a bound server. Downstream consumers (host apps, paying
-    /// SDK customers) supply their concrete graph + LLM client.
-    pub fn new(graph: Arc<dyn GraphHandle>, provider: Arc<dyn ChatProvider>) -> Self {
-        Self {
-            state: Some(ServerState { graph, provider }),
-        }
-    }
-
-    /// Returns true when a graph + provider are bound.
-    pub fn is_bound(&self) -> bool {
-        self.state.is_some()
-    }
-
-    fn require_state(&self, tool: &str) -> Result<&ServerState, ErrorData> {
-        self.state.as_ref().ok_or_else(|| graph_not_bound(tool))
+    /// Construct a bound server over an already-built `Memory`.
+    pub fn new(mem: Arc<Memory>) -> Self {
+        Self { mem }
     }
 }
 
-#[tool_router(server_handler)]
-impl KremoryMcpServer {
-    #[tool(
-        name = "kremory_ingest_episode",
-        description = "Ingest one episode (transcript chunk, document, chat message) into the kremory graph with workspace scoping. Returns counts of entities/edges added + facts invalidated. Requires a bound graph backend; returns a 'graph not bound' error on the unbound binary."
-    )]
-    pub async fn kremory_ingest_episode(
-        &self,
-        Parameters(params): Parameters<IngestEpisodeParameters>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let state = self.require_state("kremory_ingest_episode")?;
-        let (scope, source_ref, facts, content) = params.into_rqlm().map_err(conv_to_error)?;
-        let result = kremory_ingest_episode_fn(
-            state.graph.as_ref(),
-            &content,
-            source_ref,
-            facts,
-            state.provider.clone(),
-            scope,
-        )
-        .await
-        .map_err(|e| kremory_to_error("kremory_ingest_episode", e))?;
-        let wire: IngestEpisodeOutput = result.into();
-        wire_to_call_result(&wire, "kremory_ingest_episode")
-    }
+/// `KREMORY_MCP_DEBUG=1` — dump raw request/response JSON bodies to stderr
+/// via `tracing::debug!` (Critical Rule 19 runtime-toggle debug switch).
+/// Read once per call (cheap env lookup; the switch is not on any hot path).
+fn debug_enabled() -> bool {
+    std::env::var("KREMORY_MCP_DEBUG")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
 
-    #[tool(
-        name = "kremory_run_dream_phase",
-        description = "Run the packaged batch consolidation recipe (community recompute, cross-meeting distillation, supersession sweep) over the scoped graph. Consumer-triggered, not a daemon. Requires a bound graph backend."
-    )]
-    pub async fn kremory_run_dream_phase(
-        &self,
-        Parameters(params): Parameters<RunDreamPhaseParameters>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let state = self.require_state("kremory_run_dream_phase")?;
-        let scope = params.into_rqlm().map_err(conv_to_error)?;
-        let result =
-            kremory_run_dream_phase_fn(state.graph.as_ref(), scope, state.provider.clone())
-                .await
-                .map_err(|e| kremory_to_error("kremory_run_dream_phase", e))?;
-        let wire: RunDreamPhaseOutput = result.into();
-        wire_to_call_result(&wire, "kremory_run_dream_phase")
-    }
-
-    #[tool(
-        name = "kremory_search",
-        description = "Query the graph with kremory's opinionated retrieval defaults (hybrid retrieval + scoping + rerank). Returns retrieved contexts ordered by score. Requires a bound graph backend."
-    )]
-    pub async fn kremory_search(
-        &self,
-        Parameters(params): Parameters<SearchParameters>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let state = self.require_state("kremory_search")?;
-        let (scope, query, opts) = params.into_rqlm().map_err(conv_to_error)?;
-        let results = kremory_search_fn(state.graph.as_ref(), &query, scope, opts)
-            .await
-            .map_err(|e| kremory_to_error("kremory_search", e))?;
-        let wire: SearchResultsOutput = results.into();
-        wire_to_call_result(&wire, "kremory_search")
-    }
-
-    #[tool(
-        name = "kremory_context_block",
-        description = "Render search results into the final string handed to the LLM, per the requested template (entities | edge_summary | temporal_facts). Pure function — works regardless of graph binding."
-    )]
-    pub async fn kremory_context_block(
-        &self,
-        Parameters(params): Parameters<ContextBlockParameters>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let (results, template) = params.into_rqlm().map_err(conv_to_error)?;
-        let rendered = kremory_context_block_fn(&results, template);
-        let wire = ContextBlockOutput { rendered };
-        wire_to_call_result(&wire, "kremory_context_block")
+/// `path` label for the `kremory_remember` counter — distinguishes the
+/// mode-(c) "pinned" path (`skip_extraction` set, no Phase-2 LLM call at
+/// all) from the default "extracted" path (Phase-2 LLM extraction runs).
+///
+/// The label reflects whether the LLM extraction path RAN, which is decided
+/// by `skip_extraction` alone — `do_remember` calls `.skip_extraction()`
+/// whenever `resolved.skip_extraction` is set, regardless of whether any
+/// `structured_facts` were supplied. Gating the label on
+/// `!structured_facts.is_empty()` as well would mislabel a
+/// `skip_extraction=true` + no-facts call as "extracted" even though no LLM
+/// call happened — a lying o11y counter (Critical Rule 19 #9).
+fn remember_path_label(p: &RememberParams) -> &'static str {
+    if p.skip_extraction {
+        "pinned"
+    } else {
+        "extracted"
     }
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// Error mapping helpers
-// ────────────────────────────────────────────────────────────────────────
-
-fn conv_to_error(e: ConversionError) -> ErrorData {
-    ErrorData::invalid_params(e.to_string(), None)
-}
-
-fn kremory_to_error(tool: &'static str, e: RqlmError) -> ErrorData {
-    ErrorData::internal_error(format!("{tool} failed: {e}"), None)
-}
-
-fn graph_not_bound(tool: &str) -> ErrorData {
-    ErrorData::internal_error(
-        format!(
-            "{tool} requires a bound graph backend — this server was constructed with \
-             KremoryMcpServer::unbound(). Compose with KremoryMcpServer::new(graph, provider) to enable."
-        ),
-        None,
-    )
-}
-
-fn wire_to_call_result<T>(wire: &T, tool: &str) -> Result<CallToolResult, ErrorData>
-where
-    T: serde::Serialize,
-{
+fn wire_to_call_result<T: serde::Serialize>(
+    wire: &T,
+    tool: &str,
+) -> Result<CallToolResult, ErrorData> {
     let value = serde_json::to_value(wire).map_err(|e| {
         ErrorData::internal_error(
             format!("{tool}: failed to serialize structured output: {e}"),
@@ -328,29 +158,297 @@ where
     Ok(CallToolResult::structured(value))
 }
 
+#[tool_router(server_handler)]
+impl KremoryMcpServer {
+    #[tool(
+        name = "kremory_remember",
+        description = "Remember new information into kremory's bi-temporal knowledge graph. Ingests a chat turn, document chunk, or note into a namespace (+ optional thread). Extracts entities/facts via LLM unless skip_extraction is set, in which case only caller-supplied structured_facts are pinned."
+    )]
+    pub async fn kremory_remember(
+        &self,
+        Parameters(params): Parameters<RememberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let start = Instant::now();
+        let namespace = params.namespace.clone();
+        let path = remember_path_label(&params);
+        let span = tracing::info_span!(
+            "kremory_mcp.tool",
+            tool = "kremory_remember",
+            namespace = %namespace,
+            path,
+        );
+        let _enter = span.enter();
+
+        if debug_enabled() {
+            tracing::debug!(
+                target: "kremory_mcp.raw_request",
+                tool = "kremory_remember",
+                request = %serde_json::to_string(&params).unwrap_or_default(),
+            );
+        }
+
+        let result = self.do_remember(params).await;
+        if let Ok(ref wire) = result {
+            if debug_enabled() {
+                tracing::debug!(
+                    target: "kremory_mcp.raw_response",
+                    tool = "kremory_remember",
+                    response = %serde_json::to_string(&wire).unwrap_or_default(),
+                );
+            }
+        }
+
+        // Serialize BEFORE computing the outcome label so a serialization
+        // failure (however unlikely for these output types) is reflected in
+        // the `outcome` counter rather than recorded as "ok" while an error
+        // is actually returned to the caller (Critical Rule 19 #9 — the
+        // counter must reflect the FINAL result, not an intermediate one).
+        let final_result: Result<CallToolResult, ErrorData> = result
+            .map_err(ErrorData::from)
+            .and_then(|wire| wire_to_call_result(&wire, "kremory_remember"));
+        let outcome = match &final_result {
+            Ok(_) => "ok",
+            Err(e) if e.code == ErrorCode::INVALID_PARAMS => "invalid_params",
+            Err(_) => "internal_error",
+        };
+        let duration_ms = start.elapsed().as_millis() as u64;
+        tracing::debug!(duration_ms, outcome, path, "kremory_remember complete");
+        metrics::counter!(
+            "kremory_mcp.tool.calls",
+            "tool" => "kremory_remember",
+            "outcome" => outcome,
+            "path" => path,
+        )
+        .increment(1);
+
+        final_result
+    }
+
+    #[tool(
+        name = "kremory_recall",
+        description = "Search your memory — hybrid keyword + semantic + graph retrieval; find/recall what you know about X. Returns a prompt-ready rendered string by default (format=text), or raw entity-shaped results (format=structured)."
+    )]
+    pub async fn kremory_recall(
+        &self,
+        Parameters(params): Parameters<RecallParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let start = Instant::now();
+        let namespace = params.namespace.clone();
+        let format_label = match params.format {
+            RecallFormat::Text => "text",
+            RecallFormat::Structured => "structured",
+        };
+        let span = tracing::info_span!(
+            "kremory_mcp.tool",
+            tool = "kremory_recall",
+            namespace = %namespace,
+            format = format_label,
+        );
+        let _enter = span.enter();
+
+        if debug_enabled() {
+            tracing::debug!(
+                target: "kremory_mcp.raw_request",
+                tool = "kremory_recall",
+                request = %serde_json::to_string(&params).unwrap_or_default(),
+            );
+        }
+
+        let result = self.do_recall(params).await;
+        let outcome = result
+            .as_ref()
+            .map(|_| "ok")
+            .unwrap_or_else(|e| e.outcome_label());
+        let duration_ms = start.elapsed().as_millis() as u64;
+        tracing::debug!(
+            duration_ms,
+            outcome,
+            format = format_label,
+            "kremory_recall complete"
+        );
+        metrics::counter!(
+            "kremory_mcp.tool.calls",
+            "tool" => "kremory_recall",
+            "outcome" => outcome,
+        )
+        .increment(1);
+
+        match result {
+            Ok(value) => {
+                if debug_enabled() {
+                    tracing::debug!(
+                        target: "kremory_mcp.raw_response",
+                        tool = "kremory_recall",
+                        response = %value.to_string(),
+                    );
+                }
+                Ok(CallToolResult::structured(value))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    #[tool(
+        name = "kremory_dream",
+        description = "Run batch consolidation (the dream phase) over a namespace: community detection, cross-episode merge, supersession sweep, fact archival, type discovery/reclassification. Consumer-triggered, not a daemon."
+    )]
+    pub async fn kremory_dream(
+        &self,
+        Parameters(params): Parameters<DreamParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let start = Instant::now();
+        let namespace = params.namespace.clone();
+        let span = tracing::info_span!(
+            "kremory_mcp.tool",
+            tool = "kremory_dream",
+            namespace = %namespace,
+        );
+        let _enter = span.enter();
+
+        if debug_enabled() {
+            tracing::debug!(
+                target: "kremory_mcp.raw_request",
+                tool = "kremory_dream",
+                request = %serde_json::to_string(&params).unwrap_or_default(),
+            );
+        }
+
+        let result = self.do_dream(params).await;
+        if let Ok(ref wire) = result {
+            if debug_enabled() {
+                tracing::debug!(
+                    target: "kremory_mcp.raw_response",
+                    tool = "kremory_dream",
+                    response = %serde_json::to_string(&wire).unwrap_or_default(),
+                );
+            }
+        }
+
+        // Serialize BEFORE computing the outcome label — see the matching
+        // comment in `kremory_remember` above (Critical Rule 19 #9).
+        let final_result: Result<CallToolResult, ErrorData> = result
+            .map_err(ErrorData::from)
+            .and_then(|wire| wire_to_call_result(&wire, "kremory_dream"));
+        let outcome = match &final_result {
+            Ok(_) => "ok",
+            Err(e) if e.code == ErrorCode::INVALID_PARAMS => "invalid_params",
+            Err(_) => "internal_error",
+        };
+        let duration_ms = start.elapsed().as_millis() as u64;
+        tracing::debug!(duration_ms, outcome, "kremory_dream complete");
+        metrics::counter!(
+            "kremory_mcp.tool.calls",
+            "tool" => "kremory_dream",
+            "outcome" => outcome,
+        )
+        .increment(1);
+
+        final_result
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Pure handler bodies — facade builder chains. Kept separate from the
+// `#[tool]`-annotated dispatch methods above so the observability/error-label
+// wiring above doesn't have to be duplicated inside the facade call itself.
+// ────────────────────────────────────────────────────────────────────────
+
+impl KremoryMcpServer {
+    async fn do_remember(&self, params: RememberParams) -> Result<RememberOutput, ToolError> {
+        let resolved = params.resolve()?;
+
+        let mut req = self
+            .mem
+            .remember(resolved.content)
+            .in_namespace(resolved.namespace);
+        if let Some(ts) = resolved.published_at {
+            req = req.published_at(ts);
+        }
+        match (resolved.source_kind, resolved.source_id) {
+            (Some(kind), id) => {
+                let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                req = req.from_source(id, kind);
+            }
+            (None, Some(id)) => {
+                req = req.from_source(id, kremory::SourceKind::Chat);
+            }
+            (None, None) => {}
+        }
+        if !resolved.facts.is_empty() {
+            req = req.with_facts(resolved.facts);
+        }
+        if resolved.skip_extraction {
+            req = req.skip_extraction();
+        }
+
+        let commit = req.await?;
+        Ok(RememberOutput::from(commit))
+    }
+
+    async fn do_recall(&self, params: RecallParams) -> Result<serde_json::Value, ToolError> {
+        let resolved = params.resolve()?;
+
+        let mut req = self
+            .mem
+            .recall(resolved.query)
+            .in_namespace(resolved.namespace);
+        if let Some(k) = resolved.k {
+            req = req.k(k);
+        }
+        if let Some(as_of) = resolved.as_of {
+            req = req.as_of(as_of);
+        }
+
+        match resolved.format {
+            RecallFormat::Text => {
+                let block = req.as_template(resolved.template).await?;
+                serde_json::to_value(RecallTextOutput { block }).map_err(|e| {
+                    ToolError::Internal(format!("failed to serialize recall text output: {e}"))
+                })
+            }
+            RecallFormat::Structured => {
+                let results = req.raw().await?;
+                let count = results.len();
+                let wire = RecallStructuredOutput {
+                    results: results.into_iter().map(Into::into).collect(),
+                    count,
+                };
+                serde_json::to_value(wire).map_err(|e| {
+                    ToolError::Internal(format!(
+                        "failed to serialize recall structured output: {e}"
+                    ))
+                })
+            }
+        }
+    }
+
+    async fn do_dream(&self, params: DreamParams) -> Result<DreamOutput, ToolError> {
+        let resolved = params.resolve()?;
+
+        let mut req = self
+            .mem
+            .dream()
+            .in_namespace(resolved.namespace)
+            .await_completion();
+        if let Some(id) = resolved.batch_id {
+            req = req.for_batch(id);
+        }
+
+        let summary = req.await?;
+        Ok(DreamOutput::from(summary))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn unbound_server_constructs() {
-        let s = KremoryMcpServer::unbound();
-        assert!(!s.is_bound());
-        let s = KremoryMcpServer::default();
-        assert!(!s.is_bound());
-    }
-
-    /// Locks the tool-name contract — these strings must remain stable
-    /// for MCP clients wired against them.
+    /// Locks the tool-name contract — these strings must remain stable for
+    /// MCP clients wired against them.
     #[test]
     fn tool_name_contract_pins() {
-        const EXPECTED_TOOLS: &[&str] = &[
-            "kremory_ingest_episode",
-            "kremory_run_dream_phase",
-            "kremory_search",
-            "kremory_context_block",
-        ];
-        assert_eq!(EXPECTED_TOOLS.len(), 4);
+        const EXPECTED_TOOLS: &[&str] = &["kremory_remember", "kremory_recall", "kremory_dream"];
+        assert_eq!(EXPECTED_TOOLS.len(), 3);
         for tool in EXPECTED_TOOLS {
             assert!(
                 tool.starts_with("kremory_"),
@@ -360,16 +458,50 @@ mod tests {
     }
 
     #[test]
-    fn graph_not_bound_error_carries_tool_name_and_remedy() {
-        let err = graph_not_bound("kremory_search");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("kremory_search"),
-            "error must carry tool name for debug: {msg}"
+    fn remember_path_label_reflects_skip_extraction() {
+        use crate::params::{SourceKindWire, StructuredFactWire};
+
+        let base = RememberParams {
+            namespace: "ns".into(),
+            thread: None,
+            content: "x".into(),
+            source_kind: Some(SourceKindWire::Chat),
+            source_id: None,
+            published_at: None,
+            structured_facts: vec![],
+            skip_extraction: false,
+        };
+        assert_eq!(remember_path_label(&base), "extracted");
+
+        let mut skip_no_facts = base.clone();
+        skip_no_facts.skip_extraction = true;
+        assert_eq!(
+            remember_path_label(&skip_no_facts),
+            "pinned",
+            "skip_extraction alone (no pinned facts) still runs NO LLM call — must label pinned"
         );
-        assert!(
-            msg.contains("KremoryMcpServer::new"),
-            "error must point at the bound constructor as remedy: {msg}"
+
+        let mut pinned = base.clone();
+        pinned.skip_extraction = true;
+        pinned.structured_facts = vec![StructuredFactWire {
+            subject: "s".into(),
+            predicate: "p".into(),
+            object: "o".into(),
+            valid_at: None,
+            invalid_at: None,
+        }];
+        assert_eq!(remember_path_label(&pinned), "pinned");
+    }
+
+    #[test]
+    fn tool_error_outcome_labels() {
+        assert_eq!(
+            ToolError::InvalidParams("x".into()).outcome_label(),
+            "invalid_params"
+        );
+        assert_eq!(
+            ToolError::Internal("x".into()).outcome_label(),
+            "internal_error"
         );
     }
 }

@@ -87,15 +87,15 @@ pub use memory::ChatProvider;
 pub use memory::{
     ContextTemplate, DreamPhaseResult, GraphAssertEntityTypeParams, GraphHandle, GraphSearchParams,
     IngestResult, MemoryError, MemoryType, Namespace, Result as MemoryResult, RetrievedContext,
-    RetrievedContextNewParams, SearchOpts, SourceKind, SourceRef, StructuredFact, TelemetryConfig,
-    TelemetryHandle, TelemetryInitError,
+    RetrievedContextNewParams, RetrievedFact, SearchOpts, SourceKind, SourceRef, StructuredFact,
+    TelemetryConfig, TelemetryHandle, TelemetryInitError,
 };
 // ADR-029a (v0.1.4): namespace policy primitives.
 pub use memory::types::{ImmutabilityLevel, InvalidPolicyError, NamespacePolicy};
 // Handle / lifecycle types (facade + substrate consumers)
 pub use memory::types::{
-    AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, CrossEpisodeMode, DreamHandle, DreamMode,
-    DreamOpts, DreamStatus, EpisodeCommit, SubmitOpts,
+    AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, CrossEpisodeMode, DreamHandle,
+    DreamMode, DreamOpts, DreamStatus, EpisodeCommit, SubmitOpts,
 };
 pub use memory::IngestStatus;
 // Event sinks + event types (Tier 2 consumers)
