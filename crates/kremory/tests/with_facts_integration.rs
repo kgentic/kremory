@@ -441,3 +441,74 @@ fn td113_pinned_subject_is_recall_findable_by_name_under_null_embedder() {
         );
     });
 }
+
+/// TD-116 / ADR-074 — recall surfaces the connected FACTS, not just entity names.
+///
+/// Regression guard for the recall-drops-facts gap the MCP dogfood exposed:
+/// after a mode-(c) pin, `recall` must return the entity WITH its connected fact
+/// (natural-language `fact` string + structured triple + temporal validity), and
+/// the default rendered template must contain the fact sentence. Runs under
+/// `NullEmbeddingProvider` — the facts come from the graph (contextualize), not
+/// the embedder, so no LLM/embedder is needed.
+#[test]
+fn td116_recall_returns_connected_facts_under_null_embedder() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+
+    rt.block_on(async {
+        let mem = open_with_ns("td116_recall_facts").await;
+
+        mem.remember("Grace Hopper invented the compiler.")
+            .with_facts(vec![StructuredFact {
+                subject: "Grace Hopper".to_string(),
+                predicate: "invented".to_string(),
+                object: "the compiler".to_string(),
+                valid_from: None,
+                valid_to: None,
+                memory_type: None,
+            }])
+            .from_document("td116-doc")
+            .skip_extraction()
+            .await
+            .expect("remember(skip_extraction) should succeed");
+
+        // Structured: the entity result carries the connected fact.
+        let raw = mem
+            .recall("Grace Hopper")
+            .raw()
+            .await
+            .expect("raw recall should succeed");
+        let hopper = raw
+            .iter()
+            .find(|r| r.entity_name == "Grace Hopper")
+            .expect("Grace Hopper must be in recall results");
+        assert!(
+            !hopper.facts.is_empty(),
+            "TD-116: recall MUST surface the entity's connected facts; got none"
+        );
+        let f = hopper
+            .facts
+            .iter()
+            .find(|f| f.predicate == "invented")
+            .expect("the pinned 'invented' fact must be present");
+        assert_eq!(f.fact, "Grace Hopper invented the compiler");
+        assert_eq!(f.subject, "Grace Hopper");
+        assert_eq!(f.object, "the compiler");
+        assert!(
+            !f.object_is_entity,
+            "literal object → object_is_entity=false"
+        );
+
+        // Rendered (default TemporalFacts template): the fact sentence appears.
+        let rendered = mem
+            .recall("Grace Hopper")
+            .await
+            .expect("rendered recall should succeed");
+        assert!(
+            rendered.contains("Grace Hopper invented the compiler"),
+            "default template must render the fact sentence, got: {rendered:?}"
+        );
+    });
+}

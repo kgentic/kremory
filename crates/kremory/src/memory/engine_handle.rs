@@ -44,7 +44,8 @@ use crate::memory::{
     },
     types::{
         BatchStatus, CancelOutcome, CancelledPhase, DreamHandle, DreamPhaseResult, DreamStatus,
-        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, SourceKind, SourceRef,
+        EpisodeCommit, MemoryError, Namespace, Result, RetrievedContext, RetrievedFact, SourceKind,
+        SourceRef,
     },
     ChatProvider,
 };
@@ -638,6 +639,45 @@ impl GraphHandle for EngineGraphHandle {
             let entity_type_id = entity.entity_type_id;
             let entity_type_name = entity.label.clone();
 
+            // ADR-074 / TD-116: surface the entity's connected facts (subject-owned,
+            // deduped by construction — a fact appears under its subject only) so
+            // recall returns the actual knowledge, not just the entity name. The
+            // facts are already computed by `contextualize` (`context.facts`); here
+            // each is projected to the LLM-facing `RetrievedFact` shape (natural-
+            // language string + structured triple + BOTH bi-temporal clocks +
+            // confidence + provenance).
+            let facts: Vec<RetrievedFact> = context
+                .facts
+                .iter()
+                .filter(|f| f.subject_id == entity.id)
+                .map(|f| {
+                    let object_is_entity = f.object_id.is_some();
+                    // Prefer the literal value; fall back to the object entity id.
+                    // (F2 endpoint display-name resolution for object entities is a
+                    // deferred enhancement — literal objects render cleanly today.)
+                    let object = f
+                        .object_value
+                        .clone()
+                        .or_else(|| f.object_id.clone())
+                        .unwrap_or_default();
+                    let fact = format!("{entity_name} {} {object}", f.predicate);
+                    RetrievedFact {
+                        fact,
+                        subject: entity_name.clone(),
+                        predicate: f.predicate.clone(),
+                        object,
+                        object_is_entity,
+                        valid_at: f.valid_from,
+                        invalid_at: f.valid_to,
+                        recorded_at: f.recorded_at,
+                        expired_at: f.expired_at,
+                        confidence: f.confidence,
+                        source_episode_ids: f.source_episode_id.into_iter().collect(),
+                        score,
+                    }
+                })
+                .collect();
+
             results.push(RetrievedContext {
                 entity_id: entity.id,
                 entity_name,
@@ -648,6 +688,7 @@ impl GraphHandle for EngineGraphHandle {
                 entity_type_id,
                 entity_type_name,
                 namespace: Some(namespace.clone()),
+                facts,
             });
         }
 
