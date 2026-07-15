@@ -436,6 +436,8 @@ mod defs_h;
 mod defs_i;
 // defs_j (TD-115): migrate_023_vector_index_column_type.
 mod defs_j;
+// defs_k (TD-117, Vera M2): migrate_024_verify_embedding_dim.
+mod defs_k;
 
 pub(crate) use defs_a::*;
 pub(crate) use defs_b::*;
@@ -456,6 +458,7 @@ pub(crate) use defs_h::*;
 #[cfg(feature = "content-search")]
 pub(crate) use defs_i::*;
 pub(crate) use defs_j::*;
+pub(crate) use defs_k::*;
 
 #[cfg(test)]
 mod tests;
