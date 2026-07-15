@@ -355,7 +355,7 @@ impl KremoryMcpServer {
 
     #[tool(
         name = "kremory_list_mutations",
-        description = "SEE what dream() (or edit/delete calls) changed in a namespace — the read-only inspect half of the reversible-mutations story. Lists logged graph mutations (entity merges, entity edits, entity deletes, fact deletes) newest-first, each carrying a mutation_id you can pass to kremory_undo. Set entity_id to scope to one entity's history (includes already-undone mutations); otherwise lists namespace-wide LIVE (still-reversible) mutations by default. Read-only — never mutates."
+        description = "SEE the logged graph mutations in a namespace — the read-only inspect half of the reversible-mutations story. Lists the four LOGGED mutation kinds (entity merges, entity edits, entity deletes, fact deletes) newest-first, each carrying a mutation_id you can pass to kremory_undo. Set entity_id to scope to one entity's history (includes already-undone mutations); otherwise lists namespace-wide LIVE (still-reversible) mutations by default. Read-only — never mutates. NOTE (TD-119): this is NOT a complete 'everything dream() changed' view — dream's fact supersession, fact archival, community assignment and canonical-form writes are reversed via their own domain APIs (e.g. unsupersede / restore_archived_fact), are NOT written to the mutation log, and therefore do NOT appear here. For dream, expect only its entity merges/edits/deletes and fact deletes."
     )]
     pub async fn kremory_list_mutations(
         &self,
