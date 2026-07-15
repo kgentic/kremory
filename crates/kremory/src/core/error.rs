@@ -144,6 +144,31 @@ pub enum Error {
     #[error("embedding_dim must be greater than 0")]
     EmbeddingDimZero,
 
+    /// `TemporalGraph::open`/`open_with_dim` refused to operate because the
+    /// caller-supplied `embedding_dim` disagrees with the embedding dimension
+    /// this store already contains data for (TD-117, Vera M2 review).
+    ///
+    /// Two independent guards raise this variant (`migrate_024_verify_embedding_dim`,
+    /// `core/migrations/defs_k.rs`): (1) the byte length of an existing stored
+    /// `embedding` row disagrees with `requested_dim * 4`, or (2) the
+    /// `embedding_dim` persisted in `embedding_dim_registry` at first-open
+    /// disagrees with `requested_dim`. Reopening with the wrong dim would
+    /// otherwise either silently return garbage nearest-neighbour results
+    /// (byte reinterpretation across a differently-typed `F32_BLOB` column) or
+    /// corrupt data during a column rebuild
+    /// (`migrate_023_vector_index_column_type`'s raw `INSERT ... SELECT
+    /// embedding` copy). `requested_dim` is the dim this open call supplied;
+    /// `detail` names which guard fired and the concrete numbers involved.
+    #[error(
+        "embedding_dim mismatch: opened with embedding_dim={requested_dim} but {detail} — \
+         reopen with the original embedding_dim, or migrate the stored vectors, before \
+         changing it"
+    )]
+    EmbeddingDimMismatch {
+        requested_dim: usize,
+        detail: String,
+    },
+
     /// An LLM call during the multi-stage extraction pipeline failed.
     /// `stage` identifies which pipeline step failed ("entities", "relations",
     /// "triplets", …); `detail` carries the underlying provider error message.

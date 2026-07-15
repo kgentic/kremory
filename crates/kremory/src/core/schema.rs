@@ -424,6 +424,13 @@ impl TemporalGraph {
         // the base DDL targets `entities` (not `rql_entities`) on all paths.
         crate::core::migrations::migrate_002_drop_rql_prefix(&self.conn).await?;
 
+        // Migration 024 (TD-117, Vera M2): hard-error on embedding_dim mismatch
+        // against a persisted registry row or pre-existing stored vector byte
+        // lengths — BEFORE any table below is created/rebuilt using `dim`.
+        // See `defs_k.rs` doc comment for the two independent guards.
+        crate::core::migrations::migrate_024_verify_embedding_dim(&self.conn, self.embedding_dim)
+            .await?;
+
         let dim = self.embedding_dim;
         self.conn
             .execute(
