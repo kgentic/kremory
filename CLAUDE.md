@@ -7,7 +7,7 @@
 
 - Releases **0.3.0 → 0.3.1 → 0.3.2** shipped, tagged, on crates.io; `main` fast-forwarded through all. 0.3.0 yanked (broken default); 0.3.1 + 0.3.2 live.
 - **TD-053 (napi parity hygiene) CLOSED + on main** (`a05be15` doc-rot pass, `fad4d5d` boy-scout pass): `parity-skip.toml` = **72 entries ≤ 80 cap**, `cargo test -p kremory-napi --test api_parity` **7/0 GREEN**. The napi 1:1 surface is verified 1:1 (ADR-034 landed); parity-skip now lists only genuinely-absent symbols.
-- **One known pre-existing test fail**: `with_facts_empty_vec_equivalent_to_no_facts` (TD-013, kremory) — empty-vec skip increments the skip_extraction counter when it should not. Fix the bug per Rule 8, do not skip. (This is the ONLY standing fail; the old "napi parity-cap fail" was never real — the "103>100" number was stale/fabricated per `feedback_subagent_fabricates_gate_results`.)
+- **No known standing test fails.** TD-013 (`with_facts_empty_vec_equivalent_to_no_facts`) was verified **CLOSED 2026-07-15** (direct test run: `1 passed, 0 failed`) — the earlier "ONLY standing fail" note here was stale. The old "napi parity-cap fail" was never real (the "103>100" number was fabricated per `feedback_subagent_fabricates_gate_results`). NB: this "Active Sprint" block still describes the 0.3.2 line and is broadly stale — current baseline is **0.5.0** (crates.io); see `.ai-docs/planning/pre-public-launch-readiness-roadmap-2026-07-15.md` + the MVP-to-public-flip execution plan for live state.
 - `cargo fmt --check` is NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
 - The napi parity test is invisible to `cargo test -p kremory` (cross-crate gate) — run workspace-wide to see it.
 
