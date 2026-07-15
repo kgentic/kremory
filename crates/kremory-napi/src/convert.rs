@@ -5,7 +5,7 @@
 
 use napi_derive::napi;
 
-use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact};
+use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact, SourceKind, SourceRef};
 
 // ── Input option structs ──────────────────────────────────────────────────────
 
@@ -660,8 +660,7 @@ pub struct JsCancelOutcome {
 /// A single connected fact surfaced by recall (ADR-074 / TD-116).
 ///
 /// Maps directly to `kremory::RetrievedFact`. Timestamps are RFC-3339 strings
-/// and episode ids are stringified (matching `JsRetrievedContext.source_refs`'s
-/// string convention) for JS ergonomics.
+/// and episode ids are stringified for JS ergonomics.
 #[napi(object, js_name = "RetrievedFact")]
 pub struct JsRetrievedFact {
     /// Natural-language rendering, e.g. `"Grace Hopper invented the compiler"`.
@@ -712,6 +711,53 @@ pub fn retrieved_fact_to_js(f: RetrievedFact) -> JsRetrievedFact {
     }
 }
 
+/// A single source reference contributing to a retrieved entity (TD-118).
+///
+/// Maps directly to `kremory::SourceRef`, mirroring the MCP `SourceRefWire`
+/// shape so the napi and MCP surfaces are two projections of one data model
+/// (`web-app-ui-parity-for-agents`). Timestamps are RFC-3339 strings.
+#[napi(object, js_name = "SourceRef")]
+pub struct JsSourceRef {
+    /// Source category, e.g. `"meeting"` / `"document"` / `"chat"` / `"episode"`.
+    /// Lower-cased string form of `kremory::SourceKind`.
+    pub kind: String,
+    /// Opaque source identifier (session ID, document ID, episode-edge id, …).
+    pub id: String,
+    /// RFC-3339 UTC timestamp the source event occurred at.
+    pub occurred_at: String,
+    /// RFC-3339 UTC publication timestamp of the source document/event, when
+    /// known. `null` when the source has no distinct publication time.
+    pub published_at: Option<String>,
+}
+
+/// Lower-cased wire string for a `SourceKind`. Mirrors the MCP
+/// `source_kind_facade_to_wire` mapping. `SourceKind` is `#[non_exhaustive]`
+/// upstream, so the catch-all keeps this forward-compatible — it surfaces an
+/// unknown future variant loudly (via its `Debug` form) rather than silently
+/// mislabeling it.
+fn source_kind_to_string(kind: SourceKind) -> String {
+    match kind {
+        SourceKind::Meeting => "meeting".to_string(),
+        SourceKind::Document => "document".to_string(),
+        SourceKind::Chat => "chat".to_string(),
+        SourceKind::Episode => "episode".to_string(),
+        other => {
+            tracing::warn!(?other, "unmapped SourceKind variant projected to napi");
+            format!("{other:?}").to_lowercase()
+        }
+    }
+}
+
+/// Convert a `kremory::SourceRef` to the napi-facing `JsSourceRef` (TD-118).
+fn source_ref_to_js(sr: SourceRef) -> JsSourceRef {
+    JsSourceRef {
+        kind: source_kind_to_string(sr.kind),
+        id: sr.id,
+        occurred_at: sr.occurred_at.to_rfc3339(),
+        published_at: sr.published_at.map(|t| t.to_rfc3339()),
+    }
+}
+
 /// A single retrieved memory context entry from `Memory.recall`.
 ///
 /// Maps directly to `kremory::RetrievedContext`.
@@ -725,9 +771,11 @@ pub struct JsRetrievedContext {
     pub summary: String,
     /// Relevance score in the range `[0.0, 1.0]`. Higher is more relevant.
     pub score: f64,
-    /// Source reference IDs that contributed to this entity. Each entry is an
-    /// opaque string key (e.g. session ID, document ID).
-    pub source_refs: Vec<String>,
+    /// Source references that contributed to this entity (TD-118). Each entry
+    /// carries `kind`/`id`/`occurred_at`/`published_at` — mirroring the MCP
+    /// `SourceRefWire` surface so JS consumers get the same provenance the MCP
+    /// wire already exposes (previously flattened to bare `id` strings).
+    pub source_refs: Vec<JsSourceRef>,
     /// `true` when the entity is a stub placeholder awaiting full extraction.
     pub incomplete: bool,
     /// Integer entity-type id for this entity within its namespace (TD-013).
@@ -761,8 +809,8 @@ pub struct JsRetrievedContext {
 pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
     let source_refs = ctx
         .source_refs
-        .iter()
-        .map(|sr| sr.id.clone())
+        .into_iter()
+        .map(source_ref_to_js)
         .collect::<Vec<_>>();
 
     let namespace = ctx.namespace.map(|ns| ns.namespace);
@@ -1385,6 +1433,56 @@ mod tests {
         ctx.entity_type_id = entity_type_id;
         ctx.entity_type_name = entity_type_name.to_string();
         ctx
+    }
+
+    /// TD-118: source_refs project the full `kremory::SourceRef` shape
+    /// (kind/id/occurred_at/published_at), not a flattened bare-id string.
+    /// Drives the real producer (`retrieved_context_to_js`) and asserts each
+    /// provenance field survives the projection — mirrors the MCP wire.
+    #[test]
+    fn source_refs_project_full_shape() {
+        use chrono::{TimeZone, Utc};
+
+        let occurred = Utc.with_ymd_and_hms(2026, 7, 15, 9, 0, 0).unwrap();
+        let published = Utc.with_ymd_and_hms(2026, 7, 14, 8, 30, 0).unwrap();
+        let ctx = RetrievedContext::new(kremory::RetrievedContextNewParams {
+            entity_id: "ent-1".to_string(),
+            entity_name: "Alice".to_string(),
+            summary: "s".to_string(),
+            score: 0.5_f32,
+            source_refs: vec![
+                kremory::SourceRef {
+                    kind: kremory::SourceKind::Document,
+                    id: "doc-42".to_string(),
+                    occurred_at: occurred,
+                    published_at: Some(published),
+                },
+                kremory::SourceRef {
+                    kind: kremory::SourceKind::Episode,
+                    id: "ep-7".to_string(),
+                    occurred_at: occurred,
+                    published_at: None,
+                },
+            ],
+        });
+
+        let js = retrieved_context_to_js(ctx);
+        assert_eq!(js.source_refs.len(), 2, "both source_refs projected");
+
+        let doc = &js.source_refs[0];
+        assert_eq!(doc.kind, "document", "kind lower-cased from SourceKind");
+        assert_eq!(doc.id, "doc-42");
+        assert_eq!(doc.occurred_at, occurred.to_rfc3339());
+        assert_eq!(
+            doc.published_at.as_deref(),
+            Some(published.to_rfc3339()).as_deref(),
+            "published_at preserved when set"
+        );
+
+        let ep = &js.source_refs[1];
+        assert_eq!(ep.kind, "episode");
+        assert_eq!(ep.id, "ep-7");
+        assert!(ep.published_at.is_none(), "published_at None survives as null");
     }
 
     /// TD-013 Phase 8: entity_type_id is correctly wired as u32 on JsRetrievedContext.

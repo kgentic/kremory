@@ -83,7 +83,14 @@ function _checkRetrieved(r: RetrievedContext): void {
   const _entityName: string = r.entityName;
   const _summary: string = r.summary;
   const _score: number = r.score;
-  const _refs: string[] = r.sourceRefs;
+  // TD-118: sourceRefs is now SourceRef[] (kind/id/occurredAt/publishedAt),
+  // mirroring the MCP wire — previously bare string[] of ids.
+  const _refs: Array<{
+    kind: string;
+    id: string;
+    occurredAt: string;
+    publishedAt?: string | null;
+  }> = r.sourceRefs;
   const _incomplete: boolean = r.incomplete;
   // TD-013 Phase 8: entity type fields (additive, always present).
   const _typeId: number = r.entityTypeId;
