@@ -425,7 +425,7 @@ pub struct JsDreamSummary {
 ///
 /// # DreamOpts field enumeration (D2 / `schemas-enumerate-touching-layers`)
 ///
-/// The substrate `DreamOpts` has 17 pub fields. Each is either EXPOSED here or
+/// The substrate `DreamOpts` has 18 pub fields. Each is either EXPOSED here or
 /// deliberately OMITTED with a reason:
 ///
 /// **Exposed (consolidation control — the D2 binding-parity surface):**
@@ -447,6 +447,10 @@ pub struct JsDreamSummary {
 ///   surface targets). All default-ON; type-discovery is separately tunable via
 ///   `runDreamPassSync`'s `DreamPassOptions.includeTypeDiscovery`. Exposing the full
 ///   reconciliation-pass matrix on `dream()` is deferred (v0.2.0).
+/// - `includeEvidenceRetypeBySimilarity` — reason: unvalidated, TD-123
+///   quarantine, default-false. NOT exposed on `JsDreamOpts`; the default-false
+///   pass-through (substrate `DreamOpts::default()`) is the correct binding
+///   behaviour until TD-123 lifts the quarantine.
 #[napi(object, js_name = "DreamOptions")]
 pub struct JsDreamOpts {
     /// Namespace to dream within. `null`/omit for Memory handle's default.
@@ -1482,7 +1486,10 @@ mod tests {
         let ep = &js.source_refs[1];
         assert_eq!(ep.kind, "episode");
         assert_eq!(ep.id, "ep-7");
-        assert!(ep.published_at.is_none(), "published_at None survives as null");
+        assert!(
+            ep.published_at.is_none(),
+            "published_at None survives as null"
+        );
     }
 
     /// TD-013 Phase 8: entity_type_id is correctly wired as u32 on JsRetrievedContext.
@@ -1633,14 +1640,26 @@ mod tests {
         assert_eq!(fact.subject, "Ada Lovelace");
         assert_eq!(fact.predicate, "wrote");
         assert_eq!(fact.object, "the first algorithm");
-        assert!(!fact.object_is_entity, "literal object → object_is_entity=false");
-        assert!(!fact.valid_at.is_empty(), "valid_at must be a non-empty RFC-3339 string");
+        assert!(
+            !fact.object_is_entity,
+            "literal object → object_is_entity=false"
+        );
+        assert!(
+            !fact.valid_at.is_empty(),
+            "valid_at must be a non-empty RFC-3339 string"
+        );
         assert!(
             fact.invalid_at.is_none(),
             "an open-ended pinned fact must have invalid_at=None"
         );
-        assert!(!fact.recorded_at.is_empty(), "recorded_at must be a non-empty RFC-3339 string");
-        assert!(fact.expired_at.is_none(), "a fresh pinned fact must have expired_at=None");
+        assert!(
+            !fact.recorded_at.is_empty(),
+            "recorded_at must be a non-empty RFC-3339 string"
+        );
+        assert!(
+            fact.expired_at.is_none(),
+            "a fresh pinned fact must have expired_at=None"
+        );
         assert_eq!(
             fact.confidence, 1.0,
             "caller-pinned facts default to confidence=1.0"
