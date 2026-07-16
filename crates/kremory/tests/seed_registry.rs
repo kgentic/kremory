@@ -162,12 +162,13 @@ async fn t6_facade_replace_populated_divergent_fails_loud_no_write() {
     );
 }
 
-/// T7 — `Augment` on a fresh namespace → defaults (0–10) + custom (≥11) present.
+/// T7 — `Augment` on a fresh namespace → defaults (0–9) + custom (≥10) present.
 ///
-/// Custom names MUST avoid the `DEFAULT_ENTITY_TYPES` vocabulary: "Court" is
-/// already default id=10, and Augment carries the defaults, so a custom
-/// `(11, "Court")` would be dropped by the `UNIQUE(group_id, name)` constraint
-/// (`INSERT OR IGNORE`). "Statute" / "Judge" are non-default.
+/// Custom names MUST avoid the `DEFAULT_ENTITY_TYPES` vocabulary: a custom spec
+/// whose name collides with a default (e.g. "Person") would be dropped by the
+/// `UNIQUE(group_id, name)` constraint (`INSERT OR IGNORE`). "Statute" / "Judge"
+/// are non-default. (Legal `Court` is now an opt-in augment, not a default —
+/// see `td079_court_is_legal_augment_not_general_default`.)
 #[tokio::test]
 async fn t7_facade_augment_fresh_namespace_defaults_plus_custom() {
     let (mem, _tmp) = fresh_memory().await;
@@ -187,7 +188,7 @@ async fn t7_facade_augment_fresh_namespace_defaults_plus_custom() {
     assert!(rows.iter().any(|(id, name)| *id == 11 && name == "Statute"));
     assert!(rows.iter().any(|(id, name)| *id == 12 && name == "Judge"));
     // Augment keeps the full default vocabulary, so the count exceeds the
-    // 2 custom rows + catch-all (defaults occupy 0–10).
+    // 2 custom rows + catch-all (defaults occupy 0–9).
     assert!(
         rows.len() > 3,
         "Augment must retain the default vocabulary, got {} rows",
@@ -352,5 +353,51 @@ async fn t11_facade_replace_match_aware_idempotency() {
     assert!(
         matches!(err, NamespaceRegistrationError::AlreadyPopulated { .. }),
         "expected AlreadyPopulated, got {err:?}"
+    );
+}
+
+/// TD-079 — `Court` is a legal-domain augment, NOT a universal default.
+///
+/// Substrate-purity guard: `DEFAULT_ENTITY_TYPES` must not leak legal
+/// vocabulary into the general default set (a WTF for a first-time general
+/// consumer). A legal consumer opts in via `NamespaceSeed::Augment(vec![Court])`;
+/// a plain (non-augmented) default namespace never sees it.
+#[tokio::test]
+async fn td079_court_is_legal_augment_not_general_default() {
+    let (mem, _tmp) = fresh_memory().await;
+
+    // Legal namespace: augment the general defaults with the legal `Court` type
+    // (id=10 — the first free slot above the 0–9 general defaults).
+    mem.register_namespace_with_seed(
+        kremory::Namespace::new("legal"),
+        NamespaceSeed::Augment(vec![spec(10, "Court")]),
+    )
+    .await
+    .expect("augment legal namespace with Court");
+
+    // General namespace: the plain default vocabulary, no legal augmentation.
+    mem.register_namespace_with_seed(kremory::Namespace::new("general"), NamespaceSeed::Default)
+        .await
+        .expect("seed general namespace with defaults");
+
+    let legal_rows = read_rows(&mem, "legal").await;
+    let general_rows = read_rows(&mem, "general").await;
+
+    // Court IS available in the augmented legal namespace.
+    assert!(
+        legal_rows.iter().any(|(_, name)| name == "Court"),
+        "Court must be present in the legal namespace after Augment; got {legal_rows:?}"
+    );
+
+    // Court is NOT present in the general default namespace (substrate-purity).
+    assert!(
+        !general_rows.iter().any(|(_, name)| name == "Court"),
+        "Court must NOT leak into the general default namespace; got {general_rows:?}"
+    );
+
+    // The general namespace still carries the universal NER defaults.
+    assert!(
+        general_rows.iter().any(|(_, name)| name == "Person"),
+        "general defaults must still include universal NER types like Person; got {general_rows:?}"
     );
 }

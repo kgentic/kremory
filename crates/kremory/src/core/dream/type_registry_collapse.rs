@@ -1147,7 +1147,7 @@ mod tests {
     ) {
         ensure_default_types_seeded(conn, group_id)
             .await
-            .expect("seed defaults 0..=10");
+            .expect("seed defaults 0..=9");
         conn.execute(
             "INSERT INTO entity_types (group_id, id, name, description) VALUES (?1, 11, ?2, ?3)",
             libsql::params![group_id, name_a, desc_a],
@@ -1248,8 +1248,8 @@ mod tests {
         );
         assert_eq!(
             count_entity_types(&conn, "g1").await,
-            12,
-            "11 seeded (ids 0..=10) + 1 surviving custom type after the merge"
+            11,
+            "10 seeded (ids 0..=9) + 1 surviving custom type after the merge"
         );
 
         // Entity remapped onto whichever id survived (keeper).
@@ -1357,7 +1357,7 @@ mod tests {
         );
         assert_eq!(
             count_entity_types(&conn, "g2").await,
-            13,
+            12,
             "both types survive — row 6 defers to PotentialAlias, no destructive merge"
         );
 
@@ -1458,8 +1458,8 @@ mod tests {
         );
         assert_eq!(
             count_entity_types(&conn, "g5").await,
-            12,
-            "11 seeded (ids 0..=10) + 1 surviving custom type after the row-5 merge"
+            11,
+            "10 seeded (ids 0..=9) + 1 surviving custom type after the row-5 merge"
         );
 
         // One merge audit row carrying the REAL cosine + verdict (spec §5.1).
@@ -1543,8 +1543,8 @@ mod tests {
         );
         assert_eq!(
             count_entity_types(&conn, "g3").await,
-            13,
-            "both types survive — 11 seeded (ids 0..=10) + 2 distinct custom types"
+            12,
+            "both types survive — 10 seeded (ids 0..=9) + 2 distinct custom types"
         );
     }
 
