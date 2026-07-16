@@ -610,6 +610,7 @@ async fn test_contextualize_one_hop_expansion() {
             query: "alice",
             group_id: None,
             limit: None,
+            as_of: None,
         })
         .await
         .expect("contextualize failed");

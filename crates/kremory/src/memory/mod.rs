@@ -316,18 +316,14 @@ pub async fn search(params: SearchParams<'_>) -> Result<Vec<RetrievedContext>> {
         namespace,
         opts,
     } = params;
-    // F4 (ADR adr-memory-builder-as-of-fail-loud / DENT-001): `as_of` point-in-time
-    // recall is declared but not yet implemented in SQL. Previously this silently
-    // no-op'd (warn + current-state results) — the worst footgun on a bi-temporal
-    // engine. Fail loud HERE at the consumption point so the guard covers BOTH the
-    // `.as_of()` setter AND the `.opts(SearchOpts{as_of})` escape hatch (one guard,
-    // not one of N setters — load-bearing-invariants-at-emit-not-prompt). Real SQL
-    // impl is parked as tech-debt; until then the surface must not lie.
-    if opts.as_of.is_some() {
-        return Err(MemoryError::Core(crate::core::error::Error::Unsupported {
-            feature: "as_of point-in-time recall",
-        }));
-    }
+    // ADR-068 (supersedes `adr-memory-builder-as-of-fail-loud` / F4 / DENT-001):
+    // `as_of` point-in-time recall is now IMPLEMENTED — `opts.as_of` passes
+    // through to `graph_search` → `contextualize()` → `TemporalGraph::
+    // get_neighbours_at`, which applies the valid-time predicate at the 1-hop
+    // fact-expansion step. The prior guard here (`Err(Error::Unsupported)`,
+    // and before that a silent `tracing::warn!` no-op) is gone — both were
+    // footguns on a bi-temporal engine that declared a capability it didn't
+    // have; the real SQL filter now backs the surface.
     graph
         .graph_search(GraphSearchParams {
             namespace: &namespace,
@@ -770,6 +766,7 @@ mod tests {
         last_search_namespace: Mutex<Option<Namespace>>,
         last_search_query: Mutex<Option<String>>,
         last_search_limit: Mutex<Option<usize>>,
+        last_search_as_of: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
         last_consolidation_namespace: Mutex<Option<Namespace>>,
     }
 
@@ -875,6 +872,7 @@ mod tests {
             *self.last_search_namespace.lock().unwrap() = Some(namespace.clone());
             *self.last_search_query.lock().unwrap() = Some(query.to_string());
             *self.last_search_limit.lock().unwrap() = opts.limit;
+            *self.last_search_as_of.lock().unwrap() = opts.as_of;
             Ok(vec![RetrievedContext {
                 entity_id: "ent-stub".into(),
                 entity_name: "Stub Entity".into(),
@@ -1097,34 +1095,45 @@ mod tests {
         assert_eq!(resolved_fallback, now);
     }
 
-    /// F4 (ADR adr-memory-builder-as-of-fail-loud): search() FAILS LOUD when
-    /// opts.as_of is Some — point-in-time recall is declared-but-unimplemented,
-    /// so a silent no-op (the old Story #318 warn-only behaviour) is replaced by
-    /// `Err(Error::Unsupported)`. Rewritten (not deleted) from
-    /// `as_of_emits_v010_warn` per treat-cause-not-symptom: the test now asserts
-    /// the corrected behaviour rather than locking the footgun.
+    /// ADR-068 (supersedes `adr-memory-builder-as-of-fail-loud`): `search()`
+    /// no longer fails loud on `opts.as_of` — the guard is gone and `as_of`
+    /// passes through to `graph.graph_search`, exactly like `limit` does.
+    /// Retired name `as_of_errors_unsupported` (per the ADR's companion spec
+    /// Decision 3: "this specific test name is retired since there's no more
+    /// `Unsupported` path for `as_of` to hit"). This unit level only proves
+    /// the STUB-level delegation contract (opts round-trip to `GraphHandle`
+    /// unchanged, no error) — the real valid-time SQL filtering correctness
+    /// is covered end-to-end in `tests/facade_as_of_warn.rs` against a real
+    /// `TemporalGraph` (a canned `StubGraphHandle` can't exercise SQL).
     #[tokio::test]
-    async fn as_of_errors_unsupported() {
+    async fn search_passes_as_of_through_without_erroring() {
         use chrono::Utc;
         let graph = StubGraphHandle::default();
         let namespace = Namespace::new("ws-as-of");
+        let ts = Utc::now();
         let opts = SearchOpts {
             limit: None,
-            as_of: Some(Utc::now()),
+            as_of: Some(ts),
             source_kind: None,
         };
-        let result = search(SearchParams {
+        let hits = search(SearchParams {
             graph: &graph,
             query: "test",
             namespace,
             opts,
         })
-        .await;
-        match result {
-            Err(MemoryError::Core(crate::core::error::Error::Unsupported { feature })) => {
-                assert_eq!(feature, "as_of point-in-time recall");
-            }
-            other => panic!("as_of must fail loud with Error::Unsupported, got: {other:?}"),
-        }
+        .await
+        .expect("as_of must no longer error — ADR-068 implements the surface");
+
+        assert_eq!(
+            hits.len(),
+            1,
+            "stub delegation must still return its canned hit"
+        );
+        assert_eq!(
+            *graph.last_search_as_of.lock().unwrap(),
+            Some(ts),
+            "opts.as_of must round-trip to GraphHandle::graph_search unchanged"
+        );
     }
 }

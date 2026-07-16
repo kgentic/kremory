@@ -233,6 +233,28 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(Some(fact_id)) => {
                         pinned_count = pinned_count.saturating_add(1);
                         pinned_fact_ids.push(fact_id);
+                        // ADR-068 boy-scout: bind the caller-asserted bounded
+                        // window (StructuredFact.valid_to, "None = open-ended")
+                        // if given — this used to be silently dropped
+                        // (`PrePinnedFact` carried `valid_from` only). Mirrors
+                        // `SupersedeRequest`'s own `bound_valid_to` call
+                        // (Amendment C) — NOT `invalidate_fact`/
+                        // `invalidate_fact_with_reason`, which write
+                        // `expired_at`/`invalid_at` (a separate, later,
+                        // system-time retirement act).
+                        if let Some(valid_to) = pf.valid_to {
+                            if let Err(e) = self.graph.bound_valid_to(fact_id, valid_to).await {
+                                tracing::warn!(
+                                    subject = %pf.subject,
+                                    fact_id,
+                                    error = %e,
+                                    "kremory.with_facts.valid_to_bind_failed"
+                                );
+                            } else {
+                                metrics::counter!("kremory.with_facts.valid_to_bound_total")
+                                    .increment(1);
+                            }
+                        }
                         // ADR-045 §3 / spec §1.2: stamp ConsumerPinned on the subject entity
                         // so the dream reclassify pass skips it. Best-effort — a warn on
                         // failure is sufficient; the fact is already pinned.

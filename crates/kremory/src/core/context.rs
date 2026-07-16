@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
+
 use crate::core::error::Result;
 use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
@@ -18,6 +20,12 @@ pub struct ContextualizeParams<'a> {
     pub group_id: Option<&'a str>,
     /// Optional result cap (defaults to `config.search.top_k`).
     pub limit: Option<usize>,
+    /// ADR-068 — point-in-time (valid-time) filter for the 1-hop fact
+    /// expansion. `None` = today's behaviour (all non-expired facts,
+    /// valid-time-agnostic). `Some(t)` = only facts whose
+    /// `[valid_from, valid_to)` window contains `t` are surfaced. Entity
+    /// search itself is unaffected — entities carry no temporal columns.
+    pub as_of: Option<DateTime<Utc>>,
 }
 
 /// Result of a contextualize() call: entities + facts from search + 1-hop expansion.
@@ -49,6 +57,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             query,
             group_id,
             limit,
+            as_of,
         } = params;
         let limit = limit.unwrap_or(self.config.search.top_k);
 
@@ -149,7 +158,19 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         let mut seen_fact_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
         for seed_id in &seed_ids {
-            let subgraph = self.graph.get_neighbours(seed_id, 1).await?;
+            // ADR-068 Decision 2/3: `get_neighbours_at` with `as_of: None`
+            // runs the copy-identical query `get_neighbours` ran here before
+            // this spec — switching unconditionally to the `_at` sibling
+            // keeps this call site single-shaped rather than branching on
+            // `as_of.is_some()`.
+            let subgraph = self
+                .graph
+                .get_neighbours_at(crate::core::graph::GetNeighboursAtParams {
+                    entity_id: seed_id,
+                    hops: 1,
+                    as_of,
+                })
+                .await?;
 
             for entity in subgraph.entities {
                 // Apply group_id filter if specified
@@ -207,6 +228,7 @@ mod tests {
             query,
             group_id: None,
             limit: None,
+            as_of: None,
         }
     }
 
@@ -313,6 +335,7 @@ mod tests {
                 query: "Alice",
                 group_id: None,
                 limit: Some(1),
+                as_of: None,
             })
             .await
             .unwrap();

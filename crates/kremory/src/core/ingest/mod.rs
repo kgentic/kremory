@@ -148,6 +148,18 @@ pub struct PrePinnedFact {
     pub object_value: Option<String>,
     /// World-time start of the fact's validity window.
     pub valid_from: DateTime<Utc>,
+    /// World-time end of the fact's validity window, `None` = open-ended.
+    /// Mirrors `memory::types::StructuredFact.valid_to` (Story #318) — added
+    /// alongside ADR-068 (`as_of` point-in-time recall): before this field
+    /// existed, a caller-asserted bounded window was silently dropped on the
+    /// pin path (`PrePinnedFact` carried `valid_from` only), so a fact like
+    /// "worked here 2020-2022" could never close except via the separate,
+    /// explicit `mem.supersede()` builder. Bound via
+    /// [`TemporalGraph::bound_valid_to`] at insert time — NOT
+    /// `invalidate_fact`/`invalidate_fact_with_reason`, which write
+    /// `expired_at`/`invalid_at` (system-time / domain-invalidation, a
+    /// different, later act).
+    pub valid_to: Option<DateTime<Utc>>,
     /// Caller's confidence score [0.0, 1.0]. Defaults to 1.0 at the translation layer.
     pub confidence: f64,
 }

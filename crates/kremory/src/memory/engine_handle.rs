@@ -196,7 +196,10 @@ impl GraphHandle for EngineGraphHandle {
         // (caller can override via `published_at()` builder). Object goes
         // to object_value (literal); object_id resolution is the engine's
         // job during Phase 2 if applicable. Confidence defaults to 1.0
-        // (StructuredFact does not carry a confidence field).
+        // (StructuredFact does not carry a confidence field). `valid_to`
+        // passes through as-is (`None` = open-ended, matching StructuredFact's
+        // own doc comment) — ADR-068 boy-scout: this used to be silently
+        // dropped (see `PrePinnedFact::valid_to`'s doc comment).
         let pre_pinned_facts: Vec<PrePinnedFact> = structured_facts
             .iter()
             .map(|sf| PrePinnedFact {
@@ -208,6 +211,7 @@ impl GraphHandle for EngineGraphHandle {
                     .valid_from
                     .or(source_ref.published_at)
                     .unwrap_or(source_ref.occurred_at),
+                valid_to: sf.valid_to,
                 confidence: 1.0,
             })
             .collect();
@@ -566,6 +570,20 @@ impl GraphHandle for EngineGraphHandle {
         } = params;
         let group_id = namespace_to_group_id(namespace);
         let limit = opts.limit;
+        let as_of = opts.as_of;
+
+        // ADR-068 NFR — "how often is as_of actually used" adoption counter
+        // for a brand-new, previously-erroring surface (observability-first-
+        // class: a new capability needs a usage signal from day one, mirrors
+        // recall-v2's `intent_classified_total` reasoning for a similarly-new
+        // signal).
+        if as_of.is_some() {
+            metrics::counter!(
+                "kremory.recall.as_of_used_total",
+                "namespace" => namespace.namespace.clone()
+            )
+            .increment(1);
+        }
 
         let context = self
             .engine
@@ -573,10 +591,20 @@ impl GraphHandle for EngineGraphHandle {
                 query,
                 group_id: Some(&group_id),
                 limit,
+                as_of,
             })
             .await
             .map_err(MemoryError::Core)?;
 
+        // ADR-068: `context.facts` above is ALREADY `as_of`-filtered at its
+        // one true source (`TemporalGraph::get_neighbours_at`, called from
+        // `contextualize()` for every seed). The per-entity projection below
+        // (G5) only re-shapes already-filtered facts into `RetrievedFact` —
+        // it does not need (and must not add) a second temporal filter here.
+        // A single enforcement site keeps `as_of`'s semantics from drifting
+        // between two copies of the same predicate (treat-cause-not-symptom:
+        // filter once, at the SQL layer that owns the temporal columns).
+        //
         // Rule 19 / ADR-074 review H1: observe the fact→entity ownership
         // projection BEFORE `context.entities` is consumed by the loop below.
         // This is the exact silent projection/filter shape whose prior version
