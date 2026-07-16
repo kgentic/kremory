@@ -213,6 +213,39 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     .await;
                 }
 
+                // MED-1 time-inversion guard — mirror `facade/supersede.rs`'s
+                // `if valid_to < fact.valid_from` reject (§3b step 3). A
+                // caller-asserted `valid_to` predating the fact's own resolved
+                // `valid_from` is a nonsensical `[valid_from, valid_to)` window
+                // that, once bound, makes the fact permanently invisible to
+                // every `as_of(t)` query. The default `valid_from` is ingest
+                // `now()` (`sf.valid_from.or(published_at).unwrap_or(occurred_at)`
+                // in `engine_handle.rs`), so a caller who supplies `valid_to`
+                // but NOT `valid_from` trivially inverts the window.
+                //
+                // DECISION: reject the WHOLE pin (skip the insert entirely) —
+                // do NOT silently drop the `valid_to` and persist an open-ended
+                // window the caller never asked for. Caller-asserted temporal
+                // data is never silently altered; a nonsensical assertion is
+                // refused outright. Observable via counter + warn, never silent.
+                if let Some(valid_to) = pf.valid_to {
+                    if valid_to < pf.valid_from {
+                        metrics::counter!(
+                            "kremory.with_facts.pin_rejected_total",
+                            "outcome" => "rejected_time_inversion"
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            subject = %pf.subject,
+                            predicate = %pf.predicate,
+                            valid_from = %pf.valid_from,
+                            valid_to = %valid_to,
+                            "kremory.with_facts.pin_rejected_time_inversion"
+                        );
+                        continue;
+                    }
+                }
+
                 match self
                     .graph
                     .try_insert_fact_with_group(
@@ -244,6 +277,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // system-time retirement act).
                         if let Some(valid_to) = pf.valid_to {
                             if let Err(e) = self.graph.bound_valid_to(fact_id, valid_to).await {
+                                // MED-2 (Rule 19): a dropped caller-asserted
+                                // `valid_to` (DB-level bind failure — distinct
+                                // from the MED-1 time-inversion reject above)
+                                // must be observable, not just warn-logged. The
+                                // success path already has
+                                // `valid_to_bound_total`; pair it with a failure
+                                // counter so the drop rate is a metric.
+                                metrics::counter!("kremory.with_facts.valid_to_bind_failed_total")
+                                    .increment(1);
                                 tracing::warn!(
                                     subject = %pf.subject,
                                     fact_id,
