@@ -23,6 +23,26 @@
 //!    `entity_type_id = new_id, entity_type_source = 'DreamPass0'`.
 //!    Without an embedder: retype ALL evidence entities for the accepted type (D4).
 //!
+//!    **TD-123 guard (default OFF):** this cosine-only comparison is a BARE
+//!    ENTITY NAME (`entities.id`) embedded against a TYPE DESCRIPTION — the same
+//!    degenerate-embedding failure class TD-097/ADR-063 documented (short bare
+//!    labels collapse to near-identical vectors under `nomic-embed-text`), just
+//!    cross-domain instead of name-vs-name. Unlike ADR-063's six sites, this
+//!    comparison was never spike-validated (ADR-063: "every kremory-specific
+//!    numeric threshold MUST PASS a `/ship-spike`... BEFORE it is wired into the
+//!    production path") and has no deterministic corroboration signal — a
+//!    lexical gate on entity-name-vs-type-name would reject legitimate matches
+//!    (an instance name like "Nobu Malibu" shares no lemma with its type
+//!    "Restaurant"), so the ADR-057/063 lexical-gate pattern does not transplant
+//!    here unmodified. Gated behind `DreamOpts::include_evidence_retype_by_
+//!    similarity` (default `false`) pending a proper spike (mirrors the
+//!    quarantine-until-spiked posture ADR-063 used for every other new
+//!    mechanism). When OFF, evidence entities are left as catch-all
+//!    (`entity_type_id = 0`) — Pass 2 `reclassify` (LLM + confidence-gated, not
+//!    cosine-alone) runs immediately after Pass 0 in the same `mem.dream()` call
+//!    and safely picks up promotion instead (ADR-037 §9.6), so disabling this
+//!    path does not lose retype coverage, only the risky cosine-alone shortcut.
+//!
 //! ## Observability (ADR-037 §6)
 //!
 //! All 6 required metrics are emitted:
@@ -123,6 +143,13 @@ pub(crate) struct DiscoverTypesParams<'a> {
     /// UNCHANGED. `true`: `NeedsLlmVerify` proposals are adjudicated via the
     /// shared `write_gate` (spec §2.2).
     pub(crate) llm_verify_band: bool,
+    /// TD-123 — `DreamOpts::include_evidence_retype_by_similarity`, threaded
+    /// from `facade/dream.rs`. `false` (default): the in-place evidence-retype
+    /// step (D4) skips the cosine-only bare-name-vs-type-description comparison
+    /// entirely (unspiked degeneracy risk, see module docs) and leaves evidence
+    /// entities as catch-all for Pass 2 `reclassify` to pick up safely. `true`:
+    /// opt-in to the pre-TD-123 cosine-alone retype behaviour.
+    pub(crate) evidence_retype_by_similarity: bool,
 }
 
 /// Discover new entity types from catch-all entities in `group_id`.
@@ -139,6 +166,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
         max_proposals,
         model_id,
         llm_verify_band,
+        evidence_retype_by_similarity,
     } = params;
     let mut result = DiscoveryResult::default();
 
@@ -347,6 +375,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         proposal: &proposal,
                         catch_alls: &catch_alls,
                         desc_emb_and_embedder: None,
+                        evidence_retype_by_similarity,
                         result: &mut result,
                     })
                     .await?;
@@ -376,6 +405,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         proposal: &proposal,
                         catch_alls: &catch_alls,
                         desc_emb_and_embedder: Some((&desc_emb, emb)),
+                        evidence_retype_by_similarity,
                         result: &mut result,
                     })
                     .await?;
@@ -400,6 +430,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                                 proposal: &proposal,
                                 catch_alls: &catch_alls,
                                 desc_emb_and_embedder: Some((&desc_emb, emb)),
+                                evidence_retype_by_similarity,
                                 result: &mut result,
                             })
                             .await?;
@@ -466,6 +497,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                             proposal: &proposal,
                             catch_alls: &catch_alls,
                             desc_emb_and_embedder: Some((&desc_emb, emb)),
+                            evidence_retype_by_similarity,
                             result: &mut result,
                         })
                         .await?;
@@ -481,6 +513,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                 proposal: &proposal,
                 catch_alls: &catch_alls,
                 desc_emb_and_embedder: None,
+                evidence_retype_by_similarity,
                 result: &mut result,
             })
             .await?;
@@ -551,6 +584,11 @@ struct AcceptProposalParams<'a> {
     catch_alls: &'a [CatchAllEntity],
     /// (proposal_desc_embedding, embedder) — `None` = degraded mode.
     desc_emb_and_embedder: Option<(&'a [f32], &'a dyn DynEmbeddingProvider)>,
+    /// TD-123 — `DreamOpts::include_evidence_retype_by_similarity` (default
+    /// `false`). Gates ONLY the `desc_emb_and_embedder = Some(..)` cosine-only
+    /// retype path (see module docs); irrelevant when `desc_emb_and_embedder`
+    /// is `None` (degraded mode always uses `retype_evidence_all`, unaffected).
+    evidence_retype_by_similarity: bool,
     result: &'a mut DiscoveryResult,
 }
 
@@ -562,6 +600,7 @@ async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
         proposal,
         catch_alls,
         desc_emb_and_embedder,
+        evidence_retype_by_similarity,
         result,
     } = params;
     let now = Utc::now().to_rfc3339();
@@ -665,23 +704,46 @@ async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
 
     // ── In-place evidence retype (D4) ─────────────────────────────────────────
     //
-    // If embedder available: retype only evidence entities whose name embedding
-    // is cosine ≥ 0.75 to the new type's description embedding (ADR-037 §9.6).
+    // If embedder available AND `evidence_retype_by_similarity` opted in: retype
+    // only evidence entities whose name embedding is cosine ≥ 0.75 to the new
+    // type's description embedding (ADR-037 §9.6). TD-123 (default OFF): this
+    // bare-name-vs-type-description comparison is an unspiked degeneracy risk
+    // (module docs) — when the flag is off, evidence entities are left as
+    // catch-all here; Pass 2 `reclassify` (LLM + confidence-gated) picks them up
+    // safely in the same `mem.dream()` call.
     //
     // If no embedder (degraded): retype ALL evidence entities for this type
-    // (accepted type's name is the only signal).
+    // (accepted type's name is the only signal) — unaffected by the flag.
 
     let retyped_count = if let Some((desc_emb, emb)) = desc_emb_and_embedder {
-        retype_evidence_by_similarity(RetypeBySimilarityParams {
-            conn,
-            group_id,
-            catch_alls,
-            new_type_id: new_id,
-            type_desc_emb: desc_emb,
-            emb,
-            now: &now,
-        })
-        .await?
+        if evidence_retype_by_similarity {
+            retype_evidence_by_similarity(RetypeBySimilarityParams {
+                conn,
+                group_id,
+                catch_alls,
+                new_type_id: new_id,
+                type_desc_emb: desc_emb,
+                emb,
+                now: &now,
+            })
+            .await?
+        } else {
+            counter!(
+                "kremory.dream.evidence_retype_by_similarity_skipped_total",
+                "namespace" => group_id.to_string()
+            )
+            .increment(1);
+            tracing::debug!(
+                target: "kremory::dream::discover_types",
+                group_id = %group_id,
+                type_name = %proposal.name,
+                new_id = new_id,
+                "discover_types: TD-123 — skipping cosine-only evidence retype \
+                 (DreamOpts::include_evidence_retype_by_similarity is false); \
+                 evidence entities remain catch-all for Pass 2 reclassify"
+            );
+            0
+        }
     } else {
         retype_evidence_all(RetypeAllParams {
             conn,
@@ -1293,6 +1355,7 @@ mod td051_tests {
             proposal: &proposal,
             catch_alls: &[],
             desc_emb_and_embedder: None,
+            evidence_retype_by_similarity: false,
             result: &mut result,
         })
         .await
@@ -1333,6 +1396,7 @@ mod td051_tests {
                 proposal: &proposal,
                 catch_alls: &[],
                 desc_emb_and_embedder: None,
+                evidence_retype_by_similarity: false,
                 result: &mut result,
             })
             .await
@@ -1435,6 +1499,7 @@ mod td050_full_workflow_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: false,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
@@ -1548,6 +1613,7 @@ mod td050_full_workflow_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: false,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
@@ -1746,6 +1812,7 @@ mod site2_type_novelty_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: false,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
@@ -1812,6 +1879,7 @@ mod site2_type_novelty_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: false,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
@@ -1883,6 +1951,7 @@ mod site2_type_novelty_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: true,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
@@ -1952,6 +2021,7 @@ mod site2_type_novelty_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: true,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
@@ -2022,6 +2092,7 @@ mod site2_type_novelty_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: true,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
@@ -2035,6 +2106,226 @@ mod site2_type_novelty_tests {
             result.types_rejected
         );
         assert_eq!(result.types_accepted[0].name, "LegalPrecedent");
+    }
+}
+
+// ─── TD-123 — cosine-alone evidence-retype guard ──────────────────────────────
+//
+// Vera-surfaced 7th cosine-alone-write site (outside ADR-063's six enumerated
+// sites): `retype_evidence_by_similarity` embeds a BARE ENTITY NAME and
+// compares it to the newly-accepted TYPE's DESCRIPTION embedding — the same
+// degenerate-embedding failure class TD-097 documented (short bare labels
+// collapse to near-identical vectors under weak embedders), just cross-domain
+// (name vs. description) rather than name-vs-name. This test simulates that
+// exact degeneracy: an UNRELATED catch-all entity's name embeds IDENTICALLY
+// (cosine = 1.0) to a newly-discovered, semantically-unrelated type's
+// description — proving the DEFAULT build does not wrongly retype it.
+#[cfg(test)]
+mod td123_evidence_retype_guard_tests {
+    use super::*;
+    use crate::core::entity_types::ensure_default_types_seeded;
+    use crate::core::provider::{
+        ChatMessage, ChatResponse, LLMError, MockChatResponse, StructuredOutputFormat, Tool,
+    };
+    use crate::core::schema::TemporalGraph;
+
+    #[derive(Debug)]
+    struct ScriptedProposalProvider {
+        json: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for ScriptedProposalProvider {
+        async fn chat_with_tools(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[Tool]>,
+            _json_schema: Option<StructuredOutputFormat>,
+        ) -> std::result::Result<Box<dyn ChatResponse>, LLMError> {
+            Ok(Box::new(MockChatResponse {
+                text: self.json.clone(),
+            }))
+        }
+    }
+
+    /// Deterministic embedder: pre-registered vector per input text (exact
+    /// match), zero vector otherwise (mirrors `site2_type_novelty_tests`'s
+    /// `MockEmbeddingProvider`).
+    #[derive(Debug, Clone)]
+    struct MockEmbeddingProvider {
+        vectors: std::collections::HashMap<String, Vec<f32>>,
+    }
+
+    impl DynEmbeddingProvider for MockEmbeddingProvider {
+        fn embed_dyn<'a>(
+            &'a self,
+            text: &'a str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<f32>>> + Send + 'a>>
+        {
+            let v = self
+                .vectors
+                .get(text)
+                .cloned()
+                .unwrap_or_else(|| vec![0.0_f32; 4]);
+            Box::pin(async move { Ok(v) })
+        }
+        fn last_usage_tokens_dyn(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    async fn seed_catch_all(conn: &libsql::Connection, group_id: &str, entity_id: &str) {
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO entities (id, entity_type_id, recorded_at, group_id) \
+             VALUES (?1, 0, ?2, ?3)",
+            libsql::params![entity_id.to_string(), now, group_id.to_string()],
+        )
+        .await
+        .expect("insert catch-all entity");
+    }
+
+    async fn entity_type_id(conn: &libsql::Connection, group_id: &str, entity_id: &str) -> i64 {
+        let mut rows = conn
+            .query(
+                "SELECT entity_type_id FROM entities WHERE id = ?1 AND group_id = ?2",
+                libsql::params![entity_id.to_string(), group_id.to_string()],
+            )
+            .await
+            .expect("query entity_type_id");
+        let row = rows
+            .next()
+            .await
+            .expect("row read")
+            .expect("entity must exist");
+        row.get::<i64>(0).expect("entity_type_id column")
+    }
+
+    const DEGENERATE_PROPOSAL_JSON: &str = r#"{"proposals":[{"name":"Recipe","description":"A step-by-step cooking guide with ingredients and cook time.","justification":"catch-all evidence suggests a recipe type."}]}"#;
+
+    /// RED (pre-fix): with the OLD unguarded code, `cosine("ibm", recipe_desc)
+    /// = 1.0 >= EVIDENCE_RETYPE_COSINE (0.75)` retypes "ibm" (an unrelated
+    /// catch-all entity) to the newly-discovered "Recipe" type — a false
+    /// retype driven by cosine alone, with zero lexical/LLM corroboration.
+    ///
+    /// GREEN (post-fix): `DreamOpts::include_evidence_retype_by_similarity`
+    /// defaults `false`, so the cosine-only retype path is skipped entirely —
+    /// "ibm" stays catch-all (`entity_type_id = 0`), left for Pass 2
+    /// `reclassify`'s LLM+confidence gate to handle safely.
+    #[tokio::test]
+    async fn default_flag_off_does_not_retype_on_degenerate_cosine_collision() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        ensure_default_types_seeded(&conn, "g1")
+            .await
+            .expect("seed defaults 0..=10");
+        seed_catch_all(&conn, "g1", "ibm").await;
+
+        // Degenerate collision: the catch-all entity's bare name embeds
+        // IDENTICALLY to the new type's description (cosine = 1.0), simulating
+        // an anisotropic embedder that does not discriminate unrelated bare
+        // labels (TD-097's `cos(Person, Date) = 1.0000` finding, cross-domain).
+        let collision_vec = vec![1.0_f32, 0.0, 0.0, 0.0];
+        let mut vectors = std::collections::HashMap::new();
+        vectors.insert("ibm".to_string(), collision_vec.clone());
+        vectors.insert(
+            "A step-by-step cooking guide with ingredients and cook time.".to_string(),
+            collision_vec,
+        );
+        let embedder = MockEmbeddingProvider { vectors };
+
+        let llm = ScriptedProposalProvider {
+            json: DEGENERATE_PROPOSAL_JSON.to_string(),
+        };
+
+        let result = discover_types(
+            &llm,
+            DiscoverTypesParams {
+                conn: &conn,
+                group_id: "g1",
+                embedder: Some(&embedder),
+                max_proposals: 3,
+                model_id: "test-model",
+                llm_verify_band: false,
+                evidence_retype_by_similarity: false, // DEFAULT
+            },
+        )
+        .await
+        .expect("discover_types must succeed");
+
+        assert_eq!(
+            result.types_accepted.len(),
+            1,
+            "the Recipe type itself must still be accepted (distinct from \
+             existing defaults) — only the RETYPE decision is guarded, got {:?}",
+            result.types_rejected
+        );
+        assert_eq!(
+            result.entities_retyped, 0,
+            "flag OFF (default): the cosine-only retype path must be entirely \
+             skipped — a degenerate collision must not retype 'ibm' into 'Recipe'"
+        );
+        assert_eq!(
+            entity_type_id(&conn, "g1", "ibm").await,
+            0,
+            "'ibm' must remain catch-all (entity_type_id=0) — a bare-name-vs-\
+             type-description cosine collision is not a valid retype signal \
+             without corroboration (TD-123)"
+        );
+    }
+
+    /// Regression: explicitly opting IN to the pre-TD-123 behaviour still
+    /// retypes on the same degenerate collision — proves the flag genuinely
+    /// gates the code path (not a permanently-dead branch) and preserves the
+    /// escape hatch for a caller who has independently validated the threshold.
+    #[tokio::test]
+    async fn flag_on_preserves_pre_td123_cosine_retype_behaviour() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        ensure_default_types_seeded(&conn, "g2")
+            .await
+            .expect("seed defaults 0..=10");
+        seed_catch_all(&conn, "g2", "ibm").await;
+
+        let collision_vec = vec![1.0_f32, 0.0, 0.0, 0.0];
+        let mut vectors = std::collections::HashMap::new();
+        vectors.insert("ibm".to_string(), collision_vec.clone());
+        vectors.insert(
+            "A step-by-step cooking guide with ingredients and cook time.".to_string(),
+            collision_vec,
+        );
+        let embedder = MockEmbeddingProvider { vectors };
+
+        let llm = ScriptedProposalProvider {
+            json: DEGENERATE_PROPOSAL_JSON.to_string(),
+        };
+
+        let result = discover_types(
+            &llm,
+            DiscoverTypesParams {
+                conn: &conn,
+                group_id: "g2",
+                embedder: Some(&embedder),
+                max_proposals: 3,
+                model_id: "test-model",
+                llm_verify_band: false,
+                evidence_retype_by_similarity: true, // explicit opt-in
+            },
+        )
+        .await
+        .expect("discover_types must succeed");
+
+        assert_eq!(
+            result.entities_retyped, 1,
+            "flag ON: opt-in preserves the pre-TD-123 cosine-only retype \
+             behaviour on the same degenerate collision"
+        );
+        assert_ne!(
+            entity_type_id(&conn, "g2", "ibm").await,
+            0,
+            "flag ON: 'ibm' is retyped away from catch-all, matching pre-TD-123 \
+             behaviour exactly"
+        );
     }
 }
 
@@ -2176,6 +2467,7 @@ mod td050_real_llm_tests {
                 max_proposals: 3,
                 model_id: "test-model",
                 llm_verify_band: false,
+                evidence_retype_by_similarity: false,
             },
         )
         .await
