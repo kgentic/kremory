@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use metrics::histogram;
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
@@ -6,6 +7,15 @@ use crate::core::error::Result;
 use crate::core::schema::{Fact, TemporalGraph};
 
 use super::{row_to_fact, SubGraph};
+
+/// Bundled parameters for [`TemporalGraph::get_neighbours_at`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments; the receiver plus 3
+/// positional params trips the project's 3-arg threshold).
+pub struct GetNeighboursAtParams<'a> {
+    pub entity_id: &'a str,
+    pub hops: u32,
+    pub as_of: Option<DateTime<Utc>>,
+}
 
 impl TemporalGraph {
     pub async fn get_neighbours(&self, entity_id: &str, hops: u32) -> Result<SubGraph> {
@@ -80,6 +90,132 @@ impl TemporalGraph {
         histogram!("rql.db.get_neighbours_facts").record(fact_count as f64);
         histogram!("rql.db.get_neighbours_ms").record(_ms);
         tracing::info!(_ms, entity_count, fact_count, "kremory.db.get_neighbours");
+        Ok(SubGraph {
+            entities,
+            facts: collected_facts,
+        })
+    }
+
+    /// Temporal-bounded sibling of [`Self::get_neighbours`] (ADR-068 Decision
+    /// 2 / TD-079 implement fork). `as_of: None` runs the copy-identical
+    /// per-hop `WHERE (subject_id = ?1 OR object_id = ?1) AND expired_at IS
+    /// NULL` query `get_neighbours` runs today; `as_of: Some(t)` adds the SAME
+    /// valid-time predicate `facts_at`/`entity_facts_at` already use:
+    /// `valid_from <= ?t AND (valid_to IS NULL OR valid_to > ?t)`.
+    /// `expired_at IS NULL` stays unconditional (system-time hard-retirement,
+    /// orthogonal to `as_of`); `invalid_at` is deliberately NOT checked — a
+    /// fact later flagged by the contradiction resolver but still
+    /// valid-time-in-window at T must still surface for `as_of(T)`; that's
+    /// the entire point of bi-temporal audit (prove what the record showed as
+    /// true at T, even after correction).
+    ///
+    /// [`Self::get_neighbours`] is intentionally left UNTOUCHED above — this
+    /// is a new sibling fn, not a modified shared primitive (ADR-068 Decision
+    /// 2: other call sites, e.g. `speculative_cache.rs`'s prefetch, have no
+    /// reason to carry a now-mandatory `as_of` parameter through their
+    /// signatures).
+    pub async fn get_neighbours_at(&self, params: GetNeighboursAtParams<'_>) -> Result<SubGraph> {
+        let GetNeighboursAtParams {
+            entity_id,
+            hops,
+            as_of,
+        } = params;
+        let _db_start = Instant::now();
+        let mut visited_entities: HashSet<String> = HashSet::new();
+        let mut collected_facts: Vec<Fact> = Vec::new();
+        let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+
+        visited_entities.insert(entity_id.to_string());
+        queue.push_back((entity_id.to_string(), 0));
+
+        let as_of_str = as_of.map(|t| t.to_rfc3339());
+
+        while let Some((current_id, depth)) = queue.pop_front() {
+            if depth >= hops {
+                continue;
+            }
+
+            let current_id_str = current_id.clone();
+            let mut rows = match &as_of_str {
+                None => {
+                    self.conn
+                        .query(
+                            "SELECT id, subject_id, predicate, object_id, object_value, properties,
+                                    valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                                memory_type, content_hash, access_count
+                             FROM facts
+                             WHERE (subject_id = ?1 OR object_id = ?1)
+                               AND expired_at IS NULL",
+                            libsql::params![current_id_str],
+                        )
+                        .await?
+                }
+                Some(t) => {
+                    self.conn
+                        .query(
+                            "SELECT id, subject_id, predicate, object_id, object_value, properties,
+                                    valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
+                                memory_type, content_hash, access_count
+                             FROM facts
+                             WHERE (subject_id = ?1 OR object_id = ?1)
+                               AND expired_at IS NULL
+                               AND valid_from <= ?2
+                               AND (valid_to IS NULL OR valid_to > ?2)",
+                            libsql::params![current_id_str, t.clone()],
+                        )
+                        .await?
+                }
+            };
+
+            let mut batch: Vec<Fact> = Vec::new();
+            while let Some(row) = rows.next().await? {
+                batch.push(row_to_fact(&row)?);
+            }
+
+            for fact in batch {
+                let neighbour_id = if fact.subject_id == current_id {
+                    fact.object_id.clone()
+                } else {
+                    Some(fact.subject_id.clone())
+                };
+
+                collected_facts.push(fact);
+
+                if let Some(nid) = neighbour_id {
+                    if !visited_entities.contains(&nid) {
+                        visited_entities.insert(nid.clone());
+                        queue.push_back((nid, depth + 1));
+                    }
+                }
+            }
+        }
+
+        // Deduplicate facts by id
+        collected_facts.sort_by_key(|f| f.id);
+        collected_facts.dedup_by_key(|f| f.id);
+
+        // Load all discovered entities
+        let mut entities = Vec::new();
+        for eid in &visited_entities {
+            if let Some(entity) = self.get_entity(eid).await? {
+                entities.push(entity);
+            }
+        }
+
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        let entity_count = entities.len();
+        let fact_count = collected_facts.len();
+        // Own histograms (not shared with get_neighbours) mirroring facts_at's
+        // rql.db.facts_at_ms/_count pattern exactly (observability-first-class).
+        histogram!("rql.db.get_neighbours_at_ms").record(_ms);
+        histogram!("rql.db.get_neighbours_at_count").record(fact_count as f64);
+        tracing::info!(
+            _ms,
+            entity_count,
+            fact_count,
+            as_of_applied = as_of.is_some(),
+            "kremory.db.get_neighbours_at"
+        );
         Ok(SubGraph {
             entities,
             facts: collected_facts,

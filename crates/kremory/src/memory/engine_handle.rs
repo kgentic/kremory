@@ -196,7 +196,10 @@ impl GraphHandle for EngineGraphHandle {
         // (caller can override via `published_at()` builder). Object goes
         // to object_value (literal); object_id resolution is the engine's
         // job during Phase 2 if applicable. Confidence defaults to 1.0
-        // (StructuredFact does not carry a confidence field).
+        // (StructuredFact does not carry a confidence field). `valid_to`
+        // passes through as-is (`None` = open-ended, matching StructuredFact's
+        // own doc comment) — ADR-068 boy-scout: this used to be silently
+        // dropped (see `PrePinnedFact::valid_to`'s doc comment).
         let pre_pinned_facts: Vec<PrePinnedFact> = structured_facts
             .iter()
             .map(|sf| PrePinnedFact {
@@ -208,6 +211,7 @@ impl GraphHandle for EngineGraphHandle {
                     .valid_from
                     .or(source_ref.published_at)
                     .unwrap_or(source_ref.occurred_at),
+                valid_to: sf.valid_to,
                 confidence: 1.0,
             })
             .collect();
@@ -566,6 +570,20 @@ impl GraphHandle for EngineGraphHandle {
         } = params;
         let group_id = namespace_to_group_id(namespace);
         let limit = opts.limit;
+        let as_of = opts.as_of;
+
+        // ADR-068 NFR — "how often is as_of actually used" adoption counter
+        // for a brand-new, previously-erroring surface (observability-first-
+        // class: a new capability needs a usage signal from day one, mirrors
+        // recall-v2's `intent_classified_total` reasoning for a similarly-new
+        // signal).
+        if as_of.is_some() {
+            metrics::counter!(
+                "kremory.recall.as_of_used_total",
+                "namespace" => namespace.namespace.clone()
+            )
+            .increment(1);
+        }
 
         let context = self
             .engine
@@ -573,9 +591,59 @@ impl GraphHandle for EngineGraphHandle {
                 query,
                 group_id: Some(&group_id),
                 limit,
+                as_of,
             })
             .await
             .map_err(MemoryError::Core)?;
+
+        // ADR-068: `context.facts` above is ALREADY `as_of`-filtered at its
+        // one true source (`TemporalGraph::get_neighbours_at`, called from
+        // `contextualize()` for every seed). The per-entity projection below
+        // (G5) only re-shapes already-filtered facts into `RetrievedFact` —
+        // it does not need (and must not add) a second temporal filter here.
+        // A single enforcement site keeps `as_of`'s semantics from drifting
+        // between two copies of the same predicate (treat-cause-not-symptom:
+        // filter once, at the SQL layer that owns the temporal columns).
+        //
+        // Rule 19 / ADR-074 review H1: observe the fact→entity ownership
+        // projection BEFORE `context.entities` is consumed by the loop below.
+        // This is the exact silent projection/filter shape whose prior version
+        // dropped facts undetected in production (TD-116) — a same-shaped
+        // regression must show up here, not require a re-run of that incident.
+        // A fact "drops" when NEITHER its `subject_id` NOR its `object_id`
+        // matches any entity in this recall's result set — e.g. the group_id
+        // filter below strips a neighbour entity out of `context.entities`
+        // while its connecting fact remains in `context.facts` (ADR-074
+        // review M3). G5 (gap-register / ADR-074 F1): a fact is now "attached"
+        // whenever EITHER endpoint survives into the result set — matching the
+        // per-entity projection fix below, which attaches a fact to an entity
+        // whether that entity is the fact's subject OR its object. Computed
+        // once, globally, so a fact is counted attached at most once (never
+        // double-counted across the per-entity loop; Rule 19 anti-pattern #9,
+        // "counters that lie").
+        let result_entity_ids: std::collections::HashSet<&str> =
+            context.entities.iter().map(|e| e.id.as_str()).collect();
+        let facts_candidates = context.facts.len();
+        let facts_attached = context
+            .facts
+            .iter()
+            .filter(|f| {
+                result_entity_ids.contains(f.subject_id.as_str())
+                    || f.object_id
+                        .as_deref()
+                        .is_some_and(|oid| result_entity_ids.contains(oid))
+            })
+            .count();
+        let facts_dropped_ownership = facts_candidates.saturating_sub(facts_attached);
+        metrics::counter!("kremory.recall.facts_attached_total").increment(facts_attached as u64);
+        metrics::counter!("kremory.recall.facts_dropped_ownership_total")
+            .increment(facts_dropped_ownership as u64);
+        tracing::debug!(
+            facts_candidates,
+            facts_attached,
+            facts_dropped_ownership,
+            "kremory.recall.facts_attached"
+        );
 
         // Map ContextResult (Entity + Fact) → Vec<RetrievedContext>.
         // Each entity becomes one RetrievedContext. source_refs are derived
@@ -639,35 +707,67 @@ impl GraphHandle for EngineGraphHandle {
             let entity_type_id = entity.entity_type_id;
             let entity_type_name = entity.label.clone();
 
-            // ADR-074 / TD-116: surface the entity's connected facts (subject-owned,
-            // deduped by construction — a fact appears under its subject only) so
-            // recall returns the actual knowledge, not just the entity name. The
-            // facts are already computed by `contextualize` (`context.facts`); here
-            // each is projected to the LLM-facing `RetrievedFact` shape (natural-
-            // language string + structured triple + BOTH bi-temporal clocks +
-            // confidence + provenance).
+            // ADR-074 / TD-116 / G5 (gap-register F1): surface the entity's
+            // connected facts — BOTH subject-owned and object-owned, deduped by
+            // construction (`context.facts.iter()` visits each `Fact` row once;
+            // the OR below just decides whether THIS entity's projection keeps
+            // it, so a self-referential fact where the entity is both subject
+            // and object still appears exactly once) — so recall returns the
+            // actual knowledge from every entity's own point of view, not just
+            // the subject's. Pre-G5 this filter was `f.subject_id == entity.id`
+            // only: an object entity (e.g. "Acme" in "Alice works_at Acme") got
+            // an empty `facts` list even though `contextualize`/`get_neighbours`
+            // had already collected both the entity and its connecting fact.
+            // The facts are already computed by `contextualize` (`context.facts`);
+            // here each is projected to the LLM-facing `RetrievedFact` shape
+            // (natural-language string + structured triple + BOTH bi-temporal
+            // clocks + confidence + provenance).
             let facts: Vec<RetrievedFact> = context
                 .facts
                 .iter()
-                .filter(|f| f.subject_id == entity.id)
+                .filter(|f| {
+                    f.subject_id == entity.id || f.object_id.as_deref() == Some(entity.id.as_str())
+                })
                 .map(|f| {
                     let object_is_entity = f.object_id.is_some();
-                    // Prefer the literal value; fall back to the object entity id.
-                    // (F2 endpoint display-name resolution for object entities is a
-                    // deferred enhancement — literal objects render cleanly today.)
-                    let object = f
-                        .object_value
-                        .clone()
-                        .or_else(|| f.object_id.clone())
-                        .unwrap_or_default();
-                    let fact = format!("{entity_name} {} {object}", f.predicate);
+                    // The filter above guarantees at least one side matches;
+                    // when the subject side does NOT match, this entity must be
+                    // the object side (self-referential facts, where both sides
+                    // match, keep the existing subject-perspective rendering).
+                    let entity_is_object_only = f.subject_id != entity.id;
+                    let (subject, object) = if entity_is_object_only {
+                        // This entity IS the fact's object: render its own
+                        // (known) display name as `object`; the subject side
+                        // falls back to the raw id — the same deferred F2
+                        // display-name-resolution limitation noted below for
+                        // the literal/object-entity id fallback, just mirrored
+                        // onto the subject side for this perspective.
+                        (f.subject_id.clone(), entity_name.clone())
+                    } else {
+                        // Prefer the literal value; fall back to the object entity id.
+                        // (F2 endpoint display-name resolution for object entities is a
+                        // deferred enhancement — literal objects render cleanly today.)
+                        let object = f
+                            .object_value
+                            .clone()
+                            .or_else(|| f.object_id.clone())
+                            .unwrap_or_default();
+                        (entity_name.clone(), object)
+                    };
+                    let fact = format!("{subject} {} {object}", f.predicate);
                     RetrievedFact {
                         fact,
-                        subject: entity_name.clone(),
+                        subject,
                         predicate: f.predicate.clone(),
                         object,
                         object_is_entity,
                         valid_at: f.valid_from,
+                        // NOT `f.invalid_at` (schema.rs:126 — the contradiction-resolver's
+                        // invalidation timestamp, an explicitly DISTINCT concept from
+                        // `valid_to`). The wire-facing "world clock" invalid_at IS
+                        // `Fact.valid_to`; a future "fix" to read `f.invalid_at` here
+                        // would silently break the supersession signal on every
+                        // `RetrievedFact` (ADR-074 review M4).
                         invalid_at: f.valid_to,
                         recorded_at: f.recorded_at,
                         expired_at: f.expired_at,
@@ -988,5 +1088,162 @@ mod tests {
     fn namespace_to_group_id_without_thread() {
         let ns = Namespace::new("ws-1");
         assert_eq!(namespace_to_group_id(&ns), "ws-1");
+    }
+
+    /// ADR-074 review H1 (Rule 19): `graph_search`'s fact→entity ownership
+    /// projection must be observed — this is the exact silent-drop shape
+    /// TD-116 fixed; a regression must show up as a metric delta, not require
+    /// another production incident to notice.
+    #[tokio::test]
+    async fn graph_search_emits_facts_attached_and_dropped_counters() {
+        use crate::core::graph::{FactInsert, InsertEntityParams};
+        use crate::memory::types::SearchOpts;
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let handle = make_handle().await;
+        let now = Utc::now();
+
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "alice",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Alice"}),
+            })
+            .await
+            .expect("insert alice");
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "acme",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Acme"}),
+            })
+            .await
+            .expect("insert acme");
+        handle
+            .engine
+            .graph
+            .insert_fact(FactInsert::new("alice", "works_at", now).object_id("acme"))
+            .await
+            .expect("insert fact");
+
+        let ns = Namespace::new("default");
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        // `set_default_local_recorder` (not `with_local_recorder`) so the guard
+        // can be held across the `.await` inside `graph_search` — see the
+        // identical pattern + rationale in `core::context::tests`.
+        let guard = metrics::set_default_local_recorder(&recorder);
+        let results = handle
+            .graph_search(GraphSearchParams {
+                namespace: &ns,
+                query: "Alice",
+                opts: &SearchOpts::default(),
+            })
+            .await
+            .expect("graph_search ok");
+        drop(guard);
+
+        assert!(!results.is_empty(), "fixture must produce a result");
+        assert!(
+            results.iter().any(|r| !r.facts.is_empty()),
+            "alice's result must carry the works_at fact"
+        );
+
+        let sum_counter = |name: &str| -> u64 {
+            snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .filter(|(k, _, _, _)| k.key().name() == name)
+                .filter_map(|(_, _, _, v)| match v {
+                    DebugValue::Counter(c) => Some(c),
+                    _ => None,
+                })
+                .sum()
+        };
+
+        let attached = sum_counter("kremory.recall.facts_attached_total");
+        let dropped = sum_counter("kremory.recall.facts_dropped_ownership_total");
+        assert!(attached >= 1, "alice's fact must be counted attached");
+        // Every fact in this fixture has its subject (alice) present in the
+        // result set, so none should be dropped by the ownership predicate.
+        assert_eq!(dropped, 0, "no facts should be dropped in this fixture");
+    }
+
+    /// G5 (gap-register / ADR-074 F1): `graph_search` must attach a fact to
+    /// BOTH the subject's AND the object's `RetrievedContext.facts` when the
+    /// entity is an *object entity* (`fact.object_id == Some(entity.id)`).
+    /// Pre-fix, the per-entity projection at the bottom of `graph_search` only
+    /// tested `f.subject_id == entity.id` — the object side of the very same
+    /// fact was silently invisible from the object entity's own recall
+    /// result, even though `contextualize`/`get_neighbours` correctly
+    /// collected the fact and the object entity into the result set.
+    #[tokio::test]
+    async fn graph_search_attaches_facts_when_entity_is_object() {
+        use crate::core::graph::{FactInsert, InsertEntityParams};
+        use crate::memory::types::SearchOpts;
+
+        let handle = make_handle().await;
+        let now = Utc::now();
+
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "alice",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Alice"}),
+            })
+            .await
+            .expect("insert alice");
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "acme",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Acme"}),
+            })
+            .await
+            .expect("insert acme");
+        handle
+            .engine
+            .graph
+            .insert_fact(FactInsert::new("alice", "works_at", now).object_id("acme"))
+            .await
+            .expect("insert fact");
+
+        let ns = Namespace::new("default");
+        // Search on "Acme" so the OBJECT entity is the seed; 1-hop expansion
+        // pulls alice (the subject) + the connecting fact into the same
+        // ContextResult, per `test_context_result_includes_facts` in
+        // `core::context::tests`.
+        let results = handle
+            .graph_search(GraphSearchParams {
+                namespace: &ns,
+                query: "Acme",
+                opts: &SearchOpts::default(),
+            })
+            .await
+            .expect("graph_search ok");
+
+        assert!(!results.is_empty(), "fixture must produce a result");
+        let acme_result = results
+            .iter()
+            .find(|r| r.entity_id == "acme")
+            .expect("acme (the object entity) must appear in the result set");
+        assert!(
+            !acme_result.facts.is_empty(),
+            "acme is the OBJECT of 'alice works_at acme' — the fact must be \
+             attached to acme's own RetrievedContext, not just alice's"
+        );
+        assert!(
+            acme_result.facts.iter().any(|f| f.predicate == "works_at"),
+            "acme's facts must include the works_at fact connecting it to alice"
+        );
     }
 }

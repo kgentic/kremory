@@ -208,6 +208,10 @@ impl<'a> DreamRequest<'a> {
                         // novelty_llm_verify` so the DEFAULT build's Pass-0 outcome is
                         // unchanged from before Site #2 landed.
                         llm_verify_band: opts.include_type_novelty_llm_verify,
+                        // TD-123 — quarantined default `false` (unspiked cosine-alone
+                        // degeneracy risk). Threaded from `DreamOpts::include_
+                        // evidence_retype_by_similarity`.
+                        evidence_retype_by_similarity: opts.include_evidence_retype_by_similarity,
                     },
                 )
                 .await

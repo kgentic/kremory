@@ -278,8 +278,17 @@ impl<'a> RecallRequest<'a> {
         self
     }
 
-    /// Point-in-time filter (v0.1.0: emits `tracing::warn!`, not yet implemented in SQL).
-    /// v0.1.1 will apply the filter. Setting this now ensures forward-compatible caller code.
+    /// Point-in-time (valid-time) filter (ADR-068) — "what was TRUE in the
+    /// world at `ts`," not "what did kremory KNOW at `ts`." Filters which
+    /// FACTS the 1-hop expansion surfaces (`TemporalGraph::get_neighbours_at`);
+    /// entity search itself is unaffected (entities carry no temporal
+    /// columns, so the same query still finds the same seed entities
+    /// regardless of `as_of`). A fact later flagged `invalid_at` by the
+    /// reconciliation resolver still appears for `as_of(ts)` if `ts` falls
+    /// inside its `[valid_from, valid_to)` window — proving what the record
+    /// showed as true at `ts`, even after correction, is the point of
+    /// bi-temporal audit. `None` (the default) returns present-day results,
+    /// unaffected.
     pub fn as_of(mut self, ts: DateTime<Utc>) -> Self {
         self.as_of = Some(ts);
         self

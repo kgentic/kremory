@@ -257,6 +257,12 @@ fn all_flags_dream_opts() -> DreamOpts {
     o.include_supersession_sweep = false;
     o.include_supersession_llm_nominate = false;
     o.include_fact_archival = false;
+    // TD-123 — `evidence_retype_by_similarity` is held at its production default
+    // (OFF). Verified empirically (2026-07-16 re-record): with this OFF, Pass-2
+    // LLM `reclassify` still promotes the surviving catch-all keeper off id=0
+    // (`entities_reclassified == 1`, IBM -> Organisation), so the E2 ordering
+    // invariant holds on the production-flip config — no need to force it on.
+    o.include_evidence_retype_by_similarity = false;
     o.consolidation_budget_tokens = Some(50_000);
     o.consolidation_budget_usd_micro = None;
     o.archive_grace_days = Some(90);

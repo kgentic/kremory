@@ -5,7 +5,7 @@
 
 use napi_derive::napi;
 
-use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact};
+use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact, SourceKind, SourceRef};
 
 // ── Input option structs ──────────────────────────────────────────────────────
 
@@ -425,7 +425,7 @@ pub struct JsDreamSummary {
 ///
 /// # DreamOpts field enumeration (D2 / `schemas-enumerate-touching-layers`)
 ///
-/// The substrate `DreamOpts` has 17 pub fields. Each is either EXPOSED here or
+/// The substrate `DreamOpts` has 18 pub fields. Each is either EXPOSED here or
 /// deliberately OMITTED with a reason:
 ///
 /// **Exposed (consolidation control — the D2 binding-parity surface):**
@@ -447,6 +447,10 @@ pub struct JsDreamSummary {
 ///   surface targets). All default-ON; type-discovery is separately tunable via
 ///   `runDreamPassSync`'s `DreamPassOptions.includeTypeDiscovery`. Exposing the full
 ///   reconciliation-pass matrix on `dream()` is deferred (v0.2.0).
+/// - `includeEvidenceRetypeBySimilarity` — reason: unvalidated, TD-123
+///   quarantine, default-false. NOT exposed on `JsDreamOpts`; the default-false
+///   pass-through (substrate `DreamOpts::default()`) is the correct binding
+///   behaviour until TD-123 lifts the quarantine.
 #[napi(object, js_name = "DreamOptions")]
 pub struct JsDreamOpts {
     /// Namespace to dream within. `null`/omit for Memory handle's default.
@@ -660,8 +664,7 @@ pub struct JsCancelOutcome {
 /// A single connected fact surfaced by recall (ADR-074 / TD-116).
 ///
 /// Maps directly to `kremory::RetrievedFact`. Timestamps are RFC-3339 strings
-/// and episode ids are stringified (matching `JsRetrievedContext.source_refs`'s
-/// string convention) for JS ergonomics.
+/// and episode ids are stringified for JS ergonomics.
 #[napi(object, js_name = "RetrievedFact")]
 pub struct JsRetrievedFact {
     /// Natural-language rendering, e.g. `"Grace Hopper invented the compiler"`.
@@ -712,6 +715,53 @@ pub fn retrieved_fact_to_js(f: RetrievedFact) -> JsRetrievedFact {
     }
 }
 
+/// A single source reference contributing to a retrieved entity (TD-118).
+///
+/// Maps directly to `kremory::SourceRef`, mirroring the MCP `SourceRefWire`
+/// shape so the napi and MCP surfaces are two projections of one data model
+/// (`web-app-ui-parity-for-agents`). Timestamps are RFC-3339 strings.
+#[napi(object, js_name = "SourceRef")]
+pub struct JsSourceRef {
+    /// Source category, e.g. `"meeting"` / `"document"` / `"chat"` / `"episode"`.
+    /// Lower-cased string form of `kremory::SourceKind`.
+    pub kind: String,
+    /// Opaque source identifier (session ID, document ID, episode-edge id, …).
+    pub id: String,
+    /// RFC-3339 UTC timestamp the source event occurred at.
+    pub occurred_at: String,
+    /// RFC-3339 UTC publication timestamp of the source document/event, when
+    /// known. `null` when the source has no distinct publication time.
+    pub published_at: Option<String>,
+}
+
+/// Lower-cased wire string for a `SourceKind`. Mirrors the MCP
+/// `source_kind_facade_to_wire` mapping. `SourceKind` is `#[non_exhaustive]`
+/// upstream, so the catch-all keeps this forward-compatible — it surfaces an
+/// unknown future variant loudly (via its `Debug` form) rather than silently
+/// mislabeling it.
+fn source_kind_to_string(kind: SourceKind) -> String {
+    match kind {
+        SourceKind::Meeting => "meeting".to_string(),
+        SourceKind::Document => "document".to_string(),
+        SourceKind::Chat => "chat".to_string(),
+        SourceKind::Episode => "episode".to_string(),
+        other => {
+            tracing::warn!(?other, "unmapped SourceKind variant projected to napi");
+            format!("{other:?}").to_lowercase()
+        }
+    }
+}
+
+/// Convert a `kremory::SourceRef` to the napi-facing `JsSourceRef` (TD-118).
+fn source_ref_to_js(sr: SourceRef) -> JsSourceRef {
+    JsSourceRef {
+        kind: source_kind_to_string(sr.kind),
+        id: sr.id,
+        occurred_at: sr.occurred_at.to_rfc3339(),
+        published_at: sr.published_at.map(|t| t.to_rfc3339()),
+    }
+}
+
 /// A single retrieved memory context entry from `Memory.recall`.
 ///
 /// Maps directly to `kremory::RetrievedContext`.
@@ -725,9 +775,11 @@ pub struct JsRetrievedContext {
     pub summary: String,
     /// Relevance score in the range `[0.0, 1.0]`. Higher is more relevant.
     pub score: f64,
-    /// Source reference IDs that contributed to this entity. Each entry is an
-    /// opaque string key (e.g. session ID, document ID).
-    pub source_refs: Vec<String>,
+    /// Source references that contributed to this entity (TD-118). Each entry
+    /// carries `kind`/`id`/`occurred_at`/`published_at` — mirroring the MCP
+    /// `SourceRefWire` surface so JS consumers get the same provenance the MCP
+    /// wire already exposes (previously flattened to bare `id` strings).
+    pub source_refs: Vec<JsSourceRef>,
     /// `true` when the entity is a stub placeholder awaiting full extraction.
     pub incomplete: bool,
     /// Integer entity-type id for this entity within its namespace (TD-013).
@@ -761,8 +813,8 @@ pub struct JsRetrievedContext {
 pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
     let source_refs = ctx
         .source_refs
-        .iter()
-        .map(|sr| sr.id.clone())
+        .into_iter()
+        .map(source_ref_to_js)
         .collect::<Vec<_>>();
 
     let namespace = ctx.namespace.map(|ns| ns.namespace);
@@ -1387,6 +1439,59 @@ mod tests {
         ctx
     }
 
+    /// TD-118: source_refs project the full `kremory::SourceRef` shape
+    /// (kind/id/occurred_at/published_at), not a flattened bare-id string.
+    /// Drives the real producer (`retrieved_context_to_js`) and asserts each
+    /// provenance field survives the projection — mirrors the MCP wire.
+    #[test]
+    fn source_refs_project_full_shape() {
+        use chrono::{TimeZone, Utc};
+
+        let occurred = Utc.with_ymd_and_hms(2026, 7, 15, 9, 0, 0).unwrap();
+        let published = Utc.with_ymd_and_hms(2026, 7, 14, 8, 30, 0).unwrap();
+        let ctx = RetrievedContext::new(kremory::RetrievedContextNewParams {
+            entity_id: "ent-1".to_string(),
+            entity_name: "Alice".to_string(),
+            summary: "s".to_string(),
+            score: 0.5_f32,
+            source_refs: vec![
+                kremory::SourceRef {
+                    kind: kremory::SourceKind::Document,
+                    id: "doc-42".to_string(),
+                    occurred_at: occurred,
+                    published_at: Some(published),
+                },
+                kremory::SourceRef {
+                    kind: kremory::SourceKind::Episode,
+                    id: "ep-7".to_string(),
+                    occurred_at: occurred,
+                    published_at: None,
+                },
+            ],
+        });
+
+        let js = retrieved_context_to_js(ctx);
+        assert_eq!(js.source_refs.len(), 2, "both source_refs projected");
+
+        let doc = &js.source_refs[0];
+        assert_eq!(doc.kind, "document", "kind lower-cased from SourceKind");
+        assert_eq!(doc.id, "doc-42");
+        assert_eq!(doc.occurred_at, occurred.to_rfc3339());
+        assert_eq!(
+            doc.published_at.as_deref(),
+            Some(published.to_rfc3339()).as_deref(),
+            "published_at preserved when set"
+        );
+
+        let ep = &js.source_refs[1];
+        assert_eq!(ep.kind, "episode");
+        assert_eq!(ep.id, "ep-7");
+        assert!(
+            ep.published_at.is_none(),
+            "published_at None survives as null"
+        );
+    }
+
     /// TD-013 Phase 8: entity_type_id is correctly wired as u32 on JsRetrievedContext.
     #[test]
     fn entity_type_id_wired_as_u32() {
@@ -1423,5 +1528,198 @@ mod tests {
         assert_eq!(js.entity_name, "Alice");
         // entity_type_name is additive — does not overwrite entity_name.
         assert_eq!(js.entity_type_name, "Organisation");
+    }
+
+    // ── ADR-074 review H2: facts must survive the napi wire layer ──────────
+    //
+    // `make_ctx` above (and `RetrievedContext::new()` generally) always
+    // defaults `facts: Vec::new()` — `RetrievedContext` is `#[non_exhaustive]`
+    // and `RetrievedContextNewParams` carries no `facts` field, so a non-empty
+    // fixture cannot be struct-literalled. This drives the REAL recall path
+    // (mode-c pinned fact via `Memory::remember().with_facts().skip_extraction()`
+    // — the same mechanism `kremory`'s own
+    // `with_facts_integration.rs::td116_recall_returns_connected_facts_under_null_embedder`
+    // proves at the facade level) so `retrieved_context_to_js` is exercised
+    // against a genuine, non-empty `RetrievedContext.facts`.
+
+    use std::sync::Arc;
+
+    use autoagents_llm::chat::{ChatMessage, ChatResponse, StructuredOutputFormat, Tool};
+    use autoagents_llm::error::LLMError;
+    use kremory::core::provider::NullEmbeddingProvider;
+    use kremory::memory::types::StructuredFact;
+    use kremory::{ChatProvider, Memory, Namespace};
+
+    use super::retrieved_fact_to_js;
+
+    /// `Memory::open(...).with_llm(...)` requires a real `Arc<dyn ChatProvider>`
+    /// even on the pinned-fact `skip_extraction()` path, which never invokes
+    /// it. Errors loudly (not a silent empty response) if that assumption
+    /// ever breaks, so a future regression fails this test with a clear cause
+    /// instead of a confusing downstream symptom.
+    #[derive(Debug, Clone)]
+    struct UnreachableChatProvider;
+
+    #[async_trait::async_trait]
+    impl ChatProvider for UnreachableChatProvider {
+        async fn chat_with_tools(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[Tool]>,
+            _json_schema: Option<StructuredOutputFormat>,
+        ) -> Result<Box<dyn ChatResponse>, LLMError> {
+            Err(LLMError::Generic(
+                "UnreachableChatProvider: chat_with_tools must not be called on a \
+                 skip_extraction() pinned-fact test path"
+                    .to_string(),
+            ))
+        }
+    }
+
+    /// Build an in-memory `Memory` (no live LLM/embedder needed — mirrors
+    /// `with_facts_integration.rs::open_with_ns`, kremory-napi's own crate
+    /// only having `NullEmbeddingProvider` available outside `test-utils`).
+    #[allow(clippy::expect_used)]
+    async fn napi_test_memory() -> Memory {
+        let llm: Arc<dyn ChatProvider> = Arc::new(UnreachableChatProvider);
+        let embedder: Arc<dyn kremory::DynEmbeddingProvider> =
+            Arc::new(NullEmbeddingProvider { dim: 384 });
+        Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .default_namespace(Namespace::new("kremory_napi_h2_tests"))
+            .await
+            .expect("in-memory Memory must build")
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    async fn retrieved_context_to_js_round_trips_a_nonempty_pinned_fact() {
+        let mem = napi_test_memory().await;
+
+        mem.remember("Ada Lovelace wrote the first algorithm.")
+            .with_facts(vec![StructuredFact {
+                subject: "Ada Lovelace".to_string(),
+                predicate: "wrote".to_string(),
+                object: "the first algorithm".to_string(),
+                valid_from: None,
+                valid_to: None,
+                memory_type: None,
+            }])
+            .from_document("napi-h2-doc")
+            .skip_extraction()
+            .await
+            .expect("remember(skip_extraction) should succeed");
+
+        let raw = mem
+            .recall("Ada Lovelace")
+            .raw()
+            .await
+            .expect("raw recall should succeed");
+        let ada = raw
+            .into_iter()
+            .find(|r| r.entity_name == "Ada Lovelace")
+            .expect("Ada Lovelace must be in recall results");
+        assert!(
+            !ada.facts.is_empty(),
+            "H2: recall must surface Ada Lovelace's connected fact before conversion"
+        );
+
+        let js = retrieved_context_to_js(ada);
+        assert!(
+            !js.facts.is_empty(),
+            "H2: retrieved_context_to_js must not drop facts crossing the napi wire"
+        );
+
+        let fact = js
+            .facts
+            .iter()
+            .find(|f| f.predicate == "wrote")
+            .expect("the pinned 'wrote' fact must survive the wire mapping");
+        assert_eq!(fact.fact, "Ada Lovelace wrote the first algorithm");
+        assert_eq!(fact.subject, "Ada Lovelace");
+        assert_eq!(fact.predicate, "wrote");
+        assert_eq!(fact.object, "the first algorithm");
+        assert!(
+            !fact.object_is_entity,
+            "literal object → object_is_entity=false"
+        );
+        assert!(
+            !fact.valid_at.is_empty(),
+            "valid_at must be a non-empty RFC-3339 string"
+        );
+        assert!(
+            fact.invalid_at.is_none(),
+            "an open-ended pinned fact must have invalid_at=None"
+        );
+        assert!(
+            !fact.recorded_at.is_empty(),
+            "recorded_at must be a non-empty RFC-3339 string"
+        );
+        assert!(
+            fact.expired_at.is_none(),
+            "a fresh pinned fact must have expired_at=None"
+        );
+        assert_eq!(
+            fact.confidence, 1.0,
+            "caller-pinned facts default to confidence=1.0"
+        );
+        assert!(
+            !fact.source_episode_ids.is_empty(),
+            "source_episode_ids must attribute the fact to its episode"
+        );
+    }
+
+    /// `retrieved_fact_to_js` (the per-fact half of the conversion) round-trips
+    /// every field independently of the containing `RetrievedContext` — the
+    /// same real, non-empty fixture as the test above, but asserting the
+    /// narrower conversion function directly.
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    async fn retrieved_fact_to_js_round_trips_every_field() {
+        let mem = napi_test_memory().await;
+
+        mem.remember("Grace Hopper invented the compiler.")
+            .with_facts(vec![StructuredFact {
+                subject: "Grace Hopper".to_string(),
+                predicate: "invented".to_string(),
+                object: "the compiler".to_string(),
+                valid_from: None,
+                valid_to: None,
+                memory_type: None,
+            }])
+            .from_document("napi-h2-fact-doc")
+            .skip_extraction()
+            .await
+            .expect("remember(skip_extraction) should succeed");
+
+        let raw = mem
+            .recall("Grace Hopper")
+            .raw()
+            .await
+            .expect("raw recall should succeed");
+        let hopper = raw
+            .into_iter()
+            .find(|r| r.entity_name == "Grace Hopper")
+            .expect("Grace Hopper must be in recall results");
+        let fact = hopper
+            .facts
+            .into_iter()
+            .find(|f| f.predicate == "invented")
+            .expect("the pinned 'invented' fact must be present");
+
+        let js = retrieved_fact_to_js(fact);
+        assert_eq!(js.fact, "Grace Hopper invented the compiler");
+        assert_eq!(js.subject, "Grace Hopper");
+        assert_eq!(js.predicate, "invented");
+        assert_eq!(js.object, "the compiler");
+        assert!(!js.object_is_entity);
+        assert!(!js.valid_at.is_empty());
+        assert!(js.invalid_at.is_none());
+        assert!(!js.recorded_at.is_empty());
+        assert!(js.expired_at.is_none());
+        assert_eq!(js.confidence, 1.0);
+        assert!(!js.source_episode_ids.is_empty());
+        assert!(js.score >= 0.0);
     }
 }

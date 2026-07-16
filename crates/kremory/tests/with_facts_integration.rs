@@ -512,3 +512,93 @@ fn td116_recall_returns_connected_facts_under_null_embedder() {
         );
     });
 }
+
+/// MED-1 (Quinn P1 correctness) — a `with_facts` pin whose caller-asserted
+/// `valid_to` predates the (defaulted) `valid_from` is a time-inversion: the
+/// resulting `[valid_from, valid_to)` window is empty, so once `bound_valid_to`
+/// writes it the fact is permanently invisible to every `as_of(t)` query. The
+/// pin path must REJECT such a pin (mirroring `facade/supersede.rs`'s
+/// `rejected_time_inversion` guard) — emitting a named counter + warn and NOT
+/// persisting an inverted-window fact.
+///
+/// Trigger mirrors the real bug: `valid_from: None` (defaults to ingest `now()`
+/// in `engine_handle.rs`) + `valid_to` 10 days in the past → guaranteed
+/// inversion regardless of test wall-clock.
+///
+/// Surgical: a valid (non-inverted) pin in the SAME batch must still succeed —
+/// the guard rejects ONLY the inverted pin, never the whole batch.
+///
+/// RED before the guard: the inverted fact is inserted + bound with an inverted
+/// window (`pinned_total == 2`, `valid_to_bound_total == 1`,
+/// `pin_rejected_total` absent). GREEN after: `pinned_total == 1` (good pin
+/// only), `pin_rejected_total == 1`, `valid_to_bound_total == 0`.
+#[test]
+fn with_facts_rejects_time_inversion_and_does_not_persist_inverted_window() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter: Snapshotter = recorder.snapshotter();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+
+    metrics::with_local_recorder(&recorder, || {
+        rt.block_on(async {
+            let mem = open_with_ns("time_inversion_reject").await;
+
+            let inverted_valid_to = Utc::now() - Duration::days(10);
+            let facts = vec![
+                // Valid pin — open-ended window, must survive.
+                StructuredFact {
+                    subject: "subject-good".to_string(),
+                    predicate: "relates-to".to_string(),
+                    object: "object-x".to_string(),
+                    valid_from: Some(Utc::now() - Duration::hours(1)),
+                    valid_to: None,
+                    memory_type: None,
+                },
+                // Inverted pin — valid_from defaults to ingest now(), which is
+                // ~10 days AFTER this valid_to → empty window. Must be rejected.
+                StructuredFact {
+                    subject: "subject-bad".to_string(),
+                    predicate: "relates-to".to_string(),
+                    object: "object-y".to_string(),
+                    valid_from: None,
+                    valid_to: Some(inverted_valid_to),
+                    memory_type: None,
+                },
+            ];
+
+            mem.remember("time-inversion guard body")
+                .with_facts(facts)
+                .from_document("med1-doc")
+                .skip_extraction()
+                .await
+                .expect("remember should succeed (rejection is in-band, not Err)");
+
+            let rejected = find_counter_labeled(
+                snapshotter.snapshot(),
+                "kremory.with_facts.pin_rejected_total",
+            );
+            assert_eq!(
+                rejected, 1,
+                "the inverted pin must fire the named time-inversion rejection counter; got {rejected}"
+            );
+
+            let pinned =
+                find_counter_labeled(snapshotter.snapshot(), "kremory.with_facts.pinned_total");
+            assert_eq!(
+                pinned, 1,
+                "only the valid pin may persist — the inverted-window fact must NOT be written; pinned_total={pinned}"
+            );
+
+            let bound = find_counter_labeled(
+                snapshotter.snapshot(),
+                "kremory.with_facts.valid_to_bound_total",
+            );
+            assert_eq!(
+                bound, 0,
+                "no valid_to bind may occur — the inverted pin is rejected BEFORE insert, the good pin has valid_to=None; valid_to_bound_total={bound}"
+            );
+        });
+    });
+}

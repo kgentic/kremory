@@ -22,15 +22,18 @@
 
 use chrono::{DateTime, Utc};
 use kremory::{
+    DeleteEntityOutcome, DeleteFactOutcome, EditEntityOutcome, MutationKind, MutationRecord,
     Namespace, RecallTemplate, RetrievedContext, RetrievedFact, SourceKind, SourceRef,
-    StructuredFact,
+    StructuredFact, UndoOutcome, UnmergeOutcome,
 };
 use thiserror::Error;
 
 use crate::params::{
-    ConsolidationOpsRanWire, DreamOutput, DreamParams, RecallFormat, RecallParams,
-    RecallTemplateWire, RememberOutput, RememberParams, RetrievedContextWire, RetrievedFactWire,
-    SourceKindWire, SourceRefWire, StructuredFactWire,
+    ConsolidationOpsRanWire, DeleteEntityOutcomeWire, DeleteFactOutcomeWire, DreamOutput,
+    DreamParams, EditEntityOutcomeWire, ListMutationsParams, MutationRecordWire, RecallFormat,
+    RecallParams, RecallTemplateWire, RememberOutput, RememberParams, RetrievedContextWire,
+    RetrievedFactWire, SourceKindWire, SourceRefWire, StructuredFactWire, TypeProposalWire,
+    UndoOutcomeWire, UndoParams, UnmergeOutcomeWire,
 };
 
 #[derive(Debug, Error)]
@@ -44,6 +47,11 @@ pub enum ConversionError {
         #[source]
         source: chrono::ParseError,
     },
+    #[error(
+        "unknown mutation kind {raw:?} — expected one of: entity_merge, fact_supersede, \
+         fact_archive, entity_edit, entity_delete, fact_delete, community_assign, canonical_form"
+    )]
+    UnknownMutationKind { raw: String },
 }
 
 // ─── primitive conversions ─────────────────────────────────────────────
@@ -73,6 +81,52 @@ fn source_kind_facade_to_wire(k: SourceKind) -> String {
             tracing::warn!(
                 ?other,
                 "unknown SourceKind variant (kremory added a new variant?) — \
+                 wire output defaulting to debug format"
+            );
+            format!("{other:?}").to_lowercase()
+        }
+    }
+}
+
+/// Parse the `kremory_list_mutations` wire `kind` string to `kremory::MutationKind`
+/// (parse-loudly, [[llm-output-parse-loudly]] extended to caller-supplied wire
+/// strings — an unrecognised kind is a hard `invalid_params`, never silently
+/// dropped or defaulted to "any kind").
+pub(crate) fn mutation_kind_wire_to_facade(raw: &str) -> Result<MutationKind, ConversionError> {
+    match raw {
+        "entity_merge" => Ok(MutationKind::EntityMerge),
+        "fact_supersede" => Ok(MutationKind::FactSupersede),
+        "fact_archive" => Ok(MutationKind::FactArchive),
+        "entity_edit" => Ok(MutationKind::EntityEdit),
+        "entity_delete" => Ok(MutationKind::EntityDelete),
+        "fact_delete" => Ok(MutationKind::FactDelete),
+        "community_assign" => Ok(MutationKind::CommunityAssign),
+        "canonical_form" => Ok(MutationKind::CanonicalForm),
+        other => Err(ConversionError::UnknownMutationKind {
+            raw: other.to_string(),
+        }),
+    }
+}
+
+/// `kremory::MutationKind` (`#[non_exhaustive]`) → the wire snake_case tag.
+/// Mirrors `source_kind_facade_to_wire`'s forward-compat posture: known
+/// variants map to their exact `graph_mutation_log.kind` tag; an unrecognised
+/// future variant (kremory added a 9th kind) falls back to the debug format
+/// rather than panicking on the mandatory `#[non_exhaustive]` wildcard arm.
+fn mutation_kind_facade_to_wire(kind: MutationKind) -> String {
+    match kind {
+        MutationKind::EntityMerge => "entity_merge".to_string(),
+        MutationKind::FactSupersede => "fact_supersede".to_string(),
+        MutationKind::FactArchive => "fact_archive".to_string(),
+        MutationKind::EntityEdit => "entity_edit".to_string(),
+        MutationKind::EntityDelete => "entity_delete".to_string(),
+        MutationKind::FactDelete => "fact_delete".to_string(),
+        MutationKind::CommunityAssign => "community_assign".to_string(),
+        MutationKind::CanonicalForm => "canonical_form".to_string(),
+        other => {
+            tracing::warn!(
+                ?other,
+                "unknown MutationKind variant (kremory added a new variant?) — \
                  wire output defaulting to debug format"
             );
             format!("{other:?}").to_lowercase()
@@ -297,7 +351,15 @@ impl From<kremory::DreamSummary> for DreamOutput {
             acronym_nickname_merges: d.acronym_nickname_merges,
             type_registry_merges: d.type_registry_merges,
             consistency_check_corrected: d.consistency_check_corrected,
-            types_discovered_count: d.types_discovered.len(),
+            types_discovered: d
+                .types_discovered
+                .into_iter()
+                .map(|t| TypeProposalWire {
+                    name: t.name,
+                    description: t.description,
+                    justification: t.justification,
+                })
+                .collect(),
             consolidation_ops_ran: ConsolidationOpsRanWire {
                 community: d.consolidation_ops_ran.community,
                 cross_episode: d.consolidation_ops_ran.cross_episode,
@@ -307,6 +369,155 @@ impl From<kremory::DreamSummary> for DreamOutput {
             duration_ms: d.duration_ms,
             budget_exhausted: d.budget_exhausted,
             warnings: d.warnings,
+        }
+    }
+}
+
+// ─── kremory_list_mutations ─────────────────────────────────────────────
+
+#[derive(Debug)]
+pub(crate) struct ResolvedListMutations {
+    pub namespace: Namespace,
+    pub entity_id: Option<String>,
+    pub kind: Option<MutationKind>,
+    pub since: Option<DateTime<Utc>>,
+    pub include_undone: bool,
+}
+
+impl ListMutationsParams {
+    pub(crate) fn resolve(self) -> Result<ResolvedListMutations, ConversionError> {
+        let namespace = build_namespace(&self.namespace, self.thread.as_deref())?;
+        let kind = self
+            .kind
+            .as_deref()
+            .map(mutation_kind_wire_to_facade)
+            .transpose()?;
+        let since = self
+            .since
+            .as_deref()
+            .map(|raw| parse_iso8601("since", raw))
+            .transpose()?;
+        Ok(ResolvedListMutations {
+            namespace,
+            entity_id: self.entity_id,
+            kind,
+            since,
+            include_undone: self.include_undone.unwrap_or(false),
+        })
+    }
+}
+
+impl From<MutationRecord> for MutationRecordWire {
+    fn from(r: MutationRecord) -> Self {
+        Self {
+            mutation_id: r.mutation_id,
+            kind: mutation_kind_facade_to_wire(r.kind),
+            created_at: r.created_at,
+            undone: r.undone,
+            group_id: r.group_id,
+            affected_entities: r.affected_entities,
+            summary: r.summary,
+        }
+    }
+}
+
+// ─── kremory_undo ───────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub(crate) struct ResolvedUndo {
+    pub namespace: Namespace,
+    pub mutation_id: i64,
+}
+
+impl UndoParams {
+    pub(crate) fn resolve(self) -> Result<ResolvedUndo, ConversionError> {
+        let namespace = build_namespace(&self.namespace, self.thread.as_deref())?;
+        Ok(ResolvedUndo {
+            namespace,
+            mutation_id: self.mutation_id,
+        })
+    }
+}
+
+impl From<UnmergeOutcome> for UnmergeOutcomeWire {
+    fn from(o: UnmergeOutcome) -> Self {
+        Self {
+            restored_entity: o.restored_entity,
+            keeper: o.keeper,
+            facts_repointed: o.facts_repointed,
+            edges_restored: o.edges_restored,
+            entities_reopened: o.entities_reopened,
+            nogood_recorded: o.nogood_recorded,
+            already_undone: o.already_undone,
+        }
+    }
+}
+
+impl From<EditEntityOutcome> for EditEntityOutcomeWire {
+    fn from(o: EditEntityOutcome) -> Self {
+        Self {
+            entity_id: o.entity_id,
+            rekeyed: o.rekeyed,
+            retyped: o.retyped,
+            facts_repointed: o.facts_repointed,
+            archived_repointed: o.archived_repointed,
+            edges_repointed: o.edges_repointed,
+            communities_repointed: o.communities_repointed,
+            entities_reopened: o.entities_reopened,
+            mutation_id: o.mutation_id,
+            already_undone: o.already_undone,
+        }
+    }
+}
+
+impl From<DeleteEntityOutcome> for DeleteEntityOutcomeWire {
+    fn from(o: DeleteEntityOutcome) -> Self {
+        Self {
+            entity_id: o.entity_id,
+            facts_retracted: o.facts_retracted,
+            edges_removed: o.edges_removed,
+            communities_removed: o.communities_removed,
+            neighbors_retracted: o.neighbors_retracted,
+            entities_reopened: o.entities_reopened,
+            mutation_id: o.mutation_id,
+            already_undone: o.already_undone,
+        }
+    }
+}
+
+impl From<DeleteFactOutcome> for DeleteFactOutcomeWire {
+    fn from(o: DeleteFactOutcome) -> Self {
+        Self {
+            fact_id: o.fact_id,
+            fact_restored: o.fact_restored,
+            neighbors_retracted: o.neighbors_retracted,
+            entities_reopened: o.entities_reopened,
+            mutation_id: o.mutation_id,
+            already_undone: o.already_undone,
+        }
+    }
+}
+
+/// `kremory::UndoOutcome` (`#[non_exhaustive]`) → the internally-tagged wire
+/// enum. Fallible rather than lossy: a future 5th log-dispatchable
+/// `MutationKind` would arrive as a variant this crate doesn't yet mirror,
+/// and per [[llm-output-parse-loudly]] / [[treat-cause-not-symptom]] that must
+/// surface as a loud error (a version-skew bug for the operator to fix), never
+/// as a silently-dropped/defaulted wire payload.
+impl TryFrom<UndoOutcome> for UndoOutcomeWire {
+    type Error = String;
+
+    fn try_from(outcome: UndoOutcome) -> Result<Self, Self::Error> {
+        match outcome {
+            UndoOutcome::Unmerge(o) => Ok(Self::Unmerge(o.into())),
+            UndoOutcome::EditEntity(o) => Ok(Self::EditEntity(o.into())),
+            UndoOutcome::DeleteEntity(o) => Ok(Self::DeleteEntity(o.into())),
+            UndoOutcome::DeleteFact(o) => Ok(Self::DeleteFact(o.into())),
+            other => Err(format!(
+                "kremory_undo: UndoOutcome carries a variant kremory-mcp's UndoOutcomeWire \
+                 does not yet mirror ({other:?}) — kremory added a new log-dispatchable \
+                 MutationKind that this crate has not caught up with yet"
+            )),
         }
     }
 }
@@ -474,5 +685,197 @@ mod tests {
         assert_eq!(wire.entity_name, "Alice");
         assert_eq!(wire.source_refs.len(), 1);
         assert_eq!(wire.source_refs[0].kind, "document");
+    }
+
+    /// G2 — the `DreamSummary.types_discovered: Vec<TypeProposal>` detail must
+    /// survive the projection to the MCP `DreamOutput` wire (name + description +
+    /// justification), NOT be flattened to a count. Guards against the
+    /// parity-drop class that shipped the recall→facts bug. A NON-EMPTY input is
+    /// load-bearing: the handler_roundtrip mock LLM discovers zero types, so only
+    /// a unit test with real proposals proves the detail is carried.
+    #[test]
+    fn dream_output_carries_type_proposal_detail() {
+        let summary = kremory::DreamSummary {
+            communities_updated: 0,
+            cross_episode_would_merge: 0,
+            cross_episode_merged: 0,
+            supersessions_recorded: 0,
+            facts_archived: 0,
+            consolidation_ops_ran: kremory::ConsolidationOpsRan::default(),
+            duration_ms: 0,
+            types_discovered: vec![kremory::TypeProposal {
+                name: "Firm".into(),
+                description: "A commercial organization".into(),
+                justification: "Recurring 'Firm' entities lacked a type".into(),
+            }],
+            entities_reclassified: 0,
+            aliases_resolved: 0,
+            canonicalization_merges: 0,
+            acronym_nickname_merges: 0,
+            type_registry_merges: 0,
+            consistency_check_corrected: 0,
+            warnings: Vec::new(),
+            budget_exhausted: false,
+        };
+        let wire: DreamOutput = summary.into();
+        assert_eq!(wire.types_discovered.len(), 1);
+        assert_eq!(wire.types_discovered[0].name, "Firm");
+        assert_eq!(
+            wire.types_discovered[0].description,
+            "A commercial organization"
+        );
+        assert_eq!(
+            wire.types_discovered[0].justification,
+            "Recurring 'Firm' entities lacked a type"
+        );
+    }
+
+    // ─── kremory_list_mutations / kremory_undo primitive conversions ─────
+    //
+    // `MutationRecord` / `UnmergeOutcome` / `EditEntityOutcome` /
+    // `DeleteEntityOutcome` / `DeleteFactOutcome` / `UndoOutcome` are all
+    // `#[non_exhaustive]` structs (or enums wrapping `#[non_exhaustive]`
+    // structs) — kremory-mcp is an external crate to kremory, so none of
+    // these can be struct-literal-constructed here (the exact restriction
+    // `#[non_exhaustive]` enforces). `MutationKind`'s eight variants are all
+    // UNIT variants, which non_exhaustive does NOT block constructing from
+    // outside the crate, so the kind mapping is unit-testable directly; the
+    // per-field wire mapping for `MutationRecordWire` / `UndoOutcomeWire` is
+    // instead proven through a real facade round-trip in
+    // `tests/handler_roundtrip.rs` (`list_mutations_and_undo_roundtrip_entity_edit`).
+
+    #[test]
+    fn mutation_kind_wire_to_facade_round_trips_all_known_tags() {
+        let cases = [
+            ("entity_merge", MutationKind::EntityMerge),
+            ("fact_supersede", MutationKind::FactSupersede),
+            ("fact_archive", MutationKind::FactArchive),
+            ("entity_edit", MutationKind::EntityEdit),
+            ("entity_delete", MutationKind::EntityDelete),
+            ("fact_delete", MutationKind::FactDelete),
+            ("community_assign", MutationKind::CommunityAssign),
+            ("canonical_form", MutationKind::CanonicalForm),
+        ];
+        for (tag, expected) in cases {
+            assert_eq!(
+                mutation_kind_wire_to_facade(tag).unwrap(),
+                expected,
+                "tag {tag:?} must parse to {expected:?}"
+            );
+            assert_eq!(
+                mutation_kind_facade_to_wire(expected),
+                tag,
+                "{expected:?} must render back to tag {tag:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mutation_kind_wire_to_facade_rejects_unknown_tag() {
+        let err = mutation_kind_wire_to_facade("not_a_real_kind").unwrap_err();
+        match err {
+            ConversionError::UnknownMutationKind { raw } => {
+                assert_eq!(raw, "not_a_real_kind");
+            }
+            other => panic!("expected UnknownMutationKind error, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_mutations_params_resolve_routes_entity_id_and_parses_kind() {
+        use crate::params::ListMutationsParams;
+
+        let p = ListMutationsParams {
+            namespace: "ws-1".into(),
+            thread: None,
+            entity_id: Some("alice".into()),
+            kind: Some("entity_edit".into()),
+            since: Some("2026-07-14T00:00:00Z".into()),
+            include_undone: Some(true),
+        };
+        let resolved = p.resolve().unwrap();
+        assert_eq!(resolved.namespace.namespace, "ws-1");
+        assert_eq!(resolved.entity_id.as_deref(), Some("alice"));
+        assert_eq!(resolved.kind, Some(MutationKind::EntityEdit));
+        assert!(resolved.since.is_some());
+        assert!(resolved.include_undone);
+    }
+
+    #[test]
+    fn list_mutations_params_resolve_defaults_include_undone_false() {
+        use crate::params::ListMutationsParams;
+
+        let p = ListMutationsParams {
+            namespace: "ws-1".into(),
+            thread: None,
+            entity_id: None,
+            kind: None,
+            since: None,
+            include_undone: None,
+        };
+        let resolved = p.resolve().unwrap();
+        assert!(resolved.entity_id.is_none());
+        assert!(resolved.kind.is_none());
+        assert!(!resolved.include_undone);
+    }
+
+    #[test]
+    fn list_mutations_params_resolve_rejects_unknown_kind() {
+        use crate::params::ListMutationsParams;
+
+        let p = ListMutationsParams {
+            namespace: "ws-1".into(),
+            thread: None,
+            entity_id: None,
+            kind: Some("bogus".into()),
+            since: None,
+            include_undone: None,
+        };
+        let err = p.resolve().unwrap_err();
+        assert!(matches!(err, ConversionError::UnknownMutationKind { .. }));
+    }
+
+    #[test]
+    fn list_mutations_params_resolve_rejects_empty_namespace() {
+        use crate::params::ListMutationsParams;
+
+        let p = ListMutationsParams {
+            namespace: "".into(),
+            thread: None,
+            entity_id: None,
+            kind: None,
+            since: None,
+            include_undone: None,
+        };
+        let err = p.resolve().unwrap_err();
+        assert!(matches!(err, ConversionError::EmptyNamespace));
+    }
+
+    #[test]
+    fn undo_params_resolve_happy_path() {
+        use crate::params::UndoParams;
+
+        let p = UndoParams {
+            namespace: "ws-1".into(),
+            thread: Some("t-1".into()),
+            mutation_id: 42,
+        };
+        let resolved = p.resolve().unwrap();
+        assert_eq!(resolved.namespace.namespace, "ws-1");
+        assert_eq!(resolved.namespace.thread.as_deref(), Some("t-1"));
+        assert_eq!(resolved.mutation_id, 42);
+    }
+
+    #[test]
+    fn undo_params_resolve_rejects_empty_namespace() {
+        use crate::params::UndoParams;
+
+        let p = UndoParams {
+            namespace: "".into(),
+            thread: None,
+            mutation_id: 1,
+        };
+        let err = p.resolve().unwrap_err();
+        assert!(matches!(err, ConversionError::EmptyNamespace));
     }
 }
