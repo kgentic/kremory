@@ -769,42 +769,110 @@ async fn recall_rejects_empty_namespace_with_invalid_params() {
     assert!(err.message.to_lowercase().contains("namespace"));
 }
 
-/// `as_of` point-in-time recall is declared-but-unimplemented in the
-/// substrate (`kremory::memory::mod.rs` — `opts.as_of.is_some()` returns
-/// `Err(Error::Unsupported { feature: "as_of point-in-time recall" })`
-/// rather than silently ignoring the filter). `params.rs` documents this as
-/// a deliberate fail-loud contract; this test locks that exact behaviour
-/// through the `kremory_recall` tool: setting `as_of` must map to MCP
-/// `internal_error`, never succeed and never silently drop the filter.
+/// ADR-068 — `as_of` point-in-time (valid-time) recall is now IMPLEMENTED
+/// end-to-end in the substrate (`recall().as_of(t)` → `SearchOpts.as_of` →
+/// `TemporalGraph::get_neighbours_at` temporal SQL filter). The prior
+/// `Unsupported`/fail-loud contract was removed this branch, so the earlier
+/// `recall_as_of_fails_loud_with_internal_error` guard here was asserting a
+/// contract that no longer exists.
+///
+/// This is the MCP-surface mirror of the substrate-side rewrite in
+/// `kremory/tests/facade_as_of_warn.rs` (that file was itself rewritten from
+/// fail-loud → positive correctness for exactly this reason). Contract now
+/// locked through the `kremory_recall` tool: an `as_of` recall SUCCEEDS
+/// (never errors) and returns temporally-correct facts —
+///   - as_of INSIDE `[valid_at, invalid_at)` → the fact is present,
+///   - as_of BEFORE `valid_at` or AT/AFTER `invalid_at` → the fact is absent
+///     (the anchoring entity is still found — entity search is as_of-agnostic,
+///     ADR-068 Decision 4 — but its facts are filtered by the temporal window,
+///     the half-open `valid_from <= t AND valid_to > t`).
 #[tokio::test]
-async fn recall_as_of_fails_loud_with_internal_error() {
-    let server = mock_server().await;
-    server
-        .kremory_remember(Parameters(pinned_remember_params("ns-as-of", "alice")))
-        .await
-        .expect("remember must succeed");
+async fn recall_as_of_returns_temporally_correct_facts() {
+    let mem = mock_memory().await;
+    let server = KremoryMcpServer::new(mem.clone());
 
-    let recall = RecallParams {
-        namespace: "ns-as-of".into(),
-        thread: None,
-        query: "alice".into(),
-        k: None,
-        as_of: Some("2026-01-01T00:00:00Z".into()),
-        format: RecallFormat::Structured,
-        template: RecallTemplateWire::default(),
-    };
-    let err = server
-        .kremory_recall(Parameters(recall))
+    // Distinctive token so the entity FTS arm finds it unambiguously.
+    let subject = "Zephyrine";
+    // Pinned fact valid ONLY within the half-open window [valid_at, invalid_at).
+    let valid_at = "2026-01-01T00:00:00Z";
+    let invalid_at = "2026-06-01T00:00:00Z";
+
+    server
+        .kremory_remember(Parameters(RememberParams {
+            namespace: "ns-as-of".into(),
+            thread: None,
+            content: format!("{subject} leads the design team"),
+            source_kind: Some(SourceKindWire::Note),
+            source_id: Some("doc-1".into()),
+            published_at: None,
+            structured_facts: vec![StructuredFactWire {
+                subject: subject.into(),
+                predicate: "leads".into(),
+                object: "design".into(),
+                valid_at: Some(valid_at.into()),
+                invalid_at: Some(invalid_at.into()),
+            }],
+            skip_extraction: true,
+        }))
         .await
-        .expect_err("as_of must fail loud, never silently succeed");
-    assert_eq!(
-        err.code,
-        ErrorCode::INTERNAL_ERROR,
-        "as_of must map to internal_error (Unsupported), not invalid_params: {err:?}"
-    );
+        .expect("mode-c remember must succeed");
+
+    // Make the subject entity findable by name — the enrichment the mock LLM
+    // cannot perform (mirrors `recall_returns_pinned_entity_after_enrichment`).
+    simulate_enrichment(&mem, subject).await;
+
+    // Run an `as_of` recall and return the facts on the anchoring entity.
+    // The recall itself MUST succeed (no more fail-loud path).
+    async fn facts_at(
+        server: &KremoryMcpServer,
+        subject: &str,
+        as_of: &str,
+    ) -> Vec<serde_json::Value> {
+        let recall = RecallParams {
+            namespace: "ns-as-of".into(),
+            thread: None,
+            query: subject.into(),
+            k: Some(10),
+            as_of: Some(as_of.into()),
+            format: RecallFormat::Structured,
+            template: RecallTemplateWire::default(),
+        };
+        let result = server
+            .kremory_recall(Parameters(recall))
+            .await
+            .expect("as_of recall must SUCCEED — the fail-loud path was removed");
+        let structured = result
+            .structured_content
+            .expect("structured recall returns structured payload");
+        structured["results"]
+            .as_array()
+            .expect("results array")
+            .iter()
+            .find(|r| r["entity_name"].as_str() == Some(subject))
+            .and_then(|r| r["facts"].as_array().cloned())
+            .unwrap_or_default()
+    }
+
+    // INSIDE the window → the pinned fact is present.
+    let inside = facts_at(&server, subject, "2026-03-01T00:00:00Z").await;
     assert!(
-        err.message.to_lowercase().contains("as_of"),
-        "internal_error must name the unsupported as_of feature: {}",
-        err.message
+        inside
+            .iter()
+            .any(|f| f["predicate"].as_str() == Some("leads")),
+        "as_of INSIDE [valid_at, invalid_at) must return the pinned fact; got: {inside:?}"
+    );
+
+    // BEFORE valid_at → the fact is filtered out by the temporal window.
+    let before = facts_at(&server, subject, "2025-06-01T00:00:00Z").await;
+    assert!(
+        before.is_empty(),
+        "as_of BEFORE valid_at must exclude the fact; got: {before:?}"
+    );
+
+    // AT/AFTER invalid_at (half-open, boundary-exclusive) → excluded.
+    let after = facts_at(&server, subject, "2026-09-01T00:00:00Z").await;
+    assert!(
+        after.is_empty(),
+        "as_of AT/AFTER invalid_at must exclude the fact; got: {after:?}"
     );
 }
