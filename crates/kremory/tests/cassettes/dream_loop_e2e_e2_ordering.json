@@ -3,38 +3,20 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0cc165a486383d16d15c8e0a9d52a93723344dffe6f4f32567d57732d8d7d0ba": [
+    "43b8518d11564f48c46c612fe67c492914636e2bb33b23736b621a338ea86f50": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"decisions\": [\n    {\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    ,\n      \"entity_id\": 1\n    }\n  ]\n}"
-      }
-    ],
-    "3261b9b3b4154f619bc2f379f37f073a74a761b2cad791f4ae16a0bc004a2c67": [
-      {
-        "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person refers to people, while Organisation refers to groups/institutions. They are distinct categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person are individuals, while Location are geographic places. They describe different types of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person are individuals, while Event are occurrences in time. They are separate semantic categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person are individuals, while Concept refers to abstract ideas or theories. They are not interchangeable.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Organisation refers to formed groups, while Location refers to physical places. They are separate types.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Organisation refers to persistent groups, while Event refers to transient occurrences. They are distinct concepts.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Organisation refers to formalized bodies, while Concept refers to abstract ideas. These are fundamentally different entity types.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 7,\n      \"reasoning\": \"A 'Court' is a specific type of formal group or institution, making it a subtype or specific example that falls under the general category of 'Organisation'.\"\n    },\n    {\n      \"confidence\": 0.85,\n      \"is_same_entity\": true,\n      \"pair_id\": 8,\n      \"reasoning\": \"A 'Technology Corporation' is a highly specific type of 'Organisation' (a company). While narrower, it represents the same semantic category of entity.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Location refers to places, and Event refers to occurrences. They describe fundamentally different types of named entities.\"\n    }\n  ]\n}"
-      }
-    ],
-    "5474672aba762a9343dc9b207f7c5f52f6f0c3b2317e79a206bc20ddd1fc5eda": [
-      {
-        "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.75,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While a 'Technology Corporation' is a type of 'Organisation', the proposed type is much more specific, focusing on the industrial and product nature (hardware/software) of the entity, whereas 'Organisation' is a broad container for any named formal group.\"\n    }\n  ]\n}"
-      }
-    ],
-    "699cde575d3dc475d66e327452450d934b667564e4b64b002008e41e3076433d": [
-      {
-        "call_index": 0,
-        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 11,\n      \"confidence\": 0.95\n    }\n  ]\n}"
+        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 2,\n      \"confidence\": 0.95\n    }\n  ]\n}"
       }
     ],
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
       {
         "call_index": 0,
-        "response_text": "How can I help you today? 😊"
+        "response_text": "How can I help you today?"
       },
       {
         "call_index": 1,
-        "response_text": "Hello! How can I help you today? 😊"
+        "response_text": "How can I help you today? Whether you have a question, need some information, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
       },
       {
         "call_index": 2,
@@ -46,33 +28,31 @@
       },
       {
         "call_index": 4,
-        "response_text": "How can I help you today? Whether you have a question, need help with a task, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
-      },
-      {
-        "call_index": 5,
-        "response_text": "What can I help you with today? Whether you have a question, need some creative writing, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
-      },
-      {
-        "call_index": 6,
-        "response_text": "How can I help you today? 😊"
+        "response_text": "What can I help you with today? 😊"
       }
     ],
-    "a3f36776ee40d4d0a36815994d3c99f5295a41d5958c4ae4655f13807e77a6ac": [
+    "9977e03cf4b8d6c304e498758cb71d0407610057dbf883ba4dbc41a9740610e6": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Location describes physical places, while Concept describes abstract ideas or methodologies.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Location describes geography, while Court describes a specific judicial institution.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Date refers to specific calendar points, while Time refers to points on a clock or durations.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Date is a specific calendar marker, while Event is a temporal occurrence or happening.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Time refers to a point or duration, whereas Quantity refers to measurable amounts, usually with units.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Event is a specific occurrence, while Concept is an abstract idea or theory.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Event is a named occurrence, while Court is a specific judicial organization.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Concept is an abstract idea, whereas Court is a specific type of institution/place.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person and Organisation are distinct entities; one refers to individuals, the other to groups/companies.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person (individual) is fundamentally different from Location (geographical place).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person (individual) is distinct from Event (a temporal occurrence).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person (individual) is distinct from Concept (abstract idea or theory).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Organisation (a named group) is different from Location (a geographical place).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Organisation (a named group) is different from Event (a specific occurrence in time).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Organisation (a named group) is different from Concept (an abstract theory or idea).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Location (place) is distinct from Event (temporal occurrence).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Location (place) is distinct from Concept (abstract idea or theory).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Date refers to a point/span on a calendar, whereas Time refers to a specific time of day or duration.\"\n    }\n  ]\n}"
+      }
+    ],
+    "bf56eca06394ef9da7fd4d87042fedb999253cbbd99ba1fda19bb0be94f4849f": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [\n    {\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Date is a specific point in time, while Event is a named occurrence or happening.\"}\n]}\n"
       }
     ],
     "dfe05a9abef6e36808ce58d43d29a571cde4d2090da6ab848d36eaa55b4a4f0e": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description of B is the full name corresponding to the common acronym A.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description and capitalization suggest that 'IBM' is the acronym for 'International Business Machines'.\"\n    }\n  ]\n}"
       }
     ],
     "ec2a7dcf6d9efc6921d94fc33fad80089f6c11d99fa8bfdc596b9e584c246ae2": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"Large technology or industrial corporations that produce hardware and software.\",\n      \"justification\": \"Both 'ibm' and 'international business machines' refer to corporate entities, specifically major technology manufacturers.\"\n    ,\n      \"name\": \"Technology Corporation\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"Companies that manufacture or provide technology solutions and services.\",\n      \"justification\": \"Both 'ibm' and 'international business machines' are names of corporations that are technology providers/manufacturers.\"\n    ,\n      \"name\": \"Technology Corporation\"\n    }\n  ]\n}"
       }
     ]
   }
