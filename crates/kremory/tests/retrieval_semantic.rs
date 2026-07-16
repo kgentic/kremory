@@ -511,6 +511,7 @@ mod semantic_tests {
                 query: "Ria",
                 group_id: None,
                 limit: None,
+                as_of: None,
             })
             .await
             .expect("contextualize failed");
