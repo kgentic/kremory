@@ -19,6 +19,7 @@ pub use entity_groups::{
 };
 pub use episodes::{EpisodeInsert, InsertEpisodeParams, InsertEpisodicEdgeParams};
 pub use facts::{FactInsert, InvalidateFactWithReasonParams};
+pub use queries::GetNeighboursAtParams;
 
 #[cfg(test)]
 mod tests;

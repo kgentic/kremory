@@ -309,11 +309,13 @@ async fn entity_fields(graph: &TemporalGraph, group_id: &str) -> Vec<(String, i6
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "TD-093 WIP: 4/5 lanes replay deterministically green, but Lane A \
-            (type_discovery) has two open blockers — TD-097 (nomic returns \
-            degenerate embeddings for bare short type-name labels → anti-redundancy \
-            rejects all) AND a discovery-call VCR replay mismatch (types_proposed=3 \
-            on record, 0 on replay). Runnable explicitly: \
+#[ignore = "TD-093 WIP: 4/5 lanes replay deterministically green. Lane A \
+            (type_discovery) remains blocked by a discovery-call VCR replay \
+            mismatch (types_proposed=3 on record, 0 on replay), so post-gate \
+            acceptance is only observable in record/live mode — hence still \
+            #[ignore]. TD-097's degenerate bare-name gate is RESOLVED (commit \
+            4244633); Lane A now asserts the post-gate accepted count \
+            (summary.types_discovered), not just proposals. Runnable explicitly: \
             KREMORY_VCR=record cargo test -p kremory --features llm-smoke,test-utils \
             --test dream_e2e_real_llm -- --ignored"]
 async fn dream_e2e_real_llm_five_pass_chain() {
@@ -580,19 +582,11 @@ async fn dream_e2e_real_llm_five_pass_chain() {
         );
     }
 
-    // ── Lane A assertion — type_discovery PASS ran + the model PROPOSED >= 1 type ──
-    // We assert `types_proposed`, NOT `types_accepted` (summary.types_discovered).
-    // Acceptance runs through the anti-redundancy gate, which compares SHORT
-    // type-NAME embeddings — and sentence-embedders (nomic-embed-text) return
-    // degenerate vectors for bare one-word labels ("Person" ≡ "Date", cosine ~1.0),
-    // so the 0.70 name-gate can reject even genuinely-novel proposals regardless of
-    // model quality. That is TD-097 (a gate-design + embedder-usage issue),
-    // ORTHOGONAL to this pipeline-integrity guard. `types_proposed >= 1`
-    // deterministically proves discovery reached the LLM with a real model and the
-    // model emitted valid structured proposals (the TD-094 invariant this E2E
-    // exists to guard). The recorded cassette shows gemma4:e4b proposing sound
-    // names ("Pharmaceutical Drug", "Corporation"); acceptance is asserted once
-    // TD-097 lands a sound name-comparison path.
+    // ── Lane A assertion — type_discovery PASS ran, PROPOSED, AND ACCEPTED >= 1 ──
+    // Pre-gate guard: `kremory.dream.types_proposed_total >= 1` deterministically
+    // proves discovery reached the LLM with a real model and the model emitted
+    // valid structured proposals (the TD-094 pipeline-integrity invariant this E2E
+    // exists to guard).
     let types_proposed = snapshotter
         .snapshot()
         .into_vec()
@@ -606,8 +600,29 @@ async fn dream_e2e_real_llm_five_pass_chain() {
     assert!(
         types_proposed >= 1,
         "Lane A (type_discovery): kremory.dream.types_proposed_total must be >= 1 \
-         (discovery pass ran + the model proposed >= 1 type); got {types_proposed}. \
-         (types_accepted is embedder-gated — see TD-097.)"
+         (discovery pass ran + the model proposed >= 1 type); got {types_proposed}."
+    );
+    // Post-gate assertion (TD-097 closeout, Vera A1): `summary.types_discovered`
+    // (== `discovery.types_accepted`, wired at facade/dream.rs) is the count that
+    // SURVIVED the anti-redundancy gate and was persisted. TD-097 landed (commit
+    // 4244633): the degenerate bare-name cosine gate — which compared SHORT
+    // one-word-label embeddings that collapse to ~1.0 cosine and could reject
+    // genuinely-novel proposals — was dropped for a deterministic `normalize_name`
+    // exact-match pre-filter + description-cosine (0.85) as the primary signal. So
+    // sound novel proposals are no longer spuriously rejected. Asserting the
+    // POST-gate accepted count proves the gate ACCEPTS good discoveries end-to-end
+    // (the actual TD-097 success condition), not merely that the LLM proposed them.
+    assert!(
+        !summary.types_discovered.is_empty(),
+        "Lane A (type_discovery): summary.types_discovered (post-gate accepted \
+         types) must be non-empty after TD-097's sound name-comparison path; \
+         proposed={types_proposed}, accepted={}. Accepted names: {:?}",
+        summary.types_discovered.len(),
+        summary
+            .types_discovered
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>(),
     );
 
     // ── Lane B assertion — reclassify retyped >= 1 low-confidence entity ──

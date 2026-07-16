@@ -248,12 +248,12 @@ async fn type_exists(conn: &libsql::Connection, group_id: &str, name: &str) -> b
 /// (c) A GENUINELY-DISTINCT pair that must NOT merge (false-merge guard) —
 ///     `Vehicle` vs `Recipe`, unrelated by any signal.
 ///
-/// Returns the group_id used, and seeds defaults 0..=10 first (types_
+/// Returns the group_id used, and seeds defaults 0..=9 first (types_
 /// registry_collapse skips id=0, spec §4.0).
 async fn plant_polluted_registry(graph: &TemporalGraph, group_id: &str) {
     ensure_default_types_seeded(&graph.conn, group_id)
         .await
-        .expect("seed defaults 0..=10");
+        .expect("seed defaults 0..=9");
 
     // (a) trivially-collapsible: singular/plural lemma pair, same meaning.
     insert_custom_type(

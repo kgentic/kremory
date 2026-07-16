@@ -28,7 +28,13 @@ use rmcp::transport::{ConfigureCommandExt, TokioChildProcess};
 use rmcp::ServiceExt;
 use tokio::net::TcpListener;
 
-const EXPECTED_TOOLS: &[&str] = &["kremory_remember", "kremory_recall", "kremory_dream"];
+const EXPECTED_TOOLS: &[&str] = &[
+    "kremory_remember",
+    "kremory_recall",
+    "kremory_dream",
+    "kremory_list_mutations",
+    "kremory_undo",
+];
 
 /// Bind a loopback TCP listener and keep accepting in the background so the
 /// server binary's boot reachability check (a single TCP connect) succeeds.
@@ -83,7 +89,7 @@ async fn spawn_server(
 }
 
 #[tokio::test]
-async fn initialize_and_list_tools_exposes_floor_3_surface() -> Result<()> {
+async fn initialize_and_list_tools_exposes_floor_5_surface() -> Result<()> {
     let (url, accept_task) = dummy_ollama().await?;
     let db = temp_db_path("list");
     let client = spawn_server(&url, &db).await?;
@@ -93,8 +99,8 @@ async fn initialize_and_list_tools_exposes_floor_3_surface() -> Result<()> {
 
     assert_eq!(
         tools.len(),
-        3,
-        "server must expose exactly the floor-3 tool surface, got {names:?}"
+        5,
+        "server must expose exactly the floor-5 tool surface, got {names:?}"
     );
     for expected in EXPECTED_TOOLS {
         assert!(

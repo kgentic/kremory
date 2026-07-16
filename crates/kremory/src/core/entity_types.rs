@@ -44,7 +44,6 @@ pub const DEFAULT_ENTITY_TYPES: &[(u32, &str, &str)] = &[
     (7, "Quantity", "A measurement or count with units. Example: '300 metres', '12 samples'."),
     (8, "Event", "A named occurrence, meeting, or conference. Example: 'NeurIPS 2024', 'Annual Review Meeting'."),
     (9, "Concept", "A named abstract entity, theory, or methodology. Example: 'OAuth 2.0', 'Six Sigma'."),
-    (10, "Court", "A court, tribunal, or judicial body. Example: 'Los Angeles Superior Court', 'Court of Appeal'."),
 ];
 
 /// Seed the default entity_types vocabulary for `group_id` if not already present.
@@ -139,7 +138,7 @@ pub async fn ensure_default_types_seeded(
 pub struct EntityTypeSpec {
     /// Integer ID within this namespace. id=0 = "Entity" catch-all.
     pub id: u32,
-    /// Canonical type name (e.g. "Person", "Organisation", "Court").
+    /// Canonical type name (e.g. "Person", "Organisation", "Location").
     pub name: String,
     /// Anti-junk description used in extraction prompts.
     pub description: String,
@@ -228,7 +227,19 @@ pub enum NamespaceSeed {
     #[default]
     Default,
     /// Seed with `specs` in ADDITION to the defaults (consumer ids should be
-    /// ≥ 11; defaults occupy 0–10). Brownfield-safe at fresh registration.
+    /// ≥ 10; the general defaults occupy 0–9). Brownfield-safe at fresh
+    /// registration.
+    ///
+    /// This is how a domain consumer opts into vocabulary the general defaults
+    /// deliberately omit. Example — a legal consumer augments with `Court`:
+    ///
+    /// ```ignore
+    /// NamespaceSeed::Augment(vec![EntityTypeSpec {
+    ///     id: 10,
+    ///     name: "Court".into(),
+    ///     description: "A court, tribunal, or judicial body.".into(),
+    /// }])
+    /// ```
     Augment(Vec<EntityTypeSpec>),
     /// Seed with ONLY `specs` — replaces the defaults entirely. id=0 "Entity"
     /// is injected by the engine if absent.
@@ -1572,8 +1583,8 @@ mod tests {
             .await
             .expect("load registry");
 
-        // "Court" is now a default type (id=10); use "Statute" as a genuinely
-        // novel label not present in DEFAULT_ENTITY_TYPES.
+        // "Statute" is not in DEFAULT_ENTITY_TYPES, so it exercises the
+        // novel-label register path.
         let new_id = label_to_id_or_register(LabelToIdOrRegisterParams {
             conn: &conn,
             group_id: "g1",
@@ -1922,12 +1933,12 @@ mod tests {
         );
     }
 
-    /// T7 — `Augment` on a fresh namespace → defaults (0–10) + custom (≥11) all present.
+    /// T7 — `Augment` on a fresh namespace → defaults (0–9) + custom (≥10) all present.
     ///
-    /// Custom names MUST avoid the `DEFAULT_ENTITY_TYPES` vocabulary: "Court" is
-    /// already default id=10, and Augment carries the defaults, so a custom
-    /// `(11, "Court")` would be dropped by the `UNIQUE(group_id, name)`
-    /// constraint via `INSERT OR IGNORE`. "Statute" / "Judge" are non-default.
+    /// Custom names MUST avoid the `DEFAULT_ENTITY_TYPES` vocabulary: a custom
+    /// spec whose name collides with a default (e.g. "Person") would be dropped
+    /// by the `UNIQUE(group_id, name)` constraint via `INSERT OR IGNORE`.
+    /// "Statute" / "Judge" are non-default, so they persist alongside the defaults.
     #[tokio::test]
     async fn t7_augment_fresh_namespace_defaults_plus_custom() {
         let conn = open_migrated_conn().await;

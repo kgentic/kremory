@@ -871,6 +871,36 @@ pub struct DreamOpts {
     /// cutoff (≥0.85 rejects, `[0.70, 0.85)` accepts) if you do not want the
     /// LLM-verify-band adjudication.
     pub include_type_novelty_llm_verify: bool,
+    /// TD-123 — gate Pass 0's in-place evidence-retype step (`discover_types`'s
+    /// `retype_evidence_by_similarity`, ADR-037 §9.6) which retypes catch-all
+    /// evidence entities to a newly-accepted type when a BARE ENTITY NAME
+    /// embedding is cosine ≥ 0.75 to the new type's DESCRIPTION embedding.
+    ///
+    /// This is a Vera-surfaced 7th cosine-alone-write site outside ADR-063's six
+    /// enumerated sites: it is the same degenerate-embedding failure class
+    /// TD-097 documented (bare short labels collapse to near-identical vectors
+    /// under `nomic-embed-text`), but cross-domain (instance name vs. type
+    /// description) rather than name-vs-name, so the ADR-057/063
+    /// lexical-compatibility gate does not transplant here unmodified (an
+    /// instance name like "Nobu Malibu" shares no lemma with its type
+    /// "Restaurant" even on a CORRECT match — a lexical gate would reject
+    /// legitimate retypes, not just degenerate ones).
+    ///
+    /// DEFAULT `false` — UNLIKE ADR-063's six sites, this comparison has never
+    /// been `/ship-spike`-validated on kremory's own corpus/embedder (ADR-063's
+    /// own precondition: "every kremory-specific numeric threshold MUST PASS a
+    /// `/ship-spike`... BEFORE it is wired into the production path"). Quarantined
+    /// default-off mirrors the same pre-spike posture ADR-063 used for every
+    /// other new mechanism (Sites #2/#3/#5 all shipped disabled pending S1-S6).
+    /// When `false` (default), evidence entities stay catch-all
+    /// (`entity_type_id = 0`) after Pass 0 accepts a new type; Pass 2
+    /// `reclassify` — LLM + `ner_confidence`-gated, not cosine-alone — runs
+    /// immediately after Pass 0 in the same `mem.dream()` call and safely picks
+    /// up the promotion instead (ADR-037 §9.6 "cascading retype"), so disabling
+    /// this flag does not lose retype coverage, only the unvalidated cosine-alone
+    /// shortcut. Set to `true` only after a dedicated spike validates
+    /// `EVIDENCE_RETYPE_COSINE` (currently 0.75) on real data.
+    pub include_evidence_retype_by_similarity: bool,
     /// Run the CONSOLIDATION community-detection op (ADR-066 §2.1, spec P4) —
     /// deterministic in-Rust label propagation over the entity co-occurrence graph,
     /// persisting `entity_communities` + `community_summaries`. Zero-LLM.
@@ -1071,6 +1101,12 @@ impl Default for DreamOpts {
             // site2_corpus_audit.md. The single miss (s2-025 Employer/Company)
             // is an orthogonal LLM-judgment miss tracked by a follow-up TD.
             include_type_novelty_llm_verify: true,
+            // DEFAULT `false` (TD-123) — this cosine-only bare-name-vs-type-
+            // description comparison has never been spike-validated (unlike
+            // ADR-063's six sites), so it stays quarantined off; Pass 2
+            // reclassify (LLM + confidence-gated) safely covers the same
+            // promotion in the same dream cycle. See field doc.
+            include_evidence_retype_by_similarity: false,
             // CONSOLIDATION sub-phase (ADR-066 §5) — ALL FOUR ops default ON. Made
             // safe by ADR-073 Tier-1 (reversible graph mutations: provenance +
             // unmerge + nogood + inspect) — every destructive consolidation write is
