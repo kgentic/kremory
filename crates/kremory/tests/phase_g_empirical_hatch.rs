@@ -567,10 +567,14 @@ async fn phase_g_gemma4_e2b_pre_post_dream() {
         );
 
         let allowed_for_config_legal: Vec<String> = if use_hybrid {
+            // Legal extraction augments the general defaults with the legal
+            // `Court` type (TD-079: `Court` is no longer a universal default —
+            // legal consumers opt in via a namespace augment).
             DEFAULT_ENTITY_TYPES
                 .iter()
                 .filter(|(id, _, _)| *id != 0)
                 .map(|(_, name, _)| name.to_string())
+                .chain(std::iter::once("Court".to_string()))
                 .collect()
         } else {
             Vec::new()
