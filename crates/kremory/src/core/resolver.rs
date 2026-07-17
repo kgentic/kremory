@@ -233,7 +233,7 @@ impl<L: ChatProvider> CascadeResolver<L> {
 }
 
 /// Helper to extract entity name from Entity struct (checks properties.name first, falls back to id).
-fn entity_name(entity: &Entity) -> &str {
+pub(crate) fn entity_name(entity: &Entity) -> &str {
     entity
         .properties
         .get("name")

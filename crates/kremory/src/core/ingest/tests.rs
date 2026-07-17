@@ -764,6 +764,129 @@ async fn stub_entity_promoted_on_reingestion_lib() {
     );
 }
 
+/// ADR-075 (TD-124): stub promotion MUST still fire when candidate blocking is
+/// ACTIVE (group has > `resolution_block_k` existing entities + a real,
+/// non-zero embedder). This is the load-bearing safety case: stubs are stored
+/// with `embedding=None`, so the embedding-ANN arm can NEVER surface them —
+/// only the exact normalized-name arm can. If the exact-name arm were dropped
+/// (or blocking short-circuited it), the stub would be missed and re-inserted
+/// as a duplicate instead of promoted. `resolution_block_k=2` + 3 real entities
+/// forces `existing_entities.len() (=4) > k`, so the ≤k no-op guard does NOT
+/// fire and blocking is genuinely exercised (MockEmbeddingProvider yields
+/// distinct non-zero FNV-1a vectors, so the null-embedder fallback is not taken).
+#[tokio::test]
+async fn stub_promoted_under_active_blocking_lib() {
+    let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
+    // k=2 with 4 entities in the group → blocking active (len > k), not the no-op.
+    let config = PipelineConfig::builder()
+        .resolution_block_k(2)
+        .build()
+        .expect("config");
+    let llm = Arc::new(MockChatProvider::null());
+    let embedder = Arc::new(MockEmbeddingProvider::new(config.embedding_dim.0));
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm,
+        embedder,
+        config,
+        model: None,
+    });
+
+    // Ingest 1: 3 real entities (Alice, Carol, Dave) + forward-ref Bob (stub).
+    // → group holds 4 entities; Bob is the only one with embedding=None.
+    let extractor_1 = FixedExtractorWithFacts {
+        entities: vec![
+            ExtractedEntity {
+                name: "Alice".into(),
+                label: "Person".into(),
+                properties: serde_json::json!({}),
+            },
+            ExtractedEntity {
+                name: "Carol".into(),
+                label: "Person".into(),
+                properties: serde_json::json!({}),
+            },
+            ExtractedEntity {
+                name: "Dave".into(),
+                label: "Person".into(),
+                properties: serde_json::json!({}),
+            },
+        ],
+        facts: vec![ExtractedFact {
+            subject: "Alice".into(),
+            predicate: "works_with".into(),
+            object: "Bob".into(),
+            is_entity_ref: true,
+            confidence: 0.9,
+        }],
+    };
+    engine
+        .ingest_with(
+            &extractor_1,
+            IngestWithParams {
+                text: "Alice and Carol and Dave all work with Bob.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
+        )
+        .await
+        .expect("ingest 1 OK");
+
+    let bob_pre = graph
+        .get_entity("bob")
+        .await
+        .expect("get OK")
+        .expect("Bob exists");
+    assert_eq!(
+        bob_pre.properties.get("stub").and_then(|v| v.as_bool()),
+        Some(true),
+        "Bob must be a stub before promotion"
+    );
+
+    // Ingest 2: Bob extracted as a real entity. With 4 existing entities and
+    // k=2, blocking is active — the ANN arm cannot see the embedding-less stub,
+    // so promotion relies entirely on the exact-name arm.
+    let extractor_2 = FixedExtractorWithFacts {
+        entities: vec![ExtractedEntity {
+            name: "Bob".into(),
+            label: "Person".into(),
+            properties: serde_json::json!({}),
+        }],
+        facts: vec![],
+    };
+    engine
+        .ingest_with(
+            &extractor_2,
+            IngestWithParams {
+                text: "Bob is a researcher at Stanford.",
+                reference_time: None,
+                group_id: None,
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
+        )
+        .await
+        .expect("ingest 2 OK");
+
+    let bob_post = graph
+        .get_entity("bob")
+        .await
+        .expect("get OK")
+        .expect("Bob still exists");
+    let stub_flag = bob_post
+        .properties
+        .get("stub")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    assert!(
+        !stub_flag,
+        "under active blocking, the exact-name arm must still promote the stub \
+         (stubs have embedding=None → invisible to the ANN arm)"
+    );
+}
+
 /// v0.1.4 — soft-dedup ingest writes exactly one row per duplicated name.
 /// Previously (Story #150): after FATAL `IntraBatchDuplicate`, zero rows
 /// were written. Post-v0.1.4: the substrate dedupes silently so one row
