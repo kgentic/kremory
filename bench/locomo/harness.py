@@ -28,6 +28,20 @@ CODEMEM_BASE = "http://localhost:3179"  # kremory-http: bare routes, NO /api pre
 DEFAULT_DATASET = Path(__file__).parent / "data" / "locomo10.json"
 NAMESPACE_PREFIX = "locomo-bench"
 
+# fail-fast-and-loud: hard wall-clock budget for ingesting ONE conversation.
+# kremory's remember() fans out to ~20 sequential LLM calls per chunk, so a
+# conversation is minutes, not seconds. If ingest of a single conversation
+# blows past this, kremory is too slow at this granularity (or stalled) — we
+# abort LOUD rather than grind for 30 min and die with a raw traceback.
+# Override via KREMORY_INGEST_BUDGET_S env.
+import os as _os
+INGEST_BUDGET_S = float(_os.environ.get("KREMORY_INGEST_BUDGET_S", "900"))
+
+
+class KremoryStalled(RuntimeError):
+    """Raised when kremory ingest stalls (store timeout) or blows the wall-clock
+    budget. Bubbles to run_benchmark's fail-fast handler — never swallowed."""
+
 
 @dataclass
 class Config:
@@ -61,7 +75,7 @@ class CodememClient:
         # of stage time — tripping this client's default 30.0s timeout
         # with an httpx.ReadTimeout mid-store. 120s gives headroom for a
         # slow store plus one ladder-arm fallback retry.
-        self.store_timeout = 120.0
+        self.store_timeout = 90.0
         # kremory's POST /consolidation/{cycle} runs the full dream()
         # reconciliation (discover/aliases/reclassify/consistency_check/
         # canonicalize passes) over every episode in the namespace — scales
@@ -95,14 +109,30 @@ class CodememClient:
         # published_at?} — memory_type/importance/tags are codemem-only
         # fields kremory ignores; kept in the signature so callers below
         # don't need to change, just not sent over the wire.
-        r = self.http.post(
-            "/memories",
-            json={
-                "content": content,
-                "namespace": namespace,
-            },
-            timeout=self.store_timeout,
-        )
+        try:
+            r = self.http.post(
+                "/memories",
+                json={
+                    "content": content,
+                    "namespace": namespace,
+                },
+                timeout=self.store_timeout,
+            )
+        except httpx.TimeoutException as e:
+            # A store TIMEOUT means kremory's ingest stalled (per-remember() fans
+            # out to ~20 sequential LLM calls). Per fail-fast-and-loud: do NOT
+            # grind or swallow — abort the whole run immediately with a clear
+            # diagnostic. Bubbles to run_benchmark's KremoryStalled handler.
+            raise KremoryStalled(
+                f"POST /memories timed out after {self.store_timeout:.0f}s "
+                f"(namespace={namespace}, content_len={len(content)}) — "
+                f"kremory ingest stalled"
+            ) from e
+        except httpx.HTTPError as e:
+            raise KremoryStalled(
+                f"POST /memories transport error ({type(e).__name__}: {e}) "
+                f"(namespace={namespace})"
+            ) from e
         if r.status_code == 201:
             return r.json().get("id")
         self.total_http_errors += 1
@@ -133,11 +163,22 @@ class CodememClient:
         # kremory's POST /consolidation/{cycle} REQUIRES ?namespace= — dream()
         # is always namespace-scoped (unlike codemem's global consolidation);
         # omitting it is a loud 422, not a silent no-op.
-        r = self.http.post(
-            f"/consolidation/{cycle}",
-            params={"namespace": namespace},
-            timeout=self.consolidate_timeout,
-        )
+        try:
+            r = self.http.post(
+                f"/consolidation/{cycle}",
+                params={"namespace": namespace},
+                timeout=self.consolidate_timeout,
+            )
+        except httpx.HTTPError as e:
+            # Consolidation is best-effort enrichment (SHARES_THEME edges) — a
+            # timeout must NOT nuke the run, but MUST be loud (not a raw crash).
+            self.total_http_errors += 1
+            print(
+                f"  [warn] consolidation '{cycle}' failed after "
+                f"{self.consolidate_timeout:.0f}s: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+            return False
         return r.status_code == 200
 
     def start_session(self, namespace: str) -> str | None:
@@ -359,6 +400,7 @@ def ingest_conversation(
     count = 0
     session_id = client.start_session(namespace)
     turns_per_chunk = 4
+    ingest_start = time.monotonic()
 
     for sess in sessions:
         turns = sess["turns"]
@@ -394,6 +436,17 @@ def ingest_conversation(
             )
             if mid:
                 count += 1
+
+            # fail-fast-and-loud: don't let one conversation's ingest silently
+            # grind for many minutes. Check the wall-clock budget after each
+            # store; blow past it → loud abort (not a 30-min silent grind).
+            elapsed = time.monotonic() - ingest_start
+            if elapsed > INGEST_BUDGET_S:
+                raise KremoryStalled(
+                    f"ingest of {sample_id} exceeded {INGEST_BUDGET_S:.0f}s "
+                    f"budget after {count} chunks ({elapsed:.0f}s elapsed) — "
+                    f"kremory ingest too slow at this granularity"
+                )
 
     if session_id:
         client.end_session(session_id, summary=f"Ingested {count} turn chunks for {sample_id}")
@@ -550,7 +603,20 @@ def run_benchmark(config: Config) -> dict:
             client.delete_namespace(namespace)
             time.sleep(0.5)
 
-            mem_count = ingest_conversation(client, namespace, sessions, sample_id)
+            try:
+                mem_count = ingest_conversation(client, namespace, sessions, sample_id)
+            except KremoryStalled as e:
+                print(
+                    f"\n{'='*64}\n"
+                    f"FAIL-FAST ABORT (ingestion): {e}\n"
+                    f"  conversation={conv_idx} sample={sample_id}  "
+                    f"http_errors={client.total_http_errors}\n"
+                    f"  → kremory ingest stalled/too-slow — NOT grinding. Fix "
+                    f"ingest throughput or raise KREMORY_INGEST_BUDGET_S before "
+                    f"re-running.\n{'='*64}",
+                    file=sys.stderr,
+                )
+                sys.exit(4)
             print(f"  Stored {mem_count} memories")
             # Brief pause for enrichment
             time.sleep(1.0)
