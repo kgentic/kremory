@@ -267,11 +267,57 @@ impl Drop for BeginGuard<'_> {
                 "BeginGuard dropped without explicit commit or rollback — rolling back defensively"
             );
             metrics::counter!("rql.db.begin_guard_drop_without_explicit_commit").increment(1);
-            // Defensive reset — the DB connection will auto-rollback on drop/reuse anyway,
-            // but we reset the flag so the next caller doesn't see a stale outer-tx state.
-            self.graph
-                .has_outer_transaction
-                .store(false, Ordering::Release);
+            // Real defensive ROLLBACK (fixes a connection-poisoning bug found via
+            // the LoCoMo benchmark smoke, 2026-07-17): a `BEGIN IMMEDIATE`
+            // transaction stays open at the SQLite engine level until an
+            // explicit COMMIT/ROLLBACK executes. Drop cannot `.await`, so this
+            // previously ONLY reset the Rust-side `has_outer_transaction` flag
+            // and left a comment claiming "the DB connection will auto-rollback
+            // on drop/reuse anyway" — false for libsql/SQLite. When an in-flight
+            // request is cancelled mid-transaction (e.g. an HTTP client
+            // disconnects/times out while kremory-http's `ingest()` is still
+            // running), the guard drops, the flag resets to `false`, but the
+            // real transaction is STILL OPEN on the connection. The next
+            // `begin_immediate_if_needed()` call then sees `false` and issues a
+            // fresh `BEGIN IMMEDIATE` on a connection SQLite still considers
+            // mid-transaction, failing every subsequent request with
+            // `cannot start a transaction within a transaction` until process
+            // restart. Fix: spawn a detached task that issues a real `ROLLBACK`
+            // against the SAME underlying connection (`libsql::Connection`
+            // clones share the same `Arc<dyn Conn>`) and only clears the flag
+            // once that rollback completes — closing the race where a new
+            // `BEGIN IMMEDIATE` could land before the old transaction is
+            // actually closed.
+            let conn = self.graph.conn.clone();
+            let flag = Arc::clone(&self.graph.has_outer_transaction);
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    handle.spawn(async move {
+                        if let Err(e) = conn.execute("ROLLBACK", ()).await {
+                            tracing::error!(
+                                target: "kremory::db",
+                                error = %e,
+                                "defensive ROLLBACK after dropped BeginGuard failed — \
+                                 connection may be poisoned for subsequent requests"
+                            );
+                        }
+                        flag.store(false, Ordering::Release);
+                    });
+                }
+                Err(_) => {
+                    // No tokio runtime available (e.g. a synchronous Drop outside
+                    // any async context) — can't issue the ROLLBACK. Best effort:
+                    // clear the flag so we don't deadlock on a stale outer-tx
+                    // bookkeeping state, but the underlying SQLite transaction may
+                    // still be open; log loudly so it isn't silently swallowed.
+                    tracing::error!(
+                        target: "kremory::db",
+                        "BeginGuard dropped with no tokio runtime available — \
+                         cannot issue defensive ROLLBACK; connection may be poisoned"
+                    );
+                    flag.store(false, Ordering::Release);
+                }
+            }
         }
     }
 }
@@ -288,7 +334,10 @@ pub struct TemporalGraph {
     pub(crate) write_lock: Arc<AsyncMutex<()>>,
     /// `true` when a `BEGIN IMMEDIATE` is already active on this connection.
     /// Used by `begin_immediate_if_needed` to skip nested BEGIN. Story #246.
-    pub(crate) has_outer_transaction: AtomicBool,
+    /// `Arc`-wrapped (like `dirty` below) so `BeginGuard::drop`'s spawned
+    /// defensive-rollback task can hold its own clone without borrowing
+    /// `&'a TemporalGraph` past the guard's lifetime.
+    pub(crate) has_outer_transaction: Arc<AtomicBool>,
     /// Per-handle dirty flag. Set to `true` by `BeginGuard::commit()` after a
     /// successful write. `flush_if_dirty()` CAS-clears it and checkpoints.
     /// `SpeculativeCache::check_dirty_and_invalidate()` takes `&Arc<AtomicBool>`
@@ -321,7 +370,7 @@ impl TemporalGraph {
             _db: db,
             conn,
             write_lock: Arc::new(AsyncMutex::new(())),
-            has_outer_transaction: AtomicBool::new(false),
+            has_outer_transaction: Arc::new(AtomicBool::new(false)),
             dirty: Arc::new(AtomicBool::new(false)),
             embedding_dim,
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
@@ -338,7 +387,7 @@ impl TemporalGraph {
             _db: db,
             conn,
             write_lock: Arc::new(AsyncMutex::new(())),
-            has_outer_transaction: AtomicBool::new(false),
+            has_outer_transaction: Arc::new(AtomicBool::new(false)),
             dirty: Arc::new(AtomicBool::new(false)),
             embedding_dim: 384,
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
@@ -1734,7 +1783,7 @@ mod schema_tests {
             _db: db,
             conn,
             write_lock: Arc::new(AsyncMutex::new(())),
-            has_outer_transaction: AtomicBool::new(false),
+            has_outer_transaction: Arc::new(AtomicBool::new(false)),
             dirty: Arc::new(AtomicBool::new(false)),
             embedding_dim: 384,
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
