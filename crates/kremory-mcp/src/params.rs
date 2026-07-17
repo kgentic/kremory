@@ -198,13 +198,10 @@ pub struct RecallParams {
     pub query: String,
     /// Top-k results to return.
     pub k: Option<usize>,
-    /// RFC 3339 UTC point-in-time filter.
-    ///
-    /// NOTE: not yet implemented in the kremory substrate — setting this
-    /// currently makes `kremory_recall` fail loud with an internal error
-    /// (`kremory::MemoryError::Core(Error::Unsupported)`) rather than
-    /// silently ignoring it. Tracked upstream; this tool surfaces the real
-    /// facade behaviour rather than papering over it.
+    /// RFC 3339 UTC point-in-time (valid-time) filter (ADR-068). Filters
+    /// which facts the recall's 1-hop expansion surfaces to what was TRUE in
+    /// the world at this timestamp — entity search itself is unaffected.
+    /// `None` (the default) returns present-day results.
     pub as_of: Option<String>,
     /// `text` (default) returns a prompt-ready rendered string; `structured`
     /// returns the raw entity-shaped results with a count.

@@ -122,9 +122,12 @@ impl<'a> DreamRequest<'a> {
         }
 
         // dream() is a Category B method (ADR-041) — requires LLM; returns LlmRequired on NoLlm.
-        // Phase-3 consolidation (communities/merges/supersessions/archival) is not yet
-        // implemented — those fields in DreamSummary are honest zeros until Phase-3 ships
-        // (see ADR-007 retirement). Pass-0 and Pass-2 populate the real fields below.
+        // Consolidation (communities/merges/supersessions/archival) IS implemented —
+        // `run_consolidation` below wires all four ops when
+        // `opts.any_consolidation_enabled()` (default true; cross-episode merge
+        // defaults to Shadow — see `cross_episode()` above). DreamSummary's
+        // consolidation fields are honest zeros only when an op is explicitly
+        // disabled or a namespace has nothing to consolidate.
         let llm = self.memory.dream_llm_or_main(
             "dream",
             "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
@@ -320,8 +323,8 @@ impl<'a> DreamRequest<'a> {
         // Runs AFTER Pass 0 so newly discovered types (from Pass 0) are available in
         // the entity type registry for the reclassify LLM prompt.
         // Pass ordering per DoD E7: Pass 0 commits → Pass 2 (reclassify) → Pass 3 (consolidation).
-        // Pass 3 (consolidation) is not yet implemented — consolidation fields in DreamSummary
-        // are honest zeros until Phase-3 consolidation ships (see ADR-007 retirement).
+        // Pass 3 (consolidation) IS implemented — see `run_consolidation` below,
+        // dispatched after consistency_check + canonicalize.
         {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);

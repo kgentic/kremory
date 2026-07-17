@@ -42,8 +42,11 @@ ner = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]
 # GraphHandle trait surface always needs ChatProvider.
 embeddings = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]
 test-utils = []
-# trace: enable hot-path span emission (ADR D3). Off by default to keep
-# production throughput overhead near zero on non-OTel deployments.
+# trace: RESERVED, NOT YET WIRED. Intended to gate hot-path span emission
+# (ADR D3) so production throughput overhead stays near zero on non-OTel
+# deployments. As of 0.5.0 no source in this crate is `#[cfg(feature =
+# "trace")]` — enabling it is currently a no-op. Kept as a placeholder so the
+# eventual wiring is additive, not a new feature name.
 trace = []
 # otel: wire tracing-opentelemetry + opentelemetry_sdk so spans export via OTLP
 # (ADR D3). Requires an OTLP collector endpoint at runtime.
@@ -65,19 +68,19 @@ llm-integration = []
 # `#[cfg(any(test, feature = "test-utils"))]`) resolves from the `tests/` binary —
 # integration tests do NOT inherit `#[cfg(test)]`, only feature flags reach them.
 llm-smoke = ["test-utils"]
-# unstable-graph: gates v0.1.6 novel semantic surface — G3.b (episode_tags
-# junction table + with_tags + filter_tag_any/all) and G9 (Memory::get_related
-# graph traversal). Ships at v0.1.6 behind this flag per Vera cycle-2 IRREV-002
-# mitigation (62% prob of v2.0 break within 1yr if 6 unvalidated surfaces lock
-# simultaneously). Promotes to stable at v0.2.0 after aidocs validation.
+# unstable-graph: RESERVED, NOT YET WIRED. Was planned to gate a v0.1.6
+# semantic surface — G3.b (episode_tags junction table + with_tags +
+# filter_tag_any/all) and G9 (Memory::get_related graph traversal) — per Vera
+# cycle-2 IRREV-002 mitigation. As of 0.5.0 no source in this crate is
+# `#[cfg(feature = "unstable-graph")]`; the planned surface never landed under
+# this flag. Kept as a placeholder so the eventual wiring is additive.
 # See .ai-docs/specs/kremory-v016-api-gaps-aidocs-consumer-2026-05-29.md §3.5.
 unstable-graph = []
-# unstable-tags: split from unstable-graph per Vera cycle-2 NEW-001 — G3.b
-# junction-table tag storage is a standard relational pattern with bounded risk
-# (B-tree index on TEXT works). Coupling it under the same flag as G9 recursive
-# CTE traversal forces consumers wanting indexed tags to also opt into the
-# higher-risk graph surface. Split allows tag adoption without CTE preview.
-# Both promote to stable independently at v0.2.0.
+# unstable-tags: RESERVED, NOT YET WIRED. Was split from unstable-graph per
+# Vera cycle-2 NEW-001 to let junction-table tag storage promote to stable
+# independently of the higher-risk graph-traversal surface. As of 0.5.0 no
+# source in this crate is `#[cfg(feature = "unstable-tags")]`. Kept as a
+# placeholder so the eventual wiring is additive.
 unstable-tags = []
 # content-search: ADR-072 seq1 — BM25/FTS5 content recall over raw
 # `episodes.content` (no LLM, no embeddings, no chunker; whole episode is the
