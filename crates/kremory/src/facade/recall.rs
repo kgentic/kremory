@@ -10,11 +10,14 @@ pub struct RecallRequest<'a> {
     pub(super) namespace: Option<Namespace>,
     /// Multi-namespace selector (ADR-029c Decision 6). Mutually exclusive with
     /// `namespace`. When set, fan-out via `tokio::join_all` executes one
-    /// sub-query per namespace and blends results via cross-namespace RRF.
+    /// sub-query per namespace (each internally RRF-fused) and merges the
+    /// per-namespace results by concatenating them and sorting by score —
+    /// NOT a second cross-namespace RRF pass over the combined list.
     pub(super) namespaces: Option<Vec<Namespace>>,
-    /// Per-namespace top-K cap before cross-namespace RRF blend (ADR-029c
-    /// Decision 4). Default: effective `k`. Raising this value improves recall
-    /// diversity for low-coverage namespaces at the cost of extra sub-query work.
+    /// Per-namespace top-K cap before the cross-namespace score-sort merge
+    /// (ADR-029c Decision 4). Default: effective `k`. Raising this value
+    /// improves recall diversity for low-coverage namespaces at the cost of
+    /// extra sub-query work.
     pub(super) per_namespace_top_k: Option<usize>,
     /// When `true`, sub-query errors emit `tracing::warn!` and the failing
     /// namespace is skipped rather than propagating `Err` to the caller
@@ -212,9 +215,11 @@ impl<'a> RecallRequest<'a> {
         self
     }
 
-    /// Recall across multiple namespaces concurrently, blending results via
-    /// per-namespace top-K RRF. Each result in the returned `Vec` carries
-    /// `namespace: Some(ns)` identifying its source namespace.
+    /// Recall across multiple namespaces concurrently. Each namespace runs
+    /// its own local RRF-fused search independently; the per-namespace
+    /// result sets are then concatenated and sorted by score (not re-fused
+    /// via a second cross-namespace RRF pass). Each result in the returned
+    /// `Vec` carries `namespace: Some(ns)` identifying its source namespace.
     ///
     /// # Empty slice
     ///
@@ -244,8 +249,8 @@ impl<'a> RecallRequest<'a> {
     }
 
     /// Cap the number of results fetched from each individual namespace before
-    /// cross-namespace RRF blending. Default: `k` (or `Memory::default_k` if
-    /// `k` is unset). Raising this value improves recall diversity for
+    /// the cross-namespace score-sort merge. Default: `k` (or `Memory::default_k`
+    /// if `k` is unset). Raising this value improves recall diversity for
     /// low-coverage namespaces at the cost of extra per-namespace sub-query work.
     pub fn per_namespace_top_k(mut self, n: usize) -> Self {
         self.per_namespace_top_k = Some(n);
@@ -501,8 +506,10 @@ impl<'a> RecallRequest<'a> {
         Ok(memory::context_block(&results, template.into()))
     }
 
-    /// Fan-out recall across all namespaces in `self.namespaces`, blend via RRF,
-    /// trim to `self.k`, and return results with `namespace: Some(ns)` attribution.
+    /// Fan-out recall across all namespaces in `self.namespaces` (each namespace
+    /// internally RRF-fused), merge the per-namespace results by concatenation +
+    /// score-descending sort, trim to `self.k`, and return results with
+    /// `namespace: Some(ns)` attribution.
     ///
     /// Precondition: `self.namespaces` is `Some` and non-empty (caller checks).
     async fn execute_multi_namespace(self) -> Result<Vec<RetrievedContext>> {
@@ -611,7 +618,10 @@ impl<'a> RecallRequest<'a> {
             }
         }
 
-        // Sort blended results by score descending (RRF scores from sub-queries).
+        // Merge the per-namespace result sets: sort the concatenated list by
+        // score descending (each score is the per-namespace RRF score from its
+        // own sub-query — this is a score-sort merge, NOT a second cross-
+        // namespace RRF pass over the combined list).
         all_results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -734,10 +744,11 @@ impl<'a> IntoFuture for RecallContentRequest<'a> {
             }
 
             // ADR-072 seq1: content-search is single-namespace-only for now.
-            // Multi-namespace fan-out (`.in_namespaces()`) mirrors the entity/
-            // fact path's `execute_multi_namespace` cross-namespace RRF blend —
-            // content passages have no such blend yet (BM25-only, no fusion);
-            // wiring fan-out is a later increment, not part of seq1's scope.
+            // Multi-namespace fan-out (`.in_namespaces()`) would mirror the
+            // entity/fact path's `execute_multi_namespace` merge (concatenate
+            // per-namespace results + sort by score) — content passages have
+            // no such merge yet (BM25-only, no fusion); wiring fan-out is a
+            // later increment, not part of seq1's scope.
             if inner.namespaces.is_some() {
                 return Err(MemoryError::Other(
                     "`.content()` recall does not yet support multi-namespace fan-out \

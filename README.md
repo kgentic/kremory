@@ -1,22 +1,31 @@
 # kremory
 
-> Local-first **bi-temporal graph memory** for AI agents, in Rust — remember, dream, recall, and **reverse any mutation**.
+> **The SQLite of agent memory.** Embeddable, bi-temporal knowledge-graph memory for AI agents — a single Rust crate you link in, not a service you call out to.
 
 [![crates.io](https://img.shields.io/crates/v/kremory.svg)](https://crates.io/crates/kremory)
 [![docs.rs](https://img.shields.io/docsrs/kremory)](https://docs.rs/kremory)
 [![license](https://img.shields.io/crates/l/kremory.svg)](LICENSE)
 ![MSRV](https://img.shields.io/badge/MSRV-1.86-blue)
 
-Embeddable agent memory as a single crate. A knowledge graph that tracks how facts change across
-**world-time and system-time**, consolidates itself in a background **dream** phase, and lets you
-**see and undo** every merge / edit / delete it makes. No model weights bundled (bring your own
-LLM + embedder), no server process, no subscription to ship.
+kremory ships as a library, not a service: one crate, one embedded libSQL file, no server process,
+no subscription to ship. Two things it does that (as far as we've checked) no other agent-memory
+tool does:
+
+- **Local-first.** Runs entirely on your machine — no server, no API key, no data leaving the box.
+  Point the same API at a remote Turso URL later if you need to; nothing changes but the connection
+  string.
+- **Memory you can undo.** Every merge, edit, and delete kremory's background consolidation
+  ("dream") phase makes is logged and reversible — `mem.undo(mutation_id)` reverses it, deterministically,
+  no LLM involved. Nothing kremory writes is a silent overwrite.
+
+Supporting capabilities: **bi-temporal** facts (ask "what did the agent know, and when" via
+`.as_of(ts)`), and **BYOM** — bring your own LLM + embedder; kremory bundles no model weights.
 
 ## Install
 
 ```toml
 [dependencies]
-kremory = "0.4"
+kremory = "0.5"
 ```
 
 That's it — no git dependency, no `[patch.crates-io]` stanza. kremory builds against the
@@ -27,37 +36,66 @@ weights are bundled; bring your own LLM + embedder (see [BYOM](#byom--bring-your
 
 ## Quickstart
 
+This mirrors [`crates/kremory/examples/quickstart.rs`](crates/kremory/examples/quickstart.rs)
+(same API calls, embedder body simplified for readability) — that file gets compiled by
+`cargo test` (and directly via `cargo build --example quickstart`), so the API shape here is
+checked against the real crate, not hand-typed and left to drift. It wires a real local Ollama
+model (BYOM) and a custom embedder (BYOE):
+
 ```rust
-use kremory::{Memory, Namespace};
+use std::sync::Arc;
+use autoagents_llm::{backends::ollama::Ollama, builder::LLMBuilder};
+use kremory::{CoreResult, EmbeddingProvider, Memory, Namespace};
 
-// Auto-detect provider from env: OLLAMA_HOST → OPENAI_API_KEY → ANTHROPIC_API_KEY → Err
-let mem = Memory::auto("./agent.db").await?;
-let ns = Namespace::new("user-jim");
+/// BYOE — a real consumer calls their embedding backend (OpenAI, Ollama
+/// `nomic-embed-text`, a local GGUF, …) inside `embed`. This one is a
+/// deterministic hash so the example needs no network embedding model.
+struct DemoEmbedder;
 
-// Ingest — a namespace is required (pass per-call as shown, or set a default
-// via the Memory::open builder's .default_namespace(..)).
-mem.remember("User prefers concise replies")
-    .in_namespace(ns.clone())
-    .await?;
+impl EmbeddingProvider for DemoEmbedder {
+    fn embed<'a>(&'a self, text: &'a str)
+        -> impl std::future::Future<Output = CoreResult<Vec<f32>>> + Send + 'a
+    {
+        async move { Ok(vec![text.len() as f32; 16]) } // 16-dim demo vector
+    }
+}
 
-// Recall — returns prompt-ready text
-let context: String = mem
-    .recall("what does the user prefer?")
-    .in_namespace(ns.clone())
-    .await?;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // BYOM — bring your own chat provider. Real Ollama here, built via autoagents-llm.
+    let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
+        .base_url("http://localhost:11434")
+        .model("gemma4-e2b:latest")
+        .timeout_seconds(120)
+        .build()?;
 
-// Dream (consolidation)
-let summary = mem.dream().await?;
-println!("communities updated: {}", summary.communities_updated);
+    // Tier 2 builder — type-state guarded: `.await` won't compile until both
+    // `.with_llm()` and `.with_embedder()` are set.
+    let mem = Memory::open("./agent.db")
+        .embedding_dim(16) // our embedder is 16-dim, not the 384 default
+        .default_namespace(Namespace::new("quickstart"))
+        .with_llm(llm)
+        .with_model_id("gemma4-e2b:latest") // tells kremory which structured-output strategy to use
+        .with_embedder(DemoEmbedder.into_dyn())
+        .await?;
 
-// Forget (GDPR-style delete)
-let deleted: u64 = mem.forget().in_namespace(ns).execute().await?;
+    // Ingest — runs real LLM extraction.
+    mem.remember("Jim prefers concise replies and writes Rust.").await?;
 
-// Close (flush WAL)
-mem.close().await?;
+    // Recall — returns prompt-ready text.
+    let ctx = mem.recall("what language does Jim use?").await?;
+    println!("{ctx}");
+
+    mem.close().await?; // flush WAL
+    Ok(())
+}
 ```
 
 No model bundled. No server process. No API key required to ship.
+
+`Memory::auto("./agent.db")` (Tier 1, not shown above) is a shorter path when you're OK with
+env-var provider auto-detection — see [Three-tier API](#three-tier-api-progressive-disclosure)
+below.
 
 ---
 
@@ -265,7 +303,7 @@ See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for 
 9. Event sinks
 10. Advanced — substrate composition
 11. Bi-temporal model
-12. Migration guide (v0.1.3 → v0.3.2)
+12. Migration guide (currently covers up to v0.3.2 — see [CHANGELOG](crates/kremory/CHANGELOG.md) for changes since)
 13. Feature flags
 14. Node / napi binding
 
@@ -341,7 +379,7 @@ kremory emits structured metrics + tracing spans for every LLM and embedding cal
 **Optional OTLP export** — enable the `otel` cargo feature:
 
 ```toml
-kremory = { version = "0.4", features = ["otel"] }
+kremory = { version = "0.5", features = ["otel"] }
 ```
 
 ```rust
@@ -392,21 +430,33 @@ The two rows nobody else fills: **reversible graph mutations** (see [Reversible 
 
 ## Status & maturity
 
-**Pre-1.0 (`0.4.x`), used in earnest but still evolving.** Correctness coverage is strong —
+**Pre-1.0 (`0.5.x`), used in earnest but still evolving.** Correctness coverage is strong —
 the full suite runs under every feature combination (default / `ner` / `content-search` /
 all-features) plus real-Ollama end-to-end journeys (`remember → dream → recall → unmerge/edit/
 delete/undo`). What 1.0 still needs: an API freeze, a cross-provider model matrix, and
 load/concurrency/durability testing.
 
-**API stability:** on the pre-1.0 lane, minor releases (`0.3 → 0.4`) may contain breaking
-changes — pin a minor (`kremory = "0.4"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
+**API stability:** on the pre-1.0 lane, minor releases (e.g. `0.4 → 0.5`) may contain breaking
+changes — pin a minor (`kremory = "0.5"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
+
+## Node.js / MCP — not yet published
+
+- **Node binding (`kremory-napi`).** A napi-rs binding exists in this repo (`crates/kremory-napi`)
+  mirroring the Rust `Memory` facade in camelCase, including undo/reversibility. **It is not yet
+  published to npm** — build it from source if you need it today. Known limitation: wiring a
+  custom (JS-callback) embedder or LLM provider can hit a native teardown assertion on abrupt
+  process exit (upstream napi-rs issue; tracked as TD-005b) — this gates the npm publish.
+- **MCP server (`kremory-mcp`).** A Model Context Protocol server (5 tools: remember / recall /
+  dream / list_mutations / undo) exists in this repo. **It is not yet published as an installable
+  package** — build it from source.
 
 ## When *not* to reach for kremory
 
 - **You want a hosted, zero-config memory API.** kremory is an *embeddable Rust crate* you wire
   your own LLM + embedder into — not a managed service. (Bring your own model is the point; it's
   also the work.)
-- **You're not in Rust (or a Node app via the [napi binding](https://www.npmjs.com/package/@kgentic/kremory-node)).** There's no Python SDK.
+- **You're not in Rust.** The Node binding above works but isn't on npm yet, and there's no Python
+  SDK.
 - **You need proven horizontal scale / high-concurrency multi-tenant *today*.** Storage is a
   single embedded libSQL writer; large-scale concurrency is on the 1.0 roadmap, not yet load-tested.
 - **You just want document RAG.** A vector DB is simpler. kremory earns its keep when you need a
