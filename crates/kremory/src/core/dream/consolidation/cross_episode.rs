@@ -444,6 +444,14 @@ pub async fn cross_episode(
                         // rarity-weighted corroboration gate (ADR-067 F2), so the
                         // merge is structurally corroborated (spec §2.3, Quinn L3).
                         structural_signal: true,
+                        // TD-112: LEFT `None` intentionally. Cross-episode (P3) is
+                        // DRY-RUN by default (ADR-070 §2.3 — `cross_episode_dry_run`
+                        // defaults true), so in production the `!dry_run` arm doesn't
+                        // fire and no keeper embedding goes stale. The re-embed is
+                        // legitimately deferred until P3 is enabled apply-mode; the
+                        // shared executor already supports it — a future call site
+                        // just threads `Some(embedder)` here.
+                        embedder: None,
                     },
                 )
                 .await?;
@@ -1742,6 +1750,7 @@ mod tests {
                 keeper_id: "keeper",
                 site: crate::core::dream::provenance::MergeSite::CrossEpisode,
                 structural_signal: true,
+                embedder: None,
             },
         )
         .await

@@ -412,6 +412,9 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<(RowOutcome, String), S
             graph: &graph,
             group_id: &gid,
             model_id: &chat_model,
+            // TD-112: metrics harness asserts on merge counters, not embedding
+            // freshness — no embedder needed here.
+            embedder: None,
         },
     )
     .await

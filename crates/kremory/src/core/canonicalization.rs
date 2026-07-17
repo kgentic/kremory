@@ -34,6 +34,7 @@ use crate::core::dream::provenance::{
     LoserEntityRow, MergeInputs, MergeSite, RepointedFact,
 };
 use crate::core::error::{Error, Result};
+use crate::core::provider::DynEmbeddingProvider;
 use crate::core::schema::TemporalGraph;
 
 // ─── Threshold constant ───────────────────────────────────────────────────────
@@ -106,6 +107,48 @@ pub async fn canonicalize_surface_forms(
     group_id: &str,
     threshold: f32,
 ) -> Result<CanonicalizationReport> {
+    canonicalize_surface_forms_with_embedder(
+        graph,
+        CanonicalizeSurfaceFormsParams {
+            group_id,
+            threshold,
+            embedder: None,
+        },
+    )
+    .await
+}
+
+/// Bundled parameters for [`canonicalize_surface_forms_with_embedder`] —
+/// args-as-object per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`).
+/// `graph` stays a lead positional param (receiver-like dep, project
+/// convention — mirrors [`ApplyMergeWithAuditParams`]).
+pub struct CanonicalizeSurfaceFormsParams<'a> {
+    pub group_id: &'a str,
+    pub threshold: f32,
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
+    /// every merge this pass applies recomputes + persists the keeper's name
+    /// embedding post-commit (see [`EntityMergeParams::embedder`]). `None`
+    /// preserves [`canonicalize_surface_forms`]'s pre-TD-112 behavior (stored
+    /// embedding left stale after a merge).
+    pub embedder: Option<&'a dyn DynEmbeddingProvider>,
+}
+
+/// [`canonicalize_surface_forms`] extended with an embedder handle (TD-112,
+/// `.ai-docs/tech-debt/tech-debt-register.md:2547`) so L5's own pairwise-cosine
+/// merges re-embed the keeper instead of leaving its stored embedding stale.
+/// Additive — the bare 3-arg [`canonicalize_surface_forms`] is this entry
+/// point's `embedder: None` degradation (same "extended with an optional
+/// param" shape as [`apply_merge_with_audit`]); all pre-existing call sites
+/// and tests keep working unchanged.
+pub async fn canonicalize_surface_forms_with_embedder(
+    graph: &TemporalGraph,
+    params: CanonicalizeSurfaceFormsParams<'_>,
+) -> Result<CanonicalizationReport> {
+    let CanonicalizeSurfaceFormsParams {
+        group_id,
+        threshold,
+        embedder,
+    } = params;
     // ── Step 1: load entity slots with embeddings ─────────────────────────────
     let slots = load_entity_slots(graph, group_id).await?;
 
@@ -267,7 +310,15 @@ pub async fn canonicalize_surface_forms(
             "kremory.l5.merge"
         );
 
-        apply_merge(graph, loser_id, &effective_keeper).await?;
+        apply_merge(
+            graph,
+            ApplyMergeParams {
+                loser_id,
+                keeper_id: &effective_keeper,
+                embedder,
+            },
+        )
+        .await?;
         merges_applied += 1;
     }
 
@@ -389,7 +440,12 @@ async fn find_merge_pairs(
 /// Thin wrapper over [`apply_merge_with_audit`] with `audit = None` — L5's own
 /// pairwise cosine merges are not LLM-adjudicated, so no `identity_verdict_audit`
 /// row is written for them (ADR-063 spec §5.2: "audit only LLM-touched decisions").
-async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> Result<()> {
+async fn apply_merge(graph: &TemporalGraph, params: ApplyMergeParams<'_>) -> Result<()> {
+    let ApplyMergeParams {
+        loser_id,
+        keeper_id,
+        embedder,
+    } = params;
     apply_entity_merge(
         graph,
         EntityMergeParams {
@@ -399,9 +455,23 @@ async fn apply_merge(graph: &TemporalGraph, loser_id: &str, keeper_id: &str) -> 
             // L5 surface-form merges are pairwise-cosine + lexical-variant gated,
             // NOT structural-corroboration driven (spec §2.3, Quinn L3).
             structural_signal: false,
+            embedder,
         },
     )
     .await
+}
+
+/// Bundled parameters for [`apply_merge`] — args-as-object per TD-042
+/// (`clippy.toml` `too-many-arguments-threshold = 3`). `graph` stays a lead
+/// positional param (receiver-like dep, project convention).
+struct ApplyMergeParams<'a> {
+    loser_id: &'a str,
+    keeper_id: &'a str,
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
+    /// the keeper's name embedding is recomputed + persisted post-commit so it
+    /// reflects the merged identity instead of going stale. `None` preserves
+    /// pre-TD-112 behavior (no re-embed).
+    embedder: Option<&'a dyn DynEmbeddingProvider>,
 }
 
 /// The shared structural entity-merge executor (ADR-066 spec DoD-P0.3).
@@ -427,6 +497,7 @@ pub(crate) async fn apply_entity_merge(
         keeper_id,
         site,
         structural_signal,
+        embedder,
     } = params;
     apply_merge_with_audit(
         graph,
@@ -436,6 +507,7 @@ pub(crate) async fn apply_entity_merge(
             audit: None,
             site,
             structural_signal,
+            embedder,
         },
     )
     .await
@@ -457,6 +529,14 @@ pub(crate) struct EntityMergeParams<'a> {
     /// merges (no structural signal). Threaded from the call-site rather than
     /// derived from `audit` (which is `None` on both non-LLM sites).
     pub(crate) structural_signal: bool,
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
+    /// the keeper's name embedding is recomputed from its canonical id and
+    /// persisted post-commit, so the surviving entity's stored embedding
+    /// reflects its post-merge identity instead of going stale. `None`
+    /// preserves pre-TD-112 behavior (embedding left untouched) — the shape
+    /// callers without embedder access (e.g. Site #5's embedder-independent
+    /// design) use today.
+    pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
 }
 
 /// One `identity_verdict_audit` row to write INSIDE the same `BEGIN IMMEDIATE`
@@ -502,6 +582,10 @@ pub(crate) struct ApplyMergeWithAuditParams<'a> {
     /// `false` for L5 pairwise cosine. Threaded from the call-site (not derived
     /// from `audit`, which is `None` on the non-LLM sites).
     pub(crate) structural_signal: bool,
+    /// TD-112: when `Some`, the keeper's name embedding is recomputed +
+    /// persisted (best-effort, post-commit) so it reflects the merged
+    /// identity. See [`EntityMergeParams::embedder`] doc for the full rationale.
+    pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
 }
 
 /// [`apply_merge`] extended with an OPTIONAL `identity_verdict_audit` INSERT
@@ -521,6 +605,7 @@ pub(crate) async fn apply_merge_with_audit(
         audit,
         site,
         structural_signal,
+        embedder,
     } = params;
     let guard = graph.begin_immediate_if_needed().await?;
     // Whether THIS guard opened the txn — decides post-commit o11y placement
@@ -786,6 +871,71 @@ pub(crate) async fn apply_merge_with_audit(
                     source = "entity_merge_executor",
                     "kremory.graph.mutation_logged: reversible-mutation provenance row committed"
                 );
+                // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): recompute
+                // + persist the keeper's name embedding AFTER the durable commit —
+                // the merge itself already succeeded, so a re-embed failure here is
+                // best-effort (never rolls back a durable merge) and must not hold
+                // the write-lock open across an external embedder call. Without this,
+                // the keeper's stored embedding stays at its PRE-merge value forever
+                // (register-verified: no production dream/reconciliation site
+                // re-persisted a recomputed embedding — `discover_types.rs:735` only
+                // recomputes for a similarity comparison, never persists).
+                if let Some(emb) = embedder {
+                    // Attribute the re-embed outcome per merge site (Quinn L3) so
+                    // once multiple sites thread the embedder, their re-embed
+                    // success/failure rates stay distinguishable. `site` is a
+                    // BOUNDED enum tag (3 variants) — safe as a metric label.
+                    let site_label = site.as_str();
+                    match emb.embed_dyn(keeper_id).await {
+                        Ok(fresh_embedding) => {
+                            match graph
+                                .update_entity_embedding(keeper_id, &fresh_embedding)
+                                .await
+                            {
+                                Ok(()) => {
+                                    counter!(
+                                        "kremory.graph.merge_reembed_total",
+                                        "outcome" => "success",
+                                        "site" => site_label,
+                                    )
+                                    .increment(1);
+                                }
+                                Err(e) => {
+                                    counter!(
+                                        "kremory.graph.merge_reembed_total",
+                                        "outcome" => "persist_failed",
+                                        "site" => site_label,
+                                    )
+                                    .increment(1);
+                                    tracing::warn!(
+                                        target: "kremory.graph.merge_reembed",
+                                        keeper_id = %keeper_id,
+                                        site = %site_label,
+                                        error = %e,
+                                        "kremory.graph.merge_reembed_persist_failed: keeper \
+                                         embedding left at its stale pre-merge value"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            counter!(
+                                "kremory.graph.merge_reembed_total",
+                                "outcome" => "embed_failed",
+                                "site" => site_label,
+                            )
+                            .increment(1);
+                            tracing::warn!(
+                                target: "kremory.graph.merge_reembed",
+                                keeper_id = %keeper_id,
+                                site = %site_label,
+                                error = %e,
+                                "kremory.graph.merge_reembed_embed_failed: keeper embedding \
+                                 left at its stale pre-merge value"
+                            );
+                        }
+                    }
+                }
             }
             Ok(())
         }
@@ -1113,6 +1263,45 @@ mod tests {
         v
     }
 
+    /// TD-112 test helper: cosine distance between an entity's PERSISTED
+    /// embedding and an ad-hoc probe vector, via the same `vector_distance_cos`
+    /// SQL function `find_merge_pairs` uses in production. Reading back through
+    /// SQL (rather than raw bytes) sidesteps endianness/precision concerns —
+    /// only the semantic (cosine) equality matters for this assertion.
+    /// Returns `None` if the entity has no embedding (zero-magnitude vector).
+    async fn entity_embedding_distance(
+        graph: &TemporalGraph,
+        id: &str,
+        probe: &[f32],
+    ) -> Option<f32> {
+        let vec_str = format!(
+            "vector32('[{}]')",
+            probe
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let mut rows = graph
+            .conn
+            .query(
+                &format!(
+                    "SELECT vector_distance_cos(embedding, {vec_str}) FROM entities WHERE id = ?1"
+                ),
+                libsql::params![id],
+            )
+            .await
+            .expect("query entity embedding distance");
+        let row = rows
+            .next()
+            .await
+            .expect("row")
+            .expect("entity must exist for embedding-distance probe");
+        row.get::<Option<f64>>(0)
+            .expect("distance column")
+            .map(|d| d as f32)
+    }
+
     // ── T1: Empty group ───────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1160,9 +1349,16 @@ mod tests {
                 .expect("edge");
         }
 
-        apply_merge(&graph, "loser", "keeper")
-            .await
-            .expect("merge must not error on episodic-edge collision");
+        apply_merge(
+            &graph,
+            ApplyMergeParams {
+                loser_id: "loser",
+                keeper_id: "keeper",
+                embedder: None,
+            },
+        )
+        .await
+        .expect("merge must not error on episodic-edge collision");
 
         let keeper_edges = graph.episodic_edges_for_entity("keeper").await.unwrap();
         assert_eq!(
@@ -1613,6 +1809,7 @@ mod tests {
                 keeper_id: "keeper",
                 site: MergeSite::Canonicalize,
                 structural_signal: false,
+                embedder: None,
             },
         )
         .await
@@ -1655,6 +1852,7 @@ mod tests {
                 keeper_id: "keeper",
                 site: MergeSite::Canonicalize,
                 structural_signal: false,
+                embedder: None,
             },
         )
         .await
@@ -1683,5 +1881,91 @@ mod tests {
             .get(0)
             .expect("object_id col");
         assert_eq!(object_id.as_deref(), Some("keeper"), "object_id must be remapped");
+    }
+
+    // ── TD-112: keeper re-embed on merge ──────────────────────────────────────
+
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): a merge that
+    /// carries an embedder must recompute + persist the KEEPER's embedding from
+    /// its canonical id, replacing whatever stale value it held before the
+    /// merge. Before the fix, `apply_merge_with_audit` never touched
+    /// `entities.embedding` — the keeper's stored vector stayed at its
+    /// pre-merge value forever.
+    #[tokio::test]
+    async fn apply_entity_merge_reembeds_keeper_when_embedder_present() {
+        use crate::core::provider::{DeterministicEmbeddingProvider, EmbeddingProvider};
+
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let gid = "g_td112_reembed";
+        // Keeper starts with a STALE embedding unrelated to its post-merge
+        // identity — simulates an entity embedded before this merge ever ran.
+        insert_entity_with_embedding(&graph, "keeper", gid, "keeper", &unit_vec(384)).await;
+        insert_bare_entity(&graph, "loser", gid).await;
+
+        let embedder = DeterministicEmbeddingProvider::new(384);
+        let fresh_keeper_embedding = embedder.embed("keeper").await.expect("embed keeper id");
+
+        apply_entity_merge(
+            &graph,
+            EntityMergeParams {
+                loser_id: "loser",
+                keeper_id: "keeper",
+                site: MergeSite::Canonicalize,
+                structural_signal: false,
+                embedder: Some(&embedder),
+            },
+        )
+        .await
+        .expect("merge");
+
+        // The keeper's stored embedding must now match a fresh embed of its own
+        // id — NOT the stale pre-merge value.
+        let distance_to_fresh =
+            entity_embedding_distance(&graph, "keeper", &fresh_keeper_embedding).await;
+        assert!(
+            distance_to_fresh.map(|d| d < 1e-4).unwrap_or(false),
+            "keeper's stored embedding must equal a fresh embed of its id post-merge \
+             (TD-112); distance was {distance_to_fresh:?}"
+        );
+
+        // Regression guard: it must have actually CHANGED from the stale value
+        // (rules out a no-op that happens to also satisfy the first assertion).
+        let distance_to_stale = entity_embedding_distance(&graph, "keeper", &unit_vec(384)).await;
+        assert!(
+            distance_to_stale.map(|d| d > 1e-4).unwrap_or(false),
+            "keeper's stored embedding must have CHANGED from its stale pre-merge \
+             value (TD-112 regression guard); distance was {distance_to_stale:?}"
+        );
+    }
+
+    /// TD-112 counterpart: `embedder: None` (the pre-fix / degraded-mode shape)
+    /// must leave the keeper's embedding untouched — the fix is additive, never
+    /// a mandatory re-embed.
+    #[tokio::test]
+    async fn apply_entity_merge_leaves_keeper_embedding_untouched_when_no_embedder() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let gid = "g_td112_no_embedder";
+        insert_entity_with_embedding(&graph, "keeper", gid, "keeper", &unit_vec(384)).await;
+        insert_bare_entity(&graph, "loser", gid).await;
+
+        apply_entity_merge(
+            &graph,
+            EntityMergeParams {
+                loser_id: "loser",
+                keeper_id: "keeper",
+                site: MergeSite::Canonicalize,
+                structural_signal: false,
+                embedder: None,
+            },
+        )
+        .await
+        .expect("merge");
+
+        let distance_to_stale = entity_embedding_distance(&graph, "keeper", &unit_vec(384)).await;
+        assert!(
+            distance_to_stale.map(|d| d < 1e-4).unwrap_or(false),
+            "with embedder: None, keeper's embedding must be UNCHANGED from its \
+             pre-merge value; distance was {distance_to_stale:?}"
+        );
     }
 }

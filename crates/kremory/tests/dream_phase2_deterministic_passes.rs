@@ -235,4 +235,66 @@ async fn dream_merges_near_duplicate_entities() {
         ids.iter().any(|i| i == "alice johnson") && !ids.iter().any(|i| i == "alice j"),
         "canonicalize must merge 'alice j' into keeper 'alice johnson'; present: {ids:?}",
     );
+
+    // TD-112 e2e (Quinn M2): prove the REAL `facade/dream.rs` wiring re-embeds the
+    // surviving keeper. Both entities were planted with the stale `unit_vec(DIM)`
+    // embedding; post-merge the keeper's stored embedding must equal a FRESH embed
+    // of its own id via the same MockEmbeddingProvider the facade holds — NOT the
+    // planted stale value. Read back via `vector_distance_cos` (the same SQL the
+    // canonicalize pass uses) to compare semantically without raw-byte concerns.
+    let fresh_keeper_embedding = MockEmbeddingProvider::new(DIM)
+        .embed_dyn("alice johnson")
+        .await
+        .expect("embed keeper id");
+    let dist_to_fresh = entity_embedding_distance(&graph, "alice johnson", &fresh_keeper_embedding)
+        .await
+        .expect("keeper must have an embedding");
+    assert!(
+        dist_to_fresh < 1e-4,
+        "TD-112: keeper's stored embedding must be REFRESHED to a fresh embed of \
+         its id after mem.dream() merges into it; cosine distance was {dist_to_fresh}",
+    );
+    // Regression guard: it must have CHANGED from the planted stale `unit_vec`
+    // (rules out a no-op that coincidentally also satisfies the first assertion —
+    // MockEmbeddingProvider's per-text vector is not the all-equal unit_vec).
+    let dist_to_stale = entity_embedding_distance(&graph, "alice johnson", &unit_vec(DIM))
+        .await
+        .expect("keeper must have an embedding");
+    assert!(
+        dist_to_stale > 1e-4,
+        "TD-112: keeper's stored embedding must have MOVED off the planted stale \
+         unit_vec value; cosine distance to stale was {dist_to_stale}",
+    );
+}
+
+/// TD-112 helper: cosine distance between an entity's PERSISTED embedding and a
+/// probe vector, via the same `vector_distance_cos` SQL the canonicalize pass
+/// uses. Returns `None` if the entity has no embedding (zero-magnitude vector).
+async fn entity_embedding_distance(graph: &TemporalGraph, id: &str, probe: &[f32]) -> Option<f32> {
+    let vec_str = format!(
+        "vector32('[{}]')",
+        probe
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let mut rows = graph
+        .conn
+        .query(
+            &format!(
+                "SELECT vector_distance_cos(embedding, {vec_str}) FROM entities WHERE id = ?1"
+            ),
+            libsql::params![id],
+        )
+        .await
+        .expect("query entity embedding distance");
+    let row = rows
+        .next()
+        .await
+        .expect("row")
+        .expect("entity must exist for embedding-distance probe");
+    row.get::<Option<f64>>(0)
+        .expect("distance column")
+        .map(|d| d as f32)
 }

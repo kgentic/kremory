@@ -151,6 +151,16 @@ pub struct AcronymNicknameRecallParams<'a> {
     /// Concrete model id for capability detection (TD-094-style threading).
     /// Empty (`""`) → `PromptOnly` degrade.
     pub model_id: &'a str,
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
+    /// a merge this pass applies recomputes + persists the keeper's name
+    /// embedding so the surviving entity's stored embedding reflects its
+    /// post-merge identity. Site #5 has NO dry-run gate and is ON by default
+    /// (`DreamOpts::include_acronym_nickname_recall` = true, VALIDATED
+    /// 2026-07-03), so it merges LIVE in every `mem.dream()` — leaving the
+    /// keeper's embedding stale is the exact TD-112 bug. `None` preserves the
+    /// pre-TD-112 no-re-embed behavior (used by unit tests that don't assert
+    /// on embeddings).
+    pub embedder: Option<&'a dyn crate::core::provider::DynEmbeddingProvider>,
 }
 
 /// Run Site #5 instance acronym/nickname recall over `group_id` (ADR-063
@@ -172,6 +182,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
         graph,
         group_id,
         model_id,
+        embedder,
     } = params;
     let conn = &graph.conn;
 
@@ -319,6 +330,15 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                             decision: "merge",
                             run_id: &run_id,
                         }),
+                        // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`):
+                        // Site #5's DETECTION is embedder-independent (initialism /
+                        // graph co-occurrence pre-filter — module doc), but that says
+                        // nothing about the surviving keeper's STORED embedding, which
+                        // still needs refreshing after the fusion. Site #5 has NO
+                        // dry-run gate and is ON by default, so it merges live in every
+                        // `mem.dream()`; thread the embedder so the keeper is re-embedded
+                        // post-commit instead of going stale (Quinn CONCERNS M1).
+                        embedder,
                     },
                 )
                 .await?;
@@ -1155,6 +1175,7 @@ mod tests {
                 graph: &graph,
                 group_id: "g5",
                 model_id: "test-model",
+                embedder: None,
             },
         )
         .await
@@ -1230,6 +1251,7 @@ mod tests {
                 graph: &graph,
                 group_id: "g_ng5",
                 model_id: "test-model",
+                embedder: None,
             },
         )
         .await
@@ -1270,6 +1292,7 @@ mod tests {
                 graph: &graph,
                 group_id: "g_ng5",
                 model_id: "test-model",
+                embedder: None,
             },
         )
         .await
@@ -1315,6 +1338,7 @@ mod tests {
                 graph: &graph,
                 group_id: "g6",
                 model_id: "test-model",
+                embedder: None,
             },
         )
         .await
@@ -1359,6 +1383,7 @@ mod tests {
                 graph: &graph,
                 group_id: "g7",
                 model_id: "test-model",
+                embedder: None,
             },
         )
         .await
