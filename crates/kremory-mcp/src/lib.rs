@@ -33,13 +33,17 @@
 //! - `kremory::MemoryError` (facade error) → MCP `internal_error` carrying
 //!   the underlying `Display` string.
 //!
-//! Both are unified internally as [`ToolError`] so each handler can record
-//! an `outcome` label (`ok` | `invalid_params` | `internal_error`) for the
-//! `kremory_mcp.tool.calls` counter before converting to the final
+//! Both are unified internally as [`handlers::ToolError`] so each handler can
+//! record an `outcome` label (`ok` | `invalid_params` | `internal_error`) for
+//! the `kremory_mcp.tool.calls` counter before converting to the final
 //! `ErrorData` (Critical Rule 19 — observability built in at emit, not
-//! bolted on after).
+//! bolted on after). `handlers::do_remember` / `do_recall` / `do_dream` are
+//! the transport-agnostic bodies, shared with the `kremory-http` REST bin
+//! (`bin/kremory-http.rs`) — see `handlers.rs` module docs.
 
 pub mod conversions;
+pub mod handlers;
+pub mod health;
 pub mod params;
 
 use std::sync::Arc;
@@ -50,47 +54,20 @@ use rmcp::{model::*, tool, tool_router};
 
 use kremory::Memory;
 
-use crate::conversions::ConversionError;
+use crate::handlers::ToolError;
 use crate::params::{
-    DreamOutput, DreamParams, ListMutationsParams, MutationRecordWire, RecallFormat, RecallParams,
-    RecallStructuredOutput, RecallTextOutput, RememberOutput, RememberParams, UndoOutcomeWire,
-    UndoParams,
+    DreamParams, ListMutationsParams, MutationRecordWire, RecallFormat, RecallParams,
+    RememberParams, UndoOutcomeWire, UndoParams,
 };
 
 // ────────────────────────────────────────────────────────────────────────
 // Internal error unification
 // ────────────────────────────────────────────────────────────────────────
 
-/// Unifies [`ConversionError`] and `kremory::MemoryError` so handler bodies
-/// can record an observability outcome label BEFORE converting to the final
-/// `rmcp::ErrorData` the JSON-RPC boundary expects.
-#[derive(Debug)]
-enum ToolError {
-    InvalidParams(String),
-    Internal(String),
-}
-
-impl ToolError {
-    fn outcome_label(&self) -> &'static str {
-        match self {
-            ToolError::InvalidParams(_) => "invalid_params",
-            ToolError::Internal(_) => "internal_error",
-        }
-    }
-}
-
-impl From<ConversionError> for ToolError {
-    fn from(e: ConversionError) -> Self {
-        ToolError::InvalidParams(e.to_string())
-    }
-}
-
-impl From<kremory::MemoryError> for ToolError {
-    fn from(e: kremory::MemoryError) -> Self {
-        ToolError::Internal(e.to_string())
-    }
-}
-
+/// [`ToolError`] → the final `rmcp::ErrorData` the JSON-RPC boundary expects.
+/// The unification itself (`ConversionError` / `kremory::MemoryError` →
+/// `ToolError`) lives in `handlers.rs` so it's shared with the REST bin; this
+/// conversion is MCP-specific and stays here.
 impl From<ToolError> for ErrorData {
     fn from(e: ToolError) -> Self {
         match e {
@@ -194,7 +171,7 @@ impl KremoryMcpServer {
             );
         }
 
-        let result = self.do_remember(params).await;
+        let result = handlers::do_remember(&self.mem, params).await;
         if let Ok(ref wire) = result {
             if debug_enabled() {
                 tracing::debug!(
@@ -261,7 +238,7 @@ impl KremoryMcpServer {
             );
         }
 
-        let result = self.do_recall(params).await;
+        let result = handlers::do_recall(&self.mem, params).await;
         let outcome = result
             .as_ref()
             .map(|_| "ok")
@@ -320,7 +297,7 @@ impl KremoryMcpServer {
             );
         }
 
-        let result = self.do_dream(params).await;
+        let result = handlers::do_dream(&self.mem, params).await;
         if let Ok(ref wire) = result {
             if debug_enabled() {
                 tracing::debug!(
@@ -473,96 +450,14 @@ impl KremoryMcpServer {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Pure handler bodies — facade builder chains. Kept separate from the
-// `#[tool]`-annotated dispatch methods above so the observability/error-label
-// wiring above doesn't have to be duplicated inside the facade call itself.
+// Pure handler bodies for the two tools NOT shared with the REST bin
+// (`kremory_list_mutations` / `kremory_undo` have no REST route in Step 2).
+// `kremory_remember` / `kremory_recall` / `kremory_dream` delegate straight
+// to `handlers::do_remember` / `do_recall` / `do_dream` from the `#[tool]`
+// methods above — see `handlers.rs`.
 // ────────────────────────────────────────────────────────────────────────
 
 impl KremoryMcpServer {
-    async fn do_remember(&self, params: RememberParams) -> Result<RememberOutput, ToolError> {
-        let resolved = params.resolve()?;
-
-        let mut req = self
-            .mem
-            .remember(resolved.content)
-            .in_namespace(resolved.namespace);
-        if let Some(ts) = resolved.published_at {
-            req = req.published_at(ts);
-        }
-        match (resolved.source_kind, resolved.source_id) {
-            (Some(kind), id) => {
-                let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                req = req.from_source(id, kind);
-            }
-            (None, Some(id)) => {
-                req = req.from_source(id, kremory::SourceKind::Chat);
-            }
-            (None, None) => {}
-        }
-        if !resolved.facts.is_empty() {
-            req = req.with_facts(resolved.facts);
-        }
-        if resolved.skip_extraction {
-            req = req.skip_extraction();
-        }
-
-        let commit = req.await?;
-        Ok(RememberOutput::from(commit))
-    }
-
-    async fn do_recall(&self, params: RecallParams) -> Result<serde_json::Value, ToolError> {
-        let resolved = params.resolve()?;
-
-        let mut req = self
-            .mem
-            .recall(resolved.query)
-            .in_namespace(resolved.namespace);
-        if let Some(k) = resolved.k {
-            req = req.k(k);
-        }
-        if let Some(as_of) = resolved.as_of {
-            req = req.as_of(as_of);
-        }
-
-        match resolved.format {
-            RecallFormat::Text => {
-                let block = req.as_template(resolved.template).await?;
-                serde_json::to_value(RecallTextOutput { block }).map_err(|e| {
-                    ToolError::Internal(format!("failed to serialize recall text output: {e}"))
-                })
-            }
-            RecallFormat::Structured => {
-                let results = req.raw().await?;
-                let count = results.len();
-                let wire = RecallStructuredOutput {
-                    results: results.into_iter().map(Into::into).collect(),
-                    count,
-                };
-                serde_json::to_value(wire).map_err(|e| {
-                    ToolError::Internal(format!(
-                        "failed to serialize recall structured output: {e}"
-                    ))
-                })
-            }
-        }
-    }
-
-    async fn do_dream(&self, params: DreamParams) -> Result<DreamOutput, ToolError> {
-        let resolved = params.resolve()?;
-
-        let mut req = self
-            .mem
-            .dream()
-            .in_namespace(resolved.namespace)
-            .await_completion();
-        if let Some(id) = resolved.batch_id {
-            req = req.for_batch(id);
-        }
-
-        let summary = req.await?;
-        Ok(DreamOutput::from(summary))
-    }
-
     async fn do_list_mutations(
         &self,
         params: ListMutationsParams,
@@ -669,15 +564,6 @@ mod tests {
         assert_eq!(remember_path_label(&pinned), "pinned");
     }
 
-    #[test]
-    fn tool_error_outcome_labels() {
-        assert_eq!(
-            ToolError::InvalidParams("x".into()).outcome_label(),
-            "invalid_params"
-        );
-        assert_eq!(
-            ToolError::Internal("x".into()).outcome_label(),
-            "internal_error"
-        );
-    }
+    // `ToolError::outcome_label` is now owned by `handlers.rs` (shared with
+    // the REST bin) — see `handlers::tests::tool_error_outcome_labels`.
 }
