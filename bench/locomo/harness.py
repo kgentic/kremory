@@ -51,6 +51,30 @@ class CodememClient:
     def __init__(self, base_url: str, timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
         self.http = httpx.Client(base_url=self.base_url, timeout=timeout)
+        # kremory's POST /memories runs a SYNCHRONOUS 3-stage LLM extraction
+        # pipeline (entities -> relations -> triplets, then per-entity
+        # ResolutionVerdict dedup calls) on every store — this is not a
+        # cheap embed-only write. Measured against gemma4:e4b (the fast
+        # default model): kremory.ingest.completed total_ms observed at
+        # 15.7s / 25.1s / 21.6s for successful stores in a smoke run, and
+        # one store still had ~6 pending ResolutionVerdict calls after 30s
+        # of stage time — tripping this client's default 30.0s timeout
+        # with an httpx.ReadTimeout mid-store. 120s gives headroom for a
+        # slow store plus one ladder-arm fallback retry.
+        self.store_timeout = 120.0
+        # kremory's POST /consolidation/{cycle} runs the full dream()
+        # reconciliation (discover/aliases/reclassify/consistency_check/
+        # canonicalize passes) over every episode in the namespace — scales
+        # with namespace size, not per-call content size. Generous ceiling
+        # so a 19-session conversation's worth of memories doesn't trip the
+        # same class of timeout.
+        self.consolidate_timeout = 300.0
+        # Per-source HTTP-error counter (observability-first-class: an
+        # aggregate accuracy score alone can't tell you WHY it's low —
+        # retrieval-broken vs model-too-weak vs scoring-bug. This is the
+        # cheap half of that signal; recall_empty tracked alongside it in
+        # run_benchmark() is the other half).
+        self.total_http_errors = 0
 
     def health(self) -> bool:
         try:
@@ -77,9 +101,11 @@ class CodememClient:
                 "content": content,
                 "namespace": namespace,
             },
+            timeout=self.store_timeout,
         )
         if r.status_code == 201:
             return r.json().get("id")
+        self.total_http_errors += 1
         print(f"  [warn] store failed ({r.status_code}): {r.text[:200]}", file=sys.stderr)
         return None
 
@@ -90,6 +116,8 @@ class CodememClient:
         )
         if r.status_code == 200:
             return r.json().get("results", [])
+        self.total_http_errors += 1
+        print(f"  [warn] recall failed ({r.status_code}): {r.text[:200]}", file=sys.stderr)
         return []
 
     def graph_neighbors(self, node_id: str, depth: int = 2) -> list[dict]:
@@ -105,7 +133,11 @@ class CodememClient:
         # kremory's POST /consolidation/{cycle} REQUIRES ?namespace= — dream()
         # is always namespace-scoped (unlike codemem's global consolidation);
         # omitting it is a loud 422, not a silent no-op.
-        r = self.http.post(f"/consolidation/{cycle}", params={"namespace": namespace})
+        r = self.http.post(
+            f"/consolidation/{cycle}",
+            params={"namespace": namespace},
+            timeout=self.consolidate_timeout,
+        )
         return r.status_code == 200
 
     def start_session(self, namespace: str) -> str | None:
@@ -484,6 +516,25 @@ def run_benchmark(config: Config) -> dict:
     all_results = []
     category_stats: dict[str, dict] = {}
 
+    # --- Observability-first + fail-fast-and-loud instrumentation ---
+    # A multi-hour benchmark must be diagnosable (WHY is a score low: retrieval
+    # broken vs model-too-weak vs scoring?) and must never silently grind on
+    # garbage or hang. Per-question records are written incrementally (crash-safe
+    # + resumable-inspectable); a circuit-breaker stops loud on systemic failure;
+    # a liveness probe aborts loud if the server/Ollama dies.
+    import datetime
+    run_ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    jsonl_path = (config.output.parent if config.output else Path("results")) / f"run-{run_ts}.jsonl"
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_f = open(jsonl_path, "a")
+    print(f"  [o11y] per-question records -> {jsonl_path}", file=sys.stderr)
+    q_done = 0
+    recall_empty_count = 0
+    CIRCUIT_MIN = 20            # evaluate the breaker after this many questions
+    CIRCUIT_EMPTY_RATE = 0.80  # >80% empty recalls = systemic ingest/recall failure
+    CIRCUIT_HTTP_RATE = 0.20   # >20% HTTP errors = systemic
+    LIVENESS_EVERY = 25
+
     for conv_idx, conversation in enumerate(dataset):
         sample_id = conversation.get("sample_id", f"conv_{conv_idx}")
         namespace = f"{NAMESPACE_PREFIX}-{sample_id}"
@@ -546,12 +597,46 @@ def run_benchmark(config: Config) -> dict:
             }
             all_results.append(result)
 
+            # --- o11y: per-question structured record, written incrementally (crash-safe) ---
+            recall_empty = (len(memories) == 0)
+            if recall_empty:
+                recall_empty_count += 1
+            q_done += 1
+            jsonl_f.write(json.dumps({
+                "question_id": qa["question_id"], "category": category,
+                "namespace": namespace, "recall_returned": len(memories),
+                "recall_empty": recall_empty, "http_errors": client.total_http_errors,
+                "correct": is_correct,
+            }) + "\n")
+            jsonl_f.flush()
+
+            # --- fail-loud: systemic-failure circuit-breaker (don't grind 1,986 Qs into zeros) ---
+            if q_done == CIRCUIT_MIN:
+                empty_rate = recall_empty_count / q_done
+                http_rate = client.total_http_errors / q_done
+                if empty_rate > CIRCUIT_EMPTY_RATE or http_rate > CIRCUIT_HTTP_RATE:
+                    jsonl_f.flush()
+                    print(f"\n[FAIL-LOUD] SYSTEMIC FAILURE after {q_done} questions: "
+                          f"{recall_empty_count}/{q_done} recalls empty ({empty_rate:.0%}), "
+                          f"{client.total_http_errors} HTTP errors ({http_rate:.0%}). "
+                          f"Ingest/recall likely broken — aborting before wasting the full run. "
+                          f"Records: {jsonl_path}", file=sys.stderr)
+                    sys.exit(2)
+
+            # --- fail-loud: liveness probe (abort if server/Ollama died, don't hang) ---
+            if q_done % LIVENESS_EVERY == 0 and config.mode != "baseline" and not client.health():
+                print(f"\n[FAIL-LOUD] kremory-http /health failed at question {q_done} — "
+                      f"server/Ollama down. Aborting. Records: {jsonl_path}", file=sys.stderr)
+                sys.exit(3)
+
             # Track per-category
             if category not in category_stats:
                 category_stats[category] = {"correct": 0, "total": 0}
             category_stats[category]["total"] += 1
             if is_correct:
                 category_stats[category]["correct"] += 1
+
+    jsonl_f.close()
 
     # Summary with scores
     total_correct = sum(v["correct"] for v in category_stats.values())
