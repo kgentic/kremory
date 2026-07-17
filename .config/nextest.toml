@@ -14,14 +14,22 @@
 # exceeds ~10s today.
 slow-timeout = "60s"
 
-# --- Ready-to-enable scaffold (kept commented per no-speculative-engineering) ---
-# If feature-profile flakes appear under nextest's higher parallelism
-# (ner_singleton / ollama keep_alive / single libSQL writer contention; see
-# Vera RISK-002 in the spec), serialize the resource-touching tests:
-#
-# [test-groups]
-# serial-resource = { max-threads = 1 }
-#
-# [[profile.default.overrides]]
-# filter = 'test(/_real_llm|llm_integration|ner_/)'
-# test-group = 'serial-resource'
+# --- Serial group for background/async-timing integration tests (TD-091 fix) ---
+# ACTIVATED 2026-07-17 (was the RISK-002 scaffold). Cause: these integration
+# tests wait for deferred extraction / sink firing within a fixed timeout. Under
+# nextest's full parallel pool (1500+ tests across --all-features) on a loaded
+# machine they get CPU-starved and miss the timeout. This is a HARNESS
+# parallelism issue, NOT a correctness bug — the 5 observed failures
+# (add_episode_returns_before_gliner_fires, deferred_extraction_invoked_after_
+# successful_ner, sink_send_batched_fires_on_batch_phase2_complete,
+# sink_send_batched_two_batches_fire_independently,
+# sink_batch_complete_fires_when_all_terminal) ALL pass serially even under load
+# 18-20 (verified 2026-07-17). Serializing the resource-touching binaries keeps
+# the timing assertions intact + un-starved. Adding the sibling background/
+# concurrent-spike binaries pre-empts the same class.
+[test-groups]
+serial-resource = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(/adr051_gliner_to_background|background_integration|sink_wiring_integration|spike_background_plus_engine_handle_concurrent|spike_two_engine_concurrent|wait_for_processing/)'
+test-group = 'serial-resource'

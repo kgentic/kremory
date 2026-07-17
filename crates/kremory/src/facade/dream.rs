@@ -264,8 +264,9 @@ impl<'a> DreamRequest<'a> {
         // nominate entity-instance pairs via a deterministic structural
         // pre-filter (initialism test OR graph co-occurrence, spec §3.1) and
         // adjudicate nominated pairs via batched LLM verdicts + the shared
-        // write_gate (spec §3.2/§3.3). Spike-gated per spec §8 — gated by
-        // `include_acronym_nickname_recall` (default `false`). Ordered
+        // write_gate (spec §3.2/§3.3). Gated by
+        // `include_acronym_nickname_recall` (default `true` — VALIDATED
+        // 2026-07-03, `memory/types.rs`). Ordered
         // immediately AFTER aliases (`resolve_pending_aliases`, above) and
         // BEFORE reclassify (spec §3.0): merges land before type-correctness
         // is re-verified, avoiding a wasted reclassify pass on an entity
@@ -284,6 +285,10 @@ impl<'a> DreamRequest<'a> {
                         group_id: &group_id,
                         // TD-094-style threading: reuse the resolved dream model id.
                         model_id: dream_model_id,
+                        // TD-112: Site #5 merges live (no dry-run gate, ON by
+                        // default) — thread the embedder so the surviving keeper's
+                        // stored embedding is refreshed post-merge (Quinn M1).
+                        embedder: Some(self.memory.embedder.as_ref()),
                     },
                 )
                 .await
@@ -436,10 +441,16 @@ impl<'a> DreamRequest<'a> {
         // merges benefit from the corrected type distribution. Non-fatal.
         if let Some(tg) = self.memory.temporal_graph.as_ref() {
             let group_id = namespace_to_group_id(&ns);
-            match crate::core::canonicalization::canonicalize_surface_forms(
+            // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): thread the
+            // embedder so the keeper's stored embedding is recomputed + persisted
+            // after each merge instead of going stale.
+            match crate::core::canonicalization::canonicalize_surface_forms_with_embedder(
                 tg,
-                &group_id,
-                crate::core::canonicalization::L5_CANONICALIZATION_THRESHOLD,
+                crate::core::canonicalization::CanonicalizeSurfaceFormsParams {
+                    group_id: &group_id,
+                    threshold: crate::core::canonicalization::L5_CANONICALIZATION_THRESHOLD,
+                    embedder: Some(self.memory.embedder.as_ref()),
+                },
             )
             .await
             {

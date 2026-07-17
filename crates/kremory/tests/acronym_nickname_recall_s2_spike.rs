@@ -425,6 +425,9 @@ async fn smoke_one_ibm_pair_s2() {
             graph: &graph,
             group_id: gid,
             model_id: &chat_model,
+            // TD-112: spike asserts on merge/audit behavior, not embedding
+            // freshness — no embedder needed here.
+            embedder: None,
         },
     )
     .await
@@ -518,6 +521,9 @@ async fn full_fixture_s2() {
             graph: &graph,
             group_id: gid,
             model_id: &chat_model,
+            // TD-112: spike asserts on merge/audit behavior, not embedding
+            // freshness — no embedder needed here.
+            embedder: None,
         },
     )
     .await
