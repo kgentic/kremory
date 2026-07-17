@@ -20,8 +20,8 @@ use crate::core::intelligence::{
     ResolutionResult,
 };
 use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
-use crate::core::resolver::{normalize_name, CascadeResolver, UnionFind};
-use crate::core::search::{FtsSearchFactsParams, SearchFilters};
+use crate::core::resolver::{entity_name, normalize_name, CascadeResolver, UnionFind};
+use crate::core::search::{FtsSearchFactsParams, SearchFilters, VectorSearchEntitiesNoCountParams};
 
 use crate::core::ingest::helpers::extract_context_snippet;
 use crate::core::ingest::{Engine, IngestionResult, SourceParams};
@@ -70,7 +70,102 @@ struct PinnedEntityRecall<'a> {
     episode_id: i64,
 }
 
+/// Bundled parameters for [`Engine::block_resolution_candidates`] — args-as-object
+/// per TD-042 (rust-conventions §too_many_arguments). All fields share the `'a`
+/// borrow of the pre-batch existing-entity slice so the returned candidate refs
+/// tie back to it.
+struct BlockCandidatesParams<'a> {
+    extracted: &'a ExtractedEntity,
+    existing_entities: &'a [crate::core::schema::Entity],
+    group_id: Option<&'a str>,
+}
+
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
+    /// ADR-075 (TD-124): select the bounded set of existing entities that a
+    /// newly-extracted entity should be resolved against, instead of comparing
+    /// it to EVERY existing entity. Without this, each new entity fanned out to
+    /// O(existing) LLM `ResolutionVerdict` calls (92% of ingest LLM calls on a
+    /// growing graph).
+    ///
+    /// Candidates = **exact normalized-name matches** (cheap, no LLM — REQUIRED
+    /// because it catches stub→real promotion; stubs carry `embedding=None` so
+    /// the ANN arm can never surface them) **UNION the embedding-ANN top-`k`**
+    /// nearest existing entities. Anything else is semantically far and defaults
+    /// to `Different` with zero LLM. Dream-phase L5 canonicalization is the
+    /// exhaustive completeness backstop for any true match this misses.
+    ///
+    /// Back-compat guards (both return the full exhaustive list, i.e. the exact
+    /// pre-ADR-075 behaviour):
+    /// - the group has ≤`k` existing entities (blocking only pays off past `k`;
+    ///   keeps the whole small-graph test suite behaviour-identical), or
+    /// - no usable embedding is available (null/failing embedder, or the ANN
+    ///   query errors) — blocking needs embeddings; without them, behave as before.
+    ///
+    /// Returned refs borrow `existing_entities`, keeping the candidate universe
+    /// == the pre-batch existing set so the downstream stub-check + union-find
+    /// (which reference `existing_entities` by id) stay valid.
+    async fn block_resolution_candidates<'a>(
+        &self,
+        params: BlockCandidatesParams<'a>,
+    ) -> Vec<&'a crate::core::schema::Entity> {
+        let BlockCandidatesParams {
+            extracted,
+            existing_entities,
+            group_id,
+        } = params;
+        let k = self.config.resolution_block_k;
+
+        // Guard 1: no-op on small graphs — exhaustive comparison at/below k.
+        if existing_entities.len() <= k {
+            return existing_entities.iter().collect();
+        }
+
+        let norm = normalize_name(&extracted.name);
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut candidates: Vec<&crate::core::schema::Entity> = Vec::new();
+
+        // Arm 1 — exact normalized-name matches (all N, cheap, no LLM).
+        for e in existing_entities {
+            if normalize_name(entity_name(e)) == norm && seen.insert(e.id.as_str()) {
+                candidates.push(e);
+            }
+        }
+
+        // Arm 2 — embedding-ANN top-k. Guard 2: null/failing embedder → full list.
+        let embedding = match self.embedder.embed(&extracted.name).await {
+            Ok(v) if !v.is_empty() && v.iter().any(|x| *x != 0.0) => v,
+            _ => return existing_entities.iter().collect(),
+        };
+        let filters = SearchFilters {
+            group_ids: group_id.map(|g| vec![g.to_string()]).unwrap_or_default(),
+            valid_after: None,
+            valid_before: None,
+            exclude_expired: false,
+        };
+        // `_no_count` variant: avoid the access_count bump the public search applies.
+        let hit_ids: HashSet<String> = match self
+            .graph
+            .vector_search_entities_no_count(VectorSearchEntitiesNoCountParams {
+                query_embedding: &embedding,
+                limit: k,
+                filters: &filters,
+            })
+            .await
+        {
+            Ok(hits) => hits.into_iter().map(|h| h.item.id).collect(),
+            // ANN failed even with a real embedding → conservative exhaustive list.
+            Err(_) => return existing_entities.iter().collect(),
+        };
+        // Intersect ANN hits with the pre-batch existing set (universe invariant).
+        for e in existing_entities {
+            if hit_ids.contains(&e.id) && seen.insert(e.id.as_str()) {
+                candidates.push(e);
+            }
+        }
+
+        candidates
+    }
+
     /// Full pipeline with a caller-supplied extractor.
     /// Any type implementing `EntityExtractor` can be used (a built-in extractor
     /// or a custom BYOE impl).
@@ -912,7 +1007,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
                 let mut resolved_to: Option<String> = None;
 
-                for existing in &existing_entities {
+                // ADR-075 (TD-124): resolve `extracted` only against a bounded
+                // candidate block (exact-name ∪ embedding-ANN top-k), not every
+                // existing entity — collapses the LLM `ResolutionVerdict` fan-out
+                // from O(new × existing) to O(k). No-op on ≤k-entity groups.
+                let candidates = self
+                    .block_resolution_candidates(BlockCandidatesParams {
+                        extracted,
+                        existing_entities: &existing_entities,
+                        group_id,
+                    })
+                    .await;
+                metrics::counter!("kremory.resolution.candidates_considered_total")
+                    .increment(candidates.len() as u64);
+                metrics::counter!("kremory.resolution.blocked_out_total")
+                    .increment(existing_entities.len().saturating_sub(candidates.len()) as u64);
+
+                for existing in candidates.iter().copied() {
                     let result = match resolver.resolve(extracted, existing).await {
                         Ok(r) => r,
                         Err(e) => break 'phases Err(e),

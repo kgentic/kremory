@@ -242,6 +242,17 @@ pub struct PipelineConfig {
     /// `.extraction_arm_budget_ms(value)` on the builder. The benchmark
     /// suite sets this to 300_000 to accommodate qwen2.5:14b warm-up latency.
     pub extraction_arm_budget_ms: u64,
+    /// ADR-075 (TD-124): entity-resolution candidate-blocking width. When a
+    /// group has MORE than this many existing entities, ingest resolution
+    /// compares each newly-extracted entity only against a bounded candidate
+    /// set — exact normalized-name matches UNION the embedding-ANN top-`k`
+    /// nearest existing entities — instead of every existing entity. This
+    /// collapses the LLM `ResolutionVerdict` fan-out from O(new × existing) to
+    /// O(k). Groups with ≤ this many entities keep the exhaustive (pre-ADR-075)
+    /// comparison, so the change is a no-op on small graphs. Dream-phase L5
+    /// canonicalization is the completeness backstop for any match blocking
+    /// misses. Default: 10.
+    pub resolution_block_k: usize,
 }
 
 impl PipelineConfig {
@@ -260,6 +271,7 @@ impl PipelineConfig {
                 cache_ttl: Duration::from_secs(300),
                 cache_max_entries: 1000,
                 extraction_arm_budget_ms: 30_000,
+                resolution_block_k: 10,
             },
         }
     }
@@ -399,6 +411,18 @@ impl PipelineConfigBuilder {
     /// silicon (~80-130s per call at 32k context).
     pub fn extraction_arm_budget_ms(mut self, ms: u64) -> Self {
         self.inner.extraction_arm_budget_ms = ms;
+        self
+    }
+
+    // ── Resolution candidate blocking (ADR-075 / TD-124) ──────────────────────
+
+    /// Set the entity-resolution candidate-blocking width `k`. Groups with more
+    /// than `k` existing entities compare each new entity against only the
+    /// exact-name matches + embedding-ANN top-`k`; groups with ≤`k` keep the
+    /// exhaustive comparison. Default: 10. Set to `usize::MAX` to disable
+    /// blocking entirely (restore pre-ADR-075 behaviour).
+    pub fn resolution_block_k(mut self, k: usize) -> Self {
+        self.inner.resolution_block_k = k;
         self
     }
 
