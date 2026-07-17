@@ -1,0 +1,616 @@
+//! `kremory-http` — thin REST transport over the SAME `handlers::do_remember`
+//! / `do_recall` / `do_dream` bodies the MCP stdio server (`main.rs` /
+//! `kremory-mcp-server`) uses. One Rust SDK (`kremory::Memory`), two thin
+//! transports — this bin owns HTTP marshalling only; all facade-calling
+//! logic lives in `handlers.rs` and is NOT duplicated here.
+//!
+//! Exists so a non-MCP harness (e.g. a Python benchmark script, codemem-style)
+//! can drive kremory over plain HTTP without speaking JSON-RPC/MCP.
+//!
+//! Env-driven boot — the DB path / Ollama reachability preflight / `Memory`
+//! construction sequence below is intentionally the SAME shape as
+//! `main.rs`'s (verbatim boot logic, not extracted to a shared fn: each
+//! `[[bin]]` target is a distinct crate, and this ~25-line sequence is the
+//! only thing that would need sharing — not worth a new lib-level export for
+//! two call sites).
+//!
+//! ```bash
+//! export KREMORY_MCP_DB_PATH=./agent.db
+//! cargo run -p kremory-mcp --bin kremory-http
+//! ```
+//!
+//! ## Env vars
+//!
+//! - `KREMORY_MCP_DB_PATH` — required. Path to the kremory libSQL database.
+//! - `KREMORY_MCP_OLLAMA_URL` — default `http://localhost:11434`.
+//! - `KREMORY_MCP_MODEL_ID` — default `gemma4:e4b`.
+//! - `PORT` — default `3179` (matches codemem's benchmark harness default).
+//!
+//! ## Routes
+//!
+//! NOTE for the harness (E2): routes are BARE — there is NO `/api` prefix
+//! (unlike codemem, whose routes nest under `/api`). Point the harness at
+//! `--base-url http://localhost:3179` (NOT `.../api`).
+//!
+//! | Route | Delegates to | Response |
+//! |---|---|---|
+//! | `GET /health` | — | `200` |
+//! | `POST /memories` `{content, namespace, published_at?}` | `handlers::do_remember` | `201 {"id"}` |
+//! | `GET /search?q=&namespace=&k=` | `handlers::do_recall` (structured) | `200 {"results":[{"id","content","score"}]}` |
+//! | `DELETE /namespaces/{ns}` | `Memory::forget` | `200 {"deleted"}` |
+//! | `POST /consolidation/{cycle}?namespace=` | `handlers::do_dream` | `200` (422 if `?namespace=` omitted) |
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{anyhow, Context, Result};
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post};
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
+
+use kremory::Memory;
+use kremory_mcp::handlers::{self, ToolError};
+use kremory_mcp::health;
+use kremory_mcp::params::{
+    DreamParams, RecallFormat, RecallParams, RecallStructuredOutput, RecallTemplateWire,
+    RememberParams, RetrievedContextWire,
+};
+
+const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+const REACHABILITY_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_PORT: u16 = 3179;
+
+#[derive(Clone)]
+struct AppState {
+    mem: Arc<Memory>,
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Error mapping — ToolError -> HTTP status + JSON body.
+// ────────────────────────────────────────────────────────────────────────
+
+struct ApiError(ToolError);
+
+impl From<ToolError> for ApiError {
+    fn from(e: ToolError) -> Self {
+        Self(e)
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let status = match &self.0 {
+            ToolError::InvalidParams(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            ToolError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let message = match self.0 {
+            ToolError::InvalidParams(msg) | ToolError::Internal(msg) => msg,
+        };
+        (status, Json(serde_json::json!({ "error": message }))).into_response()
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// GET /health
+// ────────────────────────────────────────────────────────────────────────
+
+async fn health_check() -> StatusCode {
+    StatusCode::OK
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// POST /memories
+// ────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct CreateMemoryBody {
+    content: String,
+    namespace: String,
+    #[serde(default)]
+    published_at: Option<String>,
+}
+
+async fn create_memory(
+    State(state): State<AppState>,
+    Json(body): Json<CreateMemoryBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let params = RememberParams {
+        namespace: body.namespace,
+        thread: None,
+        content: body.content,
+        source_kind: None,
+        source_id: None,
+        published_at: body.published_at,
+        structured_facts: Vec::new(),
+        skip_extraction: false,
+    };
+    let output = handlers::do_remember(&state.mem, params).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": output.episode_entity_id })),
+    ))
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// GET /search
+// ────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: String,
+    namespace: String,
+    #[serde(default)]
+    k: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchResultWire {
+    id: String,
+    content: String,
+    score: f32,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchResponseWire {
+    results: Vec<SearchResultWire>,
+}
+
+/// Flattens a `RetrievedContextWire` (entity_name/summary + its connected
+/// `facts[].fact` natural-language strings — `params.rs:117-135`) into a
+/// single prose string. kremory's `RecallStructuredOutput` is entity-shaped
+/// (one result = one entity + its facts); codemem's benchmark scorer expects
+/// one flat `content` string per result to substring-match the gold answer
+/// against — this is the "thin adapter" the REST route owns so
+/// `handlers::do_recall` itself stays transport-agnostic.
+fn flatten_result_content(r: &RetrievedContextWire) -> String {
+    let mut parts = vec![format!("{}: {}", r.entity_name, r.summary)];
+    parts.extend(r.facts.iter().map(|f| f.fact.clone()));
+    parts.join(". ")
+}
+
+async fn search(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let params = RecallParams {
+        namespace: query.namespace,
+        thread: None,
+        query: query.q,
+        k: query.k,
+        as_of: None,
+        format: RecallFormat::Structured,
+        template: RecallTemplateWire::default(),
+    };
+    let value = handlers::do_recall(&state.mem, params).await?;
+    let structured: RecallStructuredOutput = serde_json::from_value(value).map_err(|e| {
+        ApiError(ToolError::Internal(format!(
+            "kremory-http: failed to deserialize recall structured output: {e}"
+        )))
+    })?;
+    let results = structured
+        .results
+        .iter()
+        .map(|r| SearchResultWire {
+            id: r.entity_id.clone(),
+            content: flatten_result_content(r),
+            score: r.score,
+        })
+        .collect();
+    Ok(Json(SearchResponseWire { results }))
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// DELETE /namespaces/{ns}
+// ────────────────────────────────────────────────────────────────────────
+
+async fn delete_namespace(
+    State(state): State<AppState>,
+    AxumPath(ns): AxumPath<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let namespace = kremory::Namespace::new(ns);
+    let deleted = state
+        .mem
+        .forget()
+        .in_namespace(namespace)
+        .execute()
+        .await
+        .map_err(ToolError::from)?;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// POST /consolidation/{cycle}
+// ────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ConsolidationQuery {
+    /// FRICTION (flagged per task instructions): codemem's own harness posts
+    /// `/consolidation/{cycle}` with NO namespace at all (global consolidation
+    /// in codemem's data model) — but `kremory::Memory::dream()` is always
+    /// namespace-scoped (ADR-048 three-signal local-first consistency check
+    /// operates per-namespace). There is no lossless mapping from codemem's
+    /// global-consolidation semantics to kremory's namespace-scoped `dream()`.
+    ///
+    /// FAIL-LOUD (Quinn HIGH): this param is REQUIRED, not defaulted. An
+    /// earlier draft fell back to a single `"default"` namespace when omitted
+    /// — but dream idempotency is keyed on `(namespace, batch_id)`, so every
+    /// benchmark consolidation call would share `(default, <cycle>)` and only
+    /// the FIRST would execute; the rest silently no-op and dream never
+    /// touches real data. Missing `?namespace=` is now a loud 422 (see
+    /// `run_consolidation`) rather than a silent no-op. `cycle` is threaded
+    /// through as `batch_id` so repeated same-`(namespace, cycle)` calls are
+    /// idempotent (`DreamParams::batch_id`).
+    namespace: Option<String>,
+}
+
+async fn run_consolidation(
+    State(state): State<AppState>,
+    AxumPath(cycle): AxumPath<String>,
+    Query(query): Query<ConsolidationQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    // Fail loud (422) on a missing namespace rather than silently defaulting
+    // to a shared scope that would collapse dream's `(namespace, batch_id)`
+    // idempotency into a single-run no-op for the rest of the benchmark.
+    let namespace = query.namespace.filter(|ns| !ns.is_empty()).ok_or_else(|| {
+        ApiError(ToolError::InvalidParams(
+            "namespace query param required — consolidation is namespace-scoped in kremory \
+             (POST /consolidation/{cycle}?namespace=<ns>)"
+                .to_string(),
+        ))
+    })?;
+    let params = DreamParams {
+        namespace,
+        thread: None,
+        batch_id: Some(cycle),
+    };
+    let _summary = handlers::do_dream(&state.mem, params).await?;
+    Ok(StatusCode::OK)
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Router — factored out of `main` so the in-process test module below can
+// build the exact same route table over a mock-provider `Memory`.
+// ────────────────────────────────────────────────────────────────────────
+
+fn build_router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health_check))
+        .route("/memories", post(create_memory))
+        .route("/search", get(search))
+        .route("/namespaces/{ns}", delete(delete_namespace))
+        .route("/consolidation/{cycle}", post(run_consolidation))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// main
+// ────────────────────────────────────────────────────────────────────────
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let subscriber = FmtSubscriber::builder()
+        .with_writer(std::io::stderr)
+        .with_env_filter(env_filter)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)
+        .map_err(|e| anyhow!("failed to install tracing subscriber: {e}"))?;
+
+    let db_path = std::env::var("KREMORY_MCP_DB_PATH").map_err(|_| {
+        anyhow!(
+            "KREMORY_MCP_DB_PATH is required — set it to the path of the kremory \
+             libSQL database (e.g. ./agent.db)"
+        )
+    })?;
+    let ollama_url =
+        std::env::var("KREMORY_MCP_OLLAMA_URL").unwrap_or_else(|_| DEFAULT_OLLAMA_URL.to_string());
+    let model_id = std::env::var("KREMORY_MCP_MODEL_ID").ok();
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+
+    tracing::info!(
+        db_path = %db_path,
+        ollama_url = %ollama_url,
+        port,
+        model_id = model_id.as_deref().unwrap_or("gemma4:e4b (default)"),
+        "kremory-http booting"
+    );
+
+    // Fail loud BEFORE constructing Memory — see `health.rs` module docs.
+    health::check_reachable(&ollama_url, REACHABILITY_TIMEOUT)
+        .await
+        .map_err(|reason| {
+            anyhow!(
+                "Ollama unreachable at {ollama_url} ({reason}). Start Ollama \
+                 (`ollama serve`) or set KREMORY_MCP_OLLAMA_URL to a reachable endpoint."
+            )
+        })?;
+
+    let mem = kremory::facade::providers::with_ollama_at_model(ollama_url, model_id, &db_path)
+        .await
+        .with_context(|| format!("failed to open kremory Memory at {db_path}"))?;
+
+    let app = build_router(AppState { mem: Arc::new(mem) });
+
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .with_context(|| format!("failed to bind 0.0.0.0:{port}"))?;
+
+    tracing::info!(
+        port,
+        "kremory-http ready — serving GET /health, POST /memories, GET /search, \
+         DELETE /namespaces/{{ns}}, POST /consolidation/{{cycle}}"
+    );
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Tests — REST-transport coverage. These live INSIDE the bin (not a
+// `tests/*.rs` integration file) because `flatten_result_content`,
+// `build_router`, `AppState` and the handler fns are all bin-private and an
+// integration file links only against the LIB target. The mock-provider
+// `Memory` path mirrors `tests/handler_roundtrip.rs::mock_memory`.
+// ────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use axum::body::{to_bytes, Body};
+    use axum::http::Request;
+    use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
+    use kremory::{ChatProvider, DynEmbeddingProvider};
+    use kremory_mcp::params::{RetrievedFactWire, SourceRefWire};
+    use tower::ServiceExt as _;
+
+    // ─── flatten_result_content (benchmark-load-bearing) ─────────────────
+
+    fn fact_wire(fact: &str) -> RetrievedFactWire {
+        RetrievedFactWire {
+            fact: fact.to_string(),
+            subject: "s".into(),
+            predicate: "p".into(),
+            object: "o".into(),
+            object_is_entity: false,
+            valid_at: "2026-01-01T00:00:00+00:00".into(),
+            invalid_at: None,
+            recorded_at: "2026-01-01T00:00:00+00:00".into(),
+            expired_at: None,
+            confidence: 1.0,
+            source_episode_ids: vec![1],
+            score: 0.5,
+        }
+    }
+
+    fn context_wire(
+        name: &str,
+        summary: &str,
+        facts: Vec<RetrievedFactWire>,
+    ) -> RetrievedContextWire {
+        RetrievedContextWire {
+            entity_id: name.to_lowercase(),
+            entity_name: name.to_string(),
+            summary: summary.to_string(),
+            score: 0.9,
+            incomplete: false,
+            entity_type_id: 0,
+            entity_type_name: "Entity".into(),
+            namespace: None,
+            source_refs: Vec::<SourceRefWire>::new(),
+            facts,
+        }
+    }
+
+    #[test]
+    fn flatten_result_content_includes_summary_and_every_fact() {
+        let ctx = context_wire(
+            "Ada Lovelace",
+            "a mathematician",
+            vec![
+                fact_wire("Ada Lovelace wrote the first algorithm"),
+                fact_wire("Ada Lovelace collaborated with Charles Babbage"),
+            ],
+        );
+        let content = flatten_result_content(&ctx);
+        // The entity name + summary line must be present.
+        assert!(
+            content.contains("Ada Lovelace") && content.contains("a mathematician"),
+            "flattened content must carry entity name + summary: {content:?}"
+        );
+        // EVERY connected fact's natural-language string must survive — the
+        // benchmark substring scorer relies on this.
+        assert!(
+            content.contains("Ada Lovelace wrote the first algorithm"),
+            "fact 1 must appear in flattened content: {content:?}"
+        );
+        assert!(
+            content.contains("Ada Lovelace collaborated with Charles Babbage"),
+            "fact 2 must appear in flattened content: {content:?}"
+        );
+    }
+
+    #[test]
+    fn flatten_result_content_with_no_facts_is_the_summary_line() {
+        let ctx = context_wire("Grace Hopper", "a computer scientist", Vec::new());
+        let content = flatten_result_content(&ctx);
+        assert_eq!(content, "Grace Hopper: a computer scientist");
+    }
+
+    // ─── in-process HTTP round-trip over a mock-provider Memory ──────────
+
+    async fn mock_memory() -> Arc<Memory> {
+        let llm: Arc<dyn ChatProvider> = Arc::new(MockChatProvider::null());
+        let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
+        let mem = Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .await
+            .expect("in-memory Memory must build");
+        Arc::new(mem)
+    }
+
+    /// Pin a mode-(c) fact directly through the shared handler so the entity
+    /// is recall-findable with mock providers (TD-113 stamps the FTS name +
+    /// embedding at PIN time — no live LLM / enrichment seam needed, same as
+    /// `handler_roundtrip.rs::recall_structured_surfaces_pinned_fact...`).
+    async fn pin_fact(mem: &Memory, namespace: &str, subject: &str) {
+        let params = RememberParams {
+            namespace: namespace.to_string(),
+            thread: None,
+            content: format!("{subject} wrote the first algorithm"),
+            source_kind: Some(kremory_mcp::params::SourceKindWire::Note),
+            source_id: Some("doc-1".into()),
+            published_at: None,
+            structured_facts: vec![kremory_mcp::params::StructuredFactWire {
+                subject: subject.to_string(),
+                predicate: "wrote".into(),
+                object: "the first algorithm".into(),
+                valid_at: None,
+                invalid_at: None,
+            }],
+            skip_extraction: true,
+        };
+        handlers::do_remember(mem, params)
+            .await
+            .expect("pin must succeed");
+    }
+
+    async fn body_json(body: Body) -> serde_json::Value {
+        let bytes = to_bytes(body, 1 << 20).await.expect("read body");
+        serde_json::from_slice(&bytes).expect("body is JSON")
+    }
+
+    #[tokio::test]
+    async fn http_roundtrip_memories_search_delete_consolidation() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState { mem: mem.clone() });
+        let ns = "ns-http";
+
+        // POST /memories → 201 + non-empty {id}. (Extraction path + mock LLM
+        // means this specific episode won't itself be recall-findable, but the
+        // route contract — 201 + an id — is what's asserted here.)
+        let post = Request::builder()
+            .method("POST")
+            .uri("/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "content": "Ada Lovelace wrote the first algorithm.",
+                    "namespace": ns,
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = router.clone().oneshot(post).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let json = body_json(resp.into_body()).await;
+        assert!(
+            json["id"].as_str().is_some_and(|s| !s.is_empty()),
+            "POST /memories must return a non-empty id: {json}"
+        );
+
+        // Seed a recall-findable pinned fact so GET /search has a deterministic
+        // hit with mock providers, then assert the flattened `content` carries
+        // the fact text (the benchmark substring path, end-to-end through the
+        // route + adapter).
+        pin_fact(&mem, ns, "Zephyrine").await;
+        let search = Request::builder()
+            .method("GET")
+            .uri(format!("/search?q=Zephyrine&namespace={ns}&k=10"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(search).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let results = json["results"].as_array().expect("results array");
+        assert!(
+            results.iter().any(|r| {
+                r["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("Zephyrine"))
+            }),
+            "GET /search results[].content must contain the pinned subject: {json}"
+        );
+        // Each result carries the id/content/score contract shape.
+        for r in results {
+            assert!(
+                r["id"].as_str().is_some(),
+                "result.id must be a string: {r}"
+            );
+            assert!(
+                r["content"].as_str().is_some(),
+                "result.content must be a string: {r}"
+            );
+            assert!(
+                r["score"].as_f64().is_some(),
+                "result.score must be numeric: {r}"
+            );
+        }
+
+        // POST /consolidation/{cycle} WITHOUT ?namespace= → 422 (Quinn HIGH).
+        let no_ns = Request::builder()
+            .method("POST")
+            .uri("/consolidation/creative")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(no_ns).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "missing namespace must be a loud 422, not a silent no-op default"
+        );
+        let json = body_json(resp.into_body()).await;
+        assert!(
+            json["error"]
+                .as_str()
+                .is_some_and(|e| e.to_lowercase().contains("namespace")),
+            "422 body must name the missing namespace param: {json}"
+        );
+
+        // POST /consolidation/{cycle}?namespace=ns → 200.
+        let with_ns = Request::builder()
+            .method("POST")
+            .uri(format!("/consolidation/creative?namespace={ns}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(with_ns).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // DELETE /namespaces/{ns} → 200 + {deleted}.
+        let del = Request::builder()
+            .method("DELETE")
+            .uri(format!("/namespaces/{ns}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(del).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert!(
+            json["deleted"].is_u64(),
+            "DELETE must return a numeric deleted count: {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_returns_200() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState { mem });
+        let req = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}

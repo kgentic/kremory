@@ -20,13 +20,11 @@
 //! - `KREMORY_MCP_MODEL_ID` — default `gemma4:e4b`.
 //! - `KREMORY_MCP_DEBUG=1` — dump raw request/response JSON to stderr.
 
-mod health;
-
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use kremory_mcp::KremoryMcpServer;
+use kremory_mcp::{health, KremoryMcpServer};
 use rmcp::transport::io::stdio;
 use rmcp::ServiceExt;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};

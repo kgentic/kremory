@@ -1,15 +1,21 @@
-//! Boot-time reachability check for the Ollama endpoint `main.rs` wires
-//! `kremory::Memory` against.
+//! Boot-time reachability check for the Ollama endpoint the kremory-mcp
+//! binaries (`main.rs` for the MCP stdio server, `bin/kremory-http.rs` for
+//! the REST bin) wire `kremory::Memory` against.
 //!
 //! `kremory::facade::providers::with_ollama_at` / `with_ollama_at_model` do
 //! NOT probe reachability at construction time — the doc comment on
 //! `with_ollama` is explicit: "If no Ollama is available at runtime, the
 //! first `.remember()` / `.recall()` call returns a network error." That is
 //! too late for a server binary — per CLAUDE.md's "fail fast and loud" rule,
-//! `main.rs` must know at boot, not on the first tool call. This module is a
-//! connectivity-only check (TCP connect to the parsed host:port) — it does
+//! every binary must know at boot, not on the first tool call. This module is
+//! a connectivity-only check (TCP connect to the parsed host:port) — it does
 //! NOT verify Ollama is actually serving the HTTP API or that the configured
 //! model is pulled; it only rules out "nothing is listening there".
+//!
+//! `pub` (not `pub(crate)`) because both binaries live in separate crate
+//! targets (`[[bin]]` targets are distinct crates from the `[lib]` target
+//! even within the same package) and reach this module via
+//! `kremory_mcp::health::...`.
 
 use std::net::ToSocketAddrs as _;
 use std::time::Duration;
@@ -18,7 +24,7 @@ use std::time::Duration;
 /// pulling in a full URL-parsing crate (kremory-mcp has no other need for
 /// one). Returns `None` for shapes this can't confidently parse — callers
 /// should treat that as a configuration error, not silently skip the check.
-pub(crate) fn parse_host_port(url: &str) -> Option<(String, u16)> {
+pub fn parse_host_port(url: &str) -> Option<(String, u16)> {
     let without_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     let host_port = without_scheme
         .split(['/', '?'])
@@ -38,7 +44,7 @@ pub(crate) fn parse_host_port(url: &str) -> Option<(String, u16)> {
 /// TCP-connect to `url`'s host:port with a bounded timeout. `Ok(())` means
 /// something is listening; `Err` carries a human-readable reason suitable
 /// for a fail-loud boot error.
-pub(crate) async fn check_reachable(url: &str, timeout: Duration) -> Result<(), String> {
+pub async fn check_reachable(url: &str, timeout: Duration) -> Result<(), String> {
     let (host, port) = parse_host_port(url)
         .ok_or_else(|| format!("could not parse host:port from url {url:?}"))?;
 

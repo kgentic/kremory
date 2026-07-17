@@ -8,8 +8,9 @@
 //! - Malformed RFC 3339 timestamps (`published_at`, `structured_facts[].valid_at`
 //!   / `invalid_at`, `as_of`)
 //!
-//! These map to [`ConversionError`], which `lib.rs` maps to
-//! [`crate::ToolError::InvalidParams`] → MCP `ErrorData::invalid_params`.
+//! These map to [`ConversionError`], which `handlers.rs` maps to
+//! `crate::handlers::ToolError::InvalidParams` — `lib.rs` then converts that
+//! to MCP `ErrorData::invalid_params` (and the REST bin maps it to HTTP 422).
 //! `source_kind` / recall `format` / `template` are typed wire enums (see
 //! `params.rs`) — an unknown string there is rejected by `Parameters<T>`'s
 //! own JSON-schema deserialization before it ever reaches this module, so no

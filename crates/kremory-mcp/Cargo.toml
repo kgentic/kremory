@@ -25,6 +25,15 @@ path = "src/lib.rs"
 name = "kremory-mcp-server"
 path = "src/main.rs"
 
+# `kremory-http` — thin REST transport reusing the SAME `handlers.rs` bodies
+# the MCP stdio server (`kremory-mcp-server`, above) calls into. One Rust SDK
+# (`kremory::Memory`), two thin transports — see `src/handlers.rs` module
+# docs. Lets a non-MCP harness (e.g. a Python benchmark) drive kremory over
+# plain HTTP.
+[[bin]]
+name = "kremory-http"
+path = "src/bin/kremory-http.rs"
+
 [dependencies]
 kremory = { path = "../kremory" }
 # Pinned to 1.8 floor: compile-spike (2026-07-14, spec §7 step 0 / R9) resolved
@@ -49,6 +58,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # doc: consumers reading kremory's counters must pin the same minor version).
 metrics = "0.24"
 uuid = { version = "1", features = ["v4"] }
+# `kremory-http` bin only — REST transport for non-MCP consumers (e.g. the
+# Python benchmark harness). No other crate in the workspace depends on
+# these; fresh additions.
+axum = "0.8"
+tower-http = { version = "0.6", features = ["trace"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
@@ -64,3 +78,6 @@ chrono = { version = "0.4", features = ["serde"] }
 # real binary and speaks MCP over its stdio via rmcp's own client transport.
 rmcp = { version = "1.8", features = ["client", "transport-child-process"] }
 anyhow = "1"
+# `kremory-http` bin test module only — `ServiceExt::oneshot` to drive the
+# axum Router in-process without binding a TCP listener.
+tower = { version = "0.5", features = ["util"] }
