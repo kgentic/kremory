@@ -204,8 +204,17 @@ impl kremory::core::intelligence::EntityExtractor for ExternalExtractorJs {
         let tsfn = self.tsfn.clone();
 
         async move {
-            let js_result: JsExtractionResult = tsfn
+            // `call_async`'s own return value is only the SYNCHRONOUS result of
+            // invoking the JS callback. The JS `extract` function is declared
+            // `async`, so that synchronous result is a `Promise`, not the
+            // resolved data — napi-rs never auto-awaits a returned Promise.
+            // Request `Promise<JsExtractionResult>` (impls both `FromNapiValue`
+            // and `Future`) and `.await` it to obtain the resolved value.
+            let promise: napi::bindgen_prelude::Promise<JsExtractionResult> = tsfn
                 .call_async(Ok(text_owned))
+                .await
+                .map_err(|e| kremory::CoreError::Other(anyhow!("extractor callback error: {e}")))?;
+            let js_result: JsExtractionResult = promise
                 .await
                 .map_err(|e| kremory::CoreError::Other(anyhow!("extractor callback error: {e}")))?;
 
@@ -361,10 +370,18 @@ impl DynEmbeddingProvider for JsEmbedderBridge {
         let tsfn = self.tsfn.clone();
 
         Box::pin(async move {
-            // call_async suspends this tokio task and resumes when the JS Promise
-            // resolves. Vec<f64> maps to JS `number[]` (JS Number is always f64).
-            let f64_vec: Vec<f64> = tsfn
+            // `call_async`'s own return value is only the SYNCHRONOUS result of
+            // invoking the JS callback. The JS embedder callback is declared
+            // `async`, so that synchronous result is a `Promise`, not the
+            // resolved data — napi-rs never auto-awaits a returned Promise.
+            // Request `Promise<Vec<f64>>` (impls both `FromNapiValue` and
+            // `Future`) and `.await` it to obtain the resolved `number[]`
+            // (JS Number is always f64).
+            let promise: napi::bindgen_prelude::Promise<Vec<f64>> = tsfn
                 .call_async(Ok(text_owned))
+                .await
+                .map_err(|e| CoreError::Other(anyhow!("embedder callback error: {e}")))?;
+            let f64_vec: Vec<f64> = promise
                 .await
                 .map_err(|e| CoreError::Other(anyhow!("embedder callback error: {e}")))?;
 
