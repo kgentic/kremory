@@ -1,0 +1,6 @@
+httpx>=0.28
+openai>=2.26
+tqdm>=4.67
+python-dateutil>=2.9
+nltk>=3.9
+numpy>=2.4
