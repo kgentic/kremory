@@ -383,6 +383,34 @@ def f1_token_overlap(hypothesis: str, reference: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+def list_item_overlap_score(hypothesis: str, reference: str) -> float | None:
+    """Partial-credit score for LongMemEval references that are themselves a
+    LIST of items (e.g. "Paris, London, Berlin") — the fraction of gold
+    items individually found in the hypothesis.
+
+    Bug B (list-answer partial credit, W0.2): f1_token_overlap() treats the
+    reference as one bag of tokens, so a multi-word item that's entirely
+    missing loses proportionally more weight than a missing single-word
+    item. This gives each ITEM equal weight instead.
+
+    Returns None when `reference` doesn't look like a list (fewer than 2
+    comma-separated items) — callers fall back to existing single-answer
+    scoring unchanged. Item match is substring-on-normalized-text OR
+    per-item F1 >= 0.5 (mirrors f1_token_overlap's own threshold, applied
+    per-item instead of over the whole joined string).
+    """
+    items = [i.strip() for i in reference.split(",") if i.strip()]
+    if len(items) < 2:
+        return None
+    h_norm = normalize_text(hypothesis)
+    matched = sum(
+        1
+        for item in items
+        if normalize_text(item) in h_norm or f1_token_overlap(hypothesis, item) >= 0.5
+    )
+    return matched / len(items)
+
+
 def is_abstention_question(question_id: str) -> bool:
     return question_id.endswith("_abs")
 
@@ -407,8 +435,18 @@ def quick_score(hypothesis: str, reference: str, question_id: str) -> dict:
 
     # F1 token overlap
     f1 = f1_token_overlap(hypothesis, reference)
+
+    # List-answer partial credit (Bug B, W0.2). Only ever RAISES f1 (never
+    # lowers it), so a genuinely single-item reference (list_item_overlap_score
+    # returns None, <2 comma items) is scored exactly as before this fix.
+    list_score = list_item_overlap_score(hypothesis, reference)
+    explanation = f"f1={f1:.3f}"
+    if list_score is not None and list_score > f1:
+        f1 = list_score
+        explanation = f"list-item overlap={f1:.3f} (fraction of gold items matched)"
+
     is_correct = f1 >= 0.5
-    return {"is_correct": is_correct, "f1": round(f1, 4), "explanation": f"f1={f1:.3f}"}
+    return {"is_correct": is_correct, "f1": round(f1, 4), "explanation": explanation}
 
 
 def llm_evaluate(
@@ -520,6 +558,19 @@ def run_benchmark(config: Config) -> dict:
     all_results = []
     type_stats: dict[str, dict] = {}
 
+    # W0.3: crash-safe per-question write. The 500-question LongMemEval run
+    # is paid (OpenAI generation + judge calls per question) — previously
+    # this harness only wrote the full batch via json.dump() at the very
+    # end (see below), so a mid-run crash lost ALL progress + spend. Mirror
+    # LoCoMo's incremental jsonl write (bench/locomo/harness.py) — one
+    # flushed line per question, written as each result is produced.
+    import datetime
+    run_ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    jsonl_path = (config.output.parent if config.output else Path("results")) / f"run-{run_ts}.jsonl"
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_f = open(jsonl_path, "a")
+    print(f"  [o11y] per-question records -> {jsonl_path}", file=sys.stderr)
+
     for idx, item in enumerate(tqdm(dataset, desc="Evaluating")):
         question_id = item["question_id"]
         question = item["question"]
@@ -585,6 +636,13 @@ def run_benchmark(config: Config) -> dict:
         }
         all_results.append(result)
 
+        # --- o11y: per-question structured record, written incrementally
+        # (crash-safe) — W0.3. Same record shape as the final results.json
+        # entry, so a crash mid-run still leaves every question scored so
+        # far inspectable/resumable without re-spending on OpenAI calls.
+        jsonl_f.write(json.dumps(result) + "\n")
+        jsonl_f.flush()
+
         # Track per-type
         if question_type not in type_stats:
             type_stats[question_type] = {"correct": 0, "total": 0}
@@ -595,6 +653,8 @@ def run_benchmark(config: Config) -> dict:
         # 5. Cleanup (per-question, like LongMemEval expects)
         if config.mode != "baseline" and not config.skip_ingest:
             client.delete_namespace(namespace)
+
+    jsonl_f.close()
 
     # Summary
     total_correct = sum(v["correct"] for v in type_stats.values())
@@ -724,6 +784,11 @@ def rescore_results(results_path: Path, args):
 # ---------------------------------------------------------------------------
 
 def main():
+    # W0.3: unbuffered stdout so long runs stream progress live instead of
+    # buffering until process exit/flush. In-script so it's robust
+    # regardless of invocation (no reliance on `python3 -u` / PYTHONUNBUFFERED=1).
+    sys.stdout.reconfigure(line_buffering=True)
+
     parser = argparse.ArgumentParser(description="LongMemEval benchmark harness for codemem")
     parser.add_argument("--mode", default="codemem",
                         choices=["baseline", "codemem", "codemem-graph"],
