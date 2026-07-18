@@ -122,6 +122,33 @@ pub async fn do_recall(mem: &Memory, params: RecallParams) -> Result<serde_json:
     }
 }
 
+/// Content-search sibling of [`do_recall`] (benchmark-completion-roadmap
+/// W0.1) — reaches past the entity-shaped `RetrievedContext` contract to
+/// ADR-072 seq1's BM25-only `.content()` recall terminal
+/// (`mem.recall(q).in_namespace(ns).k(k).content()`), returning raw
+/// `kremory::memory::ContentPassage` passages (episode-level FTS5 snippets,
+/// NOT fused with the entity/fact RRF stream — see `ContentPassage` doc).
+///
+/// Feature-gated behind `content-search` (mirrors kremory's own gating) —
+/// only reachable from `kremory-http`'s `/search?mode=content|hybrid`. The
+/// MCP `kremory_recall` tool has no mode concept and never calls this fn, so
+/// its wire surface/behaviour is completely unaffected by this addition.
+#[cfg(feature = "content-search")]
+pub async fn do_recall_content(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<kremory::memory::ContentPassage>, ToolError> {
+    let resolved = params.resolve()?;
+
+    let mut req = mem.recall(resolved.query).in_namespace(resolved.namespace);
+    if let Some(k) = resolved.k {
+        req = req.k(k);
+    }
+
+    let passages = req.content().await?;
+    Ok(passages)
+}
+
 pub async fn do_dream(mem: &Memory, params: DreamParams) -> Result<DreamOutput, ToolError> {
     let resolved = params.resolve()?;
 

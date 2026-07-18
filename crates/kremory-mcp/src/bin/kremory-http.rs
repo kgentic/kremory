@@ -36,7 +36,16 @@
 //! |---|---|---|
 //! | `GET /health` | — | `200` |
 //! | `POST /memories` `{content, namespace, published_at?}` | `handlers::do_remember` | `201 {"id"}` |
-//! | `GET /search?q=&namespace=&k=` | `handlers::do_recall` (structured) | `200 {"results":[{"id","content","score"}]}` |
+//! | `GET /search?q=&namespace=&k=&mode=` | `handlers::do_recall` / `do_recall_content` | `200 {"results":[{"id","content","score"}]}` |
+//!
+//! `mode` (benchmark-completion-roadmap W0.1) selects which of kremory's
+//! retrieval surfaces `/search` reaches: `recall` (default, byte-identical
+//! to pre-W0.1 `/search`) is the existing hybrid keyword+semantic+graph path;
+//! `content` is ADR-072 seq1's BM25-only full-text search over raw
+//! `episodes.content` (requires this bin built with `--features
+//! content-search`, else degrades to `recall` with a warning); `hybrid` runs
+//! both and naively unions them (see `naive_merge` below — a real
+//! fusion/fairness decision is deferred to Arch-1a post-diagnostic).
 //! | `DELETE /namespaces/{ns}` | `Memory::forget` | `200 {"deleted"}` |
 //! | `POST /consolidation/{cycle}?namespace=` | `handlers::do_dream` | `200` (422 if `?namespace=` omitted) |
 
@@ -140,12 +149,29 @@ async fn create_memory(
 // GET /search
 // ────────────────────────────────────────────────────────────────────────
 
+/// `?mode=` selector (benchmark-completion-roadmap W0.1) — a REST-only
+/// routing concept. `RecallParams` (the shared MCP+REST wire type in
+/// `handlers.rs` / `params.rs`) carries no `mode` field and the MCP
+/// `kremory_recall` tool has no equivalent; `mode` lives purely at this
+/// query-string layer and selects which handler fn(s) `search()` below
+/// calls.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SearchMode {
+    #[default]
+    Recall,
+    Content,
+    Hybrid,
+}
+
 #[derive(Debug, Deserialize)]
 struct SearchQuery {
     q: String,
     namespace: String,
     #[serde(default)]
     k: Option<usize>,
+    #[serde(default)]
+    mode: SearchMode,
 }
 
 #[derive(Debug, Serialize)]
@@ -186,13 +212,29 @@ async fn search(
         format: RecallFormat::Structured,
         template: RecallTemplateWire::default(),
     };
-    let value = handlers::do_recall(&state.mem, params).await?;
+    let results = match query.mode {
+        SearchMode::Recall => recall_mode_results(&state.mem, params).await?,
+        SearchMode::Content => content_mode_results(&state.mem, params).await?,
+        SearchMode::Hybrid => hybrid_mode_results(&state.mem, params).await?,
+    };
+    Ok(Json(SearchResponseWire { results }))
+}
+
+/// `mode=recall` (the default) — the existing entity-shaped hybrid
+/// keyword/semantic/graph path (`handlers::do_recall`, structured format),
+/// flattened via [`flatten_result_content`]. Byte-identical to `/search`'s
+/// pre-W0.1 behaviour.
+async fn recall_mode_results(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<SearchResultWire>, ApiError> {
+    let value = handlers::do_recall(mem, params).await?;
     let structured: RecallStructuredOutput = serde_json::from_value(value).map_err(|e| {
         ApiError(ToolError::Internal(format!(
             "kremory-http: failed to deserialize recall structured output: {e}"
         )))
     })?;
-    let results = structured
+    Ok(structured
         .results
         .iter()
         .map(|r| SearchResultWire {
@@ -200,8 +242,106 @@ async fn search(
             content: flatten_result_content(r),
             score: r.score,
         })
-        .collect();
-    Ok(Json(SearchResponseWire { results }))
+        .collect())
+}
+
+/// `mode=content` — ADR-072 seq1 BM25-only full-text search over raw
+/// `episodes.content` (`handlers::do_recall_content`), adapted into the SAME
+/// `{id, content, score}` wire contract `mode=recall` uses:
+/// `ContentPassage::episode_id` (stringified) -> `id`,
+/// `ContentPassage::snippet` -> `content`.
+#[cfg(feature = "content-search")]
+async fn content_mode_results(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<SearchResultWire>, ApiError> {
+    let passages = handlers::do_recall_content(mem, params).await?;
+    Ok(passages
+        .into_iter()
+        .map(|p| SearchResultWire {
+            id: p.episode_id.to_string(),
+            content: p.snippet,
+            score: p.score,
+        })
+        .collect())
+}
+
+/// Feature-off degrade for `mode=content`: this bin was not built with
+/// `--features content-search`, so there is no BM25 stream to serve.
+/// Falls back to `mode=recall` with a loud warning rather than a hard
+/// error — the harness is expected to build this bin WITH the feature when
+/// it wants content/hybrid modes; this is a defensive fallback so a
+/// feature-off build still answers `/search` instead of 500ing.
+#[cfg(not(feature = "content-search"))]
+async fn content_mode_results(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<SearchResultWire>, ApiError> {
+    tracing::warn!(
+        "mode=content requested but kremory-http was built without the `content-search` \
+         feature; falling back to mode=recall"
+    );
+    recall_mode_results(mem, params).await
+}
+
+/// `mode=hybrid` — runs BOTH `mode=recall` and `mode=content` and naively
+/// unions them via [`naive_merge`]. NAIVE BASELINE FUSION — real
+/// fusion/fairness decision deferred to Arch-1a post-diagnostic per
+/// benchmark-completion-roadmap; do not read this as kremory's answer to
+/// hybrid ranking.
+#[cfg(feature = "content-search")]
+async fn hybrid_mode_results(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<SearchResultWire>, ApiError> {
+    let recall = recall_mode_results(mem, params.clone()).await?;
+    let content = content_mode_results(mem, params).await?;
+    Ok(naive_merge(recall, content))
+}
+
+/// Feature-off degrade for `mode=hybrid` — same rationale as
+/// `content_mode_results`'s feature-off arm.
+#[cfg(not(feature = "content-search"))]
+async fn hybrid_mode_results(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<SearchResultWire>, ApiError> {
+    tracing::warn!(
+        "mode=hybrid requested but kremory-http was built without the `content-search` \
+         feature; falling back to mode=recall"
+    );
+    recall_mode_results(mem, params).await
+}
+
+/// NAIVE BASELINE FUSION — real fusion/fairness decision deferred to Arch-1a
+/// post-diagnostic per benchmark-completion-roadmap. Union by `id`
+/// (first-seen wins across the two ranked lists), rank-interleaved
+/// (`recall[0], content[0], recall[1], content[1], ...`) — NOT an RRF or any
+/// score-aware fusion.
+#[cfg(feature = "content-search")]
+fn naive_merge(a: Vec<SearchResultWire>, b: Vec<SearchResultWire>) -> Vec<SearchResultWire> {
+    let mut seen = std::collections::HashSet::with_capacity(a.len() + b.len());
+    let mut merged = Vec::with_capacity(a.len() + b.len());
+    let mut ia = a.into_iter();
+    let mut ib = b.into_iter();
+    loop {
+        let ra = ia.next();
+        let rb = ib.next();
+        if ra.is_none() && rb.is_none() {
+            break;
+        }
+        if let Some(x) = ra {
+            if seen.insert(x.id.clone()) {
+                merged.push(x);
+            }
+        }
+        if let Some(x) = rb {
+            if seen.insert(x.id.clone()) {
+                merged.push(x);
+            }
+        }
+    }
+    merged
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -643,5 +783,130 @@ mod tests {
             .unwrap();
         let resp = router.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ─── mode=content / mode=hybrid (benchmark-completion-roadmap W0.1) ──
+
+    /// `GET /search?mode=content` reaches ADR-072 seq1's BM25 FTS5 stream
+    /// (`handlers::do_recall_content`) rather than the entity/fact path —
+    /// asserts a passage carrying the pinned subject's snippet comes back
+    /// through the SAME `{id, content, score}` wire contract `mode=recall`
+    /// uses.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_mode_content_returns_bm25_passage() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState { mem: mem.clone() });
+        let ns = "ns-http-content";
+
+        pin_fact(&mem, ns, "Zephyrine").await;
+
+        let search = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/search?q=Zephyrine&namespace={ns}&k=10&mode=content"
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(search).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let results = json["results"].as_array().expect("results array");
+        assert!(
+            results.iter().any(|r| {
+                r["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("Zephyrine"))
+            }),
+            "mode=content results[].content must carry the pinned subject's BM25 snippet: {json}"
+        );
+        for r in results {
+            assert!(
+                r["id"].as_str().is_some(),
+                "result.id must be a string: {r}"
+            );
+            assert!(
+                r["score"].as_f64().is_some(),
+                "result.score must be numeric: {r}"
+            );
+        }
+    }
+
+    /// `GET /search` with no `?mode=` is `mode=recall` — byte-identical to
+    /// pre-W0.1 `/search` behaviour. Regression guard for the W0.1 addition:
+    /// the default arm must not have drifted when `content-search` is
+    /// compiled in.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_default_mode_is_recall() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState { mem: mem.clone() });
+        let ns = "ns-http-default-mode";
+
+        pin_fact(&mem, ns, "Ada").await;
+
+        let search = Request::builder()
+            .method("GET")
+            .uri(format!("/search?q=Ada&namespace={ns}&k=10"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(search).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let results = json["results"].as_array().expect("results array");
+        assert!(
+            results
+                .iter()
+                .any(|r| r["content"].as_str().is_some_and(|c| c.contains("Ada"))),
+            "omitted ?mode= must default to recall and still find the pinned entity: {json}"
+        );
+    }
+
+    /// `naive_merge` — dedupes by `id` (first-seen-in-the-interleave wins)
+    /// and interleaves by rank (`recall[0], content[0], recall[1],
+    /// content[1], ...`), not any score-aware fusion.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn naive_merge_dedupes_by_id_and_interleaves_by_rank() {
+        let recall = vec![
+            SearchResultWire {
+                id: "a".into(),
+                content: "recall-a".into(),
+                score: 0.9,
+            },
+            SearchResultWire {
+                id: "b".into(),
+                content: "recall-b".into(),
+                score: 0.8,
+            },
+        ];
+        let content = vec![
+            SearchResultWire {
+                id: "b".into(),
+                content: "content-b".into(),
+                score: 0.7,
+            },
+            SearchResultWire {
+                id: "c".into(),
+                content: "content-c".into(),
+                score: 0.6,
+            },
+        ];
+        let merged = naive_merge(recall, content);
+        let ids: Vec<&str> = merged.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["a", "b", "c"],
+            "expected deduped, rank-interleaved id order: {ids:?}"
+        );
+        // "b" is duplicated across both lists; the interleave reaches
+        // content's "b" (content[0], processed in round 1 alongside
+        // recall[0]) BEFORE it reaches recall's own "b" (recall[1],
+        // round 2) — so content's copy wins the dedup, not recall's.
+        assert_eq!(
+            merged.iter().find(|r| r.id == "b").unwrap().content,
+            "content-b",
+            "first-seen-in-the-interleave copy must win the dedup"
+        );
     }
 }
