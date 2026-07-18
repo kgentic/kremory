@@ -241,17 +241,32 @@ pub(crate) fn entity_name(entity: &Entity) -> &str {
         .unwrap_or(&entity.id)
 }
 
-impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
-    async fn resolve<'a>(
-        &'a self,
-        candidate: &'a ExtractedEntity,
-        existing: &'a Entity,
-    ) -> Result<ResolutionResult> {
+impl<L: ChatProvider> CascadeResolver<L> {
+    /// ADR-076 (TD-127) Pass 1: the cheap deterministic tiers (Tier 1 exact-
+    /// normalize + Tier 2 MinHash/LSH) factored out of `resolve()` so the
+    /// batched resolver can run them synchronously, no-LLM, over an entity's
+    /// candidate block BEFORE deciding whether the entity is ambiguous enough
+    /// to need the LLM tier at all.
+    ///
+    /// Returns `Some(ResolutionResult::Same)` on a deterministic hit; `None`
+    /// means neither cheap tier fired and the pair would escalate to Tier 3
+    /// (LLM) under `resolve()`. Never returns `Some(Different)` — the cheap
+    /// tiers only ever *confirm* a match, never *rule one out*; ruling out is
+    /// what Tier 3 (or the batched map-back's conservative-NEW) is for.
+    ///
+    /// `resolve()` calls this first and only escalates to the LLM when it
+    /// returns `None` — behaviour of `resolve()` is unchanged by this
+    /// refactor (DRY: both callers share one implementation of Tier 1 + 2).
+    pub(crate) fn resolve_deterministic(
+        &self,
+        candidate: &ExtractedEntity,
+        existing: &Entity,
+    ) -> Option<ResolutionResult> {
         // Tier 1: Exact match after normalization
         let norm_candidate = normalize_name(&candidate.name);
         let norm_existing = normalize_name(entity_name(existing));
         if norm_candidate == norm_existing {
-            return Ok(ResolutionResult::Same);
+            return Some(ResolutionResult::Same);
         }
 
         // Tier 2: MinHash/LSH if entropy gate passes
@@ -260,8 +275,23 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
             let sig_b = compute_minhash(entity_name(existing), &self.minhash_config);
             let similarity = jaccard_estimate(&sig_a, &sig_b);
             if similarity >= self.minhash_config.jaccard_threshold {
-                return Ok(ResolutionResult::Same);
+                return Some(ResolutionResult::Same);
             }
+        }
+
+        None
+    }
+}
+
+impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
+    async fn resolve<'a>(
+        &'a self,
+        candidate: &'a ExtractedEntity,
+        existing: &'a Entity,
+    ) -> Result<ResolutionResult> {
+        // Pass 1 (ADR-076): cheap deterministic tiers (Tier 1 + Tier 2).
+        if let Some(result) = self.resolve_deterministic(candidate, existing) {
+            return Ok(result);
         }
 
         // Tier 3: LLM escalation

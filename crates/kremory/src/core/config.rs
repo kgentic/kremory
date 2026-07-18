@@ -218,6 +218,28 @@ impl Default for EmbeddingDim {
     }
 }
 
+/// Entity-resolution call-shape strategy (ADR-076 / TD-127).
+///
+/// Selects how the ambiguous remainder of ingest-time entity resolution (the
+/// entities that survive ADR-075 candidate blocking but are NOT resolved by
+/// the cheap deterministic tiers — exact-normalize + MinHash) reaches the LLM:
+///
+/// - `Batched` (default): one structured-output call per window resolves ALL
+///   ambiguous entities against a shared candidate pool at once, collapsing
+///   the O(ambiguous × candidates) pairwise fan-out to O(windows). See
+///   `resolver_batched.rs`.
+/// - `Pairwise`: the pre-ADR-076 behaviour — one LLM `ResolutionVerdict` call
+///   per (entity, candidate) pair via `CascadeResolver::resolve`. Retained for
+///   A/B comparison and as an instant rollback (config flip, no code revert).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResolutionStrategy {
+    /// Pre-ADR-076 pairwise `resolve()` fan-out.
+    Pairwise,
+    /// ADR-076 batched structured-output resolution (default).
+    #[default]
+    Batched,
+}
+
 /// Top-level pipeline configuration aggregating all sub-configs.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -277,6 +299,19 @@ pub struct PipelineConfig {
     /// P0 behaviour (every blocked candidate still reaches `resolve()`); raise
     /// (e.g. `0.5`) to trade a little recall for far fewer resolution LLM calls.
     pub resolution_min_cosine: f32,
+    /// ADR-076 (TD-127): entity-resolution call-shape. `Batched` (default)
+    /// collapses the ambiguous-remainder pairwise LLM fan-out into one
+    /// structured call per window; `Pairwise` retains the pre-ADR-076
+    /// per-(entity, candidate) `ResolutionVerdict` call for A/B + rollback.
+    pub resolution_strategy: ResolutionStrategy,
+    /// ADR-076 (TD-127): maximum number of ambiguous entities packed into a
+    /// single batched-resolution window. Mirrors the `resolution_block_k`
+    /// pattern — a safe-default overflow-cap knob, not a token-budget
+    /// estimator (YAGNI per ADR-076 §Decision). Default: 32 — conservative
+    /// on any 4k-or-larger-context model (32 short name+type lines, plus
+    /// pooled candidates and system prompt, totals roughly 2-3k tokens).
+    /// Raise on a large-context model to shrink call count further.
+    pub resolution_batch_max_entities: usize,
 }
 
 impl PipelineConfig {
@@ -297,6 +332,8 @@ impl PipelineConfig {
                 extraction_arm_budget_ms: 30_000,
                 resolution_block_k: 10,
                 resolution_min_cosine: 0.0,
+                resolution_strategy: ResolutionStrategy::default(),
+                resolution_batch_max_entities: 32,
             },
         }
     }
@@ -457,6 +494,24 @@ impl PipelineConfigBuilder {
     /// to `[0.0, 1.0]`.
     pub fn resolution_min_cosine(mut self, floor: f32) -> Self {
         self.inner.resolution_min_cosine = floor.clamp(0.0, 1.0);
+        self
+    }
+
+    // ── Batched resolution (ADR-076 / TD-127) ──────────────────────────────────
+
+    /// Select the entity-resolution call-shape strategy. `Batched` (default)
+    /// collapses the ambiguous-remainder LLM fan-out into one structured call
+    /// per window; `Pairwise` restores the pre-ADR-076 per-pair behaviour.
+    pub fn resolution_strategy(mut self, v: ResolutionStrategy) -> Self {
+        self.inner.resolution_strategy = v;
+        self
+    }
+
+    /// Set the maximum number of ambiguous entities packed into a single
+    /// batched-resolution window. Default: 32. Raise on a large-context model
+    /// to shrink call count further; see `resolution_batch_max_entities` docs.
+    pub fn resolution_batch_max_entities(mut self, v: usize) -> Self {
+        self.inner.resolution_batch_max_entities = v;
         self
     }
 

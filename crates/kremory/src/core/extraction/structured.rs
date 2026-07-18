@@ -777,10 +777,10 @@ fn arm_name(arm: FallbackArm) -> &'static str {
 /// engine open without LLM round-trips.
 pub(crate) async fn warm_schema_caches<L: ?Sized + ChatProvider>(llm: &L, model: Option<&str>) {
     use crate::core::extraction::schemas::{
-        SCHEMA_CONTRADICTION_VERDICT, SCHEMA_ENTITY_LIST, SCHEMA_ENTITY_TYPING,
-        SCHEMA_NUEXTRACT_BOTH, SCHEMA_NUEXTRACT_ENTITIES_ONLY, SCHEMA_NUEXTRACT_RELATIONS_ONLY,
-        SCHEMA_REL_ONLY_FORCE_FALLBACK, SCHEMA_REL_TYPE_LIST, SCHEMA_RESOLUTION_VERDICT,
-        SCHEMA_TRIPLET_LIST,
+        SCHEMA_BATCHED_RESOLUTION, SCHEMA_CONTRADICTION_VERDICT, SCHEMA_ENTITY_LIST,
+        SCHEMA_ENTITY_TYPING, SCHEMA_NUEXTRACT_BOTH, SCHEMA_NUEXTRACT_ENTITIES_ONLY,
+        SCHEMA_NUEXTRACT_RELATIONS_ONLY, SCHEMA_REL_ONLY_FORCE_FALLBACK, SCHEMA_REL_TYPE_LIST,
+        SCHEMA_RESOLUTION_VERDICT, SCHEMA_TRIPLET_LIST,
     };
 
     let schemas: &[(&'static serde_json::Value, &'static str)] = &[
@@ -794,6 +794,7 @@ pub(crate) async fn warm_schema_caches<L: ?Sized + ChatProvider>(llm: &L, model:
         (&SCHEMA_CONTRADICTION_VERDICT, "ContradictionVerdict"),
         (&SCHEMA_REL_ONLY_FORCE_FALLBACK, "RelOnlyForceFallback"),
         (&SCHEMA_RESOLUTION_VERDICT, "ResolutionVerdict"),
+        (&SCHEMA_BATCHED_RESOLUTION, "BatchedResolution"),
     ];
 
     // Minimal 1-token prompt — enough for the provider to compile the schema.
