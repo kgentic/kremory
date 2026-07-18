@@ -226,6 +226,8 @@ For every entity, provide:
 - `name`: copy the entity's `name` EXACTLY as given — do not rephrase or correct it
 - `duplicate_candidate_id`: the `candidate_id` of the EXISTING ENTITY that is the best duplicate match, or -1 if there is no duplicate
 
+Output ONLY the JSON object matching the schema — no reasoning, no explanation, no markdown fences, no prose before or after. Start your response with `{{` and end it with `}}`.
+
 <EXAMPLE>
 ENTITY: {{"id": 0, "name": "NYC", "type": "Location"}}
 EXISTING ENTITIES: [{{"candidate_id": 0, "name": "New York City", "type": "Location"}}, {{"candidate_id": 1, "name": "New York Knicks", "type": "Organization"}}]

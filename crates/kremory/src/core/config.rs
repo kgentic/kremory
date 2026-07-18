@@ -276,6 +276,16 @@ pub struct PipelineConfig {
     /// `.extraction_arm_budget_ms(value)` on the builder. The benchmark
     /// suite sets this to 300_000 to accommodate qwen2.5:14b warm-up latency.
     pub extraction_arm_budget_ms: u64,
+    /// TD-NEW-A (Lane C): how many per-chunk extraction LLM calls to run
+    /// concurrently within a single `ingest_with` call (`futures::buffered`,
+    /// order-preserving for determinism). `1` = the pre-change sequential
+    /// behaviour. Extraction is read-only (no persisted-graph dependency
+    /// between chunks — `known_entities` becomes window-local when >1, the
+    /// staleness the dream L5 backstop absorbs), so overlapping the calls
+    /// cuts ingest wall-time once resolution is no longer the bottleneck
+    /// (ADR-076). Default: 5 (conservative vs provider concurrent-rate limits;
+    /// raise via `KREMORY_EXTRACTION_CONCURRENCY` on a higher-limit provider).
+    pub extraction_concurrency: usize,
     /// ADR-075 (TD-124): entity-resolution candidate-blocking width. When a
     /// group has MORE than this many existing entities, ingest resolution
     /// compares each newly-extracted entity only against a bounded candidate
@@ -330,6 +340,7 @@ impl PipelineConfig {
                 cache_ttl: Duration::from_secs(300),
                 cache_max_entries: 1000,
                 extraction_arm_budget_ms: 30_000,
+                extraction_concurrency: 5,
                 resolution_block_k: 10,
                 resolution_min_cosine: 0.0,
                 resolution_strategy: ResolutionStrategy::default(),
@@ -473,6 +484,13 @@ impl PipelineConfigBuilder {
     /// silicon (~80-130s per call at 32k context).
     pub fn extraction_arm_budget_ms(mut self, ms: u64) -> Self {
         self.inner.extraction_arm_budget_ms = ms;
+        self
+    }
+
+    /// TD-NEW-A Lane C: concurrent per-chunk extraction calls per ingest
+    /// (`futures::buffered`, order-preserving). `1` = sequential. Default 5.
+    pub fn extraction_concurrency(mut self, n: usize) -> Self {
+        self.inner.extraction_concurrency = n;
         self
     }
 
