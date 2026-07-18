@@ -186,11 +186,11 @@ pub enum Error {
     #[error("bm25_weight ({bm25}) + vector_weight ({vector}) must sum to 1.0")]
     WeightSumInvalid { bm25: f64, vector: f64 },
 
-    /// Extraction window `max_tokens` is smaller than `min_tokens`.
+    /// Extraction window `max_words` is smaller than `min_words`.
     /// `min` is the configured minimum; `got` is the configured maximum that
     /// violates the invariant. Using `got` (the wrong value) rather than `max`
     /// aligns with Rust's conventional `expected`/`got` diagnostic naming.
-    #[error("max_tokens must be >= min_tokens ({min}), got {got}")]
+    #[error("max_words must be >= min_words ({min}), got {got}")]
     TokenWindowInvalid { got: usize, min: usize },
 
     // ── Engine lifecycle (Story #5) ───────────────────────────────────────────

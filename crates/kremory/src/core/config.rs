@@ -28,7 +28,7 @@ pub struct ExtractionWindowConfig {
     /// Default: 100 words. Shorter text rarely benefits from splitting; below
     /// this the overhead of extra chunks exceeds the gain.  Graphiti ratio:
     /// min/max ≈ 33%.
-    pub min_tokens: usize,
+    pub min_words: usize,
 
     /// Default: 0.15. Empirically, chunks with >15% of tokens being entity
     /// spans lose inter-entity context when kept whole; splitting at this
@@ -39,15 +39,15 @@ pub struct ExtractionWindowConfig {
     /// fit in the default 4096-token context with room for system prompt,
     /// query, and generation.  Optimised for latency on the real-time meeting
     /// assistant path.  Users with more memory can increase via
-    /// `LLM_CONTEXT_SIZE` + `CHUNK_MAX_TOKENS` env vars (see KGT-69 for UI
+    /// `LLM_CONTEXT_SIZE` + `CHUNK_MAX_WORDS` env vars (see KGT-69 for UI
     /// presets).  Must stay aligned with `max_chunk_chars` in
     /// the host application's pipeline config (1500 chars).
-    pub max_tokens: usize,
+    pub max_words: usize,
 
     /// Number of words from the end of `chunk[i]` to prepend to `chunk[i+1]`.
     /// Default: 50 words.  Graphiti uses 200/3000 (6.7%); ours is 50/300
     /// (16.7%) — slightly higher overlap compensates for smaller chunks.
-    pub overlap_tokens: usize,
+    pub overlap_words: usize,
 }
 
 impl ExtractionWindowConfig {
@@ -55,15 +55,15 @@ impl ExtractionWindowConfig {
     ///
     /// | Env var | Default | Rationale |
     /// |---------|---------|-----------|
-    /// | `CHUNK_MAX_TOKENS` | 300 | ~1500 chars, fits 3 chunks in 4096-ctx prompt |
-    /// | `CHUNK_MIN_TOKENS` | 100 | Don't chunk short text (Graphiti min/max ≈ 33%) |
-    /// | `CHUNK_OVERLAP_TOKENS` | 50 | Context continuity between chunks |
+    /// | `CHUNK_MAX_WORDS` (or legacy `CHUNK_MAX_TOKENS`) | 300 | ~1500 chars, fits 3 chunks in 4096-ctx prompt |
+    /// | `CHUNK_MIN_WORDS` (or legacy `CHUNK_MIN_TOKENS`) | 100 | Don't chunk short text (Graphiti min/max ≈ 33%) |
+    /// | `CHUNK_OVERLAP_WORDS` (or legacy `CHUNK_OVERLAP_TOKENS`) | 50 | Context continuity between chunks |
     /// | `CHUNK_DENSITY_THRESHOLD` | 0.15 | Entity-dense regions trigger splitting |
     pub fn from_env() -> Self {
         Self {
-            max_tokens: env_usize("CHUNK_MAX_TOKENS", 300),
-            min_tokens: env_usize("CHUNK_MIN_TOKENS", 100),
-            overlap_tokens: env_usize("CHUNK_OVERLAP_TOKENS", 50),
+            max_words: env_usize_or("CHUNK_MAX_WORDS", "CHUNK_MAX_TOKENS", 300),
+            min_words: env_usize_or("CHUNK_MIN_WORDS", "CHUNK_MIN_TOKENS", 100),
+            overlap_words: env_usize_or("CHUNK_OVERLAP_WORDS", "CHUNK_OVERLAP_TOKENS", 50),
             density_threshold: env_f64("CHUNK_DENSITY_THRESHOLD", 0.15),
         }
     }
@@ -72,10 +72,10 @@ impl ExtractionWindowConfig {
 impl Default for ExtractionWindowConfig {
     fn default() -> Self {
         Self {
-            min_tokens: 100,
+            min_words: 100,
             density_threshold: 0.15,
-            max_tokens: 300,
-            overlap_tokens: 50,
+            max_words: 300,
+            overlap_words: 50,
         }
     }
 }
@@ -85,6 +85,18 @@ fn env_usize(var: &str, default: usize) -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+/// Read `new_var`, falling back to the legacy `old_var` name, then `default`.
+///
+/// Field-rename compatibility shim (word-based `ExtractionWindowConfig` fields
+/// were renamed from `*_tokens` to `*_words` — see rename PR): existing
+/// deployments setting `CHUNK_MAX_TOKENS` etc. keep working unchanged.
+fn env_usize_or(new_var: &str, old_var: &str, default: usize) -> usize {
+    std::env::var(new_var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| env_usize(old_var, default))
 }
 
 fn env_f64(var: &str, default: f64) -> f64 {
@@ -305,8 +317,8 @@ impl PipelineConfigBuilder {
 
     // ── ExtractionWindowConfig ───────────────────────────────────────────────
 
-    pub fn min_tokens(mut self, v: usize) -> Self {
-        self.inner.extraction_window.min_tokens = v;
+    pub fn min_words(mut self, v: usize) -> Self {
+        self.inner.extraction_window.min_words = v;
         self
     }
 
@@ -315,13 +327,13 @@ impl PipelineConfigBuilder {
         self
     }
 
-    pub fn max_tokens(mut self, v: usize) -> Self {
-        self.inner.extraction_window.max_tokens = v;
+    pub fn max_words(mut self, v: usize) -> Self {
+        self.inner.extraction_window.max_words = v;
         self
     }
 
-    pub fn overlap_tokens(mut self, v: usize) -> Self {
-        self.inner.extraction_window.overlap_tokens = v;
+    pub fn overlap_words(mut self, v: usize) -> Self {
+        self.inner.extraction_window.overlap_words = v;
         self
     }
 
@@ -458,8 +470,8 @@ impl PipelineConfigBuilder {
     /// - `jaccard_threshold` must be in `(0.0, 1.0]`
     /// - `bm25_weight + vector_weight` must equal `1.0` (within 1e-9)
     /// - `embedding_dim` must be greater than 0
-    /// - `min_tokens` must be greater than 0
-    /// - `max_tokens` must be >= `min_tokens`
+    /// - `min_words` must be greater than 0
+    /// - `max_words` must be >= `min_words`
     /// - `density_threshold` must be in `(0.0, 1.0]`
     pub fn build(self) -> Result<PipelineConfig> {
         let c = &self.inner;
@@ -476,14 +488,14 @@ impl PipelineConfigBuilder {
             return Err(Error::EmbeddingDimZero);
         }
 
-        if c.extraction_window.min_tokens == 0 {
-            return Err(Error::Config("min_tokens must be greater than 0".into()));
+        if c.extraction_window.min_words == 0 {
+            return Err(Error::Config("min_words must be greater than 0".into()));
         }
 
-        if c.extraction_window.max_tokens < c.extraction_window.min_tokens {
+        if c.extraction_window.max_words < c.extraction_window.min_words {
             return Err(Error::TokenWindowInvalid {
-                min: c.extraction_window.min_tokens,
-                got: c.extraction_window.max_tokens,
+                min: c.extraction_window.min_words,
+                got: c.extraction_window.max_words,
             });
         }
 
@@ -564,11 +576,11 @@ mod tests {
 
     #[test]
     fn test_invalid_min_tokens_rejected() {
-        let result = PipelineConfig::builder().min_tokens(0).build();
-        assert!(result.is_err(), "min_tokens = 0 must be rejected");
+        let result = PipelineConfig::builder().min_words(0).build();
+        assert!(result.is_err(), "min_words = 0 must be rejected");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("min_tokens"),
+            msg.contains("min_words"),
             "error should mention field name"
         );
     }
@@ -576,14 +588,14 @@ mod tests {
     #[test]
     fn test_max_less_than_min_rejected() {
         let result = PipelineConfig::builder()
-            .min_tokens(800)
-            .max_tokens(400)
+            .min_words(800)
+            .max_words(400)
             .build();
-        assert!(result.is_err(), "max_tokens < min_tokens must be rejected");
+        assert!(result.is_err(), "max_words < min_words must be rejected");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("max_tokens") || msg.contains("min_tokens"),
-            "error should mention token fields"
+            msg.contains("max_words") || msg.contains("min_words"),
+            "error should mention word-window fields"
         );
     }
 
@@ -591,8 +603,8 @@ mod tests {
     fn test_custom_config_builds() {
         let cfg = PipelineConfig::builder()
             .embedding_dim(768)
-            .min_tokens(200)
-            .max_tokens(600)
+            .min_words(200)
+            .max_words(600)
             .density_threshold(0.2)
             .num_permutations(64)
             .shingle_size(4)
@@ -611,8 +623,8 @@ mod tests {
             .expect("custom config should build");
 
         assert_eq!(cfg.embedding_dim, EmbeddingDim(768));
-        assert_eq!(cfg.extraction_window.min_tokens, 200);
-        assert_eq!(cfg.extraction_window.max_tokens, 600);
+        assert_eq!(cfg.extraction_window.min_words, 200);
+        assert_eq!(cfg.extraction_window.max_words, 600);
         assert!((cfg.extraction_window.density_threshold - 0.2).abs() < 1e-12);
         assert_eq!(cfg.minhash.num_permutations, 64);
         assert_eq!(cfg.minhash.shingle_size, 4);
@@ -636,9 +648,9 @@ mod tests {
             .expect("default config should build");
 
         assert_eq!(cfg.embedding_dim, EmbeddingDim(384));
-        assert_eq!(cfg.extraction_window.min_tokens, 100);
+        assert_eq!(cfg.extraction_window.min_words, 100);
         assert!((cfg.extraction_window.density_threshold - 0.15).abs() < 1e-12);
-        assert_eq!(cfg.extraction_window.max_tokens, 300);
+        assert_eq!(cfg.extraction_window.max_words, 300);
         assert_eq!(cfg.minhash.num_permutations, 32);
         assert_eq!(cfg.minhash.shingle_size, 3);
         assert_eq!(cfg.minhash.band_size, 4);
