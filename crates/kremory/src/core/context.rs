@@ -145,10 +145,18 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             });
         }
 
-        // Step 4: Sort by RRF score descending and take top-K seed IDs
+        // Step 4: Sort by RRF score descending and take top-K seed IDs.
+        // Ties (an entity present in only one of fts_hits/vector_hits at the
+        // same rank position as another entity in the other list scores
+        // identically) were previously broken by `rrf_scores`'s `HashMap`
+        // iteration order — nondeterministic across process restarts on
+        // identical input (recall-ranking nondeterminism bug; same class of
+        // fix as TD-066 Change 1's neighbour-sort determinism guard below).
+        // Comparator extracted to `score_desc_id_asc` so its determinism is
+        // directly unit-testable without a full async DB round trip.
         let mut ranked: Vec<(String, f32)> =
             rrf_scores.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.sort_by(score_desc_id_asc);
         let seed_ids: Vec<String> = ranked
             .iter()
             .take(limit)
@@ -306,11 +314,33 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
     }
 }
 
+/// Comparator for `contextualize()` Step 4's seed ranking: RRF score
+/// descending, entity id ascending as a deterministic secondary tie-break.
+///
+/// Extracted as a standalone free function (rather than left as an inline
+/// closure) so its determinism is directly unit-testable without a full
+/// async DB round trip — see `mod tests` below. Two entities can score
+/// identically (e.g. each present in only one of fts_hits/vector_hits, at
+/// the same rank position, under the default equal bm25/vector weights);
+/// `rrf_scores` is a `HashMap`, so without a total-order secondary key the
+/// tied pair's relative order depended on `HashMap` iteration order — which
+/// varies per `HashMap` instance (fresh `RandomState` per `HashMap::new()`
+/// call), producing run-to-run ranking jitter on byte-identical input
+/// (recall-ranking nondeterminism bug). `id` is unique per entity, so it
+/// alone gives a total order — no relevance signal is implied by it.
+fn score_desc_id_asc(a: &(String, f32), b: &(String, f32)) -> std::cmp::Ordering {
+    b.1.partial_cmp(&a.1)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.0.cmp(&b.0))
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use super::{ContextualizeParams, MAX_NEIGHBOURS_PER_SEED, NEIGHBOUR_SCORE_DECAY};
+    use super::{
+        score_desc_id_asc, ContextualizeParams, MAX_NEIGHBOURS_PER_SEED, NEIGHBOUR_SCORE_DECAY,
+    };
     use crate::core::graph::{FactInsert, InsertEntityParams};
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
@@ -638,5 +668,120 @@ mod tests {
             vec![ctx.facts.len() as f64],
             "facts_count histogram must record exactly the returned fact count"
         );
+    }
+
+    // === Recall-ranking nondeterminism fix: `score_desc_id_asc` determinism ===
+    //
+    // `contextualize()`'s Step 4 seed ranking builds `ranked` from
+    // `rrf_scores: HashMap<String, f32>` — an entity present in only one of
+    // fts_hits/vector_hits at the same rank position as another entity in
+    // the other list (common under the default equal 0.5/0.5 bm25/vector
+    // weights) scores identically. Pre-fix, `ranked.sort_by` had no
+    // secondary key, so a tied pair's relative order depended on
+    // `HashMap`'s iteration order — which varies per `HashMap` instance
+    // (fresh `RandomState` on every `HashMap::new()` call), producing
+    // run-to-run ranking jitter on byte-identical input even within a
+    // single process. `SimpleGraph`'s `NullEmbeddingProvider` always embeds
+    // to an all-zero vector regardless of query text, which makes
+    // `vector_search` return zero hits (cosine distance against a
+    // zero-magnitude vector is NULL, and NULL-distance rows are skipped) —
+    // so a genuine cross-list RRF score tie cannot be forced through the
+    // full async `contextualize()` round trip on this harness. Per the
+    // task's explicit fallback, these tests instead prove the extracted
+    // comparator itself (now the single source of truth `contextualize()`
+    // sorts with) is a deterministic total order — score descending, id
+    // ascending on ties — which is the property that makes the seed
+    // ranking reproducible regardless of what order `HashMap` iteration
+    // happens to hand it the tied pair.
+
+    /// Distinct scores: the comparator must never fall through to the id
+    /// tie-break — higher score always sorts first.
+    #[test]
+    fn score_desc_id_asc_orders_by_score_when_distinct() {
+        let mut v = [
+            ("zzz".to_owned(), 0.2_f32),
+            ("aaa".to_owned(), 0.9_f32),
+            ("mmm".to_owned(), 0.5_f32),
+        ];
+        v.sort_by(score_desc_id_asc);
+        let ids: Vec<&str> = v.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["aaa", "mmm", "zzz"],
+            "distinct scores must sort strictly by score descending, \
+             independent of id"
+        );
+    }
+
+    /// Equal scores: the comparator must fall back to id ascending — a
+    /// stable, reproducible order, not an arbitrary one.
+    #[test]
+    fn score_desc_id_asc_breaks_ties_by_id_ascending() {
+        let mut v = [
+            ("zeta".to_owned(), 0.5_f32),
+            ("alpha".to_owned(), 0.5_f32),
+            ("mike".to_owned(), 0.5_f32),
+        ];
+        v.sort_by(score_desc_id_asc);
+        let ids: Vec<&str> = v.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["alpha", "mike", "zeta"],
+            "tied scores must break by entity id ascending"
+        );
+    }
+
+    /// The property that actually fixes the bug: for a fixed *set* of
+    /// (id, tied-score) pairs, sorting is independent of the *insertion
+    /// order* the caller hands in — exactly what varies between calls when
+    /// the input Vec is collected from a `HashMap` with a freshly-seeded
+    /// `RandomState` (as `contextualize()` Step 4 does). Every permutation
+    /// of the same tied set must sort to the identical id-ascending output.
+    #[test]
+    fn score_desc_id_asc_deterministic_across_input_permutations() {
+        let base: Vec<(String, f32)> = vec![
+            ("delta".to_owned(), 0.7_f32),
+            ("bravo".to_owned(), 0.7_f32),
+            ("foxtrot".to_owned(), 0.7_f32),
+            ("charlie".to_owned(), 0.3_f32), // distinct, lower score
+            ("alpha".to_owned(), 0.7_f32),
+        ];
+        let expected: Vec<&str> = vec!["alpha", "bravo", "delta", "foxtrot", "charlie"];
+
+        // Simulate several distinct "HashMap iteration orders" by feeding in
+        // several different permutations of the same underlying set.
+        let permutations: Vec<Vec<(String, f32)>> = vec![
+            base.clone(),
+            {
+                let mut p = base.clone();
+                p.reverse();
+                p
+            },
+            vec![
+                base[2].clone(),
+                base[0].clone(),
+                base[4].clone(),
+                base[3].clone(),
+                base[1].clone(),
+            ],
+            vec![
+                base[3].clone(),
+                base[4].clone(),
+                base[1].clone(),
+                base[2].clone(),
+                base[0].clone(),
+            ],
+        ];
+
+        for (i, perm) in permutations.into_iter().enumerate() {
+            let mut sorted = perm;
+            sorted.sort_by(score_desc_id_asc);
+            let ids: Vec<&str> = sorted.iter().map(|(id, _)| id.as_str()).collect();
+            assert_eq!(
+                ids, expected,
+                "permutation {i} sorted to a different order — ranking is \
+                 not deterministic w.r.t. input order"
+            );
+        }
     }
 }
