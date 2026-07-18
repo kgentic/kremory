@@ -18,18 +18,22 @@ pub struct SearchHit<T> {
     pub score: f64, // BM25 rank (negative; lower = more relevant)
 }
 
-/// Sanitise a raw text string for use as an FTS5 MATCH expression.
+/// Tokenise + sanitise raw text into FTS5-literal (double-quoted) tokens.
 ///
 /// FTS5 treats characters like `'`, `"`, `(`, `)`, `,`, `*`, `+`, `-`, `:`
 /// as special syntax. Raw natural language text (e.g. ASR output) will cause
-/// parse errors if passed directly. This function splits the input into words,
-/// strips non-alphanumeric characters, and wraps each token in double quotes
-/// so FTS5 treats them as literal terms.
+/// parse errors if passed directly. This function splits the input into
+/// words, strips non-alphanumeric characters, and wraps each token in double
+/// quotes so FTS5 treats them as literal terms. Shared by
+/// [`sanitise_fts5_query`] (AND-joined) and `content_search`'s AND/OR ladder
+/// below — both need the identical token set, only the join operator
+/// differs.
 ///
-/// Returns `None` if the sanitised query is empty (no usable tokens).
-fn sanitise_fts5_query(raw: &str) -> Option<String> {
-    let tokens: Vec<String> = raw
-        .split_whitespace()
+/// Returns an empty `Vec` if no usable tokens remain (e.g. all-punctuation
+/// input) — callers treat that as "no query" (see [`sanitise_fts5_query`]'s
+/// `None` return and `content_search`'s empty-tokens short-circuit).
+fn fts5_tokens(raw: &str) -> Vec<String> {
+    raw.split_whitespace()
         .map(|w| {
             w.chars()
                 .filter(|c| c.is_alphanumeric() || *c == '_')
@@ -37,7 +41,24 @@ fn sanitise_fts5_query(raw: &str) -> Option<String> {
         })
         .filter(|w| !w.is_empty())
         .map(|w| format!("\"{}\"", w))
-        .collect();
+        .collect()
+}
+
+/// Sanitise a raw text string for use as an FTS5 MATCH expression, joining
+/// tokens with FTS5's default (implicit-AND) operator — every token must
+/// appear in the row for a match.
+///
+/// Used by [`TemporalGraph::fts_search_entities`]/[`TemporalGraph::fts_search_facts`],
+/// whose queries are short extracted keyword phrases (entity names, fact
+/// predicates/objects) — AND-joining gives precise matches for that shape of
+/// query. `content_search` does NOT use this directly (see its own AND/OR
+/// ladder) because its queries are full natural-language sentences, for
+/// which AND-joining every token — including stopwords — makes a match
+/// against a short conversational passage near-impossible.
+///
+/// Returns `None` if the sanitised query is empty (no usable tokens).
+fn sanitise_fts5_query(raw: &str) -> Option<String> {
+    let tokens = fts5_tokens(raw);
     if tokens.is_empty() {
         None
     } else {
@@ -77,6 +98,19 @@ pub(crate) struct ContentSearchParams<'a> {
     pub query: &'a str,
     pub limit: usize,
     pub filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for [`TemporalGraph::run_content_match_query`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// `content_search`'s AND/OR fallback ladder (ADR-072 substrate fix) calls
+/// this twice with different `match_query` values, so the shared shape
+/// avoids duplicating the sql/limit/group_params plumbing per rung.
+#[cfg(feature = "content-search")]
+struct ContentMatchQueryParams<'a> {
+    sql: &'a str,
+    match_query: &'a str,
+    limit: usize,
+    group_params: &'a [libsql::Value],
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_entities`] —
@@ -492,87 +526,41 @@ impl TemporalGraph {
         Ok(hits)
     }
 
-    /// ADR-072 seq1 impl-spec §2 — BM25-only full-text search over raw
-    /// `episodes.content` via the `episodes_fts` external-content shadow
-    /// table (Migration 022). **Parallel arm, NOT fused** into
-    /// `rrf_fuse_entities`/`rrf_fuse_facts` below — kremory's RRF is
-    /// pairwise per-result-type, not a generic N-list fuser (ADR-072 §6b);
-    /// content passages are a third result *type*, returned as their own
-    /// BM25-ranked stream via `.content()` (`facade::recall`).
+    /// Run one `episodes_fts MATCH` attempt for `content_search` and parse
+    /// the rows into `ContentPassage`s. Pure query-execution + row-mapping —
+    /// no metrics/logging (the caller, `content_search`, owns per-arm
+    /// observability since it may call this twice, see the AND/OR ladder
+    /// below).
     ///
-    /// Scoped by `filters.group_ids` (same `build_group_id_clause` semantics
-    /// as `fts_search_entities`/`fts_search_facts` — namespace-null legacy
-    /// rows are included alongside the matched group).
+    /// FTS5 MATCH syntax errors surface here (Rule 19 — never swallowed):
+    /// `fts5_tokens` quotes every token so this should be rare in practice,
+    /// but a genuine parse failure must be loud, not silent.
     #[cfg(feature = "content-search")]
-    pub(crate) async fn content_search(
+    async fn run_content_match_query(
         &self,
-        params: ContentSearchParams<'_>,
+        params: ContentMatchQueryParams<'_>,
     ) -> Result<Vec<ContentPassage>> {
-        let ContentSearchParams {
-            query,
+        let ContentMatchQueryParams {
+            sql,
+            match_query,
             limit,
-            filters,
+            group_params,
         } = params;
-        let _search_start = Instant::now();
-
-        let safe_query = match sanitise_fts5_query(query) {
-            Some(q) => q,
-            None => {
-                let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
-                histogram!("kremory.recall.content_search_ms").record(_ms);
-                metrics::counter!(
-                    "kremory.search.empty_result_total",
-                    "arm" => "content",
-                )
-                .increment(1);
-                tracing::debug!(
-                    arm = "content",
-                    _ms,
-                    "kremory.recall.content_search 0 hits (empty sanitised query)"
-                );
-                return Ok(vec![]);
-            }
-        };
-
-        // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit).
-        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
-
-        let sql = format!(
-            "SELECT e.id, e.timestamp, \
-                    snippet(episodes_fts, 0, '', '', '…', 32), \
-                    episodes_fts.rank \
-             FROM episodes_fts \
-             JOIN episodes AS e ON e.id = episodes_fts.rowid \
-             WHERE episodes_fts MATCH ?1{group_clause} \
-             ORDER BY episodes_fts.rank \
-             LIMIT ?2",
-        );
-
         let mut sql_params: Vec<libsql::Value> = vec![
-            libsql::Value::from(safe_query.clone()),
+            libsql::Value::from(match_query.to_string()),
             libsql::Value::from(limit as i64),
         ];
-        sql_params.extend(group_params);
+        sql_params.extend(group_params.iter().cloned());
 
-        // FTS5 MATCH syntax errors surface here (Rule 19 — never swallowed):
-        // `sanitise_fts5_query` quotes every token so this should be rare in
-        // practice, but a genuine parse failure must be loud, not silent.
-        let mut rows = match self.conn.query(&sql, sql_params).await {
-            Ok(rows) => rows,
-            Err(e) => {
-                let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
-                metrics::counter!("kremory.recall.content_search_error_total").increment(1);
-                tracing::warn!(
-                    error = %e,
-                    query = %safe_query,
-                    _ms,
-                    "kremory.recall.content_search FTS5 MATCH query failed"
-                );
-                return Err(crate::core::error::Error::Search(format!(
-                    "content_search MATCH query failed: {e}"
-                )));
-            }
-        };
+        let mut rows = self.conn.query(sql, sql_params).await.map_err(|e| {
+            metrics::counter!("kremory.recall.content_search_error_total").increment(1);
+            tracing::warn!(
+                error = %e,
+                query = %match_query,
+                "kremory.recall.content_search FTS5 MATCH query failed"
+            );
+            crate::core::error::Error::Search(format!("content_search MATCH query failed: {e}"))
+        })?;
 
         let mut passages: Vec<ContentPassage> = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -600,11 +588,136 @@ impl TemporalGraph {
                 },
             });
         }
+        Ok(passages)
+    }
+
+    /// ADR-072 seq1 impl-spec §2 — BM25-only full-text search over raw
+    /// `episodes.content` via the `episodes_fts` external-content shadow
+    /// table (Migration 022). **Parallel arm, NOT fused** into
+    /// `rrf_fuse_entities`/`rrf_fuse_facts` below — kremory's RRF is
+    /// pairwise per-result-type, not a generic N-list fuser (ADR-072 §6b);
+    /// content passages are a third result *type*, returned as their own
+    /// BM25-ranked stream via `.content()` (`facade::recall`).
+    ///
+    /// Scoped by `filters.group_ids` (same `build_group_id_clause` semantics
+    /// as `fts_search_entities`/`fts_search_facts` — namespace-null legacy
+    /// rows are included alongside the matched group).
+    ///
+    /// ## AND-first, OR-fallback ladder (content-search substrate fix)
+    ///
+    /// Unlike [`sanitise_fts5_query`] (used by `fts_search_entities`/
+    /// `fts_search_facts`), this method does NOT always AND-join tokens.
+    /// `content_search`'s consumers are full natural-language sentences
+    /// (benchmark harness questions, chat-style queries) run against SHORT
+    /// conversational passages (`episodes.content`) — AND-joining every
+    /// token, including stopwords ("did", "the", "to", "go"), makes a match
+    /// against any single passage near-impossible and silently zeroes out
+    /// the entire BM25 arm for the vast majority of realistic queries (empty
+    /// results, not an error — nothing was loud about it). Verified: the
+    /// LoCoMo-benchmark query `"When did Caroline go to the LGBTQ support
+    /// group?"` AND-joins to 9 required tokens and matches 0 of 29 ingested
+    /// episodes; a 3-word keyword query like `"Postgres migration"` still
+    /// matches correctly via AND.
+    ///
+    /// `crates/kremory/tests/content_recall_benchmark.rs` deliberately tests
+    /// AND semantics (precision gate ≥0.80 for short keyword queries like
+    /// `"Postgres migration"` / `"Acme revenue"`, explicitly excluding
+    /// distractors that share only one term) — that benchmark's queries are
+    /// short keyword phrases, not full sentences, so AND still fires first
+    /// and wins for every one of them (the ladder never reaches the OR arm).
+    /// The ladder therefore ADDS coverage for natural-language queries
+    /// WITHOUT touching the tested AND-precision behaviour:
+    ///
+    /// 1. Try AND-joined tokens (FTS5 default operator) — precise; wins for
+    ///    keyword-style queries and is returned immediately when non-empty.
+    /// 2. If AND returns zero hits, retry OR-joined tokens — recall-oriented;
+    ///    `bm25()` ranking still applies (its IDF component discounts common
+    ///    terms), so the fallback is not a blunt "any word matches" scan, it
+    ///    is a ranked BM25 stream biased toward the query's distinctive
+    ///    terms.
+    ///
+    /// `fts_search_entities`/`fts_search_facts` are UNCHANGED (still
+    /// AND-only via `sanitise_fts5_query`) — this ladder is scoped to
+    /// `content_search` only, per the ADR-072 content-RAG substrate.
+    #[cfg(feature = "content-search")]
+    pub(crate) async fn content_search(
+        &self,
+        params: ContentSearchParams<'_>,
+    ) -> Result<Vec<ContentPassage>> {
+        let ContentSearchParams {
+            query,
+            limit,
+            filters,
+        } = params;
+        let _search_start = Instant::now();
+
+        let tokens = fts5_tokens(query);
+        if tokens.is_empty() {
+            let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+            histogram!("kremory.recall.content_search_ms").record(_ms);
+            metrics::counter!(
+                "kremory.search.empty_result_total",
+                "arm" => "content",
+            )
+            .increment(1);
+            tracing::debug!(
+                arm = "content",
+                _ms,
+                "kremory.recall.content_search 0 hits (empty sanitised query)"
+            );
+            return Ok(vec![]);
+        }
+
+        // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit).
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
+
+        let sql = format!(
+            "SELECT e.id, e.timestamp, \
+                    snippet(episodes_fts, 0, '', '', '…', 32), \
+                    episodes_fts.rank \
+             FROM episodes_fts \
+             JOIN episodes AS e ON e.id = episodes_fts.rowid \
+             WHERE episodes_fts MATCH ?1{group_clause} \
+             ORDER BY episodes_fts.rank \
+             LIMIT ?2",
+        );
+
+        let and_query = tokens.join(" ");
+        let mut passages = self
+            .run_content_match_query(ContentMatchQueryParams {
+                sql: &sql,
+                match_query: &and_query,
+                limit,
+                group_params: &group_params,
+            })
+            .await?;
+        let mut arm = "and";
+
+        if passages.is_empty() {
+            let or_query = tokens.join(" OR ");
+            passages = self
+                .run_content_match_query(ContentMatchQueryParams {
+                    sql: &sql,
+                    match_query: &or_query,
+                    limit,
+                    group_params: &group_params,
+                })
+                .await?;
+            arm = if passages.is_empty() {
+                "empty"
+            } else {
+                "or_fallback"
+            };
+        }
 
         let hits = passages.len();
         let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("kremory.recall.content_search_ms").record(_ms);
-        metrics::counter!("kremory.recall.content_search_total").increment(1);
+        // Per-arm attribution (Rule 19 anti-pattern #9 — a plain success
+        // counter would lie: "and" and "or_fallback" both look like generic
+        // success, but "or_fallback" firing at a high rate is a signal the
+        // AND-precise arm is systematically missing, worth watching).
+        metrics::counter!("kremory.recall.content_search_total", "arm" => arm).increment(1);
         // Per-arm attribution (Rule 19 anti-pattern #3 — never a single
         // aggregate): content's contribution is visible against entity/fact
         // via the shared `arm` label, even though seq1 does not retrofit the
@@ -615,7 +728,7 @@ impl TemporalGraph {
         if hits == 0 {
             tracing::debug!(_ms, "kremory.recall.content_search 0 hits");
         } else {
-            tracing::info!(hits, _ms, "kremory.recall.content_search");
+            tracing::info!(hits, _ms, arm, "kremory.recall.content_search");
         }
         // KREMORY_DEBUG=1: dump the raw MATCH query + returned passages
         // (diagnostic-by-env-switch, zero cost when off — mirrors the
@@ -623,7 +736,8 @@ impl TemporalGraph {
         if std::env::var("KREMORY_DEBUG").is_ok() {
             tracing::debug!(
                 target: "kremory.recall.content_search",
-                query = %safe_query,
+                arm,
+                and_query = %and_query,
                 passages = ?passages,
                 "[KREMORY_DEBUG] content_search raw match + results"
             );
