@@ -1464,6 +1464,44 @@ fn rrf_fuse_facts(
     results
 }
 
+// ─── TD-066 Change 2: graph-degree bonus (secondary/additive signal) ────────
+//
+// Grounding: `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-
+// traversal--reranking-wave-1-substrate.md`. HippoRAG2 (arXiv 2502.14802)
+// uses an additive pre-PPR fusion term at weight 0.05; GraphRAG/LightRAG use
+// node degree as a SECONDARY sort key, never primary. kremory already has an
+// UNSEEDED, GLOBAL `petgraph::algo::page_rank` in `speculative_cache.rs`
+// (TD-071, dead code) — deliberately NOT reused here, because HippoRAG's own
+// ablation shows un-seeded degree/PPR signals inherit hub bias. This bonus
+// is instead scoped to QUERY-RELEVANT seed nodes only (HippoRAG's anti-hub
+// mitigation, §3.2) and computed from the 1-hop neighbour count `context::
+// contextualize` already fetches for its expansion — zero extra graph
+// queries.
+
+/// Weight applied to the graph-degree bonus (TD-066 Change 2). Deliberately
+/// tiny relative to the `[0, 1]` RRF-normalised score range so degree can
+/// only ever nudge ranking among already-selected candidates, never
+/// dominate relevance ("do not let degree swamp relevance").
+pub(crate) const GRAPH_DEGREE_WEIGHT: f32 = 0.05;
+
+/// Degree value at which [`graph_degree_bonus`] saturates. Caps a single
+/// highly-connected ("hub") entity's contribution instead of letting raw
+/// degree grow unbounded.
+pub(crate) const GRAPH_DEGREE_SATURATION: f32 = 10.0;
+
+/// Small additive graph-degree bonus for a seed entity's own score (TD-066
+/// Change 2). `degree` = the entity's 1-hop neighbour count. Saturates at
+/// [`GRAPH_DEGREE_SATURATION`] and is bounded above by [`GRAPH_DEGREE_WEIGHT`]
+/// — callers must still clamp the entity's TOTAL score (base + bonus) to
+/// `[0, 1]` themselves, since this fn only bounds the bonus term.
+///
+/// Callers MUST only pass the degree of a node RRF fusion already selected
+/// as a search hit (a "seed") — never a degree computed from an unseeded/
+/// global graph traversal (see module-level note above).
+pub(crate) fn graph_degree_bonus(degree: usize) -> f32 {
+    GRAPH_DEGREE_WEIGHT * (degree as f32 / GRAPH_DEGREE_SATURATION).min(1.0)
+}
+
 // ── test-utils re-exports (ADR-029c 5-tier pyramid, Phase A) ─────────────────
 //
 // Property tests in `tests/properties_029bc.rs` call these private functions
@@ -1619,6 +1657,48 @@ mod tests {
         FactInsert, InsertEntityParams, InsertEntityWithGroupParams, UpdateEntityGroupParams,
     };
     use chrono::{Duration, Utc};
+
+    // === TD-066 Change 2: graph_degree_bonus ===
+
+    #[test]
+    fn graph_degree_bonus_zero_degree_is_zero() {
+        assert_eq!(graph_degree_bonus(0), 0.0);
+    }
+
+    #[test]
+    fn graph_degree_bonus_saturates_at_ceiling() {
+        // Degree far past GRAPH_DEGREE_SATURATION must not exceed the
+        // saturated bonus — a single hub entity cannot keep growing its bonus.
+        let saturated = graph_degree_bonus(GRAPH_DEGREE_SATURATION as usize);
+        let hub = graph_degree_bonus(100_000);
+        assert!(
+            (hub - saturated).abs() < 1e-6,
+            "degree far beyond saturation ({hub}) must equal the saturated bonus ({saturated})"
+        );
+    }
+
+    #[test]
+    fn graph_degree_bonus_never_exceeds_weight() {
+        // Bounded above by GRAPH_DEGREE_WEIGHT for any degree ("do not let
+        // degree swamp relevance") — the bonus alone, before it's added to a
+        // base score, must never exceed the configured weight.
+        for degree in [0, 1, 5, 10, 50, 1_000] {
+            let bonus = graph_degree_bonus(degree);
+            assert!(
+                bonus <= GRAPH_DEGREE_WEIGHT + 1e-6,
+                "degree={degree} produced bonus={bonus} > GRAPH_DEGREE_WEIGHT={GRAPH_DEGREE_WEIGHT}"
+            );
+            assert!(bonus >= 0.0, "bonus must never be negative: {bonus}");
+        }
+    }
+
+    #[test]
+    fn graph_degree_bonus_monotonic_below_saturation() {
+        // Secondary/tie-breaking signal: more-connected seeds get a bigger
+        // (but still small) bonus than less-connected ones, up to saturation.
+        assert!(graph_degree_bonus(5) > graph_degree_bonus(1));
+        assert!(graph_degree_bonus(9) > graph_degree_bonus(5));
+    }
 
     // === effective_k clamp (Story #166) ===
 

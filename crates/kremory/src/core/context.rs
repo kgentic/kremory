@@ -7,8 +7,29 @@ use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
 use crate::core::schema::{Entity, Fact};
 use crate::core::search::{
-    FtsSearchEntitiesNoCountParams, SearchFilters, VectorSearchEntitiesNoCountParams,
+    graph_degree_bonus, FtsSearchEntitiesNoCountParams, SearchFilters,
+    VectorSearchEntitiesNoCountParams,
 };
+
+/// TD-066 Change 1 — decay factor applied to a 1-hop neighbour's score
+/// relative to the seed entity that surfaced it. Grounding:
+/// `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-traversal--
+/// reranking-wave-1-substrate.md` — HippoRAG's ablation (arXiv 2405.14831
+/// Table 5) shows plain UNWEIGHTED graph expansion measurably HURTS recall
+/// (drops below no-expansion on all 3 benchmarks tested); only *weighted*
+/// expansion beats the no-expansion baseline. kremory's prior behaviour
+/// (bare inclusion, implicit score 0.0) was exactly the harmful unweighted
+/// variant. 0.5 sits mid-range of the literature's [0.3, 0.7] decay band
+/// (HippoRAG's own PPR damping factor is also 0.5).
+const NEIGHBOUR_SCORE_DECAY: f32 = 0.5;
+
+/// TD-066 Change 1 — fan-out cap per seed's 1-hop expansion. `SubGraph::
+/// entities` is populated by iterating a `HashSet` (no relevance ordering),
+/// so an unbounded expansion lets one highly-connected ("hub") seed flood
+/// the result set with arbitrary-order neighbours that dilute/displace
+/// higher-relevance candidates once `facade/recall.rs::execute` sorts +
+/// truncates by score. Small, named, tunable.
+const MAX_NEIGHBOURS_PER_SEED: usize = 8;
 
 /// Bundled parameters for [`Engine::contextualize`] — args-as-object per TD-042
 /// (rust-conventions §too_many_arguments).
@@ -35,9 +56,17 @@ pub struct ContextResult {
     pub entities: Vec<Entity>,
     /// The active (non-expired) facts connecting these entities.
     pub facts: Vec<Fact>,
-    /// RRF-derived relevance scores for seed entities, min-max normalised to [0.0, 1.0].
-    /// Keyed by entity ID. 1-hop neighbors not in the original seed set will be absent
-    /// (callers should default to 0.0 for missing keys).
+    /// Relevance scores, keyed by entity ID, all clamped to `[0.0, 1.0]`.
+    ///
+    /// Seed entities: RRF-derived, min-max normalised, plus a small additive
+    /// [`graph_degree_bonus`] (TD-066 Change 2) for their own 1-hop degree.
+    /// 1-hop neighbour entities (not themselves seeds): [`NEIGHBOUR_SCORE_DECAY`]
+    /// `* ` their connecting seed's score (TD-066 Change 1) — always below
+    /// that seed's own score, but may still out-rank a weaker seed if
+    /// strongly connected, matching the literature's "weighted expansion
+    /// beats no expansion" finding. A neighbour reachable from multiple
+    /// seeds takes the max decayed score across them. Any entity present in
+    /// `entities` also has an entry here (no more silent 0.0-default gap).
     pub scores: HashMap<String, f32>,
 }
 
@@ -137,7 +166,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             seed_rrf.values().copied().fold(f32::MAX, f32::min),
             seed_rrf.values().copied().fold(f32::MIN, f32::max),
         );
-        let normalized: HashMap<String, f32> = if (max_s - min_s).abs() < 1e-9 {
+        let mut normalized: HashMap<String, f32> = if (max_s - min_s).abs() < 1e-9 {
             // Degenerate (single result or all-equal): every result scores 1.0
             seed_rrf.keys().map(|k| (k.clone(), 1.0_f32)).collect()
         } else {
@@ -150,12 +179,19 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // Step 6: Increment access_count ONCE per unique seed ID (RISK-002)
         self.graph.increment_entity_access_counts(&seed_ids).await;
 
-        // Step 7: Expand 1-hop from each seed entity
+        // Step 7: Expand 1-hop from each seed entity (TD-066 Changes 1 + 2 —
+        // weighted/capped expansion + seed degree bonus; see the module-level
+        // `NEIGHBOUR_SCORE_DECAY`/`MAX_NEIGHBOURS_PER_SEED` docs above).
         let mut all_entities: Vec<Entity> = Vec::new();
         let mut all_facts: Vec<Fact> = Vec::new();
         let mut seen_entity_ids: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut seen_fact_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        // Decayed neighbour scores accumulate here (not directly into
+        // `normalized`) so a neighbour that's ALSO a genuine seed elsewhere
+        // in `seed_ids` never has its real RRF+degree score clobbered by a
+        // decayed one — merged in below via `entry().or_insert()`.
+        let mut expansion_scores: HashMap<String, f32> = HashMap::new();
 
         for seed_id in &seed_ids {
             // ADR-068 Decision 2/3: `get_neighbours_at` with `as_of: None`
@@ -163,7 +199,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             // this spec — switching unconditionally to the `_at` sibling
             // keeps this call site single-shaped rather than branching on
             // `as_of.is_some()`.
-            let subgraph = self
+            let mut subgraph = self
                 .graph
                 .get_neighbours_at(crate::core::graph::GetNeighboursAtParams {
                     entity_id: seed_id,
@@ -172,6 +208,36 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 })
                 .await?;
 
+            // TD-066 Change 1 (determinism guard): `SubGraph::entities` is
+            // built by iterating a `HashSet` (`TemporalGraph::get_neighbours_at`
+            // visited_entities), whose order depends on Rust's per-thread
+            // random hash seed — NOT stable across repeated calls (a query
+            // served by a different tokio worker thread can iterate the same
+            // entity set in a different order). Before MAX_NEIGHBOURS_PER_SEED
+            // existed this was harmless (every neighbour was kept regardless
+            // of order); now that the cap can drop entities past the Nth, an
+            // unstable order would make WHICH neighbours survive
+            // non-deterministic for an identical query. Sort by ID first —
+            // not a relevance signal, just a stable, reproducible tie-break.
+            subgraph.entities.sort_by(|a, b| a.id.cmp(&b.id));
+
+            // TD-066 Change 2: `SubGraph::entities` always includes the seed
+            // itself (see `TemporalGraph::get_neighbours_at`), so degree =
+            // len - 1. This is the seed's true out-degree (computed BEFORE
+            // the fan-out cap below trims which neighbours get returned) —
+            // scoped to this query-relevant seed only, never a global/
+            // unseeded traversal (search.rs `graph_degree_bonus` docs).
+            // Clamp to 1.0: keeps `ContextResult::scores`'s `[0.0, 1.0]`
+            // invariant even in the degenerate single-seed case where the
+            // base score is already 1.0.
+            let degree = subgraph.entities.len().saturating_sub(1);
+            let degree_bonus = graph_degree_bonus(degree);
+            normalized
+                .entry(seed_id.clone())
+                .and_modify(|s| *s = (*s + degree_bonus).min(1.0));
+            let seed_score = normalized.get(seed_id).copied().unwrap_or(0.0);
+
+            let mut neighbours_added_for_seed = 0usize;
             for entity in subgraph.entities {
                 // Apply group_id filter if specified
                 if let Some(gid) = group_id {
@@ -179,6 +245,26 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                         continue;
                     }
                 }
+
+                // The seed itself always appears in its own subgraph; it
+                // already carries a real (non-decayed) score and must never
+                // count against its own fan-out cap.
+                let is_seed = entity.id == *seed_id;
+                if !is_seed {
+                    if neighbours_added_for_seed >= MAX_NEIGHBOURS_PER_SEED {
+                        // TD-066 Change 1 fan-out cap reached for this seed —
+                        // skip remaining neighbours (their connecting facts
+                        // may still surface under the seed's own fact list).
+                        continue;
+                    }
+                    neighbours_added_for_seed += 1;
+                    let decayed = NEIGHBOUR_SCORE_DECAY * seed_score;
+                    expansion_scores
+                        .entry(entity.id.clone())
+                        .and_modify(|s: &mut f32| *s = s.max(decayed))
+                        .or_insert(decayed);
+                }
+
                 if seen_entity_ids.insert(entity.id.clone()) {
                     all_entities.push(entity);
                 }
@@ -189,6 +275,13 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                     all_facts.push(fact);
                 }
             }
+        }
+
+        // Merge decayed neighbour scores in — `or_insert` only fires when
+        // the key is absent, so a neighbour that's ALSO a real seed keeps
+        // its own RRF+degree score untouched.
+        for (id, score) in expansion_scores {
+            normalized.entry(id).or_insert(score);
         }
 
         // Rule 19 / ADR-074 review H1: observe the fact-collection width of
@@ -217,7 +310,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
 
 #[cfg(test)]
 mod tests {
-    use super::ContextualizeParams;
+    use super::{ContextualizeParams, MAX_NEIGHBOURS_PER_SEED, NEIGHBOUR_SCORE_DECAY};
     use crate::core::graph::{FactInsert, InsertEntityParams};
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
@@ -392,6 +485,116 @@ mod tests {
                 "score for {id} out of [0,1]: {score}"
             );
         }
+    }
+
+    /// TD-066 Change 1: a genuine 1-hop neighbour (not itself a seed) must
+    /// score strictly below the seed that surfaced it. Grounding:
+    /// `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-
+    /// traversal--reranking-wave-1-substrate.md` — naive unweighted
+    /// expansion (neighbour score == seed score, or a flat default) is the
+    /// pattern the research identifies as harmful.
+    #[tokio::test]
+    async fn test_contextualize_neighbour_score_decays_below_seed() {
+        let rql = SimpleGraph::open_in_memory_simple().await.unwrap();
+        let now = Utc::now();
+
+        rql.graph
+            .insert_entity(InsertEntityParams {
+                id: "hubdecay",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Hubdecay"}),
+            })
+            .await
+            .unwrap();
+        rql.graph
+            .insert_entity(InsertEntityParams {
+                id: "leafdecay1",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Leafdecay1"}),
+            })
+            .await
+            .unwrap();
+        rql.graph
+            .insert_fact(FactInsert::new("hubdecay", "connected_to", now).object_id("leafdecay1"))
+            .await
+            .unwrap();
+
+        // "Hubdecay" is a unique FTS token — the seed set is exactly
+        // {hubdecay}, so the degenerate min-max-normalisation branch gives
+        // it a base score of 1.0 before any degree bonus.
+        let ctx = rql.contextualize(ctx_params("Hubdecay")).await.unwrap();
+
+        let hub_score = *ctx
+            .scores
+            .get("hubdecay")
+            .expect("seed hubdecay must have a score entry");
+        let leaf_score = *ctx
+            .scores
+            .get("leafdecay1")
+            .expect("1-hop neighbour leafdecay1 must have a decayed score entry, not be absent");
+
+        assert!(
+            leaf_score < hub_score,
+            "neighbour score ({leaf_score}) must be strictly below its seed's score ({hub_score})"
+        );
+        // hub degree = 1 → degree bonus saturates far from the ceiling and
+        // hub_score clamps to 1.0 either way, so the neighbour's decayed
+        // score is deterministically NEIGHBOUR_SCORE_DECAY * 1.0.
+        assert!(
+            (leaf_score - NEIGHBOUR_SCORE_DECAY).abs() < 1e-6,
+            "expected leaf_score ({leaf_score}) == NEIGHBOUR_SCORE_DECAY ({NEIGHBOUR_SCORE_DECAY})"
+        );
+    }
+
+    /// TD-066 Change 1: a hub seed's 1-hop expansion must not flood the
+    /// result set past `MAX_NEIGHBOURS_PER_SEED` genuine neighbours, even
+    /// when the seed is connected to far more entities than that.
+    #[tokio::test]
+    async fn test_contextualize_expansion_fanout_capped() {
+        let rql = SimpleGraph::open_in_memory_simple().await.unwrap();
+        let now = Utc::now();
+
+        rql.graph
+            .insert_entity(InsertEntityParams {
+                id: "hubcap",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Hubcap"}),
+            })
+            .await
+            .unwrap();
+
+        let leaf_count = MAX_NEIGHBOURS_PER_SEED + 4;
+        for i in 0..leaf_count {
+            let leaf_id = format!("leafcap{i}");
+            rql.graph
+                .insert_entity(InsertEntityParams {
+                    id: &leaf_id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": format!("Leafcap{i}")}),
+                })
+                .await
+                .unwrap();
+            rql.graph
+                .insert_fact(FactInsert::new("hubcap", "connected_to", now).object_id(&leaf_id))
+                .await
+                .unwrap();
+        }
+
+        let ctx = rql.contextualize(ctx_params("Hubcap")).await.unwrap();
+
+        // hubcap (1 seed) + at most MAX_NEIGHBOURS_PER_SEED genuine
+        // neighbours, even though hubcap is connected to `leaf_count` (>
+        // MAX_NEIGHBOURS_PER_SEED) entities.
+        assert!(
+            ctx.entities.len() <= 1 + MAX_NEIGHBOURS_PER_SEED,
+            "fan-out cap violated: {} entities returned for a seed with {leaf_count} \
+             neighbours (cap = {MAX_NEIGHBOURS_PER_SEED})",
+            ctx.entities.len()
+        );
+        assert!(
+            ctx.entities.iter().any(|e| e.id == "hubcap"),
+            "the seed entity itself must always be present"
+        );
     }
 
     /// ADR-074 review H1 (Rule 19): `contextualize` must record the width of
