@@ -21,7 +21,7 @@ use autoagents_llm::{
 };
 
 use crate::core::chat_tracking::TokenTrackingChatProvider;
-use crate::core::config::{PipelineConfig, PipelineConfigBuilder};
+use crate::core::config::{PipelineConfig, PipelineConfigBuilder, ResolutionStrategy};
 use crate::core::ingest::{
     Engine, EngineNewParams, EngineWithCustomExtractorNoLlmParams, EngineWithExtractorParams,
 };
@@ -345,6 +345,11 @@ pub async fn with_ollama(path: impl AsRef<Path>) -> Result<Memory> {
 /// consumers can tune throughput. Unset vars leave the builder unchanged.
 /// - `KREMORY_RESOLUTION_BLOCK_K` — `usize`, the ANN blocking width.
 /// - `KREMORY_RESOLUTION_MIN_COSINE` — `f32` in `[0,1]`, the auto-different floor.
+/// - `KREMORY_RESOLUTION_STRATEGY` — `"batched"` (default) | `"pairwise"` (ADR-076):
+///   `pairwise` restores the pre-ADR-076 one-LLM-call-per-pair fan-out — used as
+///   the A/B baseline + as an instant rollback without a code change.
+/// - `KREMORY_RESOLUTION_BATCH_MAX_ENTITIES` — `usize`, the batched-window cap
+///   (ADR-076, default 32); raise on a large-context model to shrink call count.
 ///
 /// Reading env here is consistent with this module's existing env-detection
 /// (`OLLAMA_HOST` / `OLLAMA_CHAT_MODEL`); the `with_ollama_*` layer is the
@@ -358,6 +363,21 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
     if let Ok(c) = std::env::var("KREMORY_RESOLUTION_MIN_COSINE") {
         if let Ok(c) = c.parse::<f32>() {
             b = b.resolution_min_cosine(c);
+        }
+    }
+    if let Ok(s) = std::env::var("KREMORY_RESOLUTION_STRATEGY") {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pairwise" => b = b.resolution_strategy(ResolutionStrategy::Pairwise),
+            "batched" => b = b.resolution_strategy(ResolutionStrategy::Batched),
+            other => tracing::warn!(
+                value = %other,
+                "KREMORY_RESOLUTION_STRATEGY must be 'batched' or 'pairwise' — ignoring"
+            ),
+        }
+    }
+    if let Ok(n) = std::env::var("KREMORY_RESOLUTION_BATCH_MAX_ENTITIES") {
+        if let Ok(n) = n.parse::<usize>() {
+            b = b.resolution_batch_max_entities(n);
         }
     }
     b

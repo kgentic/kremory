@@ -5,7 +5,7 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use metrics::histogram;
 
-use crate::core::config::ContentType;
+use crate::core::config::{ContentType, ResolutionStrategy};
 use crate::core::contradiction::{DetectParams, TwoPoolDetector};
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
@@ -902,6 +902,84 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         )
         .with_model(self.model.clone());
 
+        // ── ADR-076 (TD-127) Pass 1 + Pass 2: batched entity resolution ────────
+        // Runs BEFORE the write transaction (ADR-076 SCOPE-001) — both passes
+        // only read the frozen `existing_entities` snapshot loaded above and
+        // do zero DB writes, so they execute in the pre-transaction window
+        // (shrinking lock-hold vs the pairwise path, which resolves inline
+        // inside the transaction's entity loop below).
+        //
+        // Pass 1 (deterministic, no LLM): for each extracted entity, run the
+        // existing ADR-075 candidate block + the cheap Tier-1/Tier-2 tiers.
+        // A hit pre-resolves the entity; a miss adds it to the ambiguous
+        // worklist. Pass 2 batches the ambiguous remainder into windowed
+        // structured-output calls (`resolver_batched::resolve_batched`).
+        //
+        // `batched_resolved` maps `normalize_name(entity.name) -> existing
+        // entity id` for every CONFIDENT resolution (deterministic or
+        // batched-LLM); entities absent from this map are NEW. Only built
+        // when the strategy is `Batched` — the `Pairwise` arm below resolves
+        // inline exactly as before ADR-076.
+        let mut batched_resolved: HashMap<String, String> = HashMap::new();
+        if self.config.resolution_strategy == ResolutionStrategy::Batched {
+            let mut ambiguous: Vec<crate::core::resolver_batched::AmbiguousEntity<'_>> =
+                Vec::new();
+
+            for (idx, extracted) in all_entities.iter().enumerate() {
+                let candidates = self
+                    .block_resolution_candidates(BlockCandidatesParams {
+                        extracted,
+                        existing_entities: &existing_entities,
+                        group_id,
+                    })
+                    .await;
+                metrics::counter!("kremory.resolution.candidates_considered_total")
+                    .increment(candidates.len() as u64);
+                metrics::counter!("kremory.resolution.blocked_out_total")
+                    .increment(existing_entities.len().saturating_sub(candidates.len()) as u64);
+
+                let mut deterministic_hit: Option<String> = None;
+                for existing in candidates.iter().copied() {
+                    if resolver.resolve_deterministic(extracted, existing)
+                        == Some(ResolutionResult::Same)
+                    {
+                        deterministic_hit = Some(existing.id.clone());
+                        break;
+                    }
+                }
+
+                match deterministic_hit {
+                    Some(existing_id) => {
+                        batched_resolved.insert(normalize_name(&extracted.name), existing_id);
+                    }
+                    // Quinn HIGH (ADR-076): an entity whose OWN block is empty
+                    // (e.g. cold-store first ingest — `existing_entities` empty)
+                    // can never merge (the map-back own-block guard would reject
+                    // any assignment anyway), so it must NOT enter the batch —
+                    // otherwise we'd fire an LLM call against an empty pool and
+                    // REGRESS call-count vs Pairwise (which makes 0 calls here).
+                    // Zero candidates → NEW for free, matching Pairwise exactly.
+                    None if !candidates.is_empty() => {
+                        ambiguous.push((idx, extracted, candidates))
+                    }
+                    None => {}
+                }
+            }
+
+            let batched_from_llm = crate::core::resolver_batched::resolve_batched(
+                crate::core::resolver_batched::ResolveBatchedParams {
+                    llm: llm_for_resolver.as_ref(),
+                    model: self.model.as_deref(),
+                    ambiguous: &ambiguous,
+                    max_window: self.config.resolution_batch_max_entities,
+                },
+            )
+            .await;
+            for (idx, existing_id) in batched_from_llm {
+                batched_resolved.insert(normalize_name(&all_entities[idx].name), existing_id);
+            }
+        }
+
         // ── Bug E: open a single outer transaction wrapping Phase 1 (entities +
         // stubs) and Phase 2 (facts).  All inner graph methods call
         // begin_immediate_if_needed() which is a no-op when a transaction is
@@ -1022,34 +1100,52 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // FTS get the canonical case ("ORG" → "Organisation").
                 let label = normalize_label(&extracted.label);
 
-                let mut resolved_to: Option<String> = None;
+                // ADR-076 (TD-127): which existing id (if any) `extracted`
+                // resolves to, computed differently per strategy.
+                //
+                // - `Batched` (default): Pass 1 (deterministic tiers) + Pass 2
+                //   (batched LLM call) already ran BEFORE this transaction —
+                //   see `batched_resolved` above. This arm is a pure lookup;
+                //   it must NOT call `block_resolution_candidates` again
+                //   (that already ran once per entity in Pass 1).
+                // - `Pairwise`: the pre-ADR-076 behaviour, unchanged. ADR-075
+                //   (TD-124) resolves `extracted` only against a bounded
+                //   candidate block (exact-name ∪ embedding-ANN top-k), not
+                //   every existing entity — collapses the LLM
+                //   `ResolutionVerdict` fan-out from O(new × existing) to
+                //   O(k). No-op on ≤k-entity groups.
+                let resolved_to: Option<String> = match self.config.resolution_strategy {
+                    ResolutionStrategy::Batched => batched_resolved
+                        .get(&normalize_name(&extracted.name))
+                        .cloned(),
+                    ResolutionStrategy::Pairwise => {
+                        let candidates = self
+                            .block_resolution_candidates(BlockCandidatesParams {
+                                extracted,
+                                existing_entities: &existing_entities,
+                                group_id,
+                            })
+                            .await;
+                        metrics::counter!("kremory.resolution.candidates_considered_total")
+                            .increment(candidates.len() as u64);
+                        metrics::counter!("kremory.resolution.blocked_out_total").increment(
+                            existing_entities.len().saturating_sub(candidates.len()) as u64,
+                        );
 
-                // ADR-075 (TD-124): resolve `extracted` only against a bounded
-                // candidate block (exact-name ∪ embedding-ANN top-k), not every
-                // existing entity — collapses the LLM `ResolutionVerdict` fan-out
-                // from O(new × existing) to O(k). No-op on ≤k-entity groups.
-                let candidates = self
-                    .block_resolution_candidates(BlockCandidatesParams {
-                        extracted,
-                        existing_entities: &existing_entities,
-                        group_id,
-                    })
-                    .await;
-                metrics::counter!("kremory.resolution.candidates_considered_total")
-                    .increment(candidates.len() as u64);
-                metrics::counter!("kremory.resolution.blocked_out_total")
-                    .increment(existing_entities.len().saturating_sub(candidates.len()) as u64);
-
-                for existing in candidates.iter().copied() {
-                    let result = match resolver.resolve(extracted, existing).await {
-                        Ok(r) => r,
-                        Err(e) => break 'phases Err(e),
-                    };
-                    if result == ResolutionResult::Same {
-                        resolved_to = Some(existing.id.clone());
-                        break;
+                        let mut found: Option<String> = None;
+                        for existing in candidates.iter().copied() {
+                            let result = match resolver.resolve(extracted, existing).await {
+                                Ok(r) => r,
+                                Err(e) => break 'phases Err(e),
+                            };
+                            if result == ResolutionResult::Same {
+                                found = Some(existing.id.clone());
+                                break;
+                            }
+                        }
+                        found
                     }
-                }
+                };
 
                 let entity_id = if let Some(existing_id) = resolved_to {
                     // Merged with existing entity
