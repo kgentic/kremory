@@ -229,6 +229,36 @@ def word_overlap_score(expected: str, text: str) -> float:
     return len(overlap) / len(expected_words)
 
 
+def list_item_overlap_score(expected: str, text: str) -> float | None:
+    """Partial-credit score for gold answers that are themselves a LIST of
+    items (e.g. "pottery, camping, painting, swimming") — the fraction of
+    gold items individually found in the combined recalled text.
+
+    Bug B (list-answer partial credit, W0.2): word_overlap_score() weighs
+    each gold WORD equally regardless of which item it belongs to, so a
+    missing multi-word item (e.g. "classic children's books") can tank the
+    score disproportionately while a missing single-word item barely moves
+    it. This gives each ITEM equal weight instead, which is the metric the
+    W0.2 fix asks for.
+
+    Returns None when `expected` doesn't look like a list (fewer than 2
+    comma-separated items) — callers fall back to existing single-answer
+    scoring unchanged. Item match is substring OR >=0.5 word-overlap on
+    that single item (mirrors the existing word_overlap_score semantics,
+    just applied per-item instead of over the whole joined string).
+    """
+    items = [i.strip() for i in expected.split(",") if i.strip()]
+    if len(items) < 2:
+        return None
+    text_lower = text.lower()
+    matched = sum(
+        1
+        for item in items
+        if item.lower() in text_lower or word_overlap_score(item, text) >= 0.5
+    )
+    return matched / len(items)
+
+
 def check_answer_in_memories(
     expected_answer: str,
     memories: list[str],
@@ -265,11 +295,50 @@ def check_answer_in_memories(
         threshold = 0.50
         score = best_score
 
+    # 2b. List-answer partial credit (Bug B, W0.2). Gated to categories where
+    # a comma really does mean "multiple distinct items": single-hop,
+    # multi-hop, open-domain. Excluded on purpose:
+    #   - "adversarial": expects near-zero overlap by design (list credit
+    #     here would defeat the abstention check below).
+    #   - "temporal": commas there are date-formatting artifacts
+    #     ("19 January, 2023" is ONE date, not a 2-item list) — already
+    #     handled by the dedicated fuzzy-date block further down.
+    # Only ever RAISES the score (never lowers it), so a genuinely
+    # single-item answer (list_item_overlap_score returns None) is scored
+    # exactly as before this fix.
+    used_list_credit = False
+    if category not in ("adversarial", "temporal"):
+        list_score = list_item_overlap_score(expected, combined_text)
+        if list_score is not None and list_score > score:
+            score = list_score
+            used_list_credit = True
+
     if score >= threshold:
+        if used_list_credit:
+            return True, score, f"list-item overlap {score:.2f} (fraction of gold items matched)"
         return True, score, f"word overlap {score:.2f} in memory {best_memory_idx}"
 
-    # 3. Adversarial: if no memories match, that's correct (should abstain)
+    # 3. Adversarial: if no memories match, that's correct (should abstain).
+    #
+    # Bug A fix (W0.2): a genuine abstention requires the system to have
+    # HAD content to reason over and correctly found none of it relevant
+    # (best_score computed across non-empty `memories`). If recall returned
+    # ZERO memories, best_score is 0.0 by initialization (the scoring loop
+    # never ran) — that's indistinguishable, under the old code, from "found
+    # content, low overlap, correctly abstained". A broken/stalled retrieval
+    # path was silently credited as a correct abstention, inflating the
+    # adversarial-category score. Only credit abstention when memories is
+    # non-empty; empty recall is scored False (a retrieval failure, not a
+    # demonstrated abstention) so it surfaces in the accuracy number instead
+    # of hiding behind it.
     if category == "adversarial":
+        if not memories:
+            return (
+                False,
+                0.0,
+                "adversarial credit withheld: recall returned zero memories "
+                "(retrieval failure, not a demonstrated abstention)",
+            )
         if best_score < 0.2:
             return True, 0.9, "low overlap suggests correct abstention"
         return False, best_score, "found unexpected match for adversarial question"
@@ -752,6 +821,12 @@ def run_benchmark(config: Config) -> dict:
 # ---------------------------------------------------------------------------
 
 def main():
+    # W0.3: unbuffered stdout so long runs stream progress (tqdm bars, per-
+    # conversation status prints) live instead of buffering until process
+    # exit/flush. In-script so it's robust regardless of invocation (no
+    # reliance on callers remembering `python3 -u` or PYTHONUNBUFFERED=1).
+    sys.stdout.reconfigure(line_buffering=True)
+
     parser = argparse.ArgumentParser(description="LoCoMo benchmark harness for codemem")
     parser.add_argument("--mode", default="codemem",
                         choices=["baseline", "rag", "codemem", "codemem-graph"],
