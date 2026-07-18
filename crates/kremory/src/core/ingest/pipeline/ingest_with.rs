@@ -143,6 +143,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             exclude_expired: false,
         };
         // `_no_count` variant: avoid the access_count bump the public search applies.
+        let min_cosine = self.config.resolution_min_cosine;
         let hit_ids: HashSet<String> = match self
             .graph
             .vector_search_entities_no_count(VectorSearchEntitiesNoCountParams {
@@ -152,7 +153,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             })
             .await
         {
-            Ok(hits) => hits.into_iter().map(|h| h.item.id).collect(),
+            Ok(hits) => {
+                // ADR-075 P1: auto-different cosine floor. `vector_search` returns
+                // score = -cosine_distance = cosine_sim - 1, so cosine_sim = score + 1.
+                // Drop candidates below the floor WITHOUT an LLM verdict (the model
+                // would say "different" for embedding-far pairs anyway). min_cosine=0.0
+                // keeps everything → pure P0. Can only reduce merges, never create a
+                // false one; dream L5 canonicalization is the completeness backstop.
+                let total = hits.len();
+                let kept: HashSet<String> = hits
+                    .into_iter()
+                    .filter(|h| (h.score as f32) + 1.0 >= min_cosine)
+                    .map(|h| h.item.id)
+                    .collect();
+                metrics::counter!("kremory.resolution.cosine_floor_skipped_total")
+                    .increment((total - kept.len()) as u64);
+                kept
+            }
             // ANN failed even with a real embedding → conservative exhaustive list.
             Err(_) => return existing_entities.iter().collect(),
         };

@@ -253,6 +253,18 @@ pub struct PipelineConfig {
     /// canonicalization is the completeness backstop for any match blocking
     /// misses. Default: 10.
     pub resolution_block_k: usize,
+    /// ADR-075 P1 (TD-124): auto-different cosine floor for the embedding-ANN
+    /// resolution arm. When a blocked ANN candidate's cosine similarity to the
+    /// newly-extracted entity is **below** this floor, it is dropped from the
+    /// candidate set (treated as `Different`) WITHOUT an LLM `ResolutionVerdict`
+    /// call — the model would almost always say "different" for an embedding-far
+    /// pair anyway, so the call is pure cost. This can only ever REDUCE merges
+    /// (never create a false one), and dream-phase L5 canonicalization is the
+    /// completeness backstop. Exact normalized-name matches are unaffected (they
+    /// bypass the floor). Range `[0.0, 1.0]`. Default: `0.0` — OFF, i.e. pure
+    /// P0 behaviour (every blocked candidate still reaches `resolve()`); raise
+    /// (e.g. `0.5`) to trade a little recall for far fewer resolution LLM calls.
+    pub resolution_min_cosine: f32,
 }
 
 impl PipelineConfig {
@@ -272,6 +284,7 @@ impl PipelineConfig {
                 cache_max_entries: 1000,
                 extraction_arm_budget_ms: 30_000,
                 resolution_block_k: 10,
+                resolution_min_cosine: 0.0,
             },
         }
     }
@@ -423,6 +436,15 @@ impl PipelineConfigBuilder {
     /// blocking entirely (restore pre-ADR-075 behaviour).
     pub fn resolution_block_k(mut self, k: usize) -> Self {
         self.inner.resolution_block_k = k;
+        self
+    }
+
+    /// Set the auto-different cosine floor for the embedding-ANN resolution arm
+    /// (ADR-075 P1). Blocked ANN candidates below this cosine similarity are
+    /// dropped without an LLM verdict. `0.0` (default) = off / pure P0. Clamped
+    /// to `[0.0, 1.0]`.
+    pub fn resolution_min_cosine(mut self, floor: f32) -> Self {
+        self.inner.resolution_min_cosine = floor.clamp(0.0, 1.0);
         self
     }
 

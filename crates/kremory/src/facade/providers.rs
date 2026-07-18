@@ -21,7 +21,7 @@ use autoagents_llm::{
 };
 
 use crate::core::chat_tracking::TokenTrackingChatProvider;
-use crate::core::config::PipelineConfig;
+use crate::core::config::{PipelineConfig, PipelineConfigBuilder};
 use crate::core::ingest::{
     Engine, EngineNewParams, EngineWithCustomExtractorNoLlmParams, EngineWithExtractorParams,
 };
@@ -126,7 +126,8 @@ pub(crate) async fn open_graph(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder =
+        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
     if !allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(allowed_entity_types);
     }
@@ -168,7 +169,8 @@ pub(crate) async fn open_graph_with_extractor(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder =
+        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -213,7 +215,8 @@ pub(crate) async fn open_graph_no_llm(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder =
+        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -271,7 +274,8 @@ pub(crate) async fn open_engine_handle(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    let mut config_builder = PipelineConfig::builder().embedding_dim(resolved_dim);
+    let mut config_builder =
+        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
     if !allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(allowed_entity_types);
     }
@@ -334,6 +338,29 @@ pub async fn auto(path: impl AsRef<Path>) -> Result<Memory> {
 /// the first `.remember()` / `.recall()` call returns a network error.
 pub async fn with_ollama(path: impl AsRef<Path>) -> Result<Memory> {
     with_ollama_at("http://localhost:11434", path).await
+}
+
+/// ADR-075 P1 (TD-124): apply optional resolution candidate-blocking overrides
+/// from env so library DEFAULTS stay pure-P0-safe while benchmarks / advanced
+/// consumers can tune throughput. Unset vars leave the builder unchanged.
+/// - `KREMORY_RESOLUTION_BLOCK_K` — `usize`, the ANN blocking width.
+/// - `KREMORY_RESOLUTION_MIN_COSINE` — `f32` in `[0,1]`, the auto-different floor.
+///
+/// Reading env here is consistent with this module's existing env-detection
+/// (`OLLAMA_HOST` / `OLLAMA_CHAT_MODEL`); the `with_ollama_*` layer is the
+/// batteries-included boot surface, not the pure library core.
+fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
+    if let Ok(k) = std::env::var("KREMORY_RESOLUTION_BLOCK_K") {
+        if let Ok(k) = k.parse::<usize>() {
+            b = b.resolution_block_k(k);
+        }
+    }
+    if let Ok(c) = std::env::var("KREMORY_RESOLUTION_MIN_COSINE") {
+        if let Ok(c) = c.parse::<f32>() {
+            b = b.resolution_min_cosine(c);
+        }
+    }
+    b
 }
 
 /// Open with Ollama at a custom URL and optional custom chat model.
