@@ -81,8 +81,8 @@ three business days after the API merge to run the full regression suite.";
             .expect("failed to build LlamaCppProvider");
 
         let config = PipelineConfig::builder()
-            .min_tokens(50)
-            .max_tokens(2000)
+            .min_words(50)
+            .max_words(2000)
             .build()
             .expect("PipelineConfig::build failed");
 
@@ -369,8 +369,8 @@ three business days after the API merge to run the full regression suite.";
         // Without these, NuExtract only discovers obvious entities (people).
         // With them, it also finds organisations, projects, dates, etc.
         let config = PipelineConfig::builder()
-            .min_tokens(50)
-            .max_tokens(2000)
+            .min_words(50)
+            .max_words(2000)
             .allowed_entity_types(vec![
                 "Person".into(),
                 "Organisation".into(),
