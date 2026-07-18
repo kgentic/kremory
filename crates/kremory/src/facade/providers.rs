@@ -518,6 +518,80 @@ pub async fn with_openai(path: impl AsRef<Path>) -> Result<Memory> {
     .await
 }
 
+/// Bundled parameters for [`with_openai_compatible_chat_ollama_embed`] —
+/// args-as-object per TD-042.
+pub struct OpenAiCompatibleParams<'a> {
+    /// Chat endpoint base URL, e.g. `https://api.groq.com/openai/v1` (Groq),
+    /// `https://api.together.xyz/v1` (Together), or a local vLLM `…/v1`.
+    pub chat_base_url: &'a str,
+    /// API key for the chat provider (e.g. the Groq key).
+    pub api_key: &'a str,
+    /// Chat model id as the provider names it, e.g. `openai/gpt-oss-120b` on Groq.
+    pub chat_model: &'a str,
+    /// Ollama base URL for the local embedder (`nomic-embed-text`, dim 768).
+    pub ollama_url: &'a str,
+    /// libSQL database path.
+    pub path: &'a str,
+}
+
+/// Open with an **OpenAI-API-compatible** chat provider (Groq, Together,
+/// Fireworks, vLLM, …) for extraction + a **local Ollama embedder**.
+///
+/// These providers are chat-only (Groq has no embeddings endpoint), so this
+/// pairs a fast/cheap cloud extractor — e.g. `gpt-oss` on Groq — with a local
+/// `nomic-embed-text` embedder (dim 768). This is the config that makes
+/// benchmarking practical: cloud extraction is latency-optimised (~0.1–0.3s/call
+/// vs ~1.5–2s local), and quality matches the gpt-4o-mini extraction the LoCoMo/
+/// LongMemEval peers used, while embeddings stay local + free.
+pub async fn with_openai_compatible_chat_ollama_embed(
+    params: OpenAiCompatibleParams<'_>,
+) -> Result<Memory> {
+    let OpenAiCompatibleParams {
+        chat_base_url,
+        api_key,
+        chat_model,
+        ollama_url,
+        path,
+    } = params;
+
+    let chat_provider: Arc<OpenAI> = LLMBuilder::<OpenAI>::new()
+        .base_url(chat_base_url)
+        .api_key(api_key)
+        .model(chat_model)
+        .timeout_seconds(120)
+        .build()
+        .map_err(|e| {
+            MemoryError::Other(format!("OpenAI-compatible chat provider error: {e}"))
+        })?;
+
+    let embed_provider: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
+        .base_url(ollama_url)
+        .model("nomic-embed-text")
+        .build()
+        .map_err(|e| MemoryError::Other(format!("Ollama embedding provider error: {e}")))?;
+
+    let arc_llm: Arc<dyn ChatProvider> = chat_provider;
+    let llm: Arc<dyn ChatProvider> = Arc::new(TokenTrackingChatProvider::new(
+        ArcChatProvider::new(arc_llm),
+        "openai",
+        Box::leak(chat_model.to_string().into_boxed_str()),
+    ));
+    let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(AutoagentsEmbedderAdapter::new(
+        EmbedderArc::<Ollama>::new(embed_provider),
+    ));
+
+    build_memory_with_model(
+        path,
+        BuildMemoryWithModelParams {
+            llm,
+            embedder,
+            embedding_dim: Some(768),
+            model: Some(chat_model),
+        },
+    )
+    .await
+}
+
 /// Open with Anthropic. Requires `$ANTHROPIC_API_KEY`.
 ///
 /// Chat model: `claude-haiku-4-5` (metric label) / `claude-3-haiku-20240307` (API identifier).

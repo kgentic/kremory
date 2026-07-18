@@ -334,9 +334,40 @@ async fn main() -> Result<()> {
             )
         })?;
 
-    let mem = kremory::facade::providers::with_ollama_at_model(ollama_url, model_id, &db_path)
-        .await
-        .with_context(|| format!("failed to open kremory Memory at {db_path}"))?;
+    // Benchmark-execution-spec §Phase-2: when an OpenAI-compatible cloud chat
+    // endpoint is configured (e.g. Groq gpt-oss), use it for EXTRACTION (fast +
+    // quality-comparable to the peers' gpt-4o-mini) while keeping embeddings on
+    // local Ollama (Groq has no embeddings endpoint). Ollama must still be up
+    // for the embedder — the reachability check above already enforced that.
+    // Falls back to all-Ollama when the cloud env vars are absent.
+    let chat_base_url = std::env::var("KREMORY_MCP_CHAT_BASE_URL").ok();
+    let chat_api_key = std::env::var("KREMORY_MCP_CHAT_API_KEY").ok();
+    let mem = match (chat_base_url, chat_api_key) {
+        (Some(base_url), Some(key)) => {
+            let chat_model = model_id
+                .clone()
+                .unwrap_or_else(|| "openai/gpt-oss-120b".to_string());
+            tracing::info!(
+                chat_base_url = %base_url,
+                chat_model = %chat_model,
+                "kremory-http: OpenAI-compatible cloud chat (extraction) + local Ollama embed"
+            );
+            kremory::facade::providers::with_openai_compatible_chat_ollama_embed(
+                kremory::facade::providers::OpenAiCompatibleParams {
+                    chat_base_url: &base_url,
+                    api_key: &key,
+                    chat_model: &chat_model,
+                    ollama_url: &ollama_url,
+                    path: &db_path,
+                },
+            )
+            .await
+            .with_context(|| format!("failed to open kremory Memory (cloud chat) at {db_path}"))?
+        }
+        _ => kremory::facade::providers::with_ollama_at_model(ollama_url, model_id, &db_path)
+            .await
+            .with_context(|| format!("failed to open kremory Memory at {db_path}"))?,
+    };
 
     let app = build_router(AppState { mem: Arc::new(mem) });
 

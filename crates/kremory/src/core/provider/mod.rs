@@ -147,6 +147,18 @@ pub fn capability_of(model: &str) -> ProviderCaps {
         // gpt-4o-mini, gpt-4o-preview, gpt-4o-YYYY-MM-DD (< threshold) → fall through
     }
 
+    // --- OpenAI open-weight gpt-oss (served via Groq / Together / vLLM) ------
+    // gpt-oss-* support OpenAI structured outputs (`response_format` json_schema)
+    // on Groq's OpenAI-compatible endpoint. Without this branch the id
+    // (`openai/gpt-oss-120b` on Groq) falls through to PromptOnly →
+    // LlmJsonRepair, wasting the model's native schema capability. Match the
+    // family substring so both the bare (`gpt-oss-120b`) and Groq-prefixed
+    // (`openai/gpt-oss-120b`) ids are caught. FormatSchema (not Native/strict)
+    // is the conservative choice — the `response_format` path Groq documents.
+    if model.contains("gpt-oss") {
+        return ProviderCaps::FormatSchema;
+    }
+
     // --- Ollama (name:tag colon pattern, plus known Ollama model families) ---
     // Anthropic and OpenAI model identifiers never contain ':'.
     // Ollama model references use the 'name:tag' form (qwen2.5:14b, llama3.2:3b).
