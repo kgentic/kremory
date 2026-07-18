@@ -17,7 +17,7 @@ use crate::core::graph::{
 };
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
-    ResolutionResult,
+    ExtractionResult, ResolutionResult,
 };
 use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
 use crate::core::resolver::{entity_name, normalize_name, CascadeResolver, UnionFind};
@@ -801,26 +801,84 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         let mut all_entities: Vec<ExtractedEntity> = Vec::new();
         let mut all_facts: Vec<ExtractedFact> = Vec::new();
-        for chunk in &chunks {
-            let ctx = ExtractionContext {
-                allowed_entity_types: &allowed_entity_types_live,
-                allowed_edge_types: &self.config.allowed_edge_types,
-                known_entities: &all_entities,
-                excluded_entity_types: &self.config.excluded_entity_types,
-                content_type: content_type.clone(),
-                registry_specs: registry.specs(),
-                existing_graph_entities: &existing_entities_for_prompt,
-                arm_budget_ms: self.config.extraction_arm_budget_ms,
-                model: self.model.as_deref(),
-            };
-            let result = extractor.extract(chunk, &ctx).await?;
-            all_entities.extend(result.entities);
-            all_facts.extend(result.facts);
 
-            // OOV audit: catch domain terms the LLM missed (language-agnostic safety net)
-            if let Some(ref auditor) = self.oov_auditor {
-                let audit_adds = auditor.audit(chunk, &all_entities);
-                all_entities.extend(audit_adds);
+        // TD-NEW-A Lane C: optionally overlap the per-chunk extraction LLM
+        // calls. `extraction_concurrency == 1` keeps the byte-identical
+        // pre-change sequential path (each chunk's prompt sees earlier chunks'
+        // entities via a growing `known_entities`) — the clean rollback + the
+        // pure-W1 baseline for benchmark attribution. `> 1` uses `buffered(N)`
+        // (order-PRESERVING, NOT `buffer_unordered`, per the TD-NEW-B
+        // determinism rule); extraction is read-only with no cross-chunk graph
+        // dependency, so overlap is safe, but `known_entities` becomes
+        // window-local (empty) — the within-ingest cross-chunk hint is dropped,
+        // which dream L5 canonicalization backstops (recall no-regression MUST
+        // be measured, per the W2 plan).
+        {
+            use futures::stream::StreamExt as _;
+            let concurrency = self.config.extraction_concurrency.max(1);
+            if concurrency == 1 {
+                for chunk in &chunks {
+                    let ctx = ExtractionContext {
+                        allowed_entity_types: &allowed_entity_types_live,
+                        allowed_edge_types: &self.config.allowed_edge_types,
+                        known_entities: &all_entities,
+                        excluded_entity_types: &self.config.excluded_entity_types,
+                        content_type: content_type.clone(),
+                        registry_specs: registry.specs(),
+                        existing_graph_entities: &existing_entities_for_prompt,
+                        arm_budget_ms: self.config.extraction_arm_budget_ms,
+                        model: self.model.as_deref(),
+                    };
+                    let result = extractor.extract(chunk.as_str(), &ctx).await?;
+                    all_entities.extend(result.entities);
+                    all_facts.extend(result.facts);
+                    if let Some(ref auditor) = self.oov_auditor {
+                        let audit_adds = auditor.audit(chunk, &all_entities);
+                        all_entities.extend(audit_adds);
+                    }
+                }
+            } else {
+                // One shared ctx serves every chunk (identical once
+                // known_entities is window-local).
+                let shared_ctx = ExtractionContext {
+                    allowed_entity_types: &allowed_entity_types_live,
+                    allowed_edge_types: &self.config.allowed_edge_types,
+                    known_entities: &[],
+                    excluded_entity_types: &self.config.excluded_entity_types,
+                    content_type: content_type.clone(),
+                    registry_specs: registry.specs(),
+                    existing_graph_entities: &existing_entities_for_prompt,
+                    arm_budget_ms: self.config.extraction_arm_budget_ms,
+                    model: self.model.as_deref(),
+                };
+                // Build the futures eagerly via `Iterator::map` (monomorphised
+                // at the concrete chunk lifetime) rather than `StreamExt::map`
+                // (which would require the borrowing future to be general over
+                // ANY item lifetime — an HRTB the `extract<'a>` signature can't
+                // satisfy inside the enclosing `tokio::spawn`).
+                let extract_futures: Vec<_> = chunks
+                    .iter()
+                    .map(|chunk| extractor.extract(chunk.as_str(), &shared_ctx))
+                    .collect();
+                let extraction_results: Vec<ExtractionResult> =
+                    futures::stream::iter(extract_futures)
+                        .buffered(concurrency)
+                        .collect::<Vec<crate::core::error::Result<ExtractionResult>>>()
+                        .await
+                        .into_iter()
+                        .collect::<crate::core::error::Result<Vec<_>>>()?;
+
+                // Fold results back in chunk order (deterministic). The OOV
+                // audit runs sequentially per chunk so its "terms this chunk
+                // missed given everything found so far" semantics are preserved.
+                for (chunk, result) in chunks.iter().zip(extraction_results) {
+                    all_entities.extend(result.entities);
+                    all_facts.extend(result.facts);
+                    if let Some(ref auditor) = self.oov_auditor {
+                        let audit_adds = auditor.audit(chunk, &all_entities);
+                        all_entities.extend(audit_adds);
+                    }
+                }
             }
         }
 

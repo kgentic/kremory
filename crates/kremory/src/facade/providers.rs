@@ -380,6 +380,11 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
             b = b.resolution_batch_max_entities(n);
         }
     }
+    if let Ok(n) = std::env::var("KREMORY_EXTRACTION_CONCURRENCY") {
+        if let Ok(n) = n.parse::<usize>() {
+            b = b.extraction_concurrency(n);
+        }
+    }
     b
 }
 
