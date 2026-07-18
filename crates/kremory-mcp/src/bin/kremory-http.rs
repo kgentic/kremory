@@ -832,6 +832,65 @@ mod tests {
         }
     }
 
+    /// Real-substrate regression for the content-search AND->OR fallback
+    /// ladder (`TemporalGraph::content_search`, `core/search.rs`).
+    ///
+    /// The sibling test above (`http_search_mode_content_returns_bm25_passage`)
+    /// queries with a SINGLE word (`q=Zephyrine`) — AND-joining one token is
+    /// indistinguishable from OR-joining one token, so that test cannot
+    /// detect a regression in the AND->OR ladder (it was GREEN even when the
+    /// underlying substrate silently returned empty for every multi-word,
+    /// natural-language query — the exact failure the LoCoMo benchmark
+    /// harness hit: 100% empty content-mode recalls on real questions).
+    ///
+    /// This test drives the REAL ingest pipeline (`pin_fact` -> `do_remember`,
+    /// same production path `insert_episode_with_group` uses — not a
+    /// hand-built fixture) then queries with a multi-word sentence whose
+    /// tokens ("Did"/"invent"/"anything"/"remarkable") are ABSENT from the
+    /// pinned content except "Zephyrine" — an AND-only match is impossible by
+    /// construction, so a non-empty result here can only have come from the
+    /// OR-fallback rung. Without the fallback (pre-fix `content_search`),
+    /// this asserts and fails.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_mode_content_natural_language_query_uses_or_fallback() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState { mem: mem.clone() });
+        let ns = "ns-http-content-nl";
+
+        // Pinned content: "Zephyrine wrote the first algorithm" (see `pin_fact`).
+        pin_fact(&mem, ns, "Zephyrine").await;
+
+        let question = "Did Zephyrine invent anything remarkable";
+        let search = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/search?q={question}&namespace={ns}&k=10&mode=content",
+                question = question.replace(' ', "%20")
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(search).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let results = json["results"].as_array().expect("results array");
+        assert!(
+            !results.is_empty(),
+            "mode=content must rescue a multi-word natural-language query via the \
+             AND->OR fallback ladder — an AND-only match is impossible here (query \
+             tokens 'invent'/'anything'/'remarkable' are absent from the pinned \
+             content). Empty here reproduces the LoCoMo-benchmark content-search bug: {json}"
+        );
+        assert!(
+            results.iter().any(|r| {
+                r["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("Zephyrine"))
+            }),
+            "OR-fallback result must still carry the pinned subject's snippet: {json}"
+        );
+    }
+
     /// `GET /search` with no `?mode=` is `mode=recall` — byte-identical to
     /// pre-W0.1 `/search` behaviour. Regression guard for the W0.1 addition:
     /// the default arm must not have drifted when `content-search` is

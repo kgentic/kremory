@@ -29,8 +29,15 @@
 //! Two unrelated filler episodes (weather, recipe) act as pure noise that no
 //! query should ever surface.
 //!
-//! FTS5's default operator is AND (see `sanitise_fts5_query` — tokens are
-//! quoted and space-joined), so multi-term queries require ALL terms present.
+//! `content_search`'s first rung AND-joins tokens (FTS5's default operator —
+//! same shape as `sanitise_fts5_query`, tokens quoted and space-joined), so
+//! multi-term queries require ALL terms present. Every query below is a
+//! short keyword phrase and matches on this AND rung, so these gates measure
+//! AND-precision exactly as before. `content_search` also has an OR-fallback
+//! rung for natural-language sentence queries (fires only when AND returns
+//! zero hits) — see `content_recall_or_fallback_rescues_natural_language_question`
+//! below for that arm's own coverage; it never fires for this file's
+//! keyword-shaped `query_set()`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -153,7 +160,10 @@ fn query_set() -> Vec<(&'static str, Vec<&'static str>)> {
         // AND query — both Alice diet episodes carry "dairy".
         ("Alice dairy", vec!["diet_vegetarian", "diet_oatmilk"]),
         // AND query excludes the CRM-migration distractor (lacks "postgres").
-        ("Postgres migration", vec!["pg_repartition", "pg_maintenance"]),
+        (
+            "Postgres migration",
+            vec!["pg_repartition", "pg_maintenance"],
+        ),
         // Single-term, CRM distractor also matches "migration" → precision < 1.0.
         ("migration", vec!["pg_repartition", "pg_maintenance"]),
         // Clean topic term.
@@ -339,7 +349,11 @@ async fn content_recall_near_miss_precision_and_tf_ranking() {
         .content()
         .await
         .expect("turbopump recall must succeed");
-    assert_eq!(tp.len(), 2, "only the two rocket episodes mention turbopump");
+    assert_eq!(
+        tp.len(),
+        2,
+        "only the two rocket episodes mention turbopump"
+    );
     assert_eq!(
         tp[0].episode_id,
         *ids.get("rocket_hotfire").unwrap(),
@@ -367,7 +381,11 @@ async fn content_recall_near_miss_precision_and_tf_ranking() {
         !and_ids.contains(ids.get("distractor_crm_migration").unwrap()),
         "FTS5 default-AND must exclude the CRM distractor from `Postgres migration`: {and_ids:?}"
     );
-    assert_eq!(and_ids.len(), 2, "only the two Postgres episodes match both terms");
+    assert_eq!(
+        and_ids.len(),
+        2,
+        "only the two Postgres episodes match both terms"
+    );
 
     let bare_migration: Vec<ContentPassage> = mem
         .recall("migration")
@@ -488,5 +506,55 @@ async fn content_recall_empty_and_no_match_return_empty() {
     assert!(
         empty.is_empty(),
         "an all-punctuation query must return no passages; got {empty:?}"
+    );
+}
+
+// ─── Test 5: AND→OR fallback ladder — natural-language questions ─────────────
+
+/// Every query in `query_set()` above is a short keyword phrase (1-2 terms)
+/// and always matches on the FIRST rung of `content_search`'s ladder
+/// (AND-joined tokens) — this benchmark's precision/recall gates never
+/// exercise the OR-fallback rung.
+///
+/// Real consumers of `.content()` (the LoCoMo/longmemeval benchmark harness,
+/// chat-style callers) query with full natural-language SENTENCES, not
+/// keyword phrases. This is the substrate bug the AND→OR ladder fixes:
+/// AND-joining every token in a sentence — including stopwords like
+/// "did"/"the"/"about"/"during" — requires ALL of them to appear in a single
+/// short conversational passage, which is realistically impossible, so the
+/// content-search arm silently returned empty for the vast majority of
+/// natural-language queries prior to this fix.
+///
+/// The query below includes "discover" and "regarding" — neither word
+/// appears anywhere in `CORPUS` — so an AND-only match is impossible BY
+/// CONSTRUCTION (proves the eventual non-empty result came from the
+/// OR-fallback rung, not a coincidental AND hit).
+#[tokio::test]
+async fn content_recall_or_fallback_rescues_natural_language_question() {
+    let mem = make_memory("content-bench-or-fallback").await;
+    let ids = ingest_corpus(&mem).await;
+
+    let question =
+        "What did the engineers discover regarding the turbopump during the hotfire test?";
+
+    let passages: Vec<ContentPassage> = mem
+        .recall(question)
+        .k(K)
+        .content()
+        .await
+        .expect("natural-language recall must succeed");
+
+    assert!(
+        !passages.is_empty(),
+        "AND->OR fallback must rescue a natural-language question whose AND-join is \
+         impossible to satisfy (contains 'discover'/'regarding', absent from every \
+         episode) — got empty for {question:?}. Without the OR-fallback rung this \
+         is exactly the LoCoMo-benchmark content-search failure (100% empty recalls)."
+    );
+    let returned_ids: Vec<i64> = passages.iter().map(|p| p.episode_id).collect();
+    assert!(
+        returned_ids.contains(ids.get("rocket_hotfire").unwrap()),
+        "OR-fallback must surface `rocket_hotfire` (shares turbopump/hotfire/test/engineers \
+         terms with the question): got {returned_ids:?}"
     );
 }
