@@ -315,6 +315,7 @@ pub async fn canonicalize_surface_forms_with_embedder(
             ApplyMergeParams {
                 loser_id,
                 keeper_id: &effective_keeper,
+                group_id,
                 embedder,
             },
         )
@@ -444,6 +445,7 @@ async fn apply_merge(graph: &TemporalGraph, params: ApplyMergeParams<'_>) -> Res
     let ApplyMergeParams {
         loser_id,
         keeper_id,
+        group_id,
         embedder,
     } = params;
     apply_entity_merge(
@@ -451,6 +453,7 @@ async fn apply_merge(graph: &TemporalGraph, params: ApplyMergeParams<'_>) -> Res
         EntityMergeParams {
             loser_id,
             keeper_id,
+            group_id,
             site: MergeSite::Canonicalize,
             // L5 surface-form merges are pairwise-cosine + lexical-variant gated,
             // NOT structural-corroboration driven (spec §2.3, Quinn L3).
@@ -467,6 +470,9 @@ async fn apply_merge(graph: &TemporalGraph, params: ApplyMergeParams<'_>) -> Res
 struct ApplyMergeParams<'a> {
     loser_id: &'a str,
     keeper_id: &'a str,
+    /// ADR-029d: the namespace this merge is scoped to (L5's own group_id,
+    /// already in scope at the call site). See [`EntityMergeParams::group_id`].
+    group_id: &'a str,
     /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
     /// the keeper's name embedding is recomputed + persisted post-commit so it
     /// reflects the merged identity instead of going stale. `None` preserves
@@ -495,6 +501,7 @@ pub(crate) async fn apply_entity_merge(
     let EntityMergeParams {
         loser_id,
         keeper_id,
+        group_id,
         site,
         structural_signal,
         embedder,
@@ -504,6 +511,7 @@ pub(crate) async fn apply_entity_merge(
         ApplyMergeWithAuditParams {
             loser_id,
             keeper_id,
+            group_id,
             audit: None,
             site,
             structural_signal,
@@ -520,6 +528,13 @@ pub(crate) async fn apply_entity_merge(
 pub(crate) struct EntityMergeParams<'a> {
     pub(crate) loser_id: &'a str,
     pub(crate) keeper_id: &'a str,
+    /// ADR-029d: entity identity is per-namespace-open — the same `id` can now
+    /// legitimately exist in TWO namespaces. Every read/write this executor
+    /// performs MUST be scoped by this `group_id` (the namespace the caller is
+    /// operating in), never a bare `id`-only predicate, or a merge in namespace
+    /// A can remap/delete rows that belong to namespace B (cross-namespace FK
+    /// corruption — the bug this field closes).
+    pub(crate) group_id: &'a str,
     pub(crate) site: MergeSite,
     /// Whether a deterministic STRUCTURAL corroboration signal drove this merge
     /// (reversible-graph-mutations spec §2.3 — recorded into
@@ -571,6 +586,10 @@ pub(crate) struct IdentityVerdictAuditRow<'a> {
 pub(crate) struct ApplyMergeWithAuditParams<'a> {
     pub(crate) loser_id: &'a str,
     pub(crate) keeper_id: &'a str,
+    /// ADR-029d: the namespace this merge is scoped to. See
+    /// [`EntityMergeParams::group_id`] doc for the full rationale — every
+    /// read/write below MUST filter on this value, never a bare `id`.
+    pub(crate) group_id: &'a str,
     pub(crate) audit: Option<IdentityVerdictAuditRow<'a>>,
     /// Which merge-producing site fired this merge — recorded into the
     /// `graph_mutation_log` row's `inputs.site` (reversible-graph-mutations
@@ -602,6 +621,7 @@ pub(crate) async fn apply_merge_with_audit(
     let ApplyMergeWithAuditParams {
         loser_id,
         keeper_id,
+        group_id,
         audit,
         site,
         structural_signal,
@@ -615,11 +635,14 @@ pub(crate) async fn apply_merge_with_audit(
     // Collect loser's access_count + ner_confidence before deletion. Site #6
     // (ADR-063): the loser's confidence is combined into the keeper via noisy-OR,
     // not discarded (SYNTHESIS §2 — merging the same entity must never lower it).
+    // ADR-029d: scoped by `group_id` — under per-namespace-open the same `id`
+    // can exist in a DIFFERENT namespace; an unscoped read here could pick up
+    // the wrong namespace's row.
     let mut rows = graph
         .conn
         .query(
-            "SELECT access_count, ner_confidence FROM entities WHERE id = ?1",
-            libsql::params![loser_id],
+            "SELECT access_count, ner_confidence FROM entities WHERE id = ?1 AND group_id = ?2",
+            libsql::params![loser_id, group_id],
         )
         .await;
 
@@ -650,6 +673,7 @@ pub(crate) async fn apply_merge_with_audit(
         MergeSnapshotParams {
             loser_id,
             keeper_id,
+            group_id,
             site,
             audit: audit.as_ref(),
             structural_signal,
@@ -671,11 +695,17 @@ pub(crate) async fn apply_merge_with_audit(
     // would treat the inherited structure as directly-asserted on the NEXT pass,
     // re-opening a deferred bridge partner's eligibility (the V1 convergence bug).
     // The flag is monotone (set here, never cleared) — see impl-spec §6 fixpoint proof.
+    // ADR-029d: scoped by `subject_group_id` — the composite FK is
+    // `(subject_id, subject_group_id) → entities(id, group_id)`; an unscoped
+    // `WHERE subject_id = loser_id` remaps EVERY namespace's facts pointing at
+    // that id, including a same-id row this merge has no business touching
+    // (the cross-namespace FK-corruption bug this scoping closes).
     let r1 = graph
         .conn
         .execute(
-            "UPDATE facts SET subject_id = ?1, corroboration_inert = 1 WHERE subject_id = ?2",
-            libsql::params![keeper_id, loser_id],
+            "UPDATE facts SET subject_id = ?1, corroboration_inert = 1 \
+             WHERE subject_id = ?2 AND subject_group_id = ?3",
+            libsql::params![keeper_id, loser_id, group_id],
         )
         .await;
 
@@ -683,12 +713,15 @@ pub(crate) async fn apply_merge_with_audit(
     // arms of `neighbours_of` (and `assertions_of`) filter `corroboration_inert = 0`,
     // so a neighbour reached via the loser's OBJECT-position fact must be equally
     // inerted (impl-spec §C0 DoD: "BOTH arms of neighbours_of's UNION").
+    // ADR-029d: scoped by `object_group_id` — same rationale as the subject-side
+    // remap above (`(object_id, object_group_id) → entities(id, group_id)` FK).
     let r2 = if r1.is_ok() {
         graph
             .conn
             .execute(
-                "UPDATE facts SET object_id = ?1, corroboration_inert = 1 WHERE object_id = ?2",
-                libsql::params![keeper_id, loser_id],
+                "UPDATE facts SET object_id = ?1, corroboration_inert = 1 \
+                 WHERE object_id = ?2 AND object_group_id = ?3",
+                libsql::params![keeper_id, loser_id, group_id],
             )
             .await
     } else {
@@ -702,12 +735,17 @@ pub(crate) async fn apply_merge_with_audit(
     // owns that presence edge — the loser's is the same presence fact about the
     // now-merged entity), then `DELETE` removes the now-orphaned loser rows so no
     // dangling entity_id survives the merge.
+    // ADR-029d: both statements scoped by `entity_group_id` — an unscoped
+    // `WHERE entity_id = loser_id` would remap/delete another namespace's
+    // presence edges for the same id (the same cross-namespace corruption
+    // class as the facts remap above).
     let r3 = if r2.is_ok() {
         match graph
             .conn
             .execute(
-                "UPDATE OR IGNORE episodic_edges SET entity_id = ?1 WHERE entity_id = ?2",
-                libsql::params![keeper_id, loser_id],
+                "UPDATE OR IGNORE episodic_edges SET entity_id = ?1 \
+                 WHERE entity_id = ?2 AND entity_group_id = ?3",
+                libsql::params![keeper_id, loser_id, group_id],
             )
             .await
         {
@@ -715,8 +753,8 @@ pub(crate) async fn apply_merge_with_audit(
                 graph
                     .conn
                     .execute(
-                        "DELETE FROM episodic_edges WHERE entity_id = ?1",
-                        libsql::params![loser_id],
+                        "DELETE FROM episodic_edges WHERE entity_id = ?1 AND entity_group_id = ?2",
+                        libsql::params![loser_id, group_id],
                     )
                     .await
             }
@@ -726,13 +764,16 @@ pub(crate) async fn apply_merge_with_audit(
         r2
     };
 
-    // Accumulate access_count into keeper
+    // Accumulate access_count into keeper. ADR-029d: scoped by `group_id` — the
+    // keeper lives in THIS namespace (it's the survivor of a merge this caller
+    // scoped to `group_id`); an unscoped write would hit whichever namespace's
+    // row libSQL matches first if the same id also exists elsewhere.
     let r4 = if r3.is_ok() && loser_access_count > 0 {
         graph
             .conn
             .execute(
-                "UPDATE entities SET access_count = access_count + ?1 WHERE id = ?2",
-                libsql::params![loser_access_count, keeper_id],
+                "UPDATE entities SET access_count = access_count + ?1 WHERE id = ?2 AND group_id = ?3",
+                libsql::params![loser_access_count, keeper_id, group_id],
             )
             .await
     } else {
@@ -745,12 +786,14 @@ pub(crate) async fn apply_merge_with_audit(
     // deterministic merged-confidence FORMULA half; the reject-FLOOR gate is deferred
     // (S4-blocked — the floor value + null-prevalence are both unmeasured, R4 open
     // item; building it now would hardcode a guessed floor).
+    // ADR-029d: both the keeper read and the keeper write are scoped by
+    // `group_id` — same rationale as the access_count accumulate above.
     let r4b = if r4.is_ok() {
         let keeper_ner_confidence: Option<f32> = match graph
             .conn
             .query(
-                "SELECT ner_confidence FROM entities WHERE id = ?1",
-                libsql::params![keeper_id],
+                "SELECT ner_confidence FROM entities WHERE id = ?1 AND group_id = ?2",
+                libsql::params![keeper_id, group_id],
             )
             .await
         {
@@ -768,8 +811,8 @@ pub(crate) async fn apply_merge_with_audit(
                 graph
                     .conn
                     .execute(
-                        "UPDATE entities SET ner_confidence = ?1 WHERE id = ?2",
-                        libsql::params![f64::from(merged), keeper_id],
+                        "UPDATE entities SET ner_confidence = ?1 WHERE id = ?2 AND group_id = ?3",
+                        libsql::params![f64::from(merged), keeper_id, group_id],
                     )
                     .await
             }
@@ -779,7 +822,13 @@ pub(crate) async fn apply_merge_with_audit(
         r4
     };
 
-    // Delete loser FTS entry
+    // Delete loser FTS entry.
+    // TODO(ADR-029d): entities_fts is NOT group-aware (FTS5 virtual table has no
+    // group_id column) — under per-namespace-open, two same-id entities in
+    // different namespaces share one ambiguous FTS row. This delete is
+    // unavoidably unscoped; it is a coarseness in cross-namespace full-text
+    // search, NOT the FK-corruption bug (facts/episodic_edges are the FK'd
+    // surfaces and ARE scoped above). See TD-130.
     let r5 = if r4b.is_ok() {
         graph
             .conn
@@ -792,13 +841,16 @@ pub(crate) async fn apply_merge_with_audit(
         r4b
     };
 
-    // Delete loser entity row
+    // Delete loser entity row. ADR-029d: scoped by `group_id` — without this,
+    // deleting `WHERE id = loser_id` alone would delete the loser row in EVERY
+    // namespace it exists in, not just this merge's namespace (composite PK is
+    // `(id, group_id)`).
     let r6 = if r5.is_ok() {
         graph
             .conn
             .execute(
-                "DELETE FROM entities WHERE id = ?1",
-                libsql::params![loser_id],
+                "DELETE FROM entities WHERE id = ?1 AND group_id = ?2",
+                libsql::params![loser_id, group_id],
             )
             .await
     } else {
@@ -963,6 +1015,13 @@ pub(crate) async fn apply_merge_with_audit(
 struct MergeSnapshotParams<'a> {
     loser_id: &'a str,
     keeper_id: &'a str,
+    /// ADR-029d: the namespace this merge is scoped to. See
+    /// [`EntityMergeParams::group_id`] doc — every read below MUST filter on
+    /// this value so the captured pre-state matches EXACTLY what the caller's
+    /// scoped merge statements go on to touch (an unscoped snapshot read would
+    /// desync from a scoped merge write, corrupting the undo/audit record even
+    /// after the FK-crash itself is fixed).
+    group_id: &'a str,
     site: MergeSite,
     audit: Option<&'a IdentityVerdictAuditRow<'a>>,
     /// The authoritative structural-corroboration bool for `inputs.structural_signal`
@@ -978,13 +1037,16 @@ async fn snapshot_merge_pre_state(
     let MergeSnapshotParams {
         loser_id,
         keeper_id,
+        group_id,
         site,
         audit,
         structural_signal,
     } = params;
     // (1) loser entity row — all 11 live columns (spec §2.3(1); no `label`,
-    //     dropped Mig 009). The merge's loser DELETE is `WHERE id = loser` (no
-    //     group filter), so the snapshot SELECT matches that predicate exactly.
+    //     dropped Mig 009). ADR-029d: scoped by `group_id` so the snapshot
+    //     matches the caller's scoped loser DELETE (`WHERE id = loser AND
+    //     group_id = ?`) exactly — an unscoped SELECT could capture a
+    //     DIFFERENT namespace's same-id row under per-namespace-open.
     let loser_entity_row = {
         let mut rows = graph
             .conn
@@ -992,14 +1054,14 @@ async fn snapshot_merge_pre_state(
                 "SELECT id, group_id, properties, embedding, recorded_at, updated_at, \
                         access_count, entity_type_id, entity_type_source, \
                         entity_type_assigned_at, ner_confidence \
-                 FROM entities WHERE id = ?1",
-                libsql::params![loser_id],
+                 FROM entities WHERE id = ?1 AND group_id = ?2",
+                libsql::params![loser_id, group_id],
             )
             .await?;
         let Some(row) = rows.next().await? else {
             return Err(Error::Other(anyhow::anyhow!(
-                "reversible-mutations snapshot: loser entity `{loser_id}` not found — \
-                 cannot capture a reversible pre-state for this merge"
+                "reversible-mutations snapshot: loser entity `{loser_id}` not found in \
+                 namespace `{group_id}` — cannot capture a reversible pre-state for this merge"
             )));
         };
         // `embedding` is an F32_BLOB; capture the raw bytes faithfully and
@@ -1020,23 +1082,27 @@ async fn snapshot_merge_pre_state(
             ner_confidence: row.get::<Option<f64>>(10)?,
         }
     };
-    let group_id = loser_entity_row.group_id.clone();
+    // Recorded provenance group_id — equals the caller's `group_id` (the row
+    // above is now scoped to it); captured from the row itself so the
+    // persisted snapshot reflects exactly what was read, not an assumption.
+    let captured_group_id = loser_entity_row.group_id.clone();
 
     // (2) keeper's PRE-merge access_count + ner_confidence (spec §2.3(2)) —
     //     captured BEFORE the merge's accumulate + noisy-OR overwrite (both
     //     non-invertible), so undo restores these exact values, not a subtraction.
+    //     ADR-029d: scoped by `group_id` — the keeper lives in this namespace.
     let keeper_pre = {
         let mut rows = graph
             .conn
             .query(
-                "SELECT access_count, ner_confidence FROM entities WHERE id = ?1",
-                libsql::params![keeper_id],
+                "SELECT access_count, ner_confidence FROM entities WHERE id = ?1 AND group_id = ?2",
+                libsql::params![keeper_id, group_id],
             )
             .await?;
         let Some(row) = rows.next().await? else {
             return Err(Error::Other(anyhow::anyhow!(
-                "reversible-mutations snapshot: keeper entity `{keeper_id}` not found — \
-                 cannot capture a reversible pre-state for this merge"
+                "reversible-mutations snapshot: keeper entity `{keeper_id}` not found in \
+                 namespace `{group_id}` — cannot capture a reversible pre-state for this merge"
             )));
         };
         KeeperPre {
@@ -1049,18 +1115,19 @@ async fn snapshot_merge_pre_state(
     // (3) facts re-pointed loser→keeper (spec §2.3(3)). The merge stamps each
     //     `corroboration_inert = 1`; capture the PRIOR flag per (fact_id,
     //     endpoint) so undo restores it — a fact already inert from an EARLIER
-    //     merge must NOT be cleared (the monotone-undo trap, §12 CH-3). The two
-    //     SELECT predicates match the merge's endpoint UPDATEs exactly (subject
-    //     then object), no group filter. A self-referential fact (loser on BOTH
-    //     endpoints) is captured twice, once per endpoint — correct, undo reverts
-    //     both.
+    //     merge must NOT be cleared (the monotone-undo trap, §12 CH-3). ADR-029d:
+    //     both SELECT predicates now filter on `subject_group_id`/`object_group_id`
+    //     to match the merge's scoped endpoint UPDATEs exactly (subject then
+    //     object). A self-referential fact (loser on BOTH endpoints) is captured
+    //     twice, once per endpoint — correct, undo reverts both.
     let mut repointed_facts: Vec<RepointedFact> = Vec::new();
     {
         let mut rows = graph
             .conn
             .query(
-                "SELECT id, corroboration_inert FROM facts WHERE subject_id = ?1",
-                libsql::params![loser_id],
+                "SELECT id, corroboration_inert FROM facts \
+                 WHERE subject_id = ?1 AND subject_group_id = ?2",
+                libsql::params![loser_id, group_id],
             )
             .await?;
         while let Some(row) = rows.next().await? {
@@ -1075,8 +1142,9 @@ async fn snapshot_merge_pre_state(
         let mut rows = graph
             .conn
             .query(
-                "SELECT id, corroboration_inert FROM facts WHERE object_id = ?1",
-                libsql::params![loser_id],
+                "SELECT id, corroboration_inert FROM facts \
+                 WHERE object_id = ?1 AND object_group_id = ?2",
+                libsql::params![loser_id, group_id],
             )
             .await?;
         while let Some(row) = rows.next().await? {
@@ -1096,14 +1164,16 @@ async fn snapshot_merge_pre_state(
     //     `UPDATE OR IGNORE` drops a colliding loser edge (undo re-INSERTs it
     //     under the loser) and re-points a non-colliding one (undo re-points it
     //     back) — §4.2 step 4. Cursors never overlap: the loser edges are drained
-    //     into a Vec before the per-edge collision sub-queries run.
+    //     into a Vec before the per-edge collision sub-queries run. ADR-029d:
+    //     scoped by `entity_group_id` to match the merge's scoped
+    //     `UPDATE OR IGNORE episodic_edges ... AND entity_group_id = ?` exactly.
     let loser_edges: Vec<(i64, String, String, String, String)> = {
         let mut rows = graph
             .conn
             .query(
                 "SELECT episode_id, entity_group_id, entity_id, role, recorded_at \
-                 FROM episodic_edges WHERE entity_id = ?1",
-                libsql::params![loser_id],
+                 FROM episodic_edges WHERE entity_id = ?1 AND entity_group_id = ?2",
+                libsql::params![loser_id, group_id],
             )
             .await?;
         let mut v = Vec::new();
@@ -1184,7 +1254,7 @@ async fn snapshot_merge_pre_state(
         tracing::debug!(
             target: "kremory.graph.provenance",
             kind = "entity_merge",
-            group_id = %group_id,
+            group_id = %captured_group_id,
             pre_state = %pre_state_json,
             inputs = %inputs_json,
             "reversible-mutations merge snapshot captured (pre-destroy)"
@@ -1200,13 +1270,19 @@ async fn snapshot_merge_pre_state(
         .execute(
             "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            libsql::params!["entity_merge", group_id.clone(), now, pre_state_json, inputs_json],
+            libsql::params![
+                "entity_merge",
+                captured_group_id.clone(),
+                now,
+                pre_state_json,
+                inputs_json
+            ],
         )
         .await?;
 
     // Return the namespace this merge scoped, for the post-commit
     // `mutation_logged_total{group_id}` label (spec §8.2).
-    Ok(group_id)
+    Ok(captured_group_id)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1354,6 +1430,7 @@ mod tests {
             ApplyMergeParams {
                 loser_id: "loser",
                 keeper_id: "keeper",
+                group_id: "g1",
                 embedder: None,
             },
         )
@@ -1807,6 +1884,7 @@ mod tests {
             EntityMergeParams {
                 loser_id: "loser",
                 keeper_id: "keeper",
+                group_id: gid,
                 site: MergeSite::Canonicalize,
                 structural_signal: false,
                 embedder: None,
@@ -1850,6 +1928,7 @@ mod tests {
             EntityMergeParams {
                 loser_id: "loser",
                 keeper_id: "keeper",
+                group_id: gid,
                 site: MergeSite::Canonicalize,
                 structural_signal: false,
                 embedder: None,
@@ -1910,6 +1989,7 @@ mod tests {
             EntityMergeParams {
                 loser_id: "loser",
                 keeper_id: "keeper",
+                group_id: gid,
                 site: MergeSite::Canonicalize,
                 structural_signal: false,
                 embedder: Some(&embedder),
@@ -1953,6 +2033,7 @@ mod tests {
             EntityMergeParams {
                 loser_id: "loser",
                 keeper_id: "keeper",
+                group_id: gid,
                 site: MergeSite::Canonicalize,
                 structural_signal: false,
                 embedder: None,

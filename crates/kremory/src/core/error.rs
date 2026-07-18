@@ -275,10 +275,14 @@ pub enum Error {
         policy: crate::memory::types::NamespacePolicy,
     },
 
-    /// An entity insert was blocked because the same entity name (`name`) is
-    /// already registered in a different namespace group (`existing_ns`) and
-    /// the `AppendOnly` policy prevents cross-namespace collision. Added v0.1.5
-    /// (ADR-029b §3.2 — closes bypass surface #2: swallowed UNIQUE error).
+    /// **RESERVED — not currently produced (ADR-029d).** Entity identity is
+    /// per-namespace-open by default: the same name in a different namespace is a
+    /// legitimate independent row (emitted as a non-blocking signal, not an error).
+    /// This variant is kept for the future opt-in strict-global-identity
+    /// `NamespacePolicy` (ADR-029d Decision 3, not yet built) — when a consumer
+    /// selects `EntityIdentityScope::StrictGlobal`, `insert_entity_with_group`
+    /// will return this. The earlier doc-comment claiming an `AppendOnly` gate was
+    /// false (the guard never read policy — ADR-029d §2 P1/P2).
     #[error(
         "cross-namespace collision: entity '{name}' exists in namespace '{existing_ns}' \
          but insert attempted in '{attempted_ns}'"

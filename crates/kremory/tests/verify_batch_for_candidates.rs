@@ -176,6 +176,7 @@ async fn dream_phase_compat_processes_only_provided() {
             candidates: &candidates,
             source_episode_text: "Alice works at Acme Corp in London.",
             llm: llm.as_ref(),
+            group_id: None,
             opts,
         },
     )
@@ -291,6 +292,7 @@ async fn dream_phase_compat_respects_provided_candidates_not_db_entities() {
             candidates: &three_candidates,
             source_episode_text: "Background entities test source episode text.",
             llm: llm.as_ref(),
+            group_id: None,
             opts,
         },
     )
@@ -399,6 +401,7 @@ async fn verify_batch_for_candidates_pre_write_flow() {
             candidates: &candidates,
             source_episode_text: "Alice works at Acme Corp. SomeAmbiguousThing was nearby.",
             llm: llm.as_ref(),
+            group_id: None,
             opts,
         },
     )
