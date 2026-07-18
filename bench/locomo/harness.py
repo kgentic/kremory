@@ -55,6 +55,12 @@ class Config:
     conversations: list[int] = field(default_factory=list)
     skip_ingest: bool = False
     output: Path | None = None
+    # kremory-http's GET /search accepts an optional ?mode=recall|content|hybrid
+    # (R-lane, commit d6ccd56) selecting which retrieval path the server uses.
+    # DISTINCT from `mode` above (baseline/rag/codemem/codemem-graph — the
+    # harness's OWN recall-strategy selector). Default "recall" preserves the
+    # pre-existing wire shape byte-for-byte (see CodememClient.recall()).
+    server_mode: str = "recall"
 
 
 # ---------------------------------------------------------------------------
@@ -62,9 +68,13 @@ class Config:
 # ---------------------------------------------------------------------------
 
 class CodememClient:
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, timeout: float = 30.0, server_mode: str = "recall"):
         self.base_url = base_url.rstrip("/")
         self.http = httpx.Client(base_url=self.base_url, timeout=timeout)
+        # kremory-http GET /search server-side retrieval mode (recall/content/
+        # hybrid) — see Config.server_mode docstring above for why this is a
+        # separate axis from --mode.
+        self.server_mode = server_mode
         # kremory's POST /memories runs a SYNCHRONOUS 3-stage LLM extraction
         # pipeline (entities -> relations -> triplets, then per-entity
         # ResolutionVerdict dedup calls) on every store — this is not a
@@ -142,7 +152,14 @@ class CodememClient:
     def recall(self, query: str, namespace: str, limit: int = 15) -> list[dict]:
         r = self.http.get(
             "/search",
-            params={"q": query, "namespace": namespace, "k": limit},
+            params={
+                "q": query,
+                "namespace": namespace,
+                "k": limit,
+                # Only send `mode` when non-default so the default (recall)
+                # wire shape is byte-identical to pre-existing behaviour.
+                **({"mode": self.server_mode} if self.server_mode != "recall" else {}),
+            },
         )
         if r.status_code == 200:
             return r.json().get("results", [])
@@ -610,7 +627,7 @@ def recall_baseline(sessions: list[dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def run_benchmark(config: Config) -> dict:
-    client = CodememClient(config.base_url)
+    client = CodememClient(config.base_url, server_mode=config.server_mode)
 
     # Health check
     if config.mode != "baseline" and not client.health():
@@ -837,6 +854,10 @@ def main():
                         help="Codemem API base URL")
     parser.add_argument("--recall-limit", type=int, default=50,
                         help="Default recall limit for single-hop questions")
+    parser.add_argument("--server-mode", default="recall",
+                        choices=["recall", "content", "hybrid"],
+                        help="kremory-http GET /search server-side retrieval mode "
+                             "(distinct from --mode, the harness's own recall strategy)")
     parser.add_argument("--graph-depth", type=int, default=2,
                         help="Graph expansion depth for codemem-graph mode")
     parser.add_argument("--conversations", type=int, nargs="*", default=[],
@@ -856,6 +877,7 @@ def main():
         conversations=args.conversations or [],
         skip_ingest=args.skip_ingest,
         output=args.output,
+        server_mode=args.server_mode,
     )
     run_benchmark(config)
 
