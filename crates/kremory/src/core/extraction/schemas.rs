@@ -87,6 +87,38 @@ pub(crate) struct ResolutionVerdictWrapper {
     pub(crate) verdict: String,
 }
 
+/// One resolved entity in a **batched** entity-resolution response (TD-127).
+///
+/// Mirrors Graphiti's `NodeDuplicate` (`graphiti_core/prompts/dedupe_nodes.py`).
+/// `id` indexes the extracted-entity list presented in the prompt (`0..N-1`);
+/// `duplicate_candidate_id` is the `candidate_id` of the matching EXISTING
+/// entity in the shared per-chunk candidate pool, or `-1` when the entity is
+/// novel (no duplicate).
+///
+/// Required fields carry **no** `#[serde(default)]` (per `llm-output-parse-loudly`):
+/// a missing field is a parse error so the fallback ladder can retry rather than
+/// silently defaulting to a wrong resolution. `id` is `u32`; `duplicate_candidate_id`
+/// is `i32` because `-1` (novel) is a valid, load-bearing value.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct BatchedNodeResolution {
+    /// Index into the extracted-entity list for this chunk (`0..N-1`).
+    pub(crate) id: u32,
+    /// `candidate_id` of the matching existing entity, or `-1` if novel.
+    pub(crate) duplicate_candidate_id: i32,
+}
+
+/// Root wrapper for a batched entity-resolution response (TD-127).
+///
+/// Mirrors Graphiti's `NodeResolutions` — a single `entity_resolutions` array,
+/// one entry per extracted entity that survived the deterministic cheap tiers
+/// (exact + MinHash) and the ADR-075 cosine blocking pre-filter. Replaces the
+/// O(extracted × candidates) pairwise `ResolutionVerdictWrapper` fan-out with
+/// one structured call per chunk.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct BatchedNodeResolutions {
+    pub(crate) entity_resolutions: Vec<BatchedNodeResolution>,
+}
+
 // ─── Schema-local parse-target types ─────────────────────────────────────────
 
 /// Schema-specific entity-only output: used by SCHEMA_NUEXTRACT_ENTITIES_ONLY
@@ -315,6 +347,20 @@ pub(crate) static SCHEMA_REL_ONLY_FORCE_FALLBACK: LazyLock<Value> = LazyLock::ne
 /// so the classification response is schema-enforced through `StructuredCallBuilder`.
 pub(crate) static SCHEMA_RESOLUTION_VERDICT: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(ResolutionVerdictWrapper)).unwrap_or_else(|e| {
+        panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
+    })
+});
+
+/// Schema for the TD-127 **batched** entity-resolution call.
+/// Root object with `entity_resolutions: [BatchedNodeResolution]`.
+///
+/// Replaces the O(extracted × candidates) pairwise `SCHEMA_RESOLUTION_VERDICT`
+/// fan-out with one structured call per chunk (Graphiti `NodeResolutions`
+/// pattern). Invoked via `StructuredCallBuilder` exactly like the pairwise
+/// schema; the deterministic exact/MinHash tiers and ADR-075 cosine blocking
+/// still run first so only the ambiguous remainder reaches this call.
+pub(crate) static SCHEMA_BATCHED_RESOLUTION: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::to_value(schemars::schema_for!(BatchedNodeResolutions)).unwrap_or_else(|e| {
         panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
     })
 });
@@ -887,5 +933,45 @@ mod tests {
         assert_eq!(schema["type"], "object", "root must be object");
         let entities = &schema["properties"]["entities"];
         assert_eq!(entities["type"], "array", "entities must be array");
+    }
+
+    // ── TD-127 batched-resolution schema spike ───────────────────────────────
+    // Mechanical compile-spike (per mechanical-compile-spike-beats-paper-review):
+    // proves the Graphiti NodeResolutions-style schema derives, generates valid
+    // JSON Schema at runtime, and round-trips the load-bearing `-1` novel value.
+
+    #[test]
+    fn schema_batched_resolution_is_object_with_entity_resolutions_array() {
+        let schema: &Value = &SCHEMA_BATCHED_RESOLUTION;
+        assert_eq!(schema["type"], "object", "root must be object");
+        let arr = &schema["properties"]["entity_resolutions"];
+        assert_eq!(arr["type"], "array", "entity_resolutions must be array");
+    }
+
+    #[test]
+    fn batched_resolution_parses_novel_and_duplicate_rows() {
+        // duplicate_candidate_id = -1 (novel) and >=0 (matched) must both parse.
+        let raw = r#"{"entity_resolutions":[
+            {"id":0,"duplicate_candidate_id":-1},
+            {"id":1,"duplicate_candidate_id":3}
+        ]}"#;
+        let parsed: BatchedNodeResolutions =
+            serde_json::from_str(raw).expect("well-formed batched resolution must parse");
+        assert_eq!(parsed.entity_resolutions.len(), 2);
+        assert_eq!(parsed.entity_resolutions[0].duplicate_candidate_id, -1);
+        assert_eq!(parsed.entity_resolutions[1].id, 1);
+        assert_eq!(parsed.entity_resolutions[1].duplicate_candidate_id, 3);
+    }
+
+    #[test]
+    fn batched_resolution_missing_required_field_is_parse_error() {
+        // No #[serde(default)] on required fields — a missing duplicate_candidate_id
+        // must be a loud parse error (llm-output-parse-loudly), not a silent default.
+        let raw = r#"{"entity_resolutions":[{"id":0}]}"#;
+        let parsed: Result<BatchedNodeResolutions, _> = serde_json::from_str(raw);
+        assert!(
+            parsed.is_err(),
+            "missing duplicate_candidate_id must fail parse, not default"
+        );
     }
 }
