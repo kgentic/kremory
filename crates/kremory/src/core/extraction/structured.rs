@@ -493,9 +493,17 @@ async fn try_arm<L: ?Sized + ChatProvider>(
     let text = match arm {
         FallbackArm::NativeSchema | FallbackArm::FormatSchema => {
             // Pass schema to the provider via StructuredOutputFormat.
+            // description MUST be non-null: Groq's OpenAI-compatible endpoint
+            // validates `response_format.json_schema.description` as non-nullable
+            // and 400s on `null` (Ollama/OpenAI tolerate the omission). Emit a
+            // deterministic description so the format_schema arm works across
+            // every provider instead of silently falling through to
+            // LlmJsonRepair. (load-bearing-invariant-at-emit; spec §5.2.)
             let fmt = StructuredOutputFormat {
                 name: schema_name.to_string(),
-                description: None,
+                description: Some(format!(
+                    "Structured extraction output conforming to the {schema_name} schema."
+                )),
                 schema: Some(schema.clone()),
                 strict: Some(matches!(arm, FallbackArm::NativeSchema)),
             };
@@ -972,6 +980,22 @@ mod tests {
     fn ollama_model_builds_format_schema_arm() {
         let ladder = build_ladder(capability_of("qwen2.5:14b"));
         assert_eq!(ladder[0], FallbackArm::FormatSchema);
+    }
+
+    // ── FormatSchema arm for gpt-oss (Groq / Together / vLLM) ──────────────────
+
+    #[test]
+    fn gpt_oss_model_builds_format_schema_arm() {
+        // Groq serves gpt-oss with an `openai/` prefix; both forms must resolve
+        // to FormatSchema (not fall through to PromptOnly → LlmJsonRepair).
+        assert_eq!(
+            build_ladder(capability_of("openai/gpt-oss-120b"))[0],
+            FallbackArm::FormatSchema
+        );
+        assert_eq!(
+            build_ladder(capability_of("gpt-oss-20b"))[0],
+            FallbackArm::FormatSchema
+        );
     }
 
     // ── FormatSchema arm succeeds with valid JSON ─────────────────────────────
