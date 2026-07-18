@@ -420,7 +420,7 @@ impl TemporalGraph {
              FROM entities_fts AS fts \
              JOIN entities AS e ON e.id = fts.entity_id \
              WHERE entities_fts MATCH ?1{} \
-             ORDER BY fts.rank LIMIT ?2",
+             ORDER BY fts.rank, fts.entity_id LIMIT ?2",
             group_clause
         );
 
@@ -499,7 +499,7 @@ impl TemporalGraph {
              JOIN facts AS f ON CAST(fts.fact_id AS INTEGER) = f.id
              WHERE facts_fts MATCH ?1
                AND f.expired_at IS NULL{}
-             ORDER BY fts.rank
+             ORDER BY fts.rank, f.id
              LIMIT ?2",
             group_clause
         );
@@ -678,7 +678,7 @@ impl TemporalGraph {
              FROM episodes_fts \
              JOIN episodes AS e ON e.id = episodes_fts.rowid \
              WHERE episodes_fts MATCH ?1{group_clause} \
-             ORDER BY episodes_fts.rank \
+             ORDER BY episodes_fts.rank, e.id \
              LIMIT ?2",
         );
 
@@ -889,7 +889,7 @@ impl TemporalGraph {
              JOIN entities AS e ON e.rowid = v.id \
              LEFT JOIN entity_types et ON et.group_id = e.group_id AND et.id = e.entity_type_id \
              WHERE 1=1{group_clause} \
-             ORDER BY distance ASC \
+             ORDER BY distance ASC, e.id ASC \
              LIMIT ?{limit_param}"
         );
 
@@ -946,7 +946,7 @@ impl TemporalGraph {
              FROM entities e \
              LEFT JOIN entity_types et ON et.group_id = e.group_id AND et.id = e.entity_type_id \
              WHERE e.embedding IS NOT NULL{} \
-             ORDER BY distance ASC \
+             ORDER BY distance ASC, e.id ASC \
              LIMIT ?2",
             group_clause
         );
@@ -1142,7 +1142,7 @@ impl TemporalGraph {
              FROM vector_top_k('facts_vec_idx', vector(?1), ?2) AS v
              JOIN facts AS f ON f.rowid = v.id
              WHERE f.expired_at IS NULL{group_clause}
-             ORDER BY distance ASC
+             ORDER BY distance ASC, f.id ASC
              LIMIT ?{limit_param}"
         );
 
@@ -1198,7 +1198,7 @@ impl TemporalGraph {
              FROM facts
              WHERE embedding IS NOT NULL
                AND expired_at IS NULL{}
-             ORDER BY distance ASC
+             ORDER BY distance ASC, id ASC
              LIMIT ?2",
             group_clause
         );
@@ -1390,7 +1390,15 @@ fn rrf_fuse_entities(
             .or_insert((rrf_score, hit.item));
     }
 
-    // Sort by RRF score descending (higher = more relevant)
+    // Sort by RRF score descending (higher = more relevant). Ties (common —
+    // e.g. two entities that only appear in one source list, at the same
+    // rank position, score identically) were previously broken by
+    // `HashMap`'s per-process-random iteration order, making result order
+    // nondeterministic across restarts on otherwise-identical input (recall-
+    // ranking nondeterminism bug). `(id, group_id)` is the same composite
+    // key `scores` is keyed on above, so it's already a total order across
+    // the deduplicated result set — deterministic secondary tie-break, no
+    // relevance signal implied.
     let mut results: Vec<SearchHit<Entity>> = scores
         .into_values()
         .map(|(score, entity)| SearchHit {
@@ -1402,6 +1410,8 @@ fn rrf_fuse_entities(
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.item.id.cmp(&b.item.id))
+            .then_with(|| a.item.group_id.cmp(&b.item.group_id))
     });
     results
 }
@@ -1451,7 +1461,12 @@ fn rrf_fuse_facts(
             .or_insert((rrf_score, hit.item));
     }
 
-    // Sort by RRF score descending (higher = more relevant)
+    // Sort by RRF score descending (higher = more relevant). Ties were
+    // previously broken by `HashMap`'s per-process-random iteration order —
+    // nondeterministic across restarts on identical input (recall-ranking
+    // nondeterminism bug). `id` (`INTEGER PRIMARY KEY AUTOINCREMENT`, per the
+    // doc comment above) is globally unique, so it alone is a sufficient
+    // deterministic secondary tie-break — no relevance signal implied.
     let mut results: Vec<SearchHit<Fact>> = scores
         .into_values()
         .map(|(score, fact)| SearchHit { item: fact, score })
@@ -1460,6 +1475,7 @@ fn rrf_fuse_facts(
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.item.id.cmp(&b.item.id))
     });
     results
 }
@@ -3123,6 +3139,145 @@ mod tests {
             results.len(),
             2,
             "empty group_ids should return all entities"
+        );
+    }
+
+    // === Recall-ranking nondeterminism fix: `rrf_fuse_entities`/`rrf_fuse_facts` ===
+    //
+    // `rrf_fuse_entities`/`rrf_fuse_facts` accumulate scores into a
+    // `HashMap`, then sort the collected `Vec` by score descending. Two
+    // distinct ids that each appear in only ONE of the two input lists, at
+    // the same rank position, score EXACTLY the same RRF value (bit-for-bit
+    // — IEEE754 addition is commutative, and here it's literally the same
+    // single term on both sides: `1.0 / (k + rank + 1.0)`). Pre-fix, the
+    // resulting tie was broken by `HashMap`'s iteration order — which
+    // varies per `HashMap` instance (fresh `RandomState` seed on every
+    // `HashMap::new()` call, even within the same process/thread) —
+    // producing run-to-run ranking jitter on byte-identical input. These
+    // tests force that exact tie and prove the fix's `.then_with(...)`
+    // secondary key makes the result deterministic across repeated calls.
+
+    fn test_entity(id: &str) -> Entity {
+        Entity {
+            id: id.to_owned(),
+            label: id.to_owned(),
+            entity_type_id: 0,
+            properties: serde_json::Value::Null,
+            recorded_at: Utc::now(),
+            updated_at: None,
+            group_id: None,
+            access_count: 0,
+        }
+    }
+
+    fn test_fact(id: i64) -> Fact {
+        Fact {
+            id,
+            subject_id: "s".to_owned(),
+            predicate: "p".to_owned(),
+            object_id: None,
+            object_value: Some("o".to_owned()),
+            properties: None,
+            valid_from: Utc::now(),
+            valid_to: None,
+            recorded_at: Utc::now(),
+            expired_at: None,
+            invalid_at: None,
+            group_id: None,
+            confidence: 1.0,
+            source_episode_id: None,
+            memory_type: None,
+            content_hash: None,
+            access_count: 0,
+            subject_group_id: None,
+            object_group_id: None,
+        }
+    }
+
+    #[test]
+    fn rrf_fuse_entities_deterministic_across_repeated_calls_on_genuine_tie() {
+        // "tie_b" is FTS-only at rank 0; "tie_a" is vector-only at rank 0.
+        // Under the shared helper's unweighted RRF (k=60), both score
+        // exactly `1.0 / 61.0` — a genuine, bit-exact tie between two
+        // DIFFERENT entities, forcing the HashMap-collection-then-sort path
+        // to rely on the secondary tie-break to stay deterministic.
+        let vector_hits = vec![SearchHit {
+            item: test_entity("tie_a"),
+            score: -0.01, // vector score is unused by rrf_fuse_entities (rank-based)
+        }];
+        let fts_hits = vec![SearchHit {
+            item: test_entity("tie_b"),
+            score: -1.0, // fts score is unused by rrf_fuse_entities (rank-based)
+        }];
+
+        let mut first_order: Option<Vec<String>> = None;
+        for i in 0..20 {
+            let out = rrf_fuse_entities(vector_hits.clone(), fts_hits.clone(), 60.0);
+            assert_eq!(out.len(), 2, "run {i}: expected both tied entities present");
+            assert!(
+                (out[0].score - out[1].score).abs() < f64::EPSILON,
+                "run {i}: expected a genuine bit-exact score tie, got {} vs {}",
+                out[0].score,
+                out[1].score
+            );
+            let order: Vec<String> = out.into_iter().map(|h| h.item.id).collect();
+            match &first_order {
+                None => first_order = Some(order),
+                Some(expected) => assert_eq!(
+                    &order, expected,
+                    "run {i}: tied-score order differs from run 0 — ranking is \
+                     nondeterministic across repeated calls"
+                ),
+            }
+        }
+        // The deterministic tie-break is id ascending: "tie_a" < "tie_b".
+        assert_eq!(
+            first_order.unwrap(),
+            vec!["tie_a".to_owned(), "tie_b".to_owned()],
+            "tied entities must order by id ascending, not HashMap iteration order"
+        );
+    }
+
+    #[test]
+    fn rrf_fuse_facts_deterministic_across_repeated_calls_on_genuine_tie() {
+        // fact id 20 is FTS-only at rank 0; fact id 10 is vector-only at
+        // rank 0 — same exact-tie construction as the entities test above,
+        // but with numeric ids so the tie-break (ascending fact id) is
+        // distinguishable from insertion/label order.
+        let vector_hits = vec![SearchHit {
+            item: test_fact(10),
+            score: -0.01,
+        }];
+        let fts_hits = vec![SearchHit {
+            item: test_fact(20),
+            score: -1.0,
+        }];
+
+        let mut first_order: Option<Vec<i64>> = None;
+        for i in 0..20 {
+            let out = rrf_fuse_facts(vector_hits.clone(), fts_hits.clone(), 60.0);
+            assert_eq!(out.len(), 2, "run {i}: expected both tied facts present");
+            assert!(
+                (out[0].score - out[1].score).abs() < f64::EPSILON,
+                "run {i}: expected a genuine bit-exact score tie, got {} vs {}",
+                out[0].score,
+                out[1].score
+            );
+            let order: Vec<i64> = out.into_iter().map(|h| h.item.id).collect();
+            match &first_order {
+                None => first_order = Some(order),
+                Some(expected) => assert_eq!(
+                    &order, expected,
+                    "run {i}: tied-score order differs from run 0 — ranking is \
+                     nondeterministic across repeated calls"
+                ),
+            }
+        }
+        // The deterministic tie-break is id ascending: 10 < 20.
+        assert_eq!(
+            first_order.unwrap(),
+            vec![10_i64, 20_i64],
+            "tied facts must order by id ascending, not HashMap iteration order"
         );
     }
 }
