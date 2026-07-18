@@ -316,6 +316,13 @@ pub struct VerifyBatchForCandidatesParams<'a> {
     pub candidates: &'a [crate::core::ingest::EntityCandidate],
     pub source_episode_text: &'a str,
     pub llm: &'a dyn crate::core::provider::ChatProvider,
+    /// ADR-029d: the namespace these candidates resolve entity rowids in.
+    /// `None` ⇒ `'default'` (mirrors `entity_groups.rs`'s `effective_group_id`
+    /// convention). Entity identity is per-namespace-open — the same
+    /// normalized name can exist as independent rows in TWO namespaces, so
+    /// the rowid lookup below MUST filter on this, or it can resolve to (and
+    /// then correct/audit) an entity in the WRONG namespace (TD-129).
+    pub group_id: Option<&'a str>,
     pub opts: VerifyBatchForCandidatesOpts,
 }
 
@@ -361,8 +368,13 @@ pub async fn verify_batch_for_candidates(
         candidates,
         source_episode_text,
         llm,
+        group_id,
         opts,
     } = params;
+    // ADR-029d: resolve None → 'default' once, mirroring `entity_groups.rs`'s
+    // `effective_group_id` convention so callers that pass `None` (single-
+    // namespace consumers) keep their existing semantics.
+    let effective_group_id = group_id.unwrap_or("default");
 
     counter!("kremory.verify_batch_for_candidates.invoked_total").increment(1);
 
@@ -399,10 +411,15 @@ pub async fn verify_batch_for_candidates(
     for ec in effective_candidates {
         let entity_id = normalize_name(&ec.name);
         let rowid: i64 = {
+            // ADR-029d / TD-129: scoped by `group_id` — an unscoped
+            // `WHERE id = ?1 LIMIT 1` can resolve to a DIFFERENT namespace's
+            // same-id entity under per-namespace-open, so `apply_correction`/
+            // `write_audit_row` downstream could mutate the wrong namespace's
+            // row (cross-namespace correctness bug).
             let mut rows = db
                 .query(
-                    "SELECT rowid FROM entities WHERE id = ?1 LIMIT 1",
-                    libsql::params![entity_id.clone()],
+                    "SELECT rowid FROM entities WHERE id = ?1 AND group_id = ?2 LIMIT 1",
+                    libsql::params![entity_id.clone(), effective_group_id],
                 )
                 .await
                 .map_err(|e| {

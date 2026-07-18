@@ -312,6 +312,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                     crate::core::canonicalization::ApplyMergeWithAuditParams {
                         loser_id: &pair.b,
                         keeper_id: &pair.a,
+                        group_id,
                         site: crate::core::dream::provenance::MergeSite::Site5AcronymNickname,
                         // Site #5 nominates via the deterministic structural
                         // pre-filter (initialism / graph co-occurrence), so the
@@ -661,7 +662,7 @@ async fn adjudicate_chunk<L: ChatProvider>(
     // resolved by prior chunks (and aborting the dream pass). Catch it and
     // default ONLY this chunk to no-verdict, matching the LLM-call-failure branch
     // below (no false merge — write_gate needs a verdict to merge).
-    let messages = match build_adjudication_messages(conn, chunk).await {
+    let messages = match build_adjudication_messages(conn, chunk, group_id).await {
         Ok(m) => m,
         Err(e) => {
             tracing::warn!(
@@ -794,6 +795,7 @@ async fn adjudicate_chunk<L: ChatProvider>(
 async fn build_adjudication_messages(
     conn: &libsql::Connection,
     nominated: &[NominatedPair],
+    group_id: &str,
 ) -> Result<Vec<crate::core::provider::ChatMessage>> {
     let system = "You are a knowledge-graph entity-identity analyst. You will be shown \
 pairs of entity names (with any known description and recent facts) that a structural \
@@ -806,8 +808,8 @@ real-world entity. Respond ONLY with the JSON structure — no extra commentary.
 
     let mut pair_lines = Vec::with_capacity(nominated.len());
     for (pair_id, pair) in nominated.iter().enumerate() {
-        let desc_a = load_entity_description(conn, &pair.a).await?;
-        let desc_b = load_entity_description(conn, &pair.b).await?;
+        let desc_a = load_entity_description(conn, &pair.a, group_id).await?;
+        let desc_b = load_entity_description(conn, &pair.b, group_id).await?;
         let facts_a = load_top3_facts(conn, &pair.a).await?;
         let facts_b = load_top3_facts(conn, &pair.b).await?;
         pair_lines.push(format!(
@@ -865,11 +867,16 @@ async fn load_entity_ids(conn: &libsql::Connection, group_id: &str) -> Result<Ve
 async fn load_entity_description(
     conn: &libsql::Connection,
     entity_id: &str,
+    group_id: &str,
 ) -> Result<Option<String>> {
+    // ADR-029d: MUST filter on group_id. Under per-namespace-open the same
+    // entity id can exist in two namespaces; an unscoped `WHERE id = ?1` would
+    // return whichever row libSQL yields first → cross-tenant data leak into the
+    // dream acronym/nickname adjudication prompt. (mirrors reclassify.rs:639.)
     let mut rows = conn
         .query(
-            "SELECT properties FROM entities WHERE id = ?1",
-            libsql::params![entity_id.to_string()],
+            "SELECT properties FROM entities WHERE id = ?1 AND group_id = ?2",
+            libsql::params![entity_id.to_string(), group_id.to_string()],
         )
         .await
         .map_err(|e| {
