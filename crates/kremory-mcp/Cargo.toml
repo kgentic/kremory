@@ -17,6 +17,17 @@ edition = "2021"
 # closed the reversible-mutations gap: floor-3 → floor-5 with
 # kremory_list_mutations (SEE) + kremory_undo (unified FIX dispatcher).
 
+[features]
+default = []
+# content-search: passthrough to kremory's ADR-072 seq1 BM25/FTS5 content
+# recall (`mem.recall(q).content()` -> `ContentPassage`). Wires
+# `GET /search?mode=content|hybrid` on the `kremory-http` REST bin
+# (benchmark-completion-roadmap W0.1) — `mode=recall` (the default) is
+# byte-identical whether or not this is enabled. Off by default; enabling it
+# costs nothing at ingest time (Migration 022 backfills `episodes_fts` from
+# already-stored `episodes.content` via pure SQL — no LLM/embedding re-ingest).
+content-search = ["kremory/content-search"]
+
 [lib]
 name = "kremory_mcp"
 path = "src/lib.rs"
