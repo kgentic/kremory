@@ -602,8 +602,16 @@ pub struct ContentPassage {
     /// The `episodes.id` (`INTEGER PRIMARY KEY AUTOINCREMENT`) this passage
     /// was recalled from.
     pub episode_id: i64,
-    /// An FTS5 `snippet()` extract of `episodes.content` around the matched
-    /// term(s) — NOT the full episode body.
+    /// The FULL `episodes.content` body of the matched episode. (Previously an
+    /// FTS5 `snippet()` 32-token excerpt; changed to full content so recall
+    /// carries the answer + the episode's leading `[Session N] [<time> on
+    /// <date>]` header — see `core::search::content_search` for the rationale
+    /// and the LoCoMo LLM-judge measurement that motivated it.) The field name
+    /// `snippet` is retained for now to avoid a breaking rename on this
+    /// `#[non_exhaustive]` public type; a rename to `content`/`text` is a
+    /// tracked follow-up. NOTE: length is unbounded — it is the whole episode
+    /// body, which is only conversation-turn-sized if the producer keeps
+    /// episodes small; a large single-episode document yields a large passage.
     pub snippet: String,
     /// BM25 relevance score from the `episodes_fts` `rank` hidden column
     /// (lower = more relevant, matching kremory's existing FTS score

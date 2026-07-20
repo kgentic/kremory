@@ -249,7 +249,8 @@ async fn recall_mode_results(
 /// `episodes.content` (`handlers::do_recall_content`), adapted into the SAME
 /// `{id, content, score}` wire contract `mode=recall` uses:
 /// `ContentPassage::episode_id` (stringified) -> `id`,
-/// `ContentPassage::snippet` -> `content`.
+/// `ContentPassage::snippet` (now the FULL matched-episode body, not a
+/// 32-token FTS5 excerpt — see `ContentPassage` doc) -> `content`.
 #[cfg(feature = "content-search")]
 async fn content_mode_results(
     mem: &Memory,
