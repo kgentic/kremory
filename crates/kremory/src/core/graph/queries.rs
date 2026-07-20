@@ -25,6 +25,14 @@ pub struct GetNeighboursAtParams<'a> {
     /// direct neighbours are all enqueued in the seed's own iteration, so the
     /// cap only fires on the NEXT iteration (after every hop-1 neighbour is
     /// already visited) — it bites only the hop>=2 expansion.
+    ///
+    /// DETERMINISM CAVEAT (Quinn REL-001): at `hops >= 2`, WHICH entities are
+    /// visited before the cap trips depends on the per-hop fact-query row order,
+    /// and that query has no `ORDER BY` — so the surviving visited SET can vary
+    /// run-to-run for an identical `hops >= 2` query. At the default `hops == 1`
+    /// this is fully deterministic (every direct neighbour is visited before the
+    /// cap fires). When `expansion_hop_bound` is actually raised past 1, add an
+    /// `ORDER BY id` to the per-hop query for a stable frontier.
     pub max_visited: Option<usize>,
 }
 
