@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use metrics::counter;
 use std::sync::Arc;
 
 use crate::core::error::Result;
@@ -181,18 +182,73 @@ pub(crate) fn build_dual_list_prompt(
 // Index Parser
 // ---------------------------------------------------------------------------
 
-/// Parse LLM response containing a wrapped JSON index list.
+/// Parse LLM response containing a JSON index list.
 ///
-/// Expects `{"indices": [1, 3]}` (the `ContradictionVerdictWrapper` shape).
-/// Malformed or bare-array responses return an empty list — the caller
-/// treats an empty list as "no contradictions detected".
+/// Requires the FULL wrapped shape `{"indices": [1, 3], "reason": "..."}` —
+/// deserialised directly as [`ContradictionVerdictWrapper`], whose `reason`
+/// field carries no `#[serde(default)]` (ADR-049 / `llm-output-parse-loudly`):
+/// a verdict missing its audit-trail justification is a PARSE FAILURE, not a
+/// degraded-but-usable result, so the fallback ladder can retry rather than
+/// silently accepting an incomplete response. This deliberately does NOT
+/// route through the shared shape-tolerant `parse_items` helper used by the
+/// other extraction parsers in this crate — that helper only inspects the
+/// `indices` key and has no concept of `reason` at all, so "shape-tolerant"
+/// there would silently mean "reason-optional" here, which is exactly the
+/// regression this function must not reintroduce. A bare `[1, 3]` array has
+/// no `reason` field by construction and is rejected on the same footing as
+/// a wrapped object that omits `reason`.
 ///
-/// The `u32` values from the wrapper are converted to `usize` for use as
-/// 1-based indices into the caller's `index_map` slice.
+/// Any parse failure (missing `reason`, bare array, wrong key, malformed
+/// JSON) is LOUD, never silent (Vera SCOPE-002): a bounded-cardinality
+/// `reason` label distinguishes the failure shape, plus the same
+/// `rql.extraction.silent_drop_suspected` signal every other extraction
+/// parser emits on a suspected drop. The caller still receives an empty list
+/// — treated as "no contradictions detected" — so a malformed verdict never
+/// panics the pipeline; the metric/log surface is what makes the drop
+/// observable instead of invisible.
+///
+/// The `u32` values found are converted to `usize` for use as 1-based indices
+/// into the caller's `index_map` slice.
 pub(crate) fn parse_index_list(json: &str) -> Vec<usize> {
-    serde_json::from_str::<ContradictionVerdictWrapper>(json.trim())
-        .map(|w| w.indices.into_iter().map(|i| i as usize).collect())
-        .unwrap_or_default()
+    let trimmed = json.trim();
+
+    match serde_json::from_str::<ContradictionVerdictWrapper>(trimmed) {
+        Ok(wrapper) => {
+            counter!("rql.extraction.json_parse_ok").increment(1);
+            wrapper.indices.into_iter().map(|i| i as usize).collect()
+        }
+        Err(_) => {
+            let reason = classify_index_list_parse_failure(trimmed);
+            counter!("rql.extraction.json_parse_fail", "reason" => reason).increment(1);
+            counter!("rql.extraction.silent_drop_suspected", "parser" => "contradiction_indices")
+                .increment(1);
+            tracing::warn!(
+                parser = "contradiction_indices",
+                reason,
+                "kremory.extraction.json_parse_fail"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// Classify why [`parse_index_list`] failed to deserialise `s` into the full
+/// [`ContradictionVerdictWrapper`], for a bounded-cardinality metric label
+/// (Rule 19 — never raw text in a label).
+fn classify_index_list_parse_failure(s: &str) -> &'static str {
+    match serde_json::from_str::<serde_json::Value>(s) {
+        Ok(serde_json::Value::Array(_)) => "bare_array",
+        Ok(serde_json::Value::Object(map)) => {
+            if !map.contains_key("indices") {
+                "missing_indices"
+            } else if !matches!(map.get("reason"), Some(serde_json::Value::String(_))) {
+                "missing_reason"
+            } else {
+                "malformed_indices"
+            }
+        }
+        _ => "malformed",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -571,19 +627,76 @@ mod tests {
 
     #[test]
     fn test_parse_index_list_wrapped_empty() {
-        assert_eq!(parse_index_list(r#"{"indices": []}"#), Vec::<usize>::new());
+        // Genuinely empty indices, `reason` present — a valid verdict of "no
+        // contradictions", not a rejected parse.
+        assert_eq!(
+            parse_index_list(r#"{"indices": [], "reason": "no overlap"}"#),
+            Vec::<usize>::new()
+        );
     }
 
     #[test]
-    fn test_parse_index_list_bare_array_returns_empty() {
-        // Old bare-array form "[1, 3]" is no longer valid — the LLM contract
-        // changed to wrapped form. Bare arrays return empty (safe fallback).
+    fn test_parse_index_list_bare_array_rejected_missing_reason() {
+        // 2026-07-20 parse-layer hardening regression fix (Vera SCOPE-002 /
+        // code-review F1): a bare `[1, 3]` array has NO `reason` field by
+        // construction, so it can never satisfy the `ContradictionVerdictWrapper`
+        // contract (ADR-049: `reason` is required, no `#[serde(default)]`).
+        // `parse_index_list` MUST reject it — same footing as any other
+        // reason-less verdict — rather than silently accepting it via a
+        // shape-tolerant fallback (that was the F1 regression: routing
+        // through the generic `parse_items` helper, which only checks
+        // `indices` and ignores `reason` entirely).
         assert_eq!(parse_index_list("[1, 3]"), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_parse_index_list_wrapped_missing_reason_rejected() {
+        // A wrapped object with `indices` but no `reason` must be rejected —
+        // ADR-049 / llm-output-parse-loudly: missing `reason` is a parse
+        // failure, not a silently-accepted degraded result.
+        assert_eq!(parse_index_list(r#"{"indices": [1, 3]}"#), Vec::<usize>::new());
     }
 
     #[test]
     fn test_parse_index_list_malformed() {
         assert_eq!(parse_index_list("garbage"), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn parse_index_list_rejection_emits_loud_observability() {
+        // F1 fix must not silently drop a reason-less verdict — Vera
+        // SCOPE-002's original complaint. Verify BOTH the missing-reason and
+        // bare-array rejection paths increment the loud-failure counters
+        // (`json_parse_fail` + `silent_drop_suspected`), using a local
+        // (non-global) `DebuggingRecorder` — same pattern as
+        // `tests/b1_observability.rs`.
+        use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
+
+        for input in [r#"{"indices": [1, 3]}"#, "[1, 3]"] {
+            let recorder = DebuggingRecorder::new();
+            let snapshotter: Snapshotter = recorder.snapshotter();
+
+            let result = metrics::with_local_recorder(&recorder, || parse_index_list(input));
+            assert!(result.is_empty(), "rejected verdict must yield empty list");
+
+            let names: Vec<String> = snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .map(|(key, _, _, _)| key.key().name().to_string())
+                .collect();
+
+            assert!(
+                names.iter().any(|n| n == "rql.extraction.json_parse_fail"),
+                "input {input:?} must increment json_parse_fail — got {names:?}"
+            );
+            assert!(
+                names
+                    .iter()
+                    .any(|n| n == "rql.extraction.silent_drop_suspected"),
+                "input {input:?} must increment silent_drop_suspected — got {names:?}"
+            );
+        }
     }
 
     // ── L1: Adversarial parse_index_list — "valid but useless" inputs ─────────
@@ -631,9 +744,10 @@ mod tests {
 
     #[test]
     fn parse_index_list_empty_array_returns_empty() {
-        // {"indices": []} is a valid wrapped form but contains no indices.
-        // Parser must return empty vec — not panic, not error.
-        let result = parse_index_list(r#"{"indices": []}"#);
+        // {"indices": [], "reason": "..."} is a valid wrapped form (reason
+        // present) but contains no indices. Parser must return empty vec —
+        // not panic, not error.
+        let result = parse_index_list(r#"{"indices": [], "reason": "nothing to flag"}"#);
         assert!(
             result.is_empty(),
             "empty indices array must return empty vec — got {result:?}"
@@ -733,8 +847,10 @@ mod tests {
     #[test]
     fn test_contradiction_via_mock_llm() {
         // Pool A has one fact that overlaps temporally and has a different object.
-        // MockChatProvider returns the wrapped form {"indices":[1]} for prompts
-        // containing "works_at". Bare-array form "[1]" is no longer accepted.
+        // MockChatProvider returns the wrapped form {"indices":[1],"reason":"..."}
+        // for prompts containing "works_at" — `reason` is required (ADR-049); a
+        // bare-array form "[1]" is REJECTED (no `reason` field possible) — see
+        // `test_parse_index_list_bare_array_rejected_missing_reason`.
         let t_start = dt(-10);
         let reference = dt(0);
 
