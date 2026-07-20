@@ -126,7 +126,7 @@ pub async fn do_recall(mem: &Memory, params: RecallParams) -> Result<serde_json:
 /// W0.1) — reaches past the entity-shaped `RetrievedContext` contract to
 /// ADR-072 seq1's BM25-only `.content()` recall terminal
 /// (`mem.recall(q).in_namespace(ns).k(k).content()`), returning raw
-/// `kremory::memory::ContentPassage` passages (episode-level FTS5 snippets,
+/// `kremory::memory::ContentPassage` passages (full matched-episode content,
 /// NOT fused with the entity/fact RRF stream — see `ContentPassage` doc).
 ///
 /// Feature-gated behind `content-search` (mirrors kremory's own gating) —

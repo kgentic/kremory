@@ -61,6 +61,13 @@ class Config:
     # harness's OWN recall-strategy selector). Default "recall" preserves the
     # pre-existing wire shape byte-for-byte (see CodememClient.recall()).
     server_mode: str = "recall"
+    # Workstream A: scorer selector. "substring" is the strict word-overlap
+    # matcher (check_answer_in_memories) — default, kept for reproducibility.
+    # "llm-judge" is an OFFLINE cross-family LLM-as-judge pass (judge_rescore.py)
+    # that credits semantic matches the substring matcher misses; the harness
+    # still runs substring inline and always persists `recalled_memories`, so
+    # both scorers report over the same run. Recorded in output metadata only.
+    scorer: str = "substring"
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +775,12 @@ def run_benchmark(config: Config) -> dict:
                 "category": category,
                 "evidence_ids": qa["evidence"],
                 "memories_recalled": len(memories),
+                # Workstream A (LLM-judge scorer): persist the actual recalled
+                # memory TEXTS per question so the run JSON is re-scorable
+                # offline by a cross-family LLM judge (judge_rescore.py) without
+                # re-running recall. The strict substring scorer above only
+                # consumes len(memories); the judge needs the strings.
+                "recalled_memories": memories,
                 "is_correct": is_correct,
                 "confidence": round(confidence, 4),
                 "explanation": explanation,
@@ -855,6 +868,8 @@ def run_benchmark(config: Config) -> dict:
 
     output = {
         "mode": config.mode,
+        "scorer": config.scorer,
+        "server_mode": config.server_mode,
         "total_questions": len(all_results),
         "category_stats": category_stats,
         "results": all_results,
@@ -912,6 +927,13 @@ def main():
                         help="Skip ingestion, reuse existing memories")
     parser.add_argument("--output", type=Path,
                         help="Output file path for results JSON")
+    parser.add_argument("--scorer", default="substring",
+                        choices=["substring", "llm-judge"],
+                        help="Scoring path. 'substring' = strict word-overlap "
+                             "matcher (default, reproducible). 'llm-judge' = "
+                             "the run captures recalled_memories for an OFFLINE "
+                             "cross-family LLM judge (see judge_rescore.py); "
+                             "substring still runs inline so both are reported.")
     args = parser.parse_args()
 
     config = Config(
@@ -924,6 +946,7 @@ def main():
         skip_ingest=args.skip_ingest,
         output=args.output,
         server_mode=args.server_mode,
+        scorer=args.scorer,
     )
     run_benchmark(config)
 
