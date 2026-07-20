@@ -165,6 +165,9 @@ pub mod reclassification;
 pub mod resolver;
 pub(crate) mod resolver_batched;
 pub mod schema;
+/// Post-RRF recall scoring axes (recall-v2 Phase 2b): ScoringWeights, per-intent
+/// weight lookup, temporal-recency boost, read-side-pure (no `execute(`).
+pub(crate) mod scoring;
 pub mod search;
 pub mod sink;
 pub mod speculative_cache;

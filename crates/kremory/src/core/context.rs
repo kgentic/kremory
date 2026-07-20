@@ -217,6 +217,23 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // decayed one — merged in below via `entry().or_insert()`.
         let mut expansion_scores: HashMap<String, f32> = HashMap::new();
 
+        // recall-v2 Phase 2b (Decision 1/5): resolve the per-intent axis weights
+        // over the config base. All intent multipliers are 1.0 for now, so this
+        // returns the config base unchanged — intent is CONSULTED (the
+        // `intent_total` counter above) but behaviourally neutral until Phase 7
+        // calibrates the multipliers (spec risk R3 resolved with a VISIBLE
+        // half-state: the reorder counters below read 0 until a weight is set).
+        let weights = crate::core::scoring::weight_overrides_for(
+            intent,
+            crate::core::scoring::ScoringWeights::from_config(&self.config.search),
+        );
+        let now = Utc::now();
+        let temporal_lambda = self.config.search.temporal_decay_lambda;
+        // Per-seed axis contributions, captured for post-loop reorder
+        // attribution (`kremory.search.<axis>_reorder_total`).
+        let mut axis_contributions: Vec<crate::core::scoring::SeedAxisContribution> =
+            Vec::with_capacity(seed_ids.len());
+
         for seed_id in &seed_ids {
             // ADR-068 Decision 2/3: `get_neighbours_at` with `as_of: None`
             // runs the copy-identical query `get_neighbours` ran here before
@@ -255,14 +272,36 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             // invariant even in the degenerate single-seed case where the
             // base score is already 1.0.
             let degree = subgraph.entities.len().saturating_sub(1);
-            // recall-v2 Phase 2a: the axis weight is config-driven now (default
-            // 0.05 = the former `GRAPH_DEGREE_WEIGHT` const, so this is
-            // behaviour-neutral). `0.0` would disable a live tested axis.
-            let degree_bonus = graph_degree_bonus(degree, self.config.search.graph_degree_weight);
+            // recall-v2 Phase 2a: config-driven graph-degree bonus (default 0.05,
+            // resolved through the per-intent weights above).
+            let degree_bonus = graph_degree_bonus(degree, weights.graph_degree_weight);
+            // recall-v2 Phase 2b: additive temporal-recency boost over the facts
+            // already fetched for THIS seed's 1-hop expansion — no new query
+            // (read-side-pure, spec RISK-003). Bounded `[0, weight]` like the
+            // degree bonus, so base + degree + temporal shares ONE `.min(1.0)`
+            // clamp (Fork-1 additive hybrid — no second normalization pass).
+            let temporal_bonus = crate::core::scoring::temporal::temporal_boost(
+                crate::core::scoring::temporal::TemporalBoostParams {
+                    facts: &subgraph.facts,
+                    weight: weights.temporal_weight,
+                    lambda: temporal_lambda,
+                    now,
+                },
+            );
+            // Capture the base (pre-boost) score + per-axis deltas BEFORE applying
+            // them, so `axis_reorders` can attribute output-order changes to each
+            // axis honestly after the loop.
+            let base_score = normalized.get(seed_id).copied().unwrap_or(0.0);
             normalized
                 .entry(seed_id.clone())
-                .and_modify(|s| *s = (*s + degree_bonus).min(1.0));
+                .and_modify(|s| *s = (*s + degree_bonus + temporal_bonus).min(1.0));
             let seed_score = normalized.get(seed_id).copied().unwrap_or(0.0);
+            axis_contributions.push(crate::core::scoring::SeedAxisContribution {
+                id: seed_id.clone(),
+                base: base_score,
+                degree_delta: degree_bonus,
+                temporal_delta: temporal_bonus,
+            });
 
             let mut neighbours_added_for_seed = 0usize;
             for entity in subgraph.entities {
@@ -309,6 +348,42 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // its own RRF+degree score untouched.
         for (id, score) in expansion_scores {
             normalized.entry(id).or_insert(score);
+        }
+
+        // recall-v2 Phase 2b measurement discipline: per-axis reorder attribution
+        // + axis-off counters. `axis_reorders` reports whether each axis actually
+        // changed the score-descending OUTPUT order of the seed set (HONEST — a
+        // non-zero boost that doesn't move the order reads `changed=false`, per
+        // observability Rule 19 #9 "counters must not lie"). This is the cheap
+        // gate the eval reads before spending an llm-judge run: `changed=true`
+        // count 0 ⇒ the axis reordered nothing ⇒ the judge run measures nothing.
+        let (degree_reordered, temporal_reordered) =
+            crate::core::scoring::axis_reorders(&axis_contributions);
+        metrics::counter!(
+            "kremory.search.graph_degree_reorder_total",
+            "changed" => if degree_reordered { "true" } else { "false" },
+        )
+        .increment(1);
+        metrics::counter!(
+            "kremory.search.temporal_reorder_total",
+            "changed" => if temporal_reordered { "true" } else { "false" },
+        )
+        .increment(1);
+        // Axis-off signal: how often each axis ran with a zero (neutral) weight.
+        if weights.graph_degree_weight <= 0.0 {
+            metrics::counter!("kremory.search.graph_degree_weight_zero_total").increment(1);
+        }
+        if weights.temporal_weight <= 0.0 {
+            metrics::counter!("kremory.search.temporal_weight_zero_total").increment(1);
+        }
+        // Fork-2 truth-boost build-trigger instrument (spec Decision 3): the
+        // fact-confidence distribution over this recall's facts. Today every
+        // writer hardcodes `confidence = 1.0`, so this is a spike at 1.0 — WHEN
+        // it stops being a spike, that's the mechanical signal to build the
+        // truth-boost axis (tracked by the new per-fact-confidence TD). Instrument
+        // now, don't half-ship the axis.
+        for fact in &all_facts {
+            metrics::histogram!("kremory.recall.fact_confidence").record(fact.confidence);
         }
 
         // Rule 19 / ADR-074 review H1: observe the fact-collection width of
