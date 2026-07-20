@@ -74,7 +74,16 @@ async fn plant_fact(graph: &TemporalGraph, subject: &str, predicate: &str, objec
              (subject_id, predicate, object_id, valid_from, recorded_at, group_id, \
               subject_group_id, object_group_id, confidence) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1.0)",
-            libsql::params![subject, predicate, object, now.clone(), now, GROUP, GROUP, GROUP],
+            libsql::params![
+                subject,
+                predicate,
+                object,
+                now.clone(),
+                now,
+                GROUP,
+                GROUP,
+                GROUP
+            ],
         )
         .await
         .expect("plant fact");
@@ -249,31 +258,67 @@ async fn edit_entity_rename_propagates_all_fks() {
     assert!(!outcome.retyped);
     assert_eq!(outcome.entity_id, NEW);
     assert_eq!(outcome.facts_repointed, 2, "both fact endpoints re-pointed");
-    assert_eq!(outcome.archived_repointed, 1, "archived fact subject re-pointed");
+    assert_eq!(
+        outcome.archived_repointed, 1,
+        "archived fact subject re-pointed"
+    );
     assert_eq!(outcome.edges_repointed, 1, "episodic edge re-pointed");
-    assert_eq!(outcome.communities_repointed, 1, "community membership re-pointed");
-    assert!(outcome.mutation_id > 0, "an entity_edit log row was written");
+    assert_eq!(
+        outcome.communities_repointed, 1,
+        "community membership re-pointed"
+    );
+    assert!(
+        outcome.mutation_id > 0,
+        "an entity_edit log row was written"
+    );
 
     // ── EVERY FK now points at NEW; ZERO dangling OLD references ──
-    assert_eq!(dangling_refs(&graph, OLD).await, 0, "no dangling old-id refs anywhere");
+    assert_eq!(
+        dangling_refs(&graph, OLD).await,
+        0,
+        "no dangling old-id refs anywhere"
+    );
 
     let (subj, _) = fact_endpoints(&graph, f_subj).await;
-    assert_eq!(subj.as_deref(), Some(NEW), "subject fact re-pointed to new id");
+    assert_eq!(
+        subj.as_deref(),
+        Some(NEW),
+        "subject fact re-pointed to new id"
+    );
     let (_, obj) = fact_endpoints(&graph, f_obj).await;
-    assert_eq!(obj.as_deref(), Some(NEW), "object fact re-pointed to new id");
+    assert_eq!(
+        obj.as_deref(),
+        Some(NEW),
+        "object fact re-pointed to new id"
+    );
 
     assert_eq!(
-        count(&graph, "SELECT COUNT(*) FROM facts_archive WHERE subject_id = ?1", NEW).await,
+        count(
+            &graph,
+            "SELECT COUNT(*) FROM facts_archive WHERE subject_id = ?1",
+            NEW
+        )
+        .await,
         1,
         "archived fact re-pointed (V5)"
     );
     assert_eq!(
-        count(&graph, "SELECT COUNT(*) FROM episodic_edges WHERE entity_id = ?1", NEW).await,
+        count(
+            &graph,
+            "SELECT COUNT(*) FROM episodic_edges WHERE entity_id = ?1",
+            NEW
+        )
+        .await,
         1,
         "episodic edge re-pointed"
     );
     assert_eq!(
-        count(&graph, "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1", NEW).await,
+        count(
+            &graph,
+            "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1",
+            NEW
+        )
+        .await,
         1,
         "community membership re-pointed"
     );
@@ -283,7 +328,12 @@ async fn edit_entity_rename_propagates_all_fks() {
         "entity PK row renamed"
     );
     assert_eq!(
-        count(&graph, "SELECT COUNT(*) FROM entities_fts WHERE entity_id = ?1", NEW).await,
+        count(
+            &graph,
+            "SELECT COUNT(*) FROM entities_fts WHERE entity_id = ?1",
+            NEW
+        )
+        .await,
         1,
         "FTS shadow rebuilt under new id"
     );
@@ -339,16 +389,30 @@ async fn edit_entity_rename_into_existing_rejected() {
     }
 
     // Both entities survive — no silent fuse.
-    assert_eq!(count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", OLD).await, 1);
-    assert_eq!(count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", NEW).await, 1);
+    assert_eq!(
+        count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", OLD).await,
+        1
+    );
+    assert_eq!(
+        count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", NEW).await,
+        1
+    );
     // No mutation-log row was written (the conflict short-circuits before the snapshot).
     let logged: i64 = {
         let mut rows = graph
             .conn
-            .query("SELECT COUNT(*) FROM graph_mutation_log WHERE kind = 'entity_edit'", ())
+            .query(
+                "SELECT COUNT(*) FROM graph_mutation_log WHERE kind = 'entity_edit'",
+                (),
+            )
             .await
             .expect("log count");
-        rows.next().await.expect("row").expect("count").get::<i64>(0).expect("n")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("count")
+            .get::<i64>(0)
+            .expect("n")
     };
     assert_eq!(logged, 0, "no entity_edit row on a rejected rename");
 }
@@ -375,19 +439,35 @@ async fn edit_entity_retype() {
     assert!(outcome.retyped);
     assert!(!outcome.rekeyed);
     assert_eq!(outcome.facts_repointed, 0, "retype does NOT touch facts");
-    assert_eq!(outcome.communities_repointed, 1, "community membership invalidated");
+    assert_eq!(
+        outcome.communities_repointed, 1,
+        "community membership invalidated"
+    );
 
     let (type_id, source) = entity_type(&graph, NEW).await;
     assert_eq!(type_id, 3, "entity_type_id changed");
-    assert_eq!(source.as_deref(), Some("ConsumerPinned"), "retype pins ConsumerPinned");
     assert_eq!(
-        count(&graph, "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1", NEW).await,
+        source.as_deref(),
+        Some("ConsumerPinned"),
+        "retype pins ConsumerPinned"
+    );
+    assert_eq!(
+        count(
+            &graph,
+            "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1",
+            NEW
+        )
+        .await,
         0,
         "community membership dropped so detection re-places the re-typed entity"
     );
     // The fact is untouched (id unchanged → no rekey).
     let (subj, _) = fact_endpoints(&graph, fact).await;
-    assert_eq!(subj.as_deref(), Some(NEW), "fact endpoint unchanged by retype");
+    assert_eq!(
+        subj.as_deref(),
+        Some(NEW),
+        "fact endpoint unchanged by retype"
+    );
 }
 
 #[tokio::test]
@@ -407,46 +487,84 @@ async fn edit_entity_undo_restores() {
             EntityEditParams {
                 entity_id: OLD.to_string(),
                 group_id: GROUP.to_string(),
-                op: EntityEditOp::Rename { new_id: NEW.to_string() },
+                op: EntityEditOp::Rename {
+                    new_id: NEW.to_string(),
+                },
             },
         )
         .await
         .expect("rename");
         let mid = out.mutation_id;
-        assert_eq!(dangling_refs(&graph, OLD).await, 0, "old id fully vacated by rename");
+        assert_eq!(
+            dangling_refs(&graph, OLD).await,
+            0,
+            "old id fully vacated by rename"
+        );
 
         let undo = undo_entity_edit(&graph, mid).await.expect("undo rename");
         assert!(undo.rekeyed);
         assert_eq!(undo.entity_id, OLD, "undo restores the old id");
 
         // Everything back on OLD; NEW fully vacated.
-        assert_eq!(dangling_refs(&graph, NEW).await, 0, "new id fully vacated by undo");
-        let (subj, _) = fact_endpoints(&graph, f).await;
-        assert_eq!(subj.as_deref(), Some(OLD), "fact subject restored to old id");
         assert_eq!(
-            count(&graph, "SELECT COUNT(*) FROM facts_archive WHERE subject_id = ?1", OLD).await,
+            dangling_refs(&graph, NEW).await,
+            0,
+            "new id fully vacated by undo"
+        );
+        let (subj, _) = fact_endpoints(&graph, f).await;
+        assert_eq!(
+            subj.as_deref(),
+            Some(OLD),
+            "fact subject restored to old id"
+        );
+        assert_eq!(
+            count(
+                &graph,
+                "SELECT COUNT(*) FROM facts_archive WHERE subject_id = ?1",
+                OLD
+            )
+            .await,
             1,
             "archived fact restored to old id"
         );
         assert_eq!(
-            count(&graph, "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1", OLD).await,
+            count(
+                &graph,
+                "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1",
+                OLD
+            )
+            .await,
             1,
             "community membership restored to old id"
         );
-        assert_eq!(count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", OLD).await, 1);
+        assert_eq!(
+            count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", OLD).await,
+            1
+        );
 
         // undone_at stamped; second undo is a no-op.
         let undone_at: Option<String> = {
             let mut rows = graph
                 .conn
-                .query("SELECT undone_at FROM graph_mutation_log WHERE id = ?1", libsql::params![mid])
+                .query(
+                    "SELECT undone_at FROM graph_mutation_log WHERE id = ?1",
+                    libsql::params![mid],
+                )
                 .await
                 .expect("undone query");
-            rows.next().await.expect("row").expect("row").get::<Option<String>>(0).expect("col")
+            rows.next()
+                .await
+                .expect("row")
+                .expect("row")
+                .get::<Option<String>>(0)
+                .expect("col")
         };
         assert!(undone_at.is_some(), "undone_at stamped");
         let again = undo_entity_edit(&graph, mid).await.expect("second undo");
-        assert_eq!(again.facts_repointed, 0, "second undo is a zero-count no-op");
+        assert_eq!(
+            again.facts_repointed, 0,
+            "second undo is a zero-count no-op"
+        );
     }
 
     // ── Scenario B: retype → undo (type + community restore) ──
@@ -472,12 +590,23 @@ async fn edit_entity_undo_restores() {
         let (pre_type, pre_source) = entity_type(&graph, NEW).await;
         assert_eq!(pre_type, 4, "sanity: retype applied before undo");
         let _ = pre_source;
-        undo_entity_edit(&graph, out.mutation_id).await.expect("undo retype");
+        undo_entity_edit(&graph, out.mutation_id)
+            .await
+            .expect("undo retype");
         let (type_id, source) = entity_type(&graph, NEW).await;
         assert_eq!(type_id, 0, "type restored to pre-retype value");
-        assert_eq!(source.as_deref(), Some("Phase1Ner"), "entity_type_source restored verbatim");
         assert_eq!(
-            count(&graph, "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1", NEW).await,
+            source.as_deref(),
+            Some("Phase1Ner"),
+            "entity_type_source restored verbatim"
+        );
+        assert_eq!(
+            count(
+                &graph,
+                "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1",
+                NEW
+            )
+            .await,
             1,
             "community membership restored on retype undo"
         );
@@ -511,20 +640,36 @@ async fn diarization_merge_unmerge_rename() {
         .expect("canonicalize");
     assert_eq!(report.merges_applied, 1, "the speaker pair merged");
     let (subj_after_merge, _) = fact_endpoints(&graph, fact).await;
-    assert_eq!(subj_after_merge.as_deref(), Some(KEEPER), "fact re-pointed to keeper by merge");
+    assert_eq!(
+        subj_after_merge.as_deref(),
+        Some(KEEPER),
+        "fact re-pointed to keeper by merge"
+    );
 
     // ── Unmerge: Speaker 1 is restored, its fact re-pointed back ──
     let mid: i64 = {
         let mut rows = graph
             .conn
-            .query("SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'", ())
+            .query(
+                "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'",
+                (),
+            )
             .await
             .expect("log query");
-        rows.next().await.expect("row").expect("row").get::<i64>(0).expect("id")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("row")
+            .get::<i64>(0)
+            .expect("id")
     };
     unmerge(&graph, mid).await.expect("unmerge");
     let (subj_after_unmerge, _) = fact_endpoints(&graph, fact).await;
-    assert_eq!(subj_after_unmerge.as_deref(), Some(SPEAKER), "fact re-pointed back to Speaker 1");
+    assert_eq!(
+        subj_after_unmerge.as_deref(),
+        Some(SPEAKER),
+        "fact re-pointed back to Speaker 1"
+    );
 
     // ── Rename: Speaker 1 → Alice; the fact follows ──
     let outcome = edit_entity(
@@ -532,21 +677,39 @@ async fn diarization_merge_unmerge_rename() {
         EntityEditParams {
             entity_id: SPEAKER.to_string(),
             group_id: GROUP.to_string(),
-            op: EntityEditOp::Rename { new_id: NEW.to_string() },
+            op: EntityEditOp::Rename {
+                new_id: NEW.to_string(),
+            },
         },
     )
     .await
     .expect("rename speaker → alice");
     assert!(outcome.rekeyed);
-    assert_eq!(outcome.facts_repointed, 1, "Speaker 1's fact re-keyed to Alice");
+    assert_eq!(
+        outcome.facts_repointed, 1,
+        "Speaker 1's fact re-keyed to Alice"
+    );
 
     // ── Assert: Alice owns Speaker 1's fact; Speaker 1 is gone; keeper untouched ──
     let (subj_final, _) = fact_endpoints(&graph, fact).await;
     assert_eq!(subj_final.as_deref(), Some(NEW), "Alice owns the fact");
-    assert_eq!(dangling_refs(&graph, SPEAKER).await, 0, "Speaker 1 fully vacated");
-    assert_eq!(count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", NEW).await, 1, "Alice exists");
     assert_eq!(
-        count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", KEEPER).await,
+        dangling_refs(&graph, SPEAKER).await,
+        0,
+        "Speaker 1 fully vacated"
+    );
+    assert_eq!(
+        count(&graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", NEW).await,
+        1,
+        "Alice exists"
+    );
+    assert_eq!(
+        count(
+            &graph,
+            "SELECT COUNT(*) FROM entities WHERE id = ?1",
+            KEEPER
+        )
+        .await,
         1,
         "the keeper is untouched by the rename"
     );

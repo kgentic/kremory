@@ -53,8 +53,8 @@
 //! `pub(crate)` items. They are NOT the stable public API — the consumer surface is the
 //! `Memory` facade (`facade/reverse.rs`).
 
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use metrics::counter;
 
 use crate::core::dream::consolidation::archive::ARCHIVE_INSERT_SQL;
@@ -353,7 +353,10 @@ struct WriteDeleteLogParams<'a> {
 /// INSERT a delete-kind provenance row on `conn` (same txn, BEFORE the destructive
 /// writes, §8.1) and return its id. `pre_state` / `inputs` are pre-serialized by the
 /// caller (parse-loudly on serialize error there).
-async fn write_delete_log(conn: &libsql::Connection, params: WriteDeleteLogParams<'_>) -> Result<i64> {
+async fn write_delete_log(
+    conn: &libsql::Connection,
+    params: WriteDeleteLogParams<'_>,
+) -> Result<i64> {
     let WriteDeleteLogParams {
         kind,
         group_id,
@@ -390,8 +393,7 @@ async fn write_delete_log(conn: &libsql::Connection, params: WriteDeleteLogParam
 /// `Error` (parse-loudly, §2.1 — our own structured emit, but a snapshot we cannot
 /// serialize means the delete would be un-reversible).
 fn to_json<T: serde::Serialize>(value: &T, what: &str) -> Result<String> {
-    serde_json::to_string(value)
-        .map_err(|e| Error::Other(anyhow::anyhow!("serialize {what}: {e}")))
+    serde_json::to_string(value).map_err(|e| Error::Other(anyhow::anyhow!("serialize {what}: {e}")))
 }
 
 // ─── delete_entity (forward, §4.4) ───────────────────────────────────────────
@@ -944,7 +946,10 @@ async fn undo_delete_entity_txn(
 /// archive tradeoff (`facts.embedding` is dropped on archival), so it will not match
 /// semantic recall until re-embedded. See [`delete_fact`] for the full caveat.
 #[doc(hidden)]
-pub async fn undo_delete_fact(graph: &TemporalGraph, mutation_id: i64) -> Result<DeleteFactOutcome> {
+pub async fn undo_delete_fact(
+    graph: &TemporalGraph,
+    mutation_id: i64,
+) -> Result<DeleteFactOutcome> {
     let guard = graph.begin_immediate_if_needed().await?;
     let committed_here = guard.opened();
     let outcome = match undo_delete_fact_txn(graph, mutation_id).await {

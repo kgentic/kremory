@@ -39,7 +39,9 @@ async fn content_recall_returns_bm25_ranked_passages_for_matched_episodes() {
 
     // Episode A: matches neither query term.
     let commit_a = mem
-        .remember("The quarterly roadmap review covers budget allocation for the next fiscal cycle.")
+        .remember(
+            "The quarterly roadmap review covers budget allocation for the next fiscal cycle.",
+        )
         .skip_extraction()
         .await
         .expect("episode A must commit");
@@ -156,7 +158,11 @@ async fn content_recall_does_not_leak_across_namespaces() {
         .content()
         .await
         .expect("namespace A content recall must succeed");
-    assert_eq!(passages_a.len(), 1, "namespace A must see exactly its own episode");
+    assert_eq!(
+        passages_a.len(),
+        1,
+        "namespace A must see exactly its own episode"
+    );
 
     // Namespace B recall for a namespace-A-only term must return nothing.
     let passages_b: Vec<ContentPassage> = mem

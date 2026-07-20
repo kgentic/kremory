@@ -1168,7 +1168,10 @@ mod tests {
             model_id: "gemma4:e4b",
         })
         .await;
-        assert!(result.is_err(), "sweep must fail on the unparseable valid_to");
+        assert!(
+            result.is_err(),
+            "sweep must fail on the unparseable valid_to"
+        );
 
         let emitted = snapshotter
             .snapshot()

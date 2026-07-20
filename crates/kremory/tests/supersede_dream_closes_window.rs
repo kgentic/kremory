@@ -86,8 +86,7 @@ async fn supersede_then_dream_closes_window() {
     let valid_from = now - Duration::days(30);
     let fact_id = graph
         .insert_fact_with_group(
-            FactInsert::new("supersede-e2e-subject", "status", valid_from)
-                .object_value("active"),
+            FactInsert::new("supersede-e2e-subject", "status", valid_from).object_value("active"),
             Some(&gid),
         )
         .await
@@ -99,8 +98,14 @@ async fn supersede_then_dream_closes_window() {
         .await
         .expect("get_fact_by_id must succeed")
         .expect("fact must exist pre-supersede");
-    assert!(pre.valid_to.is_none(), "valid_to must be NULL before supersede");
-    assert!(pre.expired_at.is_none(), "expired_at must be NULL before supersede");
+    assert!(
+        pre.valid_to.is_none(),
+        "valid_to must be NULL before supersede"
+    );
+    assert!(
+        pre.expired_at.is_none(),
+        "expired_at must be NULL before supersede"
+    );
 
     // ── Phase 1: PRODUCER — mem.supersede bounds valid_to (world-time, in the
     // past relative to `now` so window_closeout's `valid_to < now` predicate

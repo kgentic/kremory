@@ -65,7 +65,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use metrics::counter;
 
-use crate::core::canonicalization::{EntityMergeParams, apply_entity_merge};
+use crate::core::canonicalization::{apply_entity_merge, EntityMergeParams};
 use crate::core::error::Result;
 use crate::core::graph::InsertEntityWithGroupParams;
 use crate::core::schema::TemporalGraph;
@@ -109,8 +109,9 @@ const HUB_DEGREE_CAP: u32 = 8;
 /// Pinned exactly per impl-spec §3 — a `#[test]` re-derives this array from
 /// `f64::log2` to guard against a transcription error (that test uses float; this
 /// PRODUCTION array/decision does not).
-const WEIGHT_LUT_SCALED: [u64; HUB_DEGREE_CAP as usize + 1] =
-    [0, 1_048_576, 524_288, 405_645, 349_525, 315_653, 292_493, 275_408, 262_144];
+const WEIGHT_LUT_SCALED: [u64; HUB_DEGREE_CAP as usize + 1] = [
+    0, 1_048_576, 524_288, 405_645, 349_525, 315_653, 292_493, 275_408, 262_144,
+];
 
 /// Scaled decision threshold: `round(CORROBORATION_THRESHOLD_NUM × SCALE)`. The
 /// decision is `Σ WEIGHT_LUT_SCALED[f] (as u64) >= SCALED_THRESHOLD` — pure integer,
@@ -378,12 +379,7 @@ pub async fn cross_episode(
         }
         let component_adjacency: BTreeMap<String, BTreeSet<String>> = component
             .iter()
-            .map(|id| {
-                (
-                    id.clone(),
-                    adjacency.get(id).cloned().unwrap_or_default(),
-                )
-            })
+            .map(|id| (id.clone(), adjacency.get(id).cloned().unwrap_or_default()))
             .collect();
         let cliques = bron_kerbosch_maximal_cliques(&component_adjacency);
         for c in cliques {
@@ -526,7 +522,10 @@ fn edge_key(a: &str, b: &str) -> (String, String) {
 /// retained past the gate, so the tiebreak uses a fixed per-edge weight — still
 /// integer, still deterministic). Edges NOT present in `edge_path` (non-adjacent pair
 /// within the clique — impossible for a true clique, but defensive) contribute 0.
-fn clique_weight(clique: &BTreeSet<String>, edge_path: &BTreeMap<(String, String), MergePath>) -> u64 {
+fn clique_weight(
+    clique: &BTreeSet<String>,
+    edge_path: &BTreeMap<(String, String), MergePath>,
+) -> u64 {
     let members: Vec<&String> = clique.iter().collect();
     let mut total: u64 = 0;
     for i in 0..members.len() {
@@ -542,7 +541,10 @@ fn clique_weight(clique: &BTreeSet<String>, edge_path: &BTreeMap<(String, String
 
 /// A clique's path attribution: `Exact` if ANY intra-clique eligible edge was exact,
 /// else `Fuzzy` (mirrors the pre-ADR-067 `member_path` rule, now scoped per-clique).
-fn clique_path(clique: &BTreeSet<String>, edge_path: &BTreeMap<(String, String), MergePath>) -> MergePath {
+fn clique_path(
+    clique: &BTreeSet<String>,
+    edge_path: &BTreeMap<(String, String), MergePath>,
+) -> MergePath {
     let members: Vec<&String> = clique.iter().collect();
     for i in 0..members.len() {
         for j in (i + 1)..members.len() {
@@ -1437,7 +1439,9 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "acme").await;
         fact_rel(&graph, gid, "john  smith", "works_at", "acme").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(report.count, 1, "exact-label corroborated pair merges once");
 
         let ids = entities_in_group(&graph, gid).await;
@@ -1535,7 +1539,10 @@ mod tests {
             report_applied.count, report_shadow.count,
             "report.count is identical across dry_run true/false"
         );
-        assert_eq!(report_applied.count, 1, "the corroborated pair is one decision");
+        assert_eq!(
+            report_applied.count, 1,
+            "the corroborated pair is one decision"
+        );
         // (a2) D5 (consumer-API hardening): would-merge (`count`) vs merged
         // (`applied_merges`) DIVERGE across modes — applied fused 1, shadow fused 0,
         // while both DECIDED 1. This is the in-band split.
@@ -1631,15 +1638,12 @@ mod tests {
             fn on_community_updated(&self, _community_id: &str, _member_count: usize) {}
             fn on_batch_phase2_complete(&self, _event: BatchPhase2Complete) {}
             fn on_merge_proposed(&self, event: MergeProposed<'_>) {
-                self.merges
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .push((
-                        event.group_id.to_string(),
-                        event.loser.to_string(),
-                        event.keeper.to_string(),
-                        event.dry_run,
-                    ));
+                self.merges.lock().unwrap_or_else(|p| p.into_inner()).push((
+                    event.group_id.to_string(),
+                    event.loser.to_string(),
+                    event.keeper.to_string(),
+                    event.dry_run,
+                ));
             }
         }
 
@@ -1676,16 +1680,30 @@ mod tests {
 
         // Shadow: the merge decision fires the event with dry_run=true (no fusion).
         let shadow = run_once(true).await;
-        assert_eq!(shadow.len(), 1, "one merge decision → one on_merge_proposed (shadow)");
+        assert_eq!(
+            shadow.len(),
+            1,
+            "one merge decision → one on_merge_proposed (shadow)"
+        );
         assert_eq!(shadow[0].0, "g1", "group_id");
         assert_eq!(shadow[0].2, "John Smith", "keeper = lowest id");
         assert_eq!(shadow[0].1, "john  smith", "loser");
-        assert!(shadow[0].3, "shadow run → dry_run=true propagated to the event");
+        assert!(
+            shadow[0].3,
+            "shadow run → dry_run=true propagated to the event"
+        );
 
         // Applied: same fixture, dry_run=false.
         let applied = run_once(false).await;
-        assert_eq!(applied.len(), 1, "one merge decision → one on_merge_proposed (applied)");
-        assert!(!applied[0].3, "applied run → dry_run=false propagated to the event");
+        assert_eq!(
+            applied.len(),
+            1,
+            "one merge decision → one on_merge_proposed (applied)"
+        );
+        assert!(
+            !applied[0].3,
+            "applied run → dry_run=false propagated to the event"
+        );
     }
 
     /// ADR-070 §5.2: `correct_wrong_merge` reverses a merge — re-materializes the
@@ -1754,7 +1772,7 @@ mod tests {
             },
         )
         .await
-            .expect("apply_entity_merge");
+        .expect("apply_entity_merge");
         assert!(
             !entities_in_group(&graph, gid)
                 .await
@@ -1793,22 +1811,35 @@ mod tests {
 
         // BOTH endpoints re-pointed back to the split, and corroboration_inert reset to 0.
         let (subj, _, subj_inert) = fact_row(&graph, subj_fact).await;
-        assert_eq!(subj, "loser", "subject-endpoint fact points back at the split entity");
-        assert_eq!(subj_inert, 0, "subject fact is a LIVE corroborator again (MED-1)");
+        assert_eq!(
+            subj, "loser",
+            "subject-endpoint fact points back at the split entity"
+        );
+        assert_eq!(
+            subj_inert, 0,
+            "subject fact is a LIVE corroborator again (MED-1)"
+        );
         let (_, obj, obj_inert) = fact_row(&graph, obj_fact).await;
         assert_eq!(
             obj.as_deref(),
             Some("loser"),
             "object-endpoint fact points back at the split entity"
         );
-        assert_eq!(obj_inert, 0, "object fact is a LIVE corroborator again (MED-1)");
+        assert_eq!(
+            obj_inert, 0,
+            "object fact is a LIVE corroborator again (MED-1)"
+        );
 
         // The correction counter fired exactly once (flat, sibling-consistent name).
-        let fired = snapshotter.snapshot().into_vec().into_iter().any(|(ck, _, _, v)| {
-            ck.key().name()
-                == "kremory.dream.consolidation.cross_episode_wrong_merge_corrected_total"
-                && matches!(v, DebugValue::Counter(1))
-        });
+        let fired = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .any(|(ck, _, _, v)| {
+                ck.key().name()
+                    == "kremory.dream.consolidation.cross_episode_wrong_merge_corrected_total"
+                    && matches!(v, DebugValue::Counter(1))
+            });
         assert!(fired, "wrong_merge_corrected_total must fire exactly once");
     }
 
@@ -1834,7 +1865,9 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "lawfirm").await;
         fact_rel(&graph, gid, "john  smith", "competed_in", "olympics").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "homonym: same label + NO shared structure must NOT merge (EXACT 0)"
@@ -1862,7 +1895,9 @@ mod tests {
         fact_lit(&graph, gid, "Acme Corp", "headquartered_in", "Boston").await;
         fact_lit(&graph, gid, "acme  corp", "headquartered_in", "Boston").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 1,
             "identical literal assertion corroborates merge"
@@ -1905,7 +1940,9 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "located_in", "Boston").await;
         fact_rel(&graph, gid, "john  smith", "located_in", "Boston").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "single HUB shared neighbour (deg > HUB_DEGREE_CAP) contributes integer \
@@ -1936,7 +1973,9 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "member_of", "MegaCorp").await;
         fact_rel(&graph, gid, "john  smith", "member_of", "MegaCorp").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "TWO hub corroborators, BOTH deg > HUB_DEGREE_CAP → each weight 0 → \
@@ -1962,7 +2001,9 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "niche_org").await;
         fact_rel(&graph, gid, "john  smith", "works_at", "niche_org").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 1,
             "one shared neighbour of degree 2 → scaled weight 524_288 >= threshold → MERGE"
@@ -1995,7 +2036,9 @@ mod tests {
             fact_rel(&graph, gid, "John Smith", "member_of", "org_b").await;
             fact_rel(&graph, gid, "john  smith", "member_of", "org_b").await;
 
-            let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+            let report = cross_episode(&graph, gid, false)
+                .await
+                .expect("cross_episode");
             assert_eq!(
                 report.count, 1,
                 "TWO deg-8 corroborators sum to EXACTLY SCALED_THRESHOLD (integer `>=`) → MERGE"
@@ -2017,7 +2060,9 @@ mod tests {
             fact_rel(&graph, gid, "John Smith", "member_of", "org_a").await;
             fact_rel(&graph, gid, "john  smith", "member_of", "org_a").await;
 
-            let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+            let report = cross_episode(&graph, gid, false)
+                .await
+                .expect("cross_episode");
             assert_eq!(
                 report.count, 0,
                 "ONE deg-8 corroborator: 262_144 < SCALED_THRESHOLD 524_288 → must NOT merge"
@@ -2072,7 +2117,9 @@ mod tests {
         fact_rel(&graph, gid, id_a, "member_of", "org").await;
         fact_rel(&graph, gid, id_b, "member_of", "org").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(report.count, 1, "fuzzy ≥0.9 corroborated pair merges");
     }
 
@@ -2097,7 +2144,9 @@ mod tests {
         fact_rel(&graph, gid, id_a, "works_at", "lawfirm").await;
         fact_rel(&graph, gid, id_b, "competed_in", "olympics").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "fuzzy label match with NO shared structure must NOT merge (EXACT 0)"
@@ -2122,7 +2171,9 @@ mod tests {
         fact_rel(&graph, gid, "John Smith", "works_at", "acme").await;
         fact_rel(&graph, gid, "john  smith", "works_at", "acme").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "same-episode-only pair is not cross-episode recurrence (EXACT 0)"
@@ -2150,7 +2201,9 @@ mod tests {
         fact_rel(&graph, gid, "big blue", "makes", "acme").await;
         fact_rel(&graph, gid, "ibm", "makes", "acme").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "lexically-distinct pair is canonicalize's cosine job, not cross_episode"
@@ -2205,7 +2258,9 @@ mod tests {
         fact_rel(&graph, gid, "john  smith", "knows", "pair_bc_rare").await;
         fact_rel(&graph, gid, "john   smith", "knows", "pair_bc_rare").await;
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 2,
             "transitive: 3 same-label corroborated entities fuse to ONE root (2 losers)"
@@ -2254,7 +2309,9 @@ mod tests {
         fact_rel(&graph, gid, "john  smith", "knows", "y").await; // B → y
         fact_rel(&graph, gid, "john   smith", "knows", "y").await; // C → y  (B~C share y)
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         // Clique-only + disjoint-cover: eligible cliques are {A,B} and {B,C} (both
         // sharing B). Sort by (size desc [tie: both 2], weight desc [tie: both one
         // SCALED_THRESHOLD edge], min-id asc): "John Smith" (0x4A...) < "john  smith"
@@ -2400,7 +2457,9 @@ mod tests {
         fact_rel(&graph, "gA", "John Smith", "works_at", "acme a").await;
         fact_rel(&graph, "gB", "john  smith", "works_at", "acme b").await;
 
-        let report = cross_episode(&graph, "gA", false).await.expect("cross_episode gA");
+        let report = cross_episode(&graph, "gA", false)
+            .await
+            .expect("cross_episode gA");
         assert_eq!(
             report.count, 0,
             "gA sweep sees only one john-smith → no pair"
@@ -2461,7 +2520,9 @@ mod tests {
             fact_rel(&graph, gid, &ids[i + 1], "knows", &neighbour).await;
         }
 
-        let report = cross_episode(&graph, gid, false).await.expect("cross_episode");
+        let report = cross_episode(&graph, gid, false)
+            .await
+            .expect("cross_episode");
         assert_eq!(
             report.count, 0,
             "a same-label component of {n} entities (> MAX_LABEL_GROUP={MAX_LABEL_GROUP}) \
@@ -2654,7 +2715,8 @@ mod tests {
             .intersection(&b.assertions)
             .filter(|key| {
                 let object_component = key.rsplit('\u{1F}').next().unwrap_or(key.as_str());
-                object_component.starts_with("ov:") || !shared_neighbours.contains(&object_component.to_string())
+                object_component.starts_with("ov:")
+                    || !shared_neighbours.contains(&object_component.to_string())
             })
             .collect();
         if shared_neighbours.is_empty() && shared_assertions.is_empty() {
@@ -2673,7 +2735,11 @@ mod tests {
     /// Is `(a, b)` oracle-eligible: label-match (exact-normalized OR fuzzy Jaccard ≥
     /// threshold) AND spans ≥2 distinct episodes AND clears the rarity-weighted
     /// corroboration decision (over DIRECTLY-asserted structure in `population`)?
-    fn is_oracle_eligible(population: &[&PlantedEntity], a: &PlantedEntity, b: &PlantedEntity) -> bool {
+    fn is_oracle_eligible(
+        population: &[&PlantedEntity],
+        a: &PlantedEntity,
+        b: &PlantedEntity,
+    ) -> bool {
         let label_match = a.normalized == b.normalized || {
             let sa = label_shingles(&a.normalized);
             let sb = label_shingles(&b.normalized);
@@ -2751,11 +2817,9 @@ mod tests {
                 let subset_set: BTreeSet<String> = subset.iter().map(|s| s.to_string()).collect();
                 let is_maximal = !all_ids.iter().any(|candidate| {
                     !subset_set.contains(candidate)
-                        && subset_set.iter().all(|m| {
-                            adjacency
-                                .get(candidate)
-                                .is_some_and(|adj| adj.contains(m))
-                        })
+                        && subset_set
+                            .iter()
+                            .all(|m| adjacency.get(candidate).is_some_and(|adj| adj.contains(m)))
                 });
                 if is_maximal {
                     cliques.push(subset_set);

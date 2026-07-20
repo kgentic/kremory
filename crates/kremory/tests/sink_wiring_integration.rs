@@ -482,7 +482,10 @@ async fn sink_batch_complete_fires_when_all_terminal() {
             .expect("send_batched must not fail");
     }
 
-    drain_until_ready(ingestor, guard, || batch_complete_seen(&sink, "batch-v023-1")).await;
+    drain_until_ready(ingestor, guard, || {
+        batch_complete_seen(&sink, "batch-v023-1")
+    })
+    .await;
 
     let all_events = sink.snapshot();
 
@@ -641,7 +644,10 @@ async fn sink_batch_complete_counts_failed_episodes() {
     // drain_until_ready polls the sink's own BatchComplete event rather than a
     // fixed budget, so the slower per-call fallback-ladder latency here is
     // tolerated the same way as the happy-path EmptyArrayLlmClient tests.
-    drain_until_ready(ingestor, guard, || batch_complete_seen(&sink, "batch-v023-2")).await;
+    drain_until_ready(ingestor, guard, || {
+        batch_complete_seen(&sink, "batch-v023-2")
+    })
+    .await;
 
     let all_events = sink.snapshot();
     let batch_events: Vec<_> = all_events
@@ -1005,7 +1011,8 @@ async fn sink_two_batches_fire_separate_complete_events() {
         .expect("send_batched beta must not fail");
 
     drain_until_ready(ingestor, guard, || {
-        batch_complete_seen(&sink, "batch-v023-alpha") && batch_complete_seen(&sink, "batch-v023-beta")
+        batch_complete_seen(&sink, "batch-v023-alpha")
+            && batch_complete_seen(&sink, "batch-v023-beta")
     })
     .await;
 
@@ -1310,7 +1317,8 @@ async fn sink_send_batched_two_batches_fire_independently() {
         .expect("send ok");
 
     drain_until_ready(ingestor, guard, || {
-        batch_complete_seen(&sink, "followup-batch-a") && batch_complete_seen(&sink, "followup-batch-b")
+        batch_complete_seen(&sink, "followup-batch-a")
+            && batch_complete_seen(&sink, "followup-batch-b")
     })
     .await;
 

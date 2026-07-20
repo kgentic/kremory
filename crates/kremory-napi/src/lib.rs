@@ -716,10 +716,7 @@ impl JsMemory {
     /// `mutationHistory` / `listMutations`). Idempotent. Wraps
     /// `Memory::undo_entity_edit`.
     #[napi]
-    pub async fn undo_entity_edit(
-        &self,
-        mutation_id: i64,
-    ) -> napi::Result<JsEditEntityOutcome> {
+    pub async fn undo_entity_edit(&self, mutation_id: i64) -> napi::Result<JsEditEntityOutcome> {
         let outcome = self
             .inner
             .undo_entity_edit(mutation_id)
@@ -828,11 +825,14 @@ impl JsMemory {
             req = req.in_namespace(ns);
         }
 
-        let records = req
-            .await
-            .map_err(|e| napi::Error::from_reason(format!("kremory mutationHistory failed: {e}")))?;
+        let records = req.await.map_err(|e| {
+            napi::Error::from_reason(format!("kremory mutationHistory failed: {e}"))
+        })?;
 
-        Ok(records.into_iter().map(convert::mutation_record_to_js).collect())
+        Ok(records
+            .into_iter()
+            .map(convert::mutation_record_to_js)
+            .collect())
     }
 
     /// List logged graph mutations, newest-first (ADR-073 Tier-1, §3 "Inspect
@@ -892,7 +892,10 @@ impl JsMemory {
             .await
             .map_err(|e| napi::Error::from_reason(format!("kremory listMutations failed: {e}")))?;
 
-        Ok(records.into_iter().map(convert::mutation_record_to_js).collect())
+        Ok(records
+            .into_iter()
+            .map(convert::mutation_record_to_js)
+            .collect())
     }
 
     /// Search memory for context matching `query`.

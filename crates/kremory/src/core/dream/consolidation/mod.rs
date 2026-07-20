@@ -306,7 +306,10 @@ mod tests {
         // defaults-off; see dream-consumer-api-hardening-arch-spec.)
         let d = DreamOpts::default();
         assert!(d.include_community_detection, "community default ON (D1)");
-        assert!(d.include_cross_episode_merges, "cross_episode default ON (D1)");
+        assert!(
+            d.include_cross_episode_merges,
+            "cross_episode default ON (D1)"
+        );
         assert!(d.include_fact_archival, "archival default ON (D1)");
         assert!(
             d.include_supersession_sweep,
@@ -496,7 +499,9 @@ mod tests {
     }
 
     /// Does `net_mutation_warn_total` (zero labels) carry the given count?
-    fn net_mutation_warn_counter(snapshotter: &metrics_util::debugging::Snapshotter) -> Option<u64> {
+    fn net_mutation_warn_counter(
+        snapshotter: &metrics_util::debugging::Snapshotter,
+    ) -> Option<u64> {
         use metrics_util::debugging::DebugValue;
         snapshotter
             .snapshot()

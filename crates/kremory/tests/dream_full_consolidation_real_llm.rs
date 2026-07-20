@@ -53,7 +53,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use kremory::core::graph::{InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams};
+use kremory::core::graph::{
+    InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
+};
 use kremory::core::provider::RecordReplayChatProvider;
 use kremory::core::schema::TemporalGraph;
 use kremory::memory::types::DreamOpts;
@@ -378,7 +380,13 @@ async fn anchor(graph: &TemporalGraph, group_id: &str, episode_id: i64, entity: 
 }
 
 #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption (mirrors L3 siblings)
-async fn plant_fact_rel(graph: &TemporalGraph, group_id: &str, subject: &str, predicate: &str, object: &str) {
+async fn plant_fact_rel(
+    graph: &TemporalGraph,
+    group_id: &str,
+    subject: &str,
+    predicate: &str,
+    object: &str,
+) {
     let now = Utc::now().to_rfc3339();
     graph
         .conn
@@ -672,11 +680,10 @@ async fn homonym_trap_no_wrong_merge() {
 
     // ONE full mem.dream() call, ALL consolidation ops ON — the homonym pair rides
     // through supersession → archive → cross_episode → communities in one pass.
-    let summary = mem
-        .dream()
-        .with_opts(all_consolidation_on())
-        .await
-        .expect("mem.dream() with all consolidation ops ON must succeed over the homonym fixture");
+    let summary =
+        mem.dream().with_opts(all_consolidation_on()).await.expect(
+            "mem.dream() with all consolidation ops ON must succeed over the homonym fixture",
+        );
 
     eprintln!(
         "[full-consolidation-homonym] cross_episode_merges={} communities_updated={}",

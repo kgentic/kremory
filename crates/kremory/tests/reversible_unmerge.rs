@@ -83,7 +83,16 @@ async fn plant_fact(graph: &TemporalGraph, subject: &str, predicate: &str, objec
              (subject_id, predicate, object_id, valid_from, recorded_at, group_id, \
               subject_group_id, object_group_id, confidence) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1.0)",
-            libsql::params![subject, predicate, object, now.clone(), now, GROUP, GROUP, GROUP],
+            libsql::params![
+                subject,
+                predicate,
+                object,
+                now.clone(),
+                now,
+                GROUP,
+                GROUP,
+                GROUP
+            ],
         )
         .await
         .expect("plant fact");
@@ -181,7 +190,10 @@ async fn read_entity_snap(graph: &TemporalGraph, id: &str) -> Option<EntitySnap>
     })
 }
 
-async fn fact_endpoints(graph: &TemporalGraph, fact_id: i64) -> (Option<String>, Option<String>, i64) {
+async fn fact_endpoints(
+    graph: &TemporalGraph,
+    fact_id: i64,
+) -> (Option<String>, Option<String>, i64) {
     let mut rows = graph
         .conn
         .query(
@@ -270,9 +282,15 @@ async fn unmerge_restores_complete_state() {
 
     // ── Capture the PRE-merge state undo must restore ──
     let loser_pre = read_entity_snap(&graph, LOSER).await.expect("loser exists");
-    let keeper_pre = read_entity_snap(&graph, KEEPER).await.expect("keeper exists");
+    let keeper_pre = read_entity_snap(&graph, KEEPER)
+        .await
+        .expect("keeper exists");
     assert!(
-        loser_pre.embedding.as_ref().map(|b| !b.is_empty()).unwrap_or(false),
+        loser_pre
+            .embedding
+            .as_ref()
+            .map(|b| !b.is_empty())
+            .unwrap_or(false),
         "loser has an embedding pre-merge"
     );
 
@@ -302,7 +320,10 @@ async fn unmerge_restores_complete_state() {
     let mutation_id: i64 = {
         let mut rows = graph
             .conn
-            .query("SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'", ())
+            .query(
+                "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'",
+                (),
+            )
             .await
             .expect("log query");
         rows.next()
@@ -327,8 +348,13 @@ async fn unmerge_restores_complete_state() {
     );
 
     // ── (1) loser row byte-identical (embedding + assigned_at + counts + source) ──
-    let loser_post = read_entity_snap(&graph, LOSER).await.expect("loser restored");
-    assert_eq!(loser_post.embedding, loser_pre.embedding, "embedding restored exactly");
+    let loser_post = read_entity_snap(&graph, LOSER)
+        .await
+        .expect("loser restored");
+    assert_eq!(
+        loser_post.embedding, loser_pre.embedding,
+        "embedding restored exactly"
+    );
     assert_eq!(
         loser_post.entity_type_assigned_at, loser_pre.entity_type_assigned_at,
         "entity_type_assigned_at restored"
@@ -339,8 +365,13 @@ async fn unmerge_restores_complete_state() {
     assert_eq!(loser_post.properties, loser_pre.properties);
 
     // ── (2) keeper access_count + ner_confidence restored (NOT the accumulation) ──
-    let keeper_post = read_entity_snap(&graph, KEEPER).await.expect("keeper exists");
-    assert_eq!(keeper_post.access_count, 5, "keeper access restored (not 5+3=8)");
+    let keeper_post = read_entity_snap(&graph, KEEPER)
+        .await
+        .expect("keeper exists");
+    assert_eq!(
+        keeper_post.access_count, 5,
+        "keeper access restored (not 5+3=8)"
+    );
     assert_eq!(keeper_post.access_count, keeper_pre.access_count);
     assert_eq!(
         keeper_post.ner_confidence, keeper_pre.ner_confidence,
@@ -349,17 +380,36 @@ async fn unmerge_restores_complete_state() {
 
     // ── (3) facts re-pointed to loser + PRIOR corroboration_inert restored ──
     let (f1_subj, _, f1_inert) = fact_endpoints(&graph, f1).await;
-    assert_eq!(f1_subj.as_deref(), Some(LOSER), "F1 subject re-pointed to loser");
+    assert_eq!(
+        f1_subj.as_deref(),
+        Some(LOSER),
+        "F1 subject re-pointed to loser"
+    );
     assert_eq!(f1_inert, 0, "F1 was live pre-merge → restored to 0");
     let (_, f2_obj, f2_inert) = fact_endpoints(&graph, f2).await;
-    assert_eq!(f2_obj.as_deref(), Some(LOSER), "F2 object re-pointed to loser");
-    assert_eq!(f2_inert, 1, "F2 was already inert pre-merge → stays 1 (monotone trap)");
+    assert_eq!(
+        f2_obj.as_deref(),
+        Some(LOSER),
+        "F2 object re-pointed to loser"
+    );
+    assert_eq!(
+        f2_inert, 1,
+        "F2 was already inert pre-merge → stays 1 (monotone trap)"
+    );
 
     // ── (4) episodic edges: loser back on BOTH; keeper keeps only E2 ──
     let loser_eps = episodes_for_entity(&graph, LOSER).await;
-    assert_eq!(loser_eps, vec![e1.min(e2), e1.max(e2)], "loser back on E1 + E2");
+    assert_eq!(
+        loser_eps,
+        vec![e1.min(e2), e1.max(e2)],
+        "loser back on E1 + E2"
+    );
     let keeper_eps = episodes_for_entity(&graph, KEEPER).await;
-    assert_eq!(keeper_eps, vec![e2], "keeper keeps only its own E2 edge (E1 re-pointed back)");
+    assert_eq!(
+        keeper_eps,
+        vec![e2],
+        "keeper keeps only its own E2 edge (E1 re-pointed back)"
+    );
 
     // ── freeze re-open: keeper idempotency key dropped ──
     let key_count: i64 = {
@@ -371,9 +421,17 @@ async fn unmerge_restores_complete_state() {
             )
             .await
             .expect("key count");
-        rows.next().await.expect("row").expect("count").get::<i64>(0).expect("n")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("count")
+            .get::<i64>(0)
+            .expect("n")
     };
-    assert_eq!(key_count, 0, "keeper idempotency key dropped (freeze re-opened)");
+    assert_eq!(
+        key_count, 0,
+        "keeper idempotency key dropped (freeze re-opened)"
+    );
 
     // ── undone_at stamped + nogood recorded ──
     let undone_at: Option<String> = {
@@ -385,7 +443,12 @@ async fn unmerge_restores_complete_state() {
             )
             .await
             .expect("undone query");
-        rows.next().await.expect("row").expect("log row").get::<Option<String>>(0).expect("undone_at")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("log row")
+            .get::<Option<String>>(0)
+            .expect("undone_at")
     };
     assert!(undone_at.is_some(), "graph_mutation_log.undone_at stamped");
 
@@ -398,13 +461,21 @@ async fn unmerge_restores_complete_state() {
             )
             .await
             .expect("nogood query");
-        rows.next().await.expect("row").expect("count").get::<i64>(0).expect("n")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("count")
+            .get::<i64>(0)
+            .expect("n")
     };
     assert_eq!(nogood_count, 1, "a merge_nogood row was written");
 
     // ── idempotent: second unmerge is a no-op ──
     let again = unmerge(&graph, mutation_id).await.expect("second unmerge");
-    assert!(again.already_undone, "second unmerge is an already-undone no-op");
+    assert!(
+        again.already_undone,
+        "second unmerge is an already-undone no-op"
+    );
     assert_eq!(again.facts_repointed, 0);
 }
 
@@ -428,10 +499,18 @@ async fn nogood_prevents_remerge_canonicalize() {
     let mutation_id: i64 = {
         let mut rows = graph
             .conn
-            .query("SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'", ())
+            .query(
+                "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'",
+                (),
+            )
             .await
             .expect("log query");
-        rows.next().await.expect("row").expect("row").get::<i64>(0).expect("id")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("row")
+            .get::<i64>(0)
+            .expect("id")
     };
     unmerge(&graph, mutation_id).await.expect("unmerge");
 
@@ -446,7 +525,10 @@ async fn nogood_prevents_remerge_canonicalize() {
 
     let entities = graph.list_entities_in_group(GROUP).await.expect("list");
     let ids: Vec<&str> = entities.iter().map(|e| e.id.as_str()).collect();
-    assert!(ids.contains(&LOSER), "loser survives — the split pair was NOT re-merged");
+    assert!(
+        ids.contains(&LOSER),
+        "loser survives — the split pair was NOT re-merged"
+    );
     assert!(ids.contains(&KEEPER), "keeper still present");
 }
 
@@ -516,7 +598,10 @@ async fn unmerge_chained_merges_lifo() {
             blocking_mutation_id,
         }) => {
             assert_eq!(mutation_id, m1, "the rejected mutation is m1");
-            assert_eq!(blocking_mutation_id, m2, "blocked by the later chained merge m2");
+            assert_eq!(
+                blocking_mutation_id, m2,
+                "blocked by the later chained merge m2"
+            );
         }
         other => panic!("expected UnmergeOutOfOrder for out-of-order unmerge, got {other:?}"),
     }
@@ -530,17 +615,30 @@ async fn unmerge_chained_merges_lifo() {
             )
             .await
             .expect("m1 undone query");
-        rows.next().await.expect("row").expect("m1 row").get::<Option<String>>(0).expect("undone_at")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("m1 row")
+            .get::<Option<String>>(0)
+            .expect("undone_at")
     };
-    assert!(m1_undone.is_none(), "out-of-order unmerge left m1 un-reversed");
+    assert!(
+        m1_undone.is_none(),
+        "out-of-order unmerge left m1 un-reversed"
+    );
 
     // ── LIFO: unmerge #2 (m2) FIRST — restores K1. ──
     let out2 = unmerge(&graph, m2).await.expect("unmerge m2 (LIFO top)");
-    assert_eq!(out2.restored_entity, K1, "m2 restores the shared endpoint K1");
+    assert_eq!(
+        out2.restored_entity, K1,
+        "m2 restores the shared endpoint K1"
+    );
     assert!(!out2.already_undone);
 
     // ── Then unmerge #1 (m1) — now unblocked (m2 is undone) → restores A. ──
-    let out1 = unmerge(&graph, m1).await.expect("unmerge m1 after m2 (LIFO)");
+    let out1 = unmerge(&graph, m1)
+        .await
+        .expect("unmerge m1 after m2 (LIFO)");
     assert_eq!(out1.restored_entity, A, "m1 restores A");
     assert!(!out1.already_undone);
 
@@ -556,7 +654,10 @@ async fn unmerge_chained_merges_lifo() {
 async fn one_merge_log_id(graph: &TemporalGraph) -> i64 {
     let mut rows = graph
         .conn
-        .query("SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'", ())
+        .query(
+            "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'",
+            (),
+        )
         .await
         .expect("log query");
     rows.next()
@@ -599,7 +700,10 @@ async fn merge_keeper_loser(graph: &TemporalGraph) -> i64 {
     let report = canonicalize_surface_forms(graph, GROUP, L5_CANONICALIZATION_THRESHOLD)
         .await
         .expect("canonicalize");
-    assert_eq!(report.merges_applied, 1, "one merge (loser folded into keeper)");
+    assert_eq!(
+        report.merges_applied, 1,
+        "one merge (loser folded into keeper)"
+    );
     one_merge_log_id(graph).await
 }
 
@@ -632,7 +736,10 @@ async fn unmerge_stale_keeper_rename_errors_loudly() {
             mutation_id: mid,
             reason,
         }) => {
-            assert_eq!(mid, mutation_id, "UndoStale names the un-reversible mutation");
+            assert_eq!(
+                mid, mutation_id,
+                "UndoStale names the un-reversible mutation"
+            );
             assert!(
                 reason.contains(KEEPER),
                 "reason names the missing keeper `{KEEPER}`: {reason}"
@@ -734,7 +841,12 @@ async fn restore_archived_fact_roundtrip() {
             .query("SELECT COUNT(*) FROM facts WHERE id = 9001", ())
             .await
             .expect("facts count");
-        rows.next().await.expect("row").expect("count").get::<i64>(0).expect("n")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("count")
+            .get::<i64>(0)
+            .expect("n")
     };
     assert_eq!(in_facts, 1, "restored fact is live in `facts`");
     let in_archive: i64 = {
@@ -743,7 +855,12 @@ async fn restore_archived_fact_roundtrip() {
             .query("SELECT COUNT(*) FROM facts_archive WHERE id = 9001", ())
             .await
             .expect("archive count");
-        rows.next().await.expect("row").expect("count").get::<i64>(0).expect("n")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("count")
+            .get::<i64>(0)
+            .expect("n")
     };
     assert_eq!(in_archive, 0, "archive row removed after restore");
 
@@ -751,7 +868,10 @@ async fn restore_archived_fact_roundtrip() {
     let again = restore_archived_fact(&graph, 9001).await;
     // The archive row is gone now → a second restore is a hard error (not_found),
     // which is the parse-loudly contract. Re-plant + restore proves already_live.
-    assert!(again.is_err(), "second restore of an already-consumed archive id errors loudly");
+    assert!(
+        again.is_err(),
+        "second restore of an already-consumed archive id errors loudly"
+    );
 }
 
 #[tokio::test]
@@ -775,10 +895,18 @@ async fn unsupersede_clears_bound() {
     let fact_id: i64 = {
         let mut rows = graph
             .conn
-            .query("SELECT id FROM facts WHERE subject_id = 'alice' AND predicate = 'status'", ())
+            .query(
+                "SELECT id FROM facts WHERE subject_id = 'alice' AND predicate = 'status'",
+                (),
+            )
             .await
             .expect("fact id query");
-        rows.next().await.expect("row").expect("fact").get::<i64>(0).expect("id")
+        rows.next()
+            .await
+            .expect("row")
+            .expect("fact")
+            .get::<i64>(0)
+            .expect("id")
     };
 
     let outcome = unsupersede(&graph, fact_id).await.expect("unsupersede");
@@ -814,7 +942,9 @@ async fn unsupersede_clears_bound() {
     assert!(expired_at.is_none(), "expired_at cleared to NULL");
 
     // Idempotent: a fact with no bound is an honest no-op.
-    let again = unsupersede(&graph, fact_id).await.expect("second unsupersede");
+    let again = unsupersede(&graph, fact_id)
+        .await
+        .expect("second unsupersede");
     assert!(matches!(
         again,
         kremory::facade::UnsupersedeOutcome::NotSuperseded { .. }

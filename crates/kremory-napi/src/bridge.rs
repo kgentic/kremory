@@ -578,8 +578,7 @@ pub(crate) async fn resolve_env_llm() -> napi::Result<Arc<dyn ChatProvider>> {
         // Rust's, giving the SAME library two default brains depending on binding.
         // Override via OLLAMA_CHAT_MODEL env var. Avoid `-mlx` variants pending
         // upstream autoagents-llm structured-output patches.
-        let model =
-            std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
+        let model = std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
 
         // Default 30s timeout — Apple Silicon MLX/14B cold-load or model-swap
         // routinely exceeds 10s (kremory facade convention). Override via
