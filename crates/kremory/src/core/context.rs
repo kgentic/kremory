@@ -255,7 +255,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             // invariant even in the degenerate single-seed case where the
             // base score is already 1.0.
             let degree = subgraph.entities.len().saturating_sub(1);
-            let degree_bonus = graph_degree_bonus(degree);
+            // recall-v2 Phase 2a: the axis weight is config-driven now (default
+            // 0.05 = the former `GRAPH_DEGREE_WEIGHT` const, so this is
+            // behaviour-neutral). `0.0` would disable a live tested axis.
+            let degree_bonus = graph_degree_bonus(degree, self.config.search.graph_degree_weight);
             normalized
                 .entry(seed_id.clone())
                 .and_modify(|s| *s = (*s + degree_bonus).min(1.0));
