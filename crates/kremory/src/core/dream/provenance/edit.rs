@@ -432,12 +432,15 @@ async fn edit_entity_txn(
             .await
         }
         EntityEditOp::Rename { new_id } => {
-            rename_txn(conn, RenameTxnParams {
-                old_id: entity_id,
-                new_id,
-                group_id,
-                current: &current,
-            })
+            rename_txn(
+                conn,
+                RenameTxnParams {
+                    old_id: entity_id,
+                    new_id,
+                    group_id,
+                    current: &current,
+                },
+            )
             .await
         }
     }
@@ -488,7 +491,15 @@ async fn retype_txn(
         old_type_id: current.entity_type_id,
         new_type_id,
     };
-    let mutation_id = write_edit_log(conn, WriteEditLogParams { group_id, pre_state: &pre_state, inputs: &inputs }).await?;
+    let mutation_id = write_edit_log(
+        conn,
+        WriteEditLogParams {
+            group_id,
+            pre_state: &pre_state,
+            inputs: &inputs,
+        },
+    )
+    .await?;
 
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
@@ -588,7 +599,15 @@ async fn rename_txn(
         old_type_id: current.entity_type_id,
         new_type_id: current.entity_type_id,
     };
-    let mutation_id = write_edit_log(conn, WriteEditLogParams { group_id, pre_state: &pre_state, inputs: &inputs }).await?;
+    let mutation_id = write_edit_log(
+        conn,
+        WriteEditLogParams {
+            group_id,
+            pre_state: &pre_state,
+            inputs: &inputs,
+        },
+    )
+    .await?;
 
     // Re-point every FK old → new (the load-bearing column set).
     let counts = rekey_all_fks(
@@ -673,13 +692,7 @@ async fn write_edit_log(conn: &libsql::Connection, params: WriteEditLogParams<'_
     conn.execute(
         "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        libsql::params![
-            "entity_edit",
-            group_id,
-            now,
-            pre_state_json,
-            inputs_json
-        ],
+        libsql::params!["entity_edit", group_id, now, pre_state_json, inputs_json],
     )
     .await?;
     let mutation_id: i64 = {

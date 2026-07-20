@@ -112,11 +112,7 @@ async fn dream_with_sink(dry_run: bool) -> Vec<(String, String, String, bool)> {
 
     // group_id for a no-thread namespace == the namespace string.
     let gid = "adr070-sink-wiring";
-    plant_mergeable_pair(
-        mem.temporal_graph_for_test().expect("temporal graph"),
-        gid,
-    )
-    .await;
+    plant_mergeable_pair(mem.temporal_graph_for_test().expect("temporal graph"), gid).await;
 
     let sink = Arc::new(RecordingSink::default());
     // Field-mutation (not struct literal) — DreamOpts is `#[non_exhaustive]`.
@@ -154,7 +150,10 @@ async fn dream_threads_sink_to_cross_episode_on_merge_proposed() {
         1,
         "one cross_episode merge decision → one on_merge_proposed (shadow)"
     );
-    assert_eq!(shadow[0].0, "adr070-sink-wiring", "group_id threaded through");
+    assert_eq!(
+        shadow[0].0, "adr070-sink-wiring",
+        "group_id threaded through"
+    );
     assert_eq!(shadow[0].2, "John Smith", "keeper = lowest id");
     assert_eq!(shadow[0].1, "john  smith", "loser");
     assert!(

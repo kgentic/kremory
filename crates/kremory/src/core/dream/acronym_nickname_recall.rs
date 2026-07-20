@@ -1257,7 +1257,11 @@ mod tests {
         .await
         .expect("first acronym pass");
         assert_eq!(r1.merges_applied, 1, "first pass merges the acronym pair");
-        assert_eq!(count_entities(&conn, "g_ng5").await, 1, "one entity after merge");
+        assert_eq!(
+            count_entities(&conn, "g_ng5").await,
+            1,
+            "one entity after merge"
+        );
 
         // ── unmerge: reverse it + record the nogood (site = site5) ──
         let mutation_id: i64 = {

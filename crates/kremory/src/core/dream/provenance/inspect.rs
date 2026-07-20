@@ -149,7 +149,10 @@ fn derive_view(kind: MutationKind, inputs_json: &str) -> Result<(Vec<String>, St
             if let Some(obj) = inputs.object_id.clone() {
                 affected.push(obj);
             }
-            let summary = format!("deleted fact {} (subject '{}')", inputs.fact_id, inputs.subject_id);
+            let summary = format!(
+                "deleted fact {} (subject '{}')",
+                inputs.fact_id, inputs.subject_id
+            );
             Ok((affected, summary))
         }
         other => Ok((Vec::new(), format!("{} mutation", other.as_tag()))),

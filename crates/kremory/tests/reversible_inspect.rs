@@ -90,7 +90,10 @@ async fn merge_and_log_id(graph: &TemporalGraph) -> i64 {
 
     let mut rows = graph
         .conn
-        .query("SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'", ())
+        .query(
+            "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge'",
+            (),
+        )
         .await
         .expect("log query");
     rows.next()
@@ -112,13 +115,22 @@ async fn mutation_history_lists_merge() {
         .expect("mutation_history");
     assert_eq!(hist.len(), 1, "exactly one mutation touched the loser");
     let rec = &hist[0];
-    assert_eq!(rec.mutation_id, mutation_id, "record carries the undo mutation_id");
+    assert_eq!(
+        rec.mutation_id, mutation_id,
+        "record carries the undo mutation_id"
+    );
     assert_eq!(rec.kind, MutationKind::EntityMerge);
     assert!(!rec.undone, "merge is live (not yet reversed)");
     assert_eq!(rec.group_id, GROUP);
     // affected_entities = [keeper, loser] — both are locatable by id.
-    assert!(rec.affected_entities.contains(&KEEPER.to_string()), "keeper present");
-    assert!(rec.affected_entities.contains(&LOSER.to_string()), "loser present");
+    assert!(
+        rec.affected_entities.contains(&KEEPER.to_string()),
+        "keeper present"
+    );
+    assert!(
+        rec.affected_entities.contains(&LOSER.to_string()),
+        "loser present"
+    );
     assert_eq!(
         rec.summary,
         format!("merged '{LOSER}' into '{KEEPER}' (site=canonicalize)"),
@@ -137,7 +149,11 @@ async fn mutation_history_lists_merge() {
     let hist_after = mutation_history(&graph, LOSER, GROUP)
         .await
         .expect("mutation_history after unmerge");
-    assert_eq!(hist_after.len(), 1, "the record is still in history after undo");
+    assert_eq!(
+        hist_after.len(),
+        1,
+        "the record is still in history after undo"
+    );
     assert!(hist_after[0].undone, "record now shows undone = true");
     assert_eq!(hist_after[0].mutation_id, mutation_id);
 }
@@ -205,7 +221,10 @@ async fn list_mutations_filters() {
     )
     .await
     .expect("list by non-matching kind");
-    assert!(by_other_kind.is_empty(), "fact_archive kind filter excludes the merge");
+    assert!(
+        by_other_kind.is_empty(),
+        "fact_archive kind filter excludes the merge"
+    );
 
     // group filter that does NOT match → empty.
     let other_group = list_mutations(
@@ -224,7 +243,10 @@ async fn list_mutations_filters() {
     let live_after = list_mutations(&graph, MutationFilter::default())
         .await
         .expect("list live after undo");
-    assert!(live_after.is_empty(), "default filter hides the undone mutation");
+    assert!(
+        live_after.is_empty(),
+        "default filter hides the undone mutation"
+    );
 
     let all_after = list_mutations(
         &graph,
@@ -235,6 +257,10 @@ async fn list_mutations_filters() {
     )
     .await
     .expect("list include_undone after undo");
-    assert_eq!(all_after.len(), 1, "include_undone surfaces the reversed mutation");
+    assert_eq!(
+        all_after.len(),
+        1,
+        "include_undone surfaces the reversed mutation"
+    );
     assert!(all_after[0].undone, "and it is marked undone");
 }

@@ -659,7 +659,11 @@ mod tests {
             report.count, 0,
             "wholly-expired entity: BOTH facts KEPT (archiving either strands `quiet` to 0 live) — EXACT 0"
         );
-        assert_eq!(archive_count(&graph, "g1").await, 0, "nothing moved to archive");
+        assert_eq!(
+            archive_count(&graph, "g1").await,
+            0,
+            "nothing moved to archive"
+        );
     }
 
     /// ADR-070 §4 matrix: the ref-count-guard reject path (previously SILENT — it just

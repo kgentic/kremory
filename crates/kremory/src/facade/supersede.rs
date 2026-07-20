@@ -280,7 +280,11 @@ mod supersede_tests {
     /// Plant a subject entity + fact directly via the graph, mirroring
     /// `consolidation_supersession_test.rs`'s `run_one_row` seeding pattern.
     /// Returns the inserted `fact_id`.
-    async fn seed_fact(mem: &Memory, ns: &Namespace, valid_from: chrono::DateTime<chrono::Utc>) -> i64 {
+    async fn seed_fact(
+        mem: &Memory,
+        ns: &Namespace,
+        valid_from: chrono::DateTime<chrono::Utc>,
+    ) -> i64 {
         let tg = mem.temporal_graph.as_ref().expect("temporal_graph");
         let group_id = mem.group_id_for_test(ns);
 

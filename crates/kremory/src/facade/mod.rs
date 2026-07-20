@@ -102,9 +102,7 @@ pub use crate::core::dream::provenance::{
 // surface") — the SEE half of the see+fix story. `MutationRecord` is the
 // consumer-facing view a `mutation_history` / `list_mutations` query returns;
 // `MutationKind` tags it; `MutationFilter` shapes `list_mutations`.
-pub use crate::core::dream::provenance::{
-    MutationFilter, MutationKind, MutationRecord,
-};
+pub use crate::core::dream::provenance::{MutationFilter, MutationKind, MutationRecord};
 
 use std::future::IntoFuture;
 use std::path::Path;
@@ -346,7 +344,10 @@ mod dream_summary_budget_exhausted_tests {
             budget_exhausted: true,
             ..Default::default()
         };
-        assert!(r.budget_exhausted, "DreamPhaseResult.budget_exhausted must be settable");
+        assert!(
+            r.budget_exhausted,
+            "DreamPhaseResult.budget_exhausted must be settable"
+        );
     }
 
     #[test]
@@ -910,10 +911,7 @@ impl Memory {
     /// # }
     /// ```
     #[must_use = "EditEntityRequest must call .execute() to run"]
-    pub fn edit_entity<'a>(
-        &'a self,
-        entity_id: impl Into<String> + 'a,
-    ) -> EditEntityRequest<'a> {
+    pub fn edit_entity<'a>(&'a self, entity_id: impl Into<String> + 'a) -> EditEntityRequest<'a> {
         EditEntityRequest {
             memory: self,
             entity_id: entity_id.into(),

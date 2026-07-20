@@ -24,8 +24,8 @@
 //! [`crate::core::schema::TemporalGraph`] (via the `canonicalize_surface_forms`
 //! free-function) so it can also be unit-tested without a full dream-phase harness.
 
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use metrics::counter;
 use tracing;
 
@@ -1200,7 +1200,13 @@ async fn snapshot_merge_pre_state(
         .execute(
             "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            libsql::params!["entity_merge", group_id.clone(), now, pre_state_json, inputs_json],
+            libsql::params![
+                "entity_merge",
+                group_id.clone(),
+                now,
+                pre_state_json,
+                inputs_json
+            ],
         )
         .await?;
 
@@ -1813,7 +1819,7 @@ mod tests {
             },
         )
         .await
-            .expect("merge");
+        .expect("merge");
 
         // The remapped fact's endpoint is now `keeper` (subject_id rewritten) AND it
         // must be stamped corroboration_inert = 1.
@@ -1856,7 +1862,7 @@ mod tests {
             },
         )
         .await
-            .expect("merge");
+        .expect("merge");
 
         assert_eq!(
             corroboration_inert_of(&graph, remapped_id).await,
@@ -1880,7 +1886,11 @@ mod tests {
             .expect("present")
             .get(0)
             .expect("object_id col");
-        assert_eq!(object_id.as_deref(), Some("keeper"), "object_id must be remapped");
+        assert_eq!(
+            object_id.as_deref(),
+            Some("keeper"),
+            "object_id must be remapped"
+        );
     }
 
     // ── TD-112: keeper re-embed on merge ──────────────────────────────────────

@@ -133,7 +133,9 @@ impl ConsolidationBudget {
         self.used_tokens = self
             .used_tokens
             .saturating_add(tokens_input.saturating_add(tokens_output));
-        self.used_usd_micro = self.used_usd_micro.saturating_add(cost_usd_micro.unwrap_or(0));
+        self.used_usd_micro = self
+            .used_usd_micro
+            .saturating_add(cost_usd_micro.unwrap_or(0));
 
         let now = chrono::Utc::now().timestamp();
         graph
@@ -770,15 +772,16 @@ mod tests {
 
         // Fork 3 structural guarantee: NO counter key carries the high-cardinality
         // group_id / entity id as a label value.
-        let leaked = snapshotter
-            .snapshot()
-            .into_vec()
-            .into_iter()
-            .any(|(composite_key, _, _, _)| {
-                let key = composite_key.key();
-                key.labels()
-                    .any(|l| l.value() == "g-cardinality" || l.value() == "keeper-1")
-            });
+        let leaked =
+            snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .any(|(composite_key, _, _, _)| {
+                    let key = composite_key.key();
+                    key.labels()
+                        .any(|l| l.value() == "g-cardinality" || l.value() == "keeper-1")
+                });
         assert!(
             !leaked,
             "high-cardinality group_id/entity_refs must never appear as a counter label"

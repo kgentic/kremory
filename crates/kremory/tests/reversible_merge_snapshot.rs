@@ -20,7 +20,7 @@
 
 use serde_json::Value;
 
-use kremory::core::canonicalization::{L5_CANONICALIZATION_THRESHOLD, canonicalize_surface_forms};
+use kremory::core::canonicalization::{canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD};
 use kremory::core::graph::{
     InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
 };
@@ -84,7 +84,16 @@ async fn plant_fact(graph: &TemporalGraph, subject: &str, predicate: &str, objec
              (subject_id, predicate, object_id, valid_from, recorded_at, group_id, \
               subject_group_id, object_group_id, confidence) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1.0)",
-            libsql::params![subject, predicate, object, now.clone(), now, GROUP, GROUP, GROUP],
+            libsql::params![
+                subject,
+                predicate,
+                object,
+                now.clone(),
+                now,
+                GROUP,
+                GROUP,
+                GROUP
+            ],
         )
         .await
         .expect("plant fact");
@@ -235,7 +244,12 @@ async fn merge_snapshot_captures_complete_pre_state() {
     assert_eq!(loser_row["group_id"], GROUP);
     assert_eq!(loser_row["access_count"], 3);
     assert!(
-        (loser_row["ner_confidence"].as_f64().expect("loser ner_confidence") - 0.71).abs() < 1e-6
+        (loser_row["ner_confidence"]
+            .as_f64()
+            .expect("loser ner_confidence")
+            - 0.71)
+            .abs()
+            < 1e-6
     );
     assert!(
         loser_row["entity_type_assigned_at"].is_string(),
@@ -258,7 +272,9 @@ async fn merge_snapshot_captures_complete_pre_state() {
     assert!((keeper_pre["ner_confidence"].as_f64().expect("keeper ner") - 0.83).abs() < 1e-6);
 
     // ── (3) re-pointed facts — each id + endpoint + PRIOR inert flag ──
-    let facts = pre["repointed_facts"].as_array().expect("repointed_facts array");
+    let facts = pre["repointed_facts"]
+        .as_array()
+        .expect("repointed_facts array");
     assert_eq!(facts.len(), 2, "both endpoints captured: {facts:?}");
     let subj = facts
         .iter()
@@ -280,7 +296,9 @@ async fn merge_snapshot_captures_complete_pre_state() {
     );
 
     // ── (4) episodic edges — correct collided flags ──
-    let edges = pre["episodic_edges"].as_array().expect("episodic_edges array");
+    let edges = pre["episodic_edges"]
+        .as_array()
+        .expect("episodic_edges array");
     assert_eq!(edges.len(), 2, "both loser edges captured: {edges:?}");
     let e1_snap = edges
         .iter()

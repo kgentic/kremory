@@ -189,16 +189,20 @@ impl<'a> EditEntityRequest<'a> {
             (Some(new_id), None) => EntityEditOp::Rename { new_id },
             (None, Some(new_type_id)) => EntityEditOp::Retype { new_type_id },
             (None, None) => {
-                return Err(MemoryError::Core(crate::core::error::Error::EntityEditInvalid {
-                    detail: "specify exactly one of .rename(new_id) or .retype(type_id)".into(),
-                }));
+                return Err(MemoryError::Core(
+                    crate::core::error::Error::EntityEditInvalid {
+                        detail: "specify exactly one of .rename(new_id) or .retype(type_id)".into(),
+                    },
+                ));
             }
             (Some(_), Some(_)) => {
-                return Err(MemoryError::Core(crate::core::error::Error::EntityEditInvalid {
-                    detail: ".rename(new_id) and .retype(type_id) are mutually exclusive — \
+                return Err(MemoryError::Core(
+                    crate::core::error::Error::EntityEditInvalid {
+                        detail: ".rename(new_id) and .retype(type_id) are mutually exclusive — \
                              call one per edit"
-                        .into(),
-                }));
+                            .into(),
+                    },
+                ));
             }
         };
         let ns = self.memory.resolve_namespace(self.namespace)?;
@@ -703,7 +707,9 @@ mod undo_dispatch_tests {
 
     use std::sync::Arc;
 
-    use crate::core::canonicalization::{canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD};
+    use crate::core::canonicalization::{
+        canonicalize_surface_forms, L5_CANONICALIZATION_THRESHOLD,
+    };
     use crate::core::error::Error as CoreError;
     use crate::core::graph::InsertEntityWithGroupParams;
     use crate::core::provider::{DynEmbeddingProvider, MockChatProvider, NullEmbeddingProvider};
@@ -771,10 +777,13 @@ mod undo_dispatch_tests {
         )
         .await;
         insert_embedded(mem, "alice j", "Alice.").await;
-        let report =
-            canonicalize_surface_forms(mem.temporal_graph.as_ref().unwrap(), &group, L5_CANONICALIZATION_THRESHOLD)
-                .await
-                .expect("canonicalize");
+        let report = canonicalize_surface_forms(
+            mem.temporal_graph.as_ref().unwrap(),
+            &group,
+            L5_CANONICALIZATION_THRESHOLD,
+        )
+        .await
+        .expect("canonicalize");
         assert_eq!(report.merges_applied, 1, "exactly one merge produced");
         let mut rows = mem
             .temporal_graph
@@ -807,7 +816,10 @@ mod undo_dispatch_tests {
                 // is recorded so the next dream() will not re-merge the pair.
                 assert_eq!(o.restored_entity, "alice j", "loser restored");
                 assert_eq!(o.keeper, "alice johnson", "keeper named");
-                assert!(o.nogood_recorded, "unmerge records the anti-re-merge nogood");
+                assert!(
+                    o.nogood_recorded,
+                    "unmerge records the anti-re-merge nogood"
+                );
                 assert!(!o.already_undone, "first undo is a real reversal");
             }
             other => panic!("expected Unmerge, got {other:?}"),
@@ -827,11 +839,18 @@ mod undo_dispatch_tests {
             .expect("rename");
         assert!(edit.rekeyed, "rename rekeys");
 
-        let outcome = mem.undo(edit.mutation_id).execute().await.expect("undo edit");
+        let outcome = mem
+            .undo(edit.mutation_id)
+            .execute()
+            .await
+            .expect("undo edit");
         match outcome {
             UndoOutcome::EditEntity(o) => {
                 // Same effect as `mem.undo_entity_edit(id)`: the prior id is restored.
-                assert_eq!(o.entity_id, "speaker 1", "rename undo restores the prior id");
+                assert_eq!(
+                    o.entity_id, "speaker 1",
+                    "rename undo restores the prior id"
+                );
                 assert!(!o.already_undone, "first undo is a real reversal");
             }
             other => panic!("expected EditEntity, got {other:?}"),
@@ -849,7 +868,11 @@ mod undo_dispatch_tests {
             .await
             .expect("delete entity");
 
-        let outcome = mem.undo(del.mutation_id).execute().await.expect("undo delete");
+        let outcome = mem
+            .undo(del.mutation_id)
+            .execute()
+            .await
+            .expect("undo delete");
         match outcome {
             UndoOutcome::DeleteEntity(o) => {
                 assert_eq!(o.entity_id, "bob", "delete undo names the restored entity");
@@ -891,14 +914,30 @@ mod undo_dispatch_tests {
                 )
                 .await
                 .expect("fact id query");
-            rows.next().await.expect("row").expect("fact").get::<i64>(0).expect("id")
+            rows.next()
+                .await
+                .expect("row")
+                .expect("fact")
+                .get::<i64>(0)
+                .expect("id")
         };
 
-        let del = mem.delete_fact(fact_id).execute().await.expect("delete fact");
-        let outcome = mem.undo(del.mutation_id).execute().await.expect("undo delete fact");
+        let del = mem
+            .delete_fact(fact_id)
+            .execute()
+            .await
+            .expect("delete fact");
+        let outcome = mem
+            .undo(del.mutation_id)
+            .execute()
+            .await
+            .expect("undo delete fact");
         match outcome {
             UndoOutcome::DeleteFact(o) => {
-                assert_eq!(o.fact_id, fact_id, "delete-fact undo names the restored fact");
+                assert_eq!(
+                    o.fact_id, fact_id,
+                    "delete-fact undo names the restored fact"
+                );
                 assert!(o.fact_restored, "the archived fact was moved back to live");
                 assert!(!o.already_undone, "first undo is a real reversal");
             }
@@ -909,7 +948,11 @@ mod undo_dispatch_tests {
     #[tokio::test]
     async fn undo_unknown_id_is_mutation_not_found() {
         let mem = make_memory().await;
-        let err = mem.undo(999_999).execute().await.expect_err("unknown id must error");
+        let err = mem
+            .undo(999_999)
+            .execute()
+            .await
+            .expect_err("unknown id must error");
         match err {
             MemoryError::Core(CoreError::MutationNotFound { mutation_id }) => {
                 assert_eq!(mutation_id, 999_999);
@@ -943,10 +986,18 @@ mod undo_dispatch_tests {
                 .as_ref()
                 .unwrap()
                 .conn
-                .query("SELECT id FROM graph_mutation_log WHERE kind = 'fact_supersede'", ())
+                .query(
+                    "SELECT id FROM graph_mutation_log WHERE kind = 'fact_supersede'",
+                    (),
+                )
                 .await
                 .expect("planted id query");
-            rows.next().await.expect("row").expect("planted row").get::<i64>(0).expect("id")
+            rows.next()
+                .await
+                .expect("row")
+                .expect("planted row")
+                .get::<i64>(0)
+                .expect("id")
         };
 
         let err = mem

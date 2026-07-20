@@ -23,7 +23,9 @@
 use kremory::core::dream::{
     delete_entity, delete_fact, undo_delete_entity, undo_delete_fact, DeleteEntityParams,
 };
-use kremory::core::graph::{InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams};
+use kremory::core::graph::{
+    InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
+};
 use kremory::core::schema::TemporalGraph;
 
 const GROUP: &str = "meeting_42";
@@ -49,7 +51,16 @@ async fn plant_fact(graph: &TemporalGraph, subject: &str, predicate: &str, objec
              (subject_id, predicate, object_id, valid_from, recorded_at, group_id, \
               subject_group_id, object_group_id, confidence) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1.0)",
-            libsql::params![subject, predicate, object, now.clone(), now, GROUP, GROUP, GROUP],
+            libsql::params![
+                subject,
+                predicate,
+                object,
+                now.clone(),
+                now,
+                GROUP,
+                GROUP,
+                GROUP
+            ],
         )
         .await
         .expect("plant fact");
@@ -137,19 +148,42 @@ async fn entity_exists(graph: &TemporalGraph, id: &str) -> bool {
     count(graph, "SELECT COUNT(*) FROM entities WHERE id = ?1", id).await > 0
 }
 async fn fts_exists(graph: &TemporalGraph, id: &str) -> bool {
-    count(graph, "SELECT COUNT(*) FROM entities_fts WHERE entity_id = ?1", id).await > 0
+    count(
+        graph,
+        "SELECT COUNT(*) FROM entities_fts WHERE entity_id = ?1",
+        id,
+    )
+    .await
+        > 0
 }
 async fn community_exists(graph: &TemporalGraph, id: &str) -> bool {
-    count(graph, "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1", id).await > 0
+    count(
+        graph,
+        "SELECT COUNT(*) FROM entity_communities WHERE entity_id = ?1",
+        id,
+    )
+    .await
+        > 0
 }
 async fn fact_live(graph: &TemporalGraph, fact_id: i64) -> bool {
     count_i64(graph, "SELECT COUNT(*) FROM facts WHERE id = ?1", fact_id).await > 0
 }
 async fn fact_archived(graph: &TemporalGraph, fact_id: i64) -> bool {
-    count_i64(graph, "SELECT COUNT(*) FROM facts_archive WHERE id = ?1", fact_id).await > 0
+    count_i64(
+        graph,
+        "SELECT COUNT(*) FROM facts_archive WHERE id = ?1",
+        fact_id,
+    )
+    .await
+        > 0
 }
 async fn edges_for(graph: &TemporalGraph, id: &str) -> i64 {
-    count(graph, "SELECT COUNT(*) FROM episodic_edges WHERE entity_id = ?1", id).await
+    count(
+        graph,
+        "SELECT COUNT(*) FROM episodic_edges WHERE entity_id = ?1",
+        id,
+    )
+    .await
 }
 
 // ─── delete_entity — retract-on-zero precision (§4.4) ────────────────────────
@@ -190,12 +224,21 @@ async fn delete_entity_cascade_retracts_facts() {
         "only drop_me loses all support (retract-on-zero precision)"
     );
     assert!(!outcome.already_undone);
-    assert!(outcome.mutation_id > 0, "an entity_delete log row was written");
+    assert!(
+        outcome.mutation_id > 0,
+        "an entity_delete log row was written"
+    );
 
     // ── facts RETRACTED (archived), NOT hard-deleted → still recoverable ──
-    assert!(!fact_live(&graph, f_drop).await, "E's fact left the live table");
+    assert!(
+        !fact_live(&graph, f_drop).await,
+        "E's fact left the live table"
+    );
     assert!(!fact_live(&graph, f_keep).await);
-    assert!(fact_archived(&graph, f_drop).await, "E's fact is recoverable in archive");
+    assert!(
+        fact_archived(&graph, f_drop).await,
+        "E's fact is recoverable in archive"
+    );
     assert!(fact_archived(&graph, f_keep).await);
 
     // ── entity + its derived artifacts gone ──
@@ -205,9 +248,18 @@ async fn delete_entity_cascade_retracts_facts() {
     assert!(!community_exists(&graph, "e").await, "own community gone");
 
     // ── retract-on-zero precision: drop_me retracted, keep_me + carol kept ──
-    assert!(!community_exists(&graph, "drop_me").await, "drop_me lost all support → retracted");
-    assert!(community_exists(&graph, "keep_me").await, "keep_me keeps its own fact → NOT retracted");
-    assert!(entity_exists(&graph, "drop_me").await, "base entity NEVER auto-deleted (HippoRAG #17)");
+    assert!(
+        !community_exists(&graph, "drop_me").await,
+        "drop_me lost all support → retracted"
+    );
+    assert!(
+        community_exists(&graph, "keep_me").await,
+        "keep_me keeps its own fact → NOT retracted"
+    );
+    assert!(
+        entity_exists(&graph, "drop_me").await,
+        "base entity NEVER auto-deleted (HippoRAG #17)"
+    );
 }
 
 // ─── delete_entity → undo restores everything (§4.4) ─────────────────────────
@@ -245,12 +297,20 @@ async fn delete_entity_undo_restores() {
     assert!(entity_exists(&graph, "e").await, "entity back");
     assert!(fts_exists(&graph, "e").await, "FTS back");
     assert!(fact_live(&graph, f).await, "fact back in live table");
-    assert!(!fact_archived(&graph, f).await, "fact removed from archive on restore");
+    assert!(
+        !fact_archived(&graph, f).await,
+        "fact removed from archive on restore"
+    );
     assert_eq!(edges_for(&graph, "e").await, 1, "episodic edge back");
-    assert!(community_exists(&graph, "e").await, "community membership back");
+    assert!(
+        community_exists(&graph, "e").await,
+        "community membership back"
+    );
 
     // ── idempotent: second undo is a zero-count no-op ──
-    let again = undo_delete_entity(&graph, del.mutation_id).await.expect("second undo");
+    let again = undo_delete_entity(&graph, del.mutation_id)
+        .await
+        .expect("second undo");
     assert!(again.already_undone, "second undo is a no-op");
     assert_eq!(again.facts_retracted, 0);
 }
@@ -277,18 +337,37 @@ async fn delete_fact_retract_and_undo() {
     );
     assert!(!out.already_undone);
     assert!(!fact_live(&graph, f1).await, "fact left the live table");
-    assert!(fact_archived(&graph, f1).await, "fact recoverable in archive");
-    assert!(!community_exists(&graph, "alice").await, "alice retracted-on-zero");
-    assert!(community_exists(&graph, "bob").await, "bob keeps its own fact → NOT retracted");
+    assert!(
+        fact_archived(&graph, f1).await,
+        "fact recoverable in archive"
+    );
+    assert!(
+        !community_exists(&graph, "alice").await,
+        "alice retracted-on-zero"
+    );
+    assert!(
+        community_exists(&graph, "bob").await,
+        "bob keeps its own fact → NOT retracted"
+    );
 
-    let undo = undo_delete_fact(&graph, out.mutation_id).await.expect("undo delete fact");
+    let undo = undo_delete_fact(&graph, out.mutation_id)
+        .await
+        .expect("undo delete fact");
     assert!(!undo.already_undone);
     assert_eq!(undo.neighbors_retracted, 1, "alice community restored");
     assert!(fact_live(&graph, f1).await, "fact restored to live table");
-    assert!(!fact_archived(&graph, f1).await, "fact removed from archive on restore");
-    assert!(community_exists(&graph, "alice").await, "alice membership restored");
+    assert!(
+        !fact_archived(&graph, f1).await,
+        "fact removed from archive on restore"
+    );
+    assert!(
+        community_exists(&graph, "alice").await,
+        "alice membership restored"
+    );
 
-    let again = undo_delete_fact(&graph, out.mutation_id).await.expect("second undo");
+    let again = undo_delete_fact(&graph, out.mutation_id)
+        .await
+        .expect("second undo");
     assert!(again.already_undone, "second undo is a no-op");
 }
 
@@ -324,6 +403,9 @@ async fn delete_entity_cascade_terminates_on_cyclic_graph() {
     assert!(fact_archived(&graph, f_ab).await);
     assert!(fact_archived(&graph, f_ba).await);
     assert!(!entity_exists(&graph, "a").await);
-    assert!(!community_exists(&graph, "b").await, "B's derived community retracted");
+    assert!(
+        !community_exists(&graph, "b").await,
+        "B's derived community retracted"
+    );
     assert!(entity_exists(&graph, "b").await, "B base entity kept");
 }

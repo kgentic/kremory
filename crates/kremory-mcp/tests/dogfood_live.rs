@@ -31,7 +31,10 @@ fn temp_db_path(tag: &str) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("kremory-dogfood-{tag}-{}-{nanos}.db", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "kremory-dogfood-{tag}-{}-{nanos}.db",
+        std::process::id()
+    ))
 }
 
 async fn spawn_release_server(
@@ -44,7 +47,11 @@ async fn spawn_release_server(
     let bin = std::path::Path::new(manifest_dir)
         .join("../../target/release/kremory-mcp-server")
         .canonicalize()
-        .map_err(|e| anyhow!("release binary not found — run `cargo build --release -p kremory-mcp` first: {e}"))?;
+        .map_err(|e| {
+            anyhow!(
+                "release binary not found — run `cargo build --release -p kremory-mcp` first: {e}"
+            )
+        })?;
     let db = db_path.to_string_lossy().to_string();
     let transport = TokioChildProcess::new(tokio::process::Command::new(&bin).configure(|cmd| {
         cmd.env("KREMORY_MCP_DB_PATH", &db)
@@ -106,9 +113,7 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
     } else {
         false
     };
-    println!(
-        "scenario_a: 5-tool-surface={scenario_a_pass} recall-schema-enums={recall_schema_ok}"
-    );
+    println!("scenario_a: 5-tool-surface={scenario_a_pass} recall-schema-enums={recall_schema_ok}");
 
     // ── SCENARIO B: mode-(a) extraction round-trip (real LLM) ──
     println!("\n=== SCENARIO B: mode-(a) real-LLM extraction round trip ===");
@@ -124,7 +129,10 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
     .await;
     let remember_b_ok = match &remember_b {
         Ok(r) => {
-            println!("remember(dogfood) -> is_error={:?} content={:?}", r.is_error, r.structured_content);
+            println!(
+                "remember(dogfood) -> is_error={:?} content={:?}",
+                r.is_error, r.structured_content
+            );
             r.is_error == Some(false)
         }
         Err(e) => {
@@ -191,7 +199,10 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
     .await;
     let remember_c_ok = match &remember_c {
         Ok(r) => {
-            println!("remember(modec, skip_extraction) -> is_error={:?} content={:?}", r.is_error, r.structured_content);
+            println!(
+                "remember(modec, skip_extraction) -> is_error={:?} content={:?}",
+                r.is_error, r.structured_content
+            );
             r.is_error == Some(false)
         }
         Err(e) => {
@@ -212,7 +223,10 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
             Ok(r) => {
                 let count = recall_count(r).unwrap_or(0);
                 c1_count = Some(count);
-                println!("C1 recall(modec, pre-dream) count={count} body={:?}", r.structured_content);
+                println!(
+                    "C1 recall(modec, pre-dream) count={count} body={:?}",
+                    r.structured_content
+                );
             }
             Err(e) => println!("C1 recall FAILED: {e}"),
         }
@@ -227,7 +241,10 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
     .await;
     let dream_ok = match &dream {
         Ok(r) => {
-            println!("dream(modec) -> is_error={:?} content={:?}", r.is_error, r.structured_content);
+            println!(
+                "dream(modec) -> is_error={:?} content={:?}",
+                r.is_error, r.structured_content
+            );
             r.is_error == Some(false)
         }
         Err(e) => {
@@ -248,7 +265,10 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
             Ok(r) => {
                 let count = recall_count(r).unwrap_or(0);
                 c2_count = Some(count);
-                println!("C2 recall(modec, post-dream) count={count} body={:?}", r.structured_content);
+                println!(
+                    "C2 recall(modec, post-dream) count={count} body={:?}",
+                    r.structured_content
+                );
             }
             Err(e) => println!("C2 recall FAILED: {e}"),
         }
@@ -267,7 +287,10 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
     let scenario_d_pass = match &recall_d {
         Ok(r) => {
             let is_err = r.is_error == Some(true);
-            println!("recall(as_of) -> is_error={:?} content={:?}", r.is_error, r.content);
+            println!(
+                "recall(as_of) -> is_error={:?} content={:?}",
+                r.is_error, r.content
+            );
             is_err
         }
         Err(e) => {
@@ -283,26 +306,23 @@ async fn dogfood_live_settles_td_113() -> Result<()> {
 
     // ── Summary ──
     println!("\n\n---RESULT---");
-    let status = if scenario_a_pass
-        && remember_b_ok
-        && remember_c_ok
-        && dream_ok
-        && scenario_d_pass
+    let status = if scenario_a_pass && remember_b_ok && remember_c_ok && dream_ok && scenario_d_pass
     {
         "success"
     } else {
         "partial"
     };
     println!("status: {status}");
-    println!(
-        "scenario_a: 3-tools={scenario_a_pass} recall-schema-enums={recall_schema_ok}"
-    );
+    println!("scenario_a: 3-tools={scenario_a_pass} recall-schema-enums={recall_schema_ok}");
     println!(
         "scenario_b_remember_ok: {remember_b_ok} scenario_b_recall_count: {:?}",
         scenario_b_recall_count
     );
     println!("scenario_c1_modec_recall_count (pre-dream): {:?}", c1_count);
-    println!("scenario_c2_modec_after_dream_count (post-dream): {:?}", c2_count);
+    println!(
+        "scenario_c2_modec_after_dream_count (post-dream): {:?}",
+        c2_count
+    );
     println!("scenario_d_error_path: {scenario_d_pass}");
     println!("---END---");
 

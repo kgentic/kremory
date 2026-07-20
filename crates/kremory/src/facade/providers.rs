@@ -560,9 +560,7 @@ pub async fn with_openai_compatible_chat_ollama_embed(
         .model(chat_model)
         .timeout_seconds(120)
         .build()
-        .map_err(|e| {
-            MemoryError::Other(format!("OpenAI-compatible chat provider error: {e}"))
-        })?;
+        .map_err(|e| MemoryError::Other(format!("OpenAI-compatible chat provider error: {e}")))?;
 
     let embed_provider: Arc<Ollama> = EmbeddingBuilder::<Ollama>::new()
         .base_url(ollama_url)
