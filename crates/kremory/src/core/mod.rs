@@ -151,6 +151,10 @@ pub mod hybrid_extractor;
 pub(crate) mod identity_verdict;
 pub mod ingest;
 pub mod intelligence;
+/// Query-intent classification for recall scoring (TD-066 phase 1, recall-v2
+/// spec Decision 1). Zero-LLM keyword heuristic; not yet wired into the live
+/// recall path (phase 2) — see module docs for the HALF-FEATURE note.
+pub(crate) mod intent;
 pub mod migrations;
 #[cfg(feature = "ner")]
 pub mod ner;
