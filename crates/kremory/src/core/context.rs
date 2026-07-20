@@ -90,6 +90,22 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         } = params;
         let limit = limit.unwrap_or(self.config.search.top_k);
 
+        // TD-066 phase 1 (recall-v2 spec Decision 1, #77): classify query intent
+        // up-front, BEFORE FTS/vector search, so downstream scoring axes can read
+        // it for per-intent weight defaults. PHASE 1 CLASSIFIES + OBSERVES ONLY —
+        // it does NOT yet alter scoring (phase 2 wires the per-axis weight-override
+        // lookup). Emitting it now makes intent visible on every recall for the
+        // pattern-tuning the spec (Decision 5) defers to build-time eval feedback
+        // (observability-first-class).
+        let intent = crate::core::intent::classify_intent(query);
+        metrics::counter!("kremory.recall.intent_total", "intent" => intent.as_str())
+            .increment(1);
+        tracing::debug!(
+            target: "kremory.recall.intent",
+            intent = intent.as_str(),
+            "recall query intent classified (TD-066 phase 1: observe-only)"
+        );
+
         // Build search filters from the optional group_id
         let filters = match group_id {
             Some(gid) => SearchFilters::for_group(gid),
