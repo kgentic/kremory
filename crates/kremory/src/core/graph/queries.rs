@@ -15,6 +15,17 @@ pub struct GetNeighboursAtParams<'a> {
     pub entity_id: &'a str,
     pub hops: u32,
     pub as_of: Option<DateTime<Utc>>,
+    /// recall-v2 Phase 4 (TD-056, ADR-067 Amendment 2): in-BFS visited-entity
+    /// cap. `None` = unbounded (today's behaviour). `Some(cap)` early-exits the
+    /// BFS once `visited_entities.len() >= cap`, bounding hub-explosion on the
+    /// widened multi-hop path (spec R1). The caller-side per-seed neighbour cap
+    /// alone is insufficient at `hops >= 2` — every neighbour is
+    /// enqueued+queried before the caller can trim (see `context.rs`). Placed at
+    /// the top of the BFS loop so `hops == 1` stays byte-identical: a seed's
+    /// direct neighbours are all enqueued in the seed's own iteration, so the
+    /// cap only fires on the NEXT iteration (after every hop-1 neighbour is
+    /// already visited) — it bites only the hop>=2 expansion.
+    pub max_visited: Option<usize>,
 }
 
 impl TemporalGraph {
@@ -119,6 +130,7 @@ impl TemporalGraph {
             entity_id,
             hops,
             as_of,
+            max_visited,
         } = params;
         let _db_start = Instant::now();
         let mut visited_entities: HashSet<String> = HashSet::new();
@@ -131,6 +143,17 @@ impl TemporalGraph {
         let as_of_str = as_of.map(|t| t.to_rfc3339());
 
         while let Some((current_id, depth)) = queue.pop_front() {
+            // recall-v2 Phase 4 (TD-056, spec R1): in-BFS fan-out cap. Checked at
+            // the TOP of the loop (after pop, before processing) so `hops == 1`
+            // is byte-identical — a seed's direct neighbours are all enqueued in
+            // the seed's OWN iteration, so this only trips on a later iteration,
+            // after every hop-1 neighbour is already visited; at `hops >= 2` it
+            // stops the expansion BEFORE any depth-2 query, bounding hub-explosion.
+            if let Some(cap) = max_visited {
+                if visited_entities.len() >= cap {
+                    break;
+                }
+            }
             if depth >= hops {
                 continue;
             }
