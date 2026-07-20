@@ -61,6 +61,13 @@ class Config:
     # harness's OWN recall-strategy selector). Default "recall" preserves the
     # pre-existing wire shape byte-for-byte (see CodememClient.recall()).
     server_mode: str = "recall"
+    # Workstream A: scorer selector. "substring" is the strict word-overlap
+    # matcher (check_answer_in_memories) — default, kept for reproducibility.
+    # "llm-judge" is an OFFLINE cross-family LLM-as-judge pass (judge_rescore.py)
+    # that credits semantic matches the substring matcher misses; the harness
+    # still runs substring inline and always persists `recalled_memories`, so
+    # both scorers report over the same run. Recorded in output metadata only.
+    scorer: str = "substring"
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +681,17 @@ def run_benchmark(config: Config) -> dict:
     CIRCUIT_HTTP_RATE = 0.20   # >20% HTTP errors = systemic
     LIVENESS_EVERY = 25
 
+    # TD-128 (B6): per-conversation ingest ISOLATION. A budget-abort on ONE
+    # conversation must not halt a multi-conversation run — record it and move
+    # on, so the run degrades to a partial matrix (only fully-ingested
+    # conversations scored) instead of a dead run. Fail-loud is preserved: the
+    # aborted set is reported loudly at the end, and a run where EVERY attempted
+    # conversation aborts is still a hard `sys.exit(4)` (systemic ingest failure).
+    # This folds the shell-level per-conv isolation of `.context/robust-3conv.sh`
+    # into the harness so a single `--conversations 0 1 2` invocation is robust.
+    ingest_aborted: list[dict] = []
+    ingest_attempted = 0
+
     for conv_idx, conversation in enumerate(dataset):
         sample_id = conversation.get("sample_id", f"conv_{conv_idx}")
         namespace = f"{NAMESPACE_PREFIX}-{sample_id}"
@@ -689,20 +707,35 @@ def run_benchmark(config: Config) -> dict:
             client.delete_namespace(namespace)
             time.sleep(0.5)
 
+            ingest_attempted += 1
             try:
                 mem_count = ingest_conversation(client, namespace, sessions, sample_id)
             except KremoryStalled as e:
+                # TD-128 (B6): ISOLATE — record + skip this conversation's
+                # questions (its namespace is only partially ingested; scoring it
+                # would pollute the matrix), then continue to the next. Still
+                # LOUD. The all-aborted case is caught after the loop (exit 4).
                 print(
                     f"\n{'='*64}\n"
-                    f"FAIL-FAST ABORT (ingestion): {e}\n"
+                    f"FAIL-FAST ABORT (ingestion) — conversation ISOLATED, run continues: {e}\n"
                     f"  conversation={conv_idx} sample={sample_id}  "
                     f"http_errors={client.total_http_errors}\n"
-                    f"  → kremory ingest stalled/too-slow — NOT grinding. Fix "
-                    f"ingest throughput or raise KREMORY_INGEST_BUDGET_S before "
-                    f"re-running.\n{'='*64}",
+                    f"  → kremory ingest stalled/too-slow for THIS conversation — "
+                    f"excluding it from the matrix, moving to the next. Fix ingest "
+                    f"throughput or raise KREMORY_INGEST_BUDGET_S to include it.\n{'='*64}",
                     file=sys.stderr,
                 )
-                sys.exit(4)
+                ingest_aborted.append({
+                    "conv_idx": conv_idx, "sample_id": sample_id,
+                    "reason": str(e), "http_errors": client.total_http_errors,
+                })
+                jsonl_f.write(json.dumps({
+                    "event": "ingest_aborted", "conv_idx": conv_idx,
+                    "sample_id": sample_id, "namespace": namespace,
+                    "reason": str(e), "http_errors": client.total_http_errors,
+                }) + "\n")
+                jsonl_f.flush()
+                continue
             print(f"  Stored {mem_count} memories")
             # Brief pause for enrichment
             time.sleep(1.0)
@@ -742,6 +775,12 @@ def run_benchmark(config: Config) -> dict:
                 "category": category,
                 "evidence_ids": qa["evidence"],
                 "memories_recalled": len(memories),
+                # Workstream A (LLM-judge scorer): persist the actual recalled
+                # memory TEXTS per question so the run JSON is re-scorable
+                # offline by a cross-family LLM judge (judge_rescore.py) without
+                # re-running recall. The strict substring scorer above only
+                # consumes len(memories); the judge needs the strings.
+                "recalled_memories": memories,
                 "is_correct": is_correct,
                 "confidence": round(confidence, 4),
                 "explanation": explanation,
@@ -790,6 +829,23 @@ def run_benchmark(config: Config) -> dict:
 
     jsonl_f.close()
 
+    # TD-128 (B6): report ingest isolation outcome LOUDLY, and enforce fail-loud
+    # for the systemic case — if every conversation we attempted to ingest
+    # aborted, that is an ingest-broken run, not a partial matrix: exit 4.
+    if ingest_aborted:
+        print(f"\n{'='*64}\n[ISOLATION] {len(ingest_aborted)}/{ingest_attempted} "
+              f"conversation(s) aborted ingest and were EXCLUDED from the matrix:",
+              file=sys.stderr)
+        for a in ingest_aborted:
+            print(f"    - conv {a['conv_idx']} ({a['sample_id']}): {a['reason']}",
+                  file=sys.stderr)
+        print(f"{'='*64}", file=sys.stderr)
+        if ingest_attempted > 0 and len(ingest_aborted) == ingest_attempted:
+            print(f"[FAIL-LOUD] ALL {ingest_attempted} attempted conversations "
+                  f"aborted ingest — systemic ingest failure, not a partial run. "
+                  f"Exiting 4.", file=sys.stderr)
+            sys.exit(4)
+
     # Summary with scores
     total_correct = sum(v["correct"] for v in category_stats.values())
     total_questions = sum(v["total"] for v in category_stats.values())
@@ -812,9 +868,14 @@ def run_benchmark(config: Config) -> dict:
 
     output = {
         "mode": config.mode,
+        "scorer": config.scorer,
+        "server_mode": config.server_mode,
         "total_questions": len(all_results),
         "category_stats": category_stats,
         "results": all_results,
+        # TD-128 (B6): conversations excluded from this matrix due to ingest abort.
+        "ingest_aborted": ingest_aborted,
+        "ingest_attempted": ingest_attempted,
     }
 
     # Save results
@@ -866,6 +927,13 @@ def main():
                         help="Skip ingestion, reuse existing memories")
     parser.add_argument("--output", type=Path,
                         help="Output file path for results JSON")
+    parser.add_argument("--scorer", default="substring",
+                        choices=["substring", "llm-judge"],
+                        help="Scoring path. 'substring' = strict word-overlap "
+                             "matcher (default, reproducible). 'llm-judge' = "
+                             "the run captures recalled_memories for an OFFLINE "
+                             "cross-family LLM judge (see judge_rescore.py); "
+                             "substring still runs inline so both are reported.")
     args = parser.parse_args()
 
     config = Config(
@@ -878,6 +946,7 @@ def main():
         skip_ingest=args.skip_ingest,
         output=args.output,
         server_mode=args.server_mode,
+        scorer=args.scorer,
     )
     run_benchmark(config)
 

@@ -13,6 +13,7 @@ use serde::Deserialize;
 use tracing;
 
 use super::models::{RawEntity, RawRelationship};
+use super::parsers::{emit_parse_yield_metrics, parse_items, ParsePath};
 use super::{prompts, schemas, structured};
 use crate::core::config::ContentType;
 use crate::core::error::Result;
@@ -189,11 +190,39 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
         tracing::info!(_ms, stage = "entity_typing", "kremory.extraction.stage_ms");
         let typing_text = serde_json::to_string(&typing_value).unwrap_or_default();
 
-        let entity_output: EntityOnlyOutput = parse_json_lenient(&typing_text).unwrap_or_default();
-        let mut entities: Vec<ExtractedEntity> = entity_output
-            .entities
+        // Routed through the shared shape-tolerant `parse_items` helper
+        // (Vera SCOPE-001, boy-scout): the previous `parse_json_lenient::<
+        // EntityOnlyOutput>` deserialized the whole `#[serde(default)]`
+        // wrapper struct directly, which cannot distinguish a wrong/missing
+        // "entities" key from a genuine empty list, and had zero raw-vs-
+        // emitted observability. `ProgrammaticFirstExtractor` is dormant (not
+        // wired into `ExtractorKind` production dispatch) but is fixed now
+        // per boy-scout discipline while the risk is low.
+        let (raw_entities, raw_entity_count, entity_deserialize_ok, _entity_parse_path): (
+            Vec<RawEntity>,
+            usize,
+            bool,
+            ParsePath,
+        ) = parse_items(&typing_text, "entities");
+        if entity_deserialize_ok {
+            counter!("rql.extraction.json_parse_ok").increment(1);
+        } else {
+            counter!("rql.extraction.json_parse_fail").increment(1);
+            tracing::warn!(
+                parser = "programmatic_entities",
+                "kremory.extraction.json_parse_fail"
+            );
+        }
+        let mut dropped_empty_name = 0u64;
+        let mut entities: Vec<ExtractedEntity> = raw_entities
             .into_iter()
-            .filter(|e| !e.name.is_empty())
+            .filter(|e| {
+                let keep = !e.name.is_empty();
+                if !keep {
+                    dropped_empty_name += 1;
+                }
+                keep
+            })
             .map(|e| {
                 let mut props = serde_json::Map::new();
                 props.insert(
@@ -207,6 +236,11 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
                 }
             })
             .collect();
+        if dropped_empty_name > 0 {
+            counter!("rql.extraction.item_dropped", "parser" => "programmatic_entities", "reason" => "empty_name")
+                .increment(dropped_empty_name);
+        }
+        emit_parse_yield_metrics("programmatic_entities", raw_entity_count, entities.len());
 
         // Apply exclusion filter
         if !ctx.excluded_entity_types.is_empty() {
@@ -240,11 +274,33 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
         tracing::info!(_ms, stage = "relationships", "kremory.extraction.stage_ms");
         let rel_text = serde_json::to_string(&rel_value).unwrap_or_default();
 
-        let rel_output: RelOnlyOutput = parse_json_lenient(&rel_text).unwrap_or_default();
-        let facts: Vec<ExtractedFact> = rel_output
-            .relationships
+        // Same shape-tolerant + observable routing as the entities call above
+        // (Vera SCOPE-001).
+        let (raw_rels, raw_rel_count, rel_deserialize_ok, _rel_parse_path): (
+            Vec<RawRelationship>,
+            usize,
+            bool,
+            ParsePath,
+        ) = parse_items(&rel_text, "relationships");
+        if rel_deserialize_ok {
+            counter!("rql.extraction.json_parse_ok").increment(1);
+        } else {
+            counter!("rql.extraction.json_parse_fail").increment(1);
+            tracing::warn!(
+                parser = "programmatic_relationships",
+                "kremory.extraction.json_parse_fail"
+            );
+        }
+        let mut dropped_empty_field = 0u64;
+        let facts: Vec<ExtractedFact> = raw_rels
             .into_iter()
-            .filter(|r| !r.subject.is_empty() && !r.predicate.is_empty() && !r.object.is_empty())
+            .filter(|r| {
+                let keep = !r.subject.is_empty() && !r.predicate.is_empty() && !r.object.is_empty();
+                if !keep {
+                    dropped_empty_field += 1;
+                }
+                keep
+            })
             .map(|r| ExtractedFact {
                 subject: r.subject,
                 predicate: r.predicate,
@@ -253,6 +309,11 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
                 confidence: r.confidence,
             })
             .collect();
+        if dropped_empty_field > 0 {
+            counter!("rql.extraction.item_dropped", "parser" => "programmatic_relationships", "reason" => "empty_field")
+                .increment(dropped_empty_field);
+        }
+        emit_parse_yield_metrics("programmatic_relationships", raw_rel_count, facts.len());
 
         let entity_count = entities.len();
         let fact_count = facts.len();

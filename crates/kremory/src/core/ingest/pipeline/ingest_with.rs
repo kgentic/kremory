@@ -5,7 +5,7 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use metrics::histogram;
 
-use crate::core::config::ContentType;
+use crate::core::config::{ContentType, ResolutionStrategy};
 use crate::core::contradiction::{DetectParams, TwoPoolDetector};
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
@@ -17,7 +17,7 @@ use crate::core::graph::{
 };
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
-    ResolutionResult,
+    ExtractionResult, ResolutionResult,
 };
 use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
 use crate::core::resolver::{entity_name, normalize_name, CascadeResolver, UnionFind};
@@ -801,26 +801,84 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         let mut all_entities: Vec<ExtractedEntity> = Vec::new();
         let mut all_facts: Vec<ExtractedFact> = Vec::new();
-        for chunk in &chunks {
-            let ctx = ExtractionContext {
-                allowed_entity_types: &allowed_entity_types_live,
-                allowed_edge_types: &self.config.allowed_edge_types,
-                known_entities: &all_entities,
-                excluded_entity_types: &self.config.excluded_entity_types,
-                content_type: content_type.clone(),
-                registry_specs: registry.specs(),
-                existing_graph_entities: &existing_entities_for_prompt,
-                arm_budget_ms: self.config.extraction_arm_budget_ms,
-                model: self.model.as_deref(),
-            };
-            let result = extractor.extract(chunk, &ctx).await?;
-            all_entities.extend(result.entities);
-            all_facts.extend(result.facts);
 
-            // OOV audit: catch domain terms the LLM missed (language-agnostic safety net)
-            if let Some(ref auditor) = self.oov_auditor {
-                let audit_adds = auditor.audit(chunk, &all_entities);
-                all_entities.extend(audit_adds);
+        // TD-NEW-A Lane C: optionally overlap the per-chunk extraction LLM
+        // calls. `extraction_concurrency == 1` keeps the byte-identical
+        // pre-change sequential path (each chunk's prompt sees earlier chunks'
+        // entities via a growing `known_entities`) — the clean rollback + the
+        // pure-W1 baseline for benchmark attribution. `> 1` uses `buffered(N)`
+        // (order-PRESERVING, NOT `buffer_unordered`, per the TD-NEW-B
+        // determinism rule); extraction is read-only with no cross-chunk graph
+        // dependency, so overlap is safe, but `known_entities` becomes
+        // window-local (empty) — the within-ingest cross-chunk hint is dropped,
+        // which dream L5 canonicalization backstops (recall no-regression MUST
+        // be measured, per the W2 plan).
+        {
+            use futures::stream::StreamExt as _;
+            let concurrency = self.config.extraction_concurrency.max(1);
+            if concurrency == 1 {
+                for chunk in &chunks {
+                    let ctx = ExtractionContext {
+                        allowed_entity_types: &allowed_entity_types_live,
+                        allowed_edge_types: &self.config.allowed_edge_types,
+                        known_entities: &all_entities,
+                        excluded_entity_types: &self.config.excluded_entity_types,
+                        content_type: content_type.clone(),
+                        registry_specs: registry.specs(),
+                        existing_graph_entities: &existing_entities_for_prompt,
+                        arm_budget_ms: self.config.extraction_arm_budget_ms,
+                        model: self.model.as_deref(),
+                    };
+                    let result = extractor.extract(chunk.as_str(), &ctx).await?;
+                    all_entities.extend(result.entities);
+                    all_facts.extend(result.facts);
+                    if let Some(ref auditor) = self.oov_auditor {
+                        let audit_adds = auditor.audit(chunk, &all_entities);
+                        all_entities.extend(audit_adds);
+                    }
+                }
+            } else {
+                // One shared ctx serves every chunk (identical once
+                // known_entities is window-local).
+                let shared_ctx = ExtractionContext {
+                    allowed_entity_types: &allowed_entity_types_live,
+                    allowed_edge_types: &self.config.allowed_edge_types,
+                    known_entities: &[],
+                    excluded_entity_types: &self.config.excluded_entity_types,
+                    content_type: content_type.clone(),
+                    registry_specs: registry.specs(),
+                    existing_graph_entities: &existing_entities_for_prompt,
+                    arm_budget_ms: self.config.extraction_arm_budget_ms,
+                    model: self.model.as_deref(),
+                };
+                // Build the futures eagerly via `Iterator::map` (monomorphised
+                // at the concrete chunk lifetime) rather than `StreamExt::map`
+                // (which would require the borrowing future to be general over
+                // ANY item lifetime — an HRTB the `extract<'a>` signature can't
+                // satisfy inside the enclosing `tokio::spawn`).
+                let extract_futures: Vec<_> = chunks
+                    .iter()
+                    .map(|chunk| extractor.extract(chunk.as_str(), &shared_ctx))
+                    .collect();
+                let extraction_results: Vec<ExtractionResult> =
+                    futures::stream::iter(extract_futures)
+                        .buffered(concurrency)
+                        .collect::<Vec<crate::core::error::Result<ExtractionResult>>>()
+                        .await
+                        .into_iter()
+                        .collect::<crate::core::error::Result<Vec<_>>>()?;
+
+                // Fold results back in chunk order (deterministic). The OOV
+                // audit runs sequentially per chunk so its "terms this chunk
+                // missed given everything found so far" semantics are preserved.
+                for (chunk, result) in chunks.iter().zip(extraction_results) {
+                    all_entities.extend(result.entities);
+                    all_facts.extend(result.facts);
+                    if let Some(ref auditor) = self.oov_auditor {
+                        let audit_adds = auditor.audit(chunk, &all_entities);
+                        all_entities.extend(audit_adds);
+                    }
+                }
             }
         }
 
@@ -901,6 +959,84 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             self.config.entropy.clone(),
         )
         .with_model(self.model.clone());
+
+        // ── ADR-076 (TD-127) Pass 1 + Pass 2: batched entity resolution ────────
+        // Runs BEFORE the write transaction (ADR-076 SCOPE-001) — both passes
+        // only read the frozen `existing_entities` snapshot loaded above and
+        // do zero DB writes, so they execute in the pre-transaction window
+        // (shrinking lock-hold vs the pairwise path, which resolves inline
+        // inside the transaction's entity loop below).
+        //
+        // Pass 1 (deterministic, no LLM): for each extracted entity, run the
+        // existing ADR-075 candidate block + the cheap Tier-1/Tier-2 tiers.
+        // A hit pre-resolves the entity; a miss adds it to the ambiguous
+        // worklist. Pass 2 batches the ambiguous remainder into windowed
+        // structured-output calls (`resolver_batched::resolve_batched`).
+        //
+        // `batched_resolved` maps `normalize_name(entity.name) -> existing
+        // entity id` for every CONFIDENT resolution (deterministic or
+        // batched-LLM); entities absent from this map are NEW. Only built
+        // when the strategy is `Batched` — the `Pairwise` arm below resolves
+        // inline exactly as before ADR-076.
+        let mut batched_resolved: HashMap<String, String> = HashMap::new();
+        if self.config.resolution_strategy == ResolutionStrategy::Batched {
+            let mut ambiguous: Vec<crate::core::resolver_batched::AmbiguousEntity<'_>> =
+                Vec::new();
+
+            for (idx, extracted) in all_entities.iter().enumerate() {
+                let candidates = self
+                    .block_resolution_candidates(BlockCandidatesParams {
+                        extracted,
+                        existing_entities: &existing_entities,
+                        group_id,
+                    })
+                    .await;
+                metrics::counter!("kremory.resolution.candidates_considered_total")
+                    .increment(candidates.len() as u64);
+                metrics::counter!("kremory.resolution.blocked_out_total")
+                    .increment(existing_entities.len().saturating_sub(candidates.len()) as u64);
+
+                let mut deterministic_hit: Option<String> = None;
+                for existing in candidates.iter().copied() {
+                    if resolver.resolve_deterministic(extracted, existing)
+                        == Some(ResolutionResult::Same)
+                    {
+                        deterministic_hit = Some(existing.id.clone());
+                        break;
+                    }
+                }
+
+                match deterministic_hit {
+                    Some(existing_id) => {
+                        batched_resolved.insert(normalize_name(&extracted.name), existing_id);
+                    }
+                    // Quinn HIGH (ADR-076): an entity whose OWN block is empty
+                    // (e.g. cold-store first ingest — `existing_entities` empty)
+                    // can never merge (the map-back own-block guard would reject
+                    // any assignment anyway), so it must NOT enter the batch —
+                    // otherwise we'd fire an LLM call against an empty pool and
+                    // REGRESS call-count vs Pairwise (which makes 0 calls here).
+                    // Zero candidates → NEW for free, matching Pairwise exactly.
+                    None if !candidates.is_empty() => {
+                        ambiguous.push((idx, extracted, candidates))
+                    }
+                    None => {}
+                }
+            }
+
+            let batched_from_llm = crate::core::resolver_batched::resolve_batched(
+                crate::core::resolver_batched::ResolveBatchedParams {
+                    llm: llm_for_resolver.as_ref(),
+                    model: self.model.as_deref(),
+                    ambiguous: &ambiguous,
+                    max_window: self.config.resolution_batch_max_entities,
+                },
+            )
+            .await;
+            for (idx, existing_id) in batched_from_llm {
+                batched_resolved.insert(normalize_name(&all_entities[idx].name), existing_id);
+            }
+        }
 
         // ── Bug E: open a single outer transaction wrapping Phase 1 (entities +
         // stubs) and Phase 2 (facts).  All inner graph methods call
@@ -1022,34 +1158,52 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // FTS get the canonical case ("ORG" → "Organisation").
                 let label = normalize_label(&extracted.label);
 
-                let mut resolved_to: Option<String> = None;
+                // ADR-076 (TD-127): which existing id (if any) `extracted`
+                // resolves to, computed differently per strategy.
+                //
+                // - `Batched` (default): Pass 1 (deterministic tiers) + Pass 2
+                //   (batched LLM call) already ran BEFORE this transaction —
+                //   see `batched_resolved` above. This arm is a pure lookup;
+                //   it must NOT call `block_resolution_candidates` again
+                //   (that already ran once per entity in Pass 1).
+                // - `Pairwise`: the pre-ADR-076 behaviour, unchanged. ADR-075
+                //   (TD-124) resolves `extracted` only against a bounded
+                //   candidate block (exact-name ∪ embedding-ANN top-k), not
+                //   every existing entity — collapses the LLM
+                //   `ResolutionVerdict` fan-out from O(new × existing) to
+                //   O(k). No-op on ≤k-entity groups.
+                let resolved_to: Option<String> = match self.config.resolution_strategy {
+                    ResolutionStrategy::Batched => batched_resolved
+                        .get(&normalize_name(&extracted.name))
+                        .cloned(),
+                    ResolutionStrategy::Pairwise => {
+                        let candidates = self
+                            .block_resolution_candidates(BlockCandidatesParams {
+                                extracted,
+                                existing_entities: &existing_entities,
+                                group_id,
+                            })
+                            .await;
+                        metrics::counter!("kremory.resolution.candidates_considered_total")
+                            .increment(candidates.len() as u64);
+                        metrics::counter!("kremory.resolution.blocked_out_total").increment(
+                            existing_entities.len().saturating_sub(candidates.len()) as u64,
+                        );
 
-                // ADR-075 (TD-124): resolve `extracted` only against a bounded
-                // candidate block (exact-name ∪ embedding-ANN top-k), not every
-                // existing entity — collapses the LLM `ResolutionVerdict` fan-out
-                // from O(new × existing) to O(k). No-op on ≤k-entity groups.
-                let candidates = self
-                    .block_resolution_candidates(BlockCandidatesParams {
-                        extracted,
-                        existing_entities: &existing_entities,
-                        group_id,
-                    })
-                    .await;
-                metrics::counter!("kremory.resolution.candidates_considered_total")
-                    .increment(candidates.len() as u64);
-                metrics::counter!("kremory.resolution.blocked_out_total")
-                    .increment(existing_entities.len().saturating_sub(candidates.len()) as u64);
-
-                for existing in candidates.iter().copied() {
-                    let result = match resolver.resolve(extracted, existing).await {
-                        Ok(r) => r,
-                        Err(e) => break 'phases Err(e),
-                    };
-                    if result == ResolutionResult::Same {
-                        resolved_to = Some(existing.id.clone());
-                        break;
+                        let mut found: Option<String> = None;
+                        for existing in candidates.iter().copied() {
+                            let result = match resolver.resolve(extracted, existing).await {
+                                Ok(r) => r,
+                                Err(e) => break 'phases Err(e),
+                            };
+                            if result == ResolutionResult::Same {
+                                found = Some(existing.id.clone());
+                                break;
+                            }
+                        }
+                        found
                     }
-                }
+                };
 
                 let entity_id = if let Some(existing_id) = resolved_to {
                     // Merged with existing entity

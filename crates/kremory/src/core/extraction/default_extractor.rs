@@ -8,11 +8,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use metrics::histogram;
+use metrics::{counter, histogram};
 use tracing;
 
 use super::graphiti::{build_entity_prompt, build_relation_names_prompt, build_triplet_prompt};
-use super::parsers::{parse_entities_integer, parse_facts, parse_relation_names};
+use super::parsers::{parse_entities_integer, parse_facts_with_raw_count, parse_relation_names};
 use super::{schemas, structured};
 use crate::core::error::Result;
 use crate::core::intelligence::{
@@ -147,12 +147,18 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
         histogram!("rql.extraction.stage_ms", "stage" => "triplets").record(_ms);
         tracing::info!(_ms, stage = "triplets", "kremory.extraction.stage_ms");
         let stage3_text = serde_json::to_string(&stage3_value).unwrap_or_default();
-        let facts: Vec<ExtractedFact> = parse_facts(&stage3_text)?;
+        let (facts, raw_fact_count): (Vec<ExtractedFact>, usize) =
+            parse_facts_with_raw_count(&stage3_text)?;
 
         let entity_count = entities.len();
         let fact_count = facts.len();
         histogram!("rql.extraction.entity_count").record(entity_count as f64);
         histogram!("rql.extraction.fact_count").record(fact_count as f64);
+        // Stage-level raw-vs-persisted gap (spec 2026-07-20 §C4): the same
+        // signal that would have caught the empty-benchmark-fact-graph bug
+        // without a manual debug session — `raw_fact_count - fact_count` is
+        // always visible, always on.
+        counter!("rql.extraction.raw_facts_from_llm").increment(raw_fact_count as u64);
         tracing::info!(
             entity_count,
             fact_count,

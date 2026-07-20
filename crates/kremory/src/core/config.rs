@@ -28,7 +28,7 @@ pub struct ExtractionWindowConfig {
     /// Default: 100 words. Shorter text rarely benefits from splitting; below
     /// this the overhead of extra chunks exceeds the gain.  Graphiti ratio:
     /// min/max ≈ 33%.
-    pub min_tokens: usize,
+    pub min_words: usize,
 
     /// Default: 0.15. Empirically, chunks with >15% of tokens being entity
     /// spans lose inter-entity context when kept whole; splitting at this
@@ -39,15 +39,15 @@ pub struct ExtractionWindowConfig {
     /// fit in the default 4096-token context with room for system prompt,
     /// query, and generation.  Optimised for latency on the real-time meeting
     /// assistant path.  Users with more memory can increase via
-    /// `LLM_CONTEXT_SIZE` + `CHUNK_MAX_TOKENS` env vars (see KGT-69 for UI
+    /// `LLM_CONTEXT_SIZE` + `CHUNK_MAX_WORDS` env vars (see KGT-69 for UI
     /// presets).  Must stay aligned with `max_chunk_chars` in
     /// the host application's pipeline config (1500 chars).
-    pub max_tokens: usize,
+    pub max_words: usize,
 
     /// Number of words from the end of `chunk[i]` to prepend to `chunk[i+1]`.
     /// Default: 50 words.  Graphiti uses 200/3000 (6.7%); ours is 50/300
     /// (16.7%) — slightly higher overlap compensates for smaller chunks.
-    pub overlap_tokens: usize,
+    pub overlap_words: usize,
 }
 
 impl ExtractionWindowConfig {
@@ -55,15 +55,15 @@ impl ExtractionWindowConfig {
     ///
     /// | Env var | Default | Rationale |
     /// |---------|---------|-----------|
-    /// | `CHUNK_MAX_TOKENS` | 300 | ~1500 chars, fits 3 chunks in 4096-ctx prompt |
-    /// | `CHUNK_MIN_TOKENS` | 100 | Don't chunk short text (Graphiti min/max ≈ 33%) |
-    /// | `CHUNK_OVERLAP_TOKENS` | 50 | Context continuity between chunks |
+    /// | `CHUNK_MAX_WORDS` (or legacy `CHUNK_MAX_TOKENS`) | 300 | ~1500 chars, fits 3 chunks in 4096-ctx prompt |
+    /// | `CHUNK_MIN_WORDS` (or legacy `CHUNK_MIN_TOKENS`) | 100 | Don't chunk short text (Graphiti min/max ≈ 33%) |
+    /// | `CHUNK_OVERLAP_WORDS` (or legacy `CHUNK_OVERLAP_TOKENS`) | 50 | Context continuity between chunks |
     /// | `CHUNK_DENSITY_THRESHOLD` | 0.15 | Entity-dense regions trigger splitting |
     pub fn from_env() -> Self {
         Self {
-            max_tokens: env_usize("CHUNK_MAX_TOKENS", 300),
-            min_tokens: env_usize("CHUNK_MIN_TOKENS", 100),
-            overlap_tokens: env_usize("CHUNK_OVERLAP_TOKENS", 50),
+            max_words: env_usize_or("CHUNK_MAX_WORDS", "CHUNK_MAX_TOKENS", 300),
+            min_words: env_usize_or("CHUNK_MIN_WORDS", "CHUNK_MIN_TOKENS", 100),
+            overlap_words: env_usize_or("CHUNK_OVERLAP_WORDS", "CHUNK_OVERLAP_TOKENS", 50),
             density_threshold: env_f64("CHUNK_DENSITY_THRESHOLD", 0.15),
         }
     }
@@ -72,10 +72,10 @@ impl ExtractionWindowConfig {
 impl Default for ExtractionWindowConfig {
     fn default() -> Self {
         Self {
-            min_tokens: 100,
+            min_words: 100,
             density_threshold: 0.15,
-            max_tokens: 300,
-            overlap_tokens: 50,
+            max_words: 300,
+            overlap_words: 50,
         }
     }
 }
@@ -85,6 +85,18 @@ fn env_usize(var: &str, default: usize) -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+/// Read `new_var`, falling back to the legacy `old_var` name, then `default`.
+///
+/// Field-rename compatibility shim (word-based `ExtractionWindowConfig` fields
+/// were renamed from `*_tokens` to `*_words` — see rename PR): existing
+/// deployments setting `CHUNK_MAX_TOKENS` etc. keep working unchanged.
+fn env_usize_or(new_var: &str, old_var: &str, default: usize) -> usize {
+    std::env::var(new_var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| env_usize(old_var, default))
 }
 
 fn env_f64(var: &str, default: f64) -> f64 {
@@ -206,6 +218,28 @@ impl Default for EmbeddingDim {
     }
 }
 
+/// Entity-resolution call-shape strategy (ADR-076 / TD-127).
+///
+/// Selects how the ambiguous remainder of ingest-time entity resolution (the
+/// entities that survive ADR-075 candidate blocking but are NOT resolved by
+/// the cheap deterministic tiers — exact-normalize + MinHash) reaches the LLM:
+///
+/// - `Batched` (default): one structured-output call per window resolves ALL
+///   ambiguous entities against a shared candidate pool at once, collapsing
+///   the O(ambiguous × candidates) pairwise fan-out to O(windows). See
+///   `resolver_batched.rs`.
+/// - `Pairwise`: the pre-ADR-076 behaviour — one LLM `ResolutionVerdict` call
+///   per (entity, candidate) pair via `CascadeResolver::resolve`. Retained for
+///   A/B comparison and as an instant rollback (config flip, no code revert).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResolutionStrategy {
+    /// Pre-ADR-076 pairwise `resolve()` fan-out.
+    Pairwise,
+    /// ADR-076 batched structured-output resolution (default).
+    #[default]
+    Batched,
+}
+
 /// Top-level pipeline configuration aggregating all sub-configs.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -242,6 +276,16 @@ pub struct PipelineConfig {
     /// `.extraction_arm_budget_ms(value)` on the builder. The benchmark
     /// suite sets this to 300_000 to accommodate qwen2.5:14b warm-up latency.
     pub extraction_arm_budget_ms: u64,
+    /// TD-NEW-A (Lane C): how many per-chunk extraction LLM calls to run
+    /// concurrently within a single `ingest_with` call (`futures::buffered`,
+    /// order-preserving for determinism). `1` = the pre-change sequential
+    /// behaviour. Extraction is read-only (no persisted-graph dependency
+    /// between chunks — `known_entities` becomes window-local when >1, the
+    /// staleness the dream L5 backstop absorbs), so overlapping the calls
+    /// cuts ingest wall-time once resolution is no longer the bottleneck
+    /// (ADR-076). Default: 5 (conservative vs provider concurrent-rate limits;
+    /// raise via `KREMORY_EXTRACTION_CONCURRENCY` on a higher-limit provider).
+    pub extraction_concurrency: usize,
     /// ADR-075 (TD-124): entity-resolution candidate-blocking width. When a
     /// group has MORE than this many existing entities, ingest resolution
     /// compares each newly-extracted entity only against a bounded candidate
@@ -265,6 +309,19 @@ pub struct PipelineConfig {
     /// P0 behaviour (every blocked candidate still reaches `resolve()`); raise
     /// (e.g. `0.5`) to trade a little recall for far fewer resolution LLM calls.
     pub resolution_min_cosine: f32,
+    /// ADR-076 (TD-127): entity-resolution call-shape. `Batched` (default)
+    /// collapses the ambiguous-remainder pairwise LLM fan-out into one
+    /// structured call per window; `Pairwise` retains the pre-ADR-076
+    /// per-(entity, candidate) `ResolutionVerdict` call for A/B + rollback.
+    pub resolution_strategy: ResolutionStrategy,
+    /// ADR-076 (TD-127): maximum number of ambiguous entities packed into a
+    /// single batched-resolution window. Mirrors the `resolution_block_k`
+    /// pattern — a safe-default overflow-cap knob, not a token-budget
+    /// estimator (YAGNI per ADR-076 §Decision). Default: 32 — conservative
+    /// on any 4k-or-larger-context model (32 short name+type lines, plus
+    /// pooled candidates and system prompt, totals roughly 2-3k tokens).
+    /// Raise on a large-context model to shrink call count further.
+    pub resolution_batch_max_entities: usize,
 }
 
 impl PipelineConfig {
@@ -283,8 +340,11 @@ impl PipelineConfig {
                 cache_ttl: Duration::from_secs(300),
                 cache_max_entries: 1000,
                 extraction_arm_budget_ms: 30_000,
+                extraction_concurrency: 5,
                 resolution_block_k: 10,
                 resolution_min_cosine: 0.0,
+                resolution_strategy: ResolutionStrategy::default(),
+                resolution_batch_max_entities: 32,
             },
         }
     }
@@ -305,8 +365,8 @@ impl PipelineConfigBuilder {
 
     // ── ExtractionWindowConfig ───────────────────────────────────────────────
 
-    pub fn min_tokens(mut self, v: usize) -> Self {
-        self.inner.extraction_window.min_tokens = v;
+    pub fn min_words(mut self, v: usize) -> Self {
+        self.inner.extraction_window.min_words = v;
         self
     }
 
@@ -315,13 +375,13 @@ impl PipelineConfigBuilder {
         self
     }
 
-    pub fn max_tokens(mut self, v: usize) -> Self {
-        self.inner.extraction_window.max_tokens = v;
+    pub fn max_words(mut self, v: usize) -> Self {
+        self.inner.extraction_window.max_words = v;
         self
     }
 
-    pub fn overlap_tokens(mut self, v: usize) -> Self {
-        self.inner.extraction_window.overlap_tokens = v;
+    pub fn overlap_words(mut self, v: usize) -> Self {
+        self.inner.extraction_window.overlap_words = v;
         self
     }
 
@@ -427,6 +487,13 @@ impl PipelineConfigBuilder {
         self
     }
 
+    /// TD-NEW-A Lane C: concurrent per-chunk extraction calls per ingest
+    /// (`futures::buffered`, order-preserving). `1` = sequential. Default 5.
+    pub fn extraction_concurrency(mut self, n: usize) -> Self {
+        self.inner.extraction_concurrency = n;
+        self
+    }
+
     // ── Resolution candidate blocking (ADR-075 / TD-124) ──────────────────────
 
     /// Set the entity-resolution candidate-blocking width `k`. Groups with more
@@ -448,6 +515,24 @@ impl PipelineConfigBuilder {
         self
     }
 
+    // ── Batched resolution (ADR-076 / TD-127) ──────────────────────────────────
+
+    /// Select the entity-resolution call-shape strategy. `Batched` (default)
+    /// collapses the ambiguous-remainder LLM fan-out into one structured call
+    /// per window; `Pairwise` restores the pre-ADR-076 per-pair behaviour.
+    pub fn resolution_strategy(mut self, v: ResolutionStrategy) -> Self {
+        self.inner.resolution_strategy = v;
+        self
+    }
+
+    /// Set the maximum number of ambiguous entities packed into a single
+    /// batched-resolution window. Default: 32. Raise on a large-context model
+    /// to shrink call count further; see `resolution_batch_max_entities` docs.
+    pub fn resolution_batch_max_entities(mut self, v: usize) -> Self {
+        self.inner.resolution_batch_max_entities = v;
+        self
+    }
+
     // ── Build ─────────────────────────────────────────────────────────────────
 
     /// Validates the configuration and returns a [`PipelineConfig`] on success.
@@ -458,8 +543,8 @@ impl PipelineConfigBuilder {
     /// - `jaccard_threshold` must be in `(0.0, 1.0]`
     /// - `bm25_weight + vector_weight` must equal `1.0` (within 1e-9)
     /// - `embedding_dim` must be greater than 0
-    /// - `min_tokens` must be greater than 0
-    /// - `max_tokens` must be >= `min_tokens`
+    /// - `min_words` must be greater than 0
+    /// - `max_words` must be >= `min_words`
     /// - `density_threshold` must be in `(0.0, 1.0]`
     pub fn build(self) -> Result<PipelineConfig> {
         let c = &self.inner;
@@ -476,14 +561,14 @@ impl PipelineConfigBuilder {
             return Err(Error::EmbeddingDimZero);
         }
 
-        if c.extraction_window.min_tokens == 0 {
-            return Err(Error::Config("min_tokens must be greater than 0".into()));
+        if c.extraction_window.min_words == 0 {
+            return Err(Error::Config("min_words must be greater than 0".into()));
         }
 
-        if c.extraction_window.max_tokens < c.extraction_window.min_tokens {
+        if c.extraction_window.max_words < c.extraction_window.min_words {
             return Err(Error::TokenWindowInvalid {
-                min: c.extraction_window.min_tokens,
-                got: c.extraction_window.max_tokens,
+                min: c.extraction_window.min_words,
+                got: c.extraction_window.max_words,
             });
         }
 
@@ -564,11 +649,11 @@ mod tests {
 
     #[test]
     fn test_invalid_min_tokens_rejected() {
-        let result = PipelineConfig::builder().min_tokens(0).build();
-        assert!(result.is_err(), "min_tokens = 0 must be rejected");
+        let result = PipelineConfig::builder().min_words(0).build();
+        assert!(result.is_err(), "min_words = 0 must be rejected");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("min_tokens"),
+            msg.contains("min_words"),
             "error should mention field name"
         );
     }
@@ -576,14 +661,14 @@ mod tests {
     #[test]
     fn test_max_less_than_min_rejected() {
         let result = PipelineConfig::builder()
-            .min_tokens(800)
-            .max_tokens(400)
+            .min_words(800)
+            .max_words(400)
             .build();
-        assert!(result.is_err(), "max_tokens < min_tokens must be rejected");
+        assert!(result.is_err(), "max_words < min_words must be rejected");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("max_tokens") || msg.contains("min_tokens"),
-            "error should mention token fields"
+            msg.contains("max_words") || msg.contains("min_words"),
+            "error should mention word-window fields"
         );
     }
 
@@ -591,8 +676,8 @@ mod tests {
     fn test_custom_config_builds() {
         let cfg = PipelineConfig::builder()
             .embedding_dim(768)
-            .min_tokens(200)
-            .max_tokens(600)
+            .min_words(200)
+            .max_words(600)
             .density_threshold(0.2)
             .num_permutations(64)
             .shingle_size(4)
@@ -611,8 +696,8 @@ mod tests {
             .expect("custom config should build");
 
         assert_eq!(cfg.embedding_dim, EmbeddingDim(768));
-        assert_eq!(cfg.extraction_window.min_tokens, 200);
-        assert_eq!(cfg.extraction_window.max_tokens, 600);
+        assert_eq!(cfg.extraction_window.min_words, 200);
+        assert_eq!(cfg.extraction_window.max_words, 600);
         assert!((cfg.extraction_window.density_threshold - 0.2).abs() < 1e-12);
         assert_eq!(cfg.minhash.num_permutations, 64);
         assert_eq!(cfg.minhash.shingle_size, 4);
@@ -636,9 +721,9 @@ mod tests {
             .expect("default config should build");
 
         assert_eq!(cfg.embedding_dim, EmbeddingDim(384));
-        assert_eq!(cfg.extraction_window.min_tokens, 100);
+        assert_eq!(cfg.extraction_window.min_words, 100);
         assert!((cfg.extraction_window.density_threshold - 0.15).abs() < 1e-12);
-        assert_eq!(cfg.extraction_window.max_tokens, 300);
+        assert_eq!(cfg.extraction_window.max_words, 300);
         assert_eq!(cfg.minhash.num_permutations, 32);
         assert_eq!(cfg.minhash.shingle_size, 3);
         assert_eq!(cfg.minhash.band_size, 4);

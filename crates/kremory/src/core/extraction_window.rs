@@ -12,7 +12,7 @@
 //! are stored whole and embeddings are per-entity-name + per-fact, never per-window-slice.
 //! Caller-side retrieval chunking is App-layer concern per `feedback_rql_does_not_chunk_caller_owns`.
 //!
-//! The early-return at `min_tokens` (default 100) makes this splitter a no-op for normally-sized
+//! The early-return at `min_words` (default 100) makes this splitter a no-op for normally-sized
 //! episodes — it only fires when the input exceeds the configured extraction-prompt budget.
 
 use crate::core::config::{ContentType, ExtractionWindowConfig};
@@ -37,14 +37,14 @@ impl ExtractionWindowSplitter {
     }
 
     fn apply_overlap(&self, chunks: Vec<String>) -> Vec<String> {
-        if self.config.overlap_tokens == 0 || chunks.len() <= 1 {
+        if self.config.overlap_words == 0 || chunks.len() <= 1 {
             return chunks;
         }
         let mut result = Vec::with_capacity(chunks.len());
         result.push(chunks[0].clone());
         for i in 1..chunks.len() {
             let prev_words: Vec<&str> = chunks[i - 1].split_whitespace().collect();
-            let overlap_start = prev_words.len().saturating_sub(self.config.overlap_tokens);
+            let overlap_start = prev_words.len().saturating_sub(self.config.overlap_words);
             let overlap: String = prev_words[overlap_start..].join(" ");
             if overlap.is_empty() {
                 result.push(chunks[i].clone());
@@ -57,12 +57,12 @@ impl ExtractionWindowSplitter {
 
     fn split_by_density(&self, text: &str) -> Vec<String> {
         let token_count = text.split_whitespace().count();
-        if token_count < self.config.min_tokens {
+        if token_count < self.config.min_words {
             return vec![text.to_string()];
         }
 
         let words: Vec<&str> = text.split_whitespace().collect();
-        let window_size = (self.config.max_tokens / 2).max(1);
+        let window_size = (self.config.max_words / 2).max(1);
         let mut split_points: Vec<usize> = Vec::new();
 
         // Scan text with a sliding window, looking for high-density regions.
@@ -116,10 +116,10 @@ impl ExtractionWindowSplitter {
             chunks
         };
 
-        // Always enforce max_tokens per chunk by word-boundary splitting.
+        // Always enforce max_words per chunk by word-boundary splitting.
         let mut final_chunks: Vec<String> = Vec::new();
         for chunk in density_chunks {
-            final_chunks.extend(enforce_max_tokens(&chunk, self.config.max_tokens));
+            final_chunks.extend(enforce_max_words(&chunk, self.config.max_words));
         }
 
         if final_chunks.is_empty() {
@@ -141,14 +141,14 @@ impl ExtractionWindowSplitter {
             return vec![text.to_string()];
         }
 
-        // Merge consecutive short paragraphs until reaching max_tokens.
+        // Merge consecutive short paragraphs until reaching max_words.
         let mut merged: Vec<String> = Vec::new();
         let mut current = String::new();
         let mut current_tokens = 0;
 
         for para in paragraphs {
             let para_tokens = para.split_whitespace().count();
-            if current_tokens + para_tokens > self.config.max_tokens && !current.is_empty() {
+            if current_tokens + para_tokens > self.config.max_words && !current.is_empty() {
                 merged.push(current.trim().to_string());
                 current = para.to_string();
                 current_tokens = para_tokens;
@@ -165,10 +165,10 @@ impl ExtractionWindowSplitter {
             merged.push(current.trim().to_string());
         }
 
-        // Enforce max_tokens per merged chunk by word-boundary splitting.
+        // Enforce max_words per merged chunk by word-boundary splitting.
         let mut chunks: Vec<String> = Vec::new();
         for chunk in merged {
-            chunks.extend(enforce_max_tokens(&chunk, self.config.max_tokens));
+            chunks.extend(enforce_max_words(&chunk, self.config.max_words));
         }
 
         if chunks.is_empty() {
@@ -199,17 +199,17 @@ fn find_sentence_boundary(text: &str, approx_pos: usize) -> usize {
     }
 }
 
-/// Split a single chunk at word boundaries so no piece exceeds max_tokens words.
-fn enforce_max_tokens(text: &str, max_tokens: usize) -> Vec<String> {
+/// Split a single chunk at word boundaries so no piece exceeds max_words words.
+fn enforce_max_words(text: &str, max_words: usize) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
-    if words.len() <= max_tokens {
+    if words.len() <= max_words {
         return vec![text.to_string()];
     }
 
     let mut chunks = Vec::new();
     let mut i = 0;
     while i < words.len() {
-        let end = (i + max_tokens).min(words.len());
+        let end = (i + max_words).min(words.len());
         chunks.push(words[i..end].join(" "));
         i = end;
     }
@@ -224,15 +224,15 @@ mod tests {
     use crate::core::config::ExtractionWindowConfig;
 
     fn config_with(
-        min_tokens: usize,
-        max_tokens: usize,
+        min_words: usize,
+        max_words: usize,
         density_threshold: f64,
     ) -> ExtractionWindowConfig {
         ExtractionWindowConfig {
-            min_tokens,
-            max_tokens,
+            min_words,
+            max_words,
             density_threshold,
-            overlap_tokens: 0,
+            overlap_words: 0,
         }
     }
 
@@ -247,10 +247,10 @@ mod tests {
         overlap: usize,
     ) -> ExtractionWindowConfig {
         ExtractionWindowConfig {
-            min_tokens: min,
-            max_tokens: max,
+            min_words: min,
+            max_words: max,
             density_threshold: density,
-            overlap_tokens: overlap,
+            overlap_words: overlap,
         }
     }
 
