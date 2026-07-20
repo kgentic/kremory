@@ -11,25 +11,15 @@ use crate::core::search::{
     VectorSearchEntitiesNoCountParams,
 };
 
-/// TD-066 Change 1 — decay factor applied to a 1-hop neighbour's score
-/// relative to the seed entity that surfaced it. Grounding:
-/// `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-traversal--
-/// reranking-wave-1-substrate.md` — HippoRAG's ablation (arXiv 2405.14831
-/// Table 5) shows plain UNWEIGHTED graph expansion measurably HURTS recall
-/// (drops below no-expansion on all 3 benchmarks tested); only *weighted*
-/// expansion beats the no-expansion baseline. kremory's prior behaviour
-/// (bare inclusion, implicit score 0.0) was exactly the harmful unweighted
-/// variant. 0.5 sits mid-range of the literature's [0.3, 0.7] decay band
-/// (HippoRAG's own PPR damping factor is also 0.5).
-const NEIGHBOUR_SCORE_DECAY: f32 = 0.5;
-
-/// TD-066 Change 1 — fan-out cap per seed's 1-hop expansion. `SubGraph::
-/// entities` is populated by iterating a `HashSet` (no relevance ordering),
-/// so an unbounded expansion lets one highly-connected ("hub") seed flood
-/// the result set with arbitrary-order neighbours that dilute/displace
-/// higher-relevance candidates once `facade/recall.rs::execute` sorts +
-/// truncates by score. Small, named, tunable.
-const MAX_NEIGHBOURS_PER_SEED: usize = 8;
+// recall-v2 Phase 4 (TD-056): the former module consts `NEIGHBOUR_SCORE_DECAY`
+// and `MAX_NEIGHBOURS_PER_SEED` are now `SearchConfig::neighbour_score_decay`
+// (default 0.5) and `SearchConfig::expansion_fan_out_cap` (default 8) — read per
+// recall from `self.config.search`. Grounding for the decay (unchanged):
+// `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-traversal--
+// reranking-wave-1-substrate.md` — HippoRAG's ablation (arXiv 2405.14831 Table
+// 5) shows plain UNWEIGHTED graph expansion measurably HURTS recall; only
+// *weighted* expansion beats the no-expansion baseline. 0.5 is mid-range of the
+// literature's [0.3, 0.7] band (HippoRAG's PPR damping is also 0.5).
 
 /// Bundled parameters for [`Engine::contextualize`] — args-as-object per TD-042
 /// (rust-conventions §too_many_arguments).
@@ -244,8 +234,13 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 .graph
                 .get_neighbours_at(crate::core::graph::GetNeighboursAtParams {
                     entity_id: seed_id,
-                    hops: 1,
+                    // recall-v2 Phase 4 (TD-056): config-driven hop bound (default
+                    // 1 = today's behaviour) + MANDATORY in-BFS fan-out cap in the
+                    // SAME call (spec R1 — widening hops without a cap reintroduces
+                    // hub-explosion). At defaults (hops=1, cap=8) byte-identical.
+                    hops: self.config.search.expansion_hop_bound,
                     as_of,
+                    max_visited: Some(self.config.search.expansion_fan_out_cap),
                 })
                 .await?;
 
@@ -317,14 +312,16 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // count against its own fan-out cap.
                 let is_seed = entity.id == *seed_id;
                 if !is_seed {
-                    if neighbours_added_for_seed >= MAX_NEIGHBOURS_PER_SEED {
-                        // TD-066 Change 1 fan-out cap reached for this seed —
-                        // skip remaining neighbours (their connecting facts
-                        // may still surface under the seed's own fact list).
+                    if neighbours_added_for_seed >= self.config.search.expansion_fan_out_cap {
+                        // recall-v2 Phase 4 (was TD-066 const): caller-side per-seed
+                        // fan-out cap reached — skip remaining neighbours for
+                        // SCORING (their connecting facts may still surface under
+                        // the seed's own fact list). Complements the in-BFS
+                        // `max_visited` cap (which bounds traversal cost at hops>=2).
                         continue;
                     }
                     neighbours_added_for_seed += 1;
-                    let decayed = NEIGHBOUR_SCORE_DECAY * seed_score;
+                    let decayed = self.config.search.neighbour_score_decay * seed_score;
                     expansion_scores
                         .entry(entity.id.clone())
                         .and_modify(|s: &mut f32| *s = s.max(decayed))
@@ -432,12 +429,21 @@ fn score_desc_id_asc(a: &(String, f32), b: &(String, f32)) -> std::cmp::Ordering
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        score_desc_id_asc, ContextualizeParams, MAX_NEIGHBOURS_PER_SEED, NEIGHBOUR_SCORE_DECAY,
-    };
+    use super::{score_desc_id_asc, ContextualizeParams};
+    use crate::core::config::SearchConfig;
     use crate::core::graph::{FactInsert, InsertEntityParams};
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
+
+    // recall-v2 Phase 4: the fan-out cap + neighbour decay are config-driven now
+    // (`SearchConfig`). `SimpleGraph::open_in_memory_simple` uses the DEFAULT
+    // config, so these tests assert against the default values.
+    fn default_fan_out_cap() -> usize {
+        SearchConfig::default().expansion_fan_out_cap
+    }
+    fn default_neighbour_decay() -> f32 {
+        SearchConfig::default().neighbour_score_decay
+    }
 
     /// Test helper: build a [`ContextualizeParams`] from the common positional shape.
     fn ctx_params(query: &str) -> ContextualizeParams<'_> {
@@ -663,20 +669,23 @@ mod tests {
         );
         // hub degree = 1 → degree bonus saturates far from the ceiling and
         // hub_score clamps to 1.0 either way, so the neighbour's decayed
-        // score is deterministically NEIGHBOUR_SCORE_DECAY * 1.0.
+        // score is deterministically `neighbour_score_decay * 1.0`.
+        let decay = default_neighbour_decay();
         assert!(
-            (leaf_score - NEIGHBOUR_SCORE_DECAY).abs() < 1e-6,
-            "expected leaf_score ({leaf_score}) == NEIGHBOUR_SCORE_DECAY ({NEIGHBOUR_SCORE_DECAY})"
+            (leaf_score - decay).abs() < 1e-6,
+            "expected leaf_score ({leaf_score}) == neighbour_score_decay ({decay})"
         );
     }
 
-    /// TD-066 Change 1: a hub seed's 1-hop expansion must not flood the
-    /// result set past `MAX_NEIGHBOURS_PER_SEED` genuine neighbours, even
-    /// when the seed is connected to far more entities than that.
+    /// TD-066 Change 1 / recall-v2 Phase 4: a hub seed's 1-hop expansion must not
+    /// flood the result set past `expansion_fan_out_cap` genuine neighbours, even
+    /// when the seed is connected to far more entities than that. Reads the cap
+    /// from the default `SearchConfig` (Phase 4 promoted the const to config).
     #[tokio::test]
     async fn test_contextualize_expansion_fanout_capped() {
         let rql = SimpleGraph::open_in_memory_simple().await.unwrap();
         let now = Utc::now();
+        let cap = default_fan_out_cap();
 
         rql.graph
             .insert_entity(InsertEntityParams {
@@ -687,7 +696,7 @@ mod tests {
             .await
             .unwrap();
 
-        let leaf_count = MAX_NEIGHBOURS_PER_SEED + 4;
+        let leaf_count = cap + 4;
         for i in 0..leaf_count {
             let leaf_id = format!("leafcap{i}");
             rql.graph
@@ -706,13 +715,12 @@ mod tests {
 
         let ctx = rql.contextualize(ctx_params("Hubcap")).await.unwrap();
 
-        // hubcap (1 seed) + at most MAX_NEIGHBOURS_PER_SEED genuine
-        // neighbours, even though hubcap is connected to `leaf_count` (>
-        // MAX_NEIGHBOURS_PER_SEED) entities.
+        // hubcap (1 seed) + at most `cap` genuine neighbours, even though hubcap
+        // is connected to `leaf_count` (> cap) entities.
         assert!(
-            ctx.entities.len() <= 1 + MAX_NEIGHBOURS_PER_SEED,
+            ctx.entities.len() <= 1 + cap,
             "fan-out cap violated: {} entities returned for a seed with {leaf_count} \
-             neighbours (cap = {MAX_NEIGHBOURS_PER_SEED})",
+             neighbours (cap = {cap})",
             ctx.entities.len()
         );
         assert!(
