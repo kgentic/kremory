@@ -249,7 +249,8 @@ async fn recall_mode_results(
 /// `episodes.content` (`handlers::do_recall_content`), adapted into the SAME
 /// `{id, content, score}` wire contract `mode=recall` uses:
 /// `ContentPassage::episode_id` (stringified) -> `id`,
-/// `ContentPassage::snippet` -> `content`.
+/// `ContentPassage::snippet` (now the FULL matched-episode body, not a
+/// 32-token FTS5 excerpt — see `ContentPassage` doc) -> `content`.
 #[cfg(feature = "content-search")]
 async fn content_mode_results(
     mem: &Memory,
@@ -434,7 +435,23 @@ fn build_router(state: AppState) -> Router {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let mut env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // KREMORY_DEBUG=1: surface the raw-payload `tracing::debug!` dumps the
+    // extraction parsers already emit (parsers.rs) — without this directive
+    // the default `info` filter (or a `RUST_LOG` that doesn't mention this
+    // target) silently drops them, which is exactly the gap that made the
+    // 2026-07-20 empty-fact-graph bug hard to diagnose. This only adds
+    // VERBOSITY; it never gates the always-on `rql.extraction.*` C2 alarm
+    // metrics/warnings, which fire regardless of KREMORY_DEBUG.
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        match "kremory.extraction.parsers=debug".parse() {
+            Ok(directive) => env_filter = env_filter.add_directive(directive),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to parse KREMORY_DEBUG env-filter directive")
+            }
+        }
+    }
     let subscriber = FmtSubscriber::builder()
         .with_writer(std::io::stderr)
         .with_env_filter(env_filter)

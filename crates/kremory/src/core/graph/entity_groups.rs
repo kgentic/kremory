@@ -43,15 +43,21 @@ impl TemporalGraph {
     /// Insert an entity with an optional group_id.
     /// Existing tests use `insert_entity`; this variant is for new code that needs group scoping.
     ///
-    /// **Cross-namespace collision guard (ADR-029b §3.2 — bypass surface #2)**:
-    /// If `id` already exists under a DIFFERENT `group_id`, this method returns
-    /// `Err(CrossNamespaceCollision { … })` rather than silently collapsing
-    /// the namespaces via the old single-PK UNIQUE constraint.
+    /// **Entity identity is per-namespace-open (ADR-029d, supersedes ADR-029b §3
+    /// real-entity fail-fast)**: the composite PK `(id, group_id)` (migration 004)
+    /// makes the same surface name in two namespaces two independent rows — the
+    /// competitor-standard model (Graphiti/Zep/mem0/Neo4j all isolate per
+    /// partition). This insert therefore SUCCEEDS across namespaces. A
+    /// cross-namespace name reuse is emitted as a NON-BLOCKING observability
+    /// signal (trace + `rql.entity.cross_namespace_collision_total` counter), not
+    /// an error — so multi-tenant/multi-conversation ingest is not aborted by a
+    /// generic recurring name ("the user", "Alice", "session 1").
     ///
-    /// With the composite PK `(id, group_id)` (migration 004), the same name
-    /// CAN exist in two namespaces as independent rows. This pre-check guards
-    /// against unintentional cross-namespace name reuse where an explicit error
-    /// is safer than silently sharing a row.
+    /// Strict global uniqueness (audit-grade single-tenant) is a NAMED-but-not-yet
+    /// -built opt-in (`NamespacePolicy::with_entity_identity_scope`, ADR-029d
+    /// Decision 3). Dangling `subject_id` references remain protected by the FK
+    /// constraint `facts → entities` (`PRAGMA foreign_keys = ON`), a separate
+    /// mechanism untouched here.
     pub async fn insert_entity_with_group(
         &self,
         params: InsertEntityWithGroupParams<'_>,
@@ -67,20 +73,14 @@ impl TemporalGraph {
         // None → 'default' so callers using None-as-unscoped retain their semantics
         // while the storage constraint is satisfied.
         let effective_group_id = group_id.unwrap_or("default");
-        // ADR-029b §3.2 — bypass surface #2 guard:
-        // Check if the same entity name already exists under a DIFFERENT group_id.
-        // With composite PK, the insert WOULD succeed, but we want an explicit error
-        // so callers know they are creating a cross-namespace name collision.
+        // ADR-029d (supersedes ADR-029b §3 real-entity fail-fast): per-namespace-open.
+        // The same surface name in a DIFFERENT group_id is a legitimate independent
+        // row under the composite PK — NOT an error. We keep the detection purely as
+        // a NON-BLOCKING observability signal (a consumer may still want to know "you
+        // wrote a name that also exists in namespace X"), but the insert proceeds.
         //
-        // Stubs (called from the forward-reference branch in ingest.rs) intentionally
-        // skip this check — stubs use INSERT OR IGNORE semantics via the match block
-        // in ingest.rs, so cross-namespace stub creation is allowed (the row is
-        // independent under the composite PK).
-        //
-        // Uses effective_group_id (not the raw Option) so that None → 'default' is
-        // resolved before comparison. Without this, `IS NOT NULL` would match ALL
-        // non-null rows — triggering a spurious CrossNamespaceCollision when the same
-        // name is written twice to 'default'.
+        // Uses effective_group_id (not the raw Option) so None → 'default' is resolved
+        // before comparison (so the same name written twice to 'default' is NOT flagged).
         {
             let mut rows = self
                 .conn
@@ -93,18 +93,23 @@ impl TemporalGraph {
                 let existing_ns: Option<String> = row.get(0).ok();
                 let existing_str = existing_ns.as_deref().unwrap_or("<null>").to_string();
                 let attempted_str = effective_group_id;
-                tracing::error!(
+                // Rule 19 (observability-first-class): this signal had a log line but
+                // no metric. Add the counter so cross-namespace name reuse is countable
+                // (e.g. to detect a consumer that expected strict-global identity).
+                metrics::counter!(
+                    "rql.entity.cross_namespace_collision_total",
+                    "existing_ns" => existing_str.clone(),
+                    "attempted_ns" => attempted_str.to_string(),
+                )
+                .increment(1);
+                tracing::warn!(
                     target: "kremory.namespace.collision",
                     entity_name = %id,
                     existing_ns = %existing_str,
                     attempted_ns = %attempted_str,
-                    "cross-namespace entity name collision detected (ADR-029b bypass surface #2)"
+                    "cross-namespace entity name reuse (per-namespace-open, ADR-029d — permitted, not an error)"
                 );
-                return Err(crate::core::error::Error::CrossNamespaceCollision {
-                    name: id.to_string(),
-                    existing_ns: existing_str,
-                    attempted_ns: attempted_str.to_string(),
-                });
+                // ADR-029d: NO `return Err` — the insert below proceeds.
             }
         }
         let props_str = serde_json::to_string(&properties)?;

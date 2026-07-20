@@ -159,6 +159,7 @@ pub mod provider;
 pub mod rates;
 pub mod reclassification;
 pub mod resolver;
+pub(crate) mod resolver_batched;
 pub mod schema;
 pub mod search;
 pub mod sink;

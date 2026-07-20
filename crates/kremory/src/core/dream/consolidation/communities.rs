@@ -1034,8 +1034,11 @@ mod tests {
                 } else {
                     u32::try_from(rng.in_range(1, 3)).unwrap_or(1)
                 };
-                // Namespace-unique id — the cross-namespace collision guard refuses a
-                // repeated name-slug, so key the id on the namespace + a sequence.
+                // Namespace-unique id by construction (group + sequence). ADR-029d:
+                // entity identity is per-namespace-open — a repeated name-slug across
+                // namespaces would now succeed as two independent rows, not error —
+                // but this property test still wants distinct per-namespace ids so
+                // `typed_ids`/`catchall_ids` bookkeeping above stays unambiguous.
                 let id = format!("{group}_ent{e}");
                 let inserted = graph
                     .insert_entity_with_group(InsertEntityWithGroupParams {

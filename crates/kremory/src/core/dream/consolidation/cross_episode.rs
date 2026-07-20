@@ -435,6 +435,7 @@ pub async fn cross_episode(
                     EntityMergeParams {
                         loser_id: loser,
                         keeper_id: &keeper,
+                        group_id,
                         site: crate::core::dream::provenance::MergeSite::CrossEpisode,
                         // Cross-episode fusion only fires past the structural
                         // rarity-weighted corroboration gate (ADR-067 F2), so the
@@ -1766,6 +1767,7 @@ mod tests {
             EntityMergeParams {
                 loser_id: "loser",
                 keeper_id: "keeper",
+                group_id: gid,
                 site: crate::core::dream::provenance::MergeSite::CrossEpisode,
                 structural_signal: true,
                 embedder: None,

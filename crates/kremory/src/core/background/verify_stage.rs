@@ -765,6 +765,11 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                     candidates: &candidates,
                     source_episode_text: &request.text,
                     llm,
+                    // ADR-029d/TD-129: thread the request's namespace through so the
+                    // rowid lookup inside verify_batch_for_candidates resolves to
+                    // THIS namespace's entity, not an arbitrary same-id row in
+                    // another namespace.
+                    group_id: request.group_id.as_deref(),
                     opts: VerifyBatchForCandidatesOpts::default(),
                 },
             )

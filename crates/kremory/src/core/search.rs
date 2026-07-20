@@ -671,9 +671,20 @@ impl TemporalGraph {
         // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
 
+        // Return the FULL episode text (`e.content`), not an FTS5 `snippet()`
+        // excerpt. The 32-token snippet window (FTS5 caps `snippet()` at 64
+        // tokens) was severing two load-bearing things measured by the
+        // LoCoMo LLM-judge (Workstream A, 2026-07-20): (A) the answer itself
+        // when it sat outside the ±window around the matched term, and (B) the
+        // episode's leading `[Session N] [<time> on <date>]` header — needed to
+        // resolve relative-date facts ("yesterday") to an absolute date — which
+        // lives at the episode START, outside a mid-episode snippet window.
+        // Full content carries both. `ContentPassage.snippet` now holds the full
+        // episode text (field-name drift tracked for a follow-up rename); this
+        // matches the Zep-style "return a full context block" shape the
+        // recall-response-shape research recommends for LLM consumers.
         let sql = format!(
-            "SELECT e.id, e.timestamp, \
-                    snippet(episodes_fts, 0, '', '', '…', 32), \
+            "SELECT e.id, e.timestamp, e.content, \
                     episodes_fts.rank \
              FROM episodes_fts \
              JOIN episodes AS e ON e.id = episodes_fts.rowid \

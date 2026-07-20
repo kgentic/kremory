@@ -273,8 +273,8 @@ mod domain_tests {
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", fixture.transcript_path));
 
         let config = PipelineConfig::builder()
-            .min_tokens(50)
-            .max_tokens(4000)
+            .min_words(50)
+            .max_words(4000)
             .allowed_entity_types(fixture.entity_types.clone())
             .build()
             .expect("PipelineConfig build failed");
