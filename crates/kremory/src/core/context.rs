@@ -190,12 +190,14 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 .collect()
         };
 
-        // Step 6: Increment access_count ONCE per unique seed ID (RISK-002)
-        self.graph.increment_entity_access_counts(&seed_ids).await;
+        // recall-v2 Phase 5 (Decision 6): the single access-count increment
+        // (RISK-002) MOVED from here (pre-boost) to AFTER the boost loop + floor
+        // — so the floor gates on POST-boost scores and a seed dropped by the
+        // floor is never counted as recalled. See the floor block near the end.
 
         // Step 7: Expand 1-hop from each seed entity (TD-066 Changes 1 + 2 —
         // weighted/capped expansion + seed degree bonus; see the module-level
-        // `NEIGHBOUR_SCORE_DECAY`/`MAX_NEIGHBOURS_PER_SEED` docs above).
+        // config docs above for the neighbour-decay / fan-out-cap knobs).
         let mut all_entities: Vec<Entity> = Vec::new();
         let mut all_facts: Vec<Fact> = Vec::new();
         let mut seen_entity_ids: std::collections::HashSet<String> =
@@ -397,6 +399,32 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             "kremory.contextualize.facts_collected"
         );
 
+        // recall-v2 Phase 5 (Decision 6): floor threshold + the moved
+        // access-count increment. Apply the floor to the POST-BOOST scores over
+        // the seed set, drop floored seeds from the output, then increment
+        // access counts on SURVIVORS ONLY. Because this runs AFTER the boost
+        // loop, the gate sees boosted scores (a seed a boost lifted above the
+        // floor survives even over a higher-RRF-but-unboosted one) — and a
+        // dropped seed is neither returned nor counted as recalled. RISK-002
+        // single-increment is preserved: exactly one increment per unique
+        // surviving seed. `floor_threshold <= 0.0` (default) → no-op.
+        let floor = self.config.search.floor_threshold;
+        let surviving_seeds = floor_survivors(&seed_ids, &normalized, floor);
+        if surviving_seeds.len() != seed_ids.len() {
+            let seed_set: std::collections::HashSet<&String> = seed_ids.iter().collect();
+            let survivor_set: std::collections::HashSet<&String> = surviving_seeds.iter().collect();
+            // Drop floored SEEDS from the output. Neighbours are not seeds, so
+            // `!seed_set.contains` keeps every neighbour untouched.
+            all_entities.retain(|e| !seed_set.contains(&e.id) || survivor_set.contains(&e.id));
+            normalized.retain(|id, _| !seed_set.contains(id) || survivor_set.contains(id));
+            metrics::counter!("kremory.search.floor_dropped_total")
+                .increment((seed_ids.len() - surviving_seeds.len()) as u64);
+        }
+        // Step 6 (moved): increment access_count ONCE per unique SURVIVING seed.
+        self.graph
+            .increment_entity_access_counts(&surviving_seeds)
+            .await;
+
         Ok(ContextResult {
             entities: all_entities,
             facts: all_facts,
@@ -425,11 +453,33 @@ fn score_desc_id_asc(a: &(String, f32), b: &(String, f32)) -> std::cmp::Ordering
         .then_with(|| a.0.cmp(&b.0))
 }
 
+/// recall-v2 Phase 5 (Decision 6): partition seed ids by their POST-BOOST score
+/// against `floor` — a seed survives iff `scores[seed] >= floor`.
+///
+/// Gates on the boosted score (the value in `normalized` AFTER the
+/// graph-degree/temporal boosts have been applied), NOT the pre-boost RRF rank:
+/// a seed a boost lifted above the floor survives even when a higher-RRF but
+/// UNBOOSTED seed falls below it. `floor <= 0.0` (the default) keeps every seed
+/// — a true no-op. Survivors preserve the input `seed_ids` order.
+///
+/// Extracted as a free fn so the post-boost-gating property is directly
+/// unit-testable without a full async recall round-trip.
+fn floor_survivors(seed_ids: &[String], scores: &HashMap<String, f32>, floor: f32) -> Vec<String> {
+    if floor <= 0.0 {
+        return seed_ids.to_vec();
+    }
+    seed_ids
+        .iter()
+        .filter(|id| scores.get(*id).copied().unwrap_or(0.0) >= floor)
+        .cloned()
+        .collect()
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use super::{score_desc_id_asc, ContextualizeParams};
+    use super::{floor_survivors, score_desc_id_asc, ContextualizeParams};
     use crate::core::config::SearchConfig;
     use crate::core::graph::{FactInsert, InsertEntityParams};
     use crate::core::ingest::SimpleGraph;
@@ -949,5 +999,114 @@ mod tests {
                  not deterministic w.r.t. input order"
             );
         }
+    }
+
+    // === recall-v2 Phase 5 (Decision 6): floor threshold + increment ordering ===
+
+    /// STRUCTURAL ordering proof: the floor gates on the POST-boost score, not
+    /// the pre-boost RRF rank. "promoted" has a LOWER base than "unpromoted" but
+    /// a boost lifted its post-boost score above the floor, while "unpromoted"
+    /// (higher base, no boost) stayed below — so the floor keeps "promoted" and
+    /// drops the higher-base "unpromoted". The map passed in IS the post-boost
+    /// `normalized` (contextualize applies the floor AFTER the boost loop).
+    #[test]
+    fn floor_survivors_gates_on_post_boost_score_not_base() {
+        use std::collections::HashMap;
+        let scores: HashMap<String, f32> = [
+            ("promoted".to_owned(), 0.55_f32),
+            ("unpromoted".to_owned(), 0.45_f32),
+        ]
+        .into();
+        // Input order = descending RRF base (unpromoted ranked above promoted).
+        let seeds = vec!["unpromoted".to_owned(), "promoted".to_owned()];
+        assert_eq!(
+            floor_survivors(&seeds, &scores, 0.5),
+            vec!["promoted".to_owned()],
+            "the boost-promoted seed must survive; the higher-base unboosted seed \
+             must be dropped — floor gates on post-boost score"
+        );
+    }
+
+    #[test]
+    fn floor_survivors_non_positive_floor_keeps_all() {
+        use std::collections::HashMap;
+        let scores: HashMap<String, f32> =
+            [("a".to_owned(), 0.1_f32), ("b".to_owned(), 0.9_f32)].into();
+        let seeds = vec!["a".to_owned(), "b".to_owned()];
+        assert_eq!(floor_survivors(&seeds, &scores, 0.0), seeds, "floor 0 = no-op");
+        assert_eq!(
+            floor_survivors(&seeds, &scores, -1.0),
+            seeds,
+            "negative floor = no-op"
+        );
+    }
+
+    #[test]
+    fn floor_survivors_above_all_drops_everything() {
+        use std::collections::HashMap;
+        let scores: HashMap<String, f32> =
+            [("a".to_owned(), 0.9_f32), ("b".to_owned(), 1.0_f32)].into();
+        let seeds = vec!["a".to_owned(), "b".to_owned()];
+        assert!(
+            floor_survivors(&seeds, &scores, 1.5).is_empty(),
+            "a floor above every post-boost score drops all seeds"
+        );
+    }
+
+    /// Single-increment spike (RISK-002): the access-count increment moved to
+    /// AFTER the boost loop must still fire EXACTLY ONCE per recalled seed.
+    #[tokio::test]
+    async fn test_contextualize_default_floor_increments_surviving_seed_once() {
+        let rql = setup_graph_with_data().await; // default config → floor 0 = no-op
+        let _ = rql.contextualize(ctx_params("Acme")).await.unwrap();
+        let acme = rql
+            .graph
+            .get_entity("acme")
+            .await
+            .unwrap()
+            .expect("acme must exist");
+        assert_eq!(
+            acme.access_count, 1,
+            "recalled seed incremented exactly once post-move (RISK-002 preserved)"
+        );
+    }
+
+    /// Wiring proof: a floor above the max normalised score (1.0) drops the seed
+    /// from BOTH the output entities and scores, AND — because increment now runs
+    /// on survivors only — the dropped seed is NOT counted as recalled
+    /// (access_count stays 0).
+    #[tokio::test]
+    async fn test_contextualize_high_floor_drops_seed_and_skips_increment() {
+        let rql = SimpleGraph::open_in_memory_with_search_config(|s| s.floor_threshold = 1.5)
+            .await
+            .unwrap();
+        rql.graph
+            .insert_entity(InsertEntityParams {
+                id: "acme",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Acme"}),
+            })
+            .await
+            .unwrap();
+
+        let ctx = rql.contextualize(ctx_params("Acme")).await.unwrap();
+        assert!(
+            !ctx.entities.iter().any(|e| e.id == "acme"),
+            "a seed scoring below the floor must be dropped from output entities"
+        );
+        assert!(
+            !ctx.scores.contains_key("acme"),
+            "a dropped seed must be absent from scores too"
+        );
+        let acme = rql
+            .graph
+            .get_entity("acme")
+            .await
+            .unwrap()
+            .expect("acme row still exists in the graph");
+        assert_eq!(
+            acme.access_count, 0,
+            "a floored seed must NOT be counted as recalled (survivors-only increment)"
+        );
     }
 }
