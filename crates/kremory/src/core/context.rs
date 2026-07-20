@@ -764,6 +764,70 @@ mod tests {
         );
     }
 
+    /// recall-v2 Phase 2b DoD ("Counters live") + Quinn TEST-001: drive the real
+    /// producer (`contextualize`) and assert the new scoring observability actually
+    /// emits — a pure unit test of `axis_reorders` proves the LOGIC but not that
+    /// `context.rs` WIRES it (feedback_test_the_producer_not_the_callback). At
+    /// default config the temporal axis is off (weight 0) and graph-degree is live
+    /// (0.05), which pins the two axes' weight-zero counters in opposite states.
+    #[tokio::test]
+    async fn test_contextualize_emits_recall_v2_scoring_counters() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let rql = setup_graph_with_data().await;
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let guard = metrics::set_default_local_recorder(&recorder);
+        // "Acme" matches acme's properties in FTS → a real seed → the boost loop
+        // + post-loop counter block run.
+        let _ctx = rql.contextualize(ctx_params("Acme")).await.unwrap();
+        drop(guard);
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let counter_named = |name: &str| -> Option<(u64, Vec<(String, String)>)> {
+            snapshot.iter().find_map(|(k, _, _, v)| {
+                if k.key().name() == name {
+                    if let DebugValue::Counter(c) = v {
+                        let labels = k
+                            .key()
+                            .labels()
+                            .map(|l| (l.key().to_string(), l.value().to_string()))
+                            .collect();
+                        return Some((*c, labels));
+                    }
+                }
+                None
+            })
+        };
+
+        // Default temporal_weight = 0.0 → axis OFF → its weight-zero counter fires.
+        let (tw_zero, _) = counter_named("kremory.search.temporal_weight_zero_total")
+            .expect("temporal_weight_zero_total must fire at default config (axis off)");
+        assert_eq!(tw_zero, 1, "weight-zero counter fires once per recall");
+
+        // Default graph_degree_weight = 0.05 (> 0) → axis LIVE → its weight-zero
+        // counter must NOT fire (proves the default preserves the live axis).
+        assert!(
+            counter_named("kremory.search.graph_degree_weight_zero_total").is_none(),
+            "graph_degree_weight_zero_total must NOT fire at default (0.05 > 0 = axis live)"
+        );
+
+        // The per-axis reorder counter must be wired into the producer, carrying a
+        // boolean `changed` label (the honest pre-judge gate).
+        let (_, degree_labels) = counter_named("kremory.search.graph_degree_reorder_total")
+            .expect("graph_degree_reorder_total must be emitted by contextualize");
+        let changed = degree_labels
+            .iter()
+            .find(|(k, _)| k == "changed")
+            .expect("graph_degree_reorder_total must carry a `changed` label");
+        assert!(
+            changed.1 == "true" || changed.1 == "false",
+            "`changed` label must be a boolean string, got {:?}",
+            changed.1
+        );
+    }
+
     // === Recall-ranking nondeterminism fix: `score_desc_id_asc` determinism ===
     //
     // `contextualize()`'s Step 4 seed ranking builds `ranked` from
