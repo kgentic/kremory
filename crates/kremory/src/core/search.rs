@@ -1505,28 +1505,27 @@ fn rrf_fuse_facts(
 // contextualize` already fetches for its expansion — zero extra graph
 // queries.
 
-/// Weight applied to the graph-degree bonus (TD-066 Change 2). Deliberately
-/// tiny relative to the `[0, 1]` RRF-normalised score range so degree can
-/// only ever nudge ranking among already-selected candidates, never
-/// dominate relevance ("do not let degree swamp relevance").
-pub(crate) const GRAPH_DEGREE_WEIGHT: f32 = 0.05;
-
 /// Degree value at which [`graph_degree_bonus`] saturates. Caps a single
 /// highly-connected ("hub") entity's contribution instead of letting raw
 /// degree grow unbounded.
 pub(crate) const GRAPH_DEGREE_SATURATION: f32 = 10.0;
 
 /// Small additive graph-degree bonus for a seed entity's own score (TD-066
-/// Change 2). `degree` = the entity's 1-hop neighbour count. Saturates at
-/// [`GRAPH_DEGREE_SATURATION`] and is bounded above by [`GRAPH_DEGREE_WEIGHT`]
+/// Change 2). `degree` = the entity's 1-hop neighbour count; `weight` is the
+/// axis weight (recall-v2 Phase 2a: the former `GRAPH_DEGREE_WEIGHT` const,
+/// now `SearchConfig::graph_degree_weight`, default 0.05 — deliberately tiny
+/// relative to the `[0, 1]` RRF-normalised score range so degree can only ever
+/// nudge ranking among already-selected candidates, never dominate relevance).
+/// Saturates at [`GRAPH_DEGREE_SATURATION`] and is bounded above by `weight`
 /// — callers must still clamp the entity's TOTAL score (base + bonus) to
-/// `[0, 1]` themselves, since this fn only bounds the bonus term.
+/// `[0, 1]` themselves, since this fn only bounds the bonus term. `weight <=
+/// 0.0` makes the bonus a true no-op.
 ///
 /// Callers MUST only pass the degree of a node RRF fusion already selected
 /// as a search hit (a "seed") — never a degree computed from an unseeded/
 /// global graph traversal (see module-level note above).
-pub(crate) fn graph_degree_bonus(degree: usize) -> f32 {
-    GRAPH_DEGREE_WEIGHT * (degree as f32 / GRAPH_DEGREE_SATURATION).min(1.0)
+pub(crate) fn graph_degree_bonus(degree: usize, weight: f32) -> f32 {
+    weight * (degree as f32 / GRAPH_DEGREE_SATURATION).min(1.0)
 }
 
 // ── test-utils re-exports (ADR-029c 5-tier pyramid, Phase A) ─────────────────
@@ -1685,19 +1684,33 @@ mod tests {
     };
     use chrono::{Duration, Utc};
 
-    // === TD-066 Change 2: graph_degree_bonus ===
+    // === TD-066 Change 2 / recall-v2 Phase 2a: graph_degree_bonus ===
+    //
+    // The weight is now a parameter (`SearchConfig::graph_degree_weight`), not
+    // the removed `GRAPH_DEGREE_WEIGHT` const. `DEG_W` pins the shipped default
+    // (0.05) so these tests still assert the live-config behaviour.
+    const DEG_W: f32 = 0.05;
 
     #[test]
     fn graph_degree_bonus_zero_degree_is_zero() {
-        assert_eq!(graph_degree_bonus(0), 0.0);
+        assert_eq!(graph_degree_bonus(0, DEG_W), 0.0);
+    }
+
+    #[test]
+    fn graph_degree_bonus_zero_weight_is_no_op() {
+        // recall-v2 Phase 2a: weight <= 0.0 makes the axis a true no-op for any
+        // degree — the mechanism by which a config can disable the boost.
+        for degree in [0, 1, 10, 1_000] {
+            assert_eq!(graph_degree_bonus(degree, 0.0), 0.0);
+        }
     }
 
     #[test]
     fn graph_degree_bonus_saturates_at_ceiling() {
         // Degree far past GRAPH_DEGREE_SATURATION must not exceed the
         // saturated bonus — a single hub entity cannot keep growing its bonus.
-        let saturated = graph_degree_bonus(GRAPH_DEGREE_SATURATION as usize);
-        let hub = graph_degree_bonus(100_000);
+        let saturated = graph_degree_bonus(GRAPH_DEGREE_SATURATION as usize, DEG_W);
+        let hub = graph_degree_bonus(100_000, DEG_W);
         assert!(
             (hub - saturated).abs() < 1e-6,
             "degree far beyond saturation ({hub}) must equal the saturated bonus ({saturated})"
@@ -1706,14 +1719,14 @@ mod tests {
 
     #[test]
     fn graph_degree_bonus_never_exceeds_weight() {
-        // Bounded above by GRAPH_DEGREE_WEIGHT for any degree ("do not let
-        // degree swamp relevance") — the bonus alone, before it's added to a
-        // base score, must never exceed the configured weight.
+        // Bounded above by the weight for any degree ("do not let degree swamp
+        // relevance") — the bonus alone, before it's added to a base score,
+        // must never exceed the configured weight.
         for degree in [0, 1, 5, 10, 50, 1_000] {
-            let bonus = graph_degree_bonus(degree);
+            let bonus = graph_degree_bonus(degree, DEG_W);
             assert!(
-                bonus <= GRAPH_DEGREE_WEIGHT + 1e-6,
-                "degree={degree} produced bonus={bonus} > GRAPH_DEGREE_WEIGHT={GRAPH_DEGREE_WEIGHT}"
+                bonus <= DEG_W + 1e-6,
+                "degree={degree} produced bonus={bonus} > weight={DEG_W}"
             );
             assert!(bonus >= 0.0, "bonus must never be negative: {bonus}");
         }
@@ -1723,8 +1736,8 @@ mod tests {
     fn graph_degree_bonus_monotonic_below_saturation() {
         // Secondary/tie-breaking signal: more-connected seeds get a bigger
         // (but still small) bonus than less-connected ones, up to saturation.
-        assert!(graph_degree_bonus(5) > graph_degree_bonus(1));
-        assert!(graph_degree_bonus(9) > graph_degree_bonus(5));
+        assert!(graph_degree_bonus(5, DEG_W) > graph_degree_bonus(1, DEG_W));
+        assert!(graph_degree_bonus(9, DEG_W) > graph_degree_bonus(5, DEG_W));
     }
 
     // === effective_k clamp (Story #166) ===

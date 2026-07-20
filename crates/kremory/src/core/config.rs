@@ -190,6 +190,58 @@ pub struct SearchConfig {
     /// for downstream synthesis; returning more increases context window cost
     /// without commensurate quality gain.
     pub top_k: usize,
+
+    // ── recall-v2 post-RRF scoring axes (recall-v2-architecture-2026-07-03) ──
+    //
+    // All fields below feed the staged post-RRF boost pipeline in
+    // `core::context::Engine::contextualize`. Every default preserves TODAY's
+    // behaviour: only `graph_degree_weight` is a live tested axis (its default
+    // is its already-shipped constant, NOT 0.0); all NEW axes default to their
+    // no-op value so recall output is byte-identical to pre-change at defaults.
+    /// Weight of the additive graph-degree bonus (recall-v2 Phase 2a; formerly
+    /// the `search::GRAPH_DEGREE_WEIGHT` const). **Default 0.05, NOT 0.0** —
+    /// graph-degree is the one already-live boost axis (TD-066 Change 2), so
+    /// `0.0` would silently disable a shipped, tested feature. "Today's
+    /// behaviour" for this axis *is* the 0.05 bonus. Bounded contribution:
+    /// `weight * min(degree/saturation, 1)`.
+    pub graph_degree_weight: f32,
+
+    /// Weight of the additive temporal-recency boost (recall-v2 Phase 2b).
+    /// **Default 0.0 = off** — new axis, behaviourally neutral until an
+    /// eval-calibrated value is set. Additive + bounded `[0, weight]`, matching
+    /// graph-degree so a single `.min(1.0)` clamp covers both (no second
+    /// normalization pass).
+    pub temporal_weight: f32,
+
+    /// Decay rate `lambda` for the temporal boost's `exp(-lambda * age_days)`
+    /// (recall-v2 Phase 2b). Inert while `temporal_weight == 0.0`. Default 0.01
+    /// ≈ a ~69-day half-life; a placeholder pending Phase-7 eval calibration.
+    pub temporal_decay_lambda: f64,
+
+    /// Minimum post-boost score a seed must reach to survive to output
+    /// (recall-v2 Phase 5, Decision 6). **Default 0.0 = no-op** (nothing is
+    /// floored out). Applied AFTER all boosts, BEFORE the access-count
+    /// increment, so dropped entities are never counted as recalled.
+    pub floor_threshold: f32,
+
+    /// Max BFS hop depth for the 1-hop expansion (recall-v2 Phase 4, TD-056).
+    /// **Default 1 = today's behaviour.** Widening this without an in-BFS
+    /// visited cap (`expansion_fan_out_cap`) reintroduces hub-explosion (spec
+    /// R1), so the two ship together.
+    pub expansion_hop_bound: u32,
+
+    /// Cap on entities visited during a seed's BFS expansion (recall-v2 Phase 4,
+    /// TD-056). **Default 8 = the former `context::MAX_NEIGHBOURS_PER_SEED`
+    /// const.** Threaded into the BFS itself (not just the caller-side trim) so
+    /// it bounds hop≥2 traversal, not only the final result set.
+    pub expansion_fan_out_cap: usize,
+
+    /// Score-decay factor applied to a 1-hop neighbour relative to the seed
+    /// that surfaced it (recall-v2 Phase 4; formerly the
+    /// `context::NEIGHBOUR_SCORE_DECAY` const). **Default 0.5** — mid-range of
+    /// the literature's `[0.3, 0.7]` weighted-expansion band (HippoRAG PPR
+    /// damping is also 0.5).
+    pub neighbour_score_decay: f32,
 }
 
 impl Default for SearchConfig {
@@ -199,6 +251,15 @@ impl Default for SearchConfig {
             vector_weight: 0.5,
             rrf_k: 60,
             top_k: 10,
+            // recall-v2 axes — every default preserves today's behaviour
+            // (0.05 graph-degree live; all new axes at their no-op value).
+            graph_degree_weight: 0.05,
+            temporal_weight: 0.0,
+            temporal_decay_lambda: 0.01,
+            floor_threshold: 0.0,
+            expansion_hop_bound: 1,
+            expansion_fan_out_cap: 8,
+            neighbour_score_decay: 0.5,
         }
     }
 }
