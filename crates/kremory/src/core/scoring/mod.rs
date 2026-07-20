@@ -112,6 +112,15 @@ pub(crate) struct SeedAxisContribution {
 ///
 /// Sort key matches the recall comparator: score DESC, then id ASC (stable,
 /// deterministic tie-break).
+///
+/// **Scope = the seed set only.** 1-hop neighbours (whose decayed scores derive
+/// from their connecting seed's score) are NOT counted here — a seed-score
+/// change could in principle reshuffle cross-seed neighbour ordering without
+/// changing seed-set order. This is a deliberate CONSERVATIVE under-count for
+/// the cheap pre-judge gate (Quinn MNT-001): a `changed=true` is always a real
+/// reorder; a `changed=false` means the SEEDS did not reorder (neighbours may
+/// have shifted marginally). The gate reads it as "is this axis doing anything
+/// worth an llm-judge run", for which seed-set reorder is the load-bearing signal.
 pub(crate) fn axis_reorders(seeds: &[SeedAxisContribution]) -> (bool, bool) {
     let order_by = |score: &dyn Fn(&SeedAxisContribution) -> f32| -> Vec<&str> {
         let mut idx: Vec<&SeedAxisContribution> = seeds.iter().collect();
