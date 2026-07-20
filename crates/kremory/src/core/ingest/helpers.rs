@@ -75,8 +75,20 @@ pub type SimpleGraph = Engine<MockChatProvider, NullEmbeddingProvider>;
 impl SimpleGraph {
     /// Open an in-memory graph with null providers and default config.
     pub async fn open_in_memory_simple() -> Result<Self> {
+        Self::open_in_memory_with_search_config(|_| {}).await
+    }
+
+    /// Like [`Self::open_in_memory_simple`] but lets a test tweak the
+    /// [`crate::core::config::SearchConfig`] before construction — e.g. set a
+    /// non-default `floor_threshold` / `temporal_weight` to exercise the
+    /// recall-v2 scoring axes (which are behaviourally-neutral no-ops at their
+    /// defaults). Reuses the exact same null-provider wiring.
+    pub async fn open_in_memory_with_search_config(
+        tweak: impl FnOnce(&mut crate::core::config::SearchConfig),
+    ) -> Result<Self> {
         let graph = Arc::new(TemporalGraph::open_in_memory().await?);
-        let config = PipelineConfig::builder().build()?;
+        let mut config = PipelineConfig::builder().build()?;
+        tweak(&mut config.search);
         Ok(Self::new(EngineNewParams {
             graph,
             llm: Arc::new(MockChatProvider::null()),
