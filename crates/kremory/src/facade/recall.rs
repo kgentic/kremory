@@ -503,6 +503,17 @@ impl<'a> RecallRequest<'a> {
             metadata_filters_in: &self.metadata_filters_in,
         })
         .await?;
+        // Phase 0 (recall-v2-architecture-2026-07-03 Decision 8): sort by score
+        // DESC before render. `context_block` renders in input order, and
+        // `contextualize` hands entities back in `HashSet`-insert order (seeds in
+        // score order, then 1-hop neighbours interleaved out of order) — NOT
+        // score order. Without this sort EVERY post-RRF scoring signal (the
+        // RRF-normalised seed score, TD-066's neighbour-decay + graph-degree
+        // bonus) was dormant at the output: the boost mutated `scores` but never
+        // re-ordered what the LLM consuming `context_block` actually saw. The
+        // multi-namespace path already sorted (below); this closes the
+        // single-namespace gap so downstream axes are measurable.
+        sort_by_score_desc(&mut results);
         Ok(memory::context_block(&results, template.into()))
     }
 
@@ -621,12 +632,10 @@ impl<'a> RecallRequest<'a> {
         // Merge the per-namespace result sets: sort the concatenated list by
         // score descending (each score is the per-namespace RRF score from its
         // own sub-query — this is a score-sort merge, NOT a second cross-
-        // namespace RRF pass over the combined list).
-        all_results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // namespace RRF pass over the combined list). Shares the single
+        // `sort_by_score_desc` comparator with the single-namespace path so the
+        // two never drift (recall-v2-architecture-2026-07-03 Decision 8 / R2).
+        sort_by_score_desc(&mut all_results);
 
         // Trim to final_k if set.
         if let Some(k) = final_k {
@@ -635,6 +644,25 @@ impl<'a> RecallRequest<'a> {
 
         Ok(all_results)
     }
+}
+
+/// Sort recall results by score DESCENDING (highest first) — the order
+/// [`memory::context_block`] renders in (its doc contract: *"Order is preserved
+/// from the input — callers are expected to pass results already sorted by
+/// score."*).
+///
+/// Extracted as ONE free fn used by BOTH the single-namespace ([`RecallRequest::
+/// execute`]) and multi-namespace ([`RecallRequest::execute_multi_namespace`])
+/// paths so the two comparators never drift (recall-v2-architecture-2026-07-03
+/// Decision 8 / risk R2). `sort_by` is stable, so score ties preserve the input
+/// order (for single-namespace that's `contextualize`'s already-score-ordered
+/// seed sequence; for multi-namespace it's the per-namespace concat order).
+fn sort_by_score_desc(results: &mut [RetrievedContext]) {
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 }
 
 impl<'a> IntoFuture for RecallRequest<'a> {
@@ -705,7 +733,7 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             .map(|r| r.with_namespace(ns.clone()))
             .collect();
             // G6 — apply metadata post-filter before returning.
-            let filtered = apply_metadata_post_filter(MetadataPostFilterParams {
+            let mut filtered = apply_metadata_post_filter(MetadataPostFilterParams {
                 memory: inner.memory,
                 namespace: &ns,
                 results,
@@ -713,6 +741,17 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
                 metadata_filters_in: &inner.metadata_filters_in,
             })
             .await?;
+            // Phase 0 (recall-v2-architecture-2026-07-03 Decision 8): sort by
+            // score DESC. `raw()` is the terminal the HTTP `/search` benchmark
+            // path uses (`do_recall` → `req.raw()`), and its consumers rank
+            // by result order — but `memory::search` returns entities in
+            // `contextualize`'s `HashSet`-insert order (seeds score-ordered,
+            // 1-hop neighbours interleaved out of order), NOT score order. The
+            // sibling `execute()` (String) terminal sorts identically; both
+            // single-namespace terminals must, so every post-RRF scoring signal
+            // (RRF-normalised score, TD-066 neighbour-decay + graph-degree bonus)
+            // actually re-orders output rather than staying dormant.
+            sort_by_score_desc(&mut filtered);
             Ok(filtered)
         })
     }
@@ -901,7 +940,50 @@ mod filter_metadata_tests {
     use crate::core::provider::{DynEmbeddingProvider, MockChatProvider, NullEmbeddingProvider};
     use crate::memory::types::Namespace;
 
-    use super::{metadata_matches, validate_metadata_key, Memory};
+    use super::{metadata_matches, sort_by_score_desc, validate_metadata_key, Memory};
+    use crate::memory::types::{RetrievedContext, RetrievedContextNewParams};
+
+    /// Build a minimal [`RetrievedContext`] carrying only the `score` the
+    /// Phase-0 sort cares about (other fields are irrelevant to ordering).
+    fn ctx(id: &str, score: f32) -> RetrievedContext {
+        RetrievedContext::new(RetrievedContextNewParams {
+            entity_id: id.to_owned(),
+            entity_name: id.to_owned(),
+            summary: String::new(),
+            score,
+            source_refs: vec![],
+        })
+    }
+
+    // ── Phase 0 (recall-v2-architecture-2026-07-03 Decision 8) ───────────────
+    //
+    // `context_block` renders in input order, so recall output must be
+    // score-DESCENDING before render or every post-RRF scoring signal is
+    // dormant at the output (the exact "effect-never-reaches-output" gap the
+    // spec Decision 8 closes). These gate the extracted comparator both paths
+    // now share.
+
+    #[test]
+    fn sort_by_score_desc_orders_highest_first() {
+        let mut v = vec![ctx("low", 0.2), ctx("high", 0.9), ctx("mid", 0.5)];
+        sort_by_score_desc(&mut v);
+        let ids: Vec<&str> = v.iter().map(|c| c.entity_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["high", "mid", "low"],
+            "results must render score-descending (Phase 0 sort-order fix)"
+        );
+    }
+
+    #[test]
+    fn sort_by_score_desc_is_stable_on_ties() {
+        // Stable sort: equal scores preserve input order (single-namespace relies
+        // on this to keep `contextualize`'s already-score-ordered seed sequence).
+        let mut v = vec![ctx("a", 0.5), ctx("b", 0.5), ctx("c", 0.5)];
+        sort_by_score_desc(&mut v);
+        let ids: Vec<&str> = v.iter().map(|c| c.entity_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"], "tied scores must preserve input order");
+    }
 
     async fn make_memory() -> Memory {
         let llm: Arc<dyn crate::memory::ChatProvider> = Arc::new(MockChatProvider::null());
