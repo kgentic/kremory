@@ -450,6 +450,25 @@ impl TemporalGraph {
             }
             Err(e) => {
                 let _ = guard.rollback().await;
+                // `Error::Duplicate` is a benign content-hash idempotency outcome, NOT an
+                // insert failure. The LLM re-extracts identical triples across overlapping
+                // chunks; the second write hits the `content_hash` uniqueness check and the
+                // caller's `try_insert_fact*` wrapper swallows it into
+                // `with_facts_deduped_total`. Counting it under `insert_fact_error_total`
+                // was a lying instrument ([[observability-first-class]] #9): on the LoCoMo
+                // Groq conv0 run the error counter matched `with_facts_deduped_total` 1:1
+                // (100% benign dedups), which (a) mis-framed a whole debug session as a
+                // "214 insert-error bug" and (b) makes the fail-loud
+                // `insert_fact_error_total == 0` gate impossible to satisfy on any run with
+                // duplicate extraction. Skip the error counter + warn for `Duplicate`; emit
+                // a debug trace for provenance and return so the wrapper counts the dedup.
+                if matches!(e, crate::core::error::Error::Duplicate { .. }) {
+                    tracing::debug!(
+                        error = %e,
+                        "kremory.db.insert_fact_with_group deduplicated (content_hash already present)"
+                    );
+                    return Err(e);
+                }
                 // R2.2 §spec-td-085: error-path counter + paired warn (ADR D1).
                 // Reason labels per pre-R2 enumeration table §3, sub-classified via
                 // the shared `Error::fact_insert_failure_reason` (B2 observability
