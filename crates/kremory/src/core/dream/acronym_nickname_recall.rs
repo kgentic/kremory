@@ -581,6 +581,40 @@ struct AdjudicateBatchParams<'a, L: ChatProvider> {
     group_id: &'a str,
 }
 
+/// Default bounded in-flight concurrency for the Phase-2 LLM adjudication calls
+/// (TD-133 B3). Measured on a labelled conv0 dream run: this site's LLM calls
+/// are individually fast (avg ~1.58s) but were firing fully SERIALLY —
+/// `kremory.identity.llm_call_latency_ms_histogram{site="site5_acronym_nickname"}`
+/// summed to 307s across 194 calls, making this site the dominant cost of the
+/// whole dream pass. Kept conservative (not maxed): dream is latency-tolerant by
+/// design (ADR-063), and the LLM provider (Groq in the labelled run) enforces
+/// per-account RPM limits a higher value would risk tripping.
+///
+/// Overridable at runtime via `KREMORY_DREAM_ADJUDICATION_CONCURRENCY` (mirrors
+/// the `KREMORY_CONSOLIDATE_TIMEOUT_S` operational-knob precedent) — lower it to
+/// 1-2 if a busy deployment trips provider rate limits, raise it with headroom.
+const DEFAULT_ADJUDICATION_LLM_CONCURRENCY: usize = 4;
+
+/// Resolve the Phase-2 adjudication concurrency from the environment, falling
+/// back to [`DEFAULT_ADJUDICATION_LLM_CONCURRENCY`].
+fn adjudication_llm_concurrency() -> usize {
+    parse_adjudication_concurrency(
+        std::env::var("KREMORY_DREAM_ADJUDICATION_CONCURRENCY")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// Pure parse+validate of the concurrency override (extracted for testability —
+/// avoids env-var global state / test-ordering races). A missing, unparseable,
+/// or zero value falls back to the default: a concurrency of 0 would stall the
+/// `buffer_unordered` stream, so it is clamped up to the default.
+fn parse_adjudication_concurrency(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(DEFAULT_ADJUDICATION_LLM_CONCURRENCY)
+}
+
 /// Adjudicate every nominated pair via one or more chunked `IdentityVerdictBatch`
 /// LLM calls (S3 spike fix — Quinn-verified; the timeout Site #3's spike surfaced
 /// is shared infrastructure, so Site #5 gets the identical fix), returning
@@ -594,11 +628,27 @@ struct AdjudicateBatchParams<'a, L: ChatProvider> {
 /// (safe — `write_gate` row 2 fails closed — but inert at realistic sizes). Fix:
 /// split `nominated` into chunks of at most
 /// [`identity_verdict::ADJUDICATION_CHUNK_SIZE`] via
-/// [`identity_verdict::chunk_pair_indices`], run one `adjudicate_chunk` call per
-/// chunk, and remap each chunk-LOCAL `pair_id` back to the GLOBAL index
-/// (`range.start + local_pair_id`) before merging into one map. A failure on one
-/// chunk (LLM error / parse fail / timeout) only defaults THAT chunk's pairs to
-/// no-verdict — it does not lose verdicts already resolved by other chunks.
+/// [`identity_verdict::chunk_pair_indices`], and remap each chunk-LOCAL
+/// `pair_id` back to the GLOBAL index (`range.start + local_pair_id`) before
+/// merging into one map. A failure on one chunk (LLM error / parse fail /
+/// timeout / DB read fail) only defaults THAT chunk's pairs to no-verdict —
+/// it does not lose verdicts already resolved by other chunks.
+///
+/// TD-133 B3 (ADR-063 — dream is latency-tolerant, but the LLM calls
+/// themselves were needlessly serial): this runs in TWO phases rather than
+/// one straight loop, and deliberately does NOT wrap the whole loop in a
+/// single `buffer_unordered` — that would fire `build_adjudication_messages`'s
+/// DB reads concurrently against the shared `conn`, which can lock, and its
+/// existing fail-closed catch would then silently drop MORE chunks' verdicts
+/// than before (a quality regression, not just a perf one). So:
+///
+/// - Phase 1 (SERIAL): build every chunk's adjudication messages against
+///   `conn`, one chunk at a time — byte-identical to the pre-parallelization
+///   DB-read behavior (same fail-closed catch, same warn).
+/// - Phase 2 (PARALLEL, bounded by [`adjudication_llm_concurrency`]): fire the
+///   LLM calls for every chunk that got messages, concurrently. This is the
+///   half that was actually slow (I/O-bound network calls; no shared mutable
+///   state), so it's safe to overlap.
 async fn adjudicate_batch<L: ChatProvider>(
     params: AdjudicateBatchParams<'_, L>,
 ) -> Result<HashMap<usize, IdentityVerdictItem>> {
@@ -610,17 +660,68 @@ async fn adjudicate_batch<L: ChatProvider>(
         group_id,
     } = params;
 
-    let mut verdicts_by_pair_id: HashMap<usize, IdentityVerdictItem> = HashMap::new();
+    // ── Phase 1 (SERIAL, DB) ──────────────────────────────────────────────
+    let mut chunk_plan: Vec<(
+        std::ops::Range<usize>,
+        usize,
+        Option<Vec<crate::core::provider::ChatMessage>>,
+    )> = Vec::new();
     for range in crate::core::identity_verdict::chunk_pair_indices(nominated.len()) {
         let chunk = &nominated[range.clone()];
-        let chunk_verdicts = adjudicate_chunk(AdjudicateChunkParams {
-            llm,
-            model_id,
-            conn,
-            chunk,
-            group_id,
+        let messages = match build_adjudication_messages(conn, chunk, group_id).await {
+            Ok(m) => Some(m),
+            Err(e) => {
+                // Fail-closed per-chunk isolation, unchanged from
+                // pre-parallelization: default ONLY this chunk to no-verdict
+                // (no false merge — write_gate needs a verdict to merge).
+                tracing::warn!(
+                    target: "kremory::dream::acronym_recall",
+                    error = %e,
+                    group_id = %group_id,
+                    "acronym_nickname_recall: adjudication message-build (DB read) failed — chunk's nominated pairs default to no-verdict"
+                );
+                None
+            }
+        };
+        chunk_plan.push((range, chunk.len(), messages));
+    }
+
+    // ── Phase 2 (PARALLEL, LLM) ────────────────────────────────────────────
+    // Build the futures eagerly via `Iterator::map` (monomorphised at the
+    // concrete params' lifetime), mirroring `ingest_with.rs`'s
+    // `extraction_concurrency > 1` path — avoids an HRTB that `StreamExt::map`
+    // over a borrowing async fn would otherwise need.
+    let call_futures: Vec<_> = chunk_plan
+        .into_iter()
+        .map(|(range, chunk_len, messages)| {
+            async move {
+                let chunk_verdicts = match messages {
+                    Some(messages) => {
+                        call_adjudication_llm(CallAdjudicationLlmParams {
+                            llm,
+                            model_id,
+                            messages,
+                            chunk_len,
+                            group_id,
+                        })
+                        .await
+                    }
+                    None => HashMap::new(),
+                };
+                (range, chunk_verdicts)
+            }
         })
-        .await?;
+        .collect();
+
+    use futures::stream::StreamExt as _;
+    let results: Vec<(std::ops::Range<usize>, HashMap<usize, IdentityVerdictItem>)> =
+        futures::stream::iter(call_futures)
+            .buffer_unordered(adjudication_llm_concurrency())
+            .collect()
+            .await;
+
+    let mut verdicts_by_pair_id: HashMap<usize, IdentityVerdictItem> = HashMap::new();
+    for (range, chunk_verdicts) in results {
         for (local_pair_id, verdict) in chunk_verdicts {
             let global_pair_id = range.start + local_pair_id;
             verdicts_by_pair_id.insert(global_pair_id, verdict);
@@ -629,52 +730,43 @@ async fn adjudicate_batch<L: ChatProvider>(
     Ok(verdicts_by_pair_id)
 }
 
-struct AdjudicateChunkParams<'a, L: ChatProvider> {
+struct CallAdjudicationLlmParams<'a, L: ChatProvider> {
     llm: &'a L,
     model_id: &'a str,
-    conn: &'a libsql::Connection,
-    chunk: &'a [NominatedPair],
+    messages: Vec<crate::core::provider::ChatMessage>,
+    chunk_len: usize,
     group_id: &'a str,
 }
 
-/// Run ONE batched `IdentityVerdictBatch` LLM call adjudicating every pair in
-/// `chunk` (spec §3.2 — unchanged; only the pairs-per-call count is now bounded
-/// by the caller), returning verdicts keyed by chunk-LOCAL `pair_id` (index into
-/// `chunk`, NOT the caller's full `nominated` slice — see [`adjudicate_batch`]
-/// for the global-index remap). Missing/parse-failed entries are simply absent
-/// from the map — callers treat a missing `pair_id` as `llm_verdict = None`
-/// (spec §2.3 failure-mode default).
-async fn adjudicate_chunk<L: ChatProvider>(
-    params: AdjudicateChunkParams<'_, L>,
-) -> Result<HashMap<usize, IdentityVerdictItem>> {
-    let AdjudicateChunkParams {
+/// Run ONE batched `IdentityVerdictBatch` LLM call over already-built
+/// `messages` (spec §3.2 — unchanged; only the pairs-per-call count is bounded
+/// by the caller), returning verdicts keyed by chunk-LOCAL `pair_id` (0-based
+/// within the chunk, NOT the caller's full `nominated` slice — see
+/// [`adjudicate_batch`] for the global-index remap). Missing/parse-failed
+/// entries are simply absent from the map — callers treat a missing `pair_id`
+/// as `llm_verdict = None` (spec §2.3 failure-mode default).
+///
+/// TD-133 B3: extracted from the pre-parallelization `adjudicate_chunk`'s LLM
+/// half (the DB-read half — `build_adjudication_messages` — now runs in
+/// `adjudicate_batch`'s serial Phase 1). This is the half `adjudicate_batch`
+/// fires concurrently across chunks via `buffer_unordered`. All existing
+/// per-call observability (latency histogram, KREMORY_DEBUG raw dump,
+/// `verdict_parse_fail_total`, out-of-range `pair_id` drop) is preserved
+/// byte-for-byte from the pre-parallelization version. Infallible (no DB I/O
+/// left in this half) — every failure mode here was already a caught-and-
+/// defaulted-to-empty-map case, so this returns a bare map, not a `Result`.
+async fn call_adjudication_llm<L: ChatProvider>(
+    params: CallAdjudicationLlmParams<'_, L>,
+) -> HashMap<usize, IdentityVerdictItem> {
+    let CallAdjudicationLlmParams {
         llm,
         model_id,
-        conn,
-        chunk,
+        messages,
+        chunk_len,
         group_id,
     } = params;
 
-    // Fail-closed per-chunk isolation: build_adjudication_messages does DB I/O
-    // (load_entity_description / load_top3_facts) and is fallible. After chunking
-    // this runs inside the per-chunk loop — a `?` here would abort the WHOLE
-    // adjudicate_batch on a transient read error, discarding verdicts already
-    // resolved by prior chunks (and aborting the dream pass). Catch it and
-    // default ONLY this chunk to no-verdict, matching the LLM-call-failure branch
-    // below (no false merge — write_gate needs a verdict to merge).
-    let messages = match build_adjudication_messages(conn, chunk, group_id).await {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!(
-                target: "kremory::dream::acronym_recall",
-                error = %e,
-                group_id = %group_id,
-                "acronym_nickname_recall: adjudication message-build (DB read) failed — chunk's nominated pairs default to no-verdict"
-            );
-            return Ok(HashMap::new());
-        }
-    };
-    let schema = identity_verdict_batch_schema(chunk.len());
+    let schema = identity_verdict_batch_schema(chunk_len);
 
     let call_start = Instant::now();
     let raw_value = StructuredCallBuilder::new(llm, &schema, "IdentityVerdictBatch")
@@ -713,7 +805,7 @@ async fn adjudicate_chunk<L: ChatProvider>(
                 group_id = %group_id,
                 "acronym_nickname_recall: adjudication LLM call failed — chunk's nominated pairs default to no-verdict"
             );
-            return Ok(HashMap::new());
+            return HashMap::new();
         }
     };
 
@@ -740,8 +832,8 @@ async fn adjudicate_chunk<L: ChatProvider>(
                         "kremory.identity.verdict_parse_fail_total",
                         "site" => SITE_LABEL
                     )
-                    .increment(chunk.len() as u64);
-                    return Ok(HashMap::new());
+                    .increment(chunk_len as u64);
+                    return HashMap::new();
                 }
             }
         }
@@ -751,7 +843,7 @@ async fn adjudicate_chunk<L: ChatProvider>(
     for raw_item in &batch.verdicts {
         match serde_json::from_value::<IdentityVerdictItem>(raw_item.clone()) {
             Ok(item) => {
-                if item.pair_id >= chunk.len() {
+                if item.pair_id >= chunk_len {
                     // Out-of-range pair_id — echoed id doesn't correlate to any
                     // pair in this chunk; drop it loudly.
                     counter!(
@@ -762,7 +854,7 @@ async fn adjudicate_chunk<L: ChatProvider>(
                     tracing::warn!(
                         target: "kremory::dream::acronym_recall",
                         pair_id = item.pair_id,
-                        chunk_len = chunk.len(),
+                        chunk_len = chunk_len,
                         "acronym_nickname_recall: verdict pair_id out of range — dropped"
                     );
                     continue;
@@ -784,7 +876,7 @@ async fn adjudicate_chunk<L: ChatProvider>(
         }
     }
 
-    Ok(verdicts_by_pair_id)
+    verdicts_by_pair_id
 }
 
 /// Build the LLM adjudication prompt for a batch of nominated entity pairs
@@ -1321,6 +1413,130 @@ mod tests {
             2,
             "both entities survive — the split pair was NOT re-merged"
         );
+    }
+
+    // ── parse_adjudication_concurrency (TD-133 B3 — env knob) ─────────────────
+
+    /// The Phase-2 adjudication concurrency is a runtime operational knob
+    /// (`KREMORY_DREAM_ADJUDICATION_CONCURRENCY`), not a hardcoded constant.
+    /// Pins the pure parse+clamp: default on absent/garbage/empty, honour a
+    /// valid override, and clamp 0 up to the default (0 would stall the
+    /// `buffer_unordered` stream).
+    #[test]
+    fn parse_adjudication_concurrency_defaults_honours_and_clamps() {
+        assert_eq!(
+            parse_adjudication_concurrency(None),
+            DEFAULT_ADJUDICATION_LLM_CONCURRENCY
+        );
+        assert_eq!(parse_adjudication_concurrency(Some("8")), 8);
+        assert_eq!(parse_adjudication_concurrency(Some(" 2 ")), 2);
+        assert_eq!(
+            parse_adjudication_concurrency(Some("0")),
+            DEFAULT_ADJUDICATION_LLM_CONCURRENCY,
+            "0 would stall buffer_unordered — must clamp to default"
+        );
+        assert_eq!(
+            parse_adjudication_concurrency(Some("abc")),
+            DEFAULT_ADJUDICATION_LLM_CONCURRENCY
+        );
+        assert_eq!(
+            parse_adjudication_concurrency(Some("")),
+            DEFAULT_ADJUDICATION_LLM_CONCURRENCY
+        );
+    }
+
+    // ── adjudicate_batch parallel-chunk remap (TD-133 B3) ─────────────────────
+
+    /// TD-133 B3: `adjudicate_batch` now fires each chunk's LLM call
+    /// concurrently (Phase 2, `buffer_unordered`) instead of one-at-a-time.
+    /// Proves the GLOBAL `pair_id` remap (`range.start + local_pair_id`) is
+    /// still correct under concurrent completion — 25 nominated pairs split
+    /// into 3 chunks (10, 10, 5 — `ADJUDICATION_CHUNK_SIZE` = 10), a scripted
+    /// LLM returns the SAME canned batch of 10 local-indexed verdicts for
+    /// every chunk call, and every one of the 25 global pair ids must land
+    /// with the verdict that matches its chunk-local index — regardless of
+    /// which chunk's future happens to resolve first under
+    /// `buffer_unordered`.
+    #[tokio::test]
+    async fn adjudicate_batch_remaps_local_to_global_pair_id_across_parallel_chunks() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        let group_id = "s5_parallel_remap";
+
+        // 25 nominated pairs, none needing to actually exist as entities —
+        // build_adjudication_messages tolerates missing rows (description ==
+        // None, facts == empty), so this test isolates the remap logic
+        // without needing a populated graph.
+        let nominated: Vec<NominatedPair> = (0..25)
+            .map(|i| NominatedPair {
+                a: format!("entity-a-{i}"),
+                b: format!("entity-b-{i}"),
+            })
+            .collect();
+
+        // 10 local-indexed verdicts, each with a distinct confidence so the
+        // remap can be checked precisely (confidence = 0.10 + local_id*0.01).
+        // Every chunk call returns this SAME canned response — chunk 3 (5
+        // pairs, chunk_len=5) will drop local ids 5..9 as out-of-range, which
+        // is expected and asserted below.
+        let verdicts_json: String = (0..10)
+            .map(|local_id| {
+                format!(
+                    r#"{{"pair_id":{local_id},"is_same_entity":true,"confidence":{:.2},"reasoning":"r{local_id}"}}"#,
+                    0.10 + (local_id as f32) * 0.01
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let llm = ScriptedVerdictProvider {
+            json: format!(r#"{{"verdicts":[{verdicts_json}]}}"#),
+        };
+
+        let verdicts = adjudicate_batch(AdjudicateBatchParams {
+            llm: &llm,
+            model_id: "test-model",
+            conn: &conn,
+            nominated: &nominated,
+            group_id,
+        })
+        .await
+        .expect("adjudicate_batch must succeed");
+
+        // chunk_pair_indices(25) with ADJUDICATION_CHUNK_SIZE=10 => [0..10,
+        // 10..20, 20..25] (10, 10, 5). Chunk 3's chunk_len=5 means only local
+        // ids 0..4 are in-range; local ids 5..9 are dropped as out-of-range
+        // for that chunk. So expected coverage is 10 + 10 + 5 = 25 — every
+        // nominated pair gets a verdict, keyed by its GLOBAL id.
+        assert_eq!(
+            verdicts.len(),
+            25,
+            "every nominated pair (across all 3 concurrently-adjudicated chunks) must have a verdict"
+        );
+
+        for global_pair_id in 0..25usize {
+            let local_id = if global_pair_id < 10 {
+                global_pair_id
+            } else if global_pair_id < 20 {
+                global_pair_id - 10
+            } else {
+                global_pair_id - 20
+            };
+            let verdict = verdicts.get(&global_pair_id).unwrap_or_else(|| {
+                panic!("global pair_id {global_pair_id} (local {local_id}) missing a verdict")
+            });
+            assert!(
+                verdict.is_same_entity,
+                "global pair_id {global_pair_id}: is_same_entity must be true (scripted)"
+            );
+            let expected_confidence = 0.10 + (local_id as f32) * 0.01;
+            assert!(
+                (verdict.confidence - expected_confidence).abs() < 1e-4,
+                "global pair_id {global_pair_id} (local {local_id}): expected confidence \
+                 {expected_confidence}, got {} — remap must resolve to the LOCAL verdict, not a \
+                 mixed-up one from a different chunk",
+                verdict.confidence
+            );
+        }
     }
 
     /// A nominated pair with scripted LLM `is_same_entity=false` → Reject, no
