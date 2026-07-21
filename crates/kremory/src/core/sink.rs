@@ -169,17 +169,52 @@ pub struct OnEdgeAddedParams<'a> {
 ///
 /// All methods have no-op defaults so implementors only override what they
 /// care about. `Send + Sync` because sinks are shared across tokio tasks.
+///
+/// TD-133 D3: the "no-op defaults" claim above was previously a doc-lie — every
+/// method was declared without a body (`;`), so all 10 implementors were forced
+/// to implement all 6 (the object_store-wrapper brittleness pattern). The
+/// `{}` default bodies below make the doc true AND remove the brittleness: a new
+/// consumer can subscribe to just the one event it cares about. Params are
+/// `_`-prefixed because the default body intentionally ignores them (no
+/// `#[allow(unused_variables)]` — the underscore is the structural way to say
+/// "the default deliberately does nothing with this").
 pub trait IngestEventSink: Send + Sync {
     /// A new entity was extracted or resolved during the add_episode cycle.
-    fn on_entity_extracted(&self, entity_id: &str, name: &str);
+    fn on_entity_extracted(&self, _entity_id: &str, _name: &str) {}
     /// A new edge was added between two entities.
-    fn on_edge_added(&self, params: OnEdgeAddedParams<'_>);
+    fn on_edge_added(&self, _params: OnEdgeAddedParams<'_>) {}
     /// A contradiction between prior and new facts was detected and resolved.
-    fn on_contradiction(&self, event: ContradictionDetected);
+    fn on_contradiction(&self, _event: ContradictionDetected) {}
     /// Two entity records were merged (dedup collapse).
-    fn on_dedup_merge(&self, surviving_id: &str, absorbed_id: &str);
+    fn on_dedup_merge(&self, _surviving_id: &str, _absorbed_id: &str) {}
     /// The Phase 2 pipeline stage changed.
-    fn on_stage_change(&self, stage: IngestStatus);
+    fn on_stage_change(&self, _stage: IngestStatus) {}
     /// A non-fatal error occurred for a specific entity or edge.
-    fn on_ingestion_error(&self, event: IngestionError);
+    fn on_ingestion_error(&self, _event: IngestionError) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TD-133 D3: a sink that overrides ONLY `on_entity_extracted`. The fact
+    /// that this `impl` compiles at all is the proof that the other five
+    /// methods have no-op defaults — before the fix all six were required and
+    /// this would fail to compile. Calling an un-overridden `&str`-only method
+    /// (`on_dedup_merge`) confirms the default is a callable no-op, not a panic.
+    struct SingleMethodSink;
+
+    impl IngestEventSink for SingleMethodSink {
+        fn on_entity_extracted(&self, _entity_id: &str, _name: &str) {}
+    }
+
+    #[test]
+    fn ingest_event_sink_defaults_allow_single_method_impl() {
+        let sink = SingleMethodSink;
+        sink.on_entity_extracted("e1", "Alice"); // overridden
+        sink.on_dedup_merge("keep", "drop"); // default no-op — must not panic
+        // on_edge_added / on_contradiction / on_stage_change /
+        // on_ingestion_error take richer params; their defaults existing is
+        // already proven by `SingleMethodSink` compiling without them.
+    }
 }
