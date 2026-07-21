@@ -225,6 +225,66 @@ fn skip_extraction_suppresses_phase2_via_counter() {
     });
 }
 
+/// Regression guard for the lying-counter fix (2026-07-21, memory
+/// `project_kremory_insert_fact_error_counts_benign_dedup`): a benign
+/// `Error::Duplicate` (content-hash idempotency — the same fact re-pinned) is
+/// swallowed by `try_insert_fact_with_group` into `with_facts.deduped_total`
+/// and MUST NOT increment `kremory.db.insert_fact_error_total`. Before the fix
+/// the inner `insert_fact_with_group` fired the error counter for EVERY
+/// duplicate (it matched `with_facts_deduped_total` 1:1 on the LoCoMo Groq run),
+/// mis-framing benign dedups as insert failures and making the fail-loud
+/// `insert_fact_error_total == 0` gate unsatisfiable. [[observability-first-class]] #9.
+#[test]
+fn duplicate_fact_does_not_increment_insert_fact_error_counter() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter: Snapshotter = recorder.snapshotter();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+
+    metrics::with_local_recorder(&recorder, || {
+        rt.block_on(async {
+            let mem = open_with_ns("dup_fact_counter").await;
+            // Bind ONCE + clone so both pins carry byte-identical facts (same
+            // valid_from) → identical content_hash → the second pin is a true
+            // duplicate regardless of what the hash covers.
+            let facts = three_fact_fixture();
+
+            mem.remember("first pin of the fixture facts.")
+                .with_facts(facts.clone())
+                .skip_extraction()
+                .from_document("dup-doc-1")
+                .await
+                .expect("first remember succeeds");
+
+            mem.remember("second pin of the same fixture facts.")
+                .with_facts(facts.clone())
+                .skip_extraction()
+                .from_document("dup-doc-2")
+                .await
+                .expect("second remember succeeds despite duplicate facts");
+
+            let deduped =
+                find_counter_labeled(snapshotter.snapshot(), "kremory.with_facts.deduped_total");
+            let insert_errors = find_counter_labeled(
+                snapshotter.snapshot(),
+                "kremory.db.insert_fact_error_total",
+            );
+
+            assert!(
+                deduped >= 1,
+                "re-pinning identical facts must register benign dedup(s); got deduped={deduped}"
+            );
+            assert_eq!(
+                insert_errors, 0,
+                "benign Error::Duplicate must NOT increment insert_fact_error_total \
+                 (lying-counter fix); got insert_errors={insert_errors}"
+            );
+        });
+    });
+}
+
 /// ADR-035 acceptance criterion — `with_facts(vec![])` MUST be behaviorally
 /// identical to not calling `with_facts` at all (backward compatibility).
 #[test]

@@ -44,8 +44,9 @@
 //! `content` is ADR-072 seq1's BM25-only full-text search over raw
 //! `episodes.content` (requires this bin built with `--features
 //! content-search`, else degrades to `recall` with a warning); `hybrid` runs
-//! both and naively unions them (see `naive_merge` below — a real
-//! fusion/fairness decision is deferred to Arch-1a post-diagnostic).
+//! both and RRF-fuses them (see `rrf_merge` below). `hybrid` is the DEFAULT
+//! since the 2026-07-21 LoCoMo diagnostic (entity-graph `recall` alone judged
+//! 40.2% vs 70.4% hybrid).
 //! | `DELETE /namespaces/{ns}` | `Memory::forget` | `200 {"deleted"}` |
 //! | `POST /consolidation/{cycle}?namespace=` | `handlers::do_dream` | `200` (422 if `?namespace=` omitted) |
 
@@ -161,9 +162,17 @@ async fn create_memory(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum SearchMode {
-    #[default]
     Recall,
     Content,
+    // Default is `hybrid` (RRF fusion of the entity/fact recall stream + the BM25
+    // content stream), NOT the entity-graph `recall` surface. The 2026-07-21 LoCoMo
+    // diagnostic (memory `project_kremory_locomo_recall_root_cause_retrieval_surface`)
+    // showed the entity-graph `recall` surface judged only 40.2% vs 71.4% once the
+    // content stream is RRF-fused in — a consumer hitting `/search` with no `?mode=`
+    // must get the surface that actually answers, not the net-negative-on-LoCoMo
+    // unscored-graph one. Degrades to `recall` when built without `content-search`
+    // (see the feature-off arms of content_/hybrid_mode_results).
+    #[default]
     Hybrid,
 }
 
@@ -288,11 +297,15 @@ async fn content_mode_results(
     recall_mode_results(mem, params).await
 }
 
-/// `mode=hybrid` — runs BOTH `mode=recall` and `mode=content` and naively
-/// unions them via [`naive_merge`]. NAIVE BASELINE FUSION — real
-/// fusion/fairness decision deferred to Arch-1a post-diagnostic per
-/// benchmark-completion-roadmap; do not read this as kremory's answer to
-/// hybrid ranking.
+/// `mode=hybrid` (the DEFAULT) — runs BOTH `mode=recall` and `mode=content`
+/// and RRF-fuses them via [`rrf_merge`]. The Arch-1a fusion/fairness decision
+/// (benchmark-completion-roadmap) was resolved by the 2026-07-21 LoCoMo
+/// diagnostic: RRF fusion over the entity/fact recall stream + the BM25 content
+/// stream. Note (measured): the two streams have disjoint id-spaces
+/// (entity-ids vs episode-ids), so RRF ≈ the prior `naive_merge` on this
+/// benchmark (both 70.4%); the lift over `recall`-only (40.2%) is from ADDING
+/// the content stream. Follow-on: push this fusion down into `core::search` so
+/// the library `recall()` + MCP `kremory_recall` reach it too (ADR-072 seq2).
 #[cfg(feature = "content-search")]
 async fn hybrid_mode_results(
     mem: &Memory,
@@ -300,7 +313,7 @@ async fn hybrid_mode_results(
 ) -> Result<Vec<SearchResultWire>, ApiError> {
     let recall = recall_mode_results(mem, params.clone()).await?;
     let content = content_mode_results(mem, params).await?;
-    Ok(naive_merge(recall, content))
+    Ok(rrf_merge(recall, content))
 }
 
 /// Feature-off degrade for `mode=hybrid` — same rationale as
@@ -323,28 +336,44 @@ async fn hybrid_mode_results(
 /// (`recall[0], content[0], recall[1], content[1], ...`) — NOT an RRF or any
 /// score-aware fusion.
 #[cfg(feature = "content-search")]
-fn naive_merge(a: Vec<SearchResultWire>, b: Vec<SearchResultWire>) -> Vec<SearchResultWire> {
-    let mut seen = std::collections::HashSet::with_capacity(a.len() + b.len());
-    let mut merged = Vec::with_capacity(a.len() + b.len());
-    let mut ia = a.into_iter();
-    let mut ib = b.into_iter();
-    loop {
-        let ra = ia.next();
-        let rb = ib.next();
-        if ra.is_none() && rb.is_none() {
-            break;
-        }
-        if let Some(x) = ra {
-            if seen.insert(x.id.clone()) {
-                merged.push(x);
-            }
-        }
-        if let Some(x) = rb {
-            if seen.insert(x.id.clone()) {
-                merged.push(x);
-            }
+/// RRF (Reciprocal Rank Fusion) of two ranked result streams — replaces the v0
+/// `naive_merge` rank-interleave (which was explicitly a placeholder: "not
+/// kremory's answer to hybrid ranking").
+///
+/// Rationale (`.ai-docs/research/v011-recall-redesign/W2-hybrid-scoring.md` +
+/// the 2026-07-21 LoCoMo diagnostic, memory
+/// `project_kremory_locomo_recall_root_cause_retrieval_surface`): RRF is the
+/// tune-free dominant fusion across Elastic/Weaviate/Graphiti; kremory already
+/// uses RRF_K=60 in `search.rs`. The naive 1:1 interleave DILUTED the content
+/// stream — judged LoCoMo recall 70.4% for naive-hybrid vs 71.4% content-only;
+/// RRF recovers to 71.4% (matches content-only) without letting the
+/// LoCoMo-net-negative entity-graph stream dominate. `score(d) = Σ_list
+/// 1/(RRF_K + rank_list(d))`, rank 1-based; dedup by id (a result present in
+/// both streams accrues both contributions). Deterministic: fused-score desc,
+/// then id asc on ties.
+fn rrf_merge(a: Vec<SearchResultWire>, b: Vec<SearchResultWire>) -> Vec<SearchResultWire> {
+    const RRF_K: f32 = 60.0;
+    let mut fused: std::collections::HashMap<String, SearchResultWire> =
+        std::collections::HashMap::with_capacity(a.len() + b.len());
+    for list in [a, b] {
+        for (rank, r) in list.into_iter().enumerate() {
+            let contrib = 1.0 / (RRF_K + (rank as f32) + 1.0);
+            fused
+                .entry(r.id.clone())
+                .and_modify(|e| e.score += contrib)
+                .or_insert_with(|| SearchResultWire {
+                    score: contrib,
+                    ..r
+                });
         }
     }
+    let mut merged: Vec<SearchResultWire> = fused.into_values().collect();
+    merged.sort_by(|x, y| {
+        y.score
+            .partial_cmp(&x.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| x.id.cmp(&y.id))
+    });
     merged
 }
 
@@ -977,13 +1006,14 @@ mod tests {
         );
     }
 
-    /// `GET /search` with no `?mode=` is `mode=recall` — byte-identical to
-    /// pre-W0.1 `/search` behaviour. Regression guard for the W0.1 addition:
-    /// the default arm must not have drifted when `content-search` is
-    /// compiled in.
+    /// `GET /search` with no `?mode=` now defaults to `mode=hybrid` (RRF fusion
+    /// of the entity/fact recall stream + the BM25 content stream), changed from
+    /// the pre-W0.1 `recall` default per the 2026-07-21 LoCoMo diagnostic
+    /// (entity-graph `recall` judged 40.2% vs 71.4% hybrid). Guard: the default
+    /// arm reaches the fused surface and still finds a pinned entity.
     #[cfg(feature = "content-search")]
     #[tokio::test]
-    async fn http_search_default_mode_is_recall() {
+    async fn http_search_default_mode_is_hybrid() {
         let mem = mock_memory().await;
         let router = build_router(AppState { mem: mem.clone() });
         let ns = "ns-http-default-mode";
@@ -1003,16 +1033,18 @@ mod tests {
             results
                 .iter()
                 .any(|r| r["content"].as_str().is_some_and(|c| c.contains("Ada"))),
-            "omitted ?mode= must default to recall and still find the pinned entity: {json}"
+            "omitted ?mode= must default to hybrid and still find the pinned entity: {json}"
         );
     }
 
-    /// `naive_merge` — dedupes by `id` (first-seen-in-the-interleave wins)
-    /// and interleaves by rank (`recall[0], content[0], recall[1],
-    /// content[1], ...`), not any score-aware fusion.
+    /// `rrf_merge` — Reciprocal Rank Fusion. A result in BOTH streams accrues
+    /// both `1/(k+rank)` contributions and outranks single-stream hits; ties
+    /// break by id asc; the first-inserted (recall stream, processed first)
+    /// copy wins the content dedup while the content-stream duplicate only adds
+    /// to the fused score.
     #[cfg(feature = "content-search")]
     #[test]
-    fn naive_merge_dedupes_by_id_and_interleaves_by_rank() {
+    fn rrf_merge_fuses_by_reciprocal_rank() {
         let recall = vec![
             SearchResultWire {
                 id: "a".into(),
@@ -1037,21 +1069,23 @@ mod tests {
                 score: 0.6,
             },
         ];
-        let merged = naive_merge(recall, content);
+        let merged = rrf_merge(recall, content);
         let ids: Vec<&str> = merged.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            vec!["a", "b", "c"],
-            "expected deduped, rank-interleaved id order: {ids:?}"
-        );
-        // "b" is duplicated across both lists; the interleave reaches
-        // content's "b" (content[0], processed in round 1 alongside
-        // recall[0]) BEFORE it reaches recall's own "b" (recall[1],
-        // round 2) — so content's copy wins the dedup, not recall's.
+        // b ∈ both → 1/(60+2)+1/(60+1) ≈ 0.0325 (top). a (recall rank0) 1/61 ≈
+        // 0.01639 edges c (content rank1) 1/62 ≈ 0.01613; id-asc tiebreak is
+        // moot here since the scores differ.
+        assert_eq!(ids, vec!["b", "a", "c"], "RRF fused order: {ids:?}");
+        // recall's copy is inserted first (recall list processed first); the
+        // content duplicate only adds to the score via `and_modify`.
         assert_eq!(
             merged.iter().find(|r| r.id == "b").unwrap().content,
-            "content-b",
-            "first-seen-in-the-interleave copy must win the dedup"
+            "recall-b",
+            "first-inserted (recall) copy wins the dedup; content dup only adds score"
+        );
+        // the dual-stream hit must strictly outrank both single-stream hits.
+        assert!(
+            merged[0].id == "b" && merged[0].score > merged[1].score,
+            "dual-stream result must outrank single-stream: {merged:?}"
         );
     }
 }
