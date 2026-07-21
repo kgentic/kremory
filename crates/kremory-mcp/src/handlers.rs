@@ -160,7 +160,15 @@ pub async fn do_dream(mem: &Memory, params: DreamParams) -> Result<DreamOutput, 
         req = req.for_batch(id);
     }
 
+    // TD-132: total dream-phase wall-clock (the bench runs a full dream() per
+    // conversation via POST /consolidation). Dual-emit (ADR-D1): a canonical
+    // `kremory_core_*` `_seconds` histogram (renders at /metrics when a recorder
+    // is installed) + an always-on tracing log (the live sink otherwise).
+    let dream_start = std::time::Instant::now();
     let summary = req.await?;
+    let dream_secs = dream_start.elapsed().as_secs_f64();
+    metrics::histogram!("kremory_core_dream_duration_seconds").record(dream_secs);
+    tracing::info!(target: "kremory.dream", dream_total_ms = dream_secs * 1000.0, "kremory.dream.complete");
     Ok(DreamOutput::from(summary))
 }
 
