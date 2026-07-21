@@ -20,6 +20,7 @@ use crate::core::provider::{
     capability_of, ChatProvider, EmbeddingProvider, ProviderCaps, TokenCountingChatProvider,
     TokenUsage,
 };
+use crate::core::rates::{CostUsdParams, ProviderRates};
 use crate::core::schema::TemporalGraph;
 use crate::core::text_utils;
 
@@ -1052,25 +1053,20 @@ pub(crate) fn detect_provider_name(model: &str) -> String {
 /// Compute cost in micro-USD for a dream pass given token counts.
 ///
 /// Returns `Some(micro_usd)` when the rate is known, `None` when the model
-/// is an unknown tier (caller writes NULL to the DB column).
+/// is an unknown tier (caller writes NULL to the DB column). Ollama is
+/// always `Some(0)` (self-hosted, no provider cost).
 ///
-/// # Rate table (verified 2026-06-16)
+/// TD-133 C3 — this is now the SOLE cost-computation path for dream-pass
+/// budget tracking: it routes through [`ProviderRates::cost_usd`] (backed by
+/// `monitoring/provider-rates.toml`, the single source of truth for provider
+/// pricing — see TD-133 C5a/C5b) rather than a duplicate hand-rolled rate
+/// table. The former `anthropic_rate_per_token()` stored rates as INTEGER
+/// micro-USD/token (e.g. Haiku's $0.80/M input rate rounded UP to 1
+/// micro-USD/token, a ~20% overshoot); `ProviderRates::cost_usd` computes in
+/// `f64` USD and converts to micro-USD only at the end, so that precision
+/// loss is gone.
 ///
-/// | Family              | Input ($/M) | Output ($/M) |
-/// |---------------------|-------------|--------------|
-/// | claude-haiku-*      | 0.80        | 4.00         |
-/// | claude-sonnet-*     | 3.00        | 15.00        |
-/// | claude-opus-*       | 15.00       | 75.00        |
-/// | ollama (local)      | 0           | 0            |
-/// | other / unknown     | `None`      | `None`       |
-///
-/// micro_usd = (tokens / 1_000_000) × ($/M) × 1_000_000
-///           = tokens × ($/M)   (dollars cancel; result is micro-USD per token)
-/// Simplified: micro_usd = tokens_input × input_rate_per_token
-///                        + tokens_output × output_rate_per_token
-/// where rate_per_token = $/M (numerically equal to micro-USD per token).
-/// Bundled parameters for [`compute_dream_cost_micro`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// micro_usd = round(cost_usd × 1_000_000)
 pub(crate) struct ComputeDreamCostMicroParams<'a> {
     pub provider: &'a str,
     pub model: &'a str,
@@ -1085,41 +1081,21 @@ pub(crate) fn compute_dream_cost_micro(params: ComputeDreamCostMicroParams<'_>) 
         tokens_input,
         tokens_output,
     } = params;
-    match provider {
-        "ollama" => Some(0),
-        "anthropic" => {
-            // Per-token cost in micro-USD = $/M (same number: $1/M = $0.000001/token
-            // = 1 micro-USD/token).
-            let (input_rate, output_rate) = anthropic_rate_per_token(model)?;
-            let cost = tokens_input
-                .saturating_mul(input_rate)
-                .saturating_add(tokens_output.saturating_mul(output_rate));
-            Some(cost)
-        }
-        _ => None,
+    if provider == "ollama" {
+        return Some(0);
     }
-}
-
-/// Return (input_rate, output_rate) in micro-USD per token for known Anthropic
-/// model families. Returns `None` for unknown / future model strings so cost is
-/// stored as NULL rather than silently wrong.
-///
-/// Rates: https://www.anthropic.com/pricing (spot-checked 2026-06-16).
-/// micro-USD per token = $/M numerically (1 $/M = 1 μ$/token).
-fn anthropic_rate_per_token(model: &str) -> Option<(u64, u64)> {
-    if model.starts_with("claude-haiku-") {
-        // Haiku 3.5 / 4.x: $0.80/M in, $4.00/M out
-        Some((1, 4))
-    } else if model.starts_with("claude-sonnet-") {
-        // Sonnet 3.5 / 4.x: $3.00/M in, $15.00/M out
-        Some((3, 15))
-    } else if model.starts_with("claude-opus-") {
-        // Opus 4.x: $15.00/M in, $75.00/M out
-        Some((15, 75))
-    } else {
-        // Unknown claude-* (e.g. claude-mythos-preview) → NULL
-        None
-    }
+    // Load the bundled rate table directly rather than depending on the
+    // globally-initialized `PROVIDER_RATES` OnceLock — this keeps the
+    // function's result independent of process-wide init ordering (e.g.
+    // whether some other test/call path has already run `init_bundled()`).
+    let rates = ProviderRates::from_bundled().ok()?;
+    let cost_usd = rates.cost_usd(CostUsdParams {
+        provider,
+        model,
+        tokens_input,
+        tokens_output,
+    })?;
+    Some((cost_usd * 1_000_000.0).round() as u64)
 }
 
 #[cfg(test)]
@@ -1184,8 +1160,10 @@ mod budget_helpers_tests {
 
     #[test]
     fn compute_cost_anthropic_haiku() {
-        // haiku: input rate = 1 micro_usd/token, output rate = 4 micro_usd/token
-        // 1000 input → 1000; 500 output → 2000; total 3000
+        // haiku: input rate = $1.00/M = 1 micro_usd/token, output rate = $5.00/M =
+        // 5 micro_usd/token (TD-133 C5/R2 — SSOT-derived from LiteLLM via
+        // monitoring/refresh-provider-rates.py; verified 2026-07-21).
+        // 1000 input × 1 = 1000; 500 output × 5 = 2500; total 3500.
         assert_eq!(
             compute_dream_cost_micro(ComputeDreamCostMicroParams {
                 provider: "anthropic",
@@ -1193,7 +1171,7 @@ mod budget_helpers_tests {
                 tokens_input: 1000,
                 tokens_output: 500,
             }),
-            Some(1000 + 500 * 4)
+            Some(1000 + 500 * 5)
         );
     }
 
@@ -1208,6 +1186,23 @@ mod budget_helpers_tests {
                 tokens_output: 50,
             }),
             Some(100 * 3 + 50 * 15)
+        );
+    }
+
+    #[test]
+    fn compute_cost_anthropic_opus() {
+        // opus: input rate = $5.00/M = 5 micro_usd/token, output rate = $25.00/M =
+        // 25 micro_usd/token (TD-133 C5/R2 — SSOT-derived from LiteLLM via
+        // monitoring/refresh-provider-rates.py; verified 2026-07-21).
+        // 100 input × 5 + 50 output × 25 = 500 + 1250 = 1750.
+        assert_eq!(
+            compute_dream_cost_micro(ComputeDreamCostMicroParams {
+                provider: "anthropic",
+                model: "claude-opus-4-7",
+                tokens_input: 100,
+                tokens_output: 50,
+            }),
+            Some(100 * 5 + 50 * 25)
         );
     }
 
