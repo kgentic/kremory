@@ -76,8 +76,11 @@ crate follows generally).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
+import tempfile
 import tomllib
 import urllib.request
 from dataclasses import dataclass
@@ -430,6 +433,29 @@ def group_by_section(entries: list[CurrentEntry]) -> list[tuple[Section, list[Cu
     return grouped
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write `content` to `path` atomically: write to a temp file in the
+    SAME directory, then `os.replace()` it onto `path` (atomic rename on
+    POSIX and Windows). `provider-rates.toml` is bundled into the crate at
+    COMPILE TIME via `include_str!` (`core/rates.rs`) — a process crash or
+    interruption mid-`write_text()` would leave the file truncated, breaking
+    `cargo build` for every consumer until the next successful refresh. The
+    temp file is written+flushed to completion (or removed on any failure)
+    before the rename, so `path` is never observed in a partial state.
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -503,7 +529,7 @@ def main() -> int:
         sys.stdout.write(output)
         return 0
 
-    TOML_PATH.write_text(output)
+    _atomic_write_text(TOML_PATH, output)
     print(
         f"refresh-provider-rates.py: wrote {TOML_PATH} (rates_as_of={fetch_date}, "
         f"{'changes applied' if any_changed else 'no numeric changes, date refreshed'})",
