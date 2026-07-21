@@ -186,10 +186,11 @@ impl ProviderRates {
     ///
     /// 1. Exact `provider` + `model` match.
     /// 2. Longest same-provider entry whose `model` is a PREFIX of the
-    ///    queried `model` (covers date-suffixed API model ids, e.g. the
-    ///    Anthropic wire id `claude-haiku-4-5-20251001` matches the toml
-    ///    entry `claude-haiku-4-5`). Wildcard (`"*"`) entries are excluded
-    ///    from this step — they're handled explicitly in step 3.
+    ///    queried `model`, restricted to a VERSION/DATE-SUFFIXED remainder
+    ///    (see [`is_version_suffix`]; covers date-suffixed API model ids,
+    ///    e.g. the Anthropic wire id `claude-haiku-4-5-20251001` matches the
+    ///    toml entry `claude-haiku-4-5`). Wildcard (`"*"`) entries are
+    ///    excluded from this step — they're handled explicitly in step 3.
     /// 3. `provider` + `"*"` wildcard (e.g. `ollama/*`).
     ///
     /// New Anthropic model generations need their own toml entry rather than
@@ -207,7 +208,13 @@ impl ProviderRates {
         if let Some(r) = self
             .providers
             .iter()
-            .filter(|r| r.provider == provider && r.model != "*" && model.starts_with(&r.model))
+            .filter(|r| {
+                r.provider == provider
+                    && r.model != "*"
+                    && model
+                        .strip_prefix(r.model.as_str())
+                        .is_some_and(is_version_suffix)
+            })
             .max_by_key(|r| r.model.len())
         {
             return Some(r);
@@ -216,6 +223,25 @@ impl ProviderRates {
             .iter()
             .find(|r| r.provider == provider && r.model == "*")
     }
+}
+
+/// True when `remainder` — the suffix of a queried model id left over after
+/// stripping a candidate toml entry's `model` prefix — marks a version/date
+/// suffix of the SAME model rather than a DIFFERENT model that merely shares
+/// a name prefix (Rule 21 — parse/lookup loud, never silently inherit a
+/// sibling model's rate).
+///
+/// A version/date suffix always starts with `-` immediately followed by an
+/// ASCII digit (e.g. `-20251001`, `-2024-05-13`, `-4-5-20250101` for the
+/// Anthropic wire ids `claude-haiku-4-5-20251001` etc.). A remainder that
+/// starts with `-` followed by a LETTER (e.g. `-realtime-preview`,
+/// `-vision`) names a distinct model variant sharing the family's prefix —
+/// `find_entry` must NOT treat that as a match; the lookup falls through to
+/// the wildcard step or returns `None` instead of silently mis-pricing an
+/// unlisted variant at its neighbour's rate.
+fn is_version_suffix(remainder: &str) -> bool {
+    let mut chars = remainder.chars();
+    matches!(chars.next(), Some('-')) && matches!(chars.next(), Some(c) if c.is_ascii_digit())
 }
 
 /// Initialize `PROVIDER_RATES` from the bundled TOML. Idempotent — a second
@@ -434,5 +460,64 @@ mod tests {
             None,
             "unrecognized claude-* family must return None, not a guessed rate"
         );
+    }
+
+    // ── Rule 21 fix: prefix-match discriminator must not mis-price variants ──
+
+    /// A DIFFERENT model that merely shares a name prefix with a listed
+    /// family entry (dash followed by a LETTER, e.g. `-realtime-preview`)
+    /// must NOT prefix-match `gpt-4o` and silently inherit its rate — it has
+    /// no toml entry and no wildcard exists for `openai`, so both
+    /// `lookup_rate` and `cost_usd` must return `None` (fail loud, per
+    /// CLAUDE.md Rule 21 — never a silently-wrong guessed cost).
+    #[test]
+    fn find_entry_rejects_letter_suffixed_model_variant() {
+        let rates = ProviderRates::from_bundled().expect("bundled rates must parse");
+
+        assert_eq!(
+            rates.lookup_rate("openai", "gpt-4o-realtime-preview"),
+            None,
+            "gpt-4o-realtime-preview must NOT inherit gpt-4o's rate via prefix match"
+        );
+        assert_eq!(
+            rates.cost_usd(CostUsdParams {
+                provider: "openai",
+                model: "gpt-4o-realtime-preview",
+                tokens_input: 100,
+                tokens_output: 50,
+            }),
+            None,
+            "gpt-4o-realtime-preview must NOT inherit gpt-4o's rate via prefix match (cost_usd)"
+        );
+    }
+
+    /// A genuine date-suffixed wire id of a listed family entry (dash
+    /// followed by a DIGIT, e.g. `-2024-05-13`) must still prefix-match —
+    /// the discriminator must not regress the existing date-suffix
+    /// resolution path this design intentionally preserves.
+    #[test]
+    fn find_entry_still_matches_digit_suffixed_model_variant() {
+        let rates = ProviderRates::from_bundled().expect("bundled rates must parse");
+
+        let base = rates
+            .lookup_rate("openai", "gpt-4o")
+            .expect("gpt-4o entry must be present in bundled TOML");
+        let suffixed = rates
+            .lookup_rate("openai", "gpt-4o-2024-05-13")
+            .expect("date-suffixed gpt-4o id must still resolve via prefix match");
+        assert!(
+            (base - suffixed).abs() < 1e-9,
+            "gpt-4o-2024-05-13 must resolve to the same rate as gpt-4o"
+        );
+
+        let cost = rates
+            .cost_usd(CostUsdParams {
+                provider: "openai",
+                model: "gpt-4o-2024-05-13",
+                tokens_input: 1000,
+                tokens_output: 1000,
+            })
+            .expect("date-suffixed gpt-4o id must still resolve via prefix match (cost_usd)");
+        assert!(cost > 0.0, "date-suffixed match must yield a non-zero cost");
     }
 }

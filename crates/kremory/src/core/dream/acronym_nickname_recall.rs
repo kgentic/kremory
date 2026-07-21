@@ -62,6 +62,11 @@
 //! - `kremory.dream.acronym_recall.pairs_examined_total`
 //! - `kremory.dream.acronym_recall.merges_applied_total`
 //! - `kremory.dream.acronym_recall.rejected_total`
+//! - `kremory.dream.acronym_recall.cooccurrence_precompute_ms` (histogram —
+//!   TD-133 B3b: wall-clock for the bulk co-occurrence pre-filter's two
+//!   queries, sensitive to the group's episode/fact fan-out)
+//! - `kremory.dream.acronym_recall.cooccurrence_pairs_precomputed_total`
+//!   (counter — size of the pre-filter's resulting pair set)
 //! - `kremory.identity.candidate_nominated_total{site="site5_acronym_nickname"}`
 //! - `kremory.identity.verdict_parse_fail_total{site="site5_acronym_nickname"}`
 //! - `kremory.identity.llm_call_latency_ms_histogram{site="site5_acronym_nickname"}`
@@ -603,10 +608,22 @@ async fn cooccurs_in_graph(params: CooccursInGraphParams<'_>) -> Result<bool> {
 /// `(min, max)`, spec §6.2's existing canonical-pair convention) so caller
 /// lookups are order-independent regardless of which SQL branch produced the
 /// row.
+///
+/// Observability (spec §6 / Rule 19): the two bulk queries below replace an
+/// O(pairs) per-pair round-trip with an O(group-fan-out) precompute — their
+/// cost is now sensitive to the group's episode/fact fan-out rather than to
+/// `pairs_examined`, so it needs its own latency + result-size signal rather
+/// than being invisible inside the surrounding pass-level counters. Emits
+/// `kremory.dream.acronym_recall.cooccurrence_precompute_ms` (histogram,
+/// wall-clock for both queries combined) and
+/// `kremory.dream.acronym_recall.cooccurrence_pairs_precomputed_total`
+/// (counter, size of the returned set) — both unlabelled (bounded
+/// cardinality: one series for this call site).
 async fn build_cooccurrence_prefilter_set(
     conn: &libsql::Connection,
     group_id: &str,
 ) -> Result<HashSet<(String, String)>> {
+    let precompute_start = Instant::now();
     let mut pairs: HashSet<(String, String)> = HashSet::new();
 
     // Shared episode mention — mirrors `cooccurs_in_graph`'s first query as a
@@ -657,9 +674,19 @@ async fn build_cooccurrence_prefilter_set(
     // would have derived independently for EACH of `a` and `b`; the
     // self-join on `na.neighbor = nb.neighbor` then yields every pair of
     // entities sharing a common neighbor directly, bounded by actual edges
-    // (not O(N²)). Requires `idx_facts_subject` (migration 018) +
-    // `idx_facts_object` to stay index-backed (spec §3.5 RISK-002 — same
-    // index dependency as the original per-pair query, S6 spike).
+    // (not O(N²)).
+    //
+    // Index usage DIFFERS from the per-pair oracle above: this query has no
+    // `subject_id = ?`/`object_id = ?` equality predicate (that's what
+    // `idx_facts_subject`/`idx_facts_object` — migration 018 — serve for
+    // `cooccurs_in_graph`'s per-pair lookups). This CTE instead scans `facts`
+    // filtered by `group_id`, which is served by `idx_facts_group`. Verified
+    // 2026-07-21: no dedicated index exists on `episodic_edges` for the
+    // first query's `entity_group_id` filter either (only
+    // `idx_episodic_edges_entity`/`idx_episodic_edges_episode` and the
+    // migration-017 unique index leading with `episode_id`) — if this pass's
+    // fan-out grows, an `entity_group_id`-leading index is the next
+    // candidate, not a claim of current index-backing.
     let mut rows = conn
         .query(
             "WITH neighbors AS ( \
@@ -699,6 +726,11 @@ async fn build_cooccurrence_prefilter_set(
             &a, &b,
         ));
     }
+
+    histogram!("kremory.dream.acronym_recall.cooccurrence_precompute_ms")
+        .record(precompute_start.elapsed().as_millis() as f64);
+    counter!("kremory.dream.acronym_recall.cooccurrence_pairs_precomputed_total")
+        .increment(pairs.len() as u64);
 
     Ok(pairs)
 }
