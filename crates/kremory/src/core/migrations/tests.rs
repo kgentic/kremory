@@ -416,3 +416,116 @@ async fn set_mtime(path: &Path, when: SystemTime) {
         .expect("open for mtime");
     f.set_modified(when).expect("set_modified");
 }
+
+// ─── migrate_025 (TD-133 B2) — active-only partial dedup index ────────────────
+//
+// The upgrade path (DROP old-form + CREATE active-only partial) is the migration's
+// whole reason to exist, and it is NOT exercised by the graph-layer fresh-DB tests
+// (a fresh DB gets the correct index form straight from schema.rs, so migrate_025
+// hits its no-op branch there — Quinn MEDIUM finding). These pin the upgrade /
+// idempotent / absent-index paths per the migrate_006 fresh/idempotent/precondition
+// convention. Anchors: TD-133 B2 + ADR-003 (bi-temporal re-assertion).
+
+/// Read the current `idx_facts_content_hash_unique` DDL from sqlite_master.
+async fn dedup_index_sql(conn: &libsql::Connection) -> Option<String> {
+    let mut rows = conn
+        .query(
+            "SELECT sql FROM sqlite_master \
+             WHERE type='index' AND name='idx_facts_content_hash_unique'",
+            (),
+        )
+        .await
+        .expect("query index sql");
+    rows.next()
+        .await
+        .expect("read row")
+        .map(|r| r.get::<String>(0).expect("get sql"))
+}
+
+/// Minimal `facts` table carrying just the columns the dedup index targets.
+async fn seed_minimal_facts_table(conn: &libsql::Connection) {
+    conn.execute("CREATE TABLE facts (content_hash TEXT, expired_at TEXT)", ())
+        .await
+        .expect("create minimal facts table");
+}
+
+#[tokio::test]
+async fn migrate_025_rewrites_old_form_index_to_active_only_partial() {
+    let conn = in_memory_conn().await;
+    seed_minimal_facts_table(&conn).await;
+    // Simulate a pre-TD-133 on-disk DB: OLD-form index (all rows, no expired_at).
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_facts_content_hash_unique \
+         ON facts(content_hash) WHERE content_hash IS NOT NULL",
+        (),
+    )
+    .await
+    .expect("seed old-form index");
+
+    let before = dedup_index_sql(&conn).await.expect("index exists");
+    assert!(
+        !before.contains("expired_at"),
+        "precondition: old-form index must lack expired_at, got: {before}"
+    );
+
+    migrate_025_fact_dedup_expired_partial(&conn)
+        .await
+        .expect("migrate_025 upgrade path");
+
+    let after = dedup_index_sql(&conn).await.expect("index still exists");
+    assert!(
+        after.contains("expired_at IS NULL"),
+        "migrate_025 must rewrite to active-only partial, got: {after}"
+    );
+    assert!(
+        after.contains("content_hash IS NOT NULL"),
+        "must retain the content_hash NOT NULL predicate, got: {after}"
+    );
+}
+
+#[tokio::test]
+async fn migrate_025_is_idempotent_noop_on_already_migrated() {
+    let conn = in_memory_conn().await;
+    seed_minimal_facts_table(&conn).await;
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_facts_content_hash_unique \
+         ON facts(content_hash) WHERE content_hash IS NOT NULL AND expired_at IS NULL",
+        (),
+    )
+    .await
+    .expect("seed new-form index");
+
+    let before = dedup_index_sql(&conn).await.expect("index exists");
+    migrate_025_fact_dedup_expired_partial(&conn)
+        .await
+        .expect("first run must be a no-op");
+    let after = dedup_index_sql(&conn).await.expect("index still exists");
+    assert_eq!(
+        before, after,
+        "already-migrated index must be left untouched (no DROP+CREATE)"
+    );
+    // Second run: still a no-op, no error.
+    migrate_025_fact_dedup_expired_partial(&conn)
+        .await
+        .expect("second run must be a no-op");
+}
+
+#[tokio::test]
+async fn migrate_025_creates_active_only_partial_when_index_absent() {
+    let conn = in_memory_conn().await;
+    seed_minimal_facts_table(&conn).await;
+    assert!(
+        dedup_index_sql(&conn).await.is_none(),
+        "precondition: no dedup index yet"
+    );
+
+    migrate_025_fact_dedup_expired_partial(&conn)
+        .await
+        .expect("migrate_025 on absent index");
+
+    let after = dedup_index_sql(&conn).await.expect("index created");
+    assert!(
+        after.contains("expired_at IS NULL") && after.contains("content_hash IS NOT NULL"),
+        "must create the active-only partial form, got: {after}"
+    );
+}

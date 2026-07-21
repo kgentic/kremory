@@ -1802,9 +1802,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // upserted into above), plus the matching KREMORY_DEBUG
                         // namespace-mismatch dump.
                         let reason = e.fact_insert_failure_reason();
+                        // Bounded-cardinality label only (`reason`): `namespace`
+                        // (group_id) is consumer-supplied + unbounded — it stays
+                        // in the warn log + KREMORY_DEBUG dump below, never a
+                        // metric label (observability-first: no unbounded label
+                        // cardinality). TD-133 B3 follow-up.
                         metrics::counter!(
                             "kremory.ingest.phase2_fact_insert_failed_total",
-                            "namespace" => effective_gid.to_string(),
                             "reason" => reason,
                         )
                         .increment(1);
