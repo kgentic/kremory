@@ -641,10 +641,16 @@ impl TemporalGraph {
         }
         // FU.1: UNIQUE partial index on content_hash — storage-layer backstop for the
         // TOCTTOU-safe check+insert (partial: NULL allowed for pre-hash-rollout rows).
+        // TD-133 B2: scoped to ACTIVE (non-expired) rows so the index predicate matches
+        // the dedup pre-check SELECT (`graph/facts.rs`: `... AND expired_at IS NULL`).
+        // Without this, re-asserting a superseded/expired triple (a legitimate
+        // bi-temporal assert→expire→re-assert, ADR-003) collides on the stale expired
+        // row → `UNIQUE constraint failed` → the re-assertion is silently lost. Existing
+        // DBs are migrated by `migrate_025_fact_dedup_expired_partial` (runs last).
         self.conn
             .execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_content_hash_unique \
-                 ON facts(content_hash) WHERE content_hash IS NOT NULL",
+                 ON facts(content_hash) WHERE content_hash IS NOT NULL AND expired_at IS NULL",
                 (),
             )
             .await?;
@@ -854,6 +860,12 @@ impl TemporalGraph {
         // already F32_BLOB); the vector-index CREATE is LOUD (propagates
         // Err), unlike every prior migration's best-effort index create.
         crate::core::migrations::migrate_023_vector_index_column_type(&self.conn, dim).await?;
+
+        // Migration 025 (TD-133 B2): make idx_facts_content_hash_unique a partial index
+        // over ACTIVE (non-expired) rows only, matching the dedup SELECT predicate.
+        // MUST run LAST — after migrate_023 (defs_j) recreates the old-form index —
+        // else the un-partitioned form would be re-introduced. Idempotent + conditional.
+        crate::core::migrations::migrate_025_fact_dedup_expired_partial(&self.conn).await?;
 
         Ok(())
     }
