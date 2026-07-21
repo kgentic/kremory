@@ -119,6 +119,8 @@ pub use core::embedding::TokenTrackingEmbedder;
 pub mod observability {
     pub use crate::core::chat_tracking::{llm_error_type, TokenTrackingChatProvider};
     pub use crate::core::embedding::TokenTrackingEmbedder;
-    pub use crate::core::rates::{ProviderRateEntry, ProviderRates, RatesError, PROVIDER_RATES};
+    pub use crate::core::rates::{
+        CostUsdParams, ProviderRateEntry, ProviderRates, RatesError, PROVIDER_RATES,
+    };
     pub use crate::memory::{init_telemetry, TelemetryConfig, TelemetryHandle, TelemetryInitError};
 }

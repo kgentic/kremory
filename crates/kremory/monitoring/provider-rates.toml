@@ -1,67 +1,91 @@
-# kremory provider rates — canonical cost table (ADR D9 / v0.1.2)
+# kremory provider rates — canonical cost table (ADR D9 / v0.1.2; TD-133 C5a
+# per-direction extension)
 #
-# Used by `TokenTrackingChatProvider` and `TokenTrackingEmbedder` to compute
-# cost estimates from `kremory_core_tokens_total` counter data.
+# Used by `TokenTrackingChatProvider` and `TokenTrackingEmbedder` (via
+# `ProviderRates::lookup_rate`) and by dream-pass budget tracking (via
+# `ProviderRates::cost_usd`) to compute cost estimates from
+# `kremory_core_tokens_total` counter data.
 #
-# `cost_per_1k_tokens_usd`: USD cost per 1000 tokens.
-# For chat models: the OUTPUT rate is used (more conservative / expensive estimate).
-#   v0.1.3 may add per-direction granularity if needed.
-# For embedding models: single rate (no input/output distinction).
+# `cost_per_1k_tokens_usd`: USD cost per 1000 tokens — REQUIRED single-rate
+#   fallback, used directly by `lookup_rate` (no direction concept) and by
+#   `cost_usd` for entries that don't set the per-direction fields below. For
+#   chat models this is conventionally the OUTPUT rate (more conservative /
+#   expensive estimate).
+# `cost_per_1k_input_tokens_usd` / `cost_per_1k_output_tokens_usd`: OPTIONAL.
+#   When both are set, `ProviderRates::cost_usd()` charges input and output
+#   tokens at their own rate instead of the blended single rate.
+# For embedding models: single rate only (no input/output distinction).
 #
-# Update this file when providers publish new pricing. Include a reference link.
+# SSOT: this file is refreshed FROM the LiteLLM pricing dataset by
+# `monitoring/refresh-provider-rates.py` — run that script to update rates
+# rather than hand-editing the numbers below (hand-edits drift from the SSOT
+# silently and desync `rates_as_of`). Hand-editing IS still correct for rows
+# absent from the SSOT (local/self-hosted models) — the refresh script
+# preserves those verbatim. See the provenance block below for details.
 #
 # ADR D7 cardinality discipline:
 #   `provider` and `model` label values in metrics MUST match the keys here.
 #   Unlisted provider/model combos will not produce cost estimates in dashboards.
-#
-# There is NO `direction` field — single rate per model per spec line 196 + 458.
 
-rates_as_of = "2026-05-27"
+# ── Provenance ─────────────────────────────────────────────────────────────
+# Source:  https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+# License: MIT (LiteLLM, github.com/BerriAI/litellm)
+# Refreshed by: monitoring/refresh-provider-rates.py (rerun to update; prefer
+#   this over hand-editing rates — hand-edits drift from the SSOT silently).
+# rates_as_of below = the date this file was last regenerated from the SSOT.
+
+rates_as_of = "2026-07-21"
 
 # ── OpenAI embeddings ─────────────────────────────────────────────────────────
-# Source: https://openai.com/pricing (accessed 2026-05-27)
 
+# text-embedding-3-small: $0.02/M in (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "openai"
 model    = "text-embedding-3-small"
 cost_per_1k_tokens_usd = 0.00002
 dimensions = 1536
 
+# text-embedding-3-large: $0.13/M in (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "openai"
 model    = "text-embedding-3-large"
 cost_per_1k_tokens_usd = 0.00013
 dimensions = 3072
 
+# text-embedding-ada-002: $0.10/M in (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "openai"
 model    = "text-embedding-ada-002"
-cost_per_1k_tokens_usd = 0.00010
+cost_per_1k_tokens_usd = 0.0001
 dimensions = 1536
 
 # ── VoyageAI embeddings ───────────────────────────────────────────────────────
-# Source: https://www.voyageai.com/pricing (accessed 2026-05-27)
 
+# voyage-3: $0.06/M in (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "voyage"
 model    = "voyage-3"
 cost_per_1k_tokens_usd = 0.00006
 dimensions = 1024
 
+# voyage-3-lite: $0.02/M in (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "voyage"
 model    = "voyage-3-lite"
 cost_per_1k_tokens_usd = 0.00002
 dimensions = 512
 
+# voyage-code-3: $0.18/M in (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "voyage"
 model    = "voyage-code-3"
-cost_per_1k_tokens_usd = 0.00006
+cost_per_1k_tokens_usd = 0.00018
 dimensions = 1024
 
 # ── Local / self-hosted embeddings ────────────────────────────────────────────
-# Zero cost — CPU/GPU amortised separately via infra cost accounting.
+# Zero cost — CPU/GPU amortised separately via infra cost accounting. Not present
+# in the LiteLLM SSOT (self-hosted models have no vendor price) — preserved
+# verbatim by refresh-provider-rates.py rather than dropped.
 
 [[providers]]
 provider = "local"
@@ -76,51 +100,66 @@ cost_per_1k_tokens_usd = 0.0
 dimensions = 768
 
 # ── OpenAI chat ───────────────────────────────────────────────────────────────
-# Source: https://openai.com/pricing (accessed 2026-05-27)
-# Using output rate (more conservative). v0.1.3 may add per-direction granularity.
-# gpt-4o-mini: $0.60 per MTok output → $0.0006 per 1k
-# gpt-4o: $10 per MTok output → $0.01 per 1k
+# Using the output rate as the single blended rate (more conservative / expensive
+# estimate) — matches this file's single-rate convention.
 
+# gpt-4o-mini: $0.60/M out (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "openai"
 model    = "gpt-4o-mini"
 cost_per_1k_tokens_usd = 0.0006
 
+# gpt-4o: $10.00/M out (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "openai"
 model    = "gpt-4o"
 cost_per_1k_tokens_usd = 0.01
 
 # ── Anthropic chat ────────────────────────────────────────────────────────────
-# Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
-# (accessed 2026-05-27)
-# Using output rate (more conservative). v0.1.3 may add per-direction granularity.
-# claude-haiku-4-5: $5 per MTok output → $0.005 per 1k
-# claude-sonnet-4-6: $15 per MTok output → $0.015 per 1k
+# Per-direction rates (TD-133 C5a/C5b) — migrated from the now-deleted
+# `anthropic_rate_per_token()` (formerly `core/ingest/mod.rs`), a duplicate
+# hand-rolled rate table used only by dream-pass cost accounting.
+# `cost_per_1k_tokens_usd` is retained as the single-rate fallback for callers
+# with no direction concept (e.g. lookup_rate) and is set to the OUTPUT rate.
 
+# claude-haiku-4-5: $1.00/M in, $5.00/M out (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "anthropic"
 model    = "claude-haiku-4-5"
 cost_per_1k_tokens_usd = 0.005
+cost_per_1k_input_tokens_usd = 0.001
+cost_per_1k_output_tokens_usd = 0.005
 
+# claude-sonnet-4-6: $3.00/M in, $15.00/M out (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "anthropic"
 model    = "claude-sonnet-4-6"
 cost_per_1k_tokens_usd = 0.015
+cost_per_1k_input_tokens_usd = 0.003
+cost_per_1k_output_tokens_usd = 0.015
+
+# claude-opus-4-7: $5.00/M in, $25.00/M out (LiteLLM SSOT, verified 2026-07-21)
+[[providers]]
+provider = "anthropic"
+model    = "claude-opus-4-7"
+cost_per_1k_tokens_usd = 0.025
+cost_per_1k_input_tokens_usd = 0.005
+cost_per_1k_output_tokens_usd = 0.025
 
 # ── Groq (OpenAI-compatible) chat ─────────────────────────────────────────────
-# Source: https://groq.com/pricing (accessed 2026-07-20). gpt-oss-120b:
-# $0.15/MTok input, ~$0.60/MTok output → using output rate (conservative, per the
-# table convention) = $0.0006 per 1k. `model` matches the id Groq exposes (the
-# same string threaded as the metric `model` label). NOTE: single-rate is a known
-# imprecision (input is ~4× cheaper); per-direction rates tracked as a follow-up.
+# `model` matches the id Groq exposes (the same string threaded as the metric
+# `model` label). NOTE: single-rate is a known imprecision (input is cheaper than
+# output); per-direction rates tracked as a follow-up.
+
+# openai/gpt-oss-120b: $0.60/M out (LiteLLM SSOT, verified 2026-07-21)
 [[providers]]
 provider = "groq"
 model    = "openai/gpt-oss-120b"
 cost_per_1k_tokens_usd = 0.0006
 
 # ── Ollama / local chat ───────────────────────────────────────────────────────
-# Self-hosted, no provider cost. Wildcard model matches any Ollama model.
+# Self-hosted, no provider cost. Wildcard model matches any Ollama model. Not
+# present in the LiteLLM SSOT — preserved verbatim by refresh-provider-rates.py.
 
 [[providers]]
 provider = "ollama"
