@@ -199,9 +199,9 @@ pub(crate) fn parse_relation_names(json: &str) -> anyhow::Result<Vec<String>> {
         parse_items(trimmed, "items");
 
     if deserialize_ok {
-        counter!("rql.extraction.json_parse_ok").increment(1);
+        counter!("rql.extraction.json_parse_ok", "parser" => "relation_names").increment(1);
     } else {
-        counter!("rql.extraction.json_parse_fail").increment(1);
+        counter!("rql.extraction.json_parse_fail", "parser" => "relation_names").increment(1);
         tracing::warn!(
             parser = "relation_names",
             "kremory.extraction.json_parse_fail"
@@ -249,18 +249,20 @@ pub(crate) fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>>
 
     let raw: Vec<RawEntitySimple> = match serde_json::from_str(trimmed) {
         Ok(v) => {
-            counter!("rql.extraction.json_parse_ok").increment(1);
+            counter!("rql.extraction.json_parse_ok", "parser" => "entities_legacy").increment(1);
             v
         }
         Err(_) => {
             let repaired = repair_to_array(trimmed);
             match serde_json::from_str(&repaired) {
                 Ok(v) => {
-                    counter!("rql.extraction.json_parse_ok").increment(1);
+                    counter!("rql.extraction.json_parse_ok", "parser" => "entities_legacy")
+                        .increment(1);
                     v
                 }
                 Err(e) => {
-                    counter!("rql.extraction.json_parse_fail").increment(1);
+                    counter!("rql.extraction.json_parse_fail", "parser" => "entities_legacy")
+                        .increment(1);
                     tracing::warn!(error = %e, parser = "entities", "kremory.extraction.json_parse_fail");
                     return Ok(vec![]);
                 }
@@ -337,9 +339,10 @@ pub(crate) fn parse_entities_integer(
             // returns `ParsePath::None` alongside `deserialize_ok == false`.
             ParsePath::None => "wrapped",
         };
-        counter!("rql.extraction.json_parse_ok", "path" => path_label).increment(1);
+        counter!("rql.extraction.json_parse_ok", "parser" => "entities_integer", "path" => path_label)
+            .increment(1);
     } else {
-        counter!("rql.extraction.json_parse_fail").increment(1);
+        counter!("rql.extraction.json_parse_fail", "parser" => "entities_integer").increment(1);
         tracing::warn!(
             parser = "entities_integer",
             "kremory.extraction.json_parse_fail"
@@ -439,9 +442,9 @@ pub(crate) fn parse_facts_with_raw_count(
         parse_items(trimmed, "items");
 
     if deserialize_ok {
-        counter!("rql.extraction.json_parse_ok").increment(1);
+        counter!("rql.extraction.json_parse_ok", "parser" => "facts").increment(1);
     } else {
-        counter!("rql.extraction.json_parse_fail").increment(1);
+        counter!("rql.extraction.json_parse_fail", "parser" => "facts").increment(1);
         tracing::warn!(parser = "facts", "kremory.extraction.json_parse_fail");
     }
 
@@ -746,6 +749,141 @@ mod tests {
             paths,
             vec!["bare_array".to_string()],
             "a clean bare-array input must report path=bare_array, got {paths:?}"
+        );
+    }
+
+    // ── B1: json_parse_fail / json_parse_ok carry a `parser` label ──────────
+    //
+    // Prior to this fix, `rql.extraction.json_parse_fail` / `_ok` were emitted
+    // BARE (no `parser` label) at the relation_names/entities_integer/facts
+    // sites, collapsing all three sources into one un-attributable aggregate —
+    // making it impossible to tell which parser was failing (B1 debugging
+    // blocker). These pin the `parser` label now present on both counters for
+    // each of the three call sites, using the same local-recorder pattern as
+    // `captured_json_parse_ok_paths` above (module-private parsers can't be
+    // exercised from the external `tests/b1_observability.rs` integration
+    // crate — `pub(crate)` visibility — so unit tests here are the correct,
+    // compiling location).
+
+    /// Snapshot every recorded value of `label_key` on counter `metric_name`
+    /// while `f` runs, under a local (non-global) recorder. Generalizes
+    /// `captured_json_parse_ok_paths` for the parser-attribution tests below.
+    fn captured_counter_label_values(
+        metric_name: &'static str,
+        label_key: &'static str,
+        f: impl FnOnce(),
+    ) -> Vec<String> {
+        use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter: Snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, f);
+
+        snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter(|(key, _, _, _)| key.key().name() == metric_name)
+            .filter_map(|(key, _, _, _)| {
+                key.key()
+                    .labels()
+                    .find(|l| l.key() == label_key)
+                    .map(|l| l.value().to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parse_facts_malformed_input_reports_json_parse_fail_with_parser_facts_label() {
+        let parsers = captured_counter_label_values(
+            "rql.extraction.json_parse_fail",
+            "parser",
+            || {
+                let (facts, raw_count) =
+                    parse_facts_with_raw_count("not json at all").unwrap();
+                assert!(facts.is_empty());
+                assert_eq!(raw_count, 0);
+            },
+        );
+        assert_eq!(
+            parsers,
+            vec!["facts".to_string()],
+            "json_parse_fail must carry parser=facts for the fact parser, got {parsers:?}"
+        );
+    }
+
+    #[test]
+    fn parse_relation_names_malformed_input_reports_json_parse_fail_with_parser_relation_names_label()
+     {
+        let parsers = captured_counter_label_values(
+            "rql.extraction.json_parse_fail",
+            "parser",
+            || {
+                let names = parse_relation_names("not json at all").unwrap();
+                assert!(names.is_empty());
+            },
+        );
+        assert_eq!(
+            parsers,
+            vec!["relation_names".to_string()],
+            "json_parse_fail must carry parser=relation_names for the relation-names \
+             parser, got {parsers:?}"
+        );
+    }
+
+    #[test]
+    fn parse_entities_integer_malformed_input_reports_json_parse_fail_with_parser_label() {
+        let registry = registry_with_person();
+        let parsers = captured_counter_label_values(
+            "rql.extraction.json_parse_fail",
+            "parser",
+            || {
+                let entities =
+                    parse_entities_integer("not json at all", &registry).unwrap();
+                assert!(entities.is_empty());
+            },
+        );
+        assert_eq!(
+            parsers,
+            vec!["entities_integer".to_string()],
+            "json_parse_fail must carry parser=entities_integer for the integer-id \
+             entity parser, got {parsers:?}"
+        );
+    }
+
+    #[test]
+    fn parse_facts_wrapped_input_reports_json_parse_ok_with_parser_facts_label() {
+        let parsers = captured_counter_label_values(
+            "rql.extraction.json_parse_ok",
+            "parser",
+            || {
+                let facts = parse_facts(r#"{"items":[]}"#).unwrap();
+                assert!(facts.is_empty());
+            },
+        );
+        assert_eq!(
+            parsers,
+            vec!["facts".to_string()],
+            "json_parse_ok must carry parser=facts for the fact parser, got {parsers:?}"
+        );
+    }
+
+    #[test]
+    fn parse_relation_names_wrapped_input_reports_json_parse_ok_with_parser_relation_names_label()
+     {
+        let parsers = captured_counter_label_values(
+            "rql.extraction.json_parse_ok",
+            "parser",
+            || {
+                let names = parse_relation_names(r#"{"items":[]}"#).unwrap();
+                assert!(names.is_empty());
+            },
+        );
+        assert_eq!(
+            parsers,
+            vec!["relation_names".to_string()],
+            "json_parse_ok must carry parser=relation_names for the relation-names \
+             parser, got {parsers:?}"
         );
     }
 
