@@ -173,7 +173,7 @@ pub(crate) fn build_dual_list_prompt(
         idx += 1;
     }
 
-    prompt.push_str("\nFor each existing fact that the new fact CONTRADICTS (makes false or outdated), return its index number.\nIf the new fact is an UPDATE (same relationship but newer value), return that index too.\nIf no contradictions, use an empty indices list.\n\nOutput JSON in this exact format: {\"indices\": [n, n, ...]} where each n is the 1-based index number of a contradicted fact. Example: {\"indices\": [1, 3]}. If no contradictions: {\"indices\": []}.");
+    prompt.push_str("\nFor each existing fact that the new fact CONTRADICTS (makes false or outdated), return its index number.\nIf the new fact is an UPDATE (same relationship but newer value), return that index too.\nIf no contradictions, use an empty indices list.\n\nOutput JSON in this exact format: {\"indices\": [n, n, ...], \"reason\": \"<brief justification>\"} where each n is the 1-based index of a contradicted fact and reason explains the judgment. Example: {\"indices\": [1, 3], \"reason\": \"facts 1 and 3 state a prior job title now superseded by the new fact\"}. If no contradictions: {\"indices\": [], \"reason\": \"no existing fact is contradicted\"}.");
 
     (prompt, index_map)
 }
@@ -211,6 +211,16 @@ pub(crate) fn build_dual_list_prompt(
 /// into the caller's `index_map` slice.
 pub(crate) fn parse_index_list(json: &str) -> Vec<usize> {
     let trimmed = json.trim();
+
+    if std::env::var("KREMORY_DEBUG").is_ok() {
+        tracing::debug!(
+            target: "kremory.extraction.parsers",
+            parser = "contradiction_indices",
+            len = trimmed.len(),
+            raw_input = %trimmed,
+            "parse_index_list raw input"
+        );
+    }
 
     match serde_json::from_str::<ContradictionVerdictWrapper>(trimmed) {
         Ok(wrapper) => {
@@ -610,6 +620,45 @@ mod tests {
         assert!(prompt.contains("[2]"));
         // Should not have index [3]
         assert!(!prompt.contains("[3]"));
+    }
+
+    #[test]
+    fn test_dual_list_prompt_requires_reason_in_output_instruction() {
+        // Producer/consumer contract regression guard: `parse_index_list`
+        // deserialises into `ContradictionVerdictWrapper` whose `reason`
+        // field carries NO `#[serde(default)]` (ADR-049 /
+        // `llm-output-parse-loudly`) — a verdict omitting `reason` is a
+        // parse FAILURE, not a degraded-but-accepted result. If the prompt
+        // ever again asks only for `{"indices": [...]}` without `reason`,
+        // a compliant model will omit the field and the parser will reject
+        // ~every verdict — exactly the drop measured on the live conv0 run
+        // (243/344 contradiction verdicts silently failing to parse). This
+        // test pins the prompt's output-format instruction to always name
+        // `reason` as part of the required output shape, so the prompt can
+        // never again drift out of sync with the parser's mandatory field.
+        let new_fact = make_extracted("alice", "works_at", "newco");
+        let now = Utc::now();
+        let fact_a = make_fact(1, "alice", "works_at", Some("acme"), None, now, None);
+
+        let (prompt, _index_map) = build_dual_list_prompt(&new_fact, &[fact_a], &[]);
+
+        assert!(
+            prompt.contains("\"reason\""),
+            "output-format instruction must require a `reason` field \
+             (matching ContradictionVerdictWrapper's mandatory `reason`) — \
+             prompt was: {prompt}"
+        );
+        // Both the populated example and the empty-indices example must
+        // also demonstrate `reason` — a model that only sees `reason` in
+        // one example may omit it in the other case.
+        assert!(
+            prompt.contains(r#"{"indices": [1, 3], "reason":"#),
+            "populated-indices example must include reason — prompt was: {prompt}"
+        );
+        assert!(
+            prompt.contains(r#"{"indices": [], "reason":"#),
+            "empty-indices example must include reason — prompt was: {prompt}"
+        );
     }
 
     // ── Index Parser ──────────────────────────────────────────────────────────
