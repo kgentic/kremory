@@ -1,0 +1,479 @@
+#!/usr/bin/env python3
+"""LoCoMo QA-generation eval — the offline answerer + answer-judge stage.
+
+Turns kremory's retrieval-PROXY LoCoMo number into a field-COMPARABLE
+QA-answer-generation number (the metric mem0 / Zep / etc. actually report).
+
+Pipeline (all offline; reads memories already captured by the harness — no
+re-ingest, no re-recall):
+  answer-gen   <batch.jsonl | results.json> -o answers.jsonl
+      For each question: take its recalled memories (sliced to k), call the
+      ANSWERER LLM (gpt-4o-mini) with mem0's answer-generation prompt -> a
+      generated answer string.
+  answer-judge answers.jsonl -o verdicts.jsonl
+      For each generated answer: call the JUDGE LLM (gpt-4o) with mem0's judge
+      prompt over {question, gold, generated_answer} -> CORRECT/WRONG.
+  answer-tally <batch.jsonl | results.json> --verdicts verdicts.jsonl
+      QA-gen accuracy per category (+ overall), + honesty metadata.
+
+Design mirrors judge_rescore.py (decoupled prepare/tally, stable cache_key,
+idempotent resume) and reuses .context/judge_run.py's urllib call + retry +
+ThreadPoolExecutor pattern. Transport is pure-stdlib urllib against
+api.openai.com (OpenAI-compatible /chat/completions) — no SDK/venv needed; the
+plan explicitly sanctions "point base_url at api.openai.com".
+
+Verbatim mem0 prompts live in prompts_qa.py (provenance in its docstring).
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+# same-dir imports (script dir is on sys.path[0] when run directly)
+import prompts_qa
+from judge_rescore import ABSTENTION_CATEGORIES, cache_key, load_results
+
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+
+# Published per-1M-token rates (USD), for a rough cost estimate only. Verify
+# against the live pricing page before quoting — these drift.
+_RATES = {
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-2024-08-06": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o-mini-2024-07-18": (0.15, 0.60),
+}
+
+# ---------------------------------------------------------------------------
+# Content-addressed response cache (VCR) — replay identical calls for $0.
+# Key = sha256(model | system | user | json_mode). A cache HIT costs nothing
+# and is deterministic, so re-tallies, format iterations, and re-runs over the
+# SAME (model, prompts) never re-spend. NOTE: because a hit is an exact replay,
+# caching is INCOMPATIBLE with measuring run-to-run LLM variance (Phase 3 N=5) —
+# for a genuine independent sample, vary an input (fresh DB/recall) or --no-cache.
+# ---------------------------------------------------------------------------
+_CACHE_DIR: Path | None = None
+_CACHE_LOCK = __import__("threading").Lock()
+_CACHE_STATS = {"hit": 0, "miss": 0}
+
+
+def _cache_path(model: str, system: str, user: str, json_mode: bool) -> Path | None:
+    if _CACHE_DIR is None:
+        return None
+    h = hashlib.sha256(
+        f"{model}\x1f{system}\x1f{user}\x1f{json_mode}".encode()
+    ).hexdigest()
+    return _CACHE_DIR / f"{h}.json"
+
+
+# ---------------------------------------------------------------------------
+# transport
+# ---------------------------------------------------------------------------
+def _load_api_key() -> str:
+    key = os.environ.get("OPENAI_API_KEY")
+    if key:
+        return key
+    # fall back to a .env in cwd or any parent (repo root)
+    here = Path.cwd()
+    for d in [here, *here.parents]:
+        env = d / ".env"
+        if env.exists():
+            for line in env.read_text().splitlines():
+                m = re.match(r"\s*OPENAI_API_KEY\s*=\s*(.+)", line)
+                if m:
+                    return m.group(1).strip().strip('"').strip("'")
+    print("no OPENAI_API_KEY in env or .env", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _chat(key: str, model: str, system: str, user: str, *,
+          json_mode: bool = False, max_tokens: int = 1024,
+          max_retry: int = 5) -> tuple[str, int, int]:
+    """One chat.completions call via urllib. Returns (content, prompt_tok, completion_tok).
+
+    Raises after `max_retry` exhausted so the caller can fail-loud (a missing
+    answer/verdict must not be silently swallowed).
+    """
+    # cache HIT — deterministic replay for $0 (tokens returned as 0 so cost
+    # accounting reflects FRESH spend only).
+    cpath = _cache_path(model, system, user, json_mode)
+    if cpath is not None and cpath.exists():
+        try:
+            c = json.loads(cpath.read_text())
+            with _CACHE_LOCK:
+                _CACHE_STATS["hit"] += 1
+            return (c["content"], 0, 0)
+        except Exception:  # noqa: BLE001 - corrupt cache entry -> refetch
+            pass
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": user})
+    payload = {"model": model, "messages": messages,
+               "temperature": 0, "max_tokens": max_tokens}
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    body = json.dumps(payload).encode()
+    last = None
+    for attempt in range(max_retry):
+        try:
+            req = urllib.request.Request(
+                OPENAI_URL, data=body,
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json",
+                         "User-Agent": "curl/8.4.0"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                d = json.load(r)
+            content = d["choices"][0]["message"]["content"]
+            usage = d.get("usage", {})
+            ptok = usage.get("prompt_tokens", 0)
+            ctok = usage.get("completion_tokens", 0)
+            if cpath is not None:
+                cpath.parent.mkdir(parents=True, exist_ok=True)
+                tmp = cpath.with_suffix(".tmp")
+                tmp.write_text(json.dumps(
+                    {"content": content, "prompt_tokens": ptok,
+                     "completion_tokens": ctok, "model": model}))
+                tmp.replace(cpath)  # atomic — no partial cache file on crash
+                with _CACHE_LOCK:
+                    _CACHE_STATS["miss"] += 1
+            return (content, ptok, ctok)
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}: {e.read()[:200]!r}"
+            # 429 / 5xx are retryable; 4xx (except 429) is fatal
+            if e.code not in (429, 500, 502, 503, 504):
+                break
+            time.sleep(min(2 ** attempt, 20))
+        except (urllib.error.URLError, TimeoutError) as e:
+            last = f"{type(e).__name__}: {e}"
+            time.sleep(min(2 ** attempt, 20))
+        except Exception as e:  # noqa: BLE001 - surface + backoff
+            last = f"{type(e).__name__}: {e}"
+            time.sleep(1 + attempt)
+    raise RuntimeError(f"chat failed after {max_retry} tries: {last}")
+
+
+def _cost(model: str, ptok: int, ctok: int) -> float:
+    r = _RATES.get(model)
+    if not r:
+        return 0.0
+    return ptok / 1e6 * r[0] + ctok / 1e6 * r[1]
+
+
+# ---------------------------------------------------------------------------
+# input loading — accept a prepared batch JSONL OR a raw harness results JSON
+# ---------------------------------------------------------------------------
+def load_batch(path: Path) -> list[dict]:
+    """Return answerable {key, sample_id, question_id, category, question, gold,
+    memories} records. .jsonl = already-prepared batch (judge_rescore prepare
+    shape); .json = raw harness results -> filter answerable + build keys."""
+    if path.suffix == ".jsonl":
+        return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    # harness results JSON -> mirror judge_rescore.cmd_prepare filtering
+    batch, n_abstain, n_no_mem = [], 0, 0
+    for r in load_results([path]):
+        category = r.get("category", "")
+        if category in ABSTENTION_CATEGORIES:
+            n_abstain += 1
+            continue
+        memories = r.get("recalled_memories")
+        if memories is None:
+            n_no_mem += 1
+            continue
+        gold = r.get("expected_answer", "")
+        sample_id = r.get("sample_id", "")
+        batch.append({
+            "key": cache_key(sample_id, r["question_id"], gold, memories),
+            "sample_id": sample_id, "question_id": r["question_id"],
+            "category": category, "question": r.get("question", ""),
+            "gold": gold, "memories": memories,
+        })
+    if n_abstain or n_no_mem:
+        print(f"[load] {len(batch)} answerable ({n_abstain} adversarial skipped, "
+              f"{n_no_mem} missing recalled_memories)", file=sys.stderr)
+    return batch
+
+
+def _load_done_keys(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    return {json.loads(l)["key"] for l in path.read_text().splitlines() if l.strip()}
+
+
+# ---------------------------------------------------------------------------
+# answer-gen
+# ---------------------------------------------------------------------------
+def _extract_answer(text: str) -> str:
+    """The answerer ends with 'ANSWER:' — take the final segment (mem0 parity)."""
+    if "ANSWER:" in text:
+        return text.rsplit("ANSWER:", 1)[-1].strip()
+    return text.strip()
+
+
+def cmd_answer_gen(a: argparse.Namespace) -> int:
+    key = _load_api_key()
+    batch = load_batch(a.input)
+    done = _load_done_keys(a.output) if a.resume else set()
+    todo = [b for b in batch if b["key"] not in done]
+    print(f"[answer-gen] {len(batch)} questions, {len(todo)} to do "
+          f"({len(done)} cached), k={a.k}, model={a.model}, "
+          f"concurrency={a.concurrency}", flush=True)
+    if not todo:
+        return 0
+
+    def work(b: dict) -> dict:
+        mems = (b.get("memories") or [])[: a.k]
+        prompt = prompts_qa.build_answer_prompt(
+            b["question"], mems, reference_date=a.reference_date)
+        content, ptok, ctok = _chat(key, a.model, "", prompt, max_tokens=a.max_tokens)
+        return {"key": b["key"], "sample_id": b.get("sample_id", ""),
+                "question_id": b["question_id"], "category": b.get("category", ""),
+                "question": b["question"], "gold": b.get("gold", ""),
+                "generated_answer": _extract_answer(content),
+                "raw": content if a.keep_raw else None,
+                "k": a.k, "answerer_model": a.model,
+                "_ptok": ptok, "_ctok": ctok}
+
+    a.output.parent.mkdir(parents=True, exist_ok=True)
+    t0, done_n, fails = time.time(), 0, 0
+    pt = ct = 0
+    mode = "a" if (a.resume and a.output.exists()) else "w"
+    with open(a.output, mode) as f, ThreadPoolExecutor(max_workers=a.concurrency) as ex:
+        futs = {ex.submit(work, b): b for b in todo}
+        for fut in as_completed(futs):
+            try:
+                rec = fut.result()
+            except Exception as e:  # noqa: BLE001
+                fails += 1
+                print(f"[answer-gen] FAIL {futs[fut]['key']}: {e}", file=sys.stderr)
+                continue
+            pt += rec.pop("_ptok"); ct += rec.pop("_ctok")
+            f.write(json.dumps({k: v for k, v in rec.items() if v is not None},
+                               ensure_ascii=False) + "\n")
+            f.flush()
+            done_n += 1
+            if done_n % 20 == 0 or done_n == len(todo):
+                print(f"[answer-gen] {done_n}/{len(todo)}  {time.time()-t0:.0f}s  "
+                      f"~${_cost(a.model, pt, ct):.3f}", flush=True)
+    print(f"[answer-gen] wrote {done_n} answers to {a.output} "
+          f"({fails} failed) in {time.time()-t0:.0f}s  "
+          f"tokens in/out={pt}/{ct}  est ${_cost(a.model, pt, ct):.3f}  "
+          f"cache hit/miss={_CACHE_STATS['hit']}/{_CACHE_STATS['miss']}", flush=True)
+    return 1 if fails else 0
+
+
+# ---------------------------------------------------------------------------
+# answer-judge
+# ---------------------------------------------------------------------------
+def _parse_label(content: str) -> tuple[bool | None, str]:
+    """Return (correct, reason). correct=None when the label can't be parsed."""
+    label, reason = None, ""
+    try:
+        obj = json.loads(content)
+        reason = str(obj.get("reasoning", ""))[:300]
+        raw = str(obj.get("label", "")).strip().upper()
+        if "CORRECT" in raw and "WRONG" not in raw:
+            label = True
+        elif "WRONG" in raw:
+            label = False
+    except Exception:  # noqa: BLE001 - fall back to regex on the text
+        up = content.upper()
+        if "WRONG" in up and "CORRECT" not in up:
+            label = False
+        elif "CORRECT" in up:
+            label = True
+        reason = content[:300]
+    return label, reason
+
+
+def cmd_answer_judge(a: argparse.Namespace) -> int:
+    key = _load_api_key()
+    answers = [json.loads(l) for l in a.input.read_text().splitlines() if l.strip()]
+    done = _load_done_keys(a.output) if a.resume else set()
+    todo = [r for r in answers if r["key"] not in done]
+    print(f"[answer-judge] {len(answers)} answers, {len(todo)} to do "
+          f"({len(done)} cached), model={a.model}, concurrency={a.concurrency}",
+          flush=True)
+    if not todo:
+        return 0
+
+    def work(r: dict) -> dict:
+        prompt = prompts_qa.build_judge_prompt(
+            r["question"], r.get("gold", ""), r.get("generated_answer", ""),
+            r.get("category", ""))
+        content, ptok, ctok = _chat(key, a.model, prompts_qa.JUDGE_SYSTEM_PROMPT,
+                                    prompt, json_mode=True, max_tokens=300)
+        correct, reason = _parse_label(content)
+        return {"key": r["key"], "question_id": r["question_id"],
+                "category": r.get("category", ""),
+                "correct": correct, "reason": reason,
+                "judge_model": a.model, "_ptok": ptok, "_ctok": ctok}
+
+    a.output.parent.mkdir(parents=True, exist_ok=True)
+    t0, done_n, unparsed = time.time(), 0, 0
+    pt = ct = 0
+    mode = "a" if (a.resume and a.output.exists()) else "w"
+    with open(a.output, mode) as f, ThreadPoolExecutor(max_workers=a.concurrency) as ex:
+        futs = {ex.submit(work, r): r for r in todo}
+        for fut in as_completed(futs):
+            try:
+                rec = fut.result()
+            except Exception as e:  # noqa: BLE001
+                print(f"[answer-judge] FAIL {futs[fut]['key']}: {e}", file=sys.stderr)
+                continue
+            pt += rec.pop("_ptok"); ct += rec.pop("_ctok")
+            if rec["correct"] is None:
+                unparsed += 1
+                print(f"[answer-judge] UNPARSED label {rec['key']}", file=sys.stderr)
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.flush()
+            done_n += 1
+            if done_n % 20 == 0 or done_n == len(todo):
+                print(f"[answer-judge] {done_n}/{len(todo)}  {time.time()-t0:.0f}s  "
+                      f"~${_cost(a.model, pt, ct):.3f}", flush=True)
+    print(f"[answer-judge] wrote {done_n} verdicts to {a.output} "
+          f"({unparsed} unparsed) in {time.time()-t0:.0f}s  "
+          f"tokens in/out={pt}/{ct}  est ${_cost(a.model, pt, ct):.3f}  "
+          f"cache hit/miss={_CACHE_STATS['hit']}/{_CACHE_STATS['miss']}", flush=True)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# answer-tally
+# ---------------------------------------------------------------------------
+def cmd_answer_tally(a: argparse.Namespace) -> int:
+    batch = load_batch(a.input)
+    verdicts: dict[str, dict] = {}
+    for l in a.verdicts.read_text().splitlines():
+        if l.strip():
+            v = json.loads(l)
+            verdicts[v["key"]] = v
+
+    cats: dict[str, list[int]] = {}     # category -> [correct, total]
+    unjudged, unparsed = [], 0
+    for b in batch:
+        cat = b.get("category", "")
+        row = cats.setdefault(cat, [0, 0])
+        row[1] += 1
+        v = verdicts.get(b["key"])
+        if v is None:
+            unjudged.append(f"{b.get('sample_id','')}/{b['question_id']}")
+            continue
+        if v.get("correct") is None:
+            unparsed += 1
+            continue  # unparsed = not-correct (fail-loud, depresses the number)
+        if v.get("correct"):
+            row[0] += 1
+
+    print("=" * 66)
+    print(f"LoCoMo QA-GEN accuracy [HEADLINE] (answerer={a.answerer_label}, "
+          f"judge={a.judge_label}, k={a.k_label})")
+    print("NB: the harness inline SUBSTRING scorer is a separate, much stricter "
+          "floor\n    (~2x under-credits, esp. open-domain) — do NOT confuse it "
+          "with this number.")
+    print("=" * 66)
+    print(f"{'category':<14} {'correct':>8} {'total':>6} {'acc':>8}")
+    print("-" * 66)
+    per_cat = {}
+    tc = tt = 0
+    for cat in sorted(cats):
+        c, t = cats[cat]
+        tc += c; tt += t
+        acc = c / t * 100 if t else 0.0
+        per_cat[cat] = {"correct": c, "total": t, "accuracy_pct": round(acc, 2)}
+        print(f"{cat:<14} {c:>8} {t:>6} {acc:>7.1f}%")
+    print("-" * 66)
+    overall = tc / tt * 100 if tt else 0.0
+    print(f"{'OVERALL':<14} {tc:>8} {tt:>6} {overall:>7.1f}%")
+    print("=" * 66)
+    if unjudged:
+        print(f"\n[WARN] {len(unjudged)} question(s) have NO verdict (counted "
+              f"incorrect). First few: {unjudged[:5]}", file=sys.stderr)
+    if unparsed:
+        print(f"[WARN] {unparsed} verdict(s) had an unparseable label "
+              f"(counted incorrect).", file=sys.stderr)
+
+    # ---- first-class o11y: emit a machine-readable summary JSON so the JUDGED
+    # number is a durable metric artifact, not a printed table (per the "the
+    # judged number must emit metrics/o11y" gap). ----
+    summary = {
+        "metric": "locomo_qa_gen_accuracy",
+        "scorer": "qa-gen (answerer+judge)",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "config": {"answerer": a.answerer_label, "judge": a.judge_label,
+                   "k": a.k_label, "input": str(a.input),
+                   "verdicts": str(a.verdicts)},
+        "overall": {"correct": tc, "total": tt,
+                    "accuracy_pct": round(overall, 2)},
+        "per_category": per_cat,
+        "integrity": {"unjudged": len(unjudged), "unparsed_labels": unparsed,
+                      "note": "unjudged + unparsed are counted incorrect (fail-loud)"},
+    }
+    out = a.summary or a.verdicts.with_name(a.verdicts.stem + "-summary.json")
+    out.write_text(json.dumps(summary, indent=2))
+    print(f"[o11y] summary metric written -> {out}", file=sys.stderr)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# cli
+# ---------------------------------------------------------------------------
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    g = sub.add_parser("answer-gen", help="generate answers from recalled memories")
+    g.add_argument("input", type=Path, help="batch .jsonl or harness results .json")
+    g.add_argument("-o", "--output", type=Path, required=True)
+    g.add_argument("--model", default="gpt-4o-mini")
+    g.add_argument("--k", type=int, default=10, help="top-k memories to feed")
+    g.add_argument("--reference-date", default="2023")
+    g.add_argument("--max-tokens", type=int, default=1024)
+    g.add_argument("--concurrency", type=int, default=8)
+    g.add_argument("--keep-raw", action="store_true", help="store full CoT text")
+    g.add_argument("--no-resume", dest="resume", action="store_false")
+    g.add_argument("--cache-dir", default="results/qa/.cache",
+                   help="content-addressed response cache (VCR); replays identical calls for $0")
+    g.add_argument("--no-cache", dest="cache", action="store_false")
+    g.set_defaults(resume=True, cache=True, func=cmd_answer_gen)
+
+    j = sub.add_parser("answer-judge", help="judge generated answers vs gold")
+    j.add_argument("input", type=Path, help="answers.jsonl from answer-gen")
+    j.add_argument("-o", "--output", type=Path, required=True)
+    j.add_argument("--model", default="gpt-4o")
+    j.add_argument("--concurrency", type=int, default=8)
+    j.add_argument("--no-resume", dest="resume", action="store_false")
+    j.add_argument("--cache-dir", default="results/qa/.cache",
+                   help="content-addressed response cache (VCR); replays identical calls for $0")
+    j.add_argument("--no-cache", dest="cache", action="store_false")
+    j.set_defaults(resume=True, cache=True, func=cmd_answer_judge)
+
+    t = sub.add_parser("answer-tally", help="QA-gen accuracy per category")
+    t.add_argument("input", type=Path, help="batch .jsonl or harness results .json")
+    t.add_argument("--verdicts", type=Path, required=True)
+    t.add_argument("--answerer-label", default="gpt-4o-mini")
+    t.add_argument("--judge-label", default="gpt-4o")
+    t.add_argument("--k-label", default="10")
+    t.add_argument("--summary", type=Path, default=None,
+                   help="machine-readable metric JSON (default: <verdicts>-summary.json)")
+    t.set_defaults(func=cmd_answer_tally)
+
+    args = p.parse_args()
+    global _CACHE_DIR
+    if getattr(args, "cache", False) and getattr(args, "cache_dir", None):
+        _CACHE_DIR = Path(args.cache_dir)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
