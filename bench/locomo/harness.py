@@ -101,7 +101,9 @@ class CodememClient:
         # with namespace size, not per-call content size. Generous ceiling
         # so a 19-session conversation's worth of memories doesn't trip the
         # same class of timeout.
-        self.consolidate_timeout = 300.0
+        # Raised from 300s (conv0's dream exceeded it → ReadTimeout aborted
+        # consolidation → multi-hop under-served). Env-overridable.
+        self.consolidate_timeout = float(_os.environ.get("KREMORY_CONSOLIDATE_TIMEOUT_S", "1800"))
         # Per-source HTTP-error counter (observability-first-class: an
         # aggregate accuracy score alone can't tell you WHY it's low —
         # retrieval-broken vs model-too-weak vs scoring-bug. This is the
