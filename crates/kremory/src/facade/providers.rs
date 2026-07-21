@@ -568,6 +568,27 @@ pub struct OpenAiCompatibleParams<'a> {
 /// benchmarking practical: cloud extraction is latency-optimised (~0.1–0.3s/call
 /// vs ~1.5–2s local), and quality matches the gpt-4o-mini extraction the LoCoMo/
 /// LongMemEval peers used, while embeddings stay local + free.
+/// Derive the token/cost `provider` label from an OpenAI-compatible chat base
+/// URL (ADR-D9 cost-table lookup + `kremory_core_tokens_total{provider}`). The
+/// factory below is generic over ANY OpenAI-compatible endpoint, so the label
+/// must reflect the ACTUAL provider — a hardcoded `"openai"` mis-attributes
+/// Groq/Together spend and misses their pricing rows in provider-rates.toml.
+/// Match the value against the keys in `crates/kremory/monitoring/provider-rates.toml`.
+fn openai_compatible_provider_label(base_url: &str) -> &'static str {
+    let u = base_url.to_ascii_lowercase();
+    if u.contains("groq") {
+        "groq"
+    } else if u.contains("together") {
+        "together"
+    } else if u.contains("anthropic") {
+        "anthropic"
+    } else if u.contains("openai") {
+        "openai"
+    } else {
+        "openai_compatible"
+    }
+}
+
 pub async fn with_openai_compatible_chat_ollama_embed(
     params: OpenAiCompatibleParams<'_>,
 ) -> Result<Memory> {
@@ -596,7 +617,11 @@ pub async fn with_openai_compatible_chat_ollama_embed(
     let arc_llm: Arc<dyn ChatProvider> = chat_provider;
     let llm: Arc<dyn ChatProvider> = Arc::new(TokenTrackingChatProvider::new(
         ArcChatProvider::new(arc_llm),
-        "openai",
+        // Derive the provider label from the base URL — this factory is GENERIC
+        // over any OpenAI-compatible endpoint (Groq / Together / …), so a
+        // hardcoded "openai" mis-attributes cost + misses the provider's pricing
+        // rows in provider-rates.toml (verified: Groq runs were tagged "openai").
+        openai_compatible_provider_label(chat_base_url),
         Box::leak(chat_model.to_string().into_boxed_str()),
     ));
     let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(AutoagentsEmbedderAdapter::new(

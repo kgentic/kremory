@@ -27,6 +27,13 @@ default = []
 # costs nothing at ingest time (Migration 022 backfills `episodes_fts` from
 # already-stored `episodes.content` via pure SQL — no LLM/embedding re-ingest).
 content-search = ["kremory/content-search"]
+# prometheus: install a Prometheus PULL recorder + expose `GET /metrics` on the
+# `kremory-http` bin (executes ratified ADR-D2 — the CONSUMER binary owns the
+# recorder; the `kremory` lib never installs one). OPT-IN + off by default
+# because the sibling `kremory-mcp-server` (stdio) bin CANNOT use a pull exporter
+# (stdout is reserved for JSON-RPC — a scrape/OTLP-push split per R1). Enable for
+# the HTTP/bench build: `--features prometheus,content-search`.
+prometheus = ["dep:metrics-exporter-prometheus"]
 
 [lib]
 name = "kremory_mcp"
@@ -74,6 +81,7 @@ uuid = { version = "1", features = ["v4"] }
 # these; fresh additions.
 axum = "0.8"
 tower-http = { version = "0.6", features = ["trace"] }
+metrics-exporter-prometheus = { version = "0.18.3", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

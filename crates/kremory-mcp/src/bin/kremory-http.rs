@@ -53,11 +53,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::StatusCode;
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+#[cfg(feature = "prometheus")]
+use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
@@ -418,6 +421,50 @@ async fn run_consolidation(
 // build the exact same route table over a mock-provider `Memory`.
 // ────────────────────────────────────────────────────────────────────────
 
+/// Collapse a request path to its top-level route group (`/namespaces/conv0` →
+/// `/namespaces`) so the latency metric's `route` label has bounded cardinality
+/// (recall-v2 o11y / TD-132 — the per-conversation namespace is a cardinality
+/// bomb if used raw).
+fn route_label(path: &str) -> String {
+    match path.split('/').nth(1) {
+        Some(seg) if !seg.is_empty() => format!("/{seg}"),
+        _ => "/".to_owned(),
+    }
+}
+
+/// Per-request latency + TTFB observability (TD-132). For these non-streaming
+/// JSON handlers request-duration IS the TTFB. Dual-emit per ratified ADR-D1:
+/// a `metrics` histogram (rendered at `/metrics` when the `prometheus` feature
+/// installs a recorder; a no-op otherwise) AND an always-on `tracing::info` so
+/// recall latency is visible in the server log regardless. The metric follows
+/// the canonical `kremory_core_*` scheme + `_seconds` base unit (R3).
+async fn track_request_latency(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let route = route_label(&path);
+    let start = std::time::Instant::now();
+    let response = next.run(req).await;
+    let latency_s = start.elapsed().as_secs_f64();
+    let status = response.status().as_u16();
+    metrics::histogram!(
+        "kremory_core_http_request_duration_seconds",
+        "route" => route.clone(),
+        "method" => method.to_string(),
+        "status" => status.to_string(),
+    )
+    .record(latency_s);
+    tracing::info!(
+        target: "kremory.http.request",
+        %method,
+        path = %path,
+        route = %route,
+        status,
+        latency_ms = latency_s * 1000.0,
+        "kremory.http.request_complete"
+    );
+    response
+}
+
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
@@ -425,6 +472,8 @@ fn build_router(state: AppState) -> Router {
         .route("/search", get(search))
         .route("/namespaces/{ns}", delete(delete_namespace))
         .route("/consolidation/{cycle}", post(run_consolidation))
+        // Outermost app layer — times the WHOLE request (TD-132).
+        .layer(middleware::from_fn(track_request_latency))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -526,7 +575,27 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to open kremory Memory at {db_path}"))?,
     };
 
+    // TD-132 / ratified ADR-D2: the CONSUMER binary installs the recorder (the
+    // `kremory` lib never does). A Prometheus PULL exporter (HTTP is scrapeable;
+    // the sibling stdio bin uses a different channel — hence the `prometheus`
+    // feature gate). This makes the already-emitted `kremory_core_*` metrics
+    // (tokens, cost, request latency, recall/ingest/dream histograms) actually
+    // render at `/metrics` instead of firing into silence (R1's #1 finding).
+    #[cfg(feature = "prometheus")]
+    let prom_handle = PrometheusBuilder::new()
+        .install_recorder()
+        .context("failed to install Prometheus recorder")?;
+
     let app = build_router(AppState { mem: Arc::new(mem) });
+
+    #[cfg(feature = "prometheus")]
+    let app = app.route(
+        "/metrics",
+        get(move || {
+            let handle = prom_handle.clone();
+            async move { handle.render() }
+        }),
+    );
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await

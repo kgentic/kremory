@@ -28,14 +28,16 @@ CODEMEM_BASE = "http://localhost:3179"  # kremory-http: bare routes, NO /api pre
 DEFAULT_DATASET = Path(__file__).parent / "data" / "locomo10.json"
 NAMESPACE_PREFIX = "locomo-bench"
 
-# fail-fast-and-loud: hard wall-clock budget for ingesting ONE conversation.
-# kremory's remember() fans out to ~20 sequential LLM calls per chunk, so a
-# conversation is minutes, not seconds. If ingest of a single conversation
-# blows past this, kremory is too slow at this granularity (or stalled) — we
-# abort LOUD rather than grind for 30 min and die with a raw traceback.
-# Override via KREMORY_INGEST_BUDGET_S env.
+# fail-fast-and-loud, but SLOW != STUCK. `INGEST_BUDGET_S` is now a GENEROUS
+# TOTAL per-conversation BACKSTOP (default 2h), not a tight budget — a genuine
+# hang is caught per-chunk (see `stall_s` in `ingest_conversation` + the per-POST
+# httpx timeout), so this only stops a conversation that is PROGRESSING but too
+# slow to justify including in a multi-conversation run. A slow-but-progressing
+# conversation (kremory's remember() fans out to ~20 sequential LLM calls per
+# chunk — minutes per conversation) now RUNS TO COMPLETION instead of aborting.
+# Override via KREMORY_INGEST_BUDGET_S; tighten the hang guard via KREMORY_INGEST_STALL_S.
 import os as _os
-INGEST_BUDGET_S = float(_os.environ.get("KREMORY_INGEST_BUDGET_S", "900"))
+INGEST_BUDGET_S = float(_os.environ.get("KREMORY_INGEST_BUDGET_S", "7200"))
 
 
 class KremoryStalled(RuntimeError):
@@ -173,6 +175,34 @@ class CodememClient:
         self.total_http_errors += 1
         print(f"  [warn] recall failed ({r.status_code}): {r.text[:200]}", file=sys.stderr)
         return []
+
+    def scrape_metrics(self) -> dict[str, float]:
+        """Scrape GET /metrics (Prometheus text) and sum each metric across its
+        label sets → {metric_name: total}. TD-132: surfaces the server-side
+        `kremory_core_*` counters (tokens, cost, request latency, dream duration)
+        the kremory-http `prometheus` feature exposes. Returns {} if the endpoint
+        is absent (server built without the feature) — bench degrades gracefully.
+        """
+        try:
+            r = self.http.get("/metrics", timeout=10.0)
+        except Exception:
+            return {}
+        if r.status_code != 200:
+            return {}
+        totals: dict[str, float] = {}
+        for line in r.text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Prometheus text: `name{labels} value`  OR  `name value`.
+            try:
+                left, val = line.rsplit(" ", 1)
+                value = float(val)
+            except ValueError:
+                continue
+            name = left.split("{", 1)[0]
+            totals[name] = totals.get(name, 0.0) + value
+        return totals
 
     def graph_neighbors(self, node_id: str, depth: int = 2) -> list[dict]:
         # kremory-http has no graph-traversal REST tool yet — stub so
@@ -494,6 +524,15 @@ def ingest_conversation(
     session_id = client.start_session(namespace)
     turns_per_chunk = 4
     ingest_start = time.monotonic()
+    # fail-fast-and-loud, but distinguish STUCK from merely SLOW. The old
+    # aggregate per-conversation budget killed a conversation that was
+    # PROGRESSING (107 chunks ingested) just for being slow — wrong: slow-but-
+    # progressing is not a hang. Guard on PER-CHUNK stall instead (resets each
+    # chunk), with a generous TOTAL backstop so a pathologically-slow-but-
+    # progressing conversation still bounds. (A genuinely hung chunk is also
+    # caught upstream by the per-POST httpx timeout — this is belt-and-suspenders
+    # + the backstop.)
+    stall_s = float(_os.environ.get("KREMORY_INGEST_STALL_S", "180"))
 
     for sess in sessions:
         turns = sess["turns"]
@@ -520,6 +559,7 @@ def ingest_conversation(
             for sp in speakers:
                 tags.append(f"speaker:{sp}")
 
+            chunk_t0 = time.monotonic()
             mid = client.store_memory(
                 content=chunk_content,
                 namespace=namespace,
@@ -527,18 +567,29 @@ def ingest_conversation(
                 importance=0.5,
                 tags=tags,
             )
+            chunk_elapsed = time.monotonic() - chunk_t0
             if mid:
                 count += 1
 
-            # fail-fast-and-loud: don't let one conversation's ingest silently
-            # grind for many minutes. Check the wall-clock budget after each
-            # store; blow past it → loud abort (not a 30-min silent grind).
+            # STALL guard (per-chunk, resets each chunk): a SINGLE chunk that
+            # blows past the stall window is a genuine hang, not just slow — abort
+            # loud. Slow-but-progressing ingest sails through (each chunk is well
+            # under `stall_s`), which is the whole point.
+            if chunk_elapsed > stall_s:
+                raise KremoryStalled(
+                    f"ingest of {sample_id} STALLED — one chunk took "
+                    f"{chunk_elapsed:.0f}s > {stall_s:.0f}s stall window (chunk {count}) — "
+                    f"a genuine hang, not merely slow"
+                )
+            # Generous TOTAL backstop (default 2h via KREMORY_INGEST_BUDGET_S):
+            # even a progressing-but-pathologically-slow conversation must bound so
+            # it can't eat an entire multi-conversation run (TD-128 intent).
             elapsed = time.monotonic() - ingest_start
             if elapsed > INGEST_BUDGET_S:
                 raise KremoryStalled(
-                    f"ingest of {sample_id} exceeded {INGEST_BUDGET_S:.0f}s "
-                    f"budget after {count} chunks ({elapsed:.0f}s elapsed) — "
-                    f"kremory ingest too slow at this granularity"
+                    f"ingest of {sample_id} exceeded {INGEST_BUDGET_S:.0f}s TOTAL "
+                    f"backstop after {count} chunks ({elapsed:.0f}s) — progressing but "
+                    f"too slow to include; raise KREMORY_INGEST_BUDGET_S or fix throughput (TD-127)"
                 )
 
     if session_id:
@@ -747,7 +798,10 @@ def run_benchmark(config: Config) -> dict:
             category = qa["category"]
             limit = get_recall_limit(category, config)
 
-            # Recall based on mode
+            # Recall based on mode (TD-132: time it — client-side wall-clock is
+            # the per-question recall latency / TTFB for these non-streaming JSON
+            # responses).
+            recall_t0 = time.monotonic()
             if config.mode == "baseline":
                 memories = recall_baseline(sessions)
             elif config.mode == "rag":
@@ -761,6 +815,7 @@ def run_benchmark(config: Config) -> dict:
                 )
             else:  # codemem (default)
                 memories = recall_codemem(client, qa["question"], namespace, limit)
+            recall_latency_ms = round((time.monotonic() - recall_t0) * 1000.0, 1)
 
             # Check if gold answer is in recalled memories (AutoMem-style)
             is_correct, confidence, explanation = check_answer_in_memories(
@@ -785,6 +840,7 @@ def run_benchmark(config: Config) -> dict:
                 "confidence": round(confidence, 4),
                 "explanation": explanation,
                 "mode": config.mode,
+                "recall_latency_ms": recall_latency_ms,
             }
             all_results.append(result)
 
@@ -797,7 +853,7 @@ def run_benchmark(config: Config) -> dict:
                 "question_id": qa["question_id"], "category": category,
                 "namespace": namespace, "recall_returned": len(memories),
                 "recall_empty": recall_empty, "http_errors": client.total_http_errors,
-                "correct": is_correct,
+                "correct": is_correct, "recall_latency_ms": recall_latency_ms,
             }) + "\n")
             jsonl_f.flush()
 
@@ -866,11 +922,47 @@ def run_benchmark(config: Config) -> dict:
     print(f"  AutoMem:       90.53%")
     print(f"  CORE:          88.24%")
 
+    # TD-132 o11y: final /metrics scrape (for a single fresh-DB conversation the
+    # cumulative counters ARE this run's totals) + client-side recall-latency
+    # aggregate. Degrades to {} if the server lacks the `prometheus` feature.
+    o11y_metrics = client.scrape_metrics()
+    recall_latencies = sorted(
+        r["recall_latency_ms"] for r in all_results if r.get("recall_latency_ms") is not None
+    )
+
+    def _pct(xs, p):
+        if not xs:
+            return None
+        i = min(len(xs) - 1, int(round((p / 100.0) * (len(xs) - 1))))
+        return xs[i]
+
+    o11y = {
+        "metrics_endpoint_present": bool(o11y_metrics),
+        "tokens_total": o11y_metrics.get("kremory_core_tokens_total"),
+        "cost_usd_total": o11y_metrics.get("kremory_core_cost_usd_total"),
+        "recall_latency_ms_p50": _pct(recall_latencies, 50),
+        "recall_latency_ms_p95": _pct(recall_latencies, 95),
+        "recall_latency_ms_mean": (
+            round(sum(recall_latencies) / len(recall_latencies), 1) if recall_latencies else None
+        ),
+        "raw_metric_totals": o11y_metrics,
+    }
+    print(f"\n--- o11y (TD-132) ---")
+    print(f"  tokens_total:      {o11y['tokens_total']}")
+    print(f"  cost_usd_total:    {o11y['cost_usd_total']}")
+    print(
+        f"  recall latency ms: p50={o11y['recall_latency_ms_p50']} "
+        f"p95={o11y['recall_latency_ms_p95']} mean={o11y['recall_latency_ms_mean']}"
+    )
+    if not o11y["metrics_endpoint_present"]:
+        print("  [warn] /metrics absent — server built without --features prometheus", file=sys.stderr)
+
     output = {
         "mode": config.mode,
         "scorer": config.scorer,
         "server_mode": config.server_mode,
         "total_questions": len(all_results),
+        "o11y": o11y,
         "category_stats": category_stats,
         "results": all_results,
         # TD-128 (B6): conversations excluded from this matrix due to ingest abort.

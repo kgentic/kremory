@@ -108,6 +108,17 @@ provider = "anthropic"
 model    = "claude-sonnet-4-6"
 cost_per_1k_tokens_usd = 0.015
 
+# ── Groq (OpenAI-compatible) chat ─────────────────────────────────────────────
+# Source: https://groq.com/pricing (accessed 2026-07-20). gpt-oss-120b:
+# $0.15/MTok input, ~$0.60/MTok output → using output rate (conservative, per the
+# table convention) = $0.0006 per 1k. `model` matches the id Groq exposes (the
+# same string threaded as the metric `model` label). NOTE: single-rate is a known
+# imprecision (input is ~4× cheaper); per-direction rates tracked as a follow-up.
+[[providers]]
+provider = "groq"
+model    = "openai/gpt-oss-120b"
+cost_per_1k_tokens_usd = 0.0006
+
 # ── Ollama / local chat ───────────────────────────────────────────────────────
 # Self-hosted, no provider cost. Wildcard model matches any Ollama model.
 
