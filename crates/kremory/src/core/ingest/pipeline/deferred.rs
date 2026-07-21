@@ -507,12 +507,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // TD-080 P0 (Rule 19): label by namespace + reason so the silent
                     // composite-FK drop class is distinguishable from generic failures.
                     // `fk_mismatch` ⇒ the subject/object entity isn't resolvable in this
-                    // fact's namespace (the exact TD-080 #1 failure shape).
-                    let reason = if e.to_string().contains("FOREIGN KEY") {
-                        "fk_mismatch"
-                    } else {
-                        "other"
-                    };
+                    // fact's namespace (the exact TD-080 #1 failure shape). Routed
+                    // through the shared `Error::fact_insert_failure_reason` (B2
+                    // observability hardening, 2026-07-21) so this taxonomy matches
+                    // the foreground ingest + graph-layer insert paths — this also
+                    // upgrades this path to distinguish `unique_violation` /
+                    // `db_error`, which the prior ad-hoc string match collapsed into
+                    // `other`.
+                    let reason = e.fact_insert_failure_reason();
                     metrics::counter!(
                         "kremory.ingest.deferred_phase2_fact_insert_failed_total",
                         "namespace" => deferred_effective_gid.to_string(),

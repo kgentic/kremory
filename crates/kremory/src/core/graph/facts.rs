@@ -451,12 +451,11 @@ impl TemporalGraph {
             Err(e) => {
                 let _ = guard.rollback().await;
                 // R2.2 §spec-td-085: error-path counter + paired warn (ADR D1).
-                // Reason labels per pre-R2 enumeration table §3.
-                let reason: &'static str = match &e {
-                    crate::core::error::Error::Database(_) => "db_error",
-                    crate::core::error::Error::InsertReturnedNoRowId { .. } => "no_rowid",
-                    _ => "other",
-                };
+                // Reason labels per pre-R2 enumeration table §3, sub-classified via
+                // the shared `Error::fact_insert_failure_reason` (B2 observability
+                // hardening, 2026-07-21) so this taxonomy matches the deferred +
+                // foreground ingest paths instead of drifting independently.
+                let reason: &'static str = e.fact_insert_failure_reason();
                 metrics::counter!(
                     "kremory.db.insert_fact_error_total",
                     "reason" => reason,

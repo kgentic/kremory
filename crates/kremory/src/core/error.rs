@@ -530,4 +530,88 @@ pub enum Error {
     },
 }
 
+impl Error {
+    /// Classify a fact-insert failure into a bounded `reason` label for the
+    /// `*_fact_insert_failed_total` family of counters (B2 observability
+    /// hardening, 2026-07-21). Sub-classifies the coarse `Database` variant
+    /// by its underlying SQLite constraint text instead of collapsing every
+    /// DB failure into one bucket: `FOREIGN KEY` ⇒ `fk_mismatch` (the
+    /// composite-FK namespace-mismatch shape, see TD-080), `UNIQUE` ⇒
+    /// `unique_violation`, anything else DB-shaped ⇒ `db_error`.
+    ///
+    /// Shared by the foreground path (`ingest/pipeline/ingest_with.rs`), the
+    /// deferred path (`ingest/pipeline/deferred.rs`), and the graph-layer
+    /// insert path (`graph/facts.rs`) so all three report the SAME reason
+    /// taxonomy instead of each duplicating ad-hoc
+    /// `e.to_string().contains(...)` string matching at its own call site.
+    pub(crate) fn fact_insert_failure_reason(&self) -> &'static str {
+        match self {
+            Error::Database(db_err) => {
+                let s = db_err.to_string();
+                if s.contains("FOREIGN KEY") {
+                    "fk_mismatch"
+                } else if s.contains("UNIQUE") {
+                    "unique_violation"
+                } else {
+                    "db_error"
+                }
+            }
+            Error::InsertReturnedNoRowId { .. } => "no_rowid",
+            _ => "other",
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── B2: `Error::fact_insert_failure_reason` classification ──────────────
+    //
+    // Pins the shared reason taxonomy the foreground (`ingest_with.rs`),
+    // deferred (`deferred.rs`), and graph-layer (`facts.rs`) fact-insert
+    // paths all now route through — a real SQLite FK/UNIQUE constraint
+    // failure surfaces via `libsql::Error::SqliteFailure(_, message)`, so
+    // classification is driven by the message text (matches the sibling
+    // deferred-path convention this replaces).
+
+    #[test]
+    fn fact_insert_failure_reason_classifies_foreign_key_as_fk_mismatch() {
+        let err = Error::Database(libsql::Error::SqliteFailure(
+            787,
+            "FOREIGN KEY constraint failed".to_string(),
+        ));
+        assert_eq!(err.fact_insert_failure_reason(), "fk_mismatch");
+    }
+
+    #[test]
+    fn fact_insert_failure_reason_classifies_unique_as_unique_violation() {
+        let err = Error::Database(libsql::Error::SqliteFailure(
+            2067,
+            "UNIQUE constraint failed: facts.content_hash".to_string(),
+        ));
+        assert_eq!(err.fact_insert_failure_reason(), "unique_violation");
+    }
+
+    #[test]
+    fn fact_insert_failure_reason_classifies_generic_database_error_as_db_error() {
+        let err = Error::Database(libsql::Error::SqliteFailure(1, "disk I/O error".to_string()));
+        assert_eq!(err.fact_insert_failure_reason(), "db_error");
+    }
+
+    #[test]
+    fn fact_insert_failure_reason_classifies_no_rowid_variant() {
+        let err = Error::InsertReturnedNoRowId {
+            operation: "insert_fact",
+        };
+        assert_eq!(err.fact_insert_failure_reason(), "no_rowid");
+    }
+
+    #[test]
+    fn fact_insert_failure_reason_classifies_non_database_variants_as_other() {
+        let err = Error::Config("bad config".to_string());
+        assert_eq!(err.fact_insert_failure_reason(), "other");
+    }
+}

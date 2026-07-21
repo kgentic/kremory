@@ -1793,15 +1793,42 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // previously only a tracing::warn — invisible in aggregate, which hid
                         // the composite-FK namespace bug (facade facts silently dropped). Emit
                         // a counter so dropped facts are observable, not silent.
-                        metrics::counter!("kremory.ingest.phase2_fact_insert_failed_total")
-                            .increment(1);
+                        //
+                        // B2 observability hardening (2026-07-21): this bare counter gave the
+                        // foreground path no `reason`/`namespace` attribution, unlike its
+                        // deferred-path sibling (`deferred.rs`). Bring it to parity: label via
+                        // the shared `Error::fact_insert_failure_reason` taxonomy and
+                        // `effective_gid` (the SAME namespace the subject/object entities were
+                        // upserted into above), plus the matching KREMORY_DEBUG
+                        // namespace-mismatch dump.
+                        let reason = e.fact_insert_failure_reason();
+                        metrics::counter!(
+                            "kremory.ingest.phase2_fact_insert_failed_total",
+                            "namespace" => effective_gid.to_string(),
+                            "reason" => reason,
+                        )
+                        .increment(1);
                         tracing::warn!(
                             subject = %fact.subject,
                             predicate = %fact.predicate,
                             object = %fact.object,
+                            namespace = %effective_gid,
+                            reason,
                             error = %e,
                             "kremory.ingest.phase2_fact_insert_failed"
                         );
+                        if reason == "fk_mismatch" && std::env::var("KREMORY_DEBUG").is_ok() {
+                            tracing::error!(
+                                target: "kremory.ingest.namespace_mismatch",
+                                fact_namespace = %effective_gid,
+                                subject = %fact.subject,
+                                object = %fact.object,
+                                "[KREMORY_DEBUG] foreground fact dropped: composite-FK mismatch — \
+                                 subject/object entity not found in namespace (see fact_namespace). \
+                                 Compare entity-write namespace via \
+                                 rql.ingest.entity_persisted_total{{namespace}}."
+                            );
+                        }
                     }
                 }
 
