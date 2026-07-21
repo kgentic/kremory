@@ -198,6 +198,20 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
     }
 
     // ── Step 2: structural pre-filter — named hybrid (spec §3.1) ─────────────
+    //
+    // TD-133 B3: the graph co-occurrence half of the hybrid predicate used to
+    // call `cooccurs_in_graph` (2 DB queries) PER PAIR — O(N²) DB round-trips
+    // (~10.7k queries for 105 entities / 5356 pairs on the labelled conv0
+    // dream run — `pairs_examined`'s own denominator). `cooccurs_in_graph`
+    // itself is unchanged (still exercised directly by its own unit + S5/S6
+    // spike tests below); this pass now precomputes the SAME relation ONCE
+    // via `build_cooccurrence_prefilter_set` (2 bulk queries total, scoped to
+    // `group_id`) and does an in-memory `HashSet` lookup per pair instead.
+    // Quality-neutral: the nomination predicate is still exactly
+    // `initialism_candidate(a,b) OR cooccurs(a,b)` — only HOW `cooccurs` is
+    // evaluated changed (bulk-precomputed set membership vs per-pair DB
+    // round-trip), never WHAT it evaluates.
+    let cooccur_pairs = build_cooccurrence_prefilter_set(conn, group_id).await?;
     let mut nominated: Vec<NominatedPair> = Vec::new();
     for i in 0..ids.len() {
         for j in (i + 1)..ids.len() {
@@ -205,13 +219,9 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             let a = &ids[i];
             let b = &ids[j];
             let is_nominated = initialism_candidate(a, b)
-                || cooccurs_in_graph(CooccursInGraphParams {
-                    conn,
-                    group_id,
-                    a,
-                    b,
-                })
-                .await?;
+                || cooccur_pairs.contains(
+                    &crate::core::dream::provenance::reversal::sorted_pair(a, b),
+                );
             if is_nominated {
                 nominated.push(NominatedPair {
                     a: a.clone(),
@@ -470,6 +480,17 @@ fn is_initialism_of(shorter: &str, longer: &str) -> bool {
 
 /// Bundled parameters for [`cooccurs_in_graph`] — args-as-object per TD-042
 /// (rust-conventions §too_many_arguments, threshold 3).
+///
+/// TD-133 B3: `cooccurs_in_graph` is no longer called from Step 2's
+/// production loop (superseded by the bulk `build_cooccurrence_prefilter_set`
+/// precompute, immediately below) — its only remaining callers are the unit
+/// tests and the S5/S6 spike tests in `mod tests` below, which use it as the
+/// per-pair ORACLE that pins the bulk precompute's quality-neutrality
+/// (`build_cooccurrence_prefilter_set_matches_cooccurs_in_graph_per_pair`).
+/// `#[cfg(test)]`-gated accordingly rather than kept as unused production
+/// code (the alternative would be a `#[allow(dead_code)]`, forbidden in
+/// src).
+#[cfg(test)]
 struct CooccursInGraphParams<'a> {
     conn: &'a libsql::Connection,
     group_id: &'a str,
@@ -484,6 +505,10 @@ struct CooccursInGraphParams<'a> {
 /// hop). Bounded SQL scoped to `group_id`, not an in-memory full-graph
 /// traversal (spec §3.1). Requires `idx_facts_subject` (migration 018) to
 /// stay bounded-cost (spec §3.5 RISK-002).
+///
+/// TD-133 B3: test-only oracle now — see [`CooccursInGraphParams`]'s doc
+/// comment.
+#[cfg(test)]
 async fn cooccurs_in_graph(params: CooccursInGraphParams<'_>) -> Result<bool> {
     let CooccursInGraphParams {
         conn,
@@ -560,6 +585,122 @@ async fn cooccurs_in_graph(params: CooccursInGraphParams<'_>) -> Result<bool> {
         })?
         .is_some();
     Ok(found)
+}
+
+/// Bulk-precompute the graph co-occurrence relation for `group_id` (TD-133
+/// B3): the SAME relation `cooccurs_in_graph(a, b)` decides pairwise (shared
+/// episode mention OR shared 1-hop fact-neighbor), computed for every
+/// co-occurring pair in the group via exactly TWO queries total instead of
+/// TWO queries PER PAIR. Semantically identical to `cooccurs_in_graph`
+/// evaluated per-pair — same `group_id` scoping, same `expired_at IS NULL` +
+/// `object_id IS NOT NULL` fact filters, same episode-edge join shape — this
+/// function only changes HOW the relation is computed (bulk vs per-pair),
+/// never WHAT it computes, so Step 2's pre-filter nominations are unchanged
+/// (quality-neutral, spec §3.1).
+///
+/// Returned pairs are keyed via
+/// [`crate::core::dream::provenance::reversal::sorted_pair`] (lexicographic
+/// `(min, max)`, spec §6.2's existing canonical-pair convention) so caller
+/// lookups are order-independent regardless of which SQL branch produced the
+/// row.
+async fn build_cooccurrence_prefilter_set(
+    conn: &libsql::Connection,
+    group_id: &str,
+) -> Result<HashSet<(String, String)>> {
+    let mut pairs: HashSet<(String, String)> = HashSet::new();
+
+    // Shared episode mention — mirrors `cooccurs_in_graph`'s first query as a
+    // single self-join over `episodic_edges` returning EVERY co-mentioned
+    // pair for the group at once (`ea.entity_id < eb.entity_id` de-dupes
+    // each unordered pair to one row) instead of one `SELECT 1 ... LIMIT 1`
+    // round-trip per candidate pair.
+    let mut rows = conn
+        .query(
+            "SELECT DISTINCT ea.entity_id, eb.entity_id \
+             FROM episodic_edges ea \
+             JOIN episodic_edges eb ON ea.episode_id = eb.episode_id \
+             WHERE ea.entity_group_id = ?1 AND eb.entity_group_id = ?1 \
+             AND ea.entity_id < eb.entity_id",
+            libsql::params![group_id.to_string()],
+        )
+        .await
+        .map_err(|e| {
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: bulk episode co-occurrence query failed: {e}"
+            ))
+        })?;
+    while let Some(row) = rows.next().await.map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "acronym_nickname_recall: bulk episode co-occurrence row read failed: {e}"
+        ))
+    })? {
+        let a: String = row.get(0).map_err(|e| {
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: bulk episode co-occurrence col a read failed: {e}"
+            ))
+        })?;
+        let b: String = row.get(1).map_err(|e| {
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: bulk episode co-occurrence col b read failed: {e}"
+            ))
+        })?;
+        pairs.insert(crate::core::dream::provenance::reversal::sorted_pair(
+            &a, &b,
+        ));
+    }
+
+    // Shared 1-hop graph neighbor — mirrors `cooccurs_in_graph`'s second
+    // query (a fact linking `a` to some entity `x`, and a fact linking `b`
+    // to that SAME `x`, either direction, scoped to group_id and
+    // non-expired facts). The `neighbors` CTE computes, once, every
+    // (entity_id, neighbor) edge the per-pair query's two UNION subqueries
+    // would have derived independently for EACH of `a` and `b`; the
+    // self-join on `na.neighbor = nb.neighbor` then yields every pair of
+    // entities sharing a common neighbor directly, bounded by actual edges
+    // (not O(N²)). Requires `idx_facts_subject` (migration 018) +
+    // `idx_facts_object` to stay index-backed (spec §3.5 RISK-002 — same
+    // index dependency as the original per-pair query, S6 spike).
+    let mut rows = conn
+        .query(
+            "WITH neighbors AS ( \
+                 SELECT subject_id AS entity_id, object_id AS neighbor FROM facts \
+                 WHERE group_id = ?1 AND expired_at IS NULL AND object_id IS NOT NULL \
+                 UNION \
+                 SELECT object_id AS entity_id, subject_id AS neighbor FROM facts \
+                 WHERE group_id = ?1 AND expired_at IS NULL AND object_id IS NOT NULL \
+             ) \
+             SELECT DISTINCT na.entity_id, nb.entity_id \
+             FROM neighbors na \
+             JOIN neighbors nb ON na.neighbor = nb.neighbor AND na.entity_id < nb.entity_id",
+            libsql::params![group_id.to_string()],
+        )
+        .await
+        .map_err(|e| {
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: bulk neighbor co-occurrence query failed: {e}"
+            ))
+        })?;
+    while let Some(row) = rows.next().await.map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "acronym_nickname_recall: bulk neighbor co-occurrence row read failed: {e}"
+        ))
+    })? {
+        let a: String = row.get(0).map_err(|e| {
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: bulk neighbor co-occurrence col a read failed: {e}"
+            ))
+        })?;
+        let b: String = row.get(1).map_err(|e| {
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: bulk neighbor co-occurrence col b read failed: {e}"
+            ))
+        })?;
+        pairs.insert(crate::core::dream::provenance::reversal::sorted_pair(
+            &a, &b,
+        ));
+    }
+
+    Ok(pairs)
 }
 
 // D8 escape hatch (spec §3.4, deferred — see spec §7 fork "D8's exact
@@ -1241,6 +1382,127 @@ mod tests {
         })
         .await
         .expect("query"));
+    }
+
+    // ── build_cooccurrence_prefilter_set (TD-133 B3) ──────────────────────────
+
+    /// TD-133 B3 quality-neutrality proof: `build_cooccurrence_prefilter_set`
+    /// (bulk, 2 queries total) MUST agree, pair-for-pair, with the original
+    /// per-pair `cooccurs_in_graph` oracle it replaces in Step 2's loop — for
+    /// EVERY unordered pair among a fixture exercising both co-occurrence
+    /// mechanisms (shared episode, shared 1-hop fact-neighbor) AND unrelated
+    /// pairs. This is a cross-check against the real per-pair oracle (not a
+    /// re-implementation of the same logic asserting against itself), so it
+    /// proves the bulk precompute changes HOW the relation is computed, never
+    /// WHAT it computes.
+    #[tokio::test]
+    async fn build_cooccurrence_prefilter_set_matches_cooccurs_in_graph_per_pair() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        let group_id = "g_bulk_eq";
+
+        // Shared-episode pair: alpha + beta both mention the same episode.
+        insert_entity(&graph, "alpha", group_id, "").await;
+        insert_entity(&graph, "beta", group_id, "").await;
+        let ep = graph
+            .insert_episode(InsertEpisodeParams {
+                content: "Alpha and Beta appear together.",
+                timestamp: chrono::Utc::now(),
+                source_type: Some("transcript"),
+                metadata: None,
+            })
+            .await
+            .expect("episode");
+        for ent in ["alpha", "beta"] {
+            graph
+                .insert_episodic_edge(InsertEpisodicEdgeParams {
+                    episode_id: ep,
+                    entity_id: ent,
+                    entity_group_id: Some(group_id),
+                    role: "mention",
+                })
+                .await
+                .expect("edge");
+        }
+
+        // Shared-1-hop-neighbor pair: gamma + delta both link to the SAME
+        // third entity ("hub") via a fact, no episode in common.
+        insert_entity(&graph, "gamma", group_id, "").await;
+        insert_entity(&graph, "delta", group_id, "").await;
+        insert_entity(&graph, "hub", group_id, "").await;
+        let now = chrono::Utc::now();
+        graph
+            .insert_fact_with_group(
+                crate::core::graph::FactInsert::new("gamma", "knows", now).object_id("hub"),
+                Some(group_id),
+            )
+            .await
+            .expect("gamma->hub fact");
+        graph
+            .insert_fact_with_group(
+                crate::core::graph::FactInsert::new("delta", "knows", now).object_id("hub"),
+                Some(group_id),
+            )
+            .await
+            .expect("delta->hub fact");
+
+        // Unrelated entities: no episode, no fact — must never co-occur with
+        // anything in this fixture.
+        insert_entity(&graph, "epsilon", group_id, "").await;
+        insert_entity(&graph, "zeta", group_id, "").await;
+
+        let bulk_set = build_cooccurrence_prefilter_set(&conn, group_id)
+            .await
+            .expect("bulk precompute");
+
+        // Explicit positive/negative anchors (spec-readable, in addition to
+        // the exhaustive cross-check below).
+        assert!(
+            bulk_set.contains(&crate::core::dream::provenance::reversal::sorted_pair(
+                "alpha", "beta"
+            )),
+            "shared-episode pair must be in the bulk set"
+        );
+        assert!(
+            bulk_set.contains(&crate::core::dream::provenance::reversal::sorted_pair(
+                "gamma", "delta"
+            )),
+            "shared-1-hop-neighbor pair must be in the bulk set"
+        );
+        assert!(
+            !bulk_set.contains(&crate::core::dream::provenance::reversal::sorted_pair(
+                "epsilon", "zeta"
+            )),
+            "unrelated pair must NOT be in the bulk set"
+        );
+
+        // Exhaustive cross-check: for EVERY unordered pair among all 7
+        // entities, the bulk set's membership must equal the per-pair
+        // `cooccurs_in_graph` oracle's verdict — this is the quality-
+        // neutrality proof (same pairs nominated, only faster).
+        let ids = [
+            "alpha", "beta", "gamma", "delta", "hub", "epsilon", "zeta",
+        ];
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                let a = ids[i];
+                let b = ids[j];
+                let oracle = cooccurs_in_graph(CooccursInGraphParams {
+                    conn: &conn,
+                    group_id,
+                    a,
+                    b,
+                })
+                .await
+                .expect("oracle query");
+                let bulk = bulk_set
+                    .contains(&crate::core::dream::provenance::reversal::sorted_pair(a, b));
+                assert_eq!(
+                    bulk, oracle,
+                    "bulk precompute disagrees with per-pair cooccurs_in_graph oracle for ({a}, {b})"
+                );
+            }
+        }
     }
 
     // ── Full pass tests (write_gate ROW 5 / PotentialAlias / Reject) ─────────
