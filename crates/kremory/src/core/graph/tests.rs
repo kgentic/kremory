@@ -197,6 +197,60 @@ async fn test_try_insert_fact_with_group_dedups_cross_variant() {
     );
 }
 
+/// TD-133 B2 regression: re-asserting a triple that was superseded/expired must
+/// SUCCEED. The dedup pre-check SELECT excludes expired rows (`expired_at IS
+/// NULL`) but the UNIQUE index previously covered ALL rows, so a legitimate
+/// bi-temporal assert→expire→re-assert (ADR-003) collided on the stale expired
+/// row's `content_hash` → `UNIQUE constraint failed` → the re-assertion was
+/// silently lost (21 such `unique_violation` drops measured on the TD-133
+/// instrumented conv0 run, 2026-07-21). `migrate_025_fact_dedup_expired_partial`
+/// scopes the index to ACTIVE rows, matching the SELECT predicate, so an expired
+/// row no longer blocks re-assertion.
+#[tokio::test]
+async fn test_reassert_expired_fact_succeeds_td133_b2() {
+    let g = TemporalGraph::open_in_memory().await.unwrap();
+    g.insert_entity(InsertEntityParams {
+        id: "alice",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+
+    // Assert the triple.
+    let t0 = Utc::now() - Duration::days(2);
+    let id1 = g
+        .insert_fact(FactInsert::new("alice", "has_title", t0).object_value("PM"))
+        .await
+        .unwrap();
+    assert!(id1 > 0);
+
+    // Supersede it (bi-temporal expiry).
+    g.invalidate_fact(id1, Utc::now() - Duration::days(1))
+        .await
+        .unwrap();
+
+    // Re-assert the SAME triple — identical content_hash to the now-expired row.
+    // Pre-fix this errored `UNIQUE constraint failed` (the global index still
+    // held the expired row's hash); post-fix (active-only partial index) it
+    // succeeds as a new active fact.
+    let id2 = g
+        .insert_fact(FactInsert::new("alice", "has_title", Utc::now()).object_value("PM"))
+        .await
+        .expect("re-asserting a superseded triple must succeed (TD-133 B2)");
+    assert!(id2 > 0);
+    assert_ne!(id1, id2, "re-assertion must be a new row, not the expired one");
+
+    // Exactly one ACTIVE fact now (the re-assertion); the expired one excluded.
+    let facts = g.facts_at(Utc::now() + Duration::seconds(1)).await.unwrap();
+    assert_eq!(
+        facts.len(),
+        1,
+        "only the re-asserted active fact should be live"
+    );
+    assert_eq!(facts[0].predicate, "has_title");
+}
+
 #[tokio::test]
 async fn test_insert_fact_with_object_id() {
     let g = TemporalGraph::open_in_memory().await.unwrap();

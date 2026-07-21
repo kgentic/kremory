@@ -438,6 +438,8 @@ mod defs_i;
 mod defs_j;
 // defs_k (TD-117, Vera M2): migrate_024_verify_embedding_dim.
 mod defs_k;
+// defs_l (TD-133 B2): migrate_025_fact_dedup_expired_partial.
+mod defs_l;
 
 pub(crate) use defs_a::*;
 pub(crate) use defs_b::*;
@@ -459,6 +461,7 @@ pub(crate) use defs_h::*;
 pub(crate) use defs_i::*;
 pub(crate) use defs_j::*;
 pub(crate) use defs_k::*;
+pub(crate) use defs_l::*;
 
 #[cfg(test)]
 mod tests;
