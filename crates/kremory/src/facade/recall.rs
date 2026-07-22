@@ -266,12 +266,27 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
         .await
         .map_err(MemoryError::Core)?;
 
+    // TD-066 Increment 2 (spec §3 Increment 2): `SearchConfig::default()` is
+    // the only value available here today — `Memory` holds no live
+    // `PipelineConfig`/`SearchConfig` instance reachable through the
+    // `Arc<dyn GraphHandle>` trait object (unlike `graph_degree_weight`,
+    // which the `Engine` reads from its OWN `self.config.search` inside
+    // `contextualize`). Wiring a consumer-settable override through
+    // `GraphHandle` is out of scope for this increment (spec Files list:
+    // `core/config.rs` + the fusion fn only) — today `SearchConfig::default()`
+    // and any hypothetical live instance are identical (no builder setter
+    // exists for this field, mirroring `graph_degree_weight`/`temporal_weight`'s
+    // own current state), so this is a faithful read of "the configured
+    // value", not a hardcoded bypass of it.
+    let content_stream_weight =
+        crate::core::config::SearchConfig::default().content_stream_weight;
     let fused =
         crate::core::search::rrf_fuse_with_content(crate::core::search::RrfFuseWithContentParams {
             entity_stream: entity_results,
             content_stream: content_results,
             namespace: Some(namespace),
             limit,
+            content_stream_weight,
         });
     // Incremental cost THIS Increment adds (the content_search query + the
     // fusion pass) — not the whole recall (the entity-graph stream was

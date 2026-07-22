@@ -1521,6 +1521,14 @@ pub(crate) struct RrfFuseWithContentParams<'a> {
     /// flood-truncation fallback the REST layer's `hybrid_mode_results`
     /// already validated (spec §3 Increment 1 step 2 / Risk #1).
     pub limit: Option<usize>,
+    /// TD-066 Increment 2 (spec §3 Increment 2): per-stream weight applied to
+    /// the content stream's RRF contribution before it's summed into the
+    /// fused score. `1.0` = neutral (today's equal-weight fusion, byte-
+    /// identical to Increment 1). `<= 0.0` degrades content's contribution to
+    /// (effectively) zero. Mirrors `SearchConfig::content_stream_weight`
+    /// (`core/config.rs`) — callers read the config value and pass it here;
+    /// this fn stays a pure function over the weight, not a config reader.
+    pub content_stream_weight: f32,
 }
 
 /// RRF-fuses the entity-graph recall stream with the ADR-072 `content_search`
@@ -1552,6 +1560,7 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
         content_stream,
         namespace,
         limit,
+        content_stream_weight,
     } = params;
 
     let entity_count = entity_stream.len();
@@ -1564,6 +1573,13 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
     metrics::counter!("kremory.recall.canonical_fusion_total", "stream" => "content")
         .increment(content_count as u64);
 
+    // TD-066 Increment 2 (spec §6): the currently-configured weight, mirroring
+    // the `graph_degree_weight_zero_total`-style "is this axis live" gauge
+    // pattern (`context.rs:372-373`) — a gauge (not a counter) because the
+    // weight is a single per-call configuration value, not a per-item event.
+    metrics::gauge!("kremory.search.content_stream_weight_applied")
+        .set(content_stream_weight as f64);
+
     let group_id = namespace.map(crate::memory::engine_handle::namespace_to_group_id);
 
     // Key: (id, group_id) — same composite discipline as rrf_fuse_entities /
@@ -1571,7 +1587,16 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
     // are the stringified `episode_id` (matches the REST layer's
     // `content_mode_results` id convention exactly, for parity — spec Risk
     // #1: port the EXACT same math, not a reimplementation).
-    let mut scores: HashMap<(String, Option<String>), (f64, RetrievedContext)> =
+    //
+    // Value tuple = (weighted_score, baseline_score, item). `baseline_score`
+    // is what this fn would produce at `content_stream_weight = 1.0` (today's
+    // behaviour) — carried alongside the real weighted score ONLY so
+    // `content_weight_reorder_total` (below) can report whether the weight
+    // actually changed the output order, without a second full recompute
+    // pass (`axis_reorders`-style honest-counter discipline,
+    // `scoring/mod.rs:124` — a non-zero weight delta that does NOT move the
+    // order must read as `changed=false`, not lie).
+    let mut scores: HashMap<(String, Option<String>), (f64, f64, RetrievedContext)> =
         HashMap::with_capacity(entity_count + content_count);
 
     for (rank, item) in entity_stream.into_iter().enumerate() {
@@ -1579,27 +1604,65 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
         let key = (item.entity_id.clone(), group_id.clone());
         scores
             .entry(key)
-            .and_modify(|(s, _)| *s += rrf_score)
-            .or_insert((rrf_score, item));
+            .and_modify(|(w, b, _)| {
+                *w += rrf_score;
+                *b += rrf_score;
+            })
+            .or_insert((rrf_score, rrf_score, item));
     }
 
     for (rank, passage) in content_stream.into_iter().enumerate() {
-        let rrf_score = 1.0 / (RRF_K + rank as f64 + 1.0);
+        // `raw_rrf_score` = the unweighted (weight=1.0) contribution, used for
+        // both the baseline-order comparison and the actual weighted sum.
+        let raw_rrf_score = 1.0 / (RRF_K + rank as f64 + 1.0);
+        let weighted_rrf_score = raw_rrf_score * content_stream_weight as f64;
         let key = (passage.episode_id.to_string(), group_id.clone());
         scores
             .entry(key)
-            .and_modify(|(s, _)| *s += rrf_score)
+            .and_modify(|(w, b, _)| {
+                *w += weighted_rrf_score;
+                *b += raw_rrf_score;
+            })
             .or_insert_with(|| {
                 (
-                    rrf_score,
+                    weighted_rrf_score,
+                    raw_rrf_score,
                     content_passage_into_retrieved_context(passage, namespace.cloned()),
                 )
             });
     }
 
+    // Reorder-detection (spec §6 Increment 2): order the full deduped set two
+    // ways — by the real weighted score and by the weight=1.0 baseline —
+    // BEFORE truncation, mirroring `axis_reorders`'s "order twice, compare"
+    // pattern (`scoring/mod.rs:124`) and its scope note (the full candidate
+    // set, not the post-truncation slice, so a reorder below the cap is still
+    // visible to this pre-bench gate even when it doesn't change final
+    // output).
+    let order_by = |score_of: &dyn Fn(&(f64, f64, RetrievedContext)) -> f64| -> Vec<&str> {
+        let mut idx: Vec<(&str, f64)> = scores
+            .iter()
+            .map(|(key, val)| (key.0.as_str(), score_of(val)))
+            .collect();
+        idx.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(b.0))
+        });
+        idx.into_iter().map(|(id, _)| id).collect()
+    };
+    let weighted_order = order_by(&|(w, _, _)| *w);
+    let baseline_order = order_by(&|(_, b, _)| *b);
+    let content_weight_reordered = weighted_order != baseline_order;
+    metrics::counter!(
+        "kremory.search.content_weight_reorder_total",
+        "changed" => if content_weight_reordered { "true" } else { "false" },
+    )
+    .increment(1);
+
     let mut fused: Vec<RetrievedContext> = scores
         .into_values()
-        .map(|(score, mut ctx)| {
+        .map(|(score, _baseline_score, mut ctx)| {
             ctx.score = score as f32;
             ctx
         })
@@ -3536,6 +3599,7 @@ mod tests {
             content_stream,
             namespace: Some(&ns),
             limit: Some(10),
+            content_stream_weight: 1.0,
         });
 
         assert_eq!(
@@ -3599,6 +3663,7 @@ mod tests {
                 content_stream,
                 namespace: Some(&ns),
                 limit: Some(10),
+                content_stream_weight: 1.0,
             });
             assert_eq!(
                 fused.len(),
@@ -3660,6 +3725,7 @@ mod tests {
                 content_stream,
                 namespace: Some(&ns),
                 limit: Some(1),
+                content_stream_weight: 1.0,
             })
         });
 
@@ -3710,6 +3776,7 @@ mod tests {
             content_stream,
             namespace: Some(&ns),
             limit: None,
+            content_stream_weight: 1.0,
         });
 
         // No overlap between the 1 entity and 3 content ids, so the union is
@@ -3745,6 +3812,7 @@ mod tests {
                 content_stream,
                 namespace: Some(&ns),
                 limit: None,
+                content_stream_weight: 1.0,
             })
         });
 
@@ -3773,6 +3841,205 @@ mod tests {
             count_for("content"),
             Some(1),
             "content stream counter must record the 1 content-stream candidate"
+        );
+    }
+
+    // ─── TD-066 Increment 2: content_stream_weight ──────────────────────────
+    //
+    // `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
+    // §3 Increment 2 DoD.
+
+    /// DoD (a): `content_stream_weight = 1.0` (`SearchConfig::default()`'s
+    /// value) must be byte-identical to Increment 1's unweighted fusion — the
+    /// merged score for an overlapping id is still the plain SUM of both
+    /// streams' raw RRF contributions, exactly as
+    /// `rrf_fuse_with_content_dedups_overlapping_ids_across_streams` already
+    /// asserts. This test pins that neutrality claim under its own name so a
+    /// future change to the weight math that breaks the `1.0` no-op case
+    /// fails here directly, not only via an unrelated dedup test.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_weight_one_is_neutral_no_op() {
+        let ns = Namespace::new("ns-weight-neutral");
+        let entity_stream = vec![test_retrieved_context("shared", "ns-weight-neutral")];
+        let content_stream = vec![test_content_passage(0, "shared content")];
+        // Content-derived entity_id for episode 0 is "0" — distinct from
+        // "shared", so both entries survive unmerged; asserting on "shared"'s
+        // own score isolates the entity-stream contribution's arithmetic from
+        // any content-stream weighting.
+        let fused = rrf_fuse_with_content(RrfFuseWithContentParams {
+            entity_stream,
+            content_stream,
+            namespace: Some(&ns),
+            limit: Some(10),
+            content_stream_weight: crate::core::config::SearchConfig::default()
+                .content_stream_weight,
+        });
+        let shared = fused
+            .iter()
+            .find(|r| r.entity_id == "shared")
+            .expect("entity-only result must survive");
+        let expected_entity_score = (1.0 / 61.0) as f32;
+        assert!(
+            (shared.score - expected_entity_score).abs() < f32::EPSILON,
+            "weight=1.0 (SearchConfig default) must not perturb the entity \
+             stream's own RRF contribution: got {}, expected {}",
+            shared.score,
+            expected_entity_score
+        );
+    }
+
+    /// DoD (b): `content_stream_weight > 1.0` measurably shifts ranking
+    /// toward content on a synthetic fixture where content and entity
+    /// disagree on order. `ea` (entity, rank 0) scores `1/61` unweighted;
+    /// `target` (content, rank 1, behind a rank-0 filler) scores `1/62`
+    /// unweighted — strictly below `ea` at `weight=1.0`. At `weight=3.0`,
+    /// `target`'s weighted score (`3/62 ≈ 0.0484`) exceeds `ea`'s unweighted
+    /// `1/61 ≈ 0.0164`, flipping the pair's relative order.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_weight_above_one_shifts_ranking_toward_content() {
+        let ns = Namespace::new("ns-weight-shift");
+        let entity_stream = vec![test_retrieved_context("ea", "ns-weight-shift")];
+        let content_stream = vec![
+            test_content_passage(500, "filler content ranked ahead of target"),
+            test_content_passage(1, "target content that should outrank entity at high weight"),
+        ];
+
+        let baseline = rrf_fuse_with_content(RrfFuseWithContentParams {
+            entity_stream: entity_stream.clone(),
+            content_stream: content_stream.clone(),
+            namespace: Some(&ns),
+            limit: Some(10),
+            content_stream_weight: 1.0,
+        });
+        let pos_ea_baseline = baseline
+            .iter()
+            .position(|r| r.entity_id == "ea")
+            .expect("ea must be present at baseline");
+        let pos_target_baseline = baseline
+            .iter()
+            .position(|r| r.entity_id == "1")
+            .expect("target (content id 1) must be present at baseline");
+        assert!(
+            pos_ea_baseline < pos_target_baseline,
+            "at weight=1.0 the entity result must rank above the lower-ranked \
+             content item: {baseline:?}"
+        );
+
+        let weighted = rrf_fuse_with_content(RrfFuseWithContentParams {
+            entity_stream,
+            content_stream,
+            namespace: Some(&ns),
+            limit: Some(10),
+            content_stream_weight: 3.0,
+        });
+        let pos_ea_weighted = weighted
+            .iter()
+            .position(|r| r.entity_id == "ea")
+            .expect("ea must be present at weight=3.0");
+        let pos_target_weighted = weighted
+            .iter()
+            .position(|r| r.entity_id == "1")
+            .expect("target (content id 1) must be present at weight=3.0");
+        assert!(
+            pos_target_weighted < pos_ea_weighted,
+            "content_stream_weight=3.0 must push the lower-ranked content item \
+             above the entity result once weighted: {weighted:?}"
+        );
+    }
+
+    /// Rule 19 / observability-first-class: fast-tier test asserts the
+    /// `content_stream_weight_applied` gauge fires with the configured value —
+    /// not just that the fusion math is correct ("counters that lie"
+    /// cardinal failure mode).
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_emits_weight_applied_gauge() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let ns = Namespace::new("ns-weight-gauge");
+        let entity_stream = vec![test_retrieved_context("e0", "ns-weight-gauge")];
+        let content_stream = vec![test_content_passage(1, "content 1")];
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            rrf_fuse_with_content(RrfFuseWithContentParams {
+                entity_stream,
+                content_stream,
+                namespace: Some(&ns),
+                limit: None,
+                content_stream_weight: 2.5,
+            })
+        });
+
+        let gauge_value = snapshotter.snapshot().into_vec().into_iter().find_map(|(k, _, _, v)| {
+            if k.key().name() == "kremory.search.content_stream_weight_applied" {
+                if let DebugValue::Gauge(n) = v {
+                    return Some(n.into_inner());
+                }
+            }
+            None
+        });
+        assert_eq!(
+            gauge_value,
+            Some(2.5),
+            "content_stream_weight_applied gauge must record the configured weight"
+        );
+    }
+
+    /// Reorder counter must fire `changed=true` when the weight actually
+    /// flips the order (using the same fixture as the ranking-shift test
+    /// above) and `changed=false` at the neutral weight=1.0 baseline —
+    /// "counters that lie" would report `changed` unconditionally.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_emits_reorder_counter_honestly() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let ns = Namespace::new("ns-weight-reorder");
+        let entity_stream = vec![test_retrieved_context("ea", "ns-weight-reorder")];
+        let content_stream = vec![
+            test_content_passage(500, "filler content ranked ahead of target"),
+            test_content_passage(1, "target content that should outrank entity at high weight"),
+        ];
+
+        let reorder_changed = |weight: f32| -> Option<bool> {
+            let recorder = DebuggingRecorder::new();
+            let snapshotter = recorder.snapshotter();
+            metrics::with_local_recorder(&recorder, || {
+                rrf_fuse_with_content(RrfFuseWithContentParams {
+                    entity_stream: entity_stream.clone(),
+                    content_stream: content_stream.clone(),
+                    namespace: Some(&ns),
+                    limit: Some(10),
+                    content_stream_weight: weight,
+                })
+            });
+            snapshotter.snapshot().into_vec().into_iter().find_map(|(k, _, _, v)| {
+                if k.key().name() == "kremory.search.content_weight_reorder_total" {
+                    let labels: std::collections::HashMap<&str, &str> =
+                        k.key().labels().map(|l| (l.key(), l.value())).collect();
+                    if let DebugValue::Counter(n) = v {
+                        if n == 1 {
+                            return labels.get("changed").map(|s| *s == "true");
+                        }
+                    }
+                }
+                None
+            })
+        };
+
+        assert_eq!(
+            reorder_changed(1.0),
+            Some(false),
+            "weight=1.0 (no-op) must NOT report a reorder"
+        );
+        assert_eq!(
+            reorder_changed(3.0),
+            Some(true),
+            "weight=3.0, which flips ea/target's relative order, MUST report a reorder"
         );
     }
 }
