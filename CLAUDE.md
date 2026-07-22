@@ -1,4 +1,15 @@
 <!-- sprint-activate-begin -->
+## ⚠️ READ FIRST — System Primer (every session, before investigating/claiming anything)
+
+**`.ai-docs/SYSTEM-PRIMER.md`** is the canonical, verified system model + gotchas + bench runbook +
+current recall/known-issue state. Read it before benchmarking, debugging, or asserting anything about
+kremory. It exists so we STOP re-deriving the same things. #1 gotcha: **`COUNT(*)` returns 0 on the
+`entities`/`facts` vector-indexed tables even when populated** — count via `SELECT recorded_at FROM
+entities | wc -l`. The graph on `.context/full-corpus.db` is populated (1197 entities, 5148 facts).
+Correct the primer in place when reality changes (verify vs code, not memory).
+
+---
+
 ## Active Sprint
 
 **No active sprint.** Last shipped: **kremory 0.3.2** (live on crates.io — episodic-edge presence-uniqueness fix). `origin/main` = `fad4d5d` (0.3.2 + TD-053 napi-parity hygiene). The post-v0.2.4 Tech-Debt Clearance sprint and the 0.3.x release line are **DONE and merged to main** — the prior "30 commits ahead / UNPUSHED / v0.2.4 bundle" framing is retired (it predated the 0.3.x releases).
