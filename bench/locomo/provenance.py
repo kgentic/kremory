@@ -8,17 +8,32 @@ knobs the harness launched the server with. `assert_provenance` lets the
 answer-tally / gate step REFUSE to score a recall file whose stamp does not match
 the intended sweep point (fail-loud, never silently score the wrong file).
 
-`build_provenance()` sources every field from the harness's own environment (+ the
-git call), so the stamp reflects what the server was actually told, not a guess.
+`build_provenance()` sources the scoring config + build-feature flags from the
+SERVER's own `GET /health` (TD-135 — the single source of truth: the config the
+search path ACTUALLY uses), so the stamp is faithful to what the server ran with
+rather than what the HARNESS process's env happened to say (a divergence between
+the two is exactly how a config-mismatch produced a bogus benchmark number). The
+git SHA still comes from `git rev-parse HEAD`. If `/health` is unreachable or is
+an older server without a `scoring` block, it falls back to the harness env and
+logs a WARNING that the stamp MAY BE UNFAITHFUL.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
+
+_LOG = logging.getLogger(__name__)
+
+# Short — /health is a local liveness endpoint; the harness has already probed
+# the server is up before this runs.
+_HEALTH_TIMEOUT_S = 5.0
 
 
 class ProvenanceMismatch(RuntimeError):
@@ -51,28 +66,78 @@ def _env_truthy(name: str) -> bool:
     return v.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def build_provenance() -> dict[str, Any]:
-    """Build the provenance stamp from the harness's own KREMORY_* env (+ git).
+def _fetch_health(server: str) -> dict[str, Any] | None:
+    """`GET {server}/health`, parse JSON. Returns the parsed dict, or ``None`` on
+    ANY failure (unreachable / non-200 / non-JSON) so the caller can fall back to
+    env. Never raises."""
+    url = server.rstrip("/") + "/health"
+    try:
+        with urllib.request.urlopen(url, timeout=_HEALTH_TIMEOUT_S) as resp:
+            if getattr(resp, "status", 200) != 200:
+                return None
+            body = resp.read().decode("utf-8")
+        parsed = json.loads(body)
+        return parsed if isinstance(parsed, dict) else None
+    except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError) as e:
+        _LOG.warning(
+            "provenance: GET %s failed (%s: %s) — will fall back to env",
+            url, type(e).__name__, e,
+        )
+        return None
 
-    Fields mirror the S0-infra sweep knobs so a tally can assert the recall file
-    matches the intended sweep point:
 
-    - ``git_sha``: `git rev-parse HEAD`
-    - ``content_stream_weight``: from ``KREMORY_CONTENT_WEIGHT`` (default 1.0) —
-      the library-side `search_env_overrides` knob.
-    - ``rrf_k``: from ``KREMORY_RRF_K`` (default 60).
-    - ``rerank_enabled``: from ``KREMORY_RERANK`` truthy, OR the presence of
-      ``KREMORY_RERANK_K`` (reranker is a rebuild feature — the operator records
-      it via env when the server was built ``--features ...,rerank``).
-    - ``features``: from ``KREMORY_FEATURES`` — the operator-recorded cargo build
-      feature set (e.g. ``content-search,rerank,prometheus``).
+def _features_from_health(health: Mapping[str, Any]) -> str:
+    """Reconstruct the cargo build-feature string from `/health`'s compile-time
+    feature booleans — the ACTUAL compiled feature set, more faithful than the
+    operator-recorded ``KREMORY_FEATURES`` env."""
+    names = []
+    if health.get("content_search"):
+        names.append("content-search")
+    if health.get("rerank"):
+        names.append("rerank")
+    if health.get("prometheus"):
+        names.append("prometheus")
+    return ",".join(names)
 
-    Values are captured verbatim (numeric knobs parsed leniently, falling back to
-    the default on a malformed value — the Rust boot path is the authoritative
-    fail-loud validator; here we only need a faithful record of what was set).
+
+def build_provenance(
+    server: str | None = None,
+    *,
+    health: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the provenance stamp — scoring config + feature flags from the
+    server's `GET /health` (single source of truth, TD-135), git SHA from git.
+
+    Args:
+        server: base URL of the running `kremory-http` server (e.g.
+            ``http://localhost:3179``). When given (and ``health`` is not), fetch
+            ``{server}/health`` and source the scoring config + feature flags from
+            it.
+        health: a pre-fetched `/health` response dict, injected in place of a live
+            fetch (used by unit tests so they never require a live server).
+
+    Stamp fields:
+
+    - ``git_sha``: `git rev-parse HEAD`.
+    - ``content_stream_weight`` / ``rrf_k``: from ``/health``'s ``scoring`` block
+      — the server's LIVE ``SearchConfig`` (reflecting any ``KREMORY_CONTENT_WEIGHT``
+      / ``KREMORY_RRF_K`` boot overrides the server was launched with). Also
+      stamps ``graph_degree_weight`` / ``temporal_weight`` when reported.
+    - ``rerank_enabled``: from ``/health``'s compile-time ``rerank`` feature bool.
+    - ``features``: reconstructed from ``/health``'s feature booleans (the actual
+      compiled set).
+    - ``provenance_source``: ``"health"`` when sourced from the server, or
+      ``"env-fallback"`` when it fell back to env (see below).
+
+    Fallback: if ``/health`` is unreachable or an older server lacks a ``scoring``
+    block, source the scoring knobs from the harness ``KREMORY_*`` env instead and
+    log a WARNING that the stamp MAY BE UNFAITHFUL to the server's active config.
+
+    `assert_provenance`'s contract is unchanged — it still asserts only the keys
+    the caller lists in ``expected``.
     """
 
-    def _num(name: str, default: float, cast) -> Any:
+    def _env_num(name: str, default: float, cast) -> Any:
         raw = os.environ.get(name)
         if raw is None:
             return default
@@ -81,13 +146,43 @@ def build_provenance() -> dict[str, Any]:
         except (ValueError, TypeError):
             return default
 
+    # Prefer the server's ACTUAL active config (/health) — the single source of
+    # truth. Only fetch when the caller didn't inject a `health` dict directly.
+    if health is None and server is not None:
+        health = _fetch_health(server)
+
+    scoring = health.get("scoring") if isinstance(health, dict) else None
+
+    if isinstance(scoring, dict):
+        return {
+            "git_sha": _git_sha(),
+            "content_stream_weight": float(scoring.get("content_stream_weight", 1.0)),
+            "rrf_k": int(scoring.get("rrf_k", 60)),
+            "graph_degree_weight": scoring.get("graph_degree_weight"),
+            "temporal_weight": scoring.get("temporal_weight"),
+            "rerank_enabled": bool(health.get("rerank", False)),
+            "features": _features_from_health(health),
+            "provenance_source": "health",
+        }
+
+    # Env fallback. Warn LOUDLY that the stamp may be unfaithful — but only when a
+    # server/health WAS expected (a bare `build_provenance()` is normal standalone
+    # usage and must stay quiet).
+    if server is not None or health is not None:
+        _LOG.warning(
+            "provenance: server /health did not provide a `scoring` block "
+            "(unreachable or older server) — stamping from harness env, which MAY "
+            "BE UNFAITHFUL to the server's active scoring config (TD-135)."
+        )
+
     return {
         "git_sha": _git_sha(),
-        "content_stream_weight": _num("KREMORY_CONTENT_WEIGHT", 1.0, float),
-        "rrf_k": _num("KREMORY_RRF_K", 60, int),
+        "content_stream_weight": _env_num("KREMORY_CONTENT_WEIGHT", 1.0, float),
+        "rrf_k": _env_num("KREMORY_RRF_K", 60, int),
         "rerank_enabled": _env_truthy("KREMORY_RERANK")
         or ("KREMORY_RERANK_K" in os.environ),
         "features": os.environ.get("KREMORY_FEATURES", ""),
+        "provenance_source": "env-fallback",
     }
 
 

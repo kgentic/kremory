@@ -138,8 +138,41 @@ impl IntoResponse for ApiError {
 // GET /health
 // ────────────────────────────────────────────────────────────────────────
 
-async fn health_check() -> StatusCode {
-    StatusCode::OK
+/// `GET /health` — liveness (still 200) PLUS the server's build-feature flags
+/// and its ACTIVE scoring config (TD-135 / recall-improvement-e2e-spec-2026-07-22
+/// §S0-infra). The bench harness's `provenance.build_provenance()` stamps the
+/// recall-run JSON from THIS response so the provenance record is faithful to
+/// what the search path actually used — rather than re-reading the harness
+/// process's env, which can silently differ from the server's env and is exactly
+/// how a config-mismatch produced a bogus benchmark number.
+///
+/// - `content_search` / `rerank` / `prometheus` are compile-time
+///   `cfg!(feature = "…")` booleans — an orchestrator can now detect a degraded
+///   recall-only build programmatically instead of scraping the boot banner
+///   (closes the Stage-0 Quinn LOW).
+/// - `scoring` is read from the LIVE [`kremory::Memory::search_config`] (the
+///   Engine's `SearchConfig`, carrying any `KREMORY_CONTENT_WEIGHT` /
+///   `KREMORY_RRF_K` boot overrides), NOT re-read from env here.
+///
+/// Additive: the response is still `200 OK`; the JSON body is new (the prior
+/// handler returned an empty 200), so no existing field is removed.
+async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
+    let scoring = state.mem.search_config();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "ok",
+            "content_search": cfg!(feature = "content-search"),
+            "rerank": cfg!(feature = "rerank"),
+            "prometheus": cfg!(feature = "prometheus"),
+            "scoring": {
+                "content_stream_weight": scoring.content_stream_weight,
+                "rrf_k": scoring.rrf_k,
+                "graph_degree_weight": scoring.graph_degree_weight,
+                "temporal_weight": scoring.temporal_weight,
+            },
+        })),
+    )
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1042,6 +1075,82 @@ mod tests {
             .unwrap();
         let resp = router.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// TD-135 / recall-improvement-e2e-spec-2026-07-22 §S0-infra: `GET /health`
+    /// must report the server's ACTIVE scoring config + build-feature flags so
+    /// the bench harness (`provenance.build_provenance`) stamps a FAITHFUL
+    /// provenance record instead of re-reading the harness process's env (which
+    /// can silently differ from the server's — the config-mismatch that produced
+    /// a bogus benchmark number).
+    ///
+    /// The load-bearing assertion: a value set via the `KREMORY_CONTENT_WEIGHT`
+    /// / `KREMORY_RRF_K` boot override appears in `/health`'s `scoring` block —
+    /// proving the handler reads the LIVE `SearchConfig` (via
+    /// `Memory::search_config`, which `open_graph` populates from these env
+    /// overrides at construction) rather than a hardcoded default. nextest runs
+    /// each test in its own process, so this env mutation is isolated (same
+    /// pattern as `providers::search_env_overrides_apply_*`).
+    #[tokio::test]
+    async fn health_reports_active_scoring_config_and_features() {
+        std::env::set_var("KREMORY_CONTENT_WEIGHT", "2.5");
+        std::env::set_var("KREMORY_RRF_K", "42");
+        // `open_graph` (reached through the builder in `mock_memory`) applies the
+        // overrides to the Engine's `SearchConfig` at construction.
+        let mem = mock_memory().await;
+        std::env::remove_var("KREMORY_CONTENT_WEIGHT");
+        std::env::remove_var("KREMORY_RRF_K");
+
+        let router = build_router(AppState { mem, rrf_k: 42 });
+        let req = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+
+        // Build-feature booleans reflect the compiled build (cfg!-evaluated).
+        assert_eq!(
+            json["content_search"].as_bool(),
+            Some(cfg!(feature = "content-search")),
+            "/health content_search must reflect the compiled feature: {json}"
+        );
+        assert_eq!(
+            json["rerank"].as_bool(),
+            Some(cfg!(feature = "rerank")),
+            "/health rerank must reflect the compiled feature: {json}"
+        );
+        assert_eq!(
+            json["prometheus"].as_bool(),
+            Some(cfg!(feature = "prometheus")),
+            "/health prometheus must reflect the compiled feature: {json}"
+        );
+
+        // Scoring block reflects the LIVE (env-overridden) SearchConfig — NOT a
+        // hardcoded default. This is the faithfulness guarantee TD-135 hinges on.
+        let scoring = &json["scoring"];
+        assert_eq!(
+            scoring["content_stream_weight"].as_f64(),
+            Some(2.5),
+            "content_stream_weight must be the KREMORY_CONTENT_WEIGHT override (2.5), \
+             proving /health reads the live SearchConfig: {json}"
+        );
+        assert_eq!(
+            scoring["rrf_k"].as_u64(),
+            Some(42),
+            "rrf_k must be the KREMORY_RRF_K override (42): {json}"
+        );
+        // The remaining post-RRF axes must be present + numeric (defaults here).
+        assert!(
+            scoring["graph_degree_weight"].as_f64().is_some(),
+            "graph_degree_weight must be present + numeric: {json}"
+        );
+        assert!(
+            scoring["temporal_weight"].as_f64().is_some(),
+            "temporal_weight must be present + numeric: {json}"
+        );
     }
 
     /// B1 fail-loud invariant (2026-07-22): on a build WITHOUT `content-search`,

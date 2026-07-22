@@ -61,6 +61,74 @@ def test_build_provenance_reflects_env():
         os.environ.pop(k, None)
 
 
+def test_build_provenance_prefers_health_over_env():
+    """TD-135: when a /health `scoring` block is present, build_provenance sources
+    the scoring config + feature flags from IT — NOT env — even when env disagrees.
+    The /health dict is injected directly so no live server is required."""
+    # Env deliberately says something DIFFERENT from /health, to prove /health wins.
+    os.environ["KREMORY_CONTENT_WEIGHT"] = "9.9"
+    os.environ["KREMORY_RRF_K"] = "999"
+    os.environ["KREMORY_FEATURES"] = "content-search"
+    try:
+        health = {
+            "status": "ok",
+            "content_search": True,
+            "rerank": True,
+            "prometheus": False,
+            "scoring": {
+                "content_stream_weight": 1.5,
+                "rrf_k": 60,
+                "graph_degree_weight": 0.05,
+                "temporal_weight": 0.0,
+            },
+        }
+        prov = build_provenance(health=health)
+        # /health scoring wins over the (disagreeing) env.
+        assert prov["content_stream_weight"] == 1.5
+        assert prov["rrf_k"] == 60
+        assert prov["graph_degree_weight"] == 0.05
+        assert prov["temporal_weight"] == 0.0
+        # Feature flags come from /health too (rerank bool + reconstructed features).
+        assert prov["rerank_enabled"] is True
+        assert prov["features"] == "content-search,rerank"
+        assert prov["provenance_source"] == "health"
+        assert "git_sha" in prov and prov["git_sha"]  # still from git
+    finally:
+        for k in ("KREMORY_CONTENT_WEIGHT", "KREMORY_RRF_K", "KREMORY_FEATURES"):
+            os.environ.pop(k, None)
+
+
+def test_build_provenance_falls_back_to_env_without_health():
+    """No server + no /health → env fallback, flagged as such. Preserves the
+    standalone (env-sourced) behaviour for older callers / offline use."""
+    for k in ("KREMORY_CONTENT_WEIGHT", "KREMORY_RRF_K", "KREMORY_RERANK",
+              "KREMORY_RERANK_K", "KREMORY_FEATURES"):
+        os.environ.pop(k, None)
+    os.environ["KREMORY_CONTENT_WEIGHT"] = "2.0"
+    try:
+        prov = build_provenance()  # neither server nor health
+        assert prov["content_stream_weight"] == 2.0
+        assert prov["rrf_k"] == 60
+        assert prov["provenance_source"] == "env-fallback"
+    finally:
+        os.environ.pop("KREMORY_CONTENT_WEIGHT", None)
+
+
+def test_build_provenance_health_without_scoring_falls_back_to_env():
+    """An older server whose /health lacks a `scoring` block → env fallback
+    (unfaithful, but recorded) rather than a crash."""
+    for k in ("KREMORY_CONTENT_WEIGHT", "KREMORY_RRF_K", "KREMORY_FEATURES"):
+        os.environ.pop(k, None)
+    os.environ["KREMORY_CONTENT_WEIGHT"] = "3.0"
+    try:
+        health = {"status": "ok"}  # no scoring block (older server)
+        prov = build_provenance(health=health)
+        assert prov["content_stream_weight"] == 3.0
+        assert prov["provenance_source"] == "env-fallback"
+    finally:
+        os.environ.pop("KREMORY_CONTENT_WEIGHT", None)
+
+
 def test_assert_provenance_roundtrip_match():
     """A stamp written into the JSON header round-trips through assert_provenance."""
     with tempfile.TemporaryDirectory() as td:
@@ -109,6 +177,9 @@ def test_assert_provenance_missing_stamp_raises():
 def _run() -> int:
     tests = [
         test_build_provenance_reflects_env,
+        test_build_provenance_prefers_health_over_env,
+        test_build_provenance_falls_back_to_env_without_health,
+        test_build_provenance_health_without_scoring_falls_back_to_env,
         test_assert_provenance_roundtrip_match,
         test_assert_provenance_mismatch_raises,
         test_assert_provenance_missing_stamp_raises,

@@ -471,3 +471,10 @@ revisit = "v0.3.0"
 # described the pre-Tier-0b deferred state (doc-rot, not a gap). The data types
 # (MutationRecord / MutationFilter / MutationKind) are not parity-tracked, so no
 # skip is needed for them.
+
+# ── Introspection accessor (TD-135 bench provenance integrity) ───────────────
+
+[[skip]]
+symbol = "Memory::search_config"
+reason = "Read-only introspection accessor added for TD-135 — surfaces the live SearchConfig so the kremory-http bench server's GET /health can report the ACTUAL active scoring config (single source of truth vs re-reading env). It is a benchmark/HTTP-transport concern, not a JS-consumer surface; returning kremory::core::config::SearchConfig would require projecting that whole struct to napi for no consumer benefit. Revisit only if a JS consumer needs runtime scoring-config introspection."
+revisit = "never"

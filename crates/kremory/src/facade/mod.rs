@@ -575,6 +575,25 @@ impl Memory {
         providers::with_anthropic(path).await
     }
 
+    // ── Introspection ───────────────────────────────────────────────────────
+
+    /// The live search-fusion configuration this `Memory` uses for recall — the
+    /// [`SearchConfig`](crate::core::config::SearchConfig) carried by the
+    /// underlying graph handle, reflecting any `KREMORY_CONTENT_WEIGHT` /
+    /// `KREMORY_RRF_K` boot overrides applied at construction (via
+    /// `providers::search_env_overrides`). Read-only; cheap (a clone of an
+    /// in-memory struct — no I/O, hence not `async`).
+    ///
+    /// Exposed (TD-135) so a transport/consumer — e.g. the `kremory-http` bench
+    /// server's `GET /health` endpoint — can report the ACTUAL active scoring
+    /// config as a single source of truth, rather than re-reading env (which can
+    /// drift from what the search path actually uses and is exactly how a
+    /// config-mismatch produced a bogus benchmark number). Stub/test graph
+    /// handles that carry no `Engine` return `SearchConfig::default()`.
+    pub fn search_config(&self) -> crate::core::config::SearchConfig {
+        self.graph.search_config()
+    }
+
     // ── Test utilities ────────────────────────────────────────────────────────
 
     /// Access the underlying `TemporalGraph` for integration tests that need
