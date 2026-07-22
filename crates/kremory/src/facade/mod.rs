@@ -734,6 +734,7 @@ impl Memory {
             recall_id: Uuid::new_v4(),
             k: None,
             as_of: None,
+            rerank_k: None,
             template: Some(RecallTemplate::TemporalFacts),
             raw_mode: false,
             opts: None,

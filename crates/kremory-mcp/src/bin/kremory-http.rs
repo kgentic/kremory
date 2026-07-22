@@ -242,6 +242,11 @@ async fn search(
         as_of: None,
         format: RecallFormat::Structured,
         template: RecallTemplateWire::default(),
+        // TD-062 (spec §3 Increment 3): not exposed on this bench/eval REST
+        // route's query params — out of scope for this increment (the MCP
+        // tool surface + Rust builder are the primary consumer surfaces this
+        // increment wires per Rule 16).
+        rerank_k: None,
     };
     let results = match query.mode {
         SearchMode::Recall => recall_mode_results(&state.mem, params).await?,

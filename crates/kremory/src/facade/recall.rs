@@ -29,6 +29,9 @@ pub struct RecallRequest<'a> {
     pub(super) recall_id: Uuid,
     pub(super) k: Option<usize>,
     pub(super) as_of: Option<DateTime<Utc>>,
+    /// TD-062 (spec §3 Increment 3): rerank the top-`n` post-fusion
+    /// candidates via a cross-encoder. `None` (default) = no rerank.
+    pub(super) rerank_k: Option<usize>,
     pub(super) template: Option<RecallTemplate>,
     pub(super) raw_mode: bool,
     pub(super) opts: Option<SearchOpts>,
@@ -278,8 +281,7 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
     // exists for this field, mirroring `graph_degree_weight`/`temporal_weight`'s
     // own current state), so this is a faithful read of "the configured
     // value", not a hardcoded bypass of it.
-    let content_stream_weight =
-        crate::core::config::SearchConfig::default().content_stream_weight;
+    let content_stream_weight = crate::core::config::SearchConfig::default().content_stream_weight;
     let fused =
         crate::core::search::rrf_fuse_with_content(crate::core::search::RrfFuseWithContentParams {
             entity_stream: entity_results,
@@ -308,6 +310,202 @@ async fn fuse_content_stream(
 ) -> Result<Vec<RetrievedContext>> {
     metrics::counter!("kremory.recall.canonical_fusion_feature_off_total").increment(1);
     Ok(entity_results)
+}
+
+// ── TD-066 Increment 3 (TD-062 reranker) ──────────────────────────────────────
+//
+// `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md` §3
+// Increment 3. Optional FINAL stage after Increment 1/2's fusion
+// (`fuse_content_stream`, above) — reranks the top-`rerank_k` fused
+// candidates with a cross-encoder for precision. `SearchOpts.rerank_k: None`
+// (the default) is a total no-op, with or without the `rerank` feature
+// compiled in.
+
+/// Bundled parameters for [`apply_rerank`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct ApplyRerankParams<'a> {
+    query: &'a str,
+    rerank_k: Option<usize>,
+    results: Vec<RetrievedContext>,
+}
+
+/// Reranks the top-`rerank_k` of `results` (already fused by Increment 1/2)
+/// against `query` via the process-wide [`crate::core::rerank::Reranker`]
+/// singleton. `None` short-circuits with zero cost. Candidates beyond
+/// `rerank_k` pass through unreranked, appended after the reranked head in
+/// their original fused order — this is a PRECISION pass over the top
+/// slice, not a re-fusion of the whole result set.
+///
+/// Fails OPEN: a reranker error (model load failure, inference error) logs
+/// via `tracing::warn!` + the `error` outcome counter and returns the
+/// original fused order unchanged — reranking is a precision enhancement,
+/// never a correctness-critical path (spec Risk register #11's opt-in-only
+/// framing extends naturally to "never breaks recall on failure").
+#[cfg(feature = "rerank")]
+async fn apply_rerank(params: ApplyRerankParams<'_>) -> Result<Vec<RetrievedContext>> {
+    let ApplyRerankParams {
+        query,
+        rerank_k,
+        results,
+    } = params;
+    let reranker = crate::core::rerank::default_reranker();
+    apply_rerank_with(ApplyRerankWithParams {
+        reranker: reranker.as_ref(),
+        query,
+        rerank_k,
+        results,
+    })
+    .await
+}
+
+/// Bundled parameters for [`apply_rerank_with`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+#[cfg(feature = "rerank")]
+struct ApplyRerankWithParams<'a> {
+    reranker: &'a dyn crate::core::rerank::Reranker,
+    query: &'a str,
+    rerank_k: Option<usize>,
+    results: Vec<RetrievedContext>,
+}
+
+/// The actual reorder logic, parameterised over `&dyn Reranker` so the fast
+/// tier can exercise it with a deterministic mock (spec §3 Increment 3 test
+/// pyramid: "reranker trait mock proving the wiring reorders correctly") —
+/// `apply_rerank` (above) is the thin production wrapper that supplies the
+/// real process-wide singleton.
+#[cfg(feature = "rerank")]
+async fn apply_rerank_with(params: ApplyRerankWithParams<'_>) -> Result<Vec<RetrievedContext>> {
+    use std::collections::HashMap;
+
+    let ApplyRerankWithParams {
+        reranker,
+        query,
+        rerank_k,
+        results,
+    } = params;
+
+    let Some(k) = rerank_k else {
+        return Ok(results);
+    };
+    metrics::histogram!("kremory.rerank.rerank_k_requested").record(k as f64);
+
+    if results.len() <= 1 {
+        // Nothing meaningful to reorder — 0 or 1 candidates has only one
+        // possible order.
+        metrics::counter!("kremory.rerank.invoked_total", "outcome" => "skipped_below_rerank_k")
+            .increment(1);
+        return Ok(results);
+    }
+
+    let take = k.min(results.len());
+    let mut head = results;
+    let tail = if take < head.len() {
+        head.split_off(take)
+    } else {
+        Vec::new()
+    };
+
+    // Candidate text: `entity_name` + `summary` — for content-fused entries
+    // (Increment 1) `summary` already carries the full episode text
+    // (`content_passage_into_retrieved_context`); for entity-only entries
+    // it's the recall-time entity summary. Good-enough v1 candidate text;
+    // not spec-mandated to be more elaborate.
+    let candidates: Vec<(String, String)> = head
+        .iter()
+        .map(|ctx| {
+            (
+                ctx.entity_id.clone(),
+                format!("{} {}", ctx.entity_name, ctx.summary),
+            )
+        })
+        .collect();
+    let original_rank: HashMap<String, usize> = head
+        .iter()
+        .enumerate()
+        .map(|(i, ctx)| (ctx.entity_id.clone(), i))
+        .collect();
+
+    match reranker.rerank(query, &candidates).await {
+        Ok(scored) => {
+            let mut by_id: HashMap<String, RetrievedContext> = head
+                .into_iter()
+                .map(|ctx| (ctx.entity_id.clone(), ctx))
+                .collect();
+            let mut reranked_head = Vec::with_capacity(scored.len());
+            let mut rank_deltas: Vec<f64> = Vec::with_capacity(scored.len());
+            let mut any_reordered = false;
+            for (new_rank, (id, score)) in scored.into_iter().enumerate() {
+                let Some(mut ctx) = by_id.remove(&id) else {
+                    // Reranker returned an id it wasn't handed — defensive
+                    // branch, skip rather than fabricate a result.
+                    continue;
+                };
+                ctx.score = score;
+                if let Some(&old_rank) = original_rank.get(&id) {
+                    rank_deltas.push((new_rank as i64 - old_rank as i64).unsigned_abs() as f64);
+                    if new_rank != old_rank {
+                        any_reordered = true;
+                    }
+                }
+                reranked_head.push(ctx);
+            }
+            // Any candidate the reranker silently omitted (not expected per
+            // fastembed's own contract — one result per input document —
+            // but defends against a future/custom Reranker impl that
+            // filters) still survives, appended after in original order.
+            reranked_head.extend(by_id.into_values());
+
+            if !rank_deltas.is_empty() {
+                let mean_abs_delta = rank_deltas.iter().sum::<f64>() / rank_deltas.len() as f64;
+                metrics::histogram!("kremory.rerank.score_delta").record(mean_abs_delta);
+            }
+            metrics::counter!(
+                "kremory.rerank.invoked_total",
+                "outcome" => if any_reordered { "reordered" } else { "no_reorder" },
+            )
+            .increment(1);
+
+            reranked_head.extend(tail);
+            Ok(reranked_head)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "kremory.rerank failed; falling back to un-reranked fusion order"
+            );
+            metrics::counter!("kremory.rerank.invoked_total", "outcome" => "error").increment(1);
+            let mut fallback = head;
+            fallback.extend(tail);
+            Ok(fallback)
+        }
+    }
+}
+
+/// Feature-off degrade: `rerank` Cargo feature not compiled in. A consumer-
+/// requested `rerank_k` becomes a no-op (rather than silently succeeding
+/// with zero observability) — `kremory.rerank.feature_off_total` only fires
+/// when a caller actually asked for reranking a binary without the feature
+/// can't perform (Rule 19: never silently no-op a consumer-requested knob).
+#[cfg(not(feature = "rerank"))]
+async fn apply_rerank(params: ApplyRerankParams<'_>) -> Result<Vec<RetrievedContext>> {
+    let ApplyRerankParams {
+        query,
+        rerank_k,
+        results,
+    } = params;
+    if rerank_k.is_some() {
+        metrics::counter!("kremory.rerank.feature_off_total").increment(1);
+        // `query` genuinely used here (not just discarded) — gives a caller
+        // wondering why `rerank_k` had no effect the query context to
+        // correlate against, rather than an unused-field `#[allow(dead_code)]`
+        // band-aid on a field the `rerank`-on build DOES read.
+        tracing::debug!(
+            query,
+            "kremory.rerank requested via rerank_k but the 'rerank' Cargo \
+             feature is not compiled in — no-op"
+        );
+    }
+    Ok(results)
 }
 
 /// SQLite parameter cap (libsql ≥ 3.32.0). G6.b values must stay under this
@@ -404,6 +602,15 @@ impl<'a> RecallRequest<'a> {
     /// unaffected.
     pub fn as_of(mut self, ts: DateTime<Utc>) -> Self {
         self.as_of = Some(ts);
+        self
+    }
+
+    /// TD-062 (spec §3 Increment 3): rerank the top-`n` post-fusion
+    /// candidates with a cross-encoder before returning. A no-op unless the
+    /// `rerank` Cargo feature is compiled in (see `apply_rerank`'s two
+    /// cfg-gated bodies).
+    pub fn rerank_k(mut self, n: usize) -> Self {
+        self.rerank_k = Some(n);
         self
     }
 
@@ -582,7 +789,11 @@ impl<'a> RecallRequest<'a> {
             limit: self.k,
             as_of: self.as_of,
             source_kind: None,
+            rerank_k: self.rerank_k,
         });
+        // TD-066 Increment 3: captured before `opts` moves into `memory::search`
+        // below — `apply_rerank` runs as the LAST pipeline stage, after fusion.
+        let rerank_k = opts.rerank_k;
         // ADR-029a lazy population.
         self.memory.ensure_namespace_policy(&ns).await?;
         let recall_id = self.recall_id;
@@ -639,6 +850,14 @@ impl<'a> RecallRequest<'a> {
         .await?;
         #[cfg(not(feature = "content-search"))]
         let results = fuse_content_stream(results).await?;
+        // TD-066 Increment 3 (TD-062 reranker, spec §3) — optional final
+        // stage, after fusion. `rerank_k: None` (default) is a no-op.
+        let results = apply_rerank(ApplyRerankParams {
+            query: &self.query,
+            rerank_k,
+            results,
+        })
+        .await?;
         Ok(memory::context_block(&results, template.into()))
     }
 
@@ -682,10 +901,16 @@ impl<'a> RecallRequest<'a> {
         let mut sub_futures = Vec::with_capacity(namespaces.len());
         for ns in namespaces {
             let query = query.clone();
+            // TD-066 Increment 3: multi-namespace fan-out does not wire
+            // `apply_rerank` (each sub-query is independent; a cross-
+            // namespace top-k rerank is a follow-up, not this increment's
+            // scope) — `rerank_k` still threads through if the caller set it
+            // via `opts_template`, it's simply unused by this path today.
             let opts = opts_template.clone().unwrap_or(SearchOpts {
                 limit: per_ns_k,
                 as_of,
                 source_kind: None,
+                rerank_k: None,
             });
             let metadata_filters = std::sync::Arc::clone(&metadata_filters);
             let metadata_filters_in = std::sync::Arc::clone(&metadata_filters_in);
@@ -833,11 +1058,16 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             }
 
             let ns = inner.memory.resolve_namespace(inner.namespace.clone())?;
+            let rerank_k_from_field = inner.rerank_k;
             let opts = inner.opts.unwrap_or(SearchOpts {
                 limit: inner.k,
                 as_of: inner.as_of,
                 source_kind: None,
+                rerank_k: rerank_k_from_field,
             });
+            // TD-066 Increment 3: captured before `opts` moves into
+            // `memory::search` below.
+            let rerank_k = opts.rerank_k;
             // ADR-029a lazy population.
             inner.memory.ensure_namespace_policy(&ns).await?;
             let recall_id = inner.recall_id;
@@ -895,6 +1125,16 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             .await?;
             #[cfg(not(feature = "content-search"))]
             let filtered = fuse_content_stream(filtered).await?;
+            // TD-066 Increment 3 (TD-062 reranker, spec §3) — optional final
+            // stage, after fusion. `rerank_k: None` (default) is a no-op.
+            // This is the terminal `kremory_recall`'s `Structured` format
+            // uses, so wiring here reaches the MCP tool surface too.
+            let filtered = apply_rerank(ApplyRerankParams {
+                query: &inner.query,
+                rerank_k,
+                results: filtered,
+            })
+            .await?;
             Ok(filtered)
         })
     }
@@ -1557,5 +1797,185 @@ mod fuse_content_stream_tests {
              to fuse a content stream from: {fused:?}"
         );
         assert_eq!(fused[0].entity_id, "seed");
+    }
+}
+
+/// TD-066 Increment 3 (TD-062 reranker) — fast tier: `apply_rerank_with`'s
+/// wiring logic (head/tail split, id→context reassembly, score overwrite,
+/// rank-delta bookkeeping) exercised via a deterministic mock `Reranker` —
+/// zero model load, zero I/O (spec §3 Increment 3 test pyramid).
+#[cfg(all(test, feature = "rerank"))]
+mod apply_rerank_tests {
+    use super::*;
+    use crate::core::rerank::Reranker;
+
+    fn ctx(id: &str, score: f32) -> RetrievedContext {
+        RetrievedContext::new(crate::memory::types::RetrievedContextNewParams {
+            entity_id: id.to_owned(),
+            entity_name: id.to_owned(),
+            summary: format!("summary for {id}"),
+            score,
+            source_refs: Vec::new(),
+        })
+    }
+
+    /// Deterministic mock scoring every candidate by a caller-supplied
+    /// `HashMap<id, score>` — proves `apply_rerank_with`'s wiring reorders
+    /// by the RERANKER's score, not the fused-input order.
+    struct MockReranker {
+        scores: std::collections::HashMap<String, f32>,
+    }
+
+    #[async_trait::async_trait]
+    impl Reranker for MockReranker {
+        async fn rerank(
+            &self,
+            _query: &str,
+            candidates: &[(String, String)],
+        ) -> crate::core::error::Result<Vec<(String, f32)>> {
+            let mut out: Vec<(String, f32)> = candidates
+                .iter()
+                .map(|(id, _)| (id.clone(), *self.scores.get(id).unwrap_or(&0.0)))
+                .collect();
+            out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            Ok(out)
+        }
+    }
+
+    /// A reranker whose `rerank()` always errors — proves the fail-OPEN
+    /// contract (a reranker failure must never break recall).
+    struct FailingReranker;
+
+    #[async_trait::async_trait]
+    impl Reranker for FailingReranker {
+        async fn rerank(
+            &self,
+            _query: &str,
+            _candidates: &[(String, String)],
+        ) -> crate::core::error::Result<Vec<(String, f32)>> {
+            Err(crate::core::error::Error::Search("mock failure".to_owned()))
+        }
+    }
+
+    #[tokio::test]
+    async fn rerank_k_none_is_a_no_op() {
+        let results = vec![ctx("a", 0.9), ctx("b", 0.5)];
+        let reranker = MockReranker {
+            scores: std::collections::HashMap::new(),
+        };
+        let out = apply_rerank_with(ApplyRerankWithParams {
+            reranker: &reranker,
+            query: "query",
+            rerank_k: None,
+            results: results.clone(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            out.iter().map(|c| c.entity_id.clone()).collect::<Vec<_>>(),
+            results
+                .iter()
+                .map(|c| c.entity_id.clone())
+                .collect::<Vec<_>>(),
+            "rerank_k: None must leave fused order completely unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn reranker_reorders_the_top_k_head() {
+        // Fused order: a, b, c (by RRF/fusion score). Mock reranker scores
+        // "c" highest — proves the wiring adopts the RERANKER's order for
+        // the reranked head, not the original fused order.
+        let results = vec![ctx("a", 0.9), ctx("b", 0.5), ctx("c", 0.1)];
+        let reranker = MockReranker {
+            scores: [
+                ("a".to_string(), 0.1),
+                ("b".to_string(), 0.2),
+                ("c".to_string(), 0.9),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let out = apply_rerank_with(ApplyRerankWithParams {
+            reranker: &reranker,
+            query: "query",
+            rerank_k: Some(3),
+            results,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            out.iter().map(|c| c.entity_id.as_str()).collect::<Vec<_>>(),
+            vec!["c", "b", "a"],
+            "reranker's score order must win for the reranked head"
+        );
+        // Score field must be OVERWRITTEN with the reranker's score, not the
+        // stale fusion score.
+        assert!((out[0].score - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn candidates_beyond_rerank_k_pass_through_unreranked_after_head() {
+        // rerank_k=1 reranks only "a"; "b" and "c" must survive, appended
+        // after in their ORIGINAL fused order (untouched by the mock, which
+        // would otherwise put "c" first).
+        let results = vec![ctx("a", 0.9), ctx("b", 0.5), ctx("c", 0.1)];
+        let reranker = MockReranker {
+            scores: [("a".to_string(), 0.5), ("c".to_string(), 0.9)]
+                .into_iter()
+                .collect(),
+        };
+        let out = apply_rerank_with(ApplyRerankWithParams {
+            reranker: &reranker,
+            query: "query",
+            rerank_k: Some(1),
+            results,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            out.iter().map(|c| c.entity_id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b", "c"],
+            "only the top-1 head is reranked ('a' alone can't reorder); \
+             the tail ('b','c') must pass through in original fused order: {out:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_or_one_candidate_skips_reranker_entirely() {
+        let results = vec![ctx("a", 0.9)];
+        let reranker = FailingReranker;
+        // If the wiring actually called the (failing) reranker for a
+        // single-candidate set, this would hit the Err arm and log a
+        // warning rather than short-circuit — asserting Ok here proves the
+        // `results.len() <= 1` guard fires BEFORE any reranker call.
+        let out = apply_rerank_with(ApplyRerankWithParams {
+            reranker: &reranker,
+            query: "query",
+            rerank_k: Some(5),
+            results,
+        })
+        .await
+        .unwrap();
+        assert_eq!(out.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reranker_error_fails_open_to_original_fused_order() {
+        let results = vec![ctx("a", 0.9), ctx("b", 0.5)];
+        let reranker = FailingReranker;
+        let out = apply_rerank_with(ApplyRerankWithParams {
+            reranker: &reranker,
+            query: "query",
+            rerank_k: Some(2),
+            results,
+        })
+        .await
+        .expect("a reranker error must fail OPEN, not propagate Err");
+        assert_eq!(
+            out.iter().map(|c| c.entity_id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"],
+            "on reranker error, original fused order must survive unchanged"
+        );
     }
 }

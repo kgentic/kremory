@@ -397,6 +397,18 @@ pub struct SearchOpts {
     pub as_of: Option<DateTime<Utc>>,
     /// Restrict to a specific source kind (e.g. only `Document` results).
     pub source_kind: Option<SourceKind>,
+    /// TD-062 (spec §3 Increment 3): rerank the top-`n` post-fusion candidates
+    /// with a cross-encoder before returning. `None` (default) = no rerank —
+    /// today's behaviour, unaffected whether or not the `rerank` Cargo
+    /// feature is compiled in. `Some(n)` reranks the top `n` fused
+    /// candidates (`n.min(results.len())`); any candidates beyond `n` pass
+    /// through unreranked, appended after in their original fused order.
+    /// A no-op when the `rerank` feature is not compiled in (the field
+    /// always exists — per CLAUDE.md Rule 16 web-app-ui-parity, the MCP tool
+    /// surface must be able to set it — but only has an effect when the
+    /// feature is on).
+    #[serde(default)]
+    pub rerank_k: Option<usize>,
 }
 
 /// Default value for `RetrievedContext::entity_type_name` when absent from

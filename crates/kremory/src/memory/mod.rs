@@ -1007,6 +1007,7 @@ mod tests {
             limit: Some(25),
             as_of: None,
             source_kind: Some(SourceKind::Document),
+            ..Default::default()
         };
 
         let hits = search(SearchParams {
@@ -1115,6 +1116,7 @@ mod tests {
             limit: None,
             as_of: Some(ts),
             source_kind: None,
+            ..Default::default()
         };
         let hits = search(SearchParams {
             graph: &graph,
