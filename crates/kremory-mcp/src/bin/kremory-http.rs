@@ -101,6 +101,12 @@ const DEFAULT_PORT: u16 = 3179;
 #[derive(Clone)]
 struct AppState {
     mem: Arc<Memory>,
+    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): RRF `k` for the
+    /// bin-local `rrf_merge` hybrid fusion, read once from `KREMORY_RRF_K` at
+    /// boot (default 60). The library fusion sites read their own `k` from the
+    /// Engine's `SearchConfig` (via `search_env_overrides`); this bin-local
+    /// value keeps the REST hybrid arm's `rrf_merge` on the SAME sweep point.
+    rrf_k: usize,
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -253,7 +259,7 @@ async fn search(
     let results = match query.mode {
         SearchMode::Recall => recall_mode_results(&state.mem, params).await?,
         SearchMode::Content => content_mode_results(&state.mem, params).await?,
-        SearchMode::Hybrid => hybrid_mode_results(&state.mem, params).await?,
+        SearchMode::Hybrid => hybrid_mode_results(&state.mem, params, state.rrf_k).await?,
     };
     Ok(Json(SearchResponseWire { results }))
 }
@@ -359,6 +365,7 @@ async fn content_mode_results(
 async fn hybrid_mode_results(
     mem: &Memory,
     params: RecallParams,
+    rrf_k: usize,
 ) -> Result<Vec<SearchResultWire>, ApiError> {
     let k = params.k;
     let recall = recall_mode_results(mem, params.clone()).await?;
@@ -371,7 +378,7 @@ async fn hybrid_mode_results(
     // `k` when given; absent it, bound hybrid to at most its largest single arm
     // so the union never floods past what either mode alone would return.
     let cap = k.unwrap_or_else(|| recall.len().max(content.len()));
-    let mut merged = rrf_merge(recall, content);
+    let mut merged = rrf_merge(recall, content, rrf_k);
     merged.truncate(cap);
     Ok(merged)
 }
@@ -384,6 +391,7 @@ async fn hybrid_mode_results(
 async fn hybrid_mode_results(
     _mem: &Memory,
     _params: RecallParams,
+    _rrf_k: usize,
 ) -> Result<Vec<SearchResultWire>, ApiError> {
     tracing::error!(
         "mode=hybrid requested but kremory-http was built WITHOUT the `content-search` \
@@ -418,13 +426,21 @@ async fn hybrid_mode_results(
 /// 1/(RRF_K + rank_list(d))`, rank 1-based; dedup by id (a result present in
 /// both streams accrues both contributions). Deterministic: fused-score desc,
 /// then id asc on ties.
-fn rrf_merge(a: Vec<SearchResultWire>, b: Vec<SearchResultWire>) -> Vec<SearchResultWire> {
-    const RRF_K: f32 = 60.0;
+fn rrf_merge(
+    a: Vec<SearchResultWire>,
+    b: Vec<SearchResultWire>,
+    rrf_k: usize,
+) -> Vec<SearchResultWire> {
+    // recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): `k` is now the
+    // boot-read `KREMORY_RRF_K` value (AppState.rrf_k), NOT a hardcoded
+    // `const RRF_K = 60.0`, so this bin-local hybrid-fusion sweep site tracks
+    // the same k as the library fusion sites.
+    let rrf_k = rrf_k as f32;
     let mut fused: std::collections::HashMap<String, SearchResultWire> =
         std::collections::HashMap::with_capacity(a.len() + b.len());
     for list in [a, b] {
         for (rank, r) in list.into_iter().enumerate() {
-            let contrib = 1.0 / (RRF_K + (rank as f32) + 1.0);
+            let contrib = 1.0 / (rrf_k + (rank as f32) + 1.0);
             fused
                 .entry(r.id.clone())
                 .and_modify(|e| e.score += contrib)
@@ -698,7 +714,42 @@ async fn main() -> Result<()> {
         .install_recorder()
         .context("failed to install Prometheus recorder")?;
 
-    let app = build_router(AppState { mem: Arc::new(mem) });
+    // recall-improvement-e2e-spec-2026-07-22 §S0-infra (R2): read the
+    // search-fusion SWEEP knobs at boot so weight/`k` sweeps cost a restart, not
+    // a rebuild. `KREMORY_RRF_K` feeds the bin-local `rrf_merge` (hybrid arm);
+    // the library fusion sites (`context.rs` entity RRF + `rrf_fuse_with_content`
+    // content fusion) read the SAME env at Memory construction via
+    // `facade::providers::search_env_overrides`. `KREMORY_CONTENT_WEIGHT` is
+    // consumed by the library — read here only for the authoritative boot
+    // banner. Fail-loud: a malformed `KREMORY_RRF_K` WARNs + falls back to 60
+    // (never silently accepted as garbage).
+    let rrf_k: usize = match std::env::var("KREMORY_RRF_K") {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    value = %raw,
+                    error = %e,
+                    "KREMORY_RRF_K is not a valid usize — falling back to default 60"
+                );
+                60
+            }
+        },
+        Err(_) => 60,
+    };
+    let content_weight_display =
+        std::env::var("KREMORY_CONTENT_WEIGHT").unwrap_or_else(|_| "1.0 (default)".to_string());
+    tracing::info!(
+        rrf_k,
+        content_stream_weight = %content_weight_display,
+        "kremory-http: search-fusion sweep point — rrf_k applied to bin-local rrf_merge; \
+         content_stream_weight applied to the Engine SearchConfig via search_env_overrides"
+    );
+
+    let app = build_router(AppState {
+        mem: Arc::new(mem),
+        rrf_k,
+    });
 
     #[cfg(feature = "prometheus")]
     let app = app.route(
@@ -862,7 +913,10 @@ mod tests {
     #[tokio::test]
     async fn http_roundtrip_memories_search_delete_consolidation() {
         let mem = mock_memory().await;
-        let router = build_router(AppState { mem: mem.clone() });
+        let router = build_router(AppState {
+            mem: mem.clone(),
+            rrf_k: 60,
+        });
         let ns = "ns-http";
 
         // POST /memories → 201 + non-empty {id}. (Extraction path + mock LLM
@@ -980,7 +1034,7 @@ mod tests {
     #[tokio::test]
     async fn health_returns_200() {
         let mem = mock_memory().await;
-        let router = build_router(AppState { mem });
+        let router = build_router(AppState { mem, rrf_k: 60 });
         let req = Request::builder()
             .method("GET")
             .uri("/health")
@@ -1001,7 +1055,7 @@ mod tests {
     #[tokio::test]
     async fn hybrid_without_content_search_feature_hard_fails() {
         let mem = mock_memory().await;
-        let router = build_router(AppState { mem });
+        let router = build_router(AppState { mem, rrf_k: 60 });
         let ns = "ns-http-faildude";
         for mode in ["hybrid", "content"] {
             let req = Request::builder()
@@ -1037,7 +1091,10 @@ mod tests {
     #[tokio::test]
     async fn http_search_mode_content_returns_bm25_passage() {
         let mem = mock_memory().await;
-        let router = build_router(AppState { mem: mem.clone() });
+        let router = build_router(AppState {
+            mem: mem.clone(),
+            rrf_k: 60,
+        });
         let ns = "ns-http-content";
 
         pin_fact(&mem, ns, "Zephyrine").await;
@@ -1096,7 +1153,10 @@ mod tests {
     #[tokio::test]
     async fn http_search_mode_content_natural_language_query_uses_or_fallback() {
         let mem = mock_memory().await;
-        let router = build_router(AppState { mem: mem.clone() });
+        let router = build_router(AppState {
+            mem: mem.clone(),
+            rrf_k: 60,
+        });
         let ns = "ns-http-content-nl";
 
         // Pinned content: "Zephyrine wrote the first algorithm" (see `pin_fact`).
@@ -1141,7 +1201,10 @@ mod tests {
     #[tokio::test]
     async fn http_search_default_mode_is_hybrid() {
         let mem = mock_memory().await;
-        let router = build_router(AppState { mem: mem.clone() });
+        let router = build_router(AppState {
+            mem: mem.clone(),
+            rrf_k: 60,
+        });
         let ns = "ns-http-default-mode";
 
         pin_fact(&mem, ns, "Ada").await;
@@ -1195,7 +1258,7 @@ mod tests {
                 score: 0.6,
             },
         ];
-        let merged = rrf_merge(recall, content);
+        let merged = rrf_merge(recall, content, 60);
         let ids: Vec<&str> = merged.iter().map(|r| r.id.as_str()).collect();
         // b ∈ both → 1/(60+2)+1/(60+1) ≈ 0.0325 (top). a (recall rank0) 1/61 ≈
         // 0.01639 edges c (content rank1) 1/62 ≈ 0.01613; id-asc tiebreak is
@@ -1212,6 +1275,49 @@ mod tests {
         assert!(
             merged[0].id == "b" && merged[0].score > merged[1].score,
             "dual-stream result must outrank single-stream: {merged:?}"
+        );
+    }
+
+    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3/R4a): the bin-local
+    /// `rrf_merge` (fusion site 3 of 3) reads its RRF `k` from the argument
+    /// (boot `KREMORY_RRF_K` → `AppState.rrf_k`), NOT a hardcoded const. A
+    /// different `k` must produce different fused scores on identical input,
+    /// proving the value flows through rather than being ignored.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_merge_reads_k_argument_not_const() {
+        let input = || {
+            (
+                vec![SearchResultWire {
+                    id: "x".into(),
+                    content: "x".into(),
+                    score: 0.9,
+                }],
+                vec![SearchResultWire {
+                    id: "y".into(),
+                    content: "y".into(),
+                    score: 0.8,
+                }],
+            )
+        };
+        let (ra, rb) = input();
+        let k60 = rrf_merge(ra, rb, 60);
+        let (ra, rb) = input();
+        let k1 = rrf_merge(ra, rb, 1);
+        // rank-0 contribution is 1/(k+0+1): k=60 → 1/61 ≈ 0.0164; k=1 → 1/2 = 0.5.
+        let score_x_k60 = k60.iter().find(|r| r.id == "x").unwrap().score;
+        let score_x_k1 = k1.iter().find(|r| r.id == "x").unwrap().score;
+        assert!(
+            (score_x_k60 - (1.0 / 61.0)).abs() < f32::EPSILON,
+            "k=60 must yield 1/61 for a rank-0 hit, got {score_x_k60}"
+        );
+        assert!(
+            (score_x_k1 - 0.5).abs() < f32::EPSILON,
+            "k=1 must yield 1/2 for a rank-0 hit, got {score_x_k1}"
+        );
+        assert!(
+            score_x_k1 > score_x_k60,
+            "a smaller k must raise the fused score — proves rrf_merge reads its k arg"
         );
     }
 }

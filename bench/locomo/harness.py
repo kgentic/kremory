@@ -24,6 +24,13 @@ from pathlib import Path
 import httpx
 from tqdm import tqdm
 
+# recall-improvement-e2e-spec-2026-07-22 §S0-infra [G1]: provenance stamp helper.
+# Sibling module so both the harness (build) and the tally/gate (assert) share it.
+try:
+    from provenance import build_provenance
+except ImportError:  # invoked as a package / from another CWD
+    from bench.locomo.provenance import build_provenance
+
 CODEMEM_BASE = "http://localhost:3179"  # kremory-http: bare routes, NO /api prefix
 DEFAULT_DATASET = Path(__file__).parent / "data" / "locomo10.json"
 NAMESPACE_PREFIX = "locomo-bench"
@@ -963,6 +970,11 @@ def run_benchmark(config: Config) -> dict:
         "mode": config.mode,
         "scorer": config.scorer,
         "server_mode": config.server_mode,
+        # recall-improvement-e2e-spec-2026-07-22 §S0-infra [G1]: stamp the exact
+        # sweep point (git SHA + KREMORY_* search-fusion knobs the harness
+        # launched the server with) so answer-tally/gate can refuse to score a
+        # stale recall file (assert_provenance in bench/locomo/provenance.py).
+        "provenance": build_provenance(),
         "total_questions": len(all_results),
         "o11y": o11y,
         "category_stats": category_stats,

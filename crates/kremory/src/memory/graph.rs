@@ -162,6 +162,18 @@ pub trait GraphHandle: Send + Sync {
     /// Hybrid retrieval over the scoped graph.
     async fn graph_search(&self, params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>>;
 
+    /// The live search-fusion config for this handle
+    /// (recall-improvement-e2e-spec-2026-07-22 §S0-infra). Default returns
+    /// `SearchConfig::default()` (stub/test handles that carry no `Engine`);
+    /// `EngineGraphHandle` overrides it to expose the `Engine`'s configured
+    /// `SearchConfig`, so the facade recall path reads the LIVE
+    /// `content_stream_weight`/`rrf_k` (e.g. the `KREMORY_CONTENT_WEIGHT` /
+    /// `KREMORY_RRF_K` boot overrides) instead of a hardcoded default. Sync +
+    /// cheap (a clone of an in-memory struct — no I/O), hence not `async`.
+    fn search_config(&self) -> crate::core::config::SearchConfig {
+        crate::core::config::SearchConfig::default()
+    }
+
     // ── Legacy consolidation (from D.0a — retained for backwards compat) ─────
     //
     // New code should use `graph_submit_dream`. This method runs dream

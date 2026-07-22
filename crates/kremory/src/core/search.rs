@@ -1529,6 +1529,13 @@ pub(crate) struct RrfFuseWithContentParams<'a> {
     /// (`core/config.rs`) — callers read the config value and pass it here;
     /// this fn stays a pure function over the weight, not a config reader.
     pub content_stream_weight: f32,
+    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): the RRF constant
+    /// `k` (default 60), threaded from the caller's live `SearchConfig` so the
+    /// `KREMORY_RRF_K` boot override reaches THIS content-fusion sweep site.
+    /// Formerly the hardcoded `const RRF_K: f64 = 60.0` inside the fn. Mirrors
+    /// `content_stream_weight`: callers read the config value and pass it here;
+    /// this fn stays a pure function over `k`, not a config reader.
+    pub rrf_k: usize,
 }
 
 /// RRF-fuses the entity-graph recall stream with the ADR-072 `content_search`
@@ -1553,15 +1560,18 @@ pub(crate) struct RrfFuseWithContentParams<'a> {
 pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec<RetrievedContext> {
     use std::collections::HashMap;
 
-    const RRF_K: f64 = 60.0;
-
     let RrfFuseWithContentParams {
         entity_stream,
         content_stream,
         namespace,
         limit,
         content_stream_weight,
+        rrf_k,
     } = params;
+    // recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): `k` now flows from
+    // the caller's live `SearchConfig` (KREMORY_RRF_K boot override), not a
+    // hardcoded `const RRF_K = 60.0`.
+    let rrf_k = rrf_k as f64;
 
     let entity_count = entity_stream.len();
     let content_count = content_stream.len();
@@ -1600,7 +1610,7 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
         HashMap::with_capacity(entity_count + content_count);
 
     for (rank, item) in entity_stream.into_iter().enumerate() {
-        let rrf_score = 1.0 / (RRF_K + rank as f64 + 1.0);
+        let rrf_score = 1.0 / (rrf_k + rank as f64 + 1.0);
         let key = (item.entity_id.clone(), group_id.clone());
         scores
             .entry(key)
@@ -1614,7 +1624,7 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
     for (rank, passage) in content_stream.into_iter().enumerate() {
         // `raw_rrf_score` = the unweighted (weight=1.0) contribution, used for
         // both the baseline-order comparison and the actual weighted sum.
-        let raw_rrf_score = 1.0 / (RRF_K + rank as f64 + 1.0);
+        let raw_rrf_score = 1.0 / (rrf_k + rank as f64 + 1.0);
         let weighted_rrf_score = raw_rrf_score * content_stream_weight as f64;
         let key = (passage.episode_id.to_string(), group_id.clone());
         scores
@@ -3600,6 +3610,7 @@ mod tests {
             namespace: Some(&ns),
             limit: Some(10),
             content_stream_weight: 1.0,
+            rrf_k: 60,
         });
 
         assert_eq!(
@@ -3664,6 +3675,7 @@ mod tests {
                 namespace: Some(&ns),
                 limit: Some(10),
                 content_stream_weight: 1.0,
+                rrf_k: 60,
             });
             assert_eq!(
                 fused.len(),
@@ -3726,6 +3738,7 @@ mod tests {
                 namespace: Some(&ns),
                 limit: Some(1),
                 content_stream_weight: 1.0,
+                rrf_k: 60,
             })
         });
 
@@ -3777,6 +3790,7 @@ mod tests {
             namespace: Some(&ns),
             limit: None,
             content_stream_weight: 1.0,
+            rrf_k: 60,
         });
 
         // No overlap between the 1 entity and 3 content ids, so the union is
@@ -3813,6 +3827,7 @@ mod tests {
                 namespace: Some(&ns),
                 limit: None,
                 content_stream_weight: 1.0,
+                rrf_k: 60,
             })
         });
 
@@ -3874,6 +3889,7 @@ mod tests {
             limit: Some(10),
             content_stream_weight: crate::core::config::SearchConfig::default()
                 .content_stream_weight,
+            rrf_k: 60,
         });
         let shared = fused
             .iter()
@@ -3912,6 +3928,7 @@ mod tests {
             namespace: Some(&ns),
             limit: Some(10),
             content_stream_weight: 1.0,
+            rrf_k: 60,
         });
         let pos_ea_baseline = baseline
             .iter()
@@ -3933,6 +3950,7 @@ mod tests {
             namespace: Some(&ns),
             limit: Some(10),
             content_stream_weight: 3.0,
+            rrf_k: 60,
         });
         let pos_ea_weighted = weighted
             .iter()
@@ -3946,6 +3964,56 @@ mod tests {
             pos_target_weighted < pos_ea_weighted,
             "content_stream_weight=3.0 must push the lower-ranked content item \
              above the entity result once weighted: {weighted:?}"
+        );
+    }
+
+    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3/R4a):
+    /// `rrf_fuse_with_content` (fusion site 2 of 3) reads its RRF `k` from
+    /// `RrfFuseWithContentParams.rrf_k` (threaded from the live `SearchConfig`,
+    /// i.e. the `KREMORY_RRF_K` boot override), NOT the former hardcoded
+    /// `const RRF_K = 60.0`. A different `k` must yield different fused scores
+    /// on identical input — a rank-0 hit scores `1/(k+1)`.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_reads_rrf_k_from_params() {
+        let ns = Namespace::new("ns-rrf-k");
+        let fused_k60 = rrf_fuse_with_content(RrfFuseWithContentParams {
+            entity_stream: vec![test_retrieved_context("e0", "ns-rrf-k")],
+            content_stream: vec![test_content_passage(1, "c0")],
+            namespace: Some(&ns),
+            limit: Some(10),
+            content_stream_weight: 1.0,
+            rrf_k: 60,
+        });
+        let fused_k1 = rrf_fuse_with_content(RrfFuseWithContentParams {
+            entity_stream: vec![test_retrieved_context("e0", "ns-rrf-k")],
+            content_stream: vec![test_content_passage(1, "c0")],
+            namespace: Some(&ns),
+            limit: Some(10),
+            content_stream_weight: 1.0,
+            rrf_k: 1,
+        });
+        let e_k60 = fused_k60
+            .iter()
+            .find(|r| r.entity_id == "e0")
+            .expect("entity e0 present at k=60")
+            .score;
+        let e_k1 = fused_k1
+            .iter()
+            .find(|r| r.entity_id == "e0")
+            .expect("entity e0 present at k=1")
+            .score;
+        assert!(
+            (e_k60 - (1.0_f32 / 61.0)).abs() < f32::EPSILON,
+            "k=60 must yield 1/61 for a rank-0 hit, got {e_k60}"
+        );
+        assert!(
+            (e_k1 - 0.5).abs() < f32::EPSILON,
+            "k=1 must yield 1/2 for a rank-0 hit, got {e_k1}"
+        );
+        assert!(
+            e_k1 > e_k60,
+            "a smaller k must raise the fused score — proves rrf_k flows from params"
         );
     }
 
@@ -3971,6 +4039,7 @@ mod tests {
                 namespace: Some(&ns),
                 limit: None,
                 content_stream_weight: 2.5,
+                rrf_k: 60,
             })
         });
 
@@ -4015,6 +4084,7 @@ mod tests {
                     namespace: Some(&ns),
                     limit: Some(10),
                     content_stream_weight: weight,
+                    rrf_k: 60,
                 })
             });
             snapshotter.snapshot().into_vec().into_iter().find_map(|(k, _, _, v)| {

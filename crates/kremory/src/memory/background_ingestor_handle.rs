@@ -162,6 +162,14 @@ fn ingest_send_err_to_memory_err(e: IngestSendError) -> MemoryError {
 
 #[async_trait]
 impl GraphHandle for BackgroundIngestorGraphHandle {
+    // Pass-through to the inner EngineGraphHandle so the LIVE SearchConfig
+    // (incl. KREMORY_CONTENT_WEIGHT/KREMORY_RRF_K boot overrides) reaches the
+    // facade recall path on the background-routed handle too
+    // (recall-improvement-e2e-spec-2026-07-22 §S0-infra).
+    fn search_config(&self) -> crate::core::config::SearchConfig {
+        self.engine_handle.search_config()
+    }
+
     // ── 1. graph_ingest_episode ──────────────────────────────────────────────
     //
     // ROUTING: run_in_background=true → BackgroundIngestor (sink fires via OS-thread path).

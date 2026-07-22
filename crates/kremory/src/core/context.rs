@@ -124,8 +124,12 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             })
             .await?;
 
-        // Step 3: Reciprocal Rank Fusion (RRF) with k=60 (Bug C + NEW-004)
-        const RRF_K: f32 = 60.0;
+        // Step 3: Reciprocal Rank Fusion (RRF) (Bug C + NEW-004).
+        // recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): the RRF
+        // constant is read from `config.search.rrf_k` (default 60), NOT a
+        // hardcoded const, so the `KREMORY_RRF_K` boot override reaches this —
+        // the entity-graph FTS+vector fusion — sweep site.
+        let rrf_k = self.config.search.rrf_k as f32;
         let bm25_weight = self.config.search.bm25_weight as f32;
         let vector_weight = self.config.search.vector_weight as f32;
 
@@ -133,12 +137,12 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         for (rank, hit) in fts_hits.iter().enumerate() {
             let id = hit.item.id.clone();
             *rrf_scores.entry(id).or_insert(0.0) +=
-                bm25_weight * (1.0 / (RRF_K + rank as f32 + 1.0));
+                bm25_weight * (1.0 / (rrf_k + rank as f32 + 1.0));
         }
         for (rank, hit) in vector_hits.iter().enumerate() {
             let id = hit.item.id.clone();
             *rrf_scores.entry(id).or_insert(0.0) +=
-                vector_weight * (1.0 / (RRF_K + rank as f32 + 1.0));
+                vector_weight * (1.0 / (rrf_k + rank as f32 + 1.0));
         }
 
         // If both FTS and vector returned nothing, return empty (NEW-004: FTS-only

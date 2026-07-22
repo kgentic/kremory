@@ -158,6 +158,18 @@ impl EngineGraphHandle {
 
 #[async_trait]
 impl GraphHandle for EngineGraphHandle {
+    // ── search config accessor (recall-improvement-e2e-spec-2026-07-22 §S0-infra) ──
+    //
+    // Expose the Engine's LIVE `SearchConfig` so the facade recall path
+    // (`facade::recall::fuse_content_stream`) reads the configured
+    // `content_stream_weight`/`rrf_k` — including the `KREMORY_CONTENT_WEIGHT`
+    // / `KREMORY_RRF_K` boot overrides applied at construction
+    // (`facade::providers::search_env_overrides`) — instead of the previous
+    // `SearchConfig::default()` hardcode.
+    fn search_config(&self) -> crate::core::config::SearchConfig {
+        self.engine.config.search.clone()
+    }
+
     // ── 1. graph_ingest_episode ──────────────────────────────────────────────
 
     async fn graph_ingest_episode(
