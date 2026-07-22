@@ -211,6 +211,16 @@ pub struct RecallParams {
     /// `format` is `structured`.
     #[serde(default)]
     pub template: RecallTemplateWire,
+    /// TD-062 (`.ai-docs/specs/td-066-recall-scoring-foundation-
+    /// spec-2026-07-21.md` §3 Increment 3): rerank the top-`n` post-fusion
+    /// candidates with a local cross-encoder before returning, for
+    /// precision beyond BM25/vector/RRF-rank proxies. `None` (default) = no
+    /// rerank. A no-op unless the server was built with kremory's `rerank`
+    /// Cargo feature. Per CLAUDE.md Rule 16 (web-app-ui-parity): exposed
+    /// here so the MCP tool surface can reach the same knob the Rust
+    /// `RecallRequest::rerank_k` builder method exposes.
+    #[serde(default)]
+    pub rerank_k: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -153,6 +153,7 @@ async fn recall_structured_returns_wellformed_payload() {
         as_of: None,
         format: RecallFormat::Structured,
         template: RecallTemplateWire::default(),
+        rerank_k: None,
     };
     let result = server
         .kremory_recall(Parameters(recall))
@@ -198,6 +199,7 @@ async fn recall_returns_pinned_entity_after_enrichment() {
         as_of: None,
         format: RecallFormat::Structured,
         template: RecallTemplateWire::default(),
+        rerank_k: None,
     };
     let result = server
         .kremory_recall(Parameters(recall))
@@ -257,6 +259,7 @@ async fn recall_structured_surfaces_pinned_fact_with_every_wire_field() {
         as_of: None,
         format: RecallFormat::Structured,
         template: RecallTemplateWire::default(),
+        rerank_k: None,
     };
     let result = server
         .kremory_recall(Parameters(recall))
@@ -353,6 +356,7 @@ async fn recall_text_renders_entity_after_enrichment() {
         // Entities template renders name + summary regardless of source_refs
         // (temporal_facts needs episodic edges the pinned entity may lack).
         template: RecallTemplateWire::Entities,
+        rerank_k: None,
     };
     let result = server
         .kremory_recall(Parameters(recall))
@@ -693,6 +697,7 @@ async fn two_overlapping_recalls_run_concurrently() {
         as_of: None,
         format: RecallFormat::Structured,
         template: RecallTemplateWire::default(),
+        rerank_k: None,
     };
 
     let server_a = server.clone();
@@ -760,6 +765,7 @@ async fn recall_rejects_empty_namespace_with_invalid_params() {
         as_of: None,
         format: RecallFormat::Text,
         template: RecallTemplateWire::default(),
+        rerank_k: None,
     };
     let err = server
         .kremory_recall(Parameters(recall))
@@ -836,6 +842,7 @@ async fn recall_as_of_returns_temporally_correct_facts() {
             as_of: Some(as_of.into()),
             format: RecallFormat::Structured,
             template: RecallTemplateWire::default(),
+            rerank_k: None,
         };
         let result = server
             .kremory_recall(Parameters(recall))

@@ -193,6 +193,11 @@ symbol = "RecallRequest::opts"
 reason = "SearchOpts escape hatch; not on JS surface"
 revisit = "never"
 
+[[skip]]
+symbol = "SearchOpts::rerank_k"
+reason = "TD-062 (spec td-066-recall-scoring-foundation-spec-2026-07-21.md §3 Increment 3): new field gating the `rerank` Cargo feature's cross-encoder pass. This increment's scope is explicitly Rust core + the kremory-mcp tool surface (handlers.rs/params.rs) only — kremory-napi wiring (mirroring rerank_k onto JsRecallOptions, per the existing k/as_of mirroring convention) is a same-shape follow-up, not done in this commit."
+revisit = "next kremory-napi surface pass (alongside any other TD-066 fields not yet mirrored)"
+
 # NOTE (TD-053 boy-scout, 2026-06-25): RecallRequest::{filter_metadata,
 # in_namespace, in_namespaces, per_namespace_top_k, best_effort, k, as_of} skip
 # entries removed — each is already mirrored as a field on the RecallOptions

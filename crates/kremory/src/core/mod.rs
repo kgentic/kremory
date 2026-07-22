@@ -162,6 +162,12 @@ pub mod obs;
 pub mod provider;
 pub mod rates;
 pub mod reclassification;
+/// TD-062 cross-encoder reranker (spec §3 Increment 3 / §4). Crate-internal —
+/// the `Reranker` trait + `FastEmbedReranker` are consumed by the recall
+/// pipeline (`facade::recall`); consumers configure it via
+/// `SearchOpts.rerank_k`, not by naming the trait directly.
+#[cfg(feature = "rerank")]
+pub(crate) mod rerank;
 pub mod resolver;
 pub(crate) mod resolver_batched;
 pub mod schema;

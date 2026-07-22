@@ -27,6 +27,13 @@ default = []
 # costs nothing at ingest time (Migration 022 backfills `episodes_fts` from
 # already-stored `episodes.content` via pure SQL — no LLM/embedding re-ingest).
 content-search = ["kremory/content-search"]
+# rerank: TD-062 (`.ai-docs/specs/td-066-recall-scoring-foundation-
+# spec-2026-07-21.md` §3 Increment 3) passthrough to kremory's cross-encoder
+# reranker. `kremory_recall`'s `rerank_k` param is always ACCEPTED on the
+# wire (Rule 16 web-app-ui-parity) regardless of this feature — without it,
+# `rerank_k` is a documented no-op (kremory's own `rerank` feature-off
+# degrade). Enable to make it actually rerank.
+rerank = ["kremory/rerank"]
 # prometheus: install a Prometheus PULL recorder + expose `GET /metrics` on the
 # `kremory-http` bin (executes ratified ADR-D2 — the CONSUMER binary owns the
 # recorder; the `kremory` lib never installs one). OPT-IN + off by default

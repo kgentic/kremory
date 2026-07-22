@@ -100,6 +100,12 @@ pub async fn do_recall(mem: &Memory, params: RecallParams) -> Result<serde_json:
     if let Some(as_of) = resolved.as_of {
         req = req.as_of(as_of);
     }
+    // TD-062 (spec §3 Increment 3) — Rule 16 web-app-ui-parity: the MCP
+    // tool surface reaches the same rerank knob the Rust
+    // `RecallRequest::rerank_k` builder method exposes.
+    if let Some(rerank_k) = resolved.rerank_k {
+        req = req.rerank_k(rerank_k);
+    }
 
     match resolved.format {
         RecallFormat::Text => {

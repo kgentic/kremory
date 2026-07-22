@@ -71,6 +71,7 @@ async fn do_recall_structured_surfaces_content_derived_result() {
             as_of: None,
             format: RecallFormat::Structured,
             template: Default::default(),
+            rerank_k: None,
         },
     )
     .await

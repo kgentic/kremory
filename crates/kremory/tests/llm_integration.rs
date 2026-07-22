@@ -740,6 +740,7 @@ async fn namespace_isolation() {
                 limit: Some(20),
                 as_of: None,
                 source_kind: None,
+                rerank_k: None,
             },
         })
         .await
@@ -975,6 +976,7 @@ async fn source_refs_carries_episode_kind() {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
+                rerank_k: None,
             },
         })
         .await
@@ -1062,6 +1064,7 @@ async fn rrf_single_result_scores_one() {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
+                rerank_k: None,
             },
         })
         .await
@@ -1140,6 +1143,7 @@ async fn standalone_entity_has_episodic_edge() {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
+                rerank_k: None,
             },
         })
         .await
@@ -1239,6 +1243,7 @@ async fn stub_entity_inserted_on_forward_reference() {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
+                rerank_k: None,
             },
         })
         .await
@@ -1264,6 +1269,7 @@ async fn stub_entity_inserted_on_forward_reference() {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
+                rerank_k: None,
             },
         })
         .await
@@ -1414,6 +1420,7 @@ async fn stub_entity_promoted_on_reingestion() {
                 limit: Some(10),
                 as_of: None,
                 source_kind: None,
+                rerank_k: None,
             },
         })
         .await

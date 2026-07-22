@@ -252,6 +252,8 @@ pub(crate) struct ResolvedRecall {
     pub as_of: Option<DateTime<Utc>>,
     pub format: RecallFormat,
     pub template: RecallTemplate,
+    /// TD-062 (spec §3 Increment 3) — see `RecallParams::rerank_k`.
+    pub rerank_k: Option<usize>,
 }
 
 impl RecallParams {
@@ -269,6 +271,7 @@ impl RecallParams {
             as_of,
             format: self.format,
             template: recall_template_wire_to_facade(self.template),
+            rerank_k: self.rerank_k,
         })
     }
 }
@@ -645,6 +648,7 @@ mod tests {
             as_of: None,
             format: RecallFormat::Structured,
             template: RecallTemplateWire::Entities,
+            rerank_k: None,
         };
         let resolved = p.resolve().unwrap();
         assert_eq!(resolved.namespace.thread.as_deref(), Some("t-1"));
