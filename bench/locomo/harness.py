@@ -970,11 +970,13 @@ def run_benchmark(config: Config) -> dict:
         "mode": config.mode,
         "scorer": config.scorer,
         "server_mode": config.server_mode,
-        # recall-improvement-e2e-spec-2026-07-22 §S0-infra [G1]: stamp the exact
-        # sweep point (git SHA + KREMORY_* search-fusion knobs the harness
-        # launched the server with) so answer-tally/gate can refuse to score a
-        # stale recall file (assert_provenance in bench/locomo/provenance.py).
-        "provenance": build_provenance(),
+        # recall-improvement-e2e-spec-2026-07-22 §S0-infra [G1] + TD-135: stamp the
+        # exact sweep point (git SHA + the server's ACTIVE scoring config +
+        # build-feature flags, read from its own GET /health — the single source of
+        # truth, NOT the harness env, which can silently diverge). answer-tally/gate
+        # can then refuse to score a stale/mismatched recall file (assert_provenance
+        # in bench/locomo/provenance.py).
+        "provenance": build_provenance(server=config.base_url),
         "total_questions": len(all_results),
         "o11y": o11y,
         "category_stats": category_stats,
