@@ -242,6 +242,21 @@ pub struct SearchConfig {
     /// the literature's `[0.3, 0.7]` weighted-expansion band (HippoRAG PPR
     /// damping is also 0.5).
     pub neighbour_score_decay: f32,
+
+    /// Per-stream weight applied to the ADR-072 `content_search` BM25 stream's
+    /// RRF contribution in `search::rrf_fuse_with_content` (TD-066 Increment
+    /// 2, `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
+    /// §3 Increment 2). **Default 1.0 = today's equal-weight RRF fusion**
+    /// (Increment 1's behaviour, byte-identical) — this is a config-only
+    /// calibration knob, not a new algorithm. `content`-alone beats
+    /// equal-weight `hybrid` on 3 of 4 LoCoMo categories (spec §1.1), so a
+    /// value `> 1.0` favours the content stream over the entity-graph stream
+    /// in the fused ranking; `<= 0.0` degrades content's contribution to
+    /// (effectively) zero, without removing the stream's dedup/id-space
+    /// participation. The calibrated value is a Phase-7-style bench-sweep
+    /// output, not a value guessed at design time — ship the knob, measure
+    /// the value.
+    pub content_stream_weight: f32,
 }
 
 impl Default for SearchConfig {
@@ -260,6 +275,9 @@ impl Default for SearchConfig {
             expansion_hop_bound: 1,
             expansion_fan_out_cap: 8,
             neighbour_score_decay: 0.5,
+            // TD-066 Increment 2 — 1.0 = neutral/no-op, today's equal-weight
+            // RRF fusion (Increment 1's behaviour, byte-identical).
+            content_stream_weight: 1.0,
         }
     }
 }
