@@ -344,13 +344,29 @@ pub(crate) struct HybridTypingWrapper {
 }
 
 /// Fact triplet as emitted by the IntegerIdLlmExtractor (stage 3).
+///
+/// `subject`/`predicate`/`object` carry **no** `#[serde(default)]` (TD-133
+/// PREVENTION, per `llm-output-parse-loudly`): all three are content fields
+/// that are always consumed downstream — `subject` → `subject_id`, `object` →
+/// `object_id` (entity ref) or `object_value` (literal) in
+/// `ingest/pipeline/{deferred,ingest_with}.rs`. kremory has NO unary/object-less
+/// fact path, and an empty content field is filtered out as invalid. A default
+/// would let a triplet with a MISSING field deserialise with `""` and then be
+/// silently dropped — hiding the LLM misbehaviour that caused the empty
+/// benchmark fact graph. Without the default, a missing field is a loud parse
+/// error: the whole payload fails, `json_parse_fail` increments, and the
+/// fallback ladder (FormatSchema→LlmJsonRepair→DelimitedTuple→PromptOnly)
+/// retries — the same pattern as `BatchedNodeResolution`'s inner fields. A
+/// present-but-empty field (`"object":""`) still deserialises and is filtered
+/// by the empty-field guard in `parse_facts` — only a *missing* field fails.
+///
+/// `is_entity_ref` keeps its default: a missing hint means "treat object as a
+/// literal value", a graceful non-corrupting default (no data loss).
+/// `confidence` keeps its default: optional metadata per the rule.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct RawFact {
-    #[serde(default)]
     pub(crate) subject: String,
-    #[serde(default)]
     pub(crate) predicate: String,
-    #[serde(default)]
     pub(crate) object: String,
     #[serde(default)]
     pub(crate) is_entity_ref: bool,
