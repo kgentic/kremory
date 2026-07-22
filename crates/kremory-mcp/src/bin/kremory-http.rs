@@ -39,14 +39,33 @@
 //! | `GET /search?q=&namespace=&k=&mode=` | `handlers::do_recall` / `do_recall_content` | `200 {"results":[{"id","content","score"}]}` |
 //!
 //! `mode` (benchmark-completion-roadmap W0.1) selects which of kremory's
-//! retrieval surfaces `/search` reaches: `recall` (default, byte-identical
-//! to pre-W0.1 `/search`) is the existing hybrid keyword+semantic+graph path;
-//! `content` is ADR-072 seq1's BM25-only full-text search over raw
-//! `episodes.content` (requires this bin built with `--features
-//! content-search`, else degrades to `recall` with a warning); `hybrid` runs
-//! both and RRF-fuses them (see `rrf_merge` below). `hybrid` is the DEFAULT
-//! since the 2026-07-21 LoCoMo diagnostic (entity-graph `recall` alone judged
-//! 40.2% vs 70.4% hybrid).
+//! retrieval surfaces `/search` reaches: `recall` is the existing entity/fact
+//! hybrid keyword+semantic+graph path; `content` is ADR-072 seq1's BM25-only
+//! full-text search over raw `episodes.content` (requires this bin built with
+//! `--features content-search`, else degrades to `recall` with a warning);
+//! `hybrid` runs both and RRF-fuses them (see `rrf_merge` below). `hybrid` is
+//! the DEFAULT since the 2026-07-21 LoCoMo diagnostic (entity-graph `recall`
+//! alone judged 40.2% vs 70.4% hybrid).
+//!
+//! TD-066 Increment 1 (`.ai-docs/specs/td-066-recall-scoring-foundation-
+//! spec-2026-07-21.md` §3): the fusion this file pioneered has been ported
+//! into `core::search::rrf_fuse_with_content` and wired into
+//! `Memory::recall()`'s `.raw()`/`execute()` terminals by default whenever
+//! `content-search` is compiled in — so `recall_mode_results` below (which
+//! calls `handlers::do_recall` → `.raw()`) is **no longer entity-graph-only**
+//! in a `content-search`-enabled build; it now collaterally receives the
+//! SAME fusion `mode=hybrid` does. `mode=recall` vs `mode=hybrid` therefore
+//! no longer differ when this bin is built with `content-search` — both
+//! reach the fused surface. This is a known, deliberate consequence of
+//! wiring fusion into the canonical facade terminal (the spec explicitly
+//! sanctions the default-behaviour change with no separate HITL), not an
+//! oversight — flagged here rather than silently left stale. Untangling the
+//! REST `mode` selector's semantics (or removing it in favour of always
+//! calling the now-fused `.raw()` directly) is deferred past Increment 1;
+//! the selector is left wired as-is because the LoCoMo bench harness this
+//! spec is grounded in drives `mode=recall`/`mode=content`/`mode=hybrid`
+//! directly for its own three-way surface comparison (see spec §1.1's
+//! table) and must not be broken out from under it mid-run.
 //! | `DELETE /namespaces/{ns}` | `Memory::forget` | `200 {"deleted"}` |
 //! | `POST /consolidation/{cycle}?namespace=` | `handlers::do_dream` | `200` (422 if `?namespace=` omitted) |
 
@@ -232,10 +251,14 @@ async fn search(
     Ok(Json(SearchResponseWire { results }))
 }
 
-/// `mode=recall` (the default) — the existing entity-shaped hybrid
-/// keyword/semantic/graph path (`handlers::do_recall`, structured format),
-/// flattened via [`flatten_result_content`]. Byte-identical to `/search`'s
-/// pre-W0.1 behaviour.
+/// `mode=recall` — the entity-shaped keyword/semantic/graph path
+/// (`handlers::do_recall`, structured format), flattened via
+/// [`flatten_result_content`]. Byte-identical to `/search`'s pre-W0.1
+/// behaviour ONLY when this bin is built WITHOUT `content-search`. When
+/// `content-search` IS compiled in, `handlers::do_recall`'s `Structured`
+/// format calls `.raw()`, and `.raw()` now fuses in the content stream by
+/// default (TD-066 Increment 1, `core::search::rrf_fuse_with_content`) — see
+/// this module's top-level doc comment.
 async fn recall_mode_results(
     mem: &Memory,
     params: RecallParams,
@@ -304,16 +327,38 @@ async fn content_mode_results(
 /// stream. Note (measured): the two streams have disjoint id-spaces
 /// (entity-ids vs episode-ids), so RRF ≈ the prior `naive_merge` on this
 /// benchmark (both 70.4%); the lift over `recall`-only (40.2%) is from ADDING
-/// the content stream. Follow-on: push this fusion down into `core::search` so
-/// the library `recall()` + MCP `kremory_recall` reach it too (ADR-072 seq2).
+/// the content stream.
+///
+/// DONE (TD-066 Increment 1, `.ai-docs/specs/td-066-recall-scoring-
+/// foundation-spec-2026-07-21.md` §3): this fusion has been ported into
+/// `core::search::rrf_fuse_with_content` and wired into `Memory::recall()`'s
+/// `.raw()`/`execute()` terminals — the library `recall()` + MCP
+/// `kremory_recall` now reach it too. This fn + [`rrf_merge`] are kept as
+/// the REST bin's own (now-parallel, not load-bearing for the library/MCP
+/// surfaces) implementation rather than deleted/refactored into a thin
+/// caller of the core fn — see this module's top-level doc comment for why
+/// (the LoCoMo bench harness drives `mode=recall`/`mode=content`/
+/// `mode=hybrid` directly for a three-way surface comparison; collapsing
+/// them mid-run risks breaking that comparison).
 #[cfg(feature = "content-search")]
 async fn hybrid_mode_results(
     mem: &Memory,
     params: RecallParams,
 ) -> Result<Vec<SearchResultWire>, ApiError> {
+    let k = params.k;
     let recall = recall_mode_results(mem, params.clone()).await?;
     let content = content_mode_results(mem, params).await?;
-    Ok(rrf_merge(recall, content))
+    // Cap the fused output. Without this, hybrid returned `recall ∪ content`
+    // (~122 memories on LoCoMo conv0: recall's ~73 unioned with content's ~50)
+    // regardless of the consumer's requested `k` — a context-budget flood.
+    // `rrf_merge` orders by relevance, so truncating the tail drops noise
+    // WITHOUT dropping surfaced answers (the answer ranks near the top). Honour
+    // `k` when given; absent it, bound hybrid to at most its largest single arm
+    // so the union never floods past what either mode alone would return.
+    let cap = k.unwrap_or_else(|| recall.len().max(content.len()));
+    let mut merged = rrf_merge(recall, content);
+    merged.truncate(cap);
+    Ok(merged)
 }
 
 /// Feature-off degrade for `mode=hybrid` — same rationale as

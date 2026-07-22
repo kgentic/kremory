@@ -68,6 +68,44 @@ fn recall_k_chain_compiles() {
     let _req = mem.recall("query").k(5).in_namespace(Namespace::new("ns"));
 }
 
+/// TD-066 Increment 1 (spec §3 Increment 1 DoD item 4) — feature-off
+/// regression: a build WITHOUT `content-search` must return the EXACT
+/// pre-Increment-1 entity-graph-only behaviour. Ingests an episode whose
+/// text WOULD be content-fusion-findable if the feature were on (mirrors
+/// `td066_increment1_content_fusion.rs`'s fixture exactly), then asserts
+/// `.raw()` finds NOTHING for it here — the content stream must not exist
+/// at all in a feature-off build, so there is nothing to silently fuse in.
+#[cfg(not(feature = "content-search"))]
+#[tokio::test]
+async fn recall_raw_feature_off_stays_entity_graph_only() {
+    let ns = Namespace::new("facade-recall-feature-off");
+    let mem = Memory::open(unique_db_path("feature_off"))
+        .with_llm(make_null_llm())
+        .with_embedder(make_null_embedder())
+        .default_namespace(ns.clone())
+        .await
+        .expect("builder should succeed");
+
+    mem.remember("Zephyrine went scuba diving off the coast of Portugal last summer.")
+        .skip_extraction()
+        .await
+        .expect("episode must commit");
+
+    let results = mem
+        .recall("scuba diving Portugal")
+        .in_namespace(ns)
+        .raw()
+        .await
+        .expect("recall must succeed");
+
+    assert!(
+        results.is_empty(),
+        "feature-off build must stay entity-graph-only: a skip_extraction episode with \
+         zero entities must surface NOTHING (no content stream exists to fuse in); got: \
+         {results:?}"
+    );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn unique_db_path(tag: &str) -> std::path::PathBuf {
