@@ -622,6 +622,103 @@ mod tests {
         assert_eq!(raw_count, 2, "raw_count must count both facts pre-filter");
     }
 
+    // ── TD-133 PREVENTION: parse_facts CONTRACT regression gate ─────────────
+    //
+    // These pin the exact wrapper-drift bug that caused the 262/520 Groq parse
+    // loss (SYSTEM-PRIMER §5) so it can never silently regress locally, plus
+    // the `llm-output-parse-loudly` contract: a triplet MISSING a required
+    // content field must FAIL parse loudly (deserialize_ok=false → the fallback
+    // ladder retries), NOT silently emit an empty-field fact that gets dropped.
+    // Uses real Groq-observed shapes (strict-provider wrapped `{"items":[...]}`
+    // and lenient bare `[...]`).
+
+    #[test]
+    fn parse_facts_wrapped_groq_shape_yields_one_fact() {
+        // (a) The strict-provider wrapped shape `{"items":[...]}` — the exact
+        // shape Groq gpt-oss emits and that the original TD-133 bug dropped to 0
+        // facts. Must parse to exactly one fact.
+        let json = r#"{"items":[{"subject":"a","predicate":"p","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
+
+        // parse_items-level: assert the underlying deserialize_ok=true contract.
+        let (raw, raw_count, ok, path) = parse_items::<RawFact>(json, "items");
+        assert_eq!(raw.len(), 1);
+        assert_eq!(raw_count, 1);
+        assert!(ok, "well-formed wrapped triplet must report deserialize_ok=true");
+        assert_eq!(path, ParsePath::Wrapped);
+
+        // public parse_facts surface: exactly one fact, fields preserved.
+        let (facts, raw_count2) = parse_facts_with_raw_count(json).unwrap();
+        assert_eq!(facts.len(), 1, "wrapped Groq shape must parse to exactly 1 fact");
+        assert_eq!(raw_count2, 1);
+        assert_eq!(facts[0].subject, "a");
+        assert_eq!(facts[0].predicate, "p");
+        assert_eq!(facts[0].object, "b");
+    }
+
+    #[test]
+    fn parse_facts_bare_array_groq_shape_yields_one_fact() {
+        // (b) The lenient bare-array shape `[...]` — still emitted by some
+        // providers even when the schema advertises the wrapper.
+        let json = r#"[{"subject":"a","predicate":"p","object":"b","is_entity_ref":false,"confidence":1.0}]"#;
+        let (facts, raw_count) = parse_facts_with_raw_count(json).unwrap();
+        assert_eq!(facts.len(), 1, "bare-array Groq shape must parse to exactly 1 fact");
+        assert_eq!(raw_count, 1);
+        assert_eq!(facts[0].subject, "a");
+    }
+
+    #[test]
+    fn parse_facts_missing_predicate_fails_loud_not_silent_empty_field() {
+        // (c) A triplet MISSING the required `predicate` field must drive the
+        // whole payload to a LOUD parse failure so the fallback ladder retries —
+        // NOT silently deserialise with predicate="" and get dropped by the
+        // empty-field filter. Before removing #[serde(default)] from RawFact,
+        // this payload deserialised (predicate="") and was silently filtered;
+        // now it must fail parse (llm-output-parse-loudly).
+        let json = r#"{"items":[{"subject":"a","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
+
+        // parse_items-level: the whole array fails to deserialize → loud signal.
+        let (raw, raw_count, ok, path) = parse_items::<RawFact>(json, "items");
+        assert!(raw.is_empty(), "a triplet missing `predicate` must not yield a RawFact");
+        assert_eq!(raw_count, 0);
+        assert!(
+            !ok,
+            "missing required content field must be a loud parse failure (deserialize_ok=false), \
+             not a silent empty-field default"
+        );
+        assert_eq!(path, ParsePath::None);
+
+        // public parse_facts surface: 0 facts emitted (routes to json_parse_fail).
+        let (facts, raw_count2) = parse_facts_with_raw_count(json).unwrap();
+        assert!(
+            facts.is_empty(),
+            "public parse_facts must emit 0 facts for a required-field-missing payload"
+        );
+        assert_eq!(raw_count2, 0);
+    }
+
+    #[test]
+    fn parse_facts_missing_predicate_increments_json_parse_fail_not_ok() {
+        // Companion o11y assertion for (c): the loud failure must be visible on
+        // the `rql.extraction.json_parse_fail{parser=facts}` counter, not masked
+        // as a success. This is the metric that would have surfaced the 262
+        // silent drops as an actual failure signal.
+        let json = r#"{"items":[{"subject":"a","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
+        let fails = captured_counter_label_values(
+            "rql.extraction.json_parse_fail",
+            "parser",
+            || {
+                let (facts, _raw) = parse_facts_with_raw_count(json).unwrap();
+                assert!(facts.is_empty());
+            },
+        );
+        assert_eq!(
+            fails,
+            vec!["facts".to_string()],
+            "missing-required-field payload must increment json_parse_fail{{parser=facts}}, \
+             got {fails:?}"
+        );
+    }
+
     // ── parse_relation_names: wrapped + bare + empty (new coverage — this
     // parser previously accepted bare-array only) ──────────────────────────
 
