@@ -127,7 +127,9 @@ pub(crate) async fn open_graph(
     let graph_for_facade = Arc::clone(&graph);
 
     let mut config_builder =
-        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
+        search_env_overrides(resolution_env_overrides(
+            PipelineConfig::builder().embedding_dim(resolved_dim),
+        ));
     if !allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(allowed_entity_types);
     }
@@ -170,7 +172,9 @@ pub(crate) async fn open_graph_with_extractor(
     let graph_for_facade = Arc::clone(&graph);
 
     let mut config_builder =
-        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
+        search_env_overrides(resolution_env_overrides(
+            PipelineConfig::builder().embedding_dim(resolved_dim),
+        ));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -216,7 +220,9 @@ pub(crate) async fn open_graph_no_llm(
     let graph_for_facade = Arc::clone(&graph);
 
     let mut config_builder =
-        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
+        search_env_overrides(resolution_env_overrides(
+            PipelineConfig::builder().embedding_dim(resolved_dim),
+        ));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -275,7 +281,9 @@ pub(crate) async fn open_engine_handle(
     let graph_for_facade = Arc::clone(&graph);
 
     let mut config_builder =
-        resolution_env_overrides(PipelineConfig::builder().embedding_dim(resolved_dim));
+        search_env_overrides(resolution_env_overrides(
+            PipelineConfig::builder().embedding_dim(resolved_dim),
+        ));
     if !allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(allowed_entity_types);
     }
@@ -383,6 +391,56 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
     if let Ok(n) = std::env::var("KREMORY_EXTRACTION_CONCURRENCY") {
         if let Ok(n) = n.parse::<usize>() {
             b = b.extraction_concurrency(n);
+        }
+    }
+    b
+}
+
+/// recall-improvement-e2e-spec-2026-07-22 §S0-infra: apply the server-boot
+/// search-fusion SWEEP knobs from env to the pipeline config builder, so a
+/// weight/`k` sweep costs a **server restart, not a rebuild**. Composed onto the
+/// SAME builder chain as [`resolution_env_overrides`] at every `open_graph`
+/// construction site, so the resulting `SearchConfig` reaches BOTH live library
+/// fusion sweep sites: the entity-graph RRF (`context.rs`, reads
+/// `config.search.rrf_k`) and the content-fusion (`search::rrf_fuse_with_content`
+/// via the `GraphHandle::search_config()` accessor).
+///
+/// - `KREMORY_CONTENT_WEIGHT` (f32)  → `SearchConfig::content_stream_weight`
+/// - `KREMORY_RRF_K` (usize)         → `SearchConfig::rrf_k`
+///
+/// Absent env → defaults preserved (byte-identical, DoD #1). **Fail-loud**
+/// (Rule 21 / observability-at-write-time): a malformed value is WARN-logged +
+/// ignored — never silently accepted as garbage. Applied values are INFO-logged
+/// at the apply site. `KREMORY_ENTITY_STREAM_WEIGHT` is deliberately DEFERRED to
+/// Stage B ([G13], its only consumer) — no dead config ships now.
+fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
+    if let Ok(raw) = std::env::var("KREMORY_CONTENT_WEIGHT") {
+        match raw.trim().parse::<f32>() {
+            Ok(v) => {
+                tracing::info!(
+                    content_stream_weight = v,
+                    "KREMORY_CONTENT_WEIGHT override applied to SearchConfig"
+                );
+                b = b.content_stream_weight(v);
+            }
+            Err(e) => tracing::warn!(
+                value = %raw,
+                error = %e,
+                "KREMORY_CONTENT_WEIGHT is not a valid f32 — ignoring (default 1.0 retained)"
+            ),
+        }
+    }
+    if let Ok(raw) = std::env::var("KREMORY_RRF_K") {
+        match raw.trim().parse::<usize>() {
+            Ok(v) => {
+                tracing::info!(rrf_k = v, "KREMORY_RRF_K override applied to SearchConfig");
+                b = b.rrf_k(v);
+            }
+            Err(e) => tracing::warn!(
+                value = %raw,
+                error = %e,
+                "KREMORY_RRF_K is not a valid usize — ignoring (default 60 retained)"
+            ),
         }
     }
     b
@@ -824,5 +882,64 @@ where
         input: Vec<String>,
     ) -> std::result::Result<Vec<Vec<f32>>, autoagents_llm::error::LLMError> {
         self.inner.embed(input).await
+    }
+}
+
+#[cfg(test)]
+mod search_env_override_tests {
+    use super::*;
+
+    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (R4b): the boot env
+    /// override helper applies `KREMORY_CONTENT_WEIGHT`/`KREMORY_RRF_K` to the
+    /// resulting `SearchConfig`, preserves defaults when absent, and fail-loud
+    /// IGNORES a malformed value (never panics, never silently accepts garbage).
+    ///
+    /// Sequenced within ONE test (remove → assert default → set → assert applied
+    /// → set-garbage → assert default retained → remove) so it is deterministic
+    /// regardless of runner — env is process-global, and nextest additionally
+    /// isolates each test in its own process (kremory's runner, TD-109).
+    #[test]
+    fn search_env_overrides_apply_default_and_failloud() {
+        // Absent → byte-identical defaults (DoD #1).
+        std::env::remove_var("KREMORY_CONTENT_WEIGHT");
+        std::env::remove_var("KREMORY_RRF_K");
+        let default_cfg = search_env_overrides(PipelineConfig::builder())
+            .build()
+            .expect("default config builds");
+        assert_eq!(default_cfg.search.content_stream_weight, 1.0);
+        assert_eq!(default_cfg.search.rrf_k, 60);
+
+        // Present + valid → applied.
+        std::env::set_var("KREMORY_CONTENT_WEIGHT", "2.0");
+        std::env::set_var("KREMORY_RRF_K", "1");
+        let over_cfg = search_env_overrides(PipelineConfig::builder())
+            .build()
+            .expect("override config builds");
+        assert_eq!(
+            over_cfg.search.content_stream_weight, 2.0,
+            "KREMORY_CONTENT_WEIGHT=2.0 must reach SearchConfig.content_stream_weight"
+        );
+        assert_eq!(
+            over_cfg.search.rrf_k, 1,
+            "KREMORY_RRF_K=1 must reach SearchConfig.rrf_k"
+        );
+
+        // Malformed → fail-loud ignore (default retained), never panics.
+        std::env::set_var("KREMORY_CONTENT_WEIGHT", "not-a-float");
+        std::env::set_var("KREMORY_RRF_K", "-5");
+        let bad_cfg = search_env_overrides(PipelineConfig::builder())
+            .build()
+            .expect("garbage-env config still builds");
+        assert_eq!(
+            bad_cfg.search.content_stream_weight, 1.0,
+            "garbage KREMORY_CONTENT_WEIGHT must be ignored, default 1.0 retained"
+        );
+        assert_eq!(
+            bad_cfg.search.rrf_k, 60,
+            "garbage KREMORY_RRF_K must be ignored, default 60 retained"
+        );
+
+        std::env::remove_var("KREMORY_CONTENT_WEIGHT");
+        std::env::remove_var("KREMORY_RRF_K");
     }
 }

@@ -525,6 +525,17 @@ impl PipelineConfigBuilder {
         self
     }
 
+    /// TD-066 Increment 2 / S0-infra sweep knob: per-stream weight applied to
+    /// the ADR-072 `content_search` BM25 stream's RRF contribution. Default
+    /// `1.0` (equal-weight fusion, byte-identical). Wired from the
+    /// `KREMORY_CONTENT_WEIGHT` env override at server boot
+    /// (`facade::providers::search_env_overrides`) so weight sweeps cost a
+    /// restart, not a rebuild.
+    pub fn content_stream_weight(mut self, v: f32) -> Self {
+        self.inner.search.content_stream_weight = v;
+        self
+    }
+
     // ── Ontology ─────────────────────────────────────────────────────────────
 
     pub fn allowed_entity_types(mut self, v: Vec<String>) -> Self {
@@ -673,6 +684,34 @@ mod tests {
     fn test_default_config_builds() {
         let result = PipelineConfig::builder().build();
         assert!(result.is_ok(), "default config should build without error");
+    }
+
+    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (R4c): the S0-infra
+    /// sweep knobs' defaults are unchanged — no-env recall output is
+    /// byte-identical (DoD #1). `rrf_k=60` (Cormack et al.),
+    /// `content_stream_weight=1.0` (equal-weight fusion). Guards against a
+    /// default drift silently changing the baseline sweep point.
+    #[test]
+    fn search_sweep_knob_defaults_unchanged() {
+        let search = SearchConfig::default();
+        assert_eq!(search.rrf_k, 60, "default RRF k must stay 60");
+        assert_eq!(
+            search.content_stream_weight, 1.0,
+            "default content_stream_weight must stay 1.0 (equal-weight fusion)"
+        );
+        // The builder path (used by open_graph before env overrides) must agree.
+        let built = PipelineConfig::builder().build().unwrap().search;
+        assert_eq!(built.rrf_k, 60);
+        assert_eq!(built.content_stream_weight, 1.0);
+        // The new builder setter threads the value.
+        let tuned = PipelineConfig::builder()
+            .content_stream_weight(2.5)
+            .rrf_k(1)
+            .build()
+            .unwrap()
+            .search;
+        assert_eq!(tuned.content_stream_weight, 2.5);
+        assert_eq!(tuned.rrf_k, 1);
     }
 
     #[test]
