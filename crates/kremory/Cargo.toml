@@ -86,12 +86,21 @@ unstable-tags = []
 # `episodes.content` (no LLM, no embeddings, no chunker; whole episode is the
 # retrievable unit). Gates: Migration 022 (`episodes_fts` external-content FTS5
 # virtual table + backfill), the `content_search` query arm (`core::search`),
-# the `.content()` recall builder terminal + `ContentPassage` projection
-# (parallel BM25-only stream, NOT fused into the entity/fact RRF), and the
-# `episodes_fts` purge-cascade wiring. Off by default — default build and
-# `.raw()`/entity/fact recall are byte-identical whether or not this is
-# enabled (two-lever gating model, ADR-072 §6 Finding 3; a per-episode runtime
-# `index_content` toggle is a later increment, not part of seq1).
+# the `.content()` recall builder terminal + `ContentPassage` projection, and
+# the `episodes_fts` purge-cascade wiring. Off by default — with the feature
+# OFF, default build and `.raw()`/`execute()`/entity/fact recall remain
+# byte-identical to pre-ADR-072 behaviour (two-lever gating model, ADR-072 §6
+# Finding 3; a per-episode runtime `index_content` toggle is a later
+# increment, not part of seq1).
+#
+# TD-066 Increment 1 (`.ai-docs/specs/td-066-recall-scoring-foundation-
+# spec-2026-07-21.md` §3): with the feature ON, `.raw()`/`execute()` are NO
+# LONGER byte-identical to the feature-off entity/fact-only path by default —
+# `core::search::rrf_fuse_with_content` RRF-fuses the content stream in
+# automatically (measured +30.2pts judged LoCoMo recall at the REST layer
+# this was ported from). This is a deliberate default-behaviour change,
+# scoped to when this feature is compiled in; feature-off callers are
+# unaffected.
 content-search = []
 
 [lib]

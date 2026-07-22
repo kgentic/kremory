@@ -202,6 +202,99 @@ fn validate_metadata_key(key: &str) -> Result<()> {
     Ok(())
 }
 
+// ── TD-066 Increment 1: content-fusion parity fix ────────────────────────────
+//
+// `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md` §3.
+// Wires the `core::search::rrf_fuse_with_content` fusion fn (ported from the
+// REST layer's proven `kremory-mcp/src/bin/kremory-http.rs::hybrid_mode_results`)
+// into the canonical single-namespace recall terminals so `Memory::recall()`
+// and `.raw()` (and, transitively, the MCP `kremory_recall` tool, which calls
+// `.raw()` for its `Structured` format — `kremory-mcp/src/handlers.rs::do_recall`)
+// reach the same fused surface the REST `/search?mode=hybrid` endpoint
+// already proves.
+
+/// Bundled parameters for [`fuse_content_stream`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+#[cfg(feature = "content-search")]
+struct FuseContentStreamParams<'a> {
+    memory: &'a Memory,
+    namespace: &'a Namespace,
+    query: &'a str,
+    limit: Option<usize>,
+    entity_results: Vec<RetrievedContext>,
+}
+
+/// RRF-fuses `entity_results` (the entity/fact recall stream, already
+/// score-sorted by the caller) with the ADR-072 `content_search` BM25 stream
+/// for the SAME namespace + query. Returns `entity_results` unchanged (no
+/// error) when `Memory` has no attached `TemporalGraph` — the stub-graph
+/// test-construction path (`.content()` errors loudly on this absence, but a
+/// DEFAULT-behaviour change like this one must degrade silently rather than
+/// break every caller that bypasses the builder path; `temporal_graph` is
+/// `None` ONLY for that bypass per its own doc comment, `facade/mod.rs`).
+#[cfg(feature = "content-search")]
+async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<RetrievedContext>> {
+    let FuseContentStreamParams {
+        memory,
+        namespace,
+        query,
+        limit,
+        entity_results,
+    } = params;
+
+    let Some(tg) = memory.temporal_graph.as_ref() else {
+        return Ok(entity_results);
+    };
+
+    let group_id = namespace_to_group_id(namespace);
+    let filters = crate::core::search::SearchFilters {
+        group_ids: vec![group_id],
+        ..Default::default()
+    };
+    // Mirrors `.content()`'s own limit convention (`inner.k.unwrap_or(10)`) —
+    // parity with the REST layer's `content_mode_results`, which reaches
+    // this same default through `RecallParams.k`.
+    let content_limit = limit.unwrap_or(10);
+
+    let fusion_start = std::time::Instant::now();
+    let content_results = tg
+        .content_search(crate::core::search::ContentSearchParams {
+            query,
+            limit: content_limit,
+            filters: &filters,
+        })
+        .await
+        .map_err(MemoryError::Core)?;
+
+    let fused =
+        crate::core::search::rrf_fuse_with_content(crate::core::search::RrfFuseWithContentParams {
+            entity_stream: entity_results,
+            content_stream: content_results,
+            namespace: Some(namespace),
+            limit,
+        });
+    // Incremental cost THIS Increment adds (the content_search query + the
+    // fusion pass) — not the whole recall (the entity-graph stream was
+    // already computed by the caller before this fn runs); still surfaces a
+    // regression from adding the content stream, per spec §6.
+    let fusion_secs = fusion_start.elapsed().as_secs_f64();
+    metrics::histogram!("kremory.recall.canonical_fusion_duration_seconds").record(fusion_secs);
+    Ok(fused)
+}
+
+/// Feature-off degrade — mirrors `kremory-http.rs`'s
+/// `#[cfg(not(feature = "content-search"))]` arms: no BM25 stream exists to
+/// fuse, so the entity/fact recall stream passes through unchanged. The
+/// default build (`content-search` off) stays byte-identical to
+/// pre-Increment-1 behaviour.
+#[cfg(not(feature = "content-search"))]
+async fn fuse_content_stream(
+    entity_results: Vec<RetrievedContext>,
+) -> Result<Vec<RetrievedContext>> {
+    metrics::counter!("kremory.recall.canonical_fusion_feature_off_total").increment(1);
+    Ok(entity_results)
+}
+
 /// SQLite parameter cap (libsql ≥ 3.32.0). G6.b values must stay under this
 /// to avoid `SQLITE_TOOBIG` at the SQL pre-filter promotion in v0.1.7.
 const SQLITE_MAX_VARIABLE_NUMBER: usize = 32766;
@@ -514,6 +607,23 @@ impl<'a> RecallRequest<'a> {
         // multi-namespace path already sorted (below); this closes the
         // single-namespace gap so downstream axes are measurable.
         sort_by_score_desc(&mut results);
+        // TD-066 Increment 1 (content-fusion parity fix, spec §3) — fuse in
+        // the ADR-072 `content_search` BM25 stream so `mem.recall(q).await`
+        // reaches the same surface `.raw()` does (below) and the REST
+        // `/search?mode=hybrid` endpoint already proves. Feature-gated;
+        // feature-off passes `results` through unchanged (see
+        // `fuse_content_stream`'s two cfg-gated bodies).
+        #[cfg(feature = "content-search")]
+        let results = fuse_content_stream(FuseContentStreamParams {
+            memory: self.memory,
+            namespace: &ns,
+            query: &self.query,
+            limit: self.k,
+            entity_results: results,
+        })
+        .await?;
+        #[cfg(not(feature = "content-search"))]
+        let results = fuse_content_stream(results).await?;
         Ok(memory::context_block(&results, template.into()))
     }
 
@@ -752,6 +862,24 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             // (RRF-normalised score, TD-066 neighbour-decay + graph-degree bonus)
             // actually re-orders output rather than staying dormant.
             sort_by_score_desc(&mut filtered);
+            // TD-066 Increment 1 (content-fusion parity fix, spec §3) — fuse
+            // in the ADR-072 `content_search` BM25 stream so `.raw()` (and,
+            // transitively, `kremory_recall`'s `Structured` format, which
+            // calls `.raw()` — `kremory-mcp/src/handlers.rs::do_recall`)
+            // reaches the same fused surface the REST `/search?mode=hybrid`
+            // endpoint already proves. Feature-gated; feature-off passes
+            // `filtered` through unchanged.
+            #[cfg(feature = "content-search")]
+            let filtered = fuse_content_stream(FuseContentStreamParams {
+                memory: inner.memory,
+                namespace: &ns,
+                query: &inner.query,
+                limit: inner.k,
+                entity_results: filtered,
+            })
+            .await?;
+            #[cfg(not(feature = "content-search"))]
+            let filtered = fuse_content_stream(filtered).await?;
             Ok(filtered)
         })
     }
@@ -982,7 +1110,11 @@ mod filter_metadata_tests {
         let mut v = vec![ctx("a", 0.5), ctx("b", 0.5), ctx("c", 0.5)];
         sort_by_score_desc(&mut v);
         let ids: Vec<&str> = v.iter().map(|c| c.entity_id.as_str()).collect();
-        assert_eq!(ids, vec!["a", "b", "c"], "tied scores must preserve input order");
+        assert_eq!(
+            ids,
+            vec!["a", "b", "c"],
+            "tied scores must preserve input order"
+        );
     }
 
     async fn make_memory() -> Memory {
@@ -1337,5 +1469,78 @@ mod recall_by_source_id_tests_part2 {
             .expect("recall must succeed");
         assert_eq!(null_meta.len(), 1);
         assert!(null_meta[0].metadata.is_none(), "NULL metadata → None");
+    }
+}
+
+/// TD-066 Increment 1 — `fuse_content_stream`'s "no attached `TemporalGraph`"
+/// degrade path (spec §3 Increment 1 step 6: a DEFAULT-behaviour change must
+/// degrade silently for any caller bypassing the builder path, never error).
+/// Feature-gated because `fuse_content_stream`'s `content-search` arm (the
+/// one with the guard this test exercises) only exists under that feature.
+#[cfg(all(test, feature = "content-search"))]
+mod fuse_content_stream_tests {
+    use super::*;
+
+    async fn make_memory() -> Memory {
+        use crate::core::provider::{
+            DynEmbeddingProvider, MockChatProvider, NullEmbeddingProvider,
+        };
+        use std::sync::Arc;
+        let llm: Arc<dyn crate::memory::ChatProvider> = Arc::new(MockChatProvider::null());
+        let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
+        Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .await
+            .expect("Memory must build")
+    }
+
+    /// `Memory` constructed via a stub `GraphHandle` has `temporal_graph:
+    /// None`. `fuse_content_stream` must return the entity stream unchanged
+    /// (not `Err`) in that case — mirrors `.content()`'s OWN precondition
+    /// check existing loudly, but this is a default-path fusion, not an
+    /// opt-in terminal, so silent passthrough is the correct degrade here.
+    ///
+    /// Builds a REAL Memory via the normal builder path (so every field
+    /// besides `temporal_graph` matches production construction, robust to
+    /// future field additions) then overrides just `temporal_graph: None`
+    /// via functional-update syntax — the field is `pub(crate)`, readable
+    /// from this in-crate test module.
+    #[tokio::test]
+    async fn fuse_content_stream_passes_through_unchanged_without_temporal_graph() {
+        let base = make_memory().await;
+        let memory = Memory {
+            temporal_graph: None,
+            ..base
+        };
+
+        let ns = Namespace::new("fuse-no-tg");
+        let seed = vec![RetrievedContext::new(
+            crate::memory::types::RetrievedContextNewParams {
+                entity_id: "seed".to_owned(),
+                entity_name: "seed".to_owned(),
+                summary: "unchanged".to_owned(),
+                score: 0.5,
+                source_refs: Vec::new(),
+            },
+        )];
+
+        let fused = fuse_content_stream(FuseContentStreamParams {
+            memory: &memory,
+            namespace: &ns,
+            query: "anything",
+            limit: None,
+            entity_results: seed.clone(),
+        })
+        .await
+        .expect("must degrade to Ok, not Err, when temporal_graph is None");
+
+        assert_eq!(
+            fused.len(),
+            seed.len(),
+            "entity stream must pass through unchanged when there's no TemporalGraph \
+             to fuse a content stream from: {fused:?}"
+        );
+        assert_eq!(fused[0].entity_id, "seed");
     }
 }

@@ -125,14 +125,24 @@ pub async fn do_recall(mem: &Memory, params: RecallParams) -> Result<serde_json:
 /// Content-search sibling of [`do_recall`] (benchmark-completion-roadmap
 /// W0.1) — reaches past the entity-shaped `RetrievedContext` contract to
 /// ADR-072 seq1's BM25-only `.content()` recall terminal
-/// (`mem.recall(q).in_namespace(ns).k(k).content()`), returning raw
-/// `kremory::memory::ContentPassage` passages (full matched-episode content,
-/// NOT fused with the entity/fact RRF stream — see `ContentPassage` doc).
+/// (`mem.recall(q).in_namespace(ns).k(k).content()`), returning the RAW,
+/// UNFUSED `kremory::memory::ContentPassage` passages directly (full
+/// matched-episode content) — a distinct wire shape from `do_recall`'s
+/// entity-shaped `RetrievedContext` results.
 ///
 /// Feature-gated behind `content-search` (mirrors kremory's own gating) —
-/// only reachable from `kremory-http`'s `/search?mode=content|hybrid`. The
-/// MCP `kremory_recall` tool has no mode concept and never calls this fn, so
-/// its wire surface/behaviour is completely unaffected by this addition.
+/// only reachable from `kremory-http`'s `/search?mode=content` (the
+/// `mode=content` arm specifically; `mode=hybrid`'s fusion now lives in
+/// `core::search::rrf_fuse_with_content`, TD-066 Increment 1). This fn is
+/// NEVER called by `do_recall` — but `do_recall`'s OWN wire shape is no
+/// longer content-fusion-blind: `do_recall`'s `Structured` format calls
+/// `.raw()`, and `.raw()` itself now fuses in the content stream by default
+/// when `content-search` is on (`facade/recall.rs::fuse_content_stream`,
+/// TD-066 Increment 1). This closes the exact gap this comment used to
+/// describe ("the MCP `kremory_recall` tool ... never calls this fn" —
+/// still true of THIS fn, but no longer evidence that `kremory_recall` can't
+/// reach content — see `.ai-docs/specs/td-066-recall-scoring-foundation-
+/// spec-2026-07-21.md` §1.2/§3).
 #[cfg(feature = "content-search")]
 pub async fn do_recall_content(
     mem: &Memory,

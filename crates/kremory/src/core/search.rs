@@ -9,7 +9,7 @@ use crate::core::schema::{Entity, Fact, TemporalGraph};
 // projection type + episode source-attribution kind. Both are themselves
 // `#[cfg(feature = "content-search")]`-gated in `memory::types`.
 #[cfg(feature = "content-search")]
-use crate::memory::types::{ContentPassage, SourceKind, SourceRef};
+use crate::memory::types::{ContentPassage, Namespace, RetrievedContext, SourceKind, SourceRef};
 
 /// A search hit with BM25 relevance score.
 #[derive(Debug, Clone)]
@@ -1489,6 +1489,171 @@ fn rrf_fuse_facts(
             .then_with(|| a.item.id.cmp(&b.item.id))
     });
     results
+}
+
+// ─── TD-066 Increment 1: content-fusion parity fix ──────────────────────────
+//
+// `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md` §3.
+// Ports the REST layer's proven RRF hybrid-fusion
+// (`kremory-mcp/src/bin/kremory-http.rs::hybrid_mode_results`, measured
+// +30.2pts judged LoCoMo recall) down into `core::search` so the canonical
+// `Memory::recall()` + MCP `kremory_recall` surfaces reach it too.
+
+/// Bundled parameters for [`rrf_fuse_with_content`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+#[cfg(feature = "content-search")]
+pub(crate) struct RrfFuseWithContentParams<'a> {
+    /// Entity/fact recall stream, already RRF-scored + assembled by
+    /// `contextualize`/`memory::search` and sorted score-descending by the
+    /// caller (Phase 0, recall-v2-architecture-2026-07-03 Decision 8) — this
+    /// fn's rank-position RRF math depends on that ordering.
+    pub entity_stream: Vec<RetrievedContext>,
+    /// ADR-072 `content_search` BM25 stream, already ranked by the FTS5
+    /// `rank` column.
+    pub content_stream: Vec<ContentPassage>,
+    /// Stamped onto content-derived entries and used to derive the
+    /// composite-key `group_id` (spec §3 Increment 1 step 1). This fn is
+    /// single-namespace scoped (mirrors `.content()`'s own current scope) —
+    /// every item across BOTH streams is assumed to share this one namespace.
+    pub namespace: Option<&'a Namespace>,
+    /// Caps the fused output. `None` degrades to
+    /// `entity_stream.len().max(content_stream.len())` — the SAME
+    /// flood-truncation fallback the REST layer's `hybrid_mode_results`
+    /// already validated (spec §3 Increment 1 step 2 / Risk #1).
+    pub limit: Option<usize>,
+}
+
+/// RRF-fuses the entity-graph recall stream with the ADR-072 `content_search`
+/// BM25 stream, so `Memory::recall()`'s canonical single-namespace terminals
+/// (`.raw()`, `execute()`) and the MCP `kremory_recall` tool reach the same
+/// fused surface the REST `/search?mode=hybrid` endpoint already proves
+/// (+30.2pts judged LoCoMo recall,
+/// `.ai-docs/research/bench-fix-investigation-2026-07-21.md`).
+///
+/// NOT a new fusion algorithm: the SAME rank-position RRF math
+/// (`1/(k+rank+1)`, summed across streams when a result appears in more than
+/// one) and the SAME `(id, group_id)` composite-key dedup discipline
+/// `rrf_fuse_entities`/`rrf_fuse_facts` already use (ADR-029c Decision 1),
+/// extended to a third stream. Content passages are lifted into
+/// `RetrievedContext`-shaped entries via
+/// [`content_passage_into_retrieved_context`] so both streams share one
+/// output type. Entity ids and stringified episode ids occupy disjoint
+/// spaces in practice (`kremory-http.rs`'s own `rrf_merge` doc: "the two
+/// streams have disjoint id-spaces"), so cross-stream collisions are rare —
+/// the composite key still dedupes correctly if they ever occur.
+#[cfg(feature = "content-search")]
+pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec<RetrievedContext> {
+    use std::collections::HashMap;
+
+    const RRF_K: f64 = 60.0;
+
+    let RrfFuseWithContentParams {
+        entity_stream,
+        content_stream,
+        namespace,
+        limit,
+    } = params;
+
+    let entity_count = entity_stream.len();
+    let content_count = content_stream.len();
+    // Rule 19 anti-pattern #9 — per-stream attribution, not one aggregate
+    // counter, so a stream silently returning zero candidates is visible
+    // (spec §6 Increment 1 observability plan).
+    metrics::counter!("kremory.recall.canonical_fusion_total", "stream" => "entity_graph")
+        .increment(entity_count as u64);
+    metrics::counter!("kremory.recall.canonical_fusion_total", "stream" => "content")
+        .increment(content_count as u64);
+
+    let group_id = namespace.map(crate::memory::engine_handle::namespace_to_group_id);
+
+    // Key: (id, group_id) — same composite discipline as rrf_fuse_entities /
+    // rrf_fuse_facts. Entity ids are the entity's own id string; content ids
+    // are the stringified `episode_id` (matches the REST layer's
+    // `content_mode_results` id convention exactly, for parity — spec Risk
+    // #1: port the EXACT same math, not a reimplementation).
+    let mut scores: HashMap<(String, Option<String>), (f64, RetrievedContext)> =
+        HashMap::with_capacity(entity_count + content_count);
+
+    for (rank, item) in entity_stream.into_iter().enumerate() {
+        let rrf_score = 1.0 / (RRF_K + rank as f64 + 1.0);
+        let key = (item.entity_id.clone(), group_id.clone());
+        scores
+            .entry(key)
+            .and_modify(|(s, _)| *s += rrf_score)
+            .or_insert((rrf_score, item));
+    }
+
+    for (rank, passage) in content_stream.into_iter().enumerate() {
+        let rrf_score = 1.0 / (RRF_K + rank as f64 + 1.0);
+        let key = (passage.episode_id.to_string(), group_id.clone());
+        scores
+            .entry(key)
+            .and_modify(|(s, _)| *s += rrf_score)
+            .or_insert_with(|| {
+                (
+                    rrf_score,
+                    content_passage_into_retrieved_context(passage, namespace.cloned()),
+                )
+            });
+    }
+
+    let mut fused: Vec<RetrievedContext> = scores
+        .into_values()
+        .map(|(score, mut ctx)| {
+            ctx.score = score as f32;
+            ctx
+        })
+        .collect();
+
+    // Deterministic order: fused-score desc, then entity_id asc on ties —
+    // mirrors rrf_fuse_entities'/rrf_fuse_facts' tie-break (no relevance
+    // signal implied by id order).
+    fused.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.entity_id.cmp(&b.entity_id))
+    });
+
+    // Flood-truncation fix (spec §3 Increment 1 step 2 / Risk #1's reference
+    // REST diff): cap at the caller's requested limit; absent one, bound to
+    // the larger single arm so hybrid never floods past what either mode
+    // alone would return.
+    let cap = limit.unwrap_or_else(|| entity_count.max(content_count));
+    if fused.len() > cap {
+        metrics::counter!("kremory.recall.canonical_fusion_truncated_total").increment(1);
+        fused.truncate(cap);
+    }
+
+    fused
+}
+
+/// Lifts a BM25 `ContentPassage` into a `RetrievedContext`-shaped entry so it
+/// can share [`rrf_fuse_with_content`]'s fused output type with entity-graph
+/// results. `entity_type_name = "ContentPassage"` distinguishes a
+/// content-derived hit from a real graph entity for any consumer inspecting
+/// the field — `RetrievedContext` has no dedicated "kind" discriminator, and
+/// widening the `#[non_exhaustive]` public contract with a new field for this
+/// single Increment's concern is out of scope. `score` is a placeholder
+/// (`0.0`); the caller overwrites it with the fused RRF score immediately
+/// after construction.
+#[cfg(feature = "content-search")]
+fn content_passage_into_retrieved_context(
+    passage: ContentPassage,
+    namespace: Option<Namespace>,
+) -> RetrievedContext {
+    RetrievedContext {
+        entity_id: passage.episode_id.to_string(),
+        entity_name: format!("Episode #{}", passage.episode_id),
+        summary: passage.snippet,
+        score: 0.0,
+        source_refs: vec![passage.source_ref],
+        incomplete: false,
+        entity_type_id: 0,
+        entity_type_name: "ContentPassage".to_string(),
+        namespace,
+        facts: Vec::new(),
+    }
 }
 
 // ─── TD-066 Change 2: graph-degree bonus (secondary/additive signal) ────────
@@ -3302,6 +3467,312 @@ mod tests {
             first_order.unwrap(),
             vec![10_i64, 20_i64],
             "tied facts must order by id ascending, not HashMap iteration order"
+        );
+    }
+
+    // ─── TD-066 Increment 1: rrf_fuse_with_content (content-fusion parity) ──
+    //
+    // `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
+    // §3 Increment 1 DoD — fast/deterministic tier: pure-function tests on
+    // synthetic entity/content streams, no LLM, no network, no DB.
+
+    #[cfg(feature = "content-search")]
+    fn test_retrieved_context(id: &str, ns: &str) -> RetrievedContext {
+        RetrievedContext {
+            entity_id: id.to_owned(),
+            entity_name: id.to_owned(),
+            summary: format!("summary for {id}"),
+            score: 0.0,
+            source_refs: Vec::new(),
+            incomplete: false,
+            entity_type_id: 0,
+            entity_type_name: "Entity".to_owned(),
+            namespace: Some(Namespace::new(ns)),
+            facts: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "content-search")]
+    fn test_content_passage(episode_id: i64, snippet: &str) -> ContentPassage {
+        ContentPassage {
+            episode_id,
+            snippet: snippet.to_owned(),
+            score: 0.0,
+            source_ref: SourceRef {
+                kind: SourceKind::Episode,
+                id: episode_id.to_string(),
+                occurred_at: Utc::now(),
+                published_at: None,
+            },
+        }
+    }
+
+    /// DoD: "3rd-stream composite-key dedup (entity+fact+content overlapping
+    /// ids → no double-count)". `entity_stream` already carries the upstream
+    /// entity+fact fusion (each `RetrievedContext` is `contextualize`'s
+    /// output); this test proves the NEW content stream dedups correctly
+    /// against it via the `(id, group_id)` composite key: an entity id that
+    /// collides with a content passage's stringified `episode_id` (same
+    /// namespace) merges into ONE result with the SUMMED RRF score, rather
+    /// than appearing twice.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_dedups_overlapping_ids_across_streams() {
+        let ns = Namespace::new("ns-dedup");
+        let entity_stream = vec![
+            test_retrieved_context("42", "ns-dedup"),
+            test_retrieved_context("other-entity", "ns-dedup"),
+        ];
+        let content_stream = vec![
+            test_content_passage(42, "episode text for 42"),
+            test_content_passage(99, "episode text for 99"),
+        ];
+
+        // Explicit generous limit — isolates dedup from the truncation cap
+        // (`limit: None` would degrade to `max(2, 2) = 2`, which the
+        // dedicated truncation tests below cover separately).
+        let fused = rrf_fuse_with_content(RrfFuseWithContentParams {
+            entity_stream,
+            content_stream,
+            namespace: Some(&ns),
+            limit: Some(10),
+        });
+
+        assert_eq!(
+            fused.len(),
+            3,
+            "expected 3 distinct results (42 merged, other-entity, 99); got: {fused:?}"
+        );
+        let merged = fused
+            .iter()
+            .find(|r| r.entity_id == "42")
+            .expect("merged id 42 must be present exactly once");
+        // Both streams place their "42" hit at rank 0 → each contributes
+        // 1/(60+0+1) = 1/61; the merged score is the SUM, not either alone.
+        let expected_score = (2.0 / 61.0) as f32;
+        assert!(
+            (merged.score - expected_score).abs() < f32::EPSILON,
+            "merged entry must sum both streams' RRF contributions: got {}, expected {}",
+            merged.score,
+            expected_score
+        );
+        // Entity stream is processed first (`.or_insert`), so the entity's
+        // own name/summary survive the merge — content's `or_insert_with`
+        // closure never fires for an already-present key.
+        assert_eq!(
+            merged.entity_name, "42",
+            "entity-derived fields must win the merge, not be overwritten by content"
+        );
+        assert!(
+            fused.iter().any(|r| r.entity_id == "other-entity"),
+            "entity-only result must survive unmerged: {fused:?}"
+        );
+        assert!(
+            fused.iter().any(|r| r.entity_id == "99"),
+            "content-only result must survive unmerged: {fused:?}"
+        );
+    }
+
+    /// Mirrors `rrf_fuse_entities_deterministic_across_repeated_calls_on_genuine_tie`
+    /// — a genuine bit-exact tie between an entity-only hit and a
+    /// content-only hit (both at rank 0 in their own stream, no overlapping
+    /// id) must resolve identically across repeated calls, tie-broken by
+    /// `entity_id` ascending (NOT `HashMap` iteration order).
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_deterministic_across_repeated_calls_on_genuine_tie() {
+        let ns = Namespace::new("ns-tie");
+
+        let mut first_order: Option<Vec<String>> = None;
+        for i in 0..20 {
+            let entity_stream = vec![test_retrieved_context("tie_a", "ns-tie")];
+            let content_stream = vec![test_content_passage(0, "tie_b content")];
+            // Content-derived entity_id for episode 0 is "0" — lexically
+            // less than "tie_a", so the deterministic tie-break (entity_id
+            // ascending) must always place it first.
+            // Explicit generous limit — `limit: None` would degrade to
+            // `max(1, 1) = 1` and truncate one of the two genuinely-tied
+            // results away, which is exactly the truncation cap's OWN
+            // (separately tested) behaviour, not what this test measures.
+            let fused = rrf_fuse_with_content(RrfFuseWithContentParams {
+                entity_stream,
+                content_stream,
+                namespace: Some(&ns),
+                limit: Some(10),
+            });
+            assert_eq!(
+                fused.len(),
+                2,
+                "run {i}: expected both tied results present"
+            );
+            assert!(
+                (fused[0].score - fused[1].score).abs() < f32::EPSILON,
+                "run {i}: expected a genuine bit-exact score tie, got {} vs {}",
+                fused[0].score,
+                fused[1].score
+            );
+            let order: Vec<String> = fused.into_iter().map(|r| r.entity_id).collect();
+            match &first_order {
+                None => first_order = Some(order),
+                Some(expected) => assert_eq!(
+                    &order, expected,
+                    "run {i}: tied-score order differs from run 0 — ranking is \
+                     nondeterministic across repeated calls"
+                ),
+            }
+        }
+        assert_eq!(
+            first_order.unwrap(),
+            vec!["0".to_owned(), "tie_a".to_owned()],
+            "tied results must order by entity_id ascending, not HashMap iteration order"
+        );
+    }
+
+    /// DoD: "truncation cap honours caller `limit`". Explicit `limit`
+    /// truncates the fused output to that count, keeping the highest-scored
+    /// entries, and fires the truncation counter.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_truncates_to_explicit_limit() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let ns = Namespace::new("ns-cap");
+        // "5" appears in BOTH streams at rank 0 → merged score 2/61,
+        // unambiguously higher than any single-stream candidate (which can
+        // score at most 1/61 at rank 0) — avoids the rank-0-vs-rank-0 tie
+        // that two independently-ranked, non-overlapping streams would
+        // otherwise produce (RRF score depends only on rank position, so any
+        // two unmerged rank-0 items across streams tie exactly).
+        let entity_stream = vec![
+            test_retrieved_context("5", "ns-cap"),
+            test_retrieved_context("e1", "ns-cap"),
+        ];
+        let content_stream = vec![
+            test_content_passage(5, "content 5"),
+            test_content_passage(2, "content 2"),
+        ];
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let fused = metrics::with_local_recorder(&recorder, || {
+            rrf_fuse_with_content(RrfFuseWithContentParams {
+                entity_stream,
+                content_stream,
+                namespace: Some(&ns),
+                limit: Some(1),
+            })
+        });
+
+        assert_eq!(
+            fused.len(),
+            1,
+            "explicit limit=1 must cap the fused output to 1 result: {fused:?}"
+        );
+        assert_eq!(
+            fused[0].entity_id, "5",
+            "the merged (both-streams) candidate has the strictly highest score \
+             and must survive truncation: {fused:?}"
+        );
+
+        let truncated_total: u64 = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter(|(k, _, _, _)| {
+                k.key().name() == "kremory.recall.canonical_fusion_truncated_total"
+            })
+            .filter_map(|(_, _, _, v)| match v {
+                DebugValue::Counter(n) => Some(n),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(
+            truncated_total, 1,
+            "truncation counter must fire exactly once when the cap actually drops candidates"
+        );
+    }
+
+    /// `limit: None` degrades to `entity_stream.len().max(content_stream.len())`
+    /// — the REST layer's own flood-truncation fallback (spec Risk #1).
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_none_limit_caps_to_larger_arm() {
+        let ns = Namespace::new("ns-nolimit");
+        let entity_stream = vec![test_retrieved_context("e0", "ns-nolimit")];
+        let content_stream = vec![
+            test_content_passage(1, "content 1"),
+            test_content_passage(2, "content 2"),
+            test_content_passage(3, "content 3"),
+        ];
+
+        let fused = rrf_fuse_with_content(RrfFuseWithContentParams {
+            entity_stream,
+            content_stream,
+            namespace: Some(&ns),
+            limit: None,
+        });
+
+        // No overlap between the 1 entity and 3 content ids, so the union is
+        // 4 candidates; `None` caps to max(1, 3) = 3, not the full union.
+        assert_eq!(
+            fused.len(),
+            3,
+            "None limit must cap to the larger single arm (3), not flood to the full union: {fused:?}"
+        );
+    }
+
+    /// Rule 19 / observability-first-class: fast-tier test asserts the
+    /// per-stream counter actually fires with the correct label + count —
+    /// not just that the function returns the right value ("counters that
+    /// lie" cardinal failure mode).
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_content_emits_per_stream_counters() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let ns = Namespace::new("ns-metrics");
+        let entity_stream = vec![
+            test_retrieved_context("e0", "ns-metrics"),
+            test_retrieved_context("e1", "ns-metrics"),
+        ];
+        let content_stream = vec![test_content_passage(1, "content 1")];
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            rrf_fuse_with_content(RrfFuseWithContentParams {
+                entity_stream,
+                content_stream,
+                namespace: Some(&ns),
+                limit: None,
+            })
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let count_for = |stream: &str| -> Option<u64> {
+            snapshot.iter().find_map(|(k, _, _, v)| {
+                if k.key().name() == "kremory.recall.canonical_fusion_total" {
+                    let labels: std::collections::HashMap<&str, &str> =
+                        k.key().labels().map(|l| (l.key(), l.value())).collect();
+                    if labels.get("stream") == Some(&stream) {
+                        if let DebugValue::Counter(n) = v {
+                            return Some(*n);
+                        }
+                    }
+                }
+                None
+            })
+        };
+
+        assert_eq!(
+            count_for("entity_graph"),
+            Some(2),
+            "entity_graph stream counter must record the 2 entity-stream candidates"
+        );
+        assert_eq!(
+            count_for("content"),
+            Some(1),
+            "content stream counter must record the 1 content-stream candidate"
         );
     }
 }
