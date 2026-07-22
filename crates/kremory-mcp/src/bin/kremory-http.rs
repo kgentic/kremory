@@ -42,7 +42,8 @@
 //! retrieval surfaces `/search` reaches: `recall` is the existing entity/fact
 //! hybrid keyword+semantic+graph path; `content` is ADR-072 seq1's BM25-only
 //! full-text search over raw `episodes.content` (requires this bin built with
-//! `--features content-search`, else degrades to `recall` with a warning);
+//! `--features content-search`; otherwise `mode=content`/`mode=hybrid` HARD-FAIL
+//! 422 rather than silently degrading — B1 fail-loud, see `content_mode_results`);
 //! `hybrid` runs both and RRF-fuses them (see `rrf_merge` below). `hybrid` is
 //! the DEFAULT since the 2026-07-21 LoCoMo diagnostic (entity-graph `recall`
 //! alone judged 40.2% vs 70.4% hybrid).
@@ -189,8 +190,9 @@ enum SearchMode {
     // showed the entity-graph `recall` surface judged only 40.2% vs 71.4% once the
     // content stream is RRF-fused in — a consumer hitting `/search` with no `?mode=`
     // must get the surface that actually answers, not the net-negative-on-LoCoMo
-    // unscored-graph one. Degrades to `recall` when built without `content-search`
-    // (see the feature-off arms of content_/hybrid_mode_results).
+    // unscored-graph one. HARD-FAILS 422 when built without `content-search`
+    // (B1 fail-loud — see the feature-off arms of content_/hybrid_mode_results),
+    // never a silent degrade to `recall`.
     #[default]
     Hybrid,
 }
@@ -307,22 +309,30 @@ async fn content_mode_results(
         .collect())
 }
 
-/// Feature-off degrade for `mode=content`: this bin was not built with
-/// `--features content-search`, so there is no BM25 stream to serve.
-/// Falls back to `mode=recall` with a loud warning rather than a hard
-/// error — the harness is expected to build this bin WITH the feature when
-/// it wants content/hybrid modes; this is a defensive fallback so a
-/// feature-off build still answers `/search` instead of 500ing.
+/// Feature-off HARD-FAIL for `mode=content`: this bin was not built with
+/// `--features content-search`, so there is no BM25 stream to serve. B1
+/// fail-loud (2026-07-22): a silent fallback to `mode=recall` here served a
+/// ~40%-surface entity-only result under an explicit content/hybrid request —
+/// exactly the LoCoMo 13.9% disaster class (a fabricated garbage baseline that
+/// LOOKED like a real answer). We now REFUSE the request (`InvalidParams`/422)
+/// instead of degrading silently. Recall-mode requests are unaffected (they hit
+/// the un-gated `recall_mode_results`). To serve content/hybrid, rebuild WITH
+/// `--features content-search`.
 #[cfg(not(feature = "content-search"))]
 async fn content_mode_results(
-    mem: &Memory,
-    params: RecallParams,
+    _mem: &Memory,
+    _params: RecallParams,
 ) -> Result<Vec<SearchResultWire>, ApiError> {
-    tracing::warn!(
-        "mode=content requested but kremory-http was built without the `content-search` \
-         feature; falling back to mode=recall"
+    tracing::error!(
+        "mode=content requested but kremory-http was built WITHOUT the `content-search` \
+         feature — refusing to serve a silently-degraded recall-only result (B1 fail-loud). \
+         Rebuild with `--features content-search`."
     );
-    recall_mode_results(mem, params).await
+    Err(ApiError(ToolError::InvalidParams(
+        "mode=content requires the `content-search` feature, but this server was built \
+         without it. Rebuild with `--features content-search`."
+            .to_string(),
+    )))
 }
 
 /// `mode=hybrid` (the DEFAULT) — runs BOTH `mode=recall` and `mode=content`
@@ -366,18 +376,25 @@ async fn hybrid_mode_results(
     Ok(merged)
 }
 
-/// Feature-off degrade for `mode=hybrid` — same rationale as
-/// `content_mode_results`'s feature-off arm.
+/// Feature-off HARD-FAIL for `mode=hybrid` (the DEFAULT mode) — same B1
+/// fail-loud rationale as `content_mode_results`'s feature-off arm. Because
+/// hybrid is the default, a silent fallback here was the exact path that
+/// produced the 13.9% LoCoMo baseline. Refuse the request rather than degrade.
 #[cfg(not(feature = "content-search"))]
 async fn hybrid_mode_results(
-    mem: &Memory,
-    params: RecallParams,
+    _mem: &Memory,
+    _params: RecallParams,
 ) -> Result<Vec<SearchResultWire>, ApiError> {
-    tracing::warn!(
-        "mode=hybrid requested but kremory-http was built without the `content-search` \
-         feature; falling back to mode=recall"
+    tracing::error!(
+        "mode=hybrid requested but kremory-http was built WITHOUT the `content-search` \
+         feature — refusing to serve a silently-degraded recall-only result (B1 fail-loud). \
+         Rebuild with `--features content-search`."
     );
-    recall_mode_results(mem, params).await
+    Err(ApiError(ToolError::InvalidParams(
+        "mode=hybrid requires the `content-search` feature, but this server was built \
+         without it. Rebuild with `--features content-search`."
+            .to_string(),
+    )))
 }
 
 /// NAIVE BASELINE FUSION — real fusion/fairness decision deferred to Arch-1a
@@ -586,6 +603,22 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|e| anyhow!("failed to install tracing subscriber: {e}"))?;
+
+    // B1 fail-loud (2026-07-22): announce the content-search capability at boot so
+    // an operator can NEVER unknowingly run a degraded (recall-only) server behind
+    // the default `mode=hybrid`. Without the feature, content/hybrid requests now
+    // hard-fail (422) rather than silently degrading — this banner is the paired
+    // startup signal so the cause is visible before the first request.
+    #[cfg(feature = "content-search")]
+    tracing::info!(
+        "kremory-http built WITH `content-search` — mode=content/hybrid available."
+    );
+    #[cfg(not(feature = "content-search"))]
+    tracing::warn!(
+        "kremory-http built WITHOUT `content-search` — mode=content and mode=hybrid \
+         (the DEFAULT) will HARD-FAIL (422). Only mode=recall is servable. Rebuild with \
+         `--features content-search` for hybrid/content recall."
+    );
 
     let db_path = std::env::var("KREMORY_MCP_DB_PATH").map_err(|_| {
         anyhow!(
@@ -860,9 +893,16 @@ mod tests {
         // the fact text (the benchmark substring path, end-to-end through the
         // route + adapter).
         pin_fact(&mem, ns, "Zephyrine").await;
+        // `mode=recall` is explicit here (not the default `hybrid`): under a
+        // default-features build (no `content-search`), B1 fail-loud makes
+        // `hybrid`/`content` a hard 422, so the servable roundtrip mode is
+        // `recall`. `recall` returns the pinned entity/fact regardless of the
+        // `content-search` feature, keeping this route-contract test
+        // config-agnostic. The 422 fail-loud contract is asserted separately in
+        // `hybrid_without_content_search_feature_hard_fails`.
         let search = Request::builder()
             .method("GET")
-            .uri(format!("/search?q=Zephyrine&namespace={ns}&k=10"))
+            .uri(format!("/search?q=Zephyrine&namespace={ns}&k=10&mode=recall"))
             .body(Body::empty())
             .unwrap();
         let resp = router.clone().oneshot(search).await.unwrap();
@@ -948,6 +988,42 @@ mod tests {
             .unwrap();
         let resp = router.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// B1 fail-loud invariant (2026-07-22): on a build WITHOUT `content-search`,
+    /// an explicit `mode=hybrid`/`mode=content` request MUST hard-fail (422),
+    /// never silently degrade to recall-only. Silent degradation here served a
+    /// ~40%-surface answer under the DEFAULT `hybrid` mode and produced the
+    /// LoCoMo 13.9% garbage baseline. Only compiled/relevant when the feature is
+    /// OFF (with it ON, hybrid/content are servable and return 200 — covered by
+    /// `http_search_mode_content_returns_bm25_passage`).
+    #[cfg(not(feature = "content-search"))]
+    #[tokio::test]
+    async fn hybrid_without_content_search_feature_hard_fails() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState { mem });
+        let ns = "ns-http-faildude";
+        for mode in ["hybrid", "content"] {
+            let req = Request::builder()
+                .method("GET")
+                .uri(format!("/search?q=anything&namespace={ns}&k=10&mode={mode}"))
+                .body(Body::empty())
+                .unwrap();
+            let resp = router.clone().oneshot(req).await.unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "mode={mode} without the content-search feature must hard-fail \
+                 422 (B1 fail-loud), not silently degrade to recall"
+            );
+            let json = body_json(resp.into_body()).await;
+            assert!(
+                json["error"]
+                    .as_str()
+                    .is_some_and(|e| e.to_lowercase().contains("content-search")),
+                "422 body must name the missing content-search feature: {json}"
+            );
+        }
     }
 
     // ─── mode=content / mode=hybrid (benchmark-completion-roadmap W0.1) ──
