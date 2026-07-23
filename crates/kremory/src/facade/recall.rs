@@ -260,7 +260,7 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
     let content_limit = limit.unwrap_or(10);
 
     let fusion_start = std::time::Instant::now();
-    let content_results = tg
+    let bm25_results = tg
         .content_search(crate::core::search::ContentSearchParams {
             query,
             limit: content_limit,
@@ -273,12 +273,73 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
     // `SearchConfig` through the new `GraphHandle::search_config()` accessor
     // (EngineGraphHandle returns the Engine's `self.config.search`), NOT
     // `SearchConfig::default()`. This is what carries the `KREMORY_CONTENT_WEIGHT`
-    // / `KREMORY_RRF_K` boot overrides (applied at construction via
-    // `providers::search_env_overrides`) into the content-fusion sweep site, so
-    // weight/k sweeps cost a server restart, not a rebuild. Stub/test handles
-    // fall back to the trait default (`SearchConfig::default()`), preserving
-    // byte-identical behaviour where no Engine config exists.
+    // / `KREMORY_RRF_K` / `KREMORY_EPISODE_DENSE` boot overrides (applied at
+    // construction via `providers::search_env_overrides`) into the content-fusion
+    // sweep site, so weight/k/dense sweeps cost a server restart, not a rebuild.
+    // Stub/test handles fall back to the trait default (`SearchConfig::default()`),
+    // preserving byte-identical behaviour where no Engine config exists.
     let search_config = memory.graph.search_config();
+
+    // TD-136 dense episode arm — DEFAULT OFF (byte-identical: `content_results`
+    // is the BM25 stream unchanged). When enabled, embed the query, run the
+    // dense cosine arm over `episodes.embedding`, and RRF-fuse it WITH the BM25
+    // episode arm into a single content stream BEFORE it enters
+    // `rrf_fuse_with_content` below (which stays a two-stream entity↔content
+    // fuse). An embedder/search failure DEGRADES to BM25-only (never fails an
+    // otherwise-working recall) with a loud warn + counter (Rule 19). This whole
+    // fn is already `content-search`-gated, so no inner feature-cfg is needed.
+    let content_results = if search_config.episode_dense_enabled {
+        match memory.embedder.embed_dyn(query).await {
+            Ok(query_embedding) => {
+                match tg
+                    .vector_search_episodes(crate::core::search::VectorSearchEpisodesParams {
+                        query_embedding: &query_embedding,
+                        limit: content_limit,
+                        filters: &filters,
+                    })
+                    .await
+                {
+                    Ok(dense_results) => crate::core::search::rrf_fuse_content_streams(
+                        crate::core::search::RrfFuseContentStreamsParams {
+                            bm25_stream: bm25_results,
+                            dense_stream: dense_results,
+                            rrf_k: search_config.rrf_k,
+                            limit: Some(content_limit),
+                        },
+                    ),
+                    Err(e) => {
+                        metrics::counter!(
+                            "kremory.recall.episode_dense_degraded_total",
+                            "reason" => "vector_search_failed",
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            error = %e,
+                            "kremory.recall.episode_dense vector_search_episodes failed — \
+                             degrading to BM25-only content stream"
+                        );
+                        bm25_results
+                    }
+                }
+            }
+            Err(e) => {
+                metrics::counter!(
+                    "kremory.recall.episode_dense_degraded_total",
+                    "reason" => "query_embed_failed",
+                )
+                .increment(1);
+                tracing::warn!(
+                    error = %e,
+                    "kremory.recall.episode_dense query embed failed — degrading to \
+                     BM25-only content stream"
+                );
+                bm25_results
+            }
+        }
+    } else {
+        bm25_results
+    };
+
     let fused =
         crate::core::search::rrf_fuse_with_content(crate::core::search::RrfFuseWithContentParams {
             entity_stream: entity_results,

@@ -440,6 +440,13 @@ mod defs_j;
 mod defs_k;
 // defs_l (TD-133 B2): migrate_025_fact_dedup_expired_partial.
 mod defs_l;
+// defs_m (TD-136): migrate_026_episodes_embedding — dense episode vector arm.
+// Entirely empty when `content-search` is off (its sole item is feature-gated
+// at the same level) — gate the module + re-export to keep the default build
+// free of a dead-module/unused-import warning under `-D warnings` (mirrors
+// defs_i's `content-search` gating exactly).
+#[cfg(feature = "content-search")]
+mod defs_m;
 
 pub(crate) use defs_a::*;
 pub(crate) use defs_b::*;
@@ -462,6 +469,10 @@ pub(crate) use defs_i::*;
 pub(crate) use defs_j::*;
 pub(crate) use defs_k::*;
 pub(crate) use defs_l::*;
+// defs_m (TD-136): migrate_026_episodes_embedding is `content-search`-gated at
+// the item level, so gate the re-export too (mirrors defs_i).
+#[cfg(feature = "content-search")]
+pub(crate) use defs_m::*;
 
 #[cfg(test)]
 mod tests;

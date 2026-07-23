@@ -113,6 +113,16 @@ struct ContentMatchQueryParams<'a> {
     group_params: &'a [libsql::Value],
 }
 
+/// Bundled parameters for [`TemporalGraph::vector_search_episodes`] — TD-136
+/// dense episode retrieval arm. Args-as-object per TD-042. Feature-gated behind
+/// `content-search` (mirrors the `ContentPassage` it returns).
+#[cfg(feature = "content-search")]
+pub(crate) struct VectorSearchEpisodesParams<'a> {
+    pub query_embedding: &'a [f32],
+    pub limit: usize,
+    pub filters: &'a SearchFilters,
+}
+
 /// Bundled parameters for [`TemporalGraph::vector_search_entities`] —
 /// args-as-object per TD-042 (rust-conventions §too_many_arguments).
 pub struct VectorSearchEntitiesParams<'a> {
@@ -173,6 +183,26 @@ struct VectorSearchFactsWithIndexParams<'a> {
 /// Bundled parameters for [`TemporalGraph::vector_search_facts_brute_force`] —
 /// args-as-object per TD-042 (rust-conventions §too_many_arguments).
 struct VectorSearchFactsBruteForceParams<'a> {
+    vec_str: &'a str,
+    limit: usize,
+    filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for `TemporalGraph::vector_search_episodes_with_index`
+/// (TD-136 dense episode arm) — args-as-object per TD-042. Feature-gated behind
+/// `content-search`.
+#[cfg(feature = "content-search")]
+struct VectorSearchEpisodesWithIndexParams<'a> {
+    vec_str: &'a str,
+    limit: usize,
+    filters: &'a SearchFilters,
+}
+
+/// Bundled parameters for `TemporalGraph::vector_search_episodes_brute_force`
+/// (TD-136 dense episode arm) — args-as-object per TD-042. Feature-gated behind
+/// `content-search`.
+#[cfg(feature = "content-search")]
+struct VectorSearchEpisodesBruteForceParams<'a> {
     vec_str: &'a str,
     limit: usize,
     filters: &'a SearchFilters,
@@ -1238,6 +1268,233 @@ impl TemporalGraph {
         Ok(hits)
     }
 
+    /// TD-136 dense episode retrieval arm — cosine vector search over
+    /// `episodes.embedding` (Migration 026), returning [`ContentPassage`]s so it
+    /// composes with the BM25 `content_search` stream (see
+    /// [`rrf_fuse_content_streams`]). Mirrors [`vector_search_facts`] exactly:
+    /// DiskANN index (`vector_top_k('episodes_vec_idx', …)`) first, brute-force
+    /// fallback on index error (TD-115 resilience). Scoped by `filters.group_ids`.
+    ///
+    /// The returned `ContentPassage.score` is the raw cosine distance
+    /// (`lower = more relevant`, matching `ContentPassage`'s BM25-rank
+    /// convention). Passages are ordered best-first (distance ASC); only their
+    /// rank position is consumed by `rrf_fuse_content_streams`, so the absolute
+    /// score is not comparable across the BM25/dense arms — the RRF fusion
+    /// normalises by rank, not by score value.
+    #[cfg(feature = "content-search")]
+    pub(crate) async fn vector_search_episodes(
+        &self,
+        params: VectorSearchEpisodesParams<'_>,
+    ) -> Result<Vec<ContentPassage>> {
+        let VectorSearchEpisodesParams {
+            query_embedding,
+            limit,
+            filters,
+        } = params;
+        let _search_start = Instant::now();
+        let vec_str = format!(
+            "[{}]",
+            query_embedding
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+
+        // Try DiskANN index first (vector_top_k), fall back to brute-force.
+        let result = self
+            .vector_search_episodes_with_index(VectorSearchEpisodesWithIndexParams {
+                vec_str: &vec_str,
+                limit,
+                filters,
+            })
+            .await;
+
+        let passages = match result {
+            Ok(p) => p,
+            Err(e) => {
+                metrics::counter!(
+                    "kremory.search.error_total",
+                    "arm" => "vector_episodes",
+                    "reason" => "index_fallback",
+                )
+                .increment(1);
+                tracing::warn!(
+                    error = %e,
+                    arm = "vector_episodes",
+                    reason = "index_fallback",
+                    "kremory.search.vector_episodes index failed, falling back to brute-force"
+                );
+                match self
+                    .vector_search_episodes_brute_force(VectorSearchEpisodesBruteForceParams {
+                        vec_str: &vec_str,
+                        limit,
+                        filters,
+                    })
+                    .await
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        metrics::counter!(
+                            "kremory.search.error_total",
+                            "arm" => "vector_episodes",
+                            "reason" => "brute_force_failed",
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            error = %e,
+                            arm = "vector_episodes",
+                            reason = "brute_force_failed",
+                            "kremory.search.vector_episodes brute-force failed"
+                        );
+                        return Err(e.into());
+                    }
+                }
+            }
+        };
+        let hits_count = passages.len();
+        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.search.vector_episodes_hits").record(hits_count as f64);
+        histogram!("rql.search.vector_episodes_ms").record(_ms);
+        // Per-arm attribution (Rule 19 anti-pattern #3) — the dense episode arm's
+        // contribution is visible against the BM25 `content` arm via the shared
+        // label on `kremory.recall.results_total`.
+        metrics::counter!("kremory.recall.results_total", "arm" => "episode_dense")
+            .increment(hits_count as u64);
+        tracing::info!(hits = hits_count, _ms, "kremory.search.vector_episodes");
+        Ok(passages)
+    }
+
+    #[cfg(feature = "content-search")]
+    async fn vector_search_episodes_with_index(
+        &self,
+        params: VectorSearchEpisodesWithIndexParams<'_>,
+    ) -> anyhow::Result<Vec<ContentPassage>> {
+        let VectorSearchEpisodesWithIndexParams {
+            vec_str,
+            limit,
+            filters,
+        } = params;
+        // TD-114: `vector_top_k` post-filters group_id (no predicate arg), so
+        // over-fetch by estimated namespace selectivity + cap with a real LIMIT.
+        let base = effective_k(limit, usize::MAX);
+        let plan = self
+            .plan_index_fetch(IndexFetchQuery {
+                table: "episodes",
+                limit,
+                filters,
+            })
+            .await;
+        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=fetch_k).
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
+        // Final LIMIT param sits after the variable-count group params.
+        let limit_param = 3 + filters.group_ids.len();
+
+        // `episodes.id` IS the rowid (INTEGER PRIMARY KEY AUTOINCREMENT), so
+        // `e.rowid = v.id` joins the DiskANN hit back to the episode row.
+        let sql = format!(
+            "SELECT e.id, e.timestamp, e.content, \
+                    vector_distance_cos(e.embedding, vector(?1)) as distance \
+             FROM vector_top_k('episodes_vec_idx', vector(?1), ?2) AS v \
+             JOIN episodes AS e ON e.rowid = v.id \
+             WHERE 1=1{group_clause} \
+             ORDER BY distance ASC, e.id ASC \
+             LIMIT ?{limit_param}"
+        );
+
+        let mut sql_params: Vec<libsql::Value> = vec![
+            libsql::Value::from(vec_str.to_owned()),
+            libsql::Value::from(plan.fetch_k as i64),
+        ];
+        sql_params.extend(group_params);
+        sql_params.push(libsql::Value::from(base as i64));
+
+        let passages = self.rows_to_episode_passages(&sql, sql_params).await?;
+        self.emit_index_shortfall(IndexShortfall {
+            arm: "episodes",
+            plan: &plan,
+            limit: base,
+            delivered: passages.len(),
+        });
+        Ok(passages)
+    }
+
+    #[cfg(feature = "content-search")]
+    async fn vector_search_episodes_brute_force(
+        &self,
+        params: VectorSearchEpisodesBruteForceParams<'_>,
+    ) -> anyhow::Result<Vec<ContentPassage>> {
+        let VectorSearchEpisodesBruteForceParams {
+            vec_str,
+            limit,
+            filters,
+        } = params;
+        // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit).
+        let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
+
+        let sql = format!(
+            "SELECT e.id, e.timestamp, e.content, \
+                    vector_distance_cos(e.embedding, vector(?1)) as distance \
+             FROM episodes e \
+             WHERE e.embedding IS NOT NULL{group_clause} \
+             ORDER BY distance ASC, e.id ASC \
+             LIMIT ?2"
+        );
+
+        let mut sql_params: Vec<libsql::Value> = vec![
+            libsql::Value::from(vec_str.to_owned()),
+            libsql::Value::from(limit as i64),
+        ];
+        sql_params.extend(group_params);
+
+        self.rows_to_episode_passages(&sql, sql_params).await
+    }
+
+    /// Shared row→`ContentPassage` mapping for the two `vector_search_episodes`
+    /// arms (index + brute-force) — both SELECT the identical
+    /// `(id, timestamp, content, distance)` shape. Rows whose cosine distance is
+    /// NULL (a zero-magnitude embedding) are skipped, mirroring
+    /// `vector_search_facts_with_index`'s NULL-distance guard.
+    #[cfg(feature = "content-search")]
+    async fn rows_to_episode_passages(
+        &self,
+        sql: &str,
+        sql_params: Vec<libsql::Value>,
+    ) -> anyhow::Result<Vec<ContentPassage>> {
+        let mut rows = self.conn.query(sql, sql_params).await?;
+        let mut passages = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let episode_id: i64 = row.get(0)?;
+            let ts_str: String = row.get(1)?;
+            let content: String = row.get(2)?;
+            let Some(distance) = row.get::<Option<f64>>(3)? else {
+                continue;
+            };
+            let occurred_at: DateTime<Utc> = DateTime::parse_from_rfc3339(&ts_str)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "vector_search_episodes: episode {episode_id} has unparseable \
+                         timestamp {ts_str:?}: {e}"
+                    )
+                })?
+                .with_timezone(&Utc);
+            passages.push(ContentPassage {
+                episode_id,
+                snippet: content,
+                // Cosine distance: lower = more relevant (matches ContentPassage's
+                // BM25-rank convention). Ordering is by distance ASC (best first).
+                score: distance as f32,
+                source_ref: SourceRef {
+                    kind: SourceKind::Episode,
+                    id: episode_id.to_string(),
+                    occurred_at,
+                    published_at: None,
+                },
+            });
+        }
+        Ok(passages)
+    }
+
     /// Hybrid search: combines vector similarity + FTS5 BM25 for facts using Reciprocal Rank Fusion.
     /// `query_text` is used for FTS5, `query_embedding` is used for vector search.
     /// Returns facts ranked by combined RRF score (higher = more relevant).
@@ -1727,6 +1984,104 @@ fn content_passage_into_retrieved_context(
         namespace,
         facts: Vec::new(),
     }
+}
+
+/// TD-136: RRF-fuse the BM25 `content_search` episode stream with the dense
+/// `vector_search_episodes` stream into ONE rank-ordered `Vec<ContentPassage>`,
+/// keyed by `episode_id`. The fused stream then enters
+/// [`rrf_fuse_with_content`] in place of the BM25-only stream, so the dense
+/// arm's contribution reaches the canonical recall surface WITHOUT touching the
+/// entity/fact ↔ content fusion math (which stays a two-stream fuse).
+///
+/// Same rank-position RRF as `rrf_fuse_entities`/`rrf_fuse_with_content`
+/// (`1/(k+rank+1)`, summed when an episode appears in both arms) and the same
+/// `k` (threaded from the live `SearchConfig`). Both input arms are assumed
+/// already ranked best-first (BM25 `rank` ASC; dense cosine-distance ASC).
+///
+/// Output ordering: fused-score DESC, then `episode_id` ASC on ties (no
+/// relevance implied by id order — mirrors the sibling fusers). The returned
+/// `ContentPassage.score` is set to the fused RRF score (higher = more
+/// relevant) so a consumer that DOES inspect it sees the fused ranking; the
+/// downstream `rrf_fuse_with_content` re-ranks by position regardless.
+/// `limit` caps the fused output (`None` ⇒ the larger single arm, mirroring
+/// `rrf_fuse_with_content`'s flood-truncation fallback).
+#[cfg(feature = "content-search")]
+pub(crate) struct RrfFuseContentStreamsParams {
+    /// BM25 `content_search` episode stream, ranked best-first (`rank` ASC).
+    pub bm25_stream: Vec<ContentPassage>,
+    /// Dense `vector_search_episodes` stream, ranked best-first (distance ASC).
+    pub dense_stream: Vec<ContentPassage>,
+    /// RRF constant `k`, threaded from the live `SearchConfig`.
+    pub rrf_k: usize,
+    /// Output cap; `None` ⇒ the larger single arm (flood-truncation fallback,
+    /// mirrors `rrf_fuse_with_content`).
+    pub limit: Option<usize>,
+}
+
+#[cfg(feature = "content-search")]
+pub(crate) fn rrf_fuse_content_streams(
+    params: RrfFuseContentStreamsParams,
+) -> Vec<ContentPassage> {
+    use std::collections::HashMap;
+
+    let RrfFuseContentStreamsParams {
+        bm25_stream,
+        dense_stream,
+        rrf_k,
+        limit,
+    } = params;
+    let rrf_k = rrf_k as f64;
+    let bm25_count = bm25_stream.len();
+    let dense_count = dense_stream.len();
+
+    // Rule 19 anti-pattern #3 — per-arm attribution so a silently-empty arm is
+    // visible (e.g. dense returns 0 because embeddings were never backfilled).
+    metrics::counter!("kremory.recall.episode_fusion_total", "arm" => "bm25")
+        .increment(bm25_count as u64);
+    metrics::counter!("kremory.recall.episode_fusion_total", "arm" => "dense")
+        .increment(dense_count as u64);
+
+    // Value = (accumulated_rrf_score, passage). First writer wins the passage
+    // body (both arms carry the same episode content); the score accumulates.
+    let mut scores: HashMap<i64, (f64, ContentPassage)> =
+        HashMap::with_capacity(bm25_count + dense_count);
+
+    for (rank, passage) in bm25_stream.into_iter().enumerate() {
+        let rrf_score = 1.0 / (rrf_k + rank as f64 + 1.0);
+        scores
+            .entry(passage.episode_id)
+            .and_modify(|(s, _)| *s += rrf_score)
+            .or_insert((rrf_score, passage));
+    }
+    for (rank, passage) in dense_stream.into_iter().enumerate() {
+        let rrf_score = 1.0 / (rrf_k + rank as f64 + 1.0);
+        scores
+            .entry(passage.episode_id)
+            .and_modify(|(s, _)| *s += rrf_score)
+            .or_insert((rrf_score, passage));
+    }
+
+    let mut fused: Vec<ContentPassage> = scores
+        .into_values()
+        .map(|(score, mut passage)| {
+            passage.score = score as f32;
+            passage
+        })
+        .collect();
+
+    // Deterministic order: fused-score DESC, episode_id ASC on ties.
+    fused.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.episode_id.cmp(&b.episode_id))
+    });
+
+    let cap = limit.unwrap_or_else(|| bm25_count.max(dense_count));
+    if fused.len() > cap {
+        fused.truncate(cap);
+    }
+    fused
 }
 
 // ─── TD-066 Change 2: graph-degree bonus (secondary/additive signal) ────────
@@ -4111,5 +4466,213 @@ mod tests {
             Some(true),
             "weight=3.0, which flips ea/target's relative order, MUST report a reorder"
         );
+    }
+
+    // ─── TD-136: dense episode retrieval arm ─────────────────────────────────
+
+    /// Byte-identical guard: the dense arm ships OFF by default, so a default
+    /// `SearchConfig` never enables the episode dense arm (recall + ingest stay
+    /// BM25-only).
+    #[test]
+    fn episode_dense_enabled_defaults_off() {
+        assert!(!crate::core::config::SearchConfig::default().episode_dense_enabled);
+    }
+
+    #[cfg(feature = "content-search")]
+    fn episode_passage(episode_id: i64, score: f32) -> ContentPassage {
+        ContentPassage {
+            episode_id,
+            snippet: format!("episode {episode_id}"),
+            score,
+            source_ref: SourceRef {
+                kind: SourceKind::Episode,
+                id: episode_id.to_string(),
+                occurred_at: Utc::now(),
+                published_at: None,
+            },
+        }
+    }
+
+    /// `rrf_fuse_content_streams` fuses the BM25 + dense arms by rank position,
+    /// dedups on `episode_id`, and orders by summed RRF score. An episode that
+    /// appears in BOTH arms outranks one that appears in only one, even if the
+    /// single-arm one was rank-0 in its arm.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_content_streams_dedups_and_boosts_dual_arm() {
+        // BM25:  [ep1, ep2]   dense: [ep2, ep3]
+        // ep2 appears in both → highest fused score. ep1/ep3 each appear once.
+        let bm25 = vec![episode_passage(1, -1.0), episode_passage(2, -2.0)];
+        let dense = vec![episode_passage(2, 0.1), episode_passage(3, 0.2)];
+
+        // Explicit generous limit so the union (3 distinct) is not flood-truncated
+        // by the `None` fallback cap (`max(arm_len)`); production always passes a
+        // concrete `content_limit`.
+        let fused = rrf_fuse_content_streams(RrfFuseContentStreamsParams {
+            bm25_stream: bm25,
+            dense_stream: dense,
+            rrf_k: 60,
+            limit: Some(10),
+        });
+
+        // Deduped: 3 distinct episodes.
+        assert_eq!(fused.len(), 3, "dedup on episode_id → 3 distinct episodes");
+        let ids: Vec<i64> = fused.iter().map(|p| p.episode_id).collect();
+        assert_eq!(ids[0], 2, "ep2 (in both arms) must rank first");
+        assert!(
+            fused[0].score > fused[1].score,
+            "dual-arm ep2 fused score must exceed any single-arm episode"
+        );
+        // No duplicate episode_ids in the fused output.
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len(), "no duplicate episode_ids");
+    }
+
+    /// `rrf_fuse_content_streams` honours the explicit output cap.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_content_streams_respects_limit() {
+        let bm25 = vec![
+            episode_passage(1, -1.0),
+            episode_passage(2, -2.0),
+            episode_passage(3, -3.0),
+        ];
+        let dense = vec![episode_passage(4, 0.1), episode_passage(5, 0.2)];
+        let fused = rrf_fuse_content_streams(RrfFuseContentStreamsParams {
+            bm25_stream: bm25,
+            dense_stream: dense,
+            rrf_k: 60,
+            limit: Some(2),
+        });
+        assert_eq!(fused.len(), 2, "limit=2 caps the fused output");
+    }
+
+    /// End-to-end for the dense episode arm: Migration 026 installs
+    /// `episodes.embedding` + `episodes_vec_idx` on `open_in_memory` (the
+    /// `ALTER ADD COLUMN F32_BLOB(dim)` + `libsql_vector_idx` path), episodes get
+    /// embeddings via `set_episode_embedding`, and `vector_search_episodes`
+    /// ranks them by cosine proximity — retrieving a semantically-close episode
+    /// that a lexical BM25 query for the same vector could miss.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn vector_search_episodes_ranks_by_cosine() {
+        use crate::core::graph::InsertEpisodeParams;
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        let no_filter = SearchFilters::new();
+
+        fn ep(content: &str) -> InsertEpisodeParams<'_> {
+            InsertEpisodeParams {
+                content,
+                timestamp: Utc::now(),
+                source_type: None,
+                metadata: None,
+            }
+        }
+        let near_id = g.insert_episode(ep("smartwatch sleep tracking")).await.unwrap();
+        let far_id = g.insert_episode(ep("quarterly revenue report")).await.unwrap();
+        let mid_id = g.insert_episode(ep("smartwatch battery life")).await.unwrap();
+
+        // Hand-crafted embeddings: `near` closest to the query, `far` orthogonal-ish.
+        let query = make_embedding(1.0);
+        g.set_episode_embedding(near_id, &make_embedding(1.0)).await.unwrap();
+        g.set_episode_embedding(mid_id, &make_embedding(1.02)).await.unwrap();
+        g.set_episode_embedding(far_id, &make_embedding(9.0)).await.unwrap();
+
+        let hits = g
+            .vector_search_episodes(VectorSearchEpisodesParams {
+                query_embedding: &query,
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(hits.len(), 3, "all 3 embedded episodes returned");
+        assert_eq!(
+            hits[0].episode_id, near_id,
+            "the episode with the identical embedding must rank first"
+        );
+        // Best-first: distances are non-decreasing (score = cosine distance ASC).
+        assert!(
+            hits[0].score <= hits[1].score && hits[1].score <= hits[2].score,
+            "passages must be ordered best-first (distance ascending): {:?}",
+            hits.iter().map(|p| p.score).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            hits.last().unwrap().episode_id,
+            far_id,
+            "the orthogonal episode must rank last"
+        );
+    }
+
+    /// Episodes with a NULL embedding are invisible to the dense arm (never an
+    /// error), and `episodes_missing_embedding` reports exactly the unembedded
+    /// rows — the substrate the `Memory::backfill_episode_embeddings` loop drives.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn episodes_missing_embedding_tracks_backfill_progress() {
+        use crate::core::graph::InsertEpisodeParams;
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        let no_filter = SearchFilters::new();
+
+        fn ep(content: &str) -> InsertEpisodeParams<'_> {
+            InsertEpisodeParams {
+                content,
+                timestamp: Utc::now(),
+                source_type: None,
+                metadata: None,
+            }
+        }
+        let a = g.insert_episode(ep("alpha")).await.unwrap();
+        let b = g.insert_episode(ep("beta")).await.unwrap();
+
+        // Both start NULL-embedding.
+        let missing = g.episodes_missing_embedding(100).await.unwrap();
+        assert_eq!(missing.len(), 2, "both fresh episodes lack an embedding");
+        // Dense arm sees nothing yet (NULL embeddings excluded, not an error).
+        let hits = g
+            .vector_search_episodes(VectorSearchEpisodesParams {
+                query_embedding: &make_embedding(1.0),
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .unwrap();
+        assert!(hits.is_empty(), "no embeddings yet → dense arm empty, not error");
+
+        // Backfill one → it drops out of the missing set + becomes searchable.
+        g.set_episode_embedding(a, &make_embedding(1.0)).await.unwrap();
+        let missing = g.episodes_missing_embedding(100).await.unwrap();
+        assert_eq!(missing.len(), 1, "one embedded → one still missing");
+        assert_eq!(missing[0].0, b, "the remaining missing row is the un-embedded one");
+        let hits = g
+            .vector_search_episodes(VectorSearchEpisodesParams {
+                query_embedding: &make_embedding(1.0),
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1, "the embedded episode is now dense-searchable");
+        assert_eq!(hits[0].episode_id, a);
+    }
+
+    /// Migration 026 is idempotent: `open_in_memory` runs it once; running it
+    /// again is a clean no-op (PRAGMA column gate + `CREATE INDEX IF NOT EXISTS`).
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn migrate_026_episodes_embedding_is_idempotent() {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        // open_in_memory already ran migrate_026 once (dim 384). A second run
+        // must not error (column already present → ADD COLUMN skipped; index
+        // create is IF NOT EXISTS).
+        crate::core::migrations::migrate_026_episodes_embedding(&g.conn, 384)
+            .await
+            .expect("migrate_026 must be idempotent on re-run");
+        crate::core::migrations::migrate_026_episodes_embedding(&g.conn, 384)
+            .await
+            .expect("migrate_026 must remain idempotent on a third run");
     }
 }

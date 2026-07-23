@@ -449,6 +449,20 @@ impl From<RecallTemplate> for ContextTemplate {
 ///
 /// Advanced users requiring raw substrate access can use `kremory::memory::*`
 /// free functions directly — they remain public and unchanged.
+///
+/// TD-136 (dense episode retrieval): tally returned by
+/// [`Memory::backfill_episode_embeddings`]. Feature-gated behind
+/// `content-search` (the whole backfill path only exists there).
+#[cfg(feature = "content-search")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EpisodeEmbeddingBackfill {
+    /// Episodes whose `content` was embedded + stored this run.
+    pub embedded: u64,
+    /// Episodes skipped due to a per-episode embed/store failure (WARN-logged;
+    /// re-run to retry them).
+    pub failed: u64,
+}
+
 #[derive(Clone)]
 pub struct Memory {
     pub(crate) graph: Arc<dyn GraphHandle>,
@@ -1292,6 +1306,91 @@ impl Memory {
 
             sleep(interval).await;
         }
+    }
+
+    /// TD-136 (dense episode retrieval): backfill `episodes.embedding` for every
+    /// episode that has none, over the existing corpus — NO re-ingest, NO LLM.
+    ///
+    /// Selects NULL-embedding episodes in pages of `batch_size`, embeds each
+    /// episode's `content` with the SAME embedder the graph already uses for
+    /// entity/fact embeddings, and UPDATEs the `embedding` column (populating
+    /// the `episodes_vec_idx` DiskANN index from Migration 026). Idempotent +
+    /// resumable: an already-embedded episode is skipped (its `embedding` is
+    /// non-NULL), so re-running only fills the remaining gap. Feature-gated
+    /// behind `content-search` (the column only exists there).
+    ///
+    /// Returns the run [`EpisodeEmbeddingBackfill`] tally. Per-episode embed
+    /// failures are counted (`failed`) + WARN-logged but do NOT abort the run —
+    /// a transient embedder hiccup on one episode must not lose the whole
+    /// backfill (re-run to retry the failures).
+    ///
+    /// Intended as an operator/maintenance entrypoint (e.g. the
+    /// `kremory-http backfill-episode-embeddings` subcommand) — run it against a
+    /// COPY of the DB before measuring the dense arm, so the pre-existing corpus
+    /// is dense-searchable without a full re-ingest.
+    #[cfg(feature = "content-search")]
+    pub async fn backfill_episode_embeddings(
+        &self,
+        batch_size: usize,
+    ) -> Result<EpisodeEmbeddingBackfill> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::backfill_episode_embeddings requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        // Guard against a zero page size (an infinite no-progress loop).
+        let batch_size = batch_size.max(1);
+
+        let mut stats = EpisodeEmbeddingBackfill::default();
+        loop {
+            let batch = tg
+                .episodes_missing_embedding(batch_size)
+                .await
+                .map_err(MemoryError::Core)?;
+            if batch.is_empty() {
+                break;
+            }
+            for (episode_id, content) in batch {
+                match self.embedder.embed_dyn(&content).await {
+                    Ok(embedding) => match tg.set_episode_embedding(episode_id, &embedding).await {
+                        Ok(()) => stats.embedded += 1,
+                        Err(e) => {
+                            stats.failed += 1;
+                            tracing::warn!(
+                                error = %e,
+                                episode_id,
+                                "backfill_episode_embeddings: set_episode_embedding failed"
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        stats.failed += 1;
+                        tracing::warn!(
+                            error = %e,
+                            episode_id,
+                            "backfill_episode_embeddings: embedder failed"
+                        );
+                    }
+                }
+            }
+            // If a whole page was all-failures we would loop forever on the same
+            // NULL rows — bail once we've made no forward progress on a full page.
+            if stats.embedded == 0 && stats.failed > 0 {
+                tracing::warn!(
+                    failed = stats.failed,
+                    "backfill_episode_embeddings: first page all-failed — aborting (check the embedder)"
+                );
+                break;
+            }
+        }
+        tracing::info!(
+            embedded = stats.embedded,
+            failed = stats.failed,
+            "kremory.backfill_episode_embeddings complete"
+        );
+        Ok(stats)
     }
 
     /// Block until the dream phase handle reaches a terminal status.

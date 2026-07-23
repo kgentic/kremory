@@ -236,6 +236,70 @@ impl TemporalGraph {
         Ok(episode_id)
     }
 
+    /// TD-136 (dense episode retrieval): set/update the embedding vector for
+    /// one episode row, mirroring [`TemporalGraph::set_entity_embedding`] /
+    /// `set_fact_embedding` exactly (JSON-array `vector()` UPDATE keyed by the
+    /// episode's `INTEGER PRIMARY KEY`). Feature-gated behind `content-search`
+    /// — the `episodes.embedding` column only exists in that build
+    /// (Migration 026). Called at ingest (when the dense arm is enabled) and by
+    /// the `Memory::backfill_episode_embeddings` maintenance path.
+    #[cfg(feature = "content-search")]
+    pub async fn set_episode_embedding(&self, episode_id: i64, embedding: &[f32]) -> Result<()> {
+        let _db_start = Instant::now();
+        // Convert f32 slice to JSON array string for the vector() SQL function
+        // (identical shape to set_entity_embedding / set_fact_embedding).
+        let vec_str = format!(
+            "[{}]",
+            embedding
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        self.conn
+            .execute(
+                "UPDATE episodes SET embedding = vector(?1) WHERE id = ?2",
+                libsql::params![vec_str, episode_id],
+            )
+            .await?;
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.set_episode_embedding_ms").record(_ms);
+        tracing::debug!(_ms, episode_id, "kremory.db.set_episode_embedding");
+        Ok(())
+    }
+
+    /// TD-136: select up to `limit` episodes whose `embedding` is still NULL,
+    /// for the `Memory::backfill_episode_embeddings` maintenance loop. Returns
+    /// `(episode_id, content)` pairs. Feature-gated behind `content-search`
+    /// (the column only exists there).
+    ///
+    /// Selects real data columns (`id`, `content`) — NOT `COUNT(*)`/rowid-only —
+    /// so the libsql DiskANN vector-index `COUNT(*)`-returns-0 trap
+    /// (SYSTEM-PRIMER §2; `episodes` gains `episodes_vec_idx` in Migration 026)
+    /// cannot silently zero out the backfill set. The `WHERE embedding IS NULL`
+    /// predicate makes this converge: each backfilled episode drops out of the
+    /// next page.
+    #[cfg(feature = "content-search")]
+    pub async fn episodes_missing_embedding(&self, limit: usize) -> Result<Vec<(i64, String)>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, content FROM episodes \
+                 WHERE embedding IS NULL \
+                 ORDER BY id ASC \
+                 LIMIT ?1",
+                libsql::params![limit as i64],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id: i64 = row.get::<i64>(0)?;
+            let content: String = row.get::<String>(1)?;
+            out.push((id, content));
+        }
+        Ok(out)
+    }
+
     // === Episodic Edge Methods ===
 
     /// Insert an episodic edge (MENTIONS link from episode to entity).

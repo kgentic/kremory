@@ -443,6 +443,35 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
+    // TD-136 dense-episode A/B knob. Truthy = `1`/`true`/`yes`/`on`
+    // (case-insensitive); any other value is treated as OFF and WARN-logged so
+    // a typo (`KREMORY_EPISODE_DENSE=ture`) never silently enables/disables the
+    // arm. Absent env → default `false` (byte-identical BM25-only). Fail-loud
+    // per Rule 21 — mirrors the parse-and-warn discipline of the two knobs above.
+    if let Ok(raw) = std::env::var("KREMORY_EPISODE_DENSE") {
+        let trimmed = raw.trim();
+        match trimmed.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => {
+                tracing::info!(
+                    episode_dense_enabled = true,
+                    "KREMORY_EPISODE_DENSE override applied to SearchConfig (dense episode arm ON)"
+                );
+                b = b.episode_dense_enabled(true);
+            }
+            "0" | "false" | "no" | "off" | "" => {
+                tracing::info!(
+                    episode_dense_enabled = false,
+                    "KREMORY_EPISODE_DENSE=off — dense episode arm OFF (BM25-only, default)"
+                );
+                b = b.episode_dense_enabled(false);
+            }
+            other => tracing::warn!(
+                value = %other,
+                "KREMORY_EPISODE_DENSE is not a recognised boolean \
+                 (1/true/yes/on | 0/false/no/off) — ignoring (default OFF retained)"
+            ),
+        }
+    }
     b
 }
 

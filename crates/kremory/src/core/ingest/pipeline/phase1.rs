@@ -61,6 +61,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
         let episode_id = self.graph.insert_episode_with_group(episode, None).await?;
 
+        // TD-136: dense episode arm — embed + store the episode's embedding when
+        // the dense arm is enabled (no-op / byte-identical when off).
+        #[cfg(feature = "content-search")]
+        self.maybe_embed_episode(episode_id, text).await;
+
         // 2. NER only — no LLM, no entity writes.
         //    When the `ner` feature is active, run GLiNER to obtain span candidates.
         //    Without the feature, return empty candidates (caller proceeds to verify

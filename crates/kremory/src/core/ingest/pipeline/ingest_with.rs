@@ -231,6 +231,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .insert_episode_with_group(episode, group_id)
             .await?;
 
+        // TD-136: dense episode arm — embed + store the episode's embedding when
+        // the dense arm is enabled (no-op / byte-identical when off).
+        #[cfg(feature = "content-search")]
+        self.maybe_embed_episode(episode_id, text).await;
+
         // 1b. ADR-035 §5 Option A — Pin caller-pre-extracted facts BEFORE Phase 2 LLM.
         //
         // Caller-supplied triples enter the graph first; the LLM Phase 2 extraction
