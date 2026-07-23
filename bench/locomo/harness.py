@@ -1022,7 +1022,16 @@ def main():
     parser.add_argument("--base-url", default=CODEMEM_BASE,
                         help="Codemem API base URL")
     parser.add_argument("--recall-limit", type=int, default=50,
-                        help="Default recall limit for single-hop questions")
+                        help="Recall depth applied to ALL categories unless a "
+                             "per-category override below is given. (Previously "
+                             "temporal/multi-hop were silently pinned at 10 "
+                             "regardless of this flag — a depth bug.)")
+    parser.add_argument("--recall-limit-temporal", type=int, default=None,
+                        help="Override recall depth for temporal questions "
+                             "(default: --recall-limit)")
+    parser.add_argument("--recall-limit-multihop", type=int, default=None,
+                        help="Override recall depth for multi-hop questions "
+                             "(default: --recall-limit)")
     parser.add_argument("--server-mode", default="recall",
                         choices=["recall", "content", "hybrid"],
                         help="kremory-http GET /search server-side retrieval mode "
@@ -1048,6 +1057,19 @@ def main():
         base_url=args.base_url,
         dataset_path=args.dataset,
         recall_limit=args.recall_limit,
+        # Depth-bug fix: --recall-limit now applies to temporal/multi-hop too
+        # (they were hardcoded to 10, silently capping every deep run). A
+        # per-category flag still overrides when explicitly given.
+        recall_limit_temporal=(
+            args.recall_limit_temporal
+            if args.recall_limit_temporal is not None
+            else args.recall_limit
+        ),
+        recall_limit_multihop=(
+            args.recall_limit_multihop
+            if args.recall_limit_multihop is not None
+            else args.recall_limit
+        ),
         graph_depth=args.graph_depth,
         mode=args.mode,
         conversations=args.conversations or [],
