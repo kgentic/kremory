@@ -736,6 +736,48 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to open kremory Memory at {db_path}"))?,
     };
 
+    // TD-136 (dense episode retrieval): one-shot maintenance subcommand
+    // `kremory-http backfill-episode-embeddings [batch_size]` — embed + store
+    // `episodes.embedding` for the existing corpus (populating `episodes_vec_idx`
+    // from Migration 026), then exit WITHOUT starting the HTTP server. Run this
+    // against a COPY of the DB before measuring the dense arm. Requires the
+    // `content-search` feature (the column + fn only exist there).
+    if std::env::args().nth(1).as_deref() == Some("backfill-episode-embeddings") {
+        #[cfg(feature = "content-search")]
+        {
+            let batch_size: usize = std::env::args()
+                .nth(2)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(256);
+            tracing::info!(
+                batch_size,
+                "kremory-http: running episode-embedding backfill (TD-136), then exiting"
+            );
+            let stats = mem
+                .backfill_episode_embeddings(batch_size)
+                .await
+                .context("episode-embedding backfill failed")?;
+            tracing::info!(
+                embedded = stats.embedded,
+                failed = stats.failed,
+                "kremory-http: episode-embedding backfill complete"
+            );
+            // Stdout line for the orchestrator to scrape (stderr carries tracing).
+            println!(
+                "backfill-episode-embeddings: embedded={} failed={}",
+                stats.embedded, stats.failed
+            );
+            return Ok(());
+        }
+        #[cfg(not(feature = "content-search"))]
+        {
+            anyhow::bail!(
+                "backfill-episode-embeddings requires a `content-search` build — \
+                 rebuild with `--features content-search`"
+            );
+        }
+    }
+
     // TD-132 / ratified ADR-D2: the CONSUMER binary installs the recorder (the
     // `kremory` lib never does). A Prometheus PULL exporter (HTTP is scrapeable;
     // the sibling stdio bin uses a different channel — hence the `prometheus`

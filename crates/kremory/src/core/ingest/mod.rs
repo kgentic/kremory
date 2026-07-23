@@ -485,6 +485,62 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         self.model.as_deref()
     }
 
+    /// TD-136 (dense episode retrieval): embed one episode's content + store it
+    /// on `episodes.embedding`, IFF the dense arm is enabled
+    /// (`config.search.episode_dense_enabled`). Called after every episode
+    /// INSERT in the ingest pipeline (`pipeline/ingest_with.rs`,
+    /// `pipeline/phase1.rs`).
+    ///
+    /// DEFAULT OFF → this is a pure no-op (no embedder call, no UPDATE), so
+    /// ingest is byte-identical to pre-TD-136 when the flag is unset — the write
+    /// side of the same A/B lever that gates the read arm in
+    /// `facade::recall::fuse_content_stream`. The existing corpus is populated
+    /// separately by `Memory::backfill_episode_embeddings`.
+    ///
+    /// Feature-gated behind `content-search` (the `episodes.embedding` column
+    /// only exists there). Failures are surfaced as a WARN + counter and
+    /// swallowed — an episode-embedding failure must never abort an ingest that
+    /// otherwise succeeded (the episode is still BM25-searchable; the dense arm
+    /// simply misses it until a re-embed/backfill).
+    #[cfg(feature = "content-search")]
+    pub(crate) async fn maybe_embed_episode(&self, episode_id: i64, content: &str) {
+        if !self.config.search.episode_dense_enabled {
+            return;
+        }
+        match self.embedder.embed(content).await {
+            Ok(embedding) => {
+                if let Err(e) = self.graph.set_episode_embedding(episode_id, &embedding).await {
+                    metrics::counter!(
+                        "kremory.ingest.episode_embed_failed_total",
+                        "stage" => "store",
+                    )
+                    .increment(1);
+                    tracing::warn!(
+                        error = %e,
+                        episode_id,
+                        "kremory.ingest.maybe_embed_episode: set_episode_embedding failed \
+                         (episode stays BM25-only until backfill)"
+                    );
+                } else {
+                    metrics::counter!("kremory.ingest.episode_embedded_total").increment(1);
+                }
+            }
+            Err(e) => {
+                metrics::counter!(
+                    "kremory.ingest.episode_embed_failed_total",
+                    "stage" => "embed",
+                )
+                .increment(1);
+                tracing::warn!(
+                    error = %e,
+                    episode_id,
+                    "kremory.ingest.maybe_embed_episode: embedder failed \
+                     (episode stays BM25-only until backfill)"
+                );
+            }
+        }
+    }
+
     /// Unified document ingestion: store document as a searchable entity with
     /// full-text embedding, then run the intelligence pipeline to extract
     /// sub-entities and facts.

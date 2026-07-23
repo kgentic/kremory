@@ -867,6 +867,17 @@ impl TemporalGraph {
         // else the un-partitioned form would be re-introduced. Idempotent + conditional.
         crate::core::migrations::migrate_025_fact_dedup_expired_partial(&self.conn).await?;
 
+        // Migration 026 (TD-136): dense episode retrieval substrate — add an
+        // `embedding F32_BLOB(dim)` column + `episodes_vec_idx` (libsql cosine
+        // vector index) to `episodes`, mirroring `entities`/`facts`. Feature-
+        // gated behind `content-search` (same two-lever gate as Migration 022's
+        // `episodes_fts`) — the default build never touches `episodes` and stays
+        // byte-identical. Idempotent: PRAGMA table_info column gate + CREATE
+        // INDEX IF NOT EXISTS. Runs AFTER migrate_023 (whose F32_BLOB rebuild
+        // is unrelated to episodes) so `dim` is the same authoritative value.
+        #[cfg(feature = "content-search")]
+        crate::core::migrations::migrate_026_episodes_embedding(&self.conn, dim).await?;
+
         Ok(())
     }
 
@@ -1802,6 +1813,16 @@ mod schema_tests {
         };
         // Run migrations so all tables exist — then corrupt one.
         graph.run_migrations().await.expect("run_migrations");
+        // TD-136: under `content-search`, Migration 026 installs the DiskANN
+        // `episodes_vec_idx` on `episodes`; libsql refuses `DROP TABLE` while its
+        // vector index survives, so drop the index first (mirrors defs_j.rs's
+        // `DROP INDEX IF EXISTS entities_vec_idx` before table restructure). IF
+        // EXISTS makes this a harmless no-op on the default (no-index) build.
+        graph
+            .conn
+            .execute("DROP INDEX IF EXISTS episodes_vec_idx", ())
+            .await
+            .expect("DROP INDEX episodes_vec_idx");
         graph
             .conn
             .execute("DROP TABLE episodes", ())

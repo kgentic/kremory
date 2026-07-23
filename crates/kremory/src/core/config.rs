@@ -257,6 +257,20 @@ pub struct SearchConfig {
     /// output, not a value guessed at design time — ship the knob, measure
     /// the value.
     pub content_stream_weight: f32,
+
+    /// TD-136 (dense episode retrieval): when `true`, recall runs a dense
+    /// (embedding) vector arm over `episodes.embedding` and RRF-fuses it with
+    /// the ADR-072 BM25 `content_search` episode arm BEFORE the fused content
+    /// stream enters `search::rrf_fuse_with_content`. Also gates ingest-time
+    /// episode embedding (`core/ingest/pipeline`). **Default `false` = today's
+    /// BM25-only behaviour, byte-identical** — the whole dense arm (read +
+    /// write) is inert until enabled, so `content-search` builds keep the exact
+    /// pre-TD-136 recall + ingest surface at defaults. Wired from the
+    /// `KREMORY_EPISODE_DENSE` boot override
+    /// (`facade::providers::search_env_overrides`), mirroring
+    /// `content_stream_weight`'s `KREMORY_CONTENT_WEIGHT` A/B knob, so the
+    /// dense-vs-BM25 comparison costs a server restart, not a rebuild.
+    pub episode_dense_enabled: bool,
 }
 
 impl Default for SearchConfig {
@@ -278,6 +292,9 @@ impl Default for SearchConfig {
             // TD-066 Increment 2 — 1.0 = neutral/no-op, today's equal-weight
             // RRF fusion (Increment 1's behaviour, byte-identical).
             content_stream_weight: 1.0,
+            // TD-136 — dense episode arm OFF by default: byte-identical BM25-only
+            // recall + ingest until KREMORY_EPISODE_DENSE flips it on.
+            episode_dense_enabled: false,
         }
     }
 }
@@ -533,6 +550,16 @@ impl PipelineConfigBuilder {
     /// restart, not a rebuild.
     pub fn content_stream_weight(mut self, v: f32) -> Self {
         self.inner.search.content_stream_weight = v;
+        self
+    }
+
+    /// TD-136 dense-episode A/B knob: enable the dense (embedding) episode
+    /// retrieval arm + ingest-time episode embedding. Default `false`
+    /// (BM25-only, byte-identical). Wired from the `KREMORY_EPISODE_DENSE` env
+    /// override at server boot (`facade::providers::search_env_overrides`) so
+    /// the dense-vs-BM25 comparison costs a restart, not a rebuild.
+    pub fn episode_dense_enabled(mut self, v: bool) -> Self {
+        self.inner.search.episode_dense_enabled = v;
         self
     }
 
