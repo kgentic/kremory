@@ -170,6 +170,10 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
                 "rrf_k": scoring.rrf_k,
                 "graph_degree_weight": scoring.graph_degree_weight,
                 "temporal_weight": scoring.temporal_weight,
+                // TD-136 dense episode arm — surfaced so the bench provenance
+                // stamp records whether KREMORY_EPISODE_DENSE was active (the
+                // dense-vs-BM25 A/B is otherwise invisible in the recall-run JSON).
+                "episode_dense_enabled": scoring.episode_dense_enabled,
             },
         })),
     )
