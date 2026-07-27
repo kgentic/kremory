@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use metrics;
 
 use crate::core::config::{ContentType, PipelineConfig};
+use crate::core::embed_prefix::document_embed_text;
 use crate::core::error::Result;
 use crate::core::graph::{InsertEntityParams, UpdateEntitySourceTierParams};
 
@@ -507,9 +508,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         if !self.config.search.episode_dense_enabled {
             return;
         }
-        match self.embedder.embed(content).await {
+        // TD-143: WRITE into `episodes.embedding` — document-prefix it.
+        let prefixed_content =
+            document_embed_text(content, self.config.search.embed_task_prefix_enabled);
+        match self.embedder.embed(&prefixed_content).await {
             Ok(embedding) => {
-                if let Err(e) = self.graph.set_episode_embedding(episode_id, &embedding).await {
+                if let Err(e) = self
+                    .graph
+                    .set_episode_embedding(episode_id, &embedding)
+                    .await
+                {
                     metrics::counter!(
                         "kremory.ingest.episode_embed_failed_total",
                         "stage" => "store",
@@ -576,7 +584,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .increment(1);
 
         // 2. Embed the full document text for vector search.
-        let embedding = self.embedder.embed(text).await?;
+        // TD-143: WRITE into `entities.embedding` (this document-anchor entity
+        // shares the same index as every other entity) — document-prefix it.
+        let embedding = self
+            .embedder
+            .embed(&document_embed_text(
+                text,
+                self.config.search.embed_task_prefix_enabled,
+            ))
+            .await?;
         self.graph.set_entity_embedding(source, &embedding).await?;
 
         // 3. Run the intelligence pipeline on the document content.

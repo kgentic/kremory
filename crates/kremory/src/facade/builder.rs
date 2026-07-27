@@ -340,6 +340,26 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Explicitly enable/disable the TD-143 nomic `search_document:` /
+    /// `search_query:` task-prefix on every embed call site
+    /// (`SearchConfig::embed_task_prefix_enabled`). Default (unset): `false`
+    /// (bare-text embedding) unless overridden by `KREMORY_EMBED_TASK_PREFIX`
+    /// at construction time. Calling this setter wins over BOTH the default
+    /// and any env override, for this `Memory` only.
+    ///
+    /// ⚠️ Nomic-specific — only meaningful when the wired embedder is
+    /// `nomic-embed-text`. ⚠️ Flipping this on an EXISTING corpus makes every
+    /// already-stored embedding stale (mixed prefixed/unprefixed vectors in
+    /// one index is a silent correctness bug, not a graceful degrade) — see
+    /// [`SearchConfig::embed_task_prefix_enabled`](crate::core::config::SearchConfig::embed_task_prefix_enabled)
+    /// for the required re-embed sequence.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::embed_task_prefix_enabled`](crate::core::config::PipelineConfigBuilder::embed_task_prefix_enabled).
+    pub fn with_embed_task_prefix_enabled(mut self, v: bool) -> Self {
+        self.search_overrides.embed_task_prefix_enabled = Some(v);
+        self
+    }
+
     /// Configure automatic dream-pass scheduling.
     ///
     /// Default: [`DreamSchedule::Off`] — no background task is spawned.

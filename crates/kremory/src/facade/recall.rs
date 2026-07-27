@@ -289,7 +289,12 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
     // otherwise-working recall) with a loud warn + counter (Rule 19). This whole
     // fn is already `content-search`-gated, so no inner feature-cfg is needed.
     let content_results = if search_config.episode_dense_enabled {
-        match memory.embedder.embed_dyn(query).await {
+        // TD-143: QUERY against the document-prefixed `episodes` vector index.
+        let prefixed_query = crate::core::embed_prefix::query_embed_text(
+            query,
+            search_config.embed_task_prefix_enabled,
+        );
+        match memory.embedder.embed_dyn(&prefixed_query).await {
             Ok(query_embedding) => {
                 match tg
                     .vector_search_episodes(crate::core::search::VectorSearchEpisodesParams {
@@ -361,7 +366,12 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
     // (never fails an otherwise-working recall) with a loud warn + counter
     // (Rule 19), same degrade discipline as the episode arm above.
     let fused = if search_config.fact_dense_enabled {
-        match memory.embedder.embed_dyn(query).await {
+        // TD-143: QUERY against the document-prefixed `facts` vector index.
+        let prefixed_query = crate::core::embed_prefix::query_embed_text(
+            query,
+            search_config.embed_task_prefix_enabled,
+        );
+        match memory.embedder.embed_dyn(&prefixed_query).await {
             Ok(query_embedding) => {
                 match tg
                     .vector_search_facts(crate::core::search::VectorSearchFactsParams {
@@ -2368,7 +2378,12 @@ mod apply_rerank_real_path_tests {
         let mem = make_memory().await;
         let ns = Namespace::new("test-rerank-real-path-none");
         seed_episode(&mem, &ns, "midnight sun over svalbard archipelago norway").await;
-        seed_episode(&mem, &ns, "midnight sun visible across northern lapland finland").await;
+        seed_episode(
+            &mem,
+            &ns,
+            "midnight sun visible across northern lapland finland",
+        )
+        .await;
 
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();

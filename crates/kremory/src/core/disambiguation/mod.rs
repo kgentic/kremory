@@ -64,6 +64,7 @@ use metrics::counter;
 use tracing;
 
 use crate::core::confidence::{min_confidence_floor_for_gate, CONFIDENCE_REJECT_FLOOR};
+use crate::core::embed_prefix::query_embed_text;
 use crate::core::error::Result;
 use crate::core::graph::FactInsert;
 use crate::core::provider::EmbeddingProvider;
@@ -174,6 +175,7 @@ pub struct DisambiguateParams<'a> {
 pub async fn disambiguate<Emb: EmbeddingProvider>(
     params: DisambiguateParams<'_>,
     embedder: &Emb,
+    embed_task_prefix_enabled: bool,
 ) -> Result<DisambiguationOutcome> {
     let DisambiguateParams {
         entity_name,
@@ -188,8 +190,13 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         return Ok(DisambiguationOutcome::New);
     }
 
-    // Step 1: embed the entity name.
-    let embedding = embedder.embed(entity_name).await?;
+    // Step 1: embed the entity name. TD-143: this probes the SAME `entities`
+    // vector index that ingest-time writes document-prefix (`set_entity_embedding`
+    // call sites in `ingest_with.rs`) — must use `query_embed_text` so a flipped
+    // knob keeps both sides of the comparison in the same task space.
+    let embedding = embedder
+        .embed(&query_embed_text(entity_name, embed_task_prefix_enabled))
+        .await?;
     if embedding.is_empty() {
         // Degenerate embedder returned a zero-length slice — skip disambiguation.
         return Ok(DisambiguationOutcome::New);
@@ -825,6 +832,7 @@ mod tests {
                 graph: &graph,
             },
             &embedder,
+            false,
         )
         .await?;
         assert_eq!(
@@ -846,6 +854,7 @@ mod tests {
                 graph: &graph,
             },
             &embedder,
+            false,
         )
         .await?;
         assert_eq!(
@@ -867,6 +876,7 @@ mod tests {
                 graph: &graph,
             },
             &embedder,
+            false,
         )
         .await?;
         assert_eq!(

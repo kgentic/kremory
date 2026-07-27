@@ -739,30 +739,29 @@ pub(crate) async fn apply_merge_with_audit(
     // `WHERE entity_id = loser_id` would remap/delete another namespace's
     // presence edges for the same id (the same cross-namespace corruption
     // class as the facts remap above).
-    let r3 = if r2.is_ok() {
-        match graph
-            .conn
-            .execute(
-                "UPDATE OR IGNORE episodic_edges SET entity_id = ?1 \
+    let r3 =
+        if r2.is_ok() {
+            match graph
+                .conn
+                .execute(
+                    "UPDATE OR IGNORE episodic_edges SET entity_id = ?1 \
                  WHERE entity_id = ?2 AND entity_group_id = ?3",
-                libsql::params![keeper_id, loser_id, group_id],
-            )
-            .await
-        {
-            Ok(_) => {
-                graph
+                    libsql::params![keeper_id, loser_id, group_id],
+                )
+                .await
+            {
+                Ok(_) => graph
                     .conn
                     .execute(
                         "DELETE FROM episodic_edges WHERE entity_id = ?1 AND entity_group_id = ?2",
                         libsql::params![loser_id, group_id],
                     )
-                    .await
+                    .await,
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
-        }
-    } else {
-        r2
-    };
+        } else {
+            r2
+        };
 
     // Accumulate access_count into keeper. ADR-029d: scoped by `group_id` — the
     // keeper lives in THIS namespace (it's the survivor of a merge this caller
@@ -788,39 +787,38 @@ pub(crate) async fn apply_merge_with_audit(
     // item; building it now would hardcode a guessed floor).
     // ADR-029d: both the keeper read and the keeper write are scoped by
     // `group_id` — same rationale as the access_count accumulate above.
-    let r4b = if r4.is_ok() {
-        let keeper_ner_confidence: Option<f32> = match graph
-            .conn
-            .query(
-                "SELECT ner_confidence FROM entities WHERE id = ?1 AND group_id = ?2",
-                libsql::params![keeper_id, group_id],
-            )
-            .await
-        {
-            Ok(mut kr) => match kr.next().await {
-                Ok(Some(row)) => row.get::<Option<f64>>(0).ok().flatten().map(|v| v as f32),
-                _ => None,
-            },
-            Err(_) => None,
-        };
-        match crate::core::confidence::merged_confidence(
-            keeper_ner_confidence,
-            loser_ner_confidence,
-        ) {
-            Some(merged) => {
-                graph
+    let r4b =
+        if r4.is_ok() {
+            let keeper_ner_confidence: Option<f32> = match graph
+                .conn
+                .query(
+                    "SELECT ner_confidence FROM entities WHERE id = ?1 AND group_id = ?2",
+                    libsql::params![keeper_id, group_id],
+                )
+                .await
+            {
+                Ok(mut kr) => match kr.next().await {
+                    Ok(Some(row)) => row.get::<Option<f64>>(0).ok().flatten().map(|v| v as f32),
+                    _ => None,
+                },
+                Err(_) => None,
+            };
+            match crate::core::confidence::merged_confidence(
+                keeper_ner_confidence,
+                loser_ner_confidence,
+            ) {
+                Some(merged) => graph
                     .conn
                     .execute(
                         "UPDATE entities SET ner_confidence = ?1 WHERE id = ?2 AND group_id = ?3",
                         libsql::params![f64::from(merged), keeper_id, group_id],
                     )
-                    .await
+                    .await,
+                None => Ok(0), // both null — nothing to combine
             }
-            None => Ok(0), // both null — nothing to combine
-        }
-    } else {
-        r4
-    };
+        } else {
+            r4
+        };
 
     // Delete loser FTS entry.
     // TODO(ADR-029d): entities_fts is NOT group-aware (FTS5 virtual table has no
@@ -933,6 +931,19 @@ pub(crate) async fn apply_merge_with_audit(
                 // re-persisted a recomputed embedding — `discover_types.rs:735` only
                 // recomputes for a similarity comparison, never persists).
                 if let Some(emb) = embedder {
+                    // TD-143 KNOWN GAP (documented, not silent): this re-embed writes
+                    // into `entities.embedding` — the same index ingest-time writes
+                    // document-prefix when `embed_task_prefix_enabled` is on — but this
+                    // call site does NOT thread that knob (would require adding it to
+                    // `EntityMergeParams`/`ApplyMergeWithAuditParams` and both callers,
+                    // `canonicalize_surface_forms` L5 and
+                    // `core::dream::consolidation::cross_episode`). Left unprefixed:
+                    // out of scope for TD-143 (best-effort, dream-phase-only, tracked
+                    // separately as TD-112) — but means a keeper re-embedded via THIS
+                    // path after the knob is flipped on stays in the unprefixed task
+                    // space until the next full re-ingest/backfill. Revisit if/when the
+                    // knob defaults on.
+                    //
                     // Attribute the re-embed outcome per merge site (Quinn L3) so
                     // once multiple sites thread the embedder, their re-embed
                     // success/failure rates stay distinguishable. `site` is a

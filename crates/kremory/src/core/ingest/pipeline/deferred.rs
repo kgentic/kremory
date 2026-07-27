@@ -7,6 +7,7 @@ use metrics::histogram;
 
 use crate::core::config::ContentType;
 use crate::core::contradiction::{DetectParams, TwoPoolDetector};
+use crate::core::embed_prefix::document_embed_text;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::error::{ContradictionResolution, IngestStatus};
 use crate::core::extraction_window::ExtractionWindowSplitter;
@@ -405,8 +406,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 .await
             {
                 Ok(Some(fact_id)) => {
+                    // TD-143: WRITE into `facts.embedding` — document-prefix it.
                     let fact_text = format!("{} {} {}", fact.subject, fact.predicate, fact.object);
-                    if let Ok(embedding) = self.embedder.embed(&fact_text).await {
+                    let prefixed_fact_text = document_embed_text(
+                        &fact_text,
+                        self.config.search.embed_task_prefix_enabled,
+                    );
+                    if let Ok(embedding) = self.embedder.embed(&prefixed_fact_text).await {
                         self.graph
                             .set_fact_embedding(fact_id, &embedding)
                             .await

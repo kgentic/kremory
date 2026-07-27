@@ -135,6 +135,7 @@ pub mod context;
 pub mod contradiction;
 pub mod disambiguation;
 pub mod dream;
+pub(crate) mod embed_prefix;
 pub mod embedding;
 pub mod engine;
 pub mod entity_types;

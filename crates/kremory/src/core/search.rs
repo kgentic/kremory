@@ -2031,9 +2031,7 @@ pub(crate) struct RrfFuseContentStreamsParams {
 }
 
 #[cfg(feature = "content-search")]
-pub(crate) fn rrf_fuse_content_streams(
-    params: RrfFuseContentStreamsParams,
-) -> Vec<ContentPassage> {
+pub(crate) fn rrf_fuse_content_streams(params: RrfFuseContentStreamsParams) -> Vec<ContentPassage> {
     use std::collections::HashMap;
 
     let RrfFuseContentStreamsParams {
@@ -4492,7 +4490,10 @@ mod tests {
         let entity_stream = vec![test_retrieved_context("ea", "ns-weight-shift")];
         let content_stream = vec![
             test_content_passage(500, "filler content ranked ahead of target"),
-            test_content_passage(1, "target content that should outrank entity at high weight"),
+            test_content_passage(
+                1,
+                "target content that should outrank entity at high weight",
+            ),
         ];
 
         let baseline = rrf_fuse_with_content(RrfFuseWithContentParams {
@@ -4616,14 +4617,18 @@ mod tests {
             })
         });
 
-        let gauge_value = snapshotter.snapshot().into_vec().into_iter().find_map(|(k, _, _, v)| {
-            if k.key().name() == "kremory.search.content_stream_weight_applied" {
-                if let DebugValue::Gauge(n) = v {
-                    return Some(n.into_inner());
+        let gauge_value = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .find_map(|(k, _, _, v)| {
+                if k.key().name() == "kremory.search.content_stream_weight_applied" {
+                    if let DebugValue::Gauge(n) = v {
+                        return Some(n.into_inner());
+                    }
                 }
-            }
-            None
-        });
+                None
+            });
         assert_eq!(
             gauge_value,
             Some(2.5),
@@ -4644,7 +4649,10 @@ mod tests {
         let entity_stream = vec![test_retrieved_context("ea", "ns-weight-reorder")];
         let content_stream = vec![
             test_content_passage(500, "filler content ranked ahead of target"),
-            test_content_passage(1, "target content that should outrank entity at high weight"),
+            test_content_passage(
+                1,
+                "target content that should outrank entity at high weight",
+            ),
         ];
 
         let reorder_changed = |weight: f32| -> Option<bool> {
@@ -4660,18 +4668,22 @@ mod tests {
                     rrf_k: 60,
                 })
             });
-            snapshotter.snapshot().into_vec().into_iter().find_map(|(k, _, _, v)| {
-                if k.key().name() == "kremory.search.content_weight_reorder_total" {
-                    let labels: std::collections::HashMap<&str, &str> =
-                        k.key().labels().map(|l| (l.key(), l.value())).collect();
-                    if let DebugValue::Counter(n) = v {
-                        if n == 1 {
-                            return labels.get("changed").map(|s| *s == "true");
+            snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .find_map(|(k, _, _, v)| {
+                    if k.key().name() == "kremory.search.content_weight_reorder_total" {
+                        let labels: std::collections::HashMap<&str, &str> =
+                            k.key().labels().map(|l| (l.key(), l.value())).collect();
+                        if let DebugValue::Counter(n) = v {
+                            if n == 1 {
+                                return labels.get("changed").map(|s| *s == "true");
+                            }
                         }
                     }
-                }
-                None
-            })
+                    None
+                })
         };
 
         assert_eq!(
@@ -4788,15 +4800,30 @@ mod tests {
                 metadata: None,
             }
         }
-        let near_id = g.insert_episode(ep("smartwatch sleep tracking")).await.unwrap();
-        let far_id = g.insert_episode(ep("quarterly revenue report")).await.unwrap();
-        let mid_id = g.insert_episode(ep("smartwatch battery life")).await.unwrap();
+        let near_id = g
+            .insert_episode(ep("smartwatch sleep tracking"))
+            .await
+            .unwrap();
+        let far_id = g
+            .insert_episode(ep("quarterly revenue report"))
+            .await
+            .unwrap();
+        let mid_id = g
+            .insert_episode(ep("smartwatch battery life"))
+            .await
+            .unwrap();
 
         // Hand-crafted embeddings: `near` closest to the query, `far` orthogonal-ish.
         let query = make_embedding(1.0);
-        g.set_episode_embedding(near_id, &make_embedding(1.0)).await.unwrap();
-        g.set_episode_embedding(mid_id, &make_embedding(1.02)).await.unwrap();
-        g.set_episode_embedding(far_id, &make_embedding(9.0)).await.unwrap();
+        g.set_episode_embedding(near_id, &make_embedding(1.0))
+            .await
+            .unwrap();
+        g.set_episode_embedding(mid_id, &make_embedding(1.02))
+            .await
+            .unwrap();
+        g.set_episode_embedding(far_id, &make_embedding(9.0))
+            .await
+            .unwrap();
 
         let hits = g
             .vector_search_episodes(VectorSearchEpisodesParams {
@@ -4858,13 +4885,21 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(hits.is_empty(), "no embeddings yet → dense arm empty, not error");
+        assert!(
+            hits.is_empty(),
+            "no embeddings yet → dense arm empty, not error"
+        );
 
         // Backfill one → it drops out of the missing set + becomes searchable.
-        g.set_episode_embedding(a, &make_embedding(1.0)).await.unwrap();
+        g.set_episode_embedding(a, &make_embedding(1.0))
+            .await
+            .unwrap();
         let missing = g.episodes_missing_embedding(100).await.unwrap();
         assert_eq!(missing.len(), 1, "one embedded → one still missing");
-        assert_eq!(missing[0].0, b, "the remaining missing row is the un-embedded one");
+        assert_eq!(
+            missing[0].0, b,
+            "the remaining missing row is the un-embedded one"
+        );
         let hits = g
             .vector_search_episodes(VectorSearchEpisodesParams {
                 query_embedding: &make_embedding(1.0),
@@ -4873,7 +4908,11 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(hits.len(), 1, "the embedded episode is now dense-searchable");
+        assert_eq!(
+            hits.len(),
+            1,
+            "the embedded episode is now dense-searchable"
+        );
         assert_eq!(hits[0].episode_id, a);
     }
 
@@ -4902,6 +4941,16 @@ mod tests {
     #[test]
     fn fact_dense_enabled_defaults_off() {
         assert!(!crate::core::config::SearchConfig::default().fact_dense_enabled);
+    }
+
+    // ─── TD-143: nomic search_document:/search_query: task-prefix knob ──────
+
+    /// Byte-identical guard: the nomic task-prefix knob ships OFF by default,
+    /// so a default `SearchConfig` never prefixes embed calls (bare-text
+    /// embedding, matching every kremory release before TD-143).
+    #[test]
+    fn embed_task_prefix_enabled_defaults_off() {
+        assert!(!crate::core::config::SearchConfig::default().embed_task_prefix_enabled);
     }
 
     /// Args-as-object per TD-042 (`clippy::too_many_arguments` threshold 3).
@@ -4980,15 +5029,28 @@ mod tests {
             score: -0.1,
         });
         let out = fact_hit_into_retrieved_context(hit, None);
-        assert_eq!(out.entity_id, "fact:7", "id must be fact-prefixed, not bare");
-        assert_eq!(out.entity_type_name, "Fact", "discriminator must be \"Fact\"");
+        assert_eq!(
+            out.entity_id, "fact:7",
+            "id must be fact-prefixed, not bare"
+        );
+        assert_eq!(
+            out.entity_type_name, "Fact",
+            "discriminator must be \"Fact\""
+        );
         assert_eq!(
             out.summary, "Caroline attended LGBTQ_support_group",
             "summary must render the SAME triple shape ingest embeds"
         );
-        assert_eq!(out.source_refs.len(), 1, "source episode must produce one SourceRef");
+        assert_eq!(
+            out.source_refs.len(),
+            1,
+            "source episode must produce one SourceRef"
+        );
         assert_eq!(out.source_refs[0].kind, SourceKind::Episode);
-        assert_eq!(out.source_refs[0].id, "42", "SourceRef.id must carry the source episode id");
+        assert_eq!(
+            out.source_refs[0].id, "42",
+            "SourceRef.id must carry the source episode id"
+        );
     }
 
     /// A fact with no recorded source episode (caller-supplied structured
@@ -5038,7 +5100,11 @@ mod tests {
             rrf_k: 60,
         });
 
-        assert_eq!(fused.len(), 3, "2 entities + 1 fact, no id collisions → 3 distinct entries");
+        assert_eq!(
+            fused.len(),
+            3,
+            "2 entities + 1 fact, no id collisions → 3 distinct entries"
+        );
         let fact_entry = fused
             .iter()
             .find(|c| c.entity_type_name == "Fact")
@@ -5104,6 +5170,10 @@ mod tests {
             limit: None,
             rrf_k: 60,
         });
-        assert_eq!(fused.len(), 2, "no limit → full union (1 entity + 1 fact), nothing dropped");
+        assert_eq!(
+            fused.len(),
+            2,
+            "no limit → full union (1 entity + 1 fact), nothing dropped"
+        );
     }
 }
