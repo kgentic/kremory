@@ -2037,4 +2037,301 @@ mod apply_rerank_tests {
             "on reranker error, original fused order must survive unchanged"
         );
     }
+
+    // ── candidate-conservation invariant (reranker hardening pass) ────────
+    //
+    // `apply_rerank_with` funnels every candidate through a single
+    // `HashMap<String, RetrievedContext>` keyed on `ctx.entity_id` (the
+    // `by_id` map built above). This is safe TODAY only because the two
+    // "kinds" of id that ever reach it occupy disjoint string spaces:
+    // entity-arm results carry a name-slug `entity_id` (e.g. "alice"), while
+    // content-fused passages carry the STRINGIFIED numeric episode id
+    // (`core/search.rs::content_passage_into_retrieved_context`:
+    // `entity_id: passage.episode_id.to_string()`). Nothing in the type
+    // system pins that disjointness — ADR-064 explicitly rejected migrating
+    // entities to an integer primary key, which is exactly the change that
+    // would activate a collision. These two tests make the invariant an
+    // explicit, executable fact instead of an implicit assumption.
+
+    /// No candidate is lost when entity-style (name-slug) and episode-style
+    /// (stringified integer) ids are mixed in the same rerank batch — the
+    /// realistic shape once `fuse_content_stream` merges the entity-arm
+    /// stream with the ADR-072 content-search stream before `apply_rerank`
+    /// runs as the final pipeline stage.
+    #[tokio::test]
+    async fn candidate_count_is_conserved_across_entity_and_episode_style_ids() {
+        let results = vec![
+            ctx("alice", 0.9),     // entity-style: name slug
+            ctx("42", 0.8),        // episode-style: stringified numeric id
+            ctx("bob-jones", 0.7), // entity-style: name slug
+            ctx("103", 0.6),       // episode-style: stringified numeric id
+        ];
+        let input_count = results.len();
+        let reranker = MockReranker {
+            scores: [
+                ("alice".to_string(), 0.1),
+                ("42".to_string(), 0.9),
+                ("bob-jones".to_string(), 0.5),
+                ("103".to_string(), 0.3),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let out = apply_rerank_with(ApplyRerankWithParams {
+            reranker: &reranker,
+            query: "query",
+            rerank_k: Some(4),
+            results,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            out.len(),
+            input_count,
+            "count-in must equal count-out: no candidate may be lost when distinct \
+             entity-style and episode-style ids are mixed in one rerank batch"
+        );
+        let mut out_ids: Vec<&str> = out.iter().map(|c| c.entity_id.as_str()).collect();
+        out_ids.sort_unstable();
+        assert_eq!(
+            out_ids,
+            vec!["103", "42", "alice", "bob-jones"],
+            "every distinct id must survive rerank unchanged, regardless of which kind: {out_ids:?}"
+        );
+    }
+
+    /// PIN (not a guarantee): two candidates that share the same `entity_id`
+    /// collapse to ONE surviving candidate. `by_id: HashMap<String,
+    /// RetrievedContext>` is built via `.collect()` over `head` in order, so
+    /// the SECOND candidate silently overwrites the first at the same key;
+    /// the reranker then returns two scored entries for that one id, and the
+    /// second `by_id.remove(&id)` finds nothing left to remove and is
+    /// dropped via the `continue` branch. Count-in (2) != count-out (1).
+    ///
+    /// This collision cannot happen in production TODAY (entity slugs and
+    /// stringified episode ids are disjoint — see the module doc above), so
+    /// this test is a TRIPWIRE for a future entity-id scheme change (e.g.
+    /// the integer entity primary key ADR-064 rejected), not a desired
+    /// behaviour to defend. If this assertion ever fails, the collapse
+    /// mechanics changed — update the pin, don't just delete the test, and
+    /// re-check whether the new behaviour is still safe.
+    #[tokio::test]
+    async fn duplicate_entity_id_collapses_to_one_candidate_latent_fragility_pin() {
+        let results = vec![
+            ctx("42", 0.9), // first candidate keyed "42"
+            ctx("42", 0.5), // second, DISTINCT candidate, SAME id "42"
+        ];
+        let reranker = MockReranker {
+            scores: [("42".to_string(), 0.9)].into_iter().collect(),
+        };
+        let out = apply_rerank_with(ApplyRerankWithParams {
+            reranker: &reranker,
+            query: "query",
+            rerank_k: Some(2),
+            results,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            out.len(),
+            1,
+            "PINNED: two candidates sharing one entity_id collapse to a single surviving \
+             candidate — count-in (2) != count-out (1). See test doc comment for the mechanism."
+        );
+        assert_eq!(
+            out.first().map(|c| c.entity_id.as_str()),
+            Some("42"),
+            "the surviving candidate keeps the shared id"
+        );
+    }
+}
+
+// ── TD-066 Increment 3 (TD-062 reranker) — real recall-path coverage ────────
+//
+// `apply_rerank_tests` (above) proves the WIRING via a deterministic mock
+// `Reranker` and hand-built `RetrievedContext`s — required, but per the
+// TD-140 CORRECTION (`.ai-docs/tech-debt/tech-debt-register.md`,
+// `instrument-real-data-flow-before-hypothesizing` §3 "test the real system,
+// not a model of it") that same shape of test cannot distinguish "the code
+// is wired correctly" from "the code is wired to a layer that never actually
+// runs in production" — it never drives `Memory::recall()` end to end, so it
+// can't see whether the REAL production reranker singleton
+// (`crate::core::rerank::default_reranker()`) is ever reached from the
+// public API. This module closes that gap: seeds a REAL `Memory` with real
+// episodes (via `TemporalGraph::insert_episode_with_group`, the same
+// production insert path `remember()` uses), drives the REAL
+// `mem.recall(...).raw()` terminal, and asserts on the `kremory.rerank.*`
+// metrics that `apply_rerank`'s production wrapper — NOT a mock — actually
+// fired.
+//
+// `rerank_k(0)` is deliberate, not an evasion of the real model: it stays
+// OFFLINE without weakening what's proven. `apply_rerank_with`'s
+// `take = k.min(results.len())` makes the reranked "head" slice EMPTY at
+// k=0, so the candidate list handed to `Reranker::rerank()` is empty too —
+// and `FastEmbedReranker::rerank()`'s OWN early return
+// (`if candidates.is_empty() { return Ok(Vec::new()); }`, `core/rerank.rs`)
+// fires before the ONNX session is ever touched. The real singleton, the
+// real trait dyn-dispatch, and the real `apply_rerank_with` REORDER branch
+// (NOT the `results.len() <= 1` SKIP branch — this fixture seeds 2 results)
+// all run for real; only the model load — which needs network/disk and is
+// exactly what the existing `#[ignore]`-gated
+// `fastembed_reranker_orders_relevant_pair_correctly` test exists to cover
+// separately — is avoided. This is the offline-safe ceiling of "prove the
+// real path fires" without a network/model-download dependency in the fast
+// tier; it does NOT prove the model reorders correctly (that's the ignored
+// seam-tier test's job).
+#[cfg(all(test, feature = "rerank", feature = "content-search"))]
+mod apply_rerank_real_path_tests {
+    use std::sync::Arc;
+
+    use chrono::Utc;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    use crate::core::graph::EpisodeInsert;
+    use crate::core::provider::{DynEmbeddingProvider, MockChatProvider, NullEmbeddingProvider};
+    use crate::memory::engine_handle::namespace_to_group_id;
+    use crate::memory::types::Namespace;
+
+    use super::Memory;
+
+    async fn make_memory() -> Memory {
+        let llm: Arc<dyn crate::memory::ChatProvider> = Arc::new(MockChatProvider::null());
+        let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
+        Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .await
+            .expect("Memory must build")
+    }
+
+    /// Seeds a real episode through the production
+    /// `TemporalGraph::insert_episode_with_group` path — the same call
+    /// `remember()` makes — so `episodes_fts` is populated exactly like a
+    /// production write. A raw `INSERT INTO episodes` (as
+    /// `recall_by_source_id_tests::seed_episode` uses elsewhere in this
+    /// file) would bypass `TemporalGraph::index_episode_content`'s
+    /// external-content FTS5 shadow-table indexing and silently produce
+    /// zero content-search hits — the wrong seeding path for THIS test,
+    /// which needs `content_search` to actually fire.
+    async fn seed_episode(mem: &Memory, ns: &Namespace, content: &str) {
+        let tg = mem.temporal_graph.as_ref().expect("temporal_graph");
+        let group_id = namespace_to_group_id(ns);
+        tg.insert_episode_with_group(EpisodeInsert::new(content, Utc::now()), Some(&group_id))
+            .await
+            .expect("seed episode insert must succeed");
+    }
+
+    /// Read every `kremory.rerank.*`-prefixed metric out of a
+    /// `DebuggingRecorder` snapshot, as `(full_metric_name, outcome_label)`
+    /// pairs — `outcome` is `None` for metrics that don't carry that label
+    /// (e.g. the `rerank_k_requested` histogram).
+    fn rerank_metric_names(snapshotter: &metrics_util::debugging::Snapshotter) -> Vec<String> {
+        snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(k, _, _, _)| {
+                let name = k.key().name();
+                if name.starts_with("kremory.rerank.") {
+                    Some(name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn real_recall_path_reaches_production_reranker_singleton() {
+        let mem = make_memory().await;
+        let ns = Namespace::new("test-rerank-real-path");
+        seed_episode(&mem, &ns, "aurora borealis lights over reykjavik iceland").await;
+        seed_episode(&mem, &ns, "aurora borealis seen from tromso norway fjord").await;
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        // `set_default_local_recorder` (not `with_local_recorder`) — same
+        // rationale as `core::context::test_contextualize_emits_facts_count_histogram`:
+        // suitable for async code on a current-thread `#[tokio::test]` runtime
+        // because the guard can be held across `.await` points.
+        let guard = metrics::set_default_local_recorder(&recorder);
+        let out = mem
+            .recall("aurora borealis")
+            .in_namespace(ns)
+            .rerank_k(0)
+            .raw()
+            .await
+            .expect("real recall must succeed");
+        drop(guard);
+
+        assert!(
+            out.len() > 1,
+            "fixture must produce MORE than one fused recall result so \
+             apply_rerank_with's `results.len() <= 1` skip guard does NOT \
+             short-circuit before the reranker call site is reached: got {}",
+            out.len()
+        );
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let invoked_outcome = snapshot.iter().find_map(|(k, _, _, v)| {
+            if k.key().name() != "kremory.rerank.invoked_total" {
+                return None;
+            }
+            let DebugValue::Counter(count) = v else {
+                return None;
+            };
+            let outcome = k
+                .key()
+                .labels()
+                .find(|l| l.key() == "outcome")
+                .map(|l| l.value().to_string());
+            Some((*count, outcome))
+        });
+        assert_eq!(
+            invoked_outcome,
+            Some((1, Some("no_reorder".to_string()))),
+            "real Memory::recall(...).raw().rerank_k(0) must reach apply_rerank_with's \
+             REORDER branch through the REAL default_reranker() singleton — proven by the \
+             'no_reorder' outcome (k=0 empties the reranked head, so nothing is reordered, \
+             but the branch — and the real reranker.rerank() call — still ran), NOT the \
+             'skipped_below_rerank_k' outcome (which only fires when results.len() <= 1, \
+             and this fixture seeds 2): {invoked_outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rerank_k_none_never_touches_rerank_metrics_via_real_path() {
+        let mem = make_memory().await;
+        let ns = Namespace::new("test-rerank-real-path-none");
+        seed_episode(&mem, &ns, "midnight sun over svalbard archipelago norway").await;
+        seed_episode(&mem, &ns, "midnight sun visible across northern lapland finland").await;
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let guard = metrics::set_default_local_recorder(&recorder);
+        let out = mem
+            .recall("midnight sun")
+            .in_namespace(ns)
+            .raw()
+            .await
+            .expect("real recall must succeed");
+        drop(guard);
+
+        assert!(
+            out.len() > 1,
+            "fixture must produce more than one fused recall result: got {}",
+            out.len()
+        );
+
+        let fired = rerank_metric_names(&snapshotter);
+        assert!(
+            fired.is_empty(),
+            "rerank_k: None must be a complete real-path no-op — apply_rerank_with's \
+             `let Some(k) = rerank_k else {{ return Ok(results); }}` guard fires BEFORE any \
+             kremory.rerank.* metric records, distinguishing it (through the REAL recall \
+             path, not a hand-built call) from rerank_k(0) in the sibling test above (which \
+             DOES touch the metrics even though it also performs no visible reordering): \
+             unexpected metrics fired: {fired:?}"
+        );
+    }
 }
