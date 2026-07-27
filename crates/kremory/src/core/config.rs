@@ -299,6 +299,63 @@ impl Default for SearchConfig {
     }
 }
 
+/// Explicit, per-knob overrides for [`SearchConfig`] set programmatically via
+/// [`MemoryBuilder`](crate::facade::MemoryBuilder) (TD-141:
+/// `.ai-docs/tech-debt/tech-debt-register.md` §TD-141). Each field is `None`
+/// unless the consumer called the matching `MemoryBuilder::with_*` setter —
+/// `None` means "not set programmatically", NOT "use this field's shipped
+/// default".
+///
+/// # Why a sparse overlay, not `Option<SearchConfig>`
+///
+/// TD-141's design decision (b) sketches threading `search: Option<SearchConfig>`
+/// through the `open_graph*` params. This type deviates from that literal shape:
+/// TD-141 decision (a) requires PER-FIELD precedence (explicit programmatic
+/// config > env override > default — see [`apply`](Self::apply)), and decision
+/// (d) requires per-knob setters, not one `with_search_config(SearchConfig)`.
+/// A consumer who calls only `.with_content_stream_weight(v)` must NOT
+/// silently clobber a `KREMORY_RRF_K` / `KREMORY_EPISODE_DENSE` env override
+/// for the other two fields. A monolithic `SearchConfig` cannot express
+/// "unset" per field once materialized (every field always holds a concrete
+/// value), so wrapping it in `Option` would force an all-or-nothing choice —
+/// either every explicit config always wins outright (clobbering env knobs
+/// the consumer never touched) or the whole thing is applied before env
+/// (defeating the seam's purpose). The sparse `Option<T>`-per-field overlay
+/// is the shape that actually satisfies (a) and (d) together.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SearchConfigOverrides {
+    /// Explicit override for [`SearchConfig::content_stream_weight`].
+    pub content_stream_weight: Option<f32>,
+    /// Explicit override for [`SearchConfig::rrf_k`].
+    pub rrf_k: Option<usize>,
+    /// Explicit override for [`SearchConfig::episode_dense_enabled`].
+    pub episode_dense_enabled: Option<bool>,
+}
+
+impl SearchConfigOverrides {
+    /// Apply only the `Some` fields onto `builder`, each WINNING over
+    /// whatever env override (`facade::providers::search_env_overrides`) was
+    /// already applied earlier in the same chain — TD-141 precedence:
+    /// explicit programmatic config > env override > default. Fields left
+    /// `None` here pass `builder` through unchanged, so an env override for a
+    /// knob the consumer never touched programmatically still applies. An
+    /// all-`None` (default-constructed) `SearchConfigOverrides` is a strict
+    /// no-op, so unset-by-default callers get byte-identical behaviour to
+    /// pre-TD-141 (env-only / default).
+    pub(crate) fn apply(&self, mut builder: PipelineConfigBuilder) -> PipelineConfigBuilder {
+        if let Some(v) = self.content_stream_weight {
+            builder = builder.content_stream_weight(v);
+        }
+        if let Some(v) = self.rrf_k {
+            builder = builder.rrf_k(v);
+        }
+        if let Some(v) = self.episode_dense_enabled {
+            builder = builder.episode_dense_enabled(v);
+        }
+        builder
+    }
+}
+
 /// Newtype wrapper for the embedding dimension to make API signatures
 /// self-documenting and prevent accidental dimension mismatches.
 ///

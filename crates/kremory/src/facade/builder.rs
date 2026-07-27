@@ -12,6 +12,7 @@ use super::*;
 
 use crate::core::background::{BackgroundIngestor, IngestorConfig};
 use crate::core::chat_tracking::TokenTrackingChatProvider;
+use crate::core::config::SearchConfigOverrides;
 use crate::core::error::Error as CoreError;
 use crate::core::provider::DynEmbeddingProvider;
 use crate::memory::{
@@ -71,6 +72,13 @@ pub struct MemoryBuilder<L, E> {
     /// `GlinerExtractor` rejects all entities — callers that activate the `ner`
     /// feature MUST supply this via [`MemoryBuilder::allowed_entity_types`].
     allowed_entity_types: Vec<String>,
+    /// TD-141 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-141): explicit
+    /// per-knob `SearchConfig` overrides set via `.with_content_stream_weight()`
+    /// / `.with_rrf_k()` / `.with_episode_dense_enabled()`. All-`None` by
+    /// default — env-only behaviour is unchanged for consumers who never call
+    /// these setters. Threaded unchanged across every type-state transition;
+    /// does NOT change type-state.
+    search_overrides: SearchConfigOverrides,
     /// Seed instruction for the DEFAULT namespace's entity-type registry,
     /// applied at `.await` (build time) via the same catch-all + apply path as
     /// `Memory::register_namespace_with_seed` (spec §5.2.3). Default
@@ -257,6 +265,61 @@ impl<L, E> MemoryBuilder<L, E> {
     /// ```
     pub fn allowed_entity_types(mut self, types: Vec<String>) -> Self {
         self.allowed_entity_types = types;
+        self
+    }
+
+    // ── SearchConfig overrides (TD-141) ─────────────────────────────────────
+    //
+    // Per-knob setters, not a single `.with_search_config(SearchConfig)` —
+    // per `composable-knobs-over-strategy-enum`: the consumer thinks in
+    // individual knobs ("I want a higher content weight"), not in a whole
+    // replacement config. Each setter is independent; setting one does not
+    // affect the other two, and an unset knob still honours its env override
+    // (`KREMORY_CONTENT_WEIGHT` / `KREMORY_RRF_K` / `KREMORY_EPISODE_DENSE`)
+    // if one is present at `Memory` construction time.
+    //
+    // Precedence (TD-141 design decision (a)): explicit programmatic config
+    // set here ALWAYS wins over the matching env override, which wins over
+    // the `SearchConfig` default. See `SearchConfigOverrides::apply` for the
+    // mechanism and `facade::providers::search_env_overrides` for the env
+    // layer these compose on top of. Verify the live, in-effect value via
+    // `Memory::search_config()`.
+
+    /// Explicit per-stream weight applied to the ADR-072 `content_search` BM25
+    /// stream's RRF contribution (`SearchConfig::content_stream_weight`).
+    /// Default (unset): `1.0` — equal-weight fusion — unless overridden by
+    /// `KREMORY_CONTENT_WEIGHT` at construction time. Calling this setter wins
+    /// over BOTH the default and any env override, for this `Memory` only.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::content_stream_weight`](crate::core::config::PipelineConfigBuilder::content_stream_weight).
+    pub fn with_content_stream_weight(mut self, v: f32) -> Self {
+        self.search_overrides.content_stream_weight = Some(v);
+        self
+    }
+
+    /// Explicit RRF fusion constant `k` (Cormack et al. 2009; `SearchConfig::rrf_k`).
+    /// Default (unset): `60` unless overridden by `KREMORY_RRF_K` at
+    /// construction time. Calling this setter wins over BOTH the default and
+    /// any env override, for this `Memory` only.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::rrf_k`](crate::core::config::PipelineConfigBuilder::rrf_k).
+    pub fn with_rrf_k(mut self, v: usize) -> Self {
+        self.search_overrides.rrf_k = Some(v);
+        self
+    }
+
+    /// Explicitly enable/disable the TD-136 dense (embedding) episode
+    /// retrieval arm (`SearchConfig::episode_dense_enabled`). Default
+    /// (unset): `false` (BM25-only) unless overridden by
+    /// `KREMORY_EPISODE_DENSE` at construction time. Calling this setter wins
+    /// over BOTH the default and any env override, for this `Memory` only.
+    /// Also gates ingest-time episode embedding — enabling this after data
+    /// has already been ingested without it means older episodes lack a
+    /// dense embedding until re-ingested or dreamed.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::episode_dense_enabled`](crate::core::config::PipelineConfigBuilder::episode_dense_enabled).
+    pub fn with_episode_dense_enabled(mut self, v: bool) -> Self {
+        self.search_overrides.episode_dense_enabled = Some(v);
         self
     }
 
@@ -512,6 +575,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: false,
             allowed_entity_types: vec![],
+            search_overrides: SearchConfigOverrides::default(),
             seed_registry: crate::core::entity_types::NamespaceSeed::Default,
             dream_schedule: crate::memory::scheduler::DreamSchedule::Off,
             await_extraction: false,
@@ -544,6 +608,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            search_overrides: self.search_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -621,6 +686,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            search_overrides: self.search_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -653,6 +719,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            search_overrides: self.search_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -690,6 +757,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
+            search_overrides: self.search_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -814,6 +882,14 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
             // → PromptOnly.
             let model_id = self.model_id.clone();
 
+            // TD-141 — captured up-front (mirrors `model_id` above) because it
+            // is needed at up to three separate `GraphOpenParams` /
+            // `OpenGraphParams` / `OpenEngineHandleParams` construction sites
+            // below (the compat-matrix open_graph* branch, then — when
+            // `.with_sink()` is configured — the two `open_engine_handle`
+            // calls for the `BackgroundIngestorGraphHandle` path).
+            let search_overrides = self.search_overrides.clone();
+
             // ── Compat matrix (ADR-039, 7-row table) ────────────────────────
             // Row 6: .with_extractor conflicts with .with_gliner → Err
             #[cfg(feature = "ner")]
@@ -860,6 +936,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: self.allowed_entity_types,
                         model: model_id.clone(),
+                        search: search_overrides.clone(),
                     },
                     llm.clone(),
                     crate::core::extraction::factory::ExtractorKind::Custom(custom),
@@ -885,6 +962,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
+                            search: search_overrides.clone(),
                         },
                         llm.clone(),
                         crate::core::extraction::factory::ExtractorKind::GlinerLlm(Box::new(
@@ -902,6 +980,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
+                            search: search_overrides.clone(),
                         },
                     )
                     .await?
@@ -917,6 +996,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
+                            search: search_overrides.clone(),
                         },
                     )
                     .await?
@@ -982,6 +1062,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg.clone(),
                         model: model_id.clone(),
+                        search: search_overrides.clone(),
                     },
                 )
                 .await?;
@@ -1002,6 +1083,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg,
                         model: model_id.clone(),
+                        search: search_overrides,
                     },
                 )
                 .await?;
@@ -1155,6 +1237,7 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                     embedding_dim: self.embedding_dim,
                     allowed_entity_types: self.allowed_entity_types,
                     model: self.model_id.clone(),
+                    search: self.search_overrides,
                 },
                 custom,
             )
