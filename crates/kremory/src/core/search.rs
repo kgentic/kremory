@@ -4916,6 +4916,88 @@ mod tests {
         assert_eq!(hits[0].episode_id, a);
     }
 
+    /// TD-143 companion to `episodes_missing_embedding_tracks_backfill_progress`:
+    /// `episodes_after_id` is the page source for
+    /// `Memory::reembed_all_episode_embeddings`, and — unlike
+    /// `episodes_missing_embedding` — must return EVERY episode row,
+    /// including ones that already carry an embedding (that's the whole
+    /// point: a full re-embed must be able to overwrite an existing vector).
+    ///
+    /// This also proves the id-cursor loop terminates. `episodes_after_id`
+    /// has no filter for the caller's loop to self-consume (re-embedding a
+    /// row doesn't remove it from the result set), so a naive `LIMIT`-only
+    /// loop with no cursor advance would re-fetch page 1 forever. Driving the
+    /// query with a small `batch_size` (smaller than the seeded corpus) and a
+    /// bounded iteration count means a regression to that shape FAILS this
+    /// test (either by revisiting an id or by exhausting the iteration bound
+    /// before every id is visited) instead of hanging it.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn episodes_after_id_pages_every_row_including_already_embedded() {
+        use crate::core::graph::InsertEpisodeParams;
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        fn ep(content: &str) -> InsertEpisodeParams<'_> {
+            InsertEpisodeParams {
+                content,
+                timestamp: Utc::now(),
+                source_type: None,
+                metadata: None,
+            }
+        }
+
+        // Seed more episodes than one page at batch_size=2 below.
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let id = g.insert_episode(ep(&format!("episode {i}"))).await.unwrap();
+            ids.push(id);
+        }
+
+        // Give SOME of them an existing embedding — episodes_after_id must
+        // still return them. `episodes_missing_embedding` would exclude these
+        // two; that's the exact gap this query exists to close.
+        g.set_episode_embedding(ids[0], &make_embedding(1.0))
+            .await
+            .unwrap();
+        g.set_episode_embedding(ids[2], &make_embedding(2.0))
+            .await
+            .unwrap();
+
+        let batch_size = 2usize;
+        let mut after_id = 0i64;
+        let mut visited = Vec::new();
+        // Bound the loop generously (more pages than could ever be needed) so
+        // a broken cursor fails the test instead of spinning forever.
+        for _ in 0..(ids.len() + 3) {
+            let page = g.episodes_after_id(after_id, batch_size).await.unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(
+                page.len() <= batch_size,
+                "a page must never exceed the requested batch_size"
+            );
+            for (id, _content) in &page {
+                assert!(
+                    !visited.contains(id),
+                    "id {id} was visited twice — the cursor did not advance correctly"
+                );
+                visited.push(*id);
+            }
+            after_id = page
+                .last()
+                .map(|(id, _)| *id)
+                .expect("page was checked non-empty above");
+        }
+
+        assert_eq!(
+            visited, ids,
+            "every episode id must be visited exactly once, in ascending id \
+             order, including the ones that already carry an embedding \
+             (ids[0] and ids[2] here)"
+        );
+    }
+
     /// Migration 026 is idempotent: `open_in_memory` runs it once; running it
     /// again is a clean no-op (PRAGMA column gate + `CREATE INDEX IF NOT EXISTS`).
     #[cfg(feature = "content-search")]

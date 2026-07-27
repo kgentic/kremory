@@ -945,6 +945,53 @@ async fn main() -> Result<()> {
         }
     }
 
+    // TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): one-shot
+    // maintenance subcommand `kremory-http reembed-episode-embeddings
+    // [batch_size]` — re-embed EVERY episode's `content` (overwriting any
+    // vector already stored), then exit WITHOUT starting the HTTP server.
+    // Unlike `backfill-episode-embeddings` above (which only fills
+    // NULL-embedding gaps and can NEVER touch a row that already has a
+    // vector), this is the remedy for an embedding-CONFIG change — flipping
+    // `KREMORY_EMBED_TASK_PREFIX`, swapping the embedder model, or changing
+    // the embedding dimension all make every EXISTING stored embedding stale.
+    // Run this against a COPY of the DB before measuring. Requires the
+    // `content-search` feature (the column + fn only exist there).
+    if std::env::args().nth(1).as_deref() == Some("reembed-episode-embeddings") {
+        #[cfg(feature = "content-search")]
+        {
+            let batch_size: usize = std::env::args()
+                .nth(2)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(256);
+            tracing::info!(
+                batch_size,
+                "kremory-http: running full episode-embedding re-embed (TD-143), then exiting"
+            );
+            let stats = mem
+                .reembed_all_episode_embeddings(batch_size)
+                .await
+                .context("episode-embedding re-embed failed")?;
+            tracing::info!(
+                embedded = stats.embedded,
+                failed = stats.failed,
+                "kremory-http: episode-embedding re-embed complete"
+            );
+            // Stdout line for the orchestrator to scrape (stderr carries tracing).
+            println!(
+                "reembed-episode-embeddings: embedded={} failed={}",
+                stats.embedded, stats.failed
+            );
+            return Ok(());
+        }
+        #[cfg(not(feature = "content-search"))]
+        {
+            anyhow::bail!(
+                "reembed-episode-embeddings requires a `content-search` build — \
+                 rebuild with `--features content-search`"
+            );
+        }
+    }
+
     // TD-132 / ratified ADR-D2: the CONSUMER binary installs the recorder (the
     // `kremory` lib never does). A Prometheus PULL exporter (HTTP is scrapeable;
     // the sibling stdio bin uses a different channel — hence the `prometheus`

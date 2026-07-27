@@ -329,8 +329,11 @@ pub struct SearchConfig {
     /// between them is meaningless, not just degraded). Never flip this knob
     /// against a live/measured database. The safe sequence: (1) flip on a
     /// FRESH corpus copy, (2) re-embed it in full — episodes via
-    /// `Memory::backfill_episode_embeddings` (free + local against an Ollama
-    /// embedder), entities/facts via a full re-ingest — (3) THEN measure.
+    /// `Memory::reembed_all_episode_embeddings` (free + local against an
+    /// Ollama embedder; NOT `backfill_episode_embeddings`, whose `WHERE
+    /// embedding IS NULL` paging only fills a gap and can never overwrite a
+    /// row that already has a vector — see that method's doc), entities/facts
+    /// via a full re-ingest — (3) THEN measure.
     /// Wired from the `KREMORY_EMBED_TASK_PREFIX` boot override
     /// (`facade::providers::search_env_overrides`), mirroring
     /// `episode_dense_enabled`'s `KREMORY_EPISODE_DENSE`.
