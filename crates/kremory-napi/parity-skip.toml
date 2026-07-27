@@ -359,6 +359,23 @@ symbol = "MemoryBuilder::with_embedder"
 reason = "Builder method; Tier-2 builder wiring deferred per ADR-030 Form B"
 revisit = "v0.2.0"
 
+# ── TD-141 SearchConfig builder seam (2026-07-27) ────────────────────────────
+
+[[skip]]
+symbol = "MemoryBuilder::with_content_stream_weight"
+reason = "TD-141 (tech-debt-register.md §TD-141): new per-knob SearchConfig override setter. Tier-2 builder wiring deferred per ADR-030 Form B, same rationale as every other MemoryBuilder knob above (embedding_dim, with_llm, with_dream_llm, ...) — Memory.open is the single JS construction entry point and the whole builder surface (not just this knob) is deferred together."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_rrf_k"
+reason = "TD-141: new per-knob SearchConfig override setter. Same rationale as with_content_stream_weight — Tier-2 builder wiring deferred per ADR-030 Form B."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_episode_dense_enabled"
+reason = "TD-141: new per-knob SearchConfig override setter (TD-136 dense-episode arm). Same rationale as with_content_stream_weight — Tier-2 builder wiring deferred per ADR-030 Form B."
+revisit = "v0.2.0"
+
 # ── B9 substrate gaps ─────────────────────────────────────────────────────────
 #
 # JsRecallOptions.sourceIdIn / sourceIdPrefix are specified in the B9 spec but
