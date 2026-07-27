@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
+use crate::core::embed_prefix::query_embed_text;
 use crate::core::error::Result;
 use crate::core::ingest::Engine;
 use crate::core::provider::{ChatProvider, EmbeddingProvider};
@@ -88,8 +89,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // pattern-tuning the spec (Decision 5) defers to build-time eval feedback
         // (observability-first-class).
         let intent = crate::core::intent::classify_intent(query);
-        metrics::counter!("kremory.recall.intent_total", "intent" => intent.as_str())
-            .increment(1);
+        metrics::counter!("kremory.recall.intent_total", "intent" => intent.as_str()).increment(1);
         tracing::debug!(
             target: "kremory.recall.intent",
             intent = intent.as_str(),
@@ -103,7 +103,15 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         };
 
         // Step 1: Compute query embedding for vector search (Bug D)
-        let query_embedding = self.embedder.embed(query).await?;
+        // TD-143: this is a QUERY against the document-prefixed `entities`
+        // vector index — must use `query_embed_text`.
+        let query_embedding = self
+            .embedder
+            .embed(&query_embed_text(
+                query,
+                self.config.search.embed_task_prefix_enabled,
+            ))
+            .await?;
 
         // Step 2: Run FTS + vector search in parallel, suppressing per-call
         // access_count increments (RISK-002 — we do one increment after RRF)
@@ -1037,7 +1045,11 @@ mod tests {
         let scores: HashMap<String, f32> =
             [("a".to_owned(), 0.1_f32), ("b".to_owned(), 0.9_f32)].into();
         let seeds = vec!["a".to_owned(), "b".to_owned()];
-        assert_eq!(floor_survivors(&seeds, &scores, 0.0), seeds, "floor 0 = no-op");
+        assert_eq!(
+            floor_survivors(&seeds, &scores, 0.0),
+            seeds,
+            "floor 0 = no-op"
+        );
         assert_eq!(
             floor_survivors(&seeds, &scores, -1.0),
             seeds,

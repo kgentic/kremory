@@ -189,9 +189,11 @@ pub(crate) async fn open_graph_with_extractor(
 
     // TD-141 precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
-    let mut config_builder = params.search.apply(search_env_overrides(resolution_env_overrides(
-        PipelineConfig::builder().embedding_dim(resolved_dim),
-    )));
+    let mut config_builder = params
+        .search
+        .apply(search_env_overrides(resolution_env_overrides(
+            PipelineConfig::builder().embedding_dim(resolved_dim),
+        )));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -238,9 +240,11 @@ pub(crate) async fn open_graph_no_llm(
 
     // TD-141 precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
-    let mut config_builder = params.search.apply(search_env_overrides(resolution_env_overrides(
-        PipelineConfig::builder().embedding_dim(resolved_dim),
-    )));
+    let mut config_builder = params
+        .search
+        .apply(search_env_overrides(resolution_env_overrides(
+            PipelineConfig::builder().embedding_dim(resolved_dim),
+        )));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -515,6 +519,37 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             other => tracing::warn!(
                 value = %other,
                 "KREMORY_FACT_DENSE is not a recognised boolean \
+                 (1/true/yes/on | 0/false/no/off) — ignoring (default OFF retained)"
+            ),
+        }
+    }
+    // TD-143 nomic task-prefix A/B knob. Same truthy/parse/warn discipline as
+    // KREMORY_EPISODE_DENSE / KREMORY_FACT_DENSE above. See
+    // `core::config::SearchConfig::embed_task_prefix_enabled` for the full
+    // correctness note (flipping this on an existing corpus requires a
+    // re-embed — the vectors occupy a different task space once prefixed).
+    if let Ok(raw) = std::env::var("KREMORY_EMBED_TASK_PREFIX") {
+        let trimmed = raw.trim();
+        match trimmed.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => {
+                tracing::info!(
+                    embed_task_prefix_enabled = true,
+                    "KREMORY_EMBED_TASK_PREFIX override applied to SearchConfig \
+                     (nomic search_document:/search_query: task prefixing ON)"
+                );
+                b = b.embed_task_prefix_enabled(true);
+            }
+            "0" | "false" | "no" | "off" | "" => {
+                tracing::info!(
+                    embed_task_prefix_enabled = false,
+                    "KREMORY_EMBED_TASK_PREFIX=off — nomic task prefixing OFF (bare-text \
+                     embedding, default)"
+                );
+                b = b.embed_task_prefix_enabled(false);
+            }
+            other => tracing::warn!(
+                value = %other,
+                "KREMORY_EMBED_TASK_PREFIX is not a recognised boolean \
                  (1/true/yes/on | 0/false/no/off) — ignoring (default OFF retained)"
             ),
         }

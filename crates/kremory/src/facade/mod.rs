@@ -1352,8 +1352,14 @@ impl Memory {
             if batch.is_empty() {
                 break;
             }
+            let embed_task_prefix_enabled = self.search_config().embed_task_prefix_enabled;
             for (episode_id, content) in batch {
-                match self.embedder.embed_dyn(&content).await {
+                // TD-143: WRITE into `episodes.embedding` — document-prefix it.
+                let prefixed_content = crate::core::embed_prefix::document_embed_text(
+                    &content,
+                    embed_task_prefix_enabled,
+                );
+                match self.embedder.embed_dyn(&prefixed_content).await {
                     Ok(embedding) => match tg.set_episode_embedding(episode_id, &embedding).await {
                         Ok(()) => stats.embedded += 1,
                         Err(e) => {

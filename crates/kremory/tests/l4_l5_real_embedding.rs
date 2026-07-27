@@ -148,6 +148,7 @@ fn l4_disambiguate_merge_on_high_similarity_real_embedding() {
                     graph: &graph,
                 },
                 &embedder,
+                false,
             )
             .await
             .expect("disambiguate must succeed")
@@ -219,6 +220,7 @@ fn l4_disambiguate_potential_alias_on_moderate_similarity_real_embedding() {
                     graph: &graph,
                 },
                 &embedder,
+                false,
             )
             .await
             .expect("disambiguate must succeed")
@@ -287,6 +289,7 @@ fn l4_disambiguate_new_on_low_similarity_real_embedding() {
                     graph: &graph,
                 },
                 &embedder,
+                false,
             )
             .await
             .expect("disambiguate must succeed")
@@ -408,6 +411,7 @@ fn l4_high_cosine_but_lexically_incompatible_becomes_new_not_alias() {
                     graph: &graph,
                 },
                 &embedder,
+                false,
             )
             .await
             .expect("disambiguate must succeed")
@@ -475,6 +479,7 @@ fn l4_alias_band_but_lexically_incompatible_becomes_new_not_alias() {
                     graph: &graph,
                 },
                 &embedder,
+                false,
             )
             .await
             .expect("disambiguate must succeed")

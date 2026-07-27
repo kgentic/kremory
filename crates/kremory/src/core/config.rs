@@ -299,6 +299,42 @@ pub struct SearchConfig {
     /// negative shape WORSE — precisely why this ships default-OFF behind a
     /// measured gate, never defaulted on without an A/B.
     pub fact_dense_enabled: bool,
+
+    /// TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): when
+    /// `true`, every embed call on the recall/ingest search surface is
+    /// prefixed with nomic-embed-text's REQUIRED asymmetric task prefix —
+    /// `search_document: ` for text that gets STORED into
+    /// `entities`/`episodes`/`facts.embedding` (ingest-time writes, plus the
+    /// backfill subcommand), `search_query: ` for text that is a QUERY
+    /// compared (via vector search) against that stored corpus (recall +
+    /// entity-resolution probes). See `core::embed_prefix` for the two
+    /// helpers every call site routes through and the full call-site
+    /// inventory. **Default `false` = today's bare-text embedding,
+    /// byte-identical** — nomic-embed-text is an ASYMMETRIC model; without
+    /// the prefix, queries and passages collapse into the same task space,
+    /// which TD-143 identifies as the prime suspect for the measured
+    /// vocabulary/abstraction breadth gap (`.ai-docs/research/
+    /// first-stage-retrieval-landscape-2026-07-27.md`).
+    ///
+    /// ⚠️ Nomic-specific, NOT a generic embedder feature: a consumer using a
+    /// different (non-nomic) BYOM embedder must never flip this on — the
+    /// prefix is meaningless (or actively harmful) for a symmetric or
+    /// differently-prefixed model. This is why the prefix is applied at CALL
+    /// SITES via `core::embed_prefix`, not baked into the `EmbeddingProvider`
+    /// / `DynEmbeddingProvider` trait contract, which stays provider-agnostic.
+    ///
+    /// ⚠️ CORRECTNESS — flipping this on an EXISTING corpus makes every
+    /// already-stored embedding stale (a document-prefixed write and an
+    /// unprefixed write occupy DIFFERENT task spaces — cosine similarity
+    /// between them is meaningless, not just degraded). Never flip this knob
+    /// against a live/measured database. The safe sequence: (1) flip on a
+    /// FRESH corpus copy, (2) re-embed it in full — episodes via
+    /// `Memory::backfill_episode_embeddings` (free + local against an Ollama
+    /// embedder), entities/facts via a full re-ingest — (3) THEN measure.
+    /// Wired from the `KREMORY_EMBED_TASK_PREFIX` boot override
+    /// (`facade::providers::search_env_overrides`), mirroring
+    /// `episode_dense_enabled`'s `KREMORY_EPISODE_DENSE`.
+    pub embed_task_prefix_enabled: bool,
 }
 
 impl Default for SearchConfig {
@@ -327,6 +363,10 @@ impl Default for SearchConfig {
             // reachable only via 1-hop entity expansion until KREMORY_FACT_DENSE
             // flips it on.
             fact_dense_enabled: false,
+            // TD-143 — nomic task-prefix OFF by default: every embed call sends
+            // bare text, byte-identical to pre-TD-143, until KREMORY_EMBED_TASK_PREFIX
+            // flips it on (and the corpus has been re-embedded to match).
+            embed_task_prefix_enabled: false,
         }
     }
 }
@@ -364,6 +404,8 @@ pub(crate) struct SearchConfigOverrides {
     pub episode_dense_enabled: Option<bool>,
     /// Explicit override for [`SearchConfig::fact_dense_enabled`] (TD-139).
     pub fact_dense_enabled: Option<bool>,
+    /// Explicit override for [`SearchConfig::embed_task_prefix_enabled`] (TD-143).
+    pub embed_task_prefix_enabled: Option<bool>,
 }
 
 impl SearchConfigOverrides {
@@ -388,6 +430,9 @@ impl SearchConfigOverrides {
         }
         if let Some(v) = self.fact_dense_enabled {
             builder = builder.fact_dense_enabled(v);
+        }
+        if let Some(v) = self.embed_task_prefix_enabled {
+            builder = builder.embed_task_prefix_enabled(v);
         }
         builder
     }
@@ -669,6 +714,18 @@ impl PipelineConfigBuilder {
         self
     }
 
+    /// TD-143 nomic task-prefix A/B knob: enable `search_document:` /
+    /// `search_query:` prefixing on every embed call site (see
+    /// `core::embed_prefix`). Default `false` (bare text, byte-identical).
+    /// Wired from the `KREMORY_EMBED_TASK_PREFIX` env override at server boot
+    /// (`facade::providers::search_env_overrides`) so the prefix A/B costs a
+    /// restart, not a rebuild. ⚠️ Flipping this on an existing corpus requires
+    /// a re-embed — see [`SearchConfig::embed_task_prefix_enabled`].
+    pub fn embed_task_prefix_enabled(mut self, v: bool) -> Self {
+        self.inner.search.embed_task_prefix_enabled = v;
+        self
+    }
+
     // ── Ontology ─────────────────────────────────────────────────────────────
 
     pub fn allowed_entity_types(mut self, v: Vec<String>) -> Self {
@@ -903,10 +960,7 @@ mod tests {
         let result = PipelineConfig::builder().min_words(0).build();
         assert!(result.is_err(), "min_words = 0 must be rejected");
         let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("min_words"),
-            "error should mention field name"
-        );
+        assert!(msg.contains("min_words"), "error should mention field name");
     }
 
     #[test]

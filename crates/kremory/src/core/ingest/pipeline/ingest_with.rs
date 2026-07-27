@@ -7,6 +7,7 @@ use metrics::histogram;
 
 use crate::core::config::{ContentType, ResolutionStrategy};
 use crate::core::contradiction::{DetectParams, TwoPoolDetector};
+use crate::core::embed_prefix::{document_embed_text, query_embed_text};
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
@@ -132,7 +133,20 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
 
         // Arm 2 — embedding-ANN top-k. Guard 2: null/failing embedder → full list.
-        let embedding = match self.embedder.embed(&extracted.name).await {
+        // TD-143: this is a QUERY against the SAME `entities` vector index that
+        // stores document-prefixed writes (see `set_entity_embedding` call sites
+        // below) — must use `query_embed_text`, not the raw name, or a flipped
+        // knob would compare an unprefixed probe against a document-prefixed
+        // corpus (the exact mixed-index footgun TD-143's correctness note warns
+        // against).
+        let embedding = match self
+            .embedder
+            .embed(&query_embed_text(
+                &extracted.name,
+                self.config.search.embed_task_prefix_enabled,
+            ))
+            .await
+        {
             Ok(v) if !v.is_empty() && v.iter().any(|x| *x != 0.0) => v,
             _ => return existing_entities.iter().collect(),
         };
@@ -1350,6 +1364,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             graph: &self.graph,
                         },
                         &*self.embedder,
+                        self.config.search.embed_task_prefix_enabled,
                     )
                     .await
                     {
@@ -1481,7 +1496,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
 
                     // Embed and store the entity name vector for L4 disambiguation probing.
-                    let embedding = match self.embedder.embed(&extracted.name).await {
+                    // TD-143: this is a WRITE into `entities.embedding` — document-prefix it.
+                    let embedding = match self
+                        .embedder
+                        .embed(&document_embed_text(
+                            &extracted.name,
+                            self.config.search.embed_task_prefix_enabled,
+                        ))
+                        .await
+                    {
                         Ok(v) => v,
                         Err(e) => break 'phases Err(e),
                     };
@@ -1772,9 +1795,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(Some(fact_id)) => {
                         // Embed the fact triple as a single string (subject predicate object)
                         // and store it so vector_search_facts can find it semantically.
+                        // TD-143: WRITE into `facts.embedding` — document-prefix it.
                         let fact_text =
                             format!("{} {} {}", fact.subject, fact.predicate, fact.object);
-                        if let Ok(embedding) = self.embedder.embed(&fact_text).await {
+                        let prefixed_fact_text = document_embed_text(
+                            &fact_text,
+                            self.config.search.embed_task_prefix_enabled,
+                        );
+                        if let Ok(embedding) = self.embedder.embed(&prefixed_fact_text).await {
                             self.graph
                                 .set_fact_embedding(fact_id, &embedding)
                                 .await
@@ -2016,8 +2044,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             group_id,
             episode_id,
         } = p;
-        // Channel 2 — vector.
-        match self.embedder.embed(id).await {
+        // Channel 2 — vector. TD-143: WRITE into `entities.embedding` — document-prefix it.
+        match self
+            .embedder
+            .embed(&document_embed_text(
+                id,
+                self.config.search.embed_task_prefix_enabled,
+            ))
+            .await
+        {
             Ok(embedding) => {
                 if let Err(e) = self.graph.set_entity_embedding(id, &embedding).await {
                     metrics::counter!("kremory.with_facts.pinned_embedding_stamp_failed")
