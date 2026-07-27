@@ -271,6 +271,34 @@ pub struct SearchConfig {
     /// `content_stream_weight`'s `KREMORY_CONTENT_WEIGHT` A/B knob, so the
     /// dense-vs-BM25 comparison costs a server restart, not a rebuild.
     pub episode_dense_enabled: bool,
+
+    /// TD-139 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-139 DoD item
+    /// 2): when `true`, recall runs a THIRD dense (embedding) arm —
+    /// `TemporalGraph::vector_search_facts` over `facts.embedding` — and
+    /// RRF-fuses it into the entity+content stream `fuse_content_stream`
+    /// already produces. Mirrors `episode_dense_enabled`'s rollout shape
+    /// exactly (gate → degrade-on-failure → metrics → env → builder), but is
+    /// its OWN knob, not a sub-case of the episode arm: facts and episodes
+    /// are fused via different mechanisms
+    /// (`core::search::rrf_fuse_with_facts`, not `rrf_fuse_content_streams`
+    /// — see that fn's doc comment for why a fact cannot be represented as a
+    /// `ContentPassage`). **Default `false` = today's behaviour, byte-
+    /// identical** — facts remain reachable ONLY via 1-hop expansion from an
+    /// already-matched entity (TD-139's "why it matters" section) until this
+    /// is enabled. Ingest-time fact embedding (`ingest_with.rs:~1774`,
+    /// `deferred.rs:~411`) is UNCHANGED by this knob — that write path
+    /// already runs unconditionally (TD-139 discovery: "we already do all of
+    /// that except the recall wiring"). Wired from the `KREMORY_FACT_DENSE`
+    /// boot override (`facade::providers::search_env_overrides`), mirroring
+    /// `episode_dense_enabled`'s `KREMORY_EPISODE_DENSE`, so the fact-dense
+    /// A/B costs a server restart, not a rebuild.
+    ///
+    /// ⚠️ TD-137 risk (fact/predicate quality): noisy predicates
+    /// (`greeting`, `session_timestamp`) embed as junk and may surface as
+    /// dense-arm noise, potentially making the fact stream's already-net-
+    /// negative shape WORSE — precisely why this ships default-OFF behind a
+    /// measured gate, never defaulted on without an A/B.
+    pub fact_dense_enabled: bool,
 }
 
 impl Default for SearchConfig {
@@ -295,6 +323,10 @@ impl Default for SearchConfig {
             // TD-136 — dense episode arm OFF by default: byte-identical BM25-only
             // recall + ingest until KREMORY_EPISODE_DENSE flips it on.
             episode_dense_enabled: false,
+            // TD-139 DoD item 2 — dense fact arm OFF by default: facts stay
+            // reachable only via 1-hop entity expansion until KREMORY_FACT_DENSE
+            // flips it on.
+            fact_dense_enabled: false,
         }
     }
 }
@@ -330,6 +362,8 @@ pub(crate) struct SearchConfigOverrides {
     pub rrf_k: Option<usize>,
     /// Explicit override for [`SearchConfig::episode_dense_enabled`].
     pub episode_dense_enabled: Option<bool>,
+    /// Explicit override for [`SearchConfig::fact_dense_enabled`] (TD-139).
+    pub fact_dense_enabled: Option<bool>,
 }
 
 impl SearchConfigOverrides {
@@ -351,6 +385,9 @@ impl SearchConfigOverrides {
         }
         if let Some(v) = self.episode_dense_enabled {
             builder = builder.episode_dense_enabled(v);
+        }
+        if let Some(v) = self.fact_dense_enabled {
+            builder = builder.fact_dense_enabled(v);
         }
         builder
     }
@@ -617,6 +654,18 @@ impl PipelineConfigBuilder {
     /// the dense-vs-BM25 comparison costs a restart, not a rebuild.
     pub fn episode_dense_enabled(mut self, v: bool) -> Self {
         self.inner.search.episode_dense_enabled = v;
+        self
+    }
+
+    /// TD-139 DoD item 2 dense-fact A/B knob: enable the dense (embedding)
+    /// fact retrieval arm (`TemporalGraph::vector_search_facts`, RRF-fused
+    /// via `core::search::rrf_fuse_with_facts`). Default `false` (facts
+    /// reachable only via 1-hop entity expansion, byte-identical). Wired
+    /// from the `KREMORY_FACT_DENSE` env override at server boot
+    /// (`facade::providers::search_env_overrides`) so the fact-dense A/B
+    /// costs a restart, not a rebuild.
+    pub fn fact_dense_enabled(mut self, v: bool) -> Self {
+        self.inner.search.fact_dense_enabled = v;
         self
     }
 

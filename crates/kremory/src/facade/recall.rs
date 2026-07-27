@@ -349,6 +349,70 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
             content_stream_weight: search_config.content_stream_weight,
             rrf_k: search_config.rrf_k,
         });
+
+    // TD-139 DoD item 2 — dense fact arm, DEFAULT OFF (byte-identical: `fused`
+    // is the entity+content stream unchanged). Mirrors the TD-136 dense
+    // episode arm immediately above: embed the query, run the dense cosine
+    // arm over `facts.embedding`, and RRF-fuse each hit in as its OWN entry
+    // (`core::search::rrf_fuse_with_facts` — NOT `rrf_fuse_content_streams`,
+    // which fuses same-identity episode passages; a fact and its source
+    // episode are different rows, see that fn's doc comment). An
+    // embedder/search failure DEGRADES to the entity+content fusion unchanged
+    // (never fails an otherwise-working recall) with a loud warn + counter
+    // (Rule 19), same degrade discipline as the episode arm above.
+    let fused = if search_config.fact_dense_enabled {
+        match memory.embedder.embed_dyn(query).await {
+            Ok(query_embedding) => {
+                match tg
+                    .vector_search_facts(crate::core::search::VectorSearchFactsParams {
+                        query_embedding: &query_embedding,
+                        limit: content_limit,
+                        filters: &filters,
+                    })
+                    .await
+                {
+                    Ok(fact_hits) => crate::core::search::rrf_fuse_with_facts(
+                        crate::core::search::RrfFuseWithFactsParams {
+                            entity_stream: fused,
+                            fact_stream: fact_hits,
+                            namespace: Some(namespace),
+                            limit,
+                            rrf_k: search_config.rrf_k,
+                        },
+                    ),
+                    Err(e) => {
+                        metrics::counter!(
+                            "kremory.recall.fact_dense_degraded_total",
+                            "reason" => "vector_search_failed",
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            error = %e,
+                            "kremory.recall.fact_dense vector_search_facts failed — \
+                             degrading to entity+content fusion unchanged"
+                        );
+                        fused
+                    }
+                }
+            }
+            Err(e) => {
+                metrics::counter!(
+                    "kremory.recall.fact_dense_degraded_total",
+                    "reason" => "query_embed_failed",
+                )
+                .increment(1);
+                tracing::warn!(
+                    error = %e,
+                    "kremory.recall.fact_dense query embed failed — degrading to \
+                     entity+content fusion unchanged"
+                );
+                fused
+            }
+        }
+    } else {
+        fused
+    };
+
     // Incremental cost THIS Increment adds (the content_search query + the
     // fusion pass) — not the whole recall (the entity-graph stream was
     // already computed by the caller before this fn runs); still surfaces a

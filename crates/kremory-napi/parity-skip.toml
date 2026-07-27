@@ -376,6 +376,11 @@ symbol = "MemoryBuilder::with_episode_dense_enabled"
 reason = "TD-141: new per-knob SearchConfig override setter (TD-136 dense-episode arm). Same rationale as with_content_stream_weight — Tier-2 builder wiring deferred per ADR-030 Form B."
 revisit = "v0.2.0"
 
+[[skip]]
+symbol = "MemoryBuilder::with_fact_dense_enabled"
+reason = "TD-139 (tech-debt-register.md §TD-139 DoD item 2): new per-knob SearchConfig override setter (dense fact retrieval arm). Same rationale as with_episode_dense_enabled — Tier-2 builder wiring deferred per ADR-030 Form B."
+revisit = "v0.2.0"
+
 # ── B9 substrate gaps ─────────────────────────────────────────────────────────
 #
 # JsRecallOptions.sourceIdIn / sourceIdPrefix are specified in the B9 spec but

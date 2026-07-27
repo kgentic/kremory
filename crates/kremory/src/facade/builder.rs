@@ -74,7 +74,8 @@ pub struct MemoryBuilder<L, E> {
     allowed_entity_types: Vec<String>,
     /// TD-141 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-141): explicit
     /// per-knob `SearchConfig` overrides set via `.with_content_stream_weight()`
-    /// / `.with_rrf_k()` / `.with_episode_dense_enabled()`. All-`None` by
+    /// / `.with_rrf_k()` / `.with_episode_dense_enabled()` / TD-139's
+    /// `.with_fact_dense_enabled()`. All-`None` by
     /// default — env-only behaviour is unchanged for consumers who never call
     /// these setters. Threaded unchanged across every type-state transition;
     /// does NOT change type-state.
@@ -320,6 +321,22 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Mirrors [`PipelineConfigBuilder::episode_dense_enabled`](crate::core::config::PipelineConfigBuilder::episode_dense_enabled).
     pub fn with_episode_dense_enabled(mut self, v: bool) -> Self {
         self.search_overrides.episode_dense_enabled = Some(v);
+        self
+    }
+
+    /// Explicitly enable/disable the TD-139 dense (embedding) fact
+    /// retrieval arm (`SearchConfig::fact_dense_enabled`). Default (unset):
+    /// `false` (facts reachable only via 1-hop entity expansion) unless
+    /// overridden by `KREMORY_FACT_DENSE` at construction time. Calling this
+    /// setter wins over BOTH the default and any env override, for this
+    /// `Memory` only. Ingest-time fact embedding is UNCHANGED by this knob
+    /// (it already runs unconditionally, `core/ingest/pipeline/
+    /// ingest_with.rs:~1774`) — this setter only gates whether RECALL reads
+    /// `facts.embedding` back.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::fact_dense_enabled`](crate::core::config::PipelineConfigBuilder::fact_dense_enabled).
+    pub fn with_fact_dense_enabled(mut self, v: bool) -> Self {
+        self.search_overrides.fact_dense_enabled = Some(v);
         self
     }
 

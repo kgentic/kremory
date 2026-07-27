@@ -492,6 +492,33 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
+    // TD-139 DoD item 2 dense-fact A/B knob. Same truthy/parse/warn discipline
+    // as KREMORY_EPISODE_DENSE immediately above — mirrors it exactly, this is
+    // a SIBLING knob (its own SearchConfig field), not a re-read of the same one.
+    if let Ok(raw) = std::env::var("KREMORY_FACT_DENSE") {
+        let trimmed = raw.trim();
+        match trimmed.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => {
+                tracing::info!(
+                    fact_dense_enabled = true,
+                    "KREMORY_FACT_DENSE override applied to SearchConfig (dense fact arm ON)"
+                );
+                b = b.fact_dense_enabled(true);
+            }
+            "0" | "false" | "no" | "off" | "" => {
+                tracing::info!(
+                    fact_dense_enabled = false,
+                    "KREMORY_FACT_DENSE=off — dense fact arm OFF (1-hop-only, default)"
+                );
+                b = b.fact_dense_enabled(false);
+            }
+            other => tracing::warn!(
+                value = %other,
+                "KREMORY_FACT_DENSE is not a recognised boolean \
+                 (1/true/yes/on | 0/false/no/off) — ignoring (default OFF retained)"
+            ),
+        }
+    }
     b
 }
 
