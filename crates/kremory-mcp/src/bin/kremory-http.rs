@@ -109,6 +109,32 @@ struct AppState {
     rrf_k: usize,
 }
 
+/// `KREMORY_RERANK_K` boot override — enables the TD-062 cross-encoder reranker
+/// on this REST route for the TD-134 LoCoMo A/B. Unlike `rrf_k` (an `AppState`
+/// field, threaded into `rrf_merge`), `rerank_k` is a per-recall param consumed
+/// only in the `search` handler and carried on `RecallParams`, NOT in
+/// `SearchConfig` — so it lives in a process-wide `LazyLock` (read once at first
+/// request) rather than `AppState`, keeping every `AppState` literal untouched.
+/// Mirrors the `KREMORY_RRF_K` sweep design: an A/B costs a restart, not a
+/// rebuild. `None`/malformed ⇒ rerank off (pre-TD-134 behaviour). Fail-loud: a
+/// malformed value WARNs and disables rerank rather than silently accepting it.
+static RERANK_K: std::sync::LazyLock<Option<usize>> = std::sync::LazyLock::new(|| {
+    match std::env::var("KREMORY_RERANK_K") {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!(
+                    value = %raw,
+                    error = %e,
+                    "KREMORY_RERANK_K is not a valid usize — reranker disabled"
+                );
+                None
+            }
+        },
+        Err(_) => None,
+    }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Error mapping — ToolError -> HTTP status + JSON body.
 // ────────────────────────────────────────────────────────────────────────
@@ -164,6 +190,11 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
             "status": "ok",
             "content_search": cfg!(feature = "content-search"),
             "rerank": cfg!(feature = "rerank"),
+            // TD-134: the ACTIVE rerank_k (KREMORY_RERANK_K boot override) — so the
+            // bench provenance stamp records whether reranking was on + at what
+            // depth. null ⇒ off. Distinct from the `rerank` compile-flag above
+            // (compiled-in ≠ enabled): a build can ship the reranker yet run it off.
+            "rerank_k": *RERANK_K,
             "prometheus": cfg!(feature = "prometheus"),
             "scoring": {
                 "content_stream_weight": scoring.content_stream_weight,
@@ -287,11 +318,15 @@ async fn search(
         as_of: None,
         format: RecallFormat::Structured,
         template: RecallTemplateWire::default(),
-        // TD-062 (spec §3 Increment 3): not exposed on this bench/eval REST
-        // route's query params — out of scope for this increment (the MCP
-        // tool surface + Rust builder are the primary consumer surfaces this
-        // increment wires per Rule 16).
-        rerank_k: None,
+        // TD-134 measurement: the TD-062 reranker is exposed on this bench/eval
+        // REST route via the `KREMORY_RERANK_K` boot override (read once into the
+        // `RERANK_K` static above), mirroring the `KREMORY_RRF_K` sweep pattern so
+        // the LoCoMo A/B costs a server restart, not a rebuild. `None` ⇒ rerank off
+        // (pre-TD-134 behaviour). Deep-pool discipline: the reranker sees exactly
+        // the caller's `k` items (harness `--recall-limit 50`), reordered then
+        // scored at top-10 downstream by evidence_eval.py (rank-aware, order-blind
+        // substring scorer would read 0 — CLAUDE.md Rule 36).
+        rerank_k: *RERANK_K,
     };
     let results = match query.mode {
         SearchMode::Recall => recall_mode_results(&state.mem, params).await?,
