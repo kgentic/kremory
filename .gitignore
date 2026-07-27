@@ -77,3 +77,6 @@ crates/kremory-napi/index.d.ts
 # stray test rlib artifact
 libqtest_arity.rlib
 *.rlib
+
+# Scratch clones of OSS repos for source-level teardown research (see oss-teardown skill)
+/oss/
