@@ -1945,11 +1945,23 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
             .then_with(|| a.entity_id.cmp(&b.entity_id))
     });
 
-    // Flood-truncation fix (spec §3 Increment 1 step 2 / Risk #1's reference
-    // REST diff): cap at the caller's requested limit; absent one, bound to
-    // the larger single arm so hybrid never floods past what either mode
-    // alone would return.
-    let cap = limit.unwrap_or_else(|| entity_count.max(content_count));
+    // Flood-truncation (spec §3 Increment 1 step 2 / Risk #1's reference REST
+    // diff): honour the caller's explicit limit. Absent one, return the FULL
+    // deduped union of both arms — `entity_count + content_count` — so no
+    // distinct item is ever dropped.
+    //
+    // TD-138 regression fix: the previous no-limit bound `entity_count.max(
+    // content_count)` assumed the two arms OVERLAP (union ≈ max). For DISJOINT
+    // arms it silently dropped `min(entity_count, content_count)` distinct
+    // items — e.g. a 1-entity + 1-episode recall (`.raw()` with no limit under
+    // `content-search`) capped to 1, and the score-tie tie-break (`entity_id`
+    // asc, episode id "1") evicted the sole entity in favour of the episode.
+    // That broke `td116_recall_returns_connected_facts_under_null_embedder` +
+    // the `facade_as_of_warn` positive suite (green at TD-116/TD-067 close,
+    // both `.raw()`-with-no-limit). The union is `entity_count + content_count`
+    // (post-dedup the map holds at most that many), so with no explicit limit
+    // this never truncates; the bench's `--recall-limit N` path is unchanged.
+    let cap = limit.unwrap_or(entity_count + content_count);
     if fused.len() > cap {
         metrics::counter!("kremory.recall.canonical_fusion_truncated_total").increment(1);
         fused.truncate(cap);
@@ -4130,7 +4142,7 @@ mod tests {
     /// — the REST layer's own flood-truncation fallback (spec Risk #1).
     #[cfg(feature = "content-search")]
     #[test]
-    fn rrf_fuse_with_content_none_limit_caps_to_larger_arm() {
+    fn rrf_fuse_with_content_none_limit_returns_full_union() {
         let ns = Namespace::new("ns-nolimit");
         let entity_stream = vec![test_retrieved_context("e0", "ns-nolimit")];
         let content_stream = vec![
@@ -4148,12 +4160,22 @@ mod tests {
             rrf_k: 60,
         });
 
-        // No overlap between the 1 entity and 3 content ids, so the union is
-        // 4 candidates; `None` caps to max(1, 3) = 3, not the full union.
+        // TD-138 regression fix: with NO explicit limit, fusion returns the FULL
+        // deduped union (1 entity + 3 disjoint content = 4). The prior behaviour
+        // capped to max(1,3)=3, which — on a score tie — evicted the sole ENTITY
+        // in favour of content passages, silently breaking the ADR-074/TD-116
+        // "recall MUST surface the entity's connected facts" invariant for every
+        // `.raw()`/`.recall()` call (no explicit limit) under `content-search`.
         assert_eq!(
             fused.len(),
-            3,
-            "None limit must cap to the larger single arm (3), not flood to the full union: {fused:?}"
+            4,
+            "None limit must return the full deduped union (4), never drop a distinct arm's item: {fused:?}"
+        );
+        // The load-bearing TD-138 invariant: the entity must NOT be evicted by
+        // content passages when no limit is set.
+        assert!(
+            fused.iter().any(|r| r.entity_id == "e0"),
+            "the entity 'e0' must survive no-limit fusion, not be truncated out: {fused:?}"
         );
     }
 
