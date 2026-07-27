@@ -499,6 +499,13 @@ revisit = "v0.3.0"
 # (MutationRecord / MutationFilter / MutationKind) are not parity-tracked, so no
 # skip is needed for them.
 
+# ── TD-143 full re-embed maintenance entrypoint (2026-07-27) ────────────────
+
+[[skip]]
+symbol = "Memory::reembed_all_episode_embeddings"
+reason = "TD-143 follow-up (tech-debt-register.md §TD-143): new operator/maintenance entrypoint, additive sibling of Memory::backfill_episode_embeddings (also unskipped-but-never-mirrored — see the kremory-http `backfill-episode-embeddings` / `reembed-episode-embeddings` CLI subcommands, which are this method's actual consumer). Same rationale as the other TD-141/TD-143 SearchConfig-adjacent knobs above: a one-shot corpus-maintenance operation invoked from the Rust CLI transport, not a JS-consumer runtime surface. Revisit only if a JS consumer needs to trigger a full episode re-embed at runtime."
+revisit = "never"
+
 # ── Introspection accessor (TD-135 bench provenance integrity) ───────────────
 
 [[skip]]

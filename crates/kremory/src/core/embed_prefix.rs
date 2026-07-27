@@ -35,8 +35,10 @@
 //! Flipping this knob on an EXISTING corpus makes every previously-stored
 //! embedding stale (a document-prefixed write and an unprefixed write occupy
 //! different task spaces) — re-embed a FRESH corpus copy first (episodes via
-//! `Memory::backfill_episode_embeddings`, free + local against an Ollama
-//! embedder; entities/facts via a full re-ingest) before measuring.
+//! `Memory::reembed_all_episode_embeddings`, free + local against an Ollama
+//! embedder — NOT `backfill_episode_embeddings`, whose `WHERE embedding IS
+//! NULL` paging only fills a gap and can never overwrite an already-embedded
+//! row; entities/facts via a full re-ingest) before measuring.
 
 use std::borrow::Cow;
 

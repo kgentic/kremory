@@ -451,8 +451,11 @@ impl From<RecallTemplate> for ContextTemplate {
 /// free functions directly — they remain public and unchanged.
 ///
 /// TD-136 (dense episode retrieval): tally returned by
-/// [`Memory::backfill_episode_embeddings`]. Feature-gated behind
-/// `content-search` (the whole backfill path only exists there).
+/// [`Memory::backfill_episode_embeddings`] and, since TD-143, also by
+/// [`Memory::reembed_all_episode_embeddings`] — both drive the same
+/// embed+store body over a different page source (NULL-only gap-fill vs
+/// every-row re-embed), so they share this tally shape. Feature-gated behind
+/// `content-search` (the whole embedding path only exists there).
 #[cfg(feature = "content-search")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EpisodeEmbeddingBackfill {
@@ -461,6 +464,19 @@ pub struct EpisodeEmbeddingBackfill {
     /// Episodes skipped due to a per-episode embed/store failure (WARN-logged;
     /// re-run to retry them).
     pub failed: u64,
+}
+
+/// Args-as-object for [`Memory::embed_and_store_episode_page`] per TD-042
+/// (`clippy.toml` `too-many-arguments-threshold = 3`, `self` counts).
+/// Private — an internal seam shared by
+/// [`Memory::backfill_episode_embeddings`] and
+/// [`Memory::reembed_all_episode_embeddings`], not part of the public API.
+#[cfg(feature = "content-search")]
+struct EmbedEpisodePageParams<'a> {
+    tg: &'a TemporalGraph,
+    batch: Vec<(i64, String)>,
+    stats: &'a mut EpisodeEmbeddingBackfill,
+    op: &'static str,
 }
 
 #[derive(Clone)]
@@ -1352,37 +1368,17 @@ impl Memory {
             if batch.is_empty() {
                 break;
             }
-            let embed_task_prefix_enabled = self.search_config().embed_task_prefix_enabled;
-            for (episode_id, content) in batch {
-                // TD-143: WRITE into `episodes.embedding` — document-prefix it.
-                let prefixed_content = crate::core::embed_prefix::document_embed_text(
-                    &content,
-                    embed_task_prefix_enabled,
-                );
-                match self.embedder.embed_dyn(&prefixed_content).await {
-                    Ok(embedding) => match tg.set_episode_embedding(episode_id, &embedding).await {
-                        Ok(()) => stats.embedded += 1,
-                        Err(e) => {
-                            stats.failed += 1;
-                            tracing::warn!(
-                                error = %e,
-                                episode_id,
-                                "backfill_episode_embeddings: set_episode_embedding failed"
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        stats.failed += 1;
-                        tracing::warn!(
-                            error = %e,
-                            episode_id,
-                            "backfill_episode_embeddings: embedder failed"
-                        );
-                    }
-                }
-            }
+            self.embed_and_store_episode_page(EmbedEpisodePageParams {
+                tg,
+                batch,
+                stats: &mut stats,
+                op: "backfill_episode_embeddings",
+            })
+            .await;
             // If a whole page was all-failures we would loop forever on the same
-            // NULL rows — bail once we've made no forward progress on a full page.
+            // NULL rows (the `WHERE embedding IS NULL` predicate never drops a
+            // failed row out of the next page) — bail once we've made no forward
+            // progress on a full page.
             if stats.embedded == 0 && stats.failed > 0 {
                 tracing::warn!(
                     failed = stats.failed,
@@ -1397,6 +1393,120 @@ impl Memory {
             "kremory.backfill_episode_embeddings complete"
         );
         Ok(stats)
+    }
+
+    /// TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): re-embed
+    /// **every** episode's `content`, overwriting any embedding already
+    /// stored — the remedy for an embedding-CONFIG change (flipping
+    /// [`SearchConfig::embed_task_prefix_enabled`](crate::core::config::SearchConfig::embed_task_prefix_enabled),
+    /// swapping the embedder model, or changing the embedding dimension),
+    /// none of which [`backfill_episode_embeddings`](Self::backfill_episode_embeddings)
+    /// can serve — that method's `WHERE embedding IS NULL` paging can only
+    /// FILL a gap, it can never RE-embed a row that already has a vector.
+    ///
+    /// ⚠️ This rewrites every `episodes.embedding` value in the database. Run
+    /// it against a COPY of the DB before measuring — see the
+    /// `embed_task_prefix_enabled` doc for the full safe sequence (flip the
+    /// knob on a fresh copy, re-embed in full, THEN measure). Entity/fact
+    /// embeddings are NOT touched by this method (they need a full re-ingest,
+    /// or — for entities specifically — TD-112's merge-time re-embed covers
+    /// only the alias-merge path, not a bulk config-change re-embed).
+    ///
+    /// Pages via an id-cursor over ALL episode rows
+    /// ([`TemporalGraph::episodes_after_id`]), not the NULL-only predicate
+    /// [`backfill_episode_embeddings`](Self::backfill_episode_embeddings)
+    /// uses — see that query's doc for why a plain `LIMIT` loop over an
+    /// unfiltered page source would never terminate. Idempotent: safe to
+    /// re-run (e.g. to retry any per-episode failures from a prior run — see
+    /// [`EpisodeEmbeddingBackfill::failed`]).
+    ///
+    /// Feature-gated behind `content-search` (the column only exists there).
+    #[cfg(feature = "content-search")]
+    pub async fn reembed_all_episode_embeddings(
+        &self,
+        batch_size: usize,
+    ) -> Result<EpisodeEmbeddingBackfill> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::reembed_all_episode_embeddings requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        // Guard against a zero page size (an infinite no-progress loop).
+        let batch_size = batch_size.max(1);
+
+        let mut stats = EpisodeEmbeddingBackfill::default();
+        let mut after_id: i64 = 0;
+        loop {
+            let batch = tg
+                .episodes_after_id(after_id, batch_size)
+                .await
+                .map_err(MemoryError::Core)?;
+            if batch.is_empty() {
+                break;
+            }
+            // Advance the cursor to the last id in THIS page before consuming
+            // `batch` below — unlike the NULL-predicate backfill, a row stays
+            // in this unfiltered result set after being re-embedded, so the
+            // cursor (not the predicate) is what makes the loop terminate.
+            after_id = batch.last().map(|(id, _)| *id).unwrap_or(after_id);
+            self.embed_and_store_episode_page(EmbedEpisodePageParams {
+                tg,
+                batch,
+                stats: &mut stats,
+                op: "reembed_all_episode_embeddings",
+            })
+            .await;
+        }
+        tracing::info!(
+            embedded = stats.embedded,
+            failed = stats.failed,
+            "kremory.reembed_all_episode_embeddings complete"
+        );
+        Ok(stats)
+    }
+
+    /// Shared per-page embed+store body for
+    /// [`backfill_episode_embeddings`](Self::backfill_episode_embeddings) and
+    /// [`reembed_all_episode_embeddings`](Self::reembed_all_episode_embeddings)
+    /// — same embed call, same TD-143 document-prefix routing, same
+    /// per-episode failure handling; the two callers differ only in which
+    /// paging query selected `batch`. `op` labels the WARN log lines so a
+    /// failure can be attributed to the caller that hit it. Args-as-object
+    /// per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`).
+    #[cfg(feature = "content-search")]
+    async fn embed_and_store_episode_page(&self, params: EmbedEpisodePageParams<'_>) {
+        let EmbedEpisodePageParams {
+            tg,
+            batch,
+            stats,
+            op,
+        } = params;
+        let embed_task_prefix_enabled = self.search_config().embed_task_prefix_enabled;
+        for (episode_id, content) in batch {
+            // TD-143: WRITE into `episodes.embedding` — document-prefix it.
+            let prefixed_content =
+                crate::core::embed_prefix::document_embed_text(&content, embed_task_prefix_enabled);
+            match self.embedder.embed_dyn(&prefixed_content).await {
+                Ok(embedding) => match tg.set_episode_embedding(episode_id, &embedding).await {
+                    Ok(()) => stats.embedded += 1,
+                    Err(e) => {
+                        stats.failed += 1;
+                        tracing::warn!(
+                            error = %e,
+                            episode_id,
+                            op,
+                            "set_episode_embedding failed"
+                        );
+                    }
+                },
+                Err(e) => {
+                    stats.failed += 1;
+                    tracing::warn!(error = %e, episode_id, op, "embedder failed");
+                }
+            }
+        }
     }
 
     /// Block until the dream phase handle reaches a terminal status.
@@ -2455,6 +2565,172 @@ mod dream_llm_slot_tests {
         assert_eq!(
             summary.facts_archived, 0,
             "facts_archived must be 0 — consolidation pinned OFF here (ADR-071)"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "content-search"))]
+mod reembed_all_episode_embeddings_tests {
+    //! TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143) —
+    //! `Memory::reembed_all_episode_embeddings` overwrite proof. Lives
+    //! in-crate (not `tests/`) because proving the STORED vector actually
+    //! changed requires `pub(crate)` `TemporalGraph::vector_search_episodes`
+    //! — unreachable from an external integration test. The prefix-parity and
+    //! idempotency companion tests use only public API and live in
+    //! `tests/td143_reembed_all_episode_embeddings.rs`.
+
+    use super::*;
+    use crate::core::provider::{EmbeddingProvider, MockChatProvider};
+    use crate::core::search::{SearchFilters, VectorSearchEpisodesParams};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn null_llm() -> Arc<dyn ChatProvider> {
+        Arc::new(MockChatProvider::null())
+    }
+
+    /// Deterministic 384-dim embedding derived from `seed` — same shape as
+    /// `core::search`'s own `make_embedding` test helper. Distinct seeds
+    /// produce distinguishably-different vectors so `vector_search_episodes`
+    /// ranking can prove a stored embedding actually moved.
+    fn seeded_embedding(seed: f32) -> Vec<f32> {
+        (0..384)
+            .map(|i| (i as f32 * seed).sin() * 0.5 + 0.5)
+            .collect()
+    }
+
+    /// Embedder whose output seed is switchable via an atomic flag — lets a
+    /// test embed the SAME text twice and get two DIFFERENT vectors,
+    /// simulating "the embedder/config changed since the corpus was first
+    /// embedded" without needing a second real model.
+    struct SwitchableEmbeddingProvider {
+        use_second_seed: AtomicBool,
+    }
+
+    impl SwitchableEmbeddingProvider {
+        fn new() -> Self {
+            Self {
+                use_second_seed: AtomicBool::new(false),
+            }
+        }
+
+        fn switch_to_second_seed(&self) {
+            self.use_second_seed.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl EmbeddingProvider for SwitchableEmbeddingProvider {
+        fn embed<'a>(
+            &'a self,
+            _text: &'a str,
+        ) -> impl std::future::Future<Output = crate::CoreResult<Vec<f32>>> + Send + 'a {
+            let seed = if self.use_second_seed.load(Ordering::SeqCst) {
+                5.0
+            } else {
+                1.0
+            };
+            async move { Ok(seeded_embedding(seed)) }
+        }
+    }
+
+    /// Re-embedding an ALREADY-EMBEDDED episode overwrites the stored vector
+    /// — the exact gap `backfill_episode_embeddings` cannot close (its `WHERE
+    /// embedding IS NULL` paging only ever fills a gap). Proven via
+    /// `vector_search_episodes` ranking against two distinguishable query
+    /// vectors, not by trusting the tally alone.
+    #[tokio::test]
+    async fn reembed_all_overwrites_an_existing_embedding() {
+        let embedder = Arc::new(SwitchableEmbeddingProvider::new());
+        let embedder_dyn: Arc<dyn DynEmbeddingProvider> = embedder.clone();
+
+        let mem = Memory::open(":memory:")
+            .with_llm(null_llm())
+            .with_embedder(embedder_dyn)
+            .with_episode_dense_enabled(true)
+            .default_namespace(Namespace::new("td143-reembed-overwrite"))
+            .await
+            .expect("build memory with dense episode arm");
+
+        // Ingest → embedded with seed 1.0 (dense arm embeds at ingest time).
+        mem.remember("the quick brown fox")
+            .skip_extraction()
+            .await
+            .expect("remember must persist the episode + its initial embedding");
+
+        let tg = mem
+            .temporal_graph
+            .as_ref()
+            .expect("Memory built via the builder/providers path carries a TemporalGraph");
+        let no_filter = SearchFilters::new();
+
+        // Sanity: a query embedded at seed 1.0 (matching the corpus) ranks it.
+        let hits_before = tg
+            .vector_search_episodes(VectorSearchEpisodesParams {
+                query_embedding: &seeded_embedding(1.0),
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .expect("vector search must succeed");
+        assert_eq!(
+            hits_before.len(),
+            1,
+            "the one ingested episode must be dense-searchable before re-embed"
+        );
+        let dist_before_at_seed1 = hits_before[0].score;
+
+        // Simulate a config/embedder change (TD-143's flip-the-knob, or a
+        // model swap): re-embed the WHOLE corpus, now producing seed-5.0
+        // vectors.
+        embedder.switch_to_second_seed();
+        let stats = mem
+            .reembed_all_episode_embeddings(256)
+            .await
+            .expect("reembed_all_episode_embeddings must succeed");
+        assert_eq!(
+            stats.embedded, 1,
+            "the one existing episode must be re-embedded"
+        );
+        assert_eq!(stats.failed, 0);
+
+        // The stored vector must have MOVED: a seed-1.0 query is now a worse
+        // (larger cosine-distance) match than it was before the re-embed,
+        // because the stored vector is no longer the seed-1.0 vector.
+        let hits_after = tg
+            .vector_search_episodes(VectorSearchEpisodesParams {
+                query_embedding: &seeded_embedding(1.0),
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .expect("vector search must succeed");
+        assert_eq!(hits_after.len(), 1);
+        assert!(
+            hits_after[0].score > dist_before_at_seed1,
+            "re-embedding must overwrite the stored vector — the distance to \
+             a seed-1.0 query must have INCREASED once the stored vector \
+             moved to seed-5.0 (before={dist_before_at_seed1}, after={})",
+            hits_after[0].score
+        );
+
+        // Directly confirm the NEW stored vector is now the BEST match for a
+        // seed-5.0 query (distance ~0, since query and stored vector are
+        // identical once re-embedded).
+        let hits_seed5 = tg
+            .vector_search_episodes(VectorSearchEpisodesParams {
+                query_embedding: &seeded_embedding(5.0),
+                limit: 10,
+                filters: &no_filter,
+            })
+            .await
+            .expect("vector search must succeed");
+        assert_eq!(hits_seed5.len(), 1);
+        assert!(
+            hits_seed5[0].score < hits_after[0].score,
+            "a seed-5.0 query must be a MUCH closer match than a seed-1.0 \
+             query to the freshly-stored seed-5.0 vector \
+             (seed5_dist={}, seed1_dist={})",
+            hits_seed5[0].score,
+            hits_after[0].score
         );
     }
 }

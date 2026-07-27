@@ -242,7 +242,8 @@ impl TemporalGraph {
     /// episode's `INTEGER PRIMARY KEY`). Feature-gated behind `content-search`
     /// — the `episodes.embedding` column only exists in that build
     /// (Migration 026). Called at ingest (when the dense arm is enabled) and by
-    /// the `Memory::backfill_episode_embeddings` maintenance path.
+    /// the `Memory::{backfill_episode_embeddings, reembed_all_episode_embeddings}`
+    /// maintenance paths (TD-136 gap-fill and TD-143 full re-embed, respectively).
     #[cfg(feature = "content-search")]
     pub async fn set_episode_embedding(&self, episode_id: i64, embedding: &[f32]) -> Result<()> {
         let _db_start = Instant::now();
@@ -289,6 +290,54 @@ impl TemporalGraph {
                  ORDER BY id ASC \
                  LIMIT ?1",
                 libsql::params![limit as i64],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id: i64 = row.get::<i64>(0)?;
+            let content: String = row.get::<String>(1)?;
+            out.push((id, content));
+        }
+        Ok(out)
+    }
+
+    /// TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): select up
+    /// to `limit` episodes with `id > after_id`, ordered by `id` ASC, for the
+    /// `Memory::reembed_all_episode_embeddings` maintenance loop. Returns
+    /// `(episode_id, content)` pairs.
+    ///
+    /// Unlike [`episodes_missing_embedding`](Self::episodes_missing_embedding),
+    /// this is NOT filtered by embedding state — it pages through EVERY
+    /// episode row, including ones that already carry an embedding. That is
+    /// the whole point: `episodes_missing_embedding`'s `WHERE embedding IS
+    /// NULL` predicate can only ever fill a gap, never overwrite an existing
+    /// vector, so it cannot serve a full re-embed (e.g. after flipping
+    /// [`SearchConfig::embed_task_prefix_enabled`](crate::core::config::SearchConfig::embed_task_prefix_enabled)
+    /// or swapping the embedder/dimension — see TD-112 for the sibling
+    /// entity-embedding staleness problem).
+    ///
+    /// Because there is no filter for the caller's loop to self-consume, the
+    /// caller MUST advance `after_id` to the last id in the returned page
+    /// (an id-cursor) rather than re-issuing the same `LIMIT` — a fixed
+    /// `LIMIT` with no cursor would fetch the same first page forever, since
+    /// re-embedding a row doesn't remove it from an unfiltered result set.
+    /// `after_id = 0` starts from the beginning (episode ids are `INTEGER
+    /// PRIMARY KEY`, always `>= 1`). An empty result means the cursor has
+    /// reached the end of the table.
+    #[cfg(feature = "content-search")]
+    pub async fn episodes_after_id(
+        &self,
+        after_id: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, String)>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, content FROM episodes \
+                 WHERE id > ?1 \
+                 ORDER BY id ASC \
+                 LIMIT ?2",
+                libsql::params![after_id, limit as i64],
             )
             .await?;
         let mut out = Vec::new();
