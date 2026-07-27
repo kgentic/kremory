@@ -2096,6 +2096,202 @@ pub(crate) fn rrf_fuse_content_streams(
     fused
 }
 
+// ─── TD-139 DoD item 2: dense fact retrieval arm ─────────────────────────────
+//
+// `.ai-docs/tech-debt/tech-debt-register.md` §TD-139. `TemporalGraph::
+// vector_search_facts` (this file, above) has been fully built, populated
+// (ingest already embeds every triple — `ingest_with.rs:~1774`,
+// `deferred.rs:~411`) and indexed since before TD-139 was filed, but had ZERO
+// callers outside `tests/retrieval_benchmark.rs`. This section wires it into
+// the canonical recall fusion, feature-gated + default-OFF, mirroring TD-136's
+// dense-episode rollout shape (gate → degrade-on-failure → metrics → env →
+// builder — see `facade/recall.rs::fuse_content_stream`'s `fact_dense_enabled`
+// arm for the call site).
+
+/// Lifts a dense-fact-arm hit (`TemporalGraph::vector_search_facts`) into a
+/// `RetrievedContext`-shaped entry so it can share [`rrf_fuse_with_facts`]'s
+/// fused output type with the entity+content stream.
+///
+/// `entity_id = "fact:{fact.id}"` — a fact's OWN id (always unique,
+/// `facts.id INTEGER PRIMARY KEY`), prefixed so it can never collide with a
+/// real entity id or a [`content_passage_into_retrieved_context`]-derived
+/// entry (which keys on the BARE episode-id digits) in the same fused
+/// `HashMap`. A collision there would silently merge two unrelated results
+/// under one key — the exact reason this is NOT represented as a
+/// `ContentPassage` (whose `episode_id` field IS that fusion's dedup key,
+/// and one episode can source many DISTINCT facts). `entity_type_name =
+/// "Fact"` is the discriminator `kremory-http.rs::recall_mode_results` reads
+/// to emit `kind: "fact"` on the REST wire (TD-139's measurement
+/// prerequisite, `a99cec02`) — mirrors `"ContentPassage"`'s discriminator
+/// role one function above.
+///
+/// `entity_name` / `summary` render the triple as natural-language text
+/// using the SAME `"{subject} {predicate} {object}"` shape `ingest_with.rs`
+/// embeds at write time (so what was embedded and what is displayed stay in
+/// sync) — mirrors `engine_handle.rs`'s connected-facts rendering, including
+/// its F2-deferred "prefer the literal value, fall back to the raw id"
+/// display-name-resolution gap (resolving `subject_id`/`object_id` to their
+/// entities' surface names would add a lookup per fact; out of scope here).
+///
+/// `source_refs` carries `fact.source_episode_id` as a `SourceKind::Episode`
+/// ref — how `recall_mode_results` recovers `source_episode_id` for the REST
+/// wire. Empty when the fact has no recorded source episode (a caller-
+/// supplied structured fact, or one whose source episode was later deleted —
+/// `core/schema.rs:129`'s doc comment on `Fact::source_episode_id`).
+#[cfg(feature = "content-search")]
+fn fact_hit_into_retrieved_context(
+    hit: SearchHit<Fact>,
+    namespace: Option<Namespace>,
+) -> RetrievedContext {
+    let fact = hit.item;
+    let object = fact
+        .object_value
+        .clone()
+        .or_else(|| fact.object_id.clone())
+        .unwrap_or_default();
+    let triple_text = format!("{} {} {}", fact.subject_id, fact.predicate, object);
+    let source_refs = match fact.source_episode_id {
+        Some(episode_id) => vec![SourceRef {
+            kind: SourceKind::Episode,
+            id: episode_id.to_string(),
+            occurred_at: fact.valid_from,
+            published_at: None,
+        }],
+        None => Vec::new(),
+    };
+    RetrievedContext {
+        entity_id: format!("fact:{}", fact.id),
+        entity_name: format!("Fact #{}", fact.id),
+        summary: triple_text,
+        score: 0.0,
+        source_refs,
+        incomplete: false,
+        entity_type_id: 0,
+        entity_type_name: "Fact".to_string(),
+        namespace,
+        facts: Vec::new(),
+    }
+}
+
+/// Bundled parameters for [`rrf_fuse_with_facts`] — args-as-object per
+/// TD-042 (rust-conventions §too_many_arguments).
+#[cfg(feature = "content-search")]
+pub(crate) struct RrfFuseWithFactsParams<'a> {
+    /// The entity+content stream [`rrf_fuse_with_content`] already produced,
+    /// ranked best-first — this fn's rank-position RRF math depends on that
+    /// ordering, same precondition as `rrf_fuse_with_content`'s own
+    /// `entity_stream` param.
+    pub entity_stream: Vec<RetrievedContext>,
+    /// TD-139 dense fact arm: facts ranked by embedding-cosine similarity to
+    /// the query, best-first (`TemporalGraph::vector_search_facts` orders by
+    /// `distance ASC` — closest first, already mapped to `score = -distance`
+    /// so higher `SearchHit::score` = more relevant, matching this fn's
+    /// rank-position convention).
+    pub fact_stream: Vec<SearchHit<Fact>>,
+    pub namespace: Option<&'a Namespace>,
+    /// Caps the fused output. `None` degrades to the full union
+    /// (`entity_stream.len() + fact_stream.len()`) — the SAME TD-138-fixed
+    /// no-limit discipline as `rrf_fuse_with_content` (never silently drops
+    /// a distinct item).
+    pub limit: Option<usize>,
+    /// RRF constant `k`, threaded from the caller's live `SearchConfig` (same
+    /// value `rrf_fuse_with_content` uses) so `KREMORY_RRF_K` reaches this
+    /// fusion site too.
+    pub rrf_k: usize,
+}
+
+/// TD-139 DoD item 2: RRF-fuses `entity_stream` (the entity+content fusion
+/// [`rrf_fuse_with_content`] already produced) with a THIRD stream — facts
+/// retrieved by embedding-cosine similarity via
+/// `TemporalGraph::vector_search_facts` — into ONE rank-ordered
+/// `Vec<RetrievedContext>`.
+///
+/// A SEPARATE fn from `rrf_fuse_with_content`, not a literal reuse of
+/// [`rrf_fuse_content_streams`] (the register DoD's original phrasing) —
+/// see [`fact_hit_into_retrieved_context`]'s doc comment for why: a fact and
+/// its source episode are different rows with independent identities (one
+/// episode can source many facts), so a fact cannot be represented as a
+/// `ContentPassage` (whose `episode_id` field IS that fusion's dedup key).
+/// Each fact instead becomes its own `RetrievedContext` entry keyed by
+/// `"fact:{id}"`. Same documented-deviation precedent as
+/// `SearchConfigOverrides` (`core/config.rs`) departing from TD-141's
+/// literal design-decision sketch.
+///
+/// Same rank-position RRF (`1/(k+rank+1)`) and `(id, group_id)` composite-key
+/// dedup discipline as `rrf_fuse_with_content` / `rrf_fuse_entities`.
+#[cfg(feature = "content-search")]
+pub(crate) fn rrf_fuse_with_facts(params: RrfFuseWithFactsParams<'_>) -> Vec<RetrievedContext> {
+    use std::collections::HashMap;
+
+    let RrfFuseWithFactsParams {
+        entity_stream,
+        fact_stream,
+        namespace,
+        limit,
+        rrf_k,
+    } = params;
+    let rrf_k = rrf_k as f64;
+
+    let entity_count = entity_stream.len();
+    let fact_count = fact_stream.len();
+    // Rule 19 anti-pattern #9 — per-stream attribution, so a silently-empty
+    // fact arm (e.g. no facts embedded yet) is visible, mirroring
+    // `rrf_fuse_with_content`'s `canonical_fusion_total` counters.
+    metrics::counter!("kremory.recall.fact_dense_fusion_total", "stream" => "entity_content")
+        .increment(entity_count as u64);
+    metrics::counter!("kremory.recall.fact_dense_fusion_total", "stream" => "fact_dense")
+        .increment(fact_count as u64);
+
+    let group_id = namespace.map(crate::memory::engine_handle::namespace_to_group_id);
+
+    let mut scores: HashMap<(String, Option<String>), (f64, RetrievedContext)> =
+        HashMap::with_capacity(entity_count + fact_count);
+
+    for (rank, item) in entity_stream.into_iter().enumerate() {
+        let rrf_score = 1.0 / (rrf_k + rank as f64 + 1.0);
+        let key = (item.entity_id.clone(), group_id.clone());
+        scores
+            .entry(key)
+            .and_modify(|(w, _)| *w += rrf_score)
+            .or_insert((rrf_score, item));
+    }
+
+    for (rank, hit) in fact_stream.into_iter().enumerate() {
+        let rrf_score = 1.0 / (rrf_k + rank as f64 + 1.0);
+        let ctx = fact_hit_into_retrieved_context(hit, namespace.cloned());
+        let key = (ctx.entity_id.clone(), group_id.clone());
+        scores
+            .entry(key)
+            .and_modify(|(w, _)| *w += rrf_score)
+            .or_insert((rrf_score, ctx));
+    }
+
+    let mut fused: Vec<RetrievedContext> = scores
+        .into_values()
+        .map(|(score, mut ctx)| {
+            ctx.score = score as f32;
+            ctx
+        })
+        .collect();
+
+    // Deterministic order: fused-score desc, then entity_id asc on ties —
+    // mirrors `rrf_fuse_with_content`'s tie-break.
+    fused.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.entity_id.cmp(&b.entity_id))
+    });
+
+    let cap = limit.unwrap_or(entity_count + fact_count);
+    if fused.len() > cap {
+        metrics::counter!("kremory.recall.fact_dense_fusion_truncated_total").increment(1);
+        fused.truncate(cap);
+    }
+
+    fused
+}
+
 // ─── TD-066 Change 2: graph-degree bonus (secondary/additive signal) ────────
 //
 // Grounding: `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-
@@ -4696,5 +4892,218 @@ mod tests {
         crate::core::migrations::migrate_026_episodes_embedding(&g.conn, 384)
             .await
             .expect("migrate_026 must remain idempotent on a third run");
+    }
+
+    // ─── TD-139 DoD item 2: dense fact retrieval arm ─────────────────────────
+
+    /// Byte-identical guard: the dense fact arm ships OFF by default, so a
+    /// default `SearchConfig` never enables it (facts stay reachable only via
+    /// 1-hop entity expansion).
+    #[test]
+    fn fact_dense_enabled_defaults_off() {
+        assert!(!crate::core::config::SearchConfig::default().fact_dense_enabled);
+    }
+
+    /// Args-as-object per TD-042 (`clippy::too_many_arguments` threshold 3).
+    #[cfg(feature = "content-search")]
+    struct FactHitParams<'a> {
+        id: i64,
+        subject_id: &'a str,
+        predicate: &'a str,
+        object_value: &'a str,
+        source_episode_id: Option<i64>,
+        score: f64,
+    }
+
+    #[cfg(feature = "content-search")]
+    fn fact_hit(params: FactHitParams<'_>) -> SearchHit<Fact> {
+        let FactHitParams {
+            id,
+            subject_id,
+            predicate,
+            object_value,
+            source_episode_id,
+            score,
+        } = params;
+        SearchHit {
+            item: Fact {
+                id,
+                subject_id: subject_id.to_string(),
+                predicate: predicate.to_string(),
+                object_id: None,
+                object_value: Some(object_value.to_string()),
+                properties: None,
+                valid_from: Utc::now(),
+                valid_to: None,
+                recorded_at: Utc::now(),
+                expired_at: None,
+                invalid_at: None,
+                group_id: Some("default".to_string()),
+                confidence: 0.9,
+                source_episode_id,
+                memory_type: None,
+                content_hash: None,
+                access_count: 0,
+                subject_group_id: Some("default".to_string()),
+                object_group_id: None,
+            },
+            score,
+        }
+    }
+
+    #[cfg(feature = "content-search")]
+    fn ctx(entity_id: &str) -> RetrievedContext {
+        RetrievedContext::new(crate::memory::types::RetrievedContextNewParams {
+            entity_id: entity_id.to_string(),
+            entity_name: entity_id.to_string(),
+            summary: "seed".to_string(),
+            score: 0.0,
+            source_refs: Vec::new(),
+        })
+    }
+
+    /// [`fact_hit_into_retrieved_context`] keys the lifted entry on
+    /// `"fact:{id}"` (never the bare fact id, never the source episode id) —
+    /// the collision-avoidance property `rrf_fuse_with_facts`'s dedup
+    /// `HashMap` depends on — and carries the source episode as a
+    /// `SourceKind::Episode` `SourceRef` so `kremory-http.rs::
+    /// recall_mode_results` can recover it.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn fact_hit_into_retrieved_context_uses_fact_prefixed_id_and_carries_source_episode() {
+        let hit = fact_hit(FactHitParams {
+            id: 7,
+            subject_id: "Caroline",
+            predicate: "attended",
+            object_value: "LGBTQ_support_group",
+            source_episode_id: Some(42),
+            score: -0.1,
+        });
+        let out = fact_hit_into_retrieved_context(hit, None);
+        assert_eq!(out.entity_id, "fact:7", "id must be fact-prefixed, not bare");
+        assert_eq!(out.entity_type_name, "Fact", "discriminator must be \"Fact\"");
+        assert_eq!(
+            out.summary, "Caroline attended LGBTQ_support_group",
+            "summary must render the SAME triple shape ingest embeds"
+        );
+        assert_eq!(out.source_refs.len(), 1, "source episode must produce one SourceRef");
+        assert_eq!(out.source_refs[0].kind, SourceKind::Episode);
+        assert_eq!(out.source_refs[0].id, "42", "SourceRef.id must carry the source episode id");
+    }
+
+    /// A fact with no recorded source episode (caller-supplied structured
+    /// fact, or a deleted source) lifts to an EMPTY `source_refs`, not a
+    /// fabricated one.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn fact_hit_into_retrieved_context_no_source_episode_is_empty_refs() {
+        let hit = fact_hit(FactHitParams {
+            id: 9,
+            subject_id: "Bob",
+            predicate: "likes",
+            object_value: "coffee",
+            source_episode_id: None,
+            score: -0.1,
+        });
+        let out = fact_hit_into_retrieved_context(hit, None);
+        assert!(
+            out.source_refs.is_empty(),
+            "no source_episode_id must produce zero SourceRefs, not a fabricated one"
+        );
+    }
+
+    /// `rrf_fuse_with_facts` folds a dense-fact hit into the entity+content
+    /// stream as its own ranked entry — proves the MECHANISM (fusion +
+    /// discriminator), not the wiring (that's the kremory-mcp e2e test,
+    /// TD-140 lesson: a hand-fed pure-function test alone cannot prove the
+    /// real path is reached).
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_facts_folds_fact_stream_into_entity_stream() {
+        let entity_stream = vec![ctx("alice"), ctx("bob")];
+        let fact_stream = vec![fact_hit(FactHitParams {
+            id: 1,
+            subject_id: "Caroline",
+            predicate: "attended",
+            object_value: "support_group",
+            source_episode_id: Some(5),
+            score: -0.01,
+        })];
+
+        let fused = rrf_fuse_with_facts(RrfFuseWithFactsParams {
+            entity_stream,
+            fact_stream,
+            namespace: None,
+            limit: Some(10),
+            rrf_k: 60,
+        });
+
+        assert_eq!(fused.len(), 3, "2 entities + 1 fact, no id collisions → 3 distinct entries");
+        let fact_entry = fused
+            .iter()
+            .find(|c| c.entity_type_name == "Fact")
+            .expect("fused output must contain the fact-derived entry");
+        assert_eq!(fact_entry.entity_id, "fact:1");
+        assert_eq!(fact_entry.source_refs[0].id, "5");
+    }
+
+    /// `rrf_fuse_with_facts` honours the explicit output cap, same
+    /// no-limit-drops-nothing / explicit-limit-truncates discipline as
+    /// `rrf_fuse_with_content`.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_facts_respects_limit() {
+        let entity_stream = vec![ctx("alice"), ctx("bob"), ctx("carol")];
+        let fact_stream = vec![
+            fact_hit(FactHitParams {
+                id: 1,
+                subject_id: "A",
+                predicate: "p",
+                object_value: "o1",
+                source_episode_id: Some(1),
+                score: -0.01,
+            }),
+            fact_hit(FactHitParams {
+                id: 2,
+                subject_id: "B",
+                predicate: "p",
+                object_value: "o2",
+                source_episode_id: Some(2),
+                score: -0.02,
+            }),
+        ];
+        let fused = rrf_fuse_with_facts(RrfFuseWithFactsParams {
+            entity_stream,
+            fact_stream,
+            namespace: None,
+            limit: Some(2),
+            rrf_k: 60,
+        });
+        assert_eq!(fused.len(), 2, "limit=2 caps the fused output");
+    }
+
+    /// No-limit degrades to the full union (`entity_count + fact_count`) —
+    /// the TD-138-fixed discipline: no explicit limit must never silently
+    /// drop a distinct item across two DISJOINT id-spaces.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_facts_no_limit_returns_full_union() {
+        let entity_stream = vec![ctx("alice")];
+        let fact_stream = vec![fact_hit(FactHitParams {
+            id: 1,
+            subject_id: "A",
+            predicate: "p",
+            object_value: "o1",
+            source_episode_id: Some(1),
+            score: -0.01,
+        })];
+        let fused = rrf_fuse_with_facts(RrfFuseWithFactsParams {
+            entity_stream,
+            fact_stream,
+            namespace: None,
+            limit: None,
+            rrf_k: 60,
+        });
+        assert_eq!(fused.len(), 2, "no limit → full union (1 entity + 1 fact), nothing dropped");
     }
 }

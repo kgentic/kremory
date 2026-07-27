@@ -328,13 +328,16 @@ struct SearchQuery {
 /// (`.ai-docs/tech-debt/tech-debt-register.md` "TD-139", the "⚠️ MEASUREMENT
 /// PREREQUISITE" block). Additive wire metadata: existing consumers (the
 /// LoCoMo harness) read only `id`/`content`/`score` and are unaffected by
-/// this enum's presence. No live arm emits `Fact` yet — the dense fact arm
-/// itself (`core::search::vector_search_facts`) is deliberately UNWIRED from
-/// `/search` per TD-139's DoD item 2, a separate, later, measured change.
-/// This enum + `SearchResultWire::source_episode_id` exist so
-/// `bench/locomo/evidence_eval.py` can score a future fact-kind item against
-/// its source episode's evidence turns instead of reading it as irrelevant
-/// (a fact string does not contain LoCoMo turn text verbatim).
+/// this enum's presence. `Fact` is emitted by `recall_mode_results` (below)
+/// once the entity+content fusion `handlers::do_recall` → `.raw()` reaches
+/// includes a dense-fact-arm entry (TD-139 DoD item 2,
+/// `core::search::rrf_fuse_with_facts`, feature-gated + default-OFF via
+/// `SearchConfig::fact_dense_enabled` — absent that knob, no `Fact` item ever
+/// appears, so this variant is dormant-but-wired on a default build, not
+/// unreachable). This enum + `SearchResultWire::source_episode_id` exist so
+/// `bench/locomo/evidence_eval.py` can score a fact-kind item against its
+/// source episode's evidence turns instead of reading it as irrelevant (a
+/// fact string does not contain LoCoMo turn text verbatim).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SearchResultKindWire {
@@ -344,15 +347,10 @@ enum SearchResultKindWire {
     /// `mode=content` / the content arm of `mode=hybrid` — a BM25-matched
     /// episode passage (`ContentPassage`).
     Episode,
-    /// Not yet emitted by any live path (TD-139 DoD item 2, unwired
-    /// deliberately). Reserved so the wire shape and `evidence_eval.py`'s
-    /// fact-resolution path can be proven correct BEFORE that arm exists.
-    /// Constructed today only by `#[cfg(test)]` serialization tests
-    /// (`search_result_wire_fact_kind_serializes_with_source_episode_id`) —
-    /// `#[allow(dead_code)]` is deliberate here, not a masked bug: the
-    /// variant's non-construction in the shipped binary IS the intended
-    /// state until TD-139's later, separately-measured arm lands.
-    #[allow(dead_code)]
+    /// TD-139 DoD item 2: a dense-fact-arm hit
+    /// (`core::search::vector_search_facts`, fused via `rrf_fuse_with_facts`)
+    /// — `entity_type_name == "Fact"` on the underlying `RetrievedContext`
+    /// is `recall_mode_results`'s discriminator for this variant.
     Fact,
 }
 
@@ -444,20 +442,47 @@ async fn recall_mode_results(
     Ok(structured
         .results
         .iter()
-        .map(|r| SearchResultWire {
-            id: r.entity_id.clone(),
-            content: flatten_result_content(r),
-            score: r.score,
-            kind: SearchResultKindWire::Entity,
-            // The entity's connected facts each carry their OWN
-            // `source_episode_ids` (`RetrievedFactWire`, params.rs) but that
-            // provenance is discarded by `flatten_result_content`'s join —
-            // an entity item is not itself a fact, so no single episode id
-            // applies here. TD-139 leaves this loss in place deliberately:
-            // splitting facts out of `flatten_result_content` would change
-            // this arm's result count/content, which the DoD requires to
-            // stay byte-identical.
-            source_episode_id: None,
+        .map(|r| {
+            // TD-139 DoD item 2: a dense-fact-arm hit is lifted into the
+            // entity+content fusion as a synthetic `RetrievedContext` with
+            // `entity_type_name == "Fact"`
+            // (`core::search::fact_hit_into_retrieved_context`'s
+            // discriminator) — mirrors how a `ContentPassage` is tagged
+            // `"ContentPassage"` one layer down. `fact_dense_enabled`
+            // defaults `false`, so no live result carries this tag unless
+            // the knob is on.
+            let is_fact = r.entity_type_name == "Fact";
+            SearchResultWire {
+                id: r.entity_id.clone(),
+                content: flatten_result_content(r),
+                score: r.score,
+                kind: if is_fact {
+                    SearchResultKindWire::Fact
+                } else {
+                    SearchResultKindWire::Entity
+                },
+                // The entity's connected facts each carry their OWN
+                // `source_episode_ids` (`RetrievedFactWire`, params.rs) but
+                // that provenance is discarded by `flatten_result_content`'s
+                // join — an entity item is not itself a fact, so no single
+                // episode id applies here. TD-139 leaves this loss in place
+                // deliberately: splitting facts out of `flatten_result_content`
+                // would change this arm's result count/content, which the
+                // DoD requires to stay byte-identical. A `Fact`-kind item is
+                // different: it is NOT an entity's connected fact, it IS a
+                // dense-fact-arm hit, and its own `source_refs[0]` (a
+                // `SourceKind::Episode` ref stamped by
+                // `fact_hit_into_retrieved_context`) carries its provenance —
+                // recover it here.
+                source_episode_id: if is_fact {
+                    r.source_refs
+                        .iter()
+                        .find(|sr| sr.kind == "episode")
+                        .and_then(|sr| sr.id.parse::<i64>().ok())
+                } else {
+                    None
+                },
+            }
         })
         .collect())
 }
@@ -1006,8 +1031,12 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
     use kremory::core::provider::{MockChatProvider, NullEmbeddingProvider};
+    #[cfg(feature = "content-search")]
+    use kremory::core::provider::MockEmbeddingProvider;
     use kremory::{ChatProvider, DynEmbeddingProvider};
     use kremory_mcp::params::{RetrievedFactWire, SourceRefWire};
+    #[cfg(feature = "content-search")]
+    use std::collections::HashMap;
     use tower::ServiceExt as _;
 
     // ─── flatten_result_content (benchmark-load-bearing) ─────────────────
@@ -1563,6 +1592,169 @@ mod tests {
                     .is_some_and(|c| c.contains("Zephyrine"))
             }),
             "OR-fallback result must still carry the pinned subject's snippet: {json}"
+        );
+    }
+
+    // ─── TD-139 DoD item 3: dense fact arm end-to-end (real recall path) ──
+    //
+    // `pin_fact`'s caller-supplied `structured_facts` + `skip_extraction`
+    // path does NOT populate `facts.embedding` — only the LLM-extraction
+    // insert paths do (`ingest_with.rs:~1774`, `deferred.rs:~411`). So this
+    // section drives REAL LLM-extraction ingest (a staged `MockChatProvider`,
+    // mirrors `crates/kremory/tests/facade_fact_persistence_mock.rs::
+    // staged_mock`) — the ONLY way to get a real, embedded fact through the
+    // real `remember()` → deferred Phase 2 → `ingest_with` path, then queries
+    // it back through the real `/search` REST route. Per the TD-140 lesson
+    // (`instrument-real-data-flow-before-hypothesizing` §3), a hand-fed pure
+    // function cannot prove the arm is actually WIRED — only a real
+    // end-to-end run can.
+
+    /// Staged mock for `IntegerIdLlmExtractor`'s 3 prompt stages (substring-
+    /// keyed on prompt BOILERPLATE, content-agnostic — same keys
+    /// `facade_fact_persistence_mock.rs::staged_mock` uses), producing ONE
+    /// fact triple: `Priya relocated_to Berlin`. The embedded fact text
+    /// (`ingest_with.rs`'s `format!("{subject} {predicate} {object}")`) is
+    /// therefore exactly [`FACT_DENSE_QUERY`] — querying with that identical
+    /// string gives `MockEmbeddingProvider` (hash-based: same text -> same
+    /// vector) a PERFECT cosine match, deterministically surfacing this fact
+    /// as the dense arm's top hit without a real semantic model.
+    #[cfg(feature = "content-search")]
+    fn fact_dense_staged_mock() -> MockChatProvider {
+        let mut map = HashMap::new();
+        map.insert(
+            "Each entity must appear exactly once".to_string(),
+            r#"{"entities":[{"name":"Priya","entity_type_id":1},{"name":"Berlin","entity_type_id":2}]}"#
+                .to_string(),
+        );
+        map.insert(
+            "Output a JSON array of relationship name strings.".to_string(),
+            r#"["relocated_to"]"#.to_string(),
+        );
+        map.insert(
+            "Output a concise JSON array of objects with".to_string(),
+            r#"[{"subject":"Priya","predicate":"relocated_to","object":"Berlin","is_entity_ref":true,"confidence":0.95}]"#
+                .to_string(),
+        );
+        map.insert(
+            "Are these two entities".to_string(),
+            "\"different\"".to_string(),
+        );
+        map.insert(
+            "Output a JSON array of index numbers".to_string(),
+            "[]".to_string(),
+        );
+        MockChatProvider::new(map)
+    }
+
+    #[cfg(feature = "content-search")]
+    const FACT_DENSE_QUERY: &str = "Priya relocated_to Berlin";
+    #[cfg(feature = "content-search")]
+    const FACT_DENSE_NS: &str = "ns-fact-dense";
+
+    /// Builds a `Memory` via the staged-mock LLM extraction path, `remember`s
+    /// one episode, waits for Phase 2 to land the embedded fact, and returns
+    /// `(mem, episode_id)`.
+    #[cfg(feature = "content-search")]
+    async fn build_fact_dense_mem(fact_dense_enabled: bool) -> (Arc<Memory>, i64) {
+        let llm: Arc<dyn ChatProvider> = Arc::new(fact_dense_staged_mock());
+        let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(MockEmbeddingProvider::new(384));
+        let mem = kremory::Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .with_fact_dense_enabled(fact_dense_enabled)
+            .await
+            .expect("Memory::open with fact-dense knob");
+
+        let commit = handlers::do_remember(
+            &mem,
+            RememberParams {
+                namespace: FACT_DENSE_NS.to_string(),
+                thread: None,
+                content: "Priya relocated to Berlin last year.".to_string(),
+                source_kind: Some(kremory_mcp::params::SourceKindWire::Chat),
+                source_id: Some("mock-session".into()),
+                published_at: None,
+                structured_facts: Vec::new(),
+                skip_extraction: false,
+            },
+        )
+        .await
+        .expect("do_remember with real LLM-extraction path");
+
+        let episode_id: i64 = commit
+            .episode_entity_id
+            .parse()
+            .expect("episode_entity_id must parse to an i64 rowid");
+        mem.wait_for_processing(episode_id, std::time::Duration::from_secs(30))
+            .await
+            .expect("wait_for_processing must complete (Phase 2 lands the embedded fact)");
+
+        (Arc::new(mem), episode_id)
+    }
+
+    /// TD-139 DoD item 3: with `fact_dense_enabled = true`, the fact
+    /// surfaces through the REAL `/search?mode=recall` route as
+    /// `kind: "fact"` with the CORRECT `source_episode_id` — driven through
+    /// the real `Memory` → `fuse_content_stream` → `rrf_fuse_with_facts` →
+    /// `handlers::do_recall` → `recall_mode_results` chain, not a hand-fed
+    /// pure function.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_fact_dense_arm_on_surfaces_kind_fact_with_source_episode_id() {
+        let (mem, episode_id) = build_fact_dense_mem(true).await;
+        let router = build_router(AppState { mem, rrf_k: 60 });
+
+        let search = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/search?q={q}&namespace={FACT_DENSE_NS}&k=10&mode=recall",
+                q = FACT_DENSE_QUERY.replace(' ', "%20")
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(search).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let results = json["results"].as_array().expect("results array");
+
+        let fact_hit = results
+            .iter()
+            .find(|r| r["kind"].as_str() == Some("fact"))
+            .unwrap_or_else(|| {
+                panic!("fact_dense_enabled=true must surface a kind:\"fact\" result: {json}")
+            });
+        assert_eq!(
+            fact_hit["source_episode_id"].as_i64(),
+            Some(episode_id),
+            "kind:\"fact\" result must carry the CORRECT source_episode_id: {fact_hit}"
+        );
+    }
+
+    /// TD-139 DoD item 3, the gate half: with `fact_dense_enabled = false`
+    /// (the default), the SAME fact — embedded identically, same query — is
+    /// NEVER surfaced as `kind: "fact"`. Proves the knob gates the arm rather
+    /// than the arm always firing regardless of config.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_fact_dense_arm_off_never_surfaces_kind_fact() {
+        let (mem, _episode_id) = build_fact_dense_mem(false).await;
+        let router = build_router(AppState { mem, rrf_k: 60 });
+
+        let search = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/search?q={q}&namespace={FACT_DENSE_NS}&k=10&mode=recall",
+                q = FACT_DENSE_QUERY.replace(' ', "%20")
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(search).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let results = json["results"].as_array().expect("results array");
+        assert!(
+            !results.iter().any(|r| r["kind"].as_str() == Some("fact")),
+            "fact_dense_enabled=false (default) must NEVER surface a kind:\"fact\" result: {json}"
         );
     }
 
