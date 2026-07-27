@@ -36,7 +36,13 @@
 //! |---|---|---|
 //! | `GET /health` | — | `200` |
 //! | `POST /memories` `{content, namespace, published_at?}` | `handlers::do_remember` | `201 {"id"}` |
-//! | `GET /search?q=&namespace=&k=&mode=` | `handlers::do_recall` / `do_recall_content` | `200 {"results":[{"id","content","score"}]}` |
+//! | `GET /search?q=&namespace=&k=&mode=` | `handlers::do_recall` / `do_recall_content` | `200 {"results":[{"id","content","score","kind","source_episode_id"}]}` |
+//!
+//! `results[].kind` (`"entity" \| "episode" \| "fact"`) and
+//! `results[].source_episode_id` (populated ONLY for `kind == "fact"`) are
+//! TD-139 measurement-prerequisite fields, additive over the pre-existing
+//! `{id, content, score}` contract — see [`SearchResultKindWire`] and
+//! [`SearchResultWire::source_episode_id`]. No live arm emits `"fact"` yet.
 //!
 //! `mode` (benchmark-completion-roadmap W0.1) selects which of kremory's
 //! retrieval surfaces `/search` reaches: `recall` is the existing entity/fact
@@ -318,11 +324,55 @@ struct SearchQuery {
     mode: SearchMode,
 }
 
+/// What a `/search` result item IS — TD-139 measurement prerequisite
+/// (`.ai-docs/tech-debt/tech-debt-register.md` "TD-139", the "⚠️ MEASUREMENT
+/// PREREQUISITE" block). Additive wire metadata: existing consumers (the
+/// LoCoMo harness) read only `id`/`content`/`score` and are unaffected by
+/// this enum's presence. No live arm emits `Fact` yet — the dense fact arm
+/// itself (`core::search::vector_search_facts`) is deliberately UNWIRED from
+/// `/search` per TD-139's DoD item 2, a separate, later, measured change.
+/// This enum + `SearchResultWire::source_episode_id` exist so
+/// `bench/locomo/evidence_eval.py` can score a future fact-kind item against
+/// its source episode's evidence turns instead of reading it as irrelevant
+/// (a fact string does not contain LoCoMo turn text verbatim).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SearchResultKindWire {
+    /// `mode=recall` / the recall arm of `mode=hybrid` — one entity + its
+    /// flattened connected facts (`flatten_result_content`).
+    Entity,
+    /// `mode=content` / the content arm of `mode=hybrid` — a BM25-matched
+    /// episode passage (`ContentPassage`).
+    Episode,
+    /// Not yet emitted by any live path (TD-139 DoD item 2, unwired
+    /// deliberately). Reserved so the wire shape and `evidence_eval.py`'s
+    /// fact-resolution path can be proven correct BEFORE that arm exists.
+    /// Constructed today only by `#[cfg(test)]` serialization tests
+    /// (`search_result_wire_fact_kind_serializes_with_source_episode_id`) —
+    /// `#[allow(dead_code)]` is deliberate here, not a masked bug: the
+    /// variant's non-construction in the shipped binary IS the intended
+    /// state until TD-139's later, separately-measured arm lands.
+    #[allow(dead_code)]
+    Fact,
+}
+
 #[derive(Debug, Serialize)]
 struct SearchResultWire {
     id: String,
     content: String,
     score: f32,
+    /// TD-139 measurement prerequisite: what this item IS. See
+    /// [`SearchResultKindWire`].
+    kind: SearchResultKindWire,
+    /// Populated ONLY when `kind == Fact`: the episode this fact was
+    /// asserted from (`facts.source_episode_id`, `core/schema.rs:129` —
+    /// `Option<i64>` because a caller-supplied structured fact, or a fact
+    /// whose source episode was later deleted, can carry no episode
+    /// anchor). `None` for `Entity`/`Episode` items, and for `Fact` items
+    /// with no recorded source. `bench/locomo/evidence_eval.py` resolves
+    /// this id to the episode's evidence turns rather than scoring the
+    /// fact's own (non-verbatim) text against them.
+    source_episode_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -398,6 +448,16 @@ async fn recall_mode_results(
             id: r.entity_id.clone(),
             content: flatten_result_content(r),
             score: r.score,
+            kind: SearchResultKindWire::Entity,
+            // The entity's connected facts each carry their OWN
+            // `source_episode_ids` (`RetrievedFactWire`, params.rs) but that
+            // provenance is discarded by `flatten_result_content`'s join —
+            // an entity item is not itself a fact, so no single episode id
+            // applies here. TD-139 leaves this loss in place deliberately:
+            // splitting facts out of `flatten_result_content` would change
+            // this arm's result count/content, which the DoD requires to
+            // stay byte-identical.
+            source_episode_id: None,
         })
         .collect())
 }
@@ -420,6 +480,12 @@ async fn content_mode_results(
             id: p.episode_id.to_string(),
             content: p.snippet,
             score: p.score,
+            kind: SearchResultKindWire::Episode,
+            // `id` already IS the episode id for this arm (stringified);
+            // `source_episode_id` is reserved for `Fact` items whose `id` is
+            // the FACT's own id, not an episode's — see doc comment on
+            // `SearchResultWire::source_episode_id`.
+            source_episode_id: None,
         })
         .collect())
 }
@@ -1017,6 +1083,60 @@ mod tests {
         assert_eq!(content, "Grace Hopper: a computer scientist");
     }
 
+    // ─── SearchResultWire::kind / source_episode_id (TD-139 measurement
+    // prerequisite) — pure serialization, no live arm emits `Fact` yet ────
+
+    /// Entity and Episode items (the two kinds every live arm emits today)
+    /// serialize `source_episode_id` as `null` — proves the ADDITIVE fields
+    /// don't perturb the existing `{id, content, score}` shape consumers
+    /// (the LoCoMo harness) already read.
+    #[test]
+    fn search_result_wire_entity_and_episode_kinds_have_no_source_episode_id() {
+        let entity = SearchResultWire {
+            id: "e1".into(),
+            content: "Ada Lovelace: a mathematician".into(),
+            score: 0.9,
+            kind: SearchResultKindWire::Entity,
+            source_episode_id: None,
+        };
+        let episode = SearchResultWire {
+            id: "42".into(),
+            content: "Ada Lovelace wrote the first algorithm".into(),
+            score: 0.7,
+            kind: SearchResultKindWire::Episode,
+            source_episode_id: None,
+        };
+        let ej = serde_json::to_value(&entity).expect("entity serializes");
+        let pj = serde_json::to_value(&episode).expect("episode serializes");
+        assert_eq!(ej["kind"], "entity", "entity kind: {ej}");
+        assert!(ej["source_episode_id"].is_null(), "entity: {ej}");
+        assert_eq!(pj["kind"], "episode", "episode kind: {pj}");
+        assert!(pj["source_episode_id"].is_null(), "episode: {pj}");
+    }
+
+    /// A Fact-kind item — not yet emitted by any live path (TD-139 DoD item
+    /// 2 is a later, separately-measured change) — carries its source
+    /// episode id on the wire. This is the shape `bench/locomo/
+    /// evidence_eval.py`'s fact-resolution path (Part B) depends on: proves
+    /// the wire CAN carry the provenance before the arm that would populate
+    /// it exists.
+    #[test]
+    fn search_result_wire_fact_kind_serializes_with_source_episode_id() {
+        let fact = SearchResultWire {
+            id: "fact-7".into(),
+            content: "Caroline attended LGBTQ_support_group".into(),
+            score: 0.8,
+            kind: SearchResultKindWire::Fact,
+            source_episode_id: Some(42),
+        };
+        let json = serde_json::to_value(&fact).expect("fact serializes");
+        assert_eq!(json["kind"], "fact", "fact kind: {json}");
+        assert_eq!(
+            json["source_episode_id"], 42,
+            "fact source_episode_id must round-trip: {json}"
+        );
+    }
+
     // ─── in-process HTTP round-trip over a mock-provider Memory ──────────
 
     async fn mock_memory() -> Arc<Memory> {
@@ -1135,6 +1255,21 @@ mod tests {
             assert!(
                 r["score"].as_f64().is_some(),
                 "result.score must be numeric: {r}"
+            );
+            // TD-139 measurement prerequisite: `mode=recall` items are
+            // ENTITY-kind with no per-fact episode provenance (the
+            // connected facts' own `source_episode_ids` are discarded by
+            // `flatten_result_content`'s join — see doc comment on
+            // `SearchResultWire::source_episode_id`). No live arm emits
+            // `kind: "fact"` yet.
+            assert_eq!(
+                r["kind"].as_str(),
+                Some("entity"),
+                "mode=recall result.kind must be \"entity\": {r}"
+            );
+            assert!(
+                r["source_episode_id"].is_null(),
+                "mode=recall result.source_episode_id must be null (only Fact items carry it): {r}"
             );
         }
 
@@ -1354,6 +1489,18 @@ mod tests {
                 r["score"].as_f64().is_some(),
                 "result.score must be numeric: {r}"
             );
+            // TD-139 measurement prerequisite: `mode=content` items are
+            // EPISODE-kind (a BM25-matched passage), never Fact.
+            assert_eq!(
+                r["kind"].as_str(),
+                Some("episode"),
+                "mode=content result.kind must be \"episode\": {r}"
+            );
+            assert!(
+                r["source_episode_id"].is_null(),
+                "mode=content result.source_episode_id must be null (episode's own id is \
+                 already `id`; only Fact items carry source_episode_id): {r}"
+            );
         }
     }
 
@@ -1453,6 +1600,22 @@ mod tests {
         );
     }
 
+    /// Test-only `SearchResultWire` builder for the `rrf_merge` tests below,
+    /// which exercise fusion arithmetic and are indifferent to `kind`/
+    /// `source_episode_id` — both new TD-139 fields default to the values an
+    /// `Entity`-arm result would carry (`rrf_merge`'s `..r` spread passes
+    /// them through unchanged regardless).
+    #[cfg(feature = "content-search")]
+    fn sr(id: &str, content: &str, score: f32) -> SearchResultWire {
+        SearchResultWire {
+            id: id.into(),
+            content: content.into(),
+            score,
+            kind: SearchResultKindWire::Entity,
+            source_episode_id: None,
+        }
+    }
+
     /// `rrf_merge` — Reciprocal Rank Fusion. A result in BOTH streams accrues
     /// both `1/(k+rank)` contributions and outranks single-stream hits; ties
     /// break by id asc; the first-inserted (recall stream, processed first)
@@ -1461,30 +1624,8 @@ mod tests {
     #[cfg(feature = "content-search")]
     #[test]
     fn rrf_merge_fuses_by_reciprocal_rank() {
-        let recall = vec![
-            SearchResultWire {
-                id: "a".into(),
-                content: "recall-a".into(),
-                score: 0.9,
-            },
-            SearchResultWire {
-                id: "b".into(),
-                content: "recall-b".into(),
-                score: 0.8,
-            },
-        ];
-        let content = vec![
-            SearchResultWire {
-                id: "b".into(),
-                content: "content-b".into(),
-                score: 0.7,
-            },
-            SearchResultWire {
-                id: "c".into(),
-                content: "content-c".into(),
-                score: 0.6,
-            },
-        ];
+        let recall = vec![sr("a", "recall-a", 0.9), sr("b", "recall-b", 0.8)];
+        let content = vec![sr("b", "content-b", 0.7), sr("c", "content-c", 0.6)];
         let merged = rrf_merge(recall, content, 60);
         let ids: Vec<&str> = merged.iter().map(|r| r.id.as_str()).collect();
         // b ∈ both → 1/(60+2)+1/(60+1) ≈ 0.0325 (top). a (recall rank0) 1/61 ≈
@@ -1513,20 +1654,7 @@ mod tests {
     #[cfg(feature = "content-search")]
     #[test]
     fn rrf_merge_reads_k_argument_not_const() {
-        let input = || {
-            (
-                vec![SearchResultWire {
-                    id: "x".into(),
-                    content: "x".into(),
-                    score: 0.9,
-                }],
-                vec![SearchResultWire {
-                    id: "y".into(),
-                    content: "y".into(),
-                    score: 0.8,
-                }],
-            )
-        };
+        let input = || (vec![sr("x", "x", 0.9)], vec![sr("y", "y", 0.8)]);
         let (ra, rb) = input();
         let k60 = rrf_merge(ra, rb, 60);
         let (ra, rb) = input();
