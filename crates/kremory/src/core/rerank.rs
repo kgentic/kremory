@@ -62,8 +62,57 @@ pub(crate) trait Reranker: Send + Sync {
     ) -> Result<Vec<(String, f32)>>;
 }
 
+/// Resolves which cross-encoder `FastEmbedReranker` loads, from the
+/// `KREMORY_RERANK_MODEL` boot override. Default `BGERerankerBase` (spec §4
+/// package-evaluation table) — byte-identical to pre-override behaviour when
+/// unset.
+///
+/// Governing docs: `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
+/// §4 (TD-062 reranker, package-evaluation table that selected BGE base) and the
+/// TD-134 register entry (`.ai-docs/tech-debt/tech-debt-register.md`), whose
+/// VALIDATED + oracle-decomposition blocks are the measurement this knob serves.
+///
+/// Exists because the 2026-07-27 oracle decomposition showed the reranker
+/// captured only ~43% of the reordering gain available over its own candidate
+/// pool (nDCG@10 62.9 off → 75.6 on, versus a 91.9 perfect-reorder ceiling on
+/// the SAME 50 items). The residual is therefore a property of the MODEL, not
+/// of the call site — so model choice needs to be sweepable. Mirrors the
+/// `KREMORY_RERANK_K` / `KREMORY_RRF_K` / `KREMORY_EPISODE_DENSE` pattern: an
+/// A/B costs a server restart, not a rebuild.
+///
+/// Fail-loud on an unrecognised value (WARN + default) rather than a silent
+/// substitution — a benchmark that quietly scored a different model than its
+/// provenance stamp claims is the exact class of measurement corruption
+/// CLAUDE.md Rule 36 exists to prevent. Pure fn (not inlined into the
+/// `OnceCell` init) so it is unit-testable, per the `parse_rerank_k` precedent.
+pub(crate) fn parse_reranker_model(raw: Option<&str>) -> fastembed::RerankerModel {
+    let Some(raw) = raw else {
+        return fastembed::RerankerModel::BGERerankerBase;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "bge-base" | "bgererankerbase" => fastembed::RerankerModel::BGERerankerBase,
+        "bge-v2-m3" | "bgererankerv2m3" => fastembed::RerankerModel::BGERerankerV2M3,
+        "jina-v1-turbo-en" | "jinarerankerv1turboen" => {
+            fastembed::RerankerModel::JINARerankerV1TurboEn
+        }
+        "jina-v2-multilingual" | "jinarerankerv2basemultiligual" => {
+            fastembed::RerankerModel::JINARerankerV2BaseMultiligual
+        }
+        other => {
+            tracing::warn!(
+                value = %other,
+                "KREMORY_RERANK_MODEL is not a recognised reranker — falling back to \
+                 bge-base. Valid: bge-base | bge-v2-m3 | jina-v1-turbo-en | \
+                 jina-v2-multilingual"
+            );
+            fastembed::RerankerModel::BGERerankerBase
+        }
+    }
+}
+
 /// Default `Reranker` impl wrapping `fastembed::TextRerank` (BGE reranker
-/// base model, spec §4 package-evaluation table).
+/// base model by default; see [`parse_reranker_model`] for the
+/// `KREMORY_RERANK_MODEL` sweep override).
 ///
 /// Lazily initialises the ONNX session on first `rerank()` call (`OnceCell`),
 /// not per-call (Risk #5, spec §5.4) — the `fastembed_rerank_spike` example
@@ -92,10 +141,16 @@ impl FastEmbedReranker {
                 // Hub download on first-ever run, ONNX session build always) —
                 // run it off the async runtime's worker threads so a cold
                 // model load doesn't stall other in-flight recalls.
-                let init_result = tokio::task::spawn_blocking(|| {
-                    fastembed::TextRerank::try_new(fastembed::RerankInitOptions::new(
-                        fastembed::RerankerModel::BGERerankerBase,
-                    ))
+                // Read the override BEFORE `spawn_blocking` so the chosen model
+                // is observable in the log line below even if the load fails.
+                let chosen =
+                    parse_reranker_model(std::env::var("KREMORY_RERANK_MODEL").ok().as_deref());
+                tracing::info!(
+                    reranker_model = ?chosen,
+                    "kremory.rerank.model_selected (KREMORY_RERANK_MODEL; default bge-base)"
+                );
+                let init_result = tokio::task::spawn_blocking(move || {
+                    fastembed::TextRerank::try_new(fastembed::RerankInitOptions::new(chosen))
                 })
                 .await;
                 let elapsed_secs = start.elapsed().as_secs_f64();
@@ -183,6 +238,48 @@ impl Reranker for FastEmbedReranker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `KREMORY_RERANK_MODEL` resolution — pure, so it is testable without a
+    /// model load (the `parse_rerank_k` precedent in `bin/kremory-http.rs`).
+    ///
+    /// The unset/empty/unknown cases all resolving to `BGERerankerBase` is the
+    /// load-bearing assertion: it pins that the override is byte-identical to
+    /// pre-override behaviour unless deliberately set, so enabling the knob
+    /// cannot silently change an existing benchmark's model.
+    #[test]
+    fn parse_reranker_model_defaults_and_resolves_each_alias() {
+        use fastembed::RerankerModel as M;
+        assert_eq!(parse_reranker_model(None), M::BGERerankerBase, "unset");
+        assert_eq!(parse_reranker_model(Some("")), M::BGERerankerBase, "empty");
+        assert_eq!(parse_reranker_model(Some("bge-base")), M::BGERerankerBase);
+        assert_eq!(parse_reranker_model(Some("bge-v2-m3")), M::BGERerankerV2M3);
+        assert_eq!(
+            parse_reranker_model(Some("jina-v1-turbo-en")),
+            M::JINARerankerV1TurboEn
+        );
+        assert_eq!(
+            parse_reranker_model(Some("jina-v2-multilingual")),
+            M::JINARerankerV2BaseMultiligual
+        );
+        // Case- and whitespace-insensitive, and accepts the raw enum spelling —
+        // a sweep script should not fail on " BGERerankerV2M3 ".
+        assert_eq!(
+            parse_reranker_model(Some("  BGERerankerV2M3  ")),
+            M::BGERerankerV2M3
+        );
+    }
+
+    /// An unrecognised value falls back to the default LOUDLY (a WARN is
+    /// emitted alongside) rather than erroring the whole recall — but it must
+    /// never silently resolve to some *other* real model, which would make a
+    /// benchmark score a different reranker than its provenance stamp claims.
+    #[test]
+    fn parse_reranker_model_unknown_value_falls_back_to_default() {
+        assert_eq!(
+            parse_reranker_model(Some("cohere-rerank-v3")),
+            fastembed::RerankerModel::BGERerankerBase
+        );
+    }
 
     /// Fast tier (spec §3 Increment 3 test pyramid): a deterministic mock
     /// `Reranker` proving the trait's dyn-dispatch shape works end to end —
