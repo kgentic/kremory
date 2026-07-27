@@ -218,6 +218,20 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
             // depth. null ⇒ off. Distinct from the `rerank` compile-flag above
             // (compiled-in ≠ enabled): a build can ship the reranker yet run it off.
             "rerank_k": *RERANK_K,
+            // The REQUESTED reranker (`KREMORY_RERANK_MODEL`), so a result JSON
+            // records which cross-encoder produced it. Deliberately named
+            // `_requested`, not `_active`: resolution lives in `kremory`'s
+            // `parse_reranker_model`, and an unrecognised alias there falls back
+            // to bge-base with a WARN. Echoing the raw value as "active" could
+            // therefore stamp a model that never loaded — the provenance-lie
+            // class TD-135 exists to close. The authoritative record of what
+            // actually loaded is the `kremory.rerank.model_selected` INFO log.
+            // Exposing the resolved name instead would mean new public API on
+            // `kremory` (with ADR-031 napi-parity obligations) for a bench-only
+            // sweep knob — not worth it; revisit if the knob outgrows benching.
+            "rerank_model_requested": std::env::var("KREMORY_RERANK_MODEL")
+                .ok()
+                .unwrap_or_else(|| "bge-base (default)".to_string()),
             "prometheus": cfg!(feature = "prometheus"),
             "scoring": {
                 "content_stream_weight": scoring.content_stream_weight,
