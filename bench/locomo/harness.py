@@ -927,9 +927,31 @@ def run_benchmark(config: Config) -> dict:
         print(f"{cat:<25} {s['correct']:>8} {s['total']:>8} {acc:>9.1f}%")
     print(f"{'-'*25} {'-'*8} {'-'*8} {'-'*10}")
     print(f"{'OVERALL':<25} {total_correct:>8} {total_questions:>8} {overall:>9.1f}%")
-    print(f"\n--- Baselines ---")
-    print(f"  AutoMem:       90.53%")
-    print(f"  CORE:          88.24%")
+    # Baselines — protocol-matched ONLY. Canonical SoT:
+    #   .ai-docs/specs/locomo-benchmark-protocol-2026-07-27.md
+    #   .ai-docs/research/locomo-competitor-baselines-protocol-audit-2026-07-27.md
+    #
+    # The score printed ABOVE is the SUBSTRING retrieval-proxy scorer (no answer
+    # generation), so only retrieval-proxy systems may sit beside it. kremory's
+    # externally-quotable headline is the QA-GEN number from `qa_eval.py`
+    # (answerer + judge), NOT this one — they differed by ~17pt on the same run
+    # (94.8% substring vs 77.5% qa-gen), so conflating them is a real hazard.
+    #
+    # REMOVED 2026-07-27 — both prior lines were uncited AND wrong:
+    #   "AutoMem: 90.53%" — RETRACTED at source ("That number was wrong",
+    #       https://automem.ai/blog/benchmarking-honesty; re-fetched + confirmed).
+    #       Cause included a category-5 bug scoring answers against EMPTY STRINGS.
+    #   "CORE: 88.24%"    — vendor marketing figure; CORE's own reproducible repo
+    #       reports 85% on a different 1,247-question subset, and CORE is
+    #       generate-then-judge, so it never belonged beside a substring score.
+    print(f"\n--- Baselines (retrieval-proxy protocol only — same family as this scorer) ---")
+    print(f"  AutoMem:  84.74%  (1683/1986, all 5 categories)")
+    print(f"            hybrid: cats 1-4 via check_answer_in_memories (use_llm_extraction=False),")
+    print(f"            judge only for cat-5.  https://automem.ai/benchmarks/")
+    print(f"\n  NB generate-then-judge systems (CORE 85% @1247q, Mem0 92.5%) are NOT")
+    print(f"     comparable to the number above — compare those against `qa_eval.py")
+    print(f"     answer-tally`, minding the k / judge deltas (we run k=10 + gpt-4o")
+    print(f"     judge; CORE runs k=20, Mem0 judges with gpt-4o-mini).")
 
     # TD-132 o11y: final /metrics scrape (for a single fresh-DB conversation the
     # cumulative counters ARE this run's totals) + client-side recall-latency
