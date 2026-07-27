@@ -191,4 +191,101 @@ mod tests {
         // Factual — the Broad-phrase check precedes the Factual interrogatives.
         assert_eq!(classify_intent("what do we know about X"), Intent::Broad);
     }
+
+    /// MEASUREMENT (2026-07-27, `.ai-docs/research/intent-classifier-routing-
+    /// viability-2026-07-27.md`): does `classify_intent`'s Factual/Relational/
+    /// Broad taxonomy correspond to LoCoMo's category taxonomy well enough to
+    /// gate a retrieval arm on it? Reads the real dataset, calls the REAL
+    /// `classify_intent` (not a reimplementation), cross-tabs category ×
+    /// intent, and prints the 15 multi-hop questions the classifier does NOT
+    /// label `Relational` (the failure shape a paraphrase-fragile keyword
+    /// matcher produces). `#[ignore]`d so the default suite stays green — run
+    /// explicitly:
+    /// `cargo test -p kremory --lib core::intent::tests::locomo_intent_category_crosstab -- --ignored --nocapture`
+    #[test]
+    #[ignore = "measurement-only: prints cross-tab, not a pass/fail gate"]
+    fn locomo_intent_category_crosstab() {
+        use std::collections::BTreeMap;
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../bench/locomo/data/locomo10.json"
+        );
+        let raw = std::fs::read_to_string(path).expect("read locomo10.json");
+        let data: serde_json::Value = serde_json::from_str(&raw).expect("parse locomo10.json");
+        let convs = data.as_array().expect("top-level array of conversations");
+
+        // Category ID -> name mapping, copied verbatim from
+        // `bench/locomo/harness.py::CATEGORY_NAMES` (the harness is the
+        // authority for this mapping; ids are NOT guessed here).
+        const CATEGORY_NAMES: &[(i64, &str)] = &[
+            (1, "single-hop"),
+            (2, "temporal"),
+            (3, "multi-hop"),
+            (4, "open-domain"),
+            (5, "adversarial"),
+        ];
+        let cat_name = |raw_cat: i64| -> &'static str {
+            CATEGORY_NAMES
+                .iter()
+                .find(|(id, _)| *id == raw_cat)
+                .map(|(_, n)| *n)
+                .unwrap_or("unknown")
+        };
+
+        let mut crosstab: BTreeMap<&'static str, BTreeMap<&'static str, u32>> = BTreeMap::new();
+        let mut total = 0u32;
+        let mut multi_hop_not_relational: Vec<(String, &'static str)> = Vec::new();
+
+        for conv in convs {
+            let qa_list = conv
+                .get("qa")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            for qa in qa_list {
+                let question = qa.get("question").and_then(|v| v.as_str()).unwrap_or("");
+                let raw_cat = qa.get("category").and_then(|v| v.as_i64()).unwrap_or(0);
+                let cname = cat_name(raw_cat);
+                let intent = classify_intent(question);
+
+                *crosstab
+                    .entry(cname)
+                    .or_default()
+                    .entry(intent.as_str())
+                    .or_insert(0) += 1;
+                total += 1;
+
+                if cname == "multi-hop" && intent != Intent::Relational {
+                    multi_hop_not_relational.push((question.to_string(), intent.as_str()));
+                }
+            }
+        }
+
+        println!("=== LoCoMo category x Intent cross-tab (n={total}) ===");
+        for (cat, inner) in &crosstab {
+            let row_total: u32 = inner.values().sum();
+            print!("{cat:12} n={row_total:4}  ");
+            for intent_name in ["factual", "relational", "broad"] {
+                let c = inner.get(intent_name).copied().unwrap_or(0);
+                let pct = 100.0 * f64::from(c) / f64::from(row_total);
+                print!("{intent_name}={c:4} ({pct:5.1}%)  ");
+            }
+            println!();
+        }
+
+        println!(
+            "\n=== sample multi-hop questions NOT classified Relational ({} of {}) ===",
+            multi_hop_not_relational.len(),
+            crosstab
+                .get("multi-hop")
+                .map(|m| m.values().sum::<u32>())
+                .unwrap_or(0)
+        );
+        for (q, got) in multi_hop_not_relational.iter().take(15) {
+            println!("  [{got:10}] {q}");
+        }
+
+        assert_eq!(total, 1986, "expected 1986 LoCoMo QA pairs (all 10 convs)");
+    }
 }
