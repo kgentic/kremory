@@ -119,8 +119,18 @@ def _chat(key: str, model: str, system: str, user: str, *,
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": user})
-    payload = {"model": model, "messages": messages,
-               "temperature": 0, "max_tokens": max_tokens}
+    payload = {"model": model, "messages": messages}
+    # The gpt-5 family rejects both `max_tokens` (renamed `max_completion_tokens`)
+    # and a non-default `temperature`. Added 2026-07-28 so we can run kremory
+    # under Mem0's EXACT published protocol — their 92.5% uses gpt-5 as both
+    # answerer and judge (verified from `mem0ai/memory-benchmarks` result
+    # metadata, TD-161). Without this the whole batch 400s and reports zero
+    # answers, which is what happened on the first attempt.
+    if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
+        payload["max_completion_tokens"] = max_tokens
+    else:
+        payload["temperature"] = 0
+        payload["max_tokens"] = max_tokens
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     body = json.dumps(payload).encode()
