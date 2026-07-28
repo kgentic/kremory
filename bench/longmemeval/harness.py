@@ -40,6 +40,32 @@ from tqdm import tqdm
 CODEMEM_BASE = "http://localhost:3179"  # kremory-http: bare routes, NO /api prefix
 DEFAULT_DATASET = Path(__file__).parent / "data" / "longmemeval_s_cleaned.json"
 
+# Answer-failure circuit breaker (mirrors bench/locomo/harness.py CIRCUIT_*).
+# A paid run must not grind through 500 questions turning an outage into a
+# score. Checked once, after the first CIRCUIT_MIN questions.
+CIRCUIT_MIN = 20
+CIRCUIT_FAILURE_RATE = 0.30
+
+
+class AnswerGenerationFailed(RuntimeError):
+    """The answerer never produced an answer (LLM error, timeout, bad key).
+
+    This MUST NOT be collapsed into a string. The previous code returned the
+    literal "I don't know." here, which `ABSTENTION_PHRASES` matches and
+    `quick_score` scores CORRECT for any `_abs` question — so an OpenAI outage
+    rendered as a perfect abstention score. An absence of measurement was read
+    as a measurement. Same defect class as the LoCoMo category-5 false 100%
+    (fixed 2026-07-28); this is its sixth instance in the benchmark suite.
+    """
+
+
+# Returned (not raised) when retrieval legitimately found nothing. Deliberately
+# contains NO substring from ABSTENTION_PHRASES, so it cannot be mistaken for a
+# demonstrated abstention. Mirrors the LoCoMo W0.2 rule: empty recall is a
+# RETRIEVAL failure, not a demonstrated abstention, and is scored False so it
+# surfaces in the number instead of hiding behind it.
+NO_RECALL_MARKER = "<<retrieval returned zero memories>>"
+
 
 @dataclass
 class Config:
@@ -53,6 +79,7 @@ class Config:
     use_llm_eval: bool = False
     max_questions: int = 0  # 0 = all
     skip_ingest: bool = False
+    keep_corpus: bool = False  # survive the run so --skip-ingest can re-score
     output: Path | None = None
 
 
@@ -277,9 +304,13 @@ def generate_answer(
     question_date: str,
     model: str = "gpt-4o",
 ) -> str:
-    """Generate an answer using LLM with recalled memories as context."""
+    """Generate an answer using LLM with recalled memories as context.
+
+    Raises `AnswerGenerationFailed` if the LLM call fails. It does NOT return a
+    plausible-looking string on failure — see that exception's docstring.
+    """
     if not memories:
-        return "I don't know."
+        return NO_RECALL_MARKER
 
     context_parts = []
     for i, mem in enumerate(memories, 1):
@@ -335,8 +366,11 @@ Step 3 - Answer:"""
         return full_answer
 
     except Exception as e:
-        print(f"  [warn] LLM error: {e}", file=sys.stderr)
-        return "I don't know."
+        # Do NOT return "I don't know." here. That string is in
+        # ABSTENTION_PHRASES, so every failed call on an `_abs` question was
+        # scored CORRECT — an outage read as a perfect abstention score.
+        # Fail loudly and let the caller record the question as UNSCORED.
+        raise AnswerGenerationFailed(f"answer generation failed: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -411,15 +445,50 @@ def list_item_overlap_score(hypothesis: str, reference: str) -> float | None:
     return matched / len(items)
 
 
+# Phrases must be normalized with the SAME function as the hypothesis, or the
+# comparison is asymmetric and silently partial. `normalize_text` maps
+# `[^\w\s]` to a space, so "i don't know" -> "i don t know": comparing the RAW
+# phrase against the NORMALIZED hypothesis meant the three apostrophe-bearing
+# entries — including "i don't know", the single most common way a model
+# abstains — could NEVER match, and abstention was scored as missed.
+#
+# This bug was also MASKING the one directly above it: `generate_answer` used
+# to return the literal "I don't know." on any LLM error, which would have been
+# credited as a correct abstention had this comparison worked. Normalizing the
+# phrase list WITHOUT also fixing that handler would have armed it. Both are
+# fixed together, deliberately.
+ABSTENTION_PHRASES_NORMALIZED = [normalize_text(p) for p in ABSTENTION_PHRASES]
+
+
 def is_abstention_question(question_id: str) -> bool:
     return question_id.endswith("_abs")
 
 
 def quick_score(hypothesis: str, reference: str, question_id: str) -> dict:
     """Local scoring: exact match, substring, F1 token overlap."""
+    # An EMPTY hypothesis is a data-loss bug, never a scoreable answer: it is a
+    # substring of everything, so it would score a false "substring match"
+    # below AND a false abstention above. Refuse it rather than default.
+    if not str(hypothesis).strip():
+        raise ValueError(
+            f"empty hypothesis for question {question_id!r} — refusing to score. "
+            "The answerer produced nothing; record the question as UNSCORED."
+        )
+
     if is_abstention_question(question_id):
+        # Zero recall is a RETRIEVAL failure, not a demonstrated abstention:
+        # the system never had content to reason over and correctly reject.
+        # Crediting it would let a stalled retrieval path score a perfect
+        # abstention number (LoCoMo W0.2, Bug A — same rule, same reason).
+        if hypothesis == NO_RECALL_MARKER:
+            return {
+                "is_correct": False,
+                "f1": 0.0,
+                "explanation": "abstention credit withheld: recall returned zero "
+                               "memories (retrieval failure, not a demonstrated abstention)",
+            }
         h_lower = normalize_text(hypothesis)
-        abstained = any(phrase in h_lower for phrase in ABSTENTION_PHRASES)
+        abstained = any(phrase in h_lower for phrase in ABSTENTION_PHRASES_NORMALIZED)
         return {"is_correct": abstained, "f1": 0.0, "explanation": f"abstention={'correct' if abstained else 'missed'}"}
 
     h_norm = normalize_text(hypothesis)
@@ -461,7 +530,7 @@ def llm_evaluate(
     """GPT-4o binary judge matching LongMemEval paper methodology."""
     if is_abstention_question(question_id):
         h_lower = normalize_text(hypothesis)
-        abstained = any(phrase in h_lower for phrase in ABSTENTION_PHRASES)
+        abstained = any(phrase in h_lower for phrase in ABSTENTION_PHRASES_NORMALIZED)
         return {"is_correct": abstained, "confidence": 0.9 if abstained else 0.1, "explanation": "abstention check"}
 
     if is_preference:
@@ -510,9 +579,20 @@ Respond with ONLY a JSON object:
             "explanation": result.get("explanation", ""),
         }
     except Exception as e:
-        # Fall back to quick score
+        # Do NOT silently fall back to quick_score and present the result as a
+        # judge verdict. On an `_abs` question the hypothesis reaching this
+        # point is often itself a failure artifact, so the fallback laundered
+        # TWO failures into one "correct". The fallback verdict is still
+        # computed (it is better than nothing) but is now explicitly LABELLED
+        # as degraded, so a run can be audited for how many of its verdicts
+        # were never actually judged.
         qs = quick_score(hypothesis, reference, question_id)
-        return {"is_correct": qs["is_correct"], "confidence": 0.5, "explanation": f"LLM eval failed ({e}), quick score fallback"}
+        return {
+            "is_correct": qs["is_correct"],
+            "confidence": 0.5,
+            "explanation": f"LLM eval failed ({e}), quick score fallback",
+            "judge_degraded": True,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +637,12 @@ def run_benchmark(config: Config) -> dict:
 
     all_results = []
     type_stats: dict[str, dict] = {}
+    # Questions retrieved but NOT scored (the answerer failed) — kept OUT of
+    # the accuracy denominator and reported separately, so an outage shows up
+    # as missing measurement rather than as a score.
+    unscored_stats: dict[str, int] = {}
+    answer_failures = 0
+    q_done = 0
 
     # W0.3: crash-safe per-question write. The 500-question LongMemEval run
     # is paid (OpenAI generation + judge calls per question) — previously
@@ -605,21 +691,35 @@ def run_benchmark(config: Config) -> dict:
         else:
             memories = recall_codemem(client, question, namespace, recall_limit)
 
-        # 3. Generate answer
-        hypothesis = generate_answer(
-            openai_client, question, memories, question_date, config.llm_model,
-        )
+        # 3. Generate answer. A failure here is UNSCORED, never a verdict —
+        # the answerer producing nothing is an absence of measurement.
+        try:
+            hypothesis = generate_answer(
+                openai_client, question, memories, question_date, config.llm_model,
+            )
+            answer_error = None
+        except AnswerGenerationFailed as e:
+            hypothesis, answer_error = None, str(e)
+            answer_failures += 1
+            print(f"  [UNSCORED] {question_id}: {e}", file=sys.stderr)
 
         # 4. Score — preference questions always use LLM eval since their
         # references are qualitative rubrics, not factual answers.
-        use_llm = config.use_llm_eval or question_type == "single-session-preference"
-        if use_llm:
-            score_result = llm_evaluate(
-                openai_client, question, hypothesis, reference, question_id, config.eval_model,
-                is_preference=(question_type == "single-session-preference"),
-            )
+        if answer_error is not None:
+            score_result = {
+                "is_correct": None,
+                "confidence": None,
+                "explanation": f"not scored: {answer_error}",
+            }
         else:
-            score_result = quick_score(hypothesis, reference, question_id)
+            use_llm = config.use_llm_eval or question_type == "single-session-preference"
+            if use_llm:
+                score_result = llm_evaluate(
+                    openai_client, question, hypothesis, reference, question_id, config.eval_model,
+                    is_preference=(question_type == "single-session-preference"),
+                )
+            else:
+                score_result = quick_score(hypothesis, reference, question_id)
 
         result = {
             "question_id": question_id,
@@ -630,6 +730,8 @@ def run_benchmark(config: Config) -> dict:
             "is_correct": score_result["is_correct"],
             "confidence": score_result.get("confidence", score_result.get("f1", 0)),
             "explanation": score_result["explanation"],
+            "judge_degraded": score_result.get("judge_degraded", False),
+            "answer_error": answer_error,
             "memories_recalled": len(memories),
             "memories_stored": stored,
             "mode": config.mode,
@@ -643,15 +745,41 @@ def run_benchmark(config: Config) -> dict:
         jsonl_f.write(json.dumps(result) + "\n")
         jsonl_f.flush()
 
-        # Track per-type
-        if question_type not in type_stats:
-            type_stats[question_type] = {"correct": 0, "total": 0}
-        type_stats[question_type]["total"] += 1
-        if score_result["is_correct"]:
-            type_stats[question_type]["correct"] += 1
+        # Track per-type. An UNSCORED question stays out of the denominator —
+        # the failure this guards against is precisely a category that inflates
+        # the total while measuring nothing.
+        if score_result["is_correct"] is None:
+            unscored_stats[question_type] = unscored_stats.get(question_type, 0) + 1
+        else:
+            if question_type not in type_stats:
+                type_stats[question_type] = {"correct": 0, "total": 0}
+            type_stats[question_type]["total"] += 1
+            if score_result["is_correct"]:
+                type_stats[question_type]["correct"] += 1
 
-        # 5. Cleanup (per-question, like LongMemEval expects)
-        if config.mode != "baseline" and not config.skip_ingest:
+        # --- fail-loud: don't turn an outage into a score (mirrors LoCoMo) ---
+        q_done += 1
+        if q_done == CIRCUIT_MIN:
+            rate = answer_failures / q_done
+            if rate > CIRCUIT_FAILURE_RATE:
+                jsonl_f.flush()
+                print(f"\n[FAIL-LOUD] SYSTEMIC ANSWERER FAILURE after {q_done} questions: "
+                      f"{answer_failures}/{q_done} answers failed ({rate:.0%}). "
+                      f"Aborting before spending the rest of the run. "
+                      f"Records: {jsonl_path}", file=sys.stderr)
+                sys.exit(2)
+
+        # 5. Cleanup (per-question, like LongMemEval expects).
+        #
+        # `--keep-corpus` suppresses this so the ingested haystack SURVIVES the
+        # run and a later `--skip-ingest` pass can re-score against it.
+        # Without it, `--skip-ingest` is unusable by construction: a normal run
+        # deletes every namespace it created, so there is never a corpus for it
+        # to point at, and each re-score pays a full 25,112-session re-ingest
+        # (~61M tokens through the local extractor). That is the expensive
+        # resource in this benchmark — far more than the OpenAI spend.
+        # Mandated by W0.4 ("ingest-once/--skip-ingest across bench/*/harness.py").
+        if config.mode != "baseline" and not config.skip_ingest and not config.keep_corpus:
             client.delete_namespace(namespace)
 
     jsonl_f.close()
@@ -671,8 +799,25 @@ def run_benchmark(config: Config) -> dict:
         acc = s["correct"] / s["total"] * 100 if s["total"] else 0
         name = QUESTION_TYPE_NAMES.get(qt, qt)
         print(f"{name:<30} {s['correct']:>8} {s['total']:>8} {acc:>9.1f}%")
+    for qt in sorted(unscored_stats.keys()):
+        name = QUESTION_TYPE_NAMES.get(qt, qt)
+        print(f"{name:<30} {'—':>8} {unscored_stats[qt]:>8} {'UNSCORED':>10}")
     print(f"{'-'*30} {'-'*8} {'-'*8} {'-'*10}")
     print(f"{'OVERALL':<30} {total_correct:>8} {total_questions:>8} {overall:>9.1f}%")
+
+    n_degraded = sum(1 for r in all_results if r.get("judge_degraded"))
+    if answer_failures or n_degraded:
+        print(f"\n⚠ INTEGRITY")
+        if answer_failures:
+            print(f"  {answer_failures} question(s) UNSCORED — the answerer failed and was")
+            print(f"    excluded from the denominator above rather than credited. Before")
+            print(f"    2026-07-28 these returned the literal \"I don't know.\", which")
+            print(f"    ABSTENTION_PHRASES matches, so every failure scored CORRECT on an")
+            print(f"    `_abs` question — an outage rendered as a perfect abstention score.")
+        if n_degraded:
+            print(f"  {n_degraded} verdict(s) DEGRADED — the judge call failed and the local")
+            print(f"    quick_score stood in. These are NOT judge verdicts; treat the")
+            print(f"    headline as provisional until they are re-judged.")
 
     print(f"\n--- Landscape ---")
     print(f"  Oracle gpt-4o:     82.4%")
@@ -687,6 +832,10 @@ def run_benchmark(config: Config) -> dict:
         "recall_limit": config.recall_limit,
         "total_questions": len(all_results),
         "type_stats": type_stats,
+        "unscored_stats": unscored_stats,
+        "answer_failures": answer_failures,
+        "judge_degraded_count": sum(1 for r in all_results if r.get("judge_degraded")),
+        "scored_denominator": total_questions,
         "overall_accuracy": round(overall, 2),
         "results": all_results,
     }
@@ -810,7 +959,11 @@ def main():
     parser.add_argument("--max-questions", type=int, default=0,
                         help="Limit number of questions (0 = all)")
     parser.add_argument("--skip-ingest", action="store_true",
-                        help="Skip ingestion, reuse existing memories")
+                        help="Skip ingestion, reuse memories from a prior --keep-corpus run")
+    parser.add_argument("--keep-corpus", action="store_true",
+                        help="Do NOT delete each namespace after scoring, so the ingested "
+                             "haystack survives and --skip-ingest can re-score against it. "
+                             "Use this on the FIRST (expensive) ingest pass.")
     parser.add_argument("--output", type=Path,
                         help="Output file path for results JSON")
     parser.add_argument("--rescore", type=Path, metavar="RESULTS_JSON",
@@ -831,6 +984,7 @@ def main():
             use_llm_eval=args.llm_eval,
             max_questions=args.max_questions,
             skip_ingest=args.skip_ingest,
+            keep_corpus=args.keep_corpus,
             output=args.output,
         )
         run_benchmark(config)
