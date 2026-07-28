@@ -237,6 +237,15 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // attribution (`kremory.search.<axis>_reorder_total`).
         let mut axis_contributions: Vec<crate::core::scoring::SeedAxisContribution> =
             Vec::with_capacity(seed_ids.len());
+        // ADR-062 §6 observability: wall time across the WHOLE batch of
+        // proximity walks this recall (one extra `get_neighbours_at` call per
+        // seed, only when the axis is on) + how many seeds actually received
+        // a non-zero proximity score — the "is this signal firing at all"
+        // diagnostic (`rql.search.proximity_ms` / `rql.search.
+        // proximity_seeds_boosted`). Zero cost when the axis is off: the
+        // per-seed branch below skips the query entirely.
+        let mut proximity_wall_time = std::time::Duration::ZERO;
+        let mut proximity_seeds_boosted = 0usize;
 
         for seed_id in &seed_ids {
             // ADR-068 Decision 2/3: `get_neighbours_at` with `as_of: None`
@@ -297,19 +306,58 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                     now,
                 },
             );
+            // ADR-062 / ADR-067 Phase 3: additive graph-proximity boost. Unlike
+            // degree/temporal (which reuse data this loop already fetched),
+            // proximity needs a WIDER, independently-bounded walk
+            // (`proximity_hop_bound`, default 2, vs `expansion_hop_bound`'s
+            // default 1) — so it issues its OWN `get_neighbours_at` call,
+            // reusing ADR-067 Amendment 2's `max_visited` in-BFS cap
+            // (ADR-062 §8/ASMP-001 spike criterion 2a: bounds a high-degree
+            // hub seed's worst-case cost by construction, not just spike
+            // measurement). Gated on `weight > 0.0` so the axis is not just a
+            // no-op at its default — the SECOND graph query never fires,
+            // keeping default-off byte-identical AND zero-latency-cost.
+            let proximity_bonus = if weights.proximity_weight > 0.0 {
+                let walk_start = std::time::Instant::now();
+                let proximity_subgraph = self
+                    .graph
+                    .get_neighbours_at(crate::core::graph::GetNeighboursAtParams {
+                        entity_id: seed_id,
+                        hops: self.config.search.proximity_hop_bound,
+                        as_of,
+                        max_visited: Some(self.config.search.proximity_fan_out_cap),
+                    })
+                    .await?;
+                proximity_wall_time += walk_start.elapsed();
+                // Mirrors `degree`'s own shape immediately above: the walk
+                // always includes the seed itself, so neighbour count = len - 1.
+                let proximity_neighbour_count =
+                    proximity_subgraph.entities.len().saturating_sub(1);
+                let bonus = crate::core::proximity::proximity_bonus(
+                    proximity_neighbour_count,
+                    weights.proximity_weight,
+                );
+                if bonus > 0.0 {
+                    proximity_seeds_boosted += 1;
+                }
+                bonus
+            } else {
+                0.0
+            };
             // Capture the base (pre-boost) score + per-axis deltas BEFORE applying
             // them, so `axis_reorders` can attribute output-order changes to each
             // axis honestly after the loop.
             let base_score = normalized.get(seed_id).copied().unwrap_or(0.0);
-            normalized
-                .entry(seed_id.clone())
-                .and_modify(|s| *s = (*s + degree_bonus + temporal_bonus).min(1.0));
+            normalized.entry(seed_id.clone()).and_modify(|s| {
+                *s = (*s + degree_bonus + temporal_bonus + proximity_bonus).min(1.0)
+            });
             let seed_score = normalized.get(seed_id).copied().unwrap_or(0.0);
             axis_contributions.push(crate::core::scoring::SeedAxisContribution {
                 id: seed_id.clone(),
                 base: base_score,
                 degree_delta: degree_bonus,
                 temporal_delta: temporal_bonus,
+                proximity_delta: proximity_bonus,
             });
 
             let mut neighbours_added_for_seed = 0usize;
@@ -368,7 +416,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // observability Rule 19 #9 "counters must not lie"). This is the cheap
         // gate the eval reads before spending an llm-judge run: `changed=true`
         // count 0 ⇒ the axis reordered nothing ⇒ the judge run measures nothing.
-        let (degree_reordered, temporal_reordered) =
+        let (degree_reordered, temporal_reordered, proximity_reordered) =
             crate::core::scoring::axis_reorders(&axis_contributions);
         metrics::counter!(
             "kremory.search.graph_degree_reorder_total",
@@ -380,12 +428,43 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             "changed" => if temporal_reordered { "true" } else { "false" },
         )
         .increment(1);
+        // ADR-062 §6: the load-bearing "is axis-C doing anything" signal — if
+        // `changed=true` never fires in production traffic, the feature is
+        // dead weight regardless of what a synthetic fixture showed.
+        metrics::counter!(
+            "kremory.search.proximity_reorder_total",
+            "changed" => if proximity_reordered { "true" } else { "false" },
+        )
+        .increment(1);
         // Axis-off signal: how often each axis ran with a zero (neutral) weight.
         if weights.graph_degree_weight <= 0.0 {
             metrics::counter!("kremory.search.graph_degree_weight_zero_total").increment(1);
         }
         if weights.temporal_weight <= 0.0 {
             metrics::counter!("kremory.search.temporal_weight_zero_total").increment(1);
+        }
+        // ADR-062 §6: lets operators confirm the axis is actually OFF in a
+        // given deployment, not just assume the default holds.
+        if weights.proximity_weight <= 0.0 {
+            metrics::counter!("kremory.search.proximity_weight_zero_total").increment(1);
+        } else {
+            // Only meaningful when the axis actually ran (weight > 0 is the
+            // same gate the per-seed walk above uses) — an all-zero batch
+            // when the axis is off would otherwise pollute this histogram's
+            // baseline with a flood of zeros.
+            let proximity_ms = proximity_wall_time.as_secs_f64() * 1000.0;
+            metrics::histogram!("rql.search.proximity_ms").record(proximity_ms);
+            metrics::histogram!("rql.search.proximity_seeds_boosted")
+                .record(proximity_seeds_boosted as f64);
+            tracing::info!(
+                target: "kremory.search.proximity_boost",
+                seed_count = seed_ids.len(),
+                hop_bound = self.config.search.proximity_hop_bound,
+                weight = weights.proximity_weight,
+                boosted_count = proximity_seeds_boosted,
+                proximity_ms,
+                "kremory.search.proximity_boost"
+            );
         }
         // Fork-2 truth-boost build-trigger instrument (spec Decision 3): the
         // fact-confidence distribution over this recall's facts. Today every
@@ -895,6 +974,300 @@ mod tests {
             changed.1 == "true" || changed.1 == "false",
             "`changed` label must be a boolean string, got {:?}",
             changed.1
+        );
+    }
+
+    // === ADR-062 / ADR-067 Phase 3: axis-C graph-proximity boost ===============
+
+    /// Default-off byte-identical guard: at `proximity_weight = 0.0` (the
+    /// shipped default) the SECOND `get_neighbours_at` graph query must never
+    /// fire — not just score no-op, zero latency cost. Verified via the
+    /// absence of the `rql.search.proximity_ms` histogram sample (only
+    /// recorded inside the `weight > 0.0` branch, `context.rs`).
+    #[tokio::test]
+    async fn test_contextualize_proximity_default_off_no_second_query() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let rql = setup_graph_with_data().await;
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let guard = metrics::set_default_local_recorder(&recorder);
+        let _ctx = rql.contextualize(ctx_params("Acme")).await.unwrap();
+        drop(guard);
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(
+            !snapshot
+                .iter()
+                .any(|(k, _, _, _)| k.key().name() == "rql.search.proximity_ms"),
+            "proximity_weight=0.0 (default) must skip the second graph query \
+             entirely — rql.search.proximity_ms must never be recorded"
+        );
+        let zero_total = snapshot.iter().find_map(|(k, _, _, v)| {
+            if k.key().name() == "kremory.search.proximity_weight_zero_total" {
+                if let DebugValue::Counter(c) = v {
+                    return Some(*c);
+                }
+            }
+            None
+        });
+        assert_eq!(
+            zero_total,
+            Some(1),
+            "proximity_weight_zero_total must fire once at the default (axis off)"
+        );
+    }
+
+    /// ADR-062 §7 spike criterion 2 (benefit) — the mechanism test: a
+    /// lower-RRF-scored-but-graph-proximate seed must overtake a
+    /// higher-scored-but-graph-distant seed once axis-C is enabled. Must
+    /// FAIL if the axis is wired but inert (e.g. the config knob doesn't
+    /// reach the boost, or the boost never applies).
+    ///
+    /// Fixture (fully deterministic — no reliance on BM25 relevance
+    /// scoring): three entities share IDENTICAL `properties` text
+    /// (`{"name": "Proxtest"}`), so FTS5's `bm25()` rank ties exactly across
+    /// all three; `ORDER BY fts.rank, fts.entity_id` (search.rs) then breaks
+    /// the tie by entity id ascending — `aaa_top` / `mmm_mid` / `zzz_prox`
+    /// deterministically rank 0 / 1 / 2 in `fts_hits`. `SimpleGraph`'s
+    /// `NullEmbeddingProvider` always embeds to an all-zero vector, so
+    /// `vector_search` returns zero hits (documented above) — RRF is driven
+    /// by the BM25 arm alone, giving THREE distinct, non-degenerate
+    /// min-max-normalised base scores (not the {0.0, 1.0}-only 2-point case):
+    /// `aaa_top` -> 1.0, `mmm_mid` -> ~0.49, `zzz_prox` -> 0.0.
+    /// `graph_degree_weight` is tweaked to `0.0` to isolate the proximity
+    /// axis; `temporal_weight` stays at its default-off `0.0`. Only
+    /// `zzz_prox` is connected (1 hop) to a hub with 25 further leaves — its
+    /// `proximity_hop_bound=2` walk visits `1 (hub) + 25 (leaves) = 26 >=
+    /// PROXIMITY_SATURATION (20)`, saturating its bonus to the full
+    /// `proximity_weight = 0.6` — pushing `zzz_prox` (0.0 -> 0.6) strictly
+    /// above `mmm_mid` (~0.49, unboosted) without exceeding `aaa_top`'s 1.0
+    /// ceiling (matches ADR-062's own "re-rank within top-K, never past the
+    /// top" boundary).
+    #[tokio::test]
+    async fn test_contextualize_proximity_boost_overtakes_higher_scored_distant_seed() {
+        let rql = SimpleGraph::open_in_memory_with_search_config(|cfg| {
+            cfg.graph_degree_weight = 0.0;
+            cfg.proximity_weight = 0.6;
+            // proximity_fan_out_cap default (8) is too small for the 25-leaf
+            // hub below — widen it so the walk isn't truncated before it can
+            // reach saturation (kept well below the 500+ hub-cost test's
+            // fixture size, so this stays a benefit test, not a cost test).
+            cfg.proximity_fan_out_cap = 40;
+        })
+        .await
+        .unwrap();
+        let now = Utc::now();
+
+        let proxtest = serde_json::json!({"name": "Proxtest"});
+        for id in ["aaa_top", "mmm_mid", "zzz_prox"] {
+            rql.graph
+                .insert_entity(InsertEntityParams {
+                    id,
+                    entity_type_id: 0,
+                    properties: proxtest.clone(),
+                })
+                .await
+                .unwrap();
+        }
+
+        // zzz_prox -1hop-> hubprox -1hop-> 25 leaves (none of which mention
+        // "Proxtest", so they never independently match the FTS query and
+        // become seeds themselves).
+        rql.graph
+            .insert_entity(InsertEntityParams {
+                id: "hubprox",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Hubprox"}),
+            })
+            .await
+            .unwrap();
+        rql.graph
+            .insert_fact(FactInsert::new("zzz_prox", "connected_to", now).object_id("hubprox"))
+            .await
+            .unwrap();
+        for i in 0..25 {
+            let leaf_id = format!("proxleaf{i}");
+            rql.graph
+                .insert_entity(InsertEntityParams {
+                    id: &leaf_id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": format!("Proxleaf{i}")}),
+                })
+                .await
+                .unwrap();
+            rql.graph
+                .insert_fact(FactInsert::new("hubprox", "connected_to", now).object_id(&leaf_id))
+                .await
+                .unwrap();
+        }
+
+        let ctx = rql.contextualize(ctx_params("Proxtest")).await.unwrap();
+
+        let top = *ctx.scores.get("aaa_top").expect("aaa_top must be a seed");
+        let mid = *ctx.scores.get("mmm_mid").expect("mmm_mid must be a seed");
+        let prox = *ctx
+            .scores
+            .get("zzz_prox")
+            .expect("zzz_prox must be a seed");
+
+        assert!(
+            (top - 1.0).abs() < 1e-6,
+            "top-ranked isolated seed must normalise to 1.0, got {top}"
+        );
+        assert!(
+            mid > 0.0 && mid < 1.0,
+            "mid-ranked isolated seed must be a genuine non-degenerate mid value, got {mid}"
+        );
+        assert!(
+            prox > mid,
+            "proximity-boosted zzz_prox ({prox}) must OVERTAKE the higher-scored-but-\
+             distant mmm_mid ({mid}) — the axis is wired but inert if this fails"
+        );
+        assert!(
+            prox <= top + 1e-6,
+            "proximity boost must never push a seed past the top-ranked entity's ceiling"
+        );
+
+        // Adversarial / membership floor: the wider proximity walk's own
+        // discovered entities (the hub + its 25 leaves) are used ONLY for
+        // counting — they must never leak into the returned entity/score
+        // set, i.e. an irrelevant graph-proximate neighbour must never be
+        // promoted into the result the way a directly-matching entity is.
+        let entity_ids: std::collections::HashSet<&str> =
+            ctx.entities.iter().map(|e| e.id.as_str()).collect();
+        // Scoped to the entities ONLY the wider proximity walk can reach, i.e.
+        // the 25 leaves at 2 hops from `zzz_prox`. `hubprox` is deliberately
+        // NOT asserted against: it sits ONE hop from the seed, and
+        // `expansion_hop_bound` defaults to 1, so the pre-existing expansion
+        // arm legitimately adds it via `all_entities.push(entity)` whether
+        // this axis is on or off. Verified empirically 2026-07-27 — with the
+        // axis ON, `ctx.entities` is exactly
+        // `["aaa_top", "hubprox", "mmm_mid", "zzz_prox"]`: zero leaves, so the
+        // 2-hop walk's discoveries genuinely do not leak. The original form of
+        // this assertion also forbade `hubprox` and therefore failed against
+        // correct pre-existing 1-hop expansion behaviour rather than against
+        // proximity leakage — the guard's POLICY was too broad, not the impl.
+        let leaked_leaves: Vec<String> = (0..25)
+            .map(|i| format!("proxleaf{i}"))
+            .filter(|id| entity_ids.contains(id.as_str()))
+            .collect();
+        assert!(
+            leaked_leaves.is_empty(),
+            "the proximity walk's 2-hop-only discoveries must never leak into ctx.entities \
+             (proximity is read-only counting, not a second expansion arm) — leaked: \
+             {leaked_leaves:?}"
+        );
+    }
+
+    /// ADR-062 §8/ASMP-001 spike criterion 2a: a synthetic high-degree hub
+    /// (500+ facts) at `proximity_hop_bound=2` must not cliff — the in-BFS
+    /// `max_visited` cap (`proximity_fan_out_cap`, reusing ADR-067 Amendment
+    /// 2's mechanism) bounds worst-case cost by construction. Measures and
+    /// reports real wall-clock time (not asserted against the DEFAULT cap of
+    /// 8 kept in place — the fixture intentionally exceeds it by 60x+ to
+    /// prove the cap, not the fixture size, determines the cost).
+    #[tokio::test]
+    async fn test_contextualize_proximity_hub_fixture_worst_case_latency() {
+        let rql = SimpleGraph::open_in_memory_with_search_config(|cfg| {
+            cfg.proximity_weight = 0.3;
+            // Deliberately left at the DEFAULT (8) — the whole point of this
+            // fixture is proving the cap (not fixture size) bounds cost.
+        })
+        .await
+        .unwrap();
+        let now = Utc::now();
+
+        rql.graph
+            .insert_entity(InsertEntityParams {
+                id: "megahub",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Megahubtest"}),
+            })
+            .await
+            .unwrap();
+
+        const HUB_FACT_COUNT: usize = 520;
+        for i in 0..HUB_FACT_COUNT {
+            let leaf_id = format!("megaleaf{i}");
+            rql.graph
+                .insert_entity(InsertEntityParams {
+                    id: &leaf_id,
+                    entity_type_id: 0,
+                    properties: serde_json::json!({"name": format!("Megaleaf{i}")}),
+                })
+                .await
+                .unwrap();
+            rql.graph
+                .insert_fact(FactInsert::new("megahub", "connected_to", now).object_id(&leaf_id))
+                .await
+                .unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        let ctx = rql
+            .contextualize(ctx_params("Megahubtest"))
+            .await
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            !ctx.entities.is_empty(),
+            "the hub seed itself must still be returned"
+        );
+        // Generous bound (in-memory SQLite, single hub, capped BFS): the cap
+        // must keep this well under a second, not scale with the 520-fact
+        // hub. A regression here (e.g. the cap silently stops applying to
+        // the proximity walk) would blow this budget, not just be "slow".
+        assert!(
+            elapsed.as_secs() < 5,
+            "hub-fixture proximity walk took {elapsed:?} — the fan-out cap must bound \
+             worst-case cost regardless of hub degree (ADR-062 §8/ASMP-001)"
+        );
+        eprintln!(
+            "[ADR-062 spike criterion 2a] {HUB_FACT_COUNT}-fact hub, \
+             proximity_hop_bound=2, proximity_fan_out_cap=8 (default): \
+             contextualize() wall time = {elapsed:?}"
+        );
+    }
+
+    /// ADR-062 §7 membership-floor guarantee (structural, not just spike-
+    /// measured): the boost only re-weights keys already in `seed_ids` — it
+    /// can never insert a new one. The returned SEED SET (the keys of
+    /// `ctx.scores` that were genuine RRF hits, i.e. every entity here since
+    /// none has any connecting fact) must be byte-identical whether the
+    /// proximity axis is on or off.
+    #[tokio::test]
+    async fn test_contextualize_proximity_membership_floor_seed_set_unchanged() {
+        async fn seed_id_set(weight: f32) -> std::collections::BTreeSet<String> {
+            let rql = SimpleGraph::open_in_memory_with_search_config(|cfg| {
+                cfg.proximity_weight = weight;
+            })
+            .await
+            .unwrap();
+            let text = serde_json::json!({"name": "Memberfloor"});
+            for id in ["memberfloor_a", "memberfloor_b", "memberfloor_c"] {
+                rql.graph
+                    .insert_entity(InsertEntityParams {
+                        id,
+                        entity_type_id: 0,
+                        properties: text.clone(),
+                    })
+                    .await
+                    .unwrap();
+            }
+            let ctx = rql.contextualize(ctx_params("Memberfloor")).await.unwrap();
+            ctx.scores.into_keys().collect()
+        }
+
+        let off = seed_id_set(0.0).await;
+        let on = seed_id_set(0.5).await;
+
+        assert_eq!(
+            off, on,
+            "the proximity axis must never change WHICH entities are returned — only \
+             their relative order/score (ADR-062 §7 membership floor)"
         );
     }
 

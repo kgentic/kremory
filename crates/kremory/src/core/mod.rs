@@ -160,6 +160,9 @@ pub mod migrations;
 #[cfg(feature = "ner")]
 pub mod ner;
 pub mod obs;
+/// ADR-062 / ADR-067 Phase 3 — graph-proximity boost axis: pure
+/// `usize -> f32` bonus math, read-side-pure (no `execute(`).
+pub(crate) mod proximity;
 pub mod provider;
 pub mod rates;
 pub mod reclassification;

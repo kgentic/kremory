@@ -150,6 +150,26 @@ async fn with_episode_dense_enabled_reaches_live_search_config() {
     );
 }
 
+/// ADR-062 / ADR-067 Phase 3 — same builder seam, new axis-C knob. Mirrors
+/// `with_content_stream_weight_reaches_live_search_config` exactly.
+#[tokio::test]
+async fn with_proximity_weight_reaches_live_search_config() {
+    clear_search_env();
+    std::env::remove_var("KREMORY_PROXIMITY_WEIGHT");
+    let mem = Memory::open(unique_db("proximity_weight"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_proximity_weight(0.3)
+        .await
+        .expect("build with with_proximity_weight");
+
+    assert_eq!(
+        mem.search_config().proximity_weight,
+        0.3,
+        "programmatic with_proximity_weight(0.3) must reach the live SearchConfig"
+    );
+}
+
 // ── 2. Unset knobs reproduce today's byte-identical defaults ────────────────
 
 #[tokio::test]
@@ -174,6 +194,32 @@ async fn unset_knobs_match_documented_defaults() {
         !cfg.episode_dense_enabled,
         "default episode_dense_enabled must stay false (BM25-only) — byte-identical to pre-TD-141"
     );
+    assert_eq!(
+        cfg.proximity_weight, 0.0,
+        "default proximity_weight must stay 0.0 (axis-C off) — byte-identical to pre-ADR-062"
+    );
+}
+
+/// ADR-062 / ADR-067 Phase 3 precedence test — mirrors
+/// `explicit_config_wins_over_env_override` for the new axis-C knob.
+#[tokio::test]
+async fn proximity_weight_explicit_wins_over_env_override() {
+    std::env::set_var("KREMORY_PROXIMITY_WEIGHT", "9.9");
+
+    let mem = Memory::open(unique_db("precedence_proximity_explicit_wins"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_proximity_weight(0.4)
+        .await
+        .expect("build with explicit proximity override + conflicting env");
+
+    assert_eq!(
+        mem.search_config().proximity_weight,
+        0.4,
+        "explicit with_proximity_weight(0.4) must win over KREMORY_PROXIMITY_WEIGHT=9.9"
+    );
+
+    std::env::remove_var("KREMORY_PROXIMITY_WEIGHT");
 }
 
 // ── 3. Precedence: explicit programmatic config wins over env override ──────

@@ -243,6 +243,48 @@ pub struct SearchConfig {
     /// damping is also 0.5).
     pub neighbour_score_decay: f32,
 
+    /// Weight of the additive graph-**proximity** boost — ADR-062 (axis C),
+    /// build-entry spec `axis-c-read-time-relevance-spec-2026-07-01.md`,
+    /// ADR-067 Phase 3. **Default 0.0 = off** — new axis, behaviourally
+    /// neutral until an eval-calibrated value is set (same shape as
+    /// `temporal_weight`).
+    ///
+    /// ADR-067 **Amendment 1** (2026-07-20) supersedes ADR-062's literal
+    /// "post-RRF multiplicative boost" text: this axis ships **additive +
+    /// bounded `[0, weight]`**, composed into the SAME single `.min(1.0)`
+    /// clamp as `graph_degree_weight`/`temporal_weight` — the amendment's own
+    /// migration trigger ("axis-C proximity lands and would coexist with the
+    /// additive axes") is this axis landing, and the amendment already
+    /// decided the outcome: stay additive, migrate all axes to a normalized
+    /// multiplicative chain later ONLY if a future eval shows additive
+    /// underperforms. No dead multiplicative plumbing ships.
+    ///
+    /// Distinct signal from `graph_degree_weight`: degree reads the seed's
+    /// OWN 1-hop neighbour count (`expansion_hop_bound`, default 1);
+    /// proximity reads a WIDER, independently-bounded walk
+    /// (`proximity_hop_bound`, default 2) — "is this seed near a dense
+    /// cluster it isn't directly part of", not "how many direct facts does
+    /// it have". `<= 0.0` skips the second graph query entirely (no latency
+    /// cost when off, not just a no-op score).
+    pub proximity_weight: f32,
+
+    /// Bounded-hop distance for the graph-proximity walk (ADR-062 §5 Q2/Q3).
+    /// **Default 2** — the spec's own starting recommendation: `hop_bound=1`
+    /// collapses to a near-duplicate of `graph_degree_weight`'s own 1-hop
+    /// signal; `hop_bound=3+` widens cost without a calibrated benefit yet.
+    /// Inert while `proximity_weight <= 0.0` (the second graph query is
+    /// skipped entirely, not just discounted).
+    pub proximity_hop_bound: u32,
+
+    /// In-BFS visited-entity cap for the proximity walk (ADR-062 §8/ASMP-001,
+    /// spike criterion 2a). **Default 8** — matches `expansion_fan_out_cap`'s
+    /// default. `get_neighbours_at`'s `max_visited` (ADR-067 Amendment 2)
+    /// early-exits the BFS once the cap is hit, bounding a high-degree hub
+    /// seed's worst-case cost at `proximity_hop_bound >= 2` — the same
+    /// mechanism TD-056's multi-hop expansion cap already uses, reused here
+    /// rather than adding a new capped traversal primitive.
+    pub proximity_fan_out_cap: usize,
+
     /// Per-stream weight applied to the ADR-072 `content_search` BM25 stream's
     /// RRF contribution in `search::rrf_fuse_with_content` (TD-066 Increment
     /// 2, `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
@@ -356,6 +398,12 @@ impl Default for SearchConfig {
             expansion_hop_bound: 1,
             expansion_fan_out_cap: 8,
             neighbour_score_decay: 0.5,
+            // ADR-062 / ADR-067 Phase 3 — proximity OFF by default: the
+            // second bounded-hop graph query never fires until
+            // KREMORY_PROXIMITY_WEIGHT / with_proximity_weight flips it on.
+            proximity_weight: 0.0,
+            proximity_hop_bound: 2,
+            proximity_fan_out_cap: 8,
             // TD-066 Increment 2 — 1.0 = neutral/no-op, today's equal-weight
             // RRF fusion (Increment 1's behaviour, byte-identical).
             content_stream_weight: 1.0,
@@ -409,6 +457,12 @@ pub(crate) struct SearchConfigOverrides {
     pub fact_dense_enabled: Option<bool>,
     /// Explicit override for [`SearchConfig::embed_task_prefix_enabled`] (TD-143).
     pub embed_task_prefix_enabled: Option<bool>,
+    /// Explicit override for [`SearchConfig::proximity_weight`] (ADR-062 /
+    /// ADR-067 Phase 3). `proximity_hop_bound` / `proximity_fan_out_cap` are
+    /// deliberately NOT exposed here — config-default-only, mirroring
+    /// `expansion_hop_bound`/`expansion_fan_out_cap`'s own precedent (only
+    /// the weight is the A/B lever that needs a restart-not-rebuild seam).
+    pub proximity_weight: Option<f32>,
 }
 
 impl SearchConfigOverrides {
@@ -436,6 +490,9 @@ impl SearchConfigOverrides {
         }
         if let Some(v) = self.embed_task_prefix_enabled {
             builder = builder.embed_task_prefix_enabled(v);
+        }
+        if let Some(v) = self.proximity_weight {
+            builder = builder.proximity_weight(v);
         }
         builder
     }
@@ -729,6 +786,17 @@ impl PipelineConfigBuilder {
         self
     }
 
+    /// ADR-062 / ADR-067 Phase 3 axis-C A/B knob: weight of the additive
+    /// graph-proximity boost. Default `0.0` (off, byte-identical — the second
+    /// bounded-hop query never fires). Wired from the
+    /// `KREMORY_PROXIMITY_WEIGHT` env override at server boot
+    /// (`facade::providers::search_env_overrides`) so the proximity A/B costs
+    /// a restart, not a rebuild.
+    pub fn proximity_weight(mut self, v: f32) -> Self {
+        self.inner.search.proximity_weight = v;
+        self
+    }
+
     // ── Ontology ─────────────────────────────────────────────────────────────
 
     pub fn allowed_entity_types(mut self, v: Vec<String>) -> Self {
@@ -905,6 +973,38 @@ mod tests {
             .search;
         assert_eq!(tuned.content_stream_weight, 2.5);
         assert_eq!(tuned.rrf_k, 1);
+    }
+
+    /// ADR-062 / ADR-067 Phase 3 — proximity ships OFF by default (byte-
+    /// identical): `proximity_weight <= 0.0` skips the second graph query
+    /// entirely (see `core::context::Engine::contextualize`).
+    #[test]
+    fn proximity_weight_defaults_to_zero_off() {
+        assert_eq!(
+            SearchConfig::default().proximity_weight,
+            0.0,
+            "default proximity_weight must stay 0.0 (axis OFF, byte-identical pre-ADR-062)"
+        );
+        assert_eq!(
+            SearchConfig::default().proximity_hop_bound,
+            2,
+            "default proximity_hop_bound must stay the spec's starting value (2)"
+        );
+        assert_eq!(
+            SearchConfig::default().proximity_fan_out_cap,
+            8,
+            "default proximity_fan_out_cap must match expansion_fan_out_cap's default (8)"
+        );
+        // The builder path (used by open_graph before env overrides) must agree.
+        let built = PipelineConfig::builder().build().unwrap().search;
+        assert_eq!(built.proximity_weight, 0.0);
+        // The new builder setter threads the value.
+        let tuned = PipelineConfig::builder()
+            .proximity_weight(0.2)
+            .build()
+            .unwrap()
+            .search;
+        assert_eq!(tuned.proximity_weight, 0.2);
     }
 
     #[test]

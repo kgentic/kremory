@@ -360,6 +360,21 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Explicit weight for the ADR-062 / ADR-067 Phase 3 graph-proximity
+    /// boost (`SearchConfig::proximity_weight`). Default (unset): `0.0`
+    /// (axis OFF — the second bounded-hop graph query never fires) unless
+    /// overridden by `KREMORY_PROXIMITY_WEIGHT` at construction time. Calling
+    /// this setter wins over BOTH the default and any env override, for this
+    /// `Memory` only. `proximity_hop_bound` / `proximity_fan_out_cap` are
+    /// config-default-only (2 / 8) — not exposed here, mirroring
+    /// `expansion_hop_bound`/`expansion_fan_out_cap`'s own precedent.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::proximity_weight`](crate::core::config::PipelineConfigBuilder::proximity_weight).
+    pub fn with_proximity_weight(mut self, v: f32) -> Self {
+        self.search_overrides.proximity_weight = Some(v);
+        self
+    }
+
     /// Configure automatic dream-pass scheduling.
     ///
     /// Default: [`DreamSchedule::Off`] — no background task is spawned.
