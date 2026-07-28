@@ -797,6 +797,22 @@ impl PipelineConfigBuilder {
         self
     }
 
+    /// ADR-062 axis-C hop bound — the parameter that controls the proximity
+    /// signal's SELECTIVITY, and therefore the one that actually needed to be
+    /// sweepable. Added 2026-07-27 after the first axis-C A/B measured flat at
+    /// three weights: the per-recall trace showed `seed_count=50
+    /// boosted_count=48` at the default `hop_bound = 2`, i.e. the walk reaches
+    /// neighbours for ~96% of seeds, making the boost a near-uniform additive
+    /// offset that cannot discriminate at ANY weight. Wired from
+    /// `KREMORY_PROXIMITY_HOP_BOUND` (`facade::providers::search_env_overrides`)
+    /// so the selectivity sweep costs a restart, not a rebuild — the TD-141
+    /// lesson (a knob you cannot set is a knob you cannot evaluate) applied to
+    /// axis-C's own tuning surface.
+    pub fn proximity_hop_bound(mut self, v: u32) -> Self {
+        self.inner.search.proximity_hop_bound = v;
+        self
+    }
+
     // ── Ontology ─────────────────────────────────────────────────────────────
 
     pub fn allowed_entity_types(mut self, v: Vec<String>) -> Self {
