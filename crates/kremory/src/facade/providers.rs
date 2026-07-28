@@ -431,6 +431,7 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
 ///
 /// - `KREMORY_CONTENT_WEIGHT` (f32)  → `SearchConfig::content_stream_weight`
 /// - `KREMORY_RRF_K` (usize)         → `SearchConfig::rrf_k`
+/// - `KREMORY_PROXIMITY_WEIGHT` (f32) → `SearchConfig::proximity_weight` (ADR-062 / ADR-067 Phase 3)
 ///
 /// Absent env → defaults preserved (byte-identical, DoD #1). **Fail-loud**
 /// (Rule 21 / observability-at-write-time): a malformed value is WARN-logged +
@@ -551,6 +552,25 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
                 value = %other,
                 "KREMORY_EMBED_TASK_PREFIX is not a recognised boolean \
                  (1/true/yes/on | 0/false/no/off) — ignoring (default OFF retained)"
+            ),
+        }
+    }
+    // ADR-062 / ADR-067 Phase 3 axis-C A/B knob. Same parse/fail-loud
+    // discipline as KREMORY_CONTENT_WEIGHT above (a float weight, not a
+    // boolean). Absent/malformed → default 0.0 (axis OFF) retained.
+    if let Ok(raw) = std::env::var("KREMORY_PROXIMITY_WEIGHT") {
+        match raw.trim().parse::<f32>() {
+            Ok(v) => {
+                tracing::info!(
+                    proximity_weight = v,
+                    "KREMORY_PROXIMITY_WEIGHT override applied to SearchConfig"
+                );
+                b = b.proximity_weight(v);
+            }
+            Err(e) => tracing::warn!(
+                value = %raw,
+                error = %e,
+                "KREMORY_PROXIMITY_WEIGHT is not a valid f32 — ignoring (default 0.0 retained)"
             ),
         }
     }
