@@ -174,9 +174,17 @@ class CodememClient:
                 "q": query,
                 "namespace": namespace,
                 "k": limit,
-                # Only send `mode` when non-default so the default (recall)
-                # wire shape is byte-identical to pre-existing behaviour.
-                **({"mode": self.server_mode} if self.server_mode != "recall" else {}),
+                # ALWAYS send `mode` explicitly (fixed 2026-07-28, ADR-078).
+                # This previously omitted the param whenever `server_mode ==
+                # "recall"`, on the belief that the server's default was also
+                # `recall`. It is NOT: `SearchMode`'s `#[default]` is `Hybrid`
+                # (`kremory-http.rs`), deliberately, because the entity-graph
+                # `recall` surface judges 40.2% vs hybrid's 71.4%. So every run
+                # this harness has ever labelled `server_mode: recall` was in
+                # fact measuring HYBRID — the label lied, and `--server-mode
+                # recall` was unreachable over the wire. Sending it explicitly
+                # makes the provenance stamp true and the flag actually work.
+                "mode": self.server_mode,
             },
         )
         if r.status_code == 200:

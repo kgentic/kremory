@@ -4,7 +4,7 @@
 > (`kremory::memory::submit_episode`, etc.) remain public for advanced users; most applications
 > should use the facade described below. Since v0.1.3 the facade gained a fully-wired dream
 > consolidation phase (§6), reversible graph mutations with a see/undo surface (§6a), opt-in
-> BM25/FTS5 content recall (§5, behind the `content-search` feature), and a feature-flag matrix
+> BM25/FTS5 content recall (§5, `content-search` — a DEFAULT feature since ADR-078), and a feature-flag matrix
 > (§13). The Node/napi binding mirrors the surface in camelCase (§14).
 
 ---
@@ -388,12 +388,17 @@ graph** (entities + facts, hybrid vector + keyword). A separate terminal, `.cont
 **BM25/FTS5 full-text search over the raw `episodes.content`** — the verbatim ingested text, not
 the extracted graph. It is a sibling of `.raw()` and returns `Vec<ContentPassage>`.
 
-`.content()` is gated behind the **`content-search`** cargo feature (opt-in — the terminal and
-`ContentPassage` type do not exist in the default build):
+`.content()` is gated behind the **`content-search`** cargo feature, which is **ON by default**
+since ADR-078 (2026-07-28) — so the terminal and the `ContentPassage` type exist in a default build.
+If you have disabled default features, re-enable it explicitly:
 
 ```toml
-kremory = { version = "0.3", features = ["content-search"] }
+kremory = { version = "0.5", default-features = false, features = ["content-search"] }
 ```
+
+⚠️ Disabling it does **not** just remove `.content()` — it also removes the BM25 content arm and the
+dense episode arm from the ordinary `recall()` path, measured at **−32.2pt** ex-adversarial
+substring recall (ADR-078).
 
 ```rust
 use kremory::memory::types::ContentPassage;
@@ -413,6 +418,20 @@ for p in &passages {
 }
 ```
 
+**When to reach for `.content()` instead of `.raw()`** — measured 2026-07-28 (TD-151), conv0, same
+corpus, dense arm on, no reranker:
+
+| terminal | what it queries | ex-adversarial substring recall | latency (mean) |
+|---|---|---|---|
+| `.content()` | BM25 + dense over raw episode text | **93.4%** | **12 ms** |
+| `.raw()` | the above, RRF-fused with the entity/fact graph | 96.7% | 112 ms |
+
+`.content()` gets **~97% of the accuracy for ~11% of the read cost**. If you are latency-bound and
+your consumer only needs passages to read (not entities, facts, or bi-temporal answers), it is very
+often the better trade — and a better one than any cross-encoder configuration, which buys accuracy
+in the opposite direction (the cheapest reranker arm measured costs 0.44 s/query). Absolutes were
+taken under load and are provisional; the ~9× ratio is not (ratios survive contention).
+
 Notes (ADR-072 seq1):
 
 - **BM25-only** — content passages are a distinct, un-fused stream. They are NOT blended into the
@@ -421,6 +440,46 @@ Notes (ADR-072 seq1):
   is not yet supported on this terminal and returns `Err`.
 - Requires a `Memory` built via the builder/providers path (same as `.forget()` / the
   `filter_metadata` post-filter).
+
+### §5.1 — Recipe: session expansion (right conversation, wrong turn)
+
+A measured failure mode worth knowing about: on our LoCoMo miss-set, **50% of the evidence turns we
+fail to retrieve sit in a session we ALREADY hit** — retrieval finds the right conversation and
+returns the wrong turn (`.ai-docs/RECALL-LEDGER.md` §5.7). Widening `k` does not fix this reliably;
+pulling the *rest of the hit's source* does.
+
+kremory has no built-in "session" concept, and does not need one — the behaviour composes from
+primitives that already ship:
+
+```rust
+// 1. At ingest, scope the source id to the unit you want to expand to.
+//    Anything works: a chat session, a document, a ticket, a meeting.
+//    `.from_chat(id)` / `.from_document(id)` / `.from_note(id)` are shortcuts
+//    for `.from_source(id, kind)`.
+mem.remember(turn_text)
+    .from_chat("conv-26/session-3")
+    .in_namespace(ns.clone())
+    .await?;
+
+// 2. At recall, read which source each hit came from.
+let hits = mem.recall(question).in_namespace(ns.clone()).k(10).raw().await?;
+let sources: HashSet<&str> = hits.iter()
+    .flat_map(|h| h.source_refs.iter())
+    .map(|s| s.id.as_str())
+    .collect();
+
+// 3. Pull the whole source for each hit and hand the union to your model.
+for source_id in sources {
+    let episodes = mem.recall_by_source_id(source_id, Some(ns.clone())).await?;
+    // ... append to context, subject to your token budget
+}
+```
+
+Cost: one extra indexed lookup per distinct source in the top-k — no embedding, no LLM, no second
+ranking pass. The trade-off is **context size**, not latency: you are choosing to spend tokens
+rather than retrieval quality, so cap the expansion (most-relevant source only, or a token budget).
+
+Mirrored in the Node binding as `memory.recallBySourceId(sourceId, namespace)`.
 
 ---
 
@@ -999,7 +1058,7 @@ continues to compile and run. The notable surface + behaviour changes, at the AP
 |---|---|
 | **Dream consolidation** (§6) | The dream phase is now fully wired — reconciliation passes (type discovery, aliases, reclassify, consistency-check, canonicalize) + four graph-global consolidation ops (community detection, cross-episode merge, supersession sweep, fact archival). All default ON; cross-episode merge defaults to **Shadow**. `DreamSummary` gained honest per-op fields (the old `episodes_processed` / `edges_merged` fields never existed on the shipped struct — use the fields in §6). |
 | **Reversibility** (§6a) | **NEW** — `mem.mutation_history` / `list_mutations` (SEE), the unified `mem.undo(mutation_id)` dispatcher + per-kind `unmerge` / `undo_entity_edit` / `undo_delete_entity` / `undo_delete_fact` / `unsupersede` / `restore_archived_fact`, plus direct mutations `edit_entity` / `delete_entity` / `delete_fact` / `supersede`. Every destructive mutation is reversible (ADR-073). |
-| **Content recall** (§5) | **NEW** — `mem.recall(q).content()` for BM25/FTS5 search over raw episode text, behind the opt-in `content-search` feature (ADR-072). |
+| **Content recall** (§5) | **NEW** — `mem.recall(q).content()` for BM25/FTS5 search over raw episode text, under the `content-search` feature (ADR-072) — **now ON by default** (ADR-078), which also RRF-fuses the BM25 + dense episode arms into the ordinary `recall()` path. |
 | **Namespace policy enforcement** | v0.1.4 declared policies; **v0.1.5+ ENFORCES them** (ADR-029b): `dream()` / `forget()` / `supersede()` now return `Error::NamespacePolicyViolation` on `AppendOnly` namespaces. This is a behaviour change if you registered `AppendOnly` policies expecting the v0.1.4 declare-only semantics. |
 | **Multi-namespace recall** | `recall(q).in_namespaces(&[...])` fans out across namespaces with cross-namespace RRF blending. |
 | **Metadata filters** | `recall(q).filter_metadata(key, value)` / `.filter_metadata_in(key, &[..])` post-filter recall by episode metadata. |
@@ -1013,13 +1072,13 @@ The substrate free-functions (`kremory::memory::submit_episode`, etc.) remain pu
 
 ## §13 — Feature flags
 
-kremory's `default` feature set is **empty** — the full facade + substrate free-functions are
-available with no features enabled. Opt into the surfaces below as needed:
+kremory's `default` feature set is **`["content-search"]`** (ADR-078, 2026-07-28 — it was previously
+empty). Opt into the surfaces below as needed:
 
 | Feature | Default | Enables |
 |---|---|---|
 | *(default)* | — | Full `Memory` facade, bi-temporal graph, hybrid recall, dream phase, reversibility. BYOM LLM + embedder always available. |
-| `content-search` | off | `mem.recall(q).content()` + the `ContentPassage` type — BM25/FTS5 recall over raw episode text (§5, ADR-072). |
+| `content-search` | **ON** | Three things, not one: (a) the BM25/FTS5 **content arm that `recall()` RRF-fuses in automatically**, (b) the dense episode arm, and (c) Migrations 022 + 026 (`episodes_fts`, `episodes.embedding`). It also enables the explicit `mem.recall(q).content()` terminal + `ContentPassage` type (§5, ADR-072) — but that terminal is the *smallest* part of it. **Turning this off costs −32.2pt ex-adversarial substring recall** (measured, ADR-078); it is a default, not an extra. Zero additional dependencies. |
 | `ner` | off | GLiNER hybrid extractor (`.with_gliner()` + `.with_llm(...)`); auto-downloads the ONNX GLiNER model on first use (`ort` / `ndarray` / `tokenizers` / `hf-hub`). |
 | `embeddings` | off | Local ONNX embedding-provider support (`ort` / `ndarray` / `tokenizers` / `hf-hub`). BYOM embedders work without it. |
 | `otel` | off | OTLP export — `tracing-subscriber` + `tracing-opentelemetry` + OTLP exporter; enables `init_telemetry(...)` (see [observability.md](observability.md)). |
@@ -1047,9 +1106,14 @@ in **camelCase**. The reversibility surface is fully mirrored:
 - `DreamSummary` mirrors as `JsDreamSummary` with the honest fields (`crossEpisodeWouldMerge` vs
   `crossEpisodeMerged`, `budgetExhausted`, …).
 
-> **Note:** the `content-search` feature (`.content()` recall) is a Rust-only opt-in at this time —
-> it is not enabled in the current `kremory-napi` build, so `ContentPassage` recall is not yet part
-> of the JS surface. The undo + inspect surface *is* available in JS.
+> **Updated 2026-07-28 (ADR-078).** This note previously said `content-search` was "a Rust-only
+> opt-in ... not enabled in the current `kremory-napi` build". That understated it: the binding had
+> **no passthrough for the feature at all**, so a Node consumer could not enable it under any
+> circumstances and was locked to entity/fact-only recall — which measures **−32.2pt**.
+> `kremory-napi` now declares `default = ["content-search"]` plus an opt-in `rerank` passthrough and
+> a `RecallOptions.rerankK` knob, so JS `recall()` gets the same RRF-fused hybrid surface Rust does.
+> What is still Rust-only is the **explicit `.content()` terminal + the `ContentPassage` type** — a
+> new JS output type rather than a field mirror. The undo + inspect surface *is* available in JS.
 
 ---
 

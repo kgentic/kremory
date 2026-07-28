@@ -29,9 +29,18 @@ features = ["otel"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-# Explicit empty default — prevents `--all-features` CI builds from silently
-# enabling unstable surfaces. Consumers must opt-in to unstable-graph / unstable-tags.
-default = []
+# Narrow, explicit default — still prevents `--all-features` CI builds from
+# silently enabling unstable surfaces (consumers must opt-in to unstable-graph /
+# unstable-tags), but is no longer EMPTY.
+#
+# ADR-078 (2026-07-28): `content-search` was promoted here after the first direct
+# measurement of the actual default build. An empty default is only a safe default
+# when the omitted features are optional EXTRAS; `content-search` is not — it gates
+# the BM25 arm, the dense arm, and Migrations 022 + 026, i.e. essentially all
+# measured recall quality (-32.2pt without it). `rerank` deliberately stays opt-in:
+# it pulls `ort`/ONNX Runtime, a dependency imposition a memory library should not
+# make for every consumer.
+default = ["content-search"]
 ner = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]
 # BYOM invariant: kremory consumes the trait crate (autoagents-llm) ONLY —
 # never the concrete `autoagents-llamacpp` impl, neither in [dependencies] nor
@@ -101,6 +110,15 @@ unstable-tags = []
 # this was ported from). This is a deliberate default-behaviour change,
 # scoped to when this feature is compiled in; feature-off callers are
 # unaffected.
+#
+# ADR-078 (2026-07-28): PROMOTED TO A DEFAULT FEATURE. The "+30.2pts" noted
+# above was measured at the REST layer and recorded here, yet the feature stayed
+# off by default — so no `cargo add kremory` consumer ever received it. A direct
+# measurement of the real feature-off binary put the gap at **-32.2pt
+# ex-adversarial substring on conv0 (64.5% vs 96.7%)**, matching both this
+# comment's own number and the independent 40.2%-vs-71.4% LLM-judge figure in
+# `kremory-http.rs`'s `SearchMode` doc. It costs zero dependencies, ~1ms of
+# recall, and an idempotent pure-SQL backfill (Migration 022) on upgrade.
 content-search = []
 # rerank: TD-062 (`.ai-docs/specs/td-066-recall-scoring-foundation-
 # spec-2026-07-21.md` §3 Increment 3 / §4) — a local BGE cross-encoder
