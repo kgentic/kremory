@@ -31,6 +31,7 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -84,74 +85,19 @@ class Config:
 
 
 # ---------------------------------------------------------------------------
-# Codemem API client
+# kremory HTTP client — SHARED, not forked
 # ---------------------------------------------------------------------------
-
-class CodememClient:
-    def __init__(self, base_url: str, timeout: float = 30.0):
-        self.base_url = base_url.rstrip("/")
-        self.http = httpx.Client(base_url=self.base_url, timeout=timeout)
-
-    def health(self) -> bool:
-        try:
-            r = self.http.get("/health")
-            return r.status_code == 200
-        except httpx.ConnectError:
-            return False
-
-    def store_memory(
-        self,
-        content: str,
-        namespace: str,
-        memory_type: str = "Context",
-        importance: float = 0.5,
-        tags: list[str] | None = None,
-    ) -> str | None:
-        # kremory's POST /memories only accepts {content, namespace,
-        # published_at?} — memory_type/importance/tags are codemem-only
-        # fields kremory ignores; kept in the signature so callers below
-        # don't need to change, just not sent over the wire.
-        r = self.http.post(
-            "/memories",
-            json={
-                "content": content,
-                "namespace": namespace,
-            },
-        )
-        if r.status_code == 201:
-            return r.json().get("id")
-        print(f"  [warn] store failed ({r.status_code}): {r.text[:200]}", file=sys.stderr)
-        return None
-
-    def recall(self, query: str, namespace: str, limit: int = 10) -> list[dict]:
-        r = self.http.get(
-            "/search",
-            params={"q": query, "namespace": namespace, "k": limit},
-        )
-        if r.status_code == 200:
-            return r.json().get("results", [])
-        return []
-
-    def graph_neighbors(self, node_id: str, depth: int = 2) -> list[dict]:
-        # kremory-http has no graph-traversal REST tool yet — stub so
-        # --mode codemem-graph degrades to plain recall instead of 404ing.
-        return []
-
-    def get_memory(self, memory_id: str) -> dict | None:
-        # No GET /memories/{id} route on kremory-http yet — stub.
-        return None
-
-    def delete_namespace(self, namespace: str) -> bool:
-        r = self.http.delete(f"/namespaces/{namespace}")
-        return r.status_code in (200, 404)
-
-    def consolidate(self, cycle: str, namespace: str) -> bool:
-        # kremory's POST /consolidation/{cycle} REQUIRES ?namespace= — dream()
-        # is always namespace-scoped (unlike codemem's global consolidation);
-        # omitting it is a loud 422, not a silent no-op.
-        r = self.http.post(f"/consolidation/{cycle}", params={"namespace": namespace})
-        return r.status_code == 200
-
+#
+# This file used to carry its own adapted copy of CodememClient. That fork
+# never inherited the hardenings the LoCoMo side learned the hard way, most
+# importantly `store_timeout = 90.0` and a try/except around POST /memories:
+# kremory's ingest fans out to ~20 sequential LLM calls per store, so httpx's
+# 30s default times out MID-STORE and the fork raised an uncaught
+# httpx.ReadTimeout that killed the run. Reproduced 2026-07-28 on the first
+# real call ever made through this harness. De-forked rather than patched a
+# fourth time — see bench/common/kremory_client.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from kremory_client import CodememClient, KremoryStalled  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Dataset loading
@@ -171,6 +117,26 @@ def load_dataset(path: Path) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Ingestion
 # ---------------------------------------------------------------------------
+
+def parse_haystack_date(date_str: str) -> str | None:
+    """LongMemEval `haystack_dates` -> RFC3339, for kremory's `published_at`.
+
+    Corpus format is `2023/05/25 (Thu) 20:21` — the weekday is parenthesised
+    and must be stripped before parsing. Returns None (rather than a guessed
+    timestamp) if the shape is unrecognised, so an unparseable date degrades to
+    "no world-time" instead of silently inventing one.
+    """
+    if not date_str:
+        return None
+    cleaned = re.sub(r"\s*\([A-Za-z]{3}\)\s*", " ", str(date_str)).strip()
+    for fmt in ("%Y/%m/%d %H:%M", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(cleaned, fmt).replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            continue
+    print(f"  [warn] unparseable haystack date {date_str!r}", file=sys.stderr)
+    return None
+
 
 def ingest_sessions(
     client: CodememClient,
@@ -212,6 +178,13 @@ def ingest_sessions(
             memory_type="Context",
             importance=0.5,
             tags=tags,
+            # WORLD-time for this session. Previously the date reached kremory
+            # ONLY as text inside `session_content`, so the temporal axis was
+            # never exercised by any benchmark — the server has always accepted
+            # `published_at` and no harness had ever sent it. `haystack_dates`
+            # is 1:1 with sessions in 500/500 corpus records (verified), so
+            # this mapping is total.
+            published_at=parse_haystack_date(date_str),
         )
         if mid:
             stored += 1
@@ -669,13 +642,33 @@ def run_benchmark(config: Config) -> dict:
         if config.mode != "baseline" and not config.skip_ingest:
             client.delete_namespace(namespace)
             time.sleep(0.3)
-            stored = ingest_sessions(client, namespace, item)
+            try:
+                stored = ingest_sessions(client, namespace, item)
+            except KremoryStalled as e:
+                # Fail LOUD and stop. A stalled ingest means every subsequent
+                # question would score against an empty namespace — i.e. the
+                # run would complete and report a number that measures nothing.
+                # This question is a ~40-session ingest against a server doing
+                # ~20 sequential LLM calls per store, so a stall is a real
+                # operational risk, not a theoretical one.
+                jsonl_f.flush()
+                print(f"\n[FAIL-LOUD] kremory ingest stalled on {question_id}: {e}\n"
+                      f"  Aborting rather than scoring against an empty namespace.\n"
+                      f"  Records so far: {jsonl_path}", file=sys.stderr)
+                sys.exit(5)
             # Build graph edges between related sessions
             if config.mode == "codemem-graph":
                 client.consolidate("creative", namespace)
             time.sleep(0.5)
         else:
             stored = 0
+
+        # An ingest that stored NOTHING is a retrieval-failure run, not a
+        # zero-score run. Surface it immediately instead of letting every
+        # question score False against an empty namespace.
+        if config.mode != "baseline" and not config.skip_ingest and stored == 0:
+            print(f"  [warn] {question_id}: ingest stored 0 of "
+                  f"{len(item.get('haystack_sessions', []))} sessions", file=sys.stderr)
 
         # 2. Recall — use higher limits for multi-session and temporal questions
         recall_limit = config.recall_limit
