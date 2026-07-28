@@ -32,6 +32,29 @@ pub struct ReassignEntityGroupDangerousParams<'a> {
     pub bypass_policy: bool,
 }
 
+/// Bundled parameters for [`TemporalGraph::entities_after_id`] — args-as-object
+/// per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`, `self` counts).
+#[cfg(feature = "content-search")]
+pub struct EntitiesAfterIdParams<'a> {
+    pub after_id: &'a str,
+    pub after_group_id: &'a str,
+    pub limit: usize,
+}
+
+/// One page-row from [`TemporalGraph::entities_after_id`] (TD-112) — the
+/// composite `(id, group_id)` PK plus the resolved embed text. A bare 3-tuple
+/// of `String`s would be positionally ambiguous at every call site; this
+/// struct names each field. `id` + `group_id` together are what the caller
+/// must advance the cursor to (see `entities_after_id`'s doc for why a bare
+/// `id` cursor would silently skip cross-namespace duplicate ids);
+/// `embed_text` is what the caller hands to the embedder.
+#[cfg(feature = "content-search")]
+pub struct EntityReembedRow {
+    pub id: String,
+    pub group_id: String,
+    pub embed_text: String,
+}
+
 impl TemporalGraph {
     pub async fn insert_entity(&self, params: InsertEntityParams<'_>) -> Result<()> {
         let InsertEntityParams {
@@ -447,5 +470,89 @@ impl TemporalGraph {
         histogram!("rql.db.update_entity_type_id_ms").record(_ms);
         tracing::info!(_ms, id, new_type_id, "kremory.db.update_entity_type_id");
         Ok(())
+    }
+
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): select up
+    /// to `limit` entities ordered by the composite PK `(id, group_id)` ASC,
+    /// for the `Memory::reembed_all_entity_embeddings` maintenance loop.
+    /// Returns one [`EntityReembedRow`] per entity — `embed_text` resolved via
+    /// [`super::entity_display_name`] (mirrors what ingest embeds for a NEW
+    /// entity; see that fn's doc for the full precedent).
+    ///
+    /// NOT filtered by embedding state — pages through EVERY entity row,
+    /// including ones that already carry an embedding. This is the whole
+    /// point: after a dream-phase merge/alias (TD-112's original bug) or an
+    /// embedding-config change (TD-143's `embed_task_prefix_enabled` knob, a
+    /// model swap, a dimension change), the stale row already HAS a vector —
+    /// a `WHERE embedding IS NULL` predicate could never re-touch it (mirrors
+    /// [`TemporalGraph::episodes_after_id`]'s identical TD-143 rationale for
+    /// episodes).
+    ///
+    /// **Composite-PK cursor, not a bare `id` cursor**: `entities` has
+    /// `PRIMARY KEY (id, group_id)` (ADR-029d "per-namespace-open" — the SAME
+    /// surface name may legitimately exist as two independent rows across two
+    /// namespaces), so an `id`-only cursor can silently DROP a row: if a page
+    /// boundary falls between two rows that share an `id`, `WHERE id >
+    /// last_id` excludes BOTH rows, including whichever one the previous page
+    /// did not return. Ordering + cursoring on the FULL composite key `(id,
+    /// group_id)` visits every row exactly once regardless of cross-namespace
+    /// id reuse. `after_id = ""`, `after_group_id = ""` starts from the
+    /// beginning — both columns are non-empty for every real row (`id` is a
+    /// normalized name-slug; `group_id` is NOT NULL post-migration-004, and
+    /// COALESCEd to `'default'` here to also tolerate a pre-migration NULL).
+    ///
+    /// ⚠️ Known limitation (documented, not silently swept under the
+    /// composite-cursor fix above): the maintenance loop's write-back,
+    /// [`TemporalGraph::set_entity_embedding`], updates `WHERE id = ?` with
+    /// **no** `group_id` predicate — identical to its ingest-time call site.
+    /// For the common single-namespace corpus this is exactly right. For a
+    /// corpus with a genuine cross-namespace id collision (rare — an explicit
+    /// opt-in per ADR-029d) it means re-embedding row A momentarily also
+    /// overwrites row B's stored vector, and vice versa when B's turn comes —
+    /// the FINAL state is still correct once the whole page walk completes
+    /// (every row is visited and written with its own resolved text), it just
+    /// doesn't converge on the first partial page. Scoping the write to
+    /// `(id, group_id)` would need a new `set_entity_embedding` overload
+    /// threaded through its ingest call site too — out of TD-112's scope;
+    /// follow-up if ADR-029d cross-namespace reuse becomes common.
+    ///
+    /// Feature-gated behind `content-search` (mirrors the episode/fact
+    /// siblings — all three bulk re-embed paths ship together). Args-as-object
+    /// per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`, `self`
+    /// counts).
+    #[cfg(feature = "content-search")]
+    pub async fn entities_after_id(
+        &self,
+        params: EntitiesAfterIdParams<'_>,
+    ) -> Result<Vec<EntityReembedRow>> {
+        let EntitiesAfterIdParams {
+            after_id,
+            after_group_id,
+            limit,
+        } = params;
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, COALESCE(group_id, 'default') AS gid, properties \
+                 FROM entities \
+                 WHERE (id > ?1) OR (id = ?1 AND COALESCE(group_id, 'default') > ?2) \
+                 ORDER BY id ASC, gid ASC \
+                 LIMIT ?3",
+                libsql::params![after_id, after_group_id, limit as i64],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id: String = row.get::<String>(0)?;
+            let group_id: String = row.get::<String>(1)?;
+            let properties: Option<String> = row.get::<Option<String>>(2)?;
+            let embed_text = super::entity_display_name(properties.as_deref(), &id);
+            out.push(EntityReembedRow {
+                id,
+                group_id,
+                embed_text,
+            });
+        }
+        Ok(out)
     }
 }

@@ -13,6 +13,8 @@ mod queries;
 pub use entities::{
     InsertEntityParams, ReassignEntityGroupDangerousParams, UpdateEntityGroupParams,
 };
+#[cfg(feature = "content-search")]
+pub use entities::{EntitiesAfterIdParams, EntityReembedRow};
 pub use entity_groups::{
     InsertEntityWithGroupParams, SetEntityNerConfidenceParams, UpdateEntitySourceTierParams,
     UpsertEntityWithGroupParams,
@@ -64,6 +66,41 @@ pub(super) fn parse_dt(s: &str) -> anyhow::Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(s)
         .map_err(|e| anyhow::anyhow!("bad timestamp '{}': {}", s, e))?
         .with_timezone(&Utc))
+}
+
+/// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): resolve an
+/// entity's display name from its raw `properties` JSON text, falling back to
+/// `fallback_id` (the entity's own id-slug) when `properties` is absent,
+/// unparseable, or has no string `"name"` key.
+///
+/// This mirrors what ingest embeds for a NEW entity
+/// (`core/ingest/pipeline/ingest_with.rs`'s `document_embed_text(&extracted.name,
+/// ..)` call site) — every real insertion path stamps `properties.name` with
+/// the raw display name at write time (`json!({"name": extracted.name, ..})`
+/// in ingest/`text_utils.rs`/`resolver.rs`; `json!({"name": id, ..})` in the
+/// dream-phase maintenance paths where the id-slug already IS the name). The
+/// id-slug fallback here additionally matches the precedent TD-112's
+/// merge-time re-embed already established
+/// (`core::canonicalization::apply_merge_with_audit`, `emb.embed_dyn(keeper_id)`)
+/// for the rare row with no `name` property at all: `normalize_name` only
+/// lowercases + strips punctuation, so the id-slug is a faithful stand-in for
+/// the display name at embed time.
+///
+/// Shared by [`entities::entities_after_id`](super::entities) (the entity's
+/// own row) and [`facts::facts_after_id`](super::facts) (resolving the
+/// subject/object entity referenced by a fact triple) — both bulk re-embed
+/// page sources need the identical resolution.
+///
+/// Feature-gated behind `content-search`: its only two call sites are
+/// themselves `#[cfg(feature = "content-search")]` (the bulk re-embed page
+/// sources), so on a default-features build this fn would otherwise be
+/// unreachable dead code.
+#[cfg(feature = "content-search")]
+pub(super) fn entity_display_name(properties_json: Option<&str>, fallback_id: &str) -> String {
+    properties_json
+        .and_then(|p| serde_json::from_str::<serde_json::Value>(p).ok())
+        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .unwrap_or_else(|| fallback_id.to_string())
 }
 
 /// Expected columns from the canonical entity SELECT (LEFT JOIN entity_types):

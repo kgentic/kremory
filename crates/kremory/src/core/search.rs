@@ -4998,6 +4998,239 @@ mod tests {
         );
     }
 
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112) entity
+    /// sibling of `episodes_after_id_pages_every_row_including_already_embedded`
+    /// — same shape: `entities_after_id` must return EVERY entity row
+    /// (including ones that already carry an embedding), and the id-cursor
+    /// loop must terminate without revisiting a row.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn entities_after_id_pages_every_row_including_already_embedded() {
+        use crate::core::graph::InsertEntityWithGroupParams;
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let id = format!("entity-{i}");
+            g.insert_entity_with_group(InsertEntityWithGroupParams {
+                id: &id,
+                entity_type_id: 0,
+                properties: serde_json::json!({ "name": format!("Entity {i}") }),
+                group_id: None,
+            })
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+
+        // Give SOME of them an existing embedding — entities_after_id must
+        // still return them (the NULL-only `episodes_missing_embedding`
+        // sibling predicate would exclude these; that's the exact gap this
+        // query exists to close).
+        g.set_entity_embedding(&ids[0], &make_embedding(1.0))
+            .await
+            .unwrap();
+        g.set_entity_embedding(&ids[2], &make_embedding(2.0))
+            .await
+            .unwrap();
+
+        let batch_size = 2usize;
+        let mut after_id = String::new();
+        let mut after_group_id = String::new();
+        let mut visited = Vec::new();
+        for _ in 0..(ids.len() + 3) {
+            let page = g
+                .entities_after_id(crate::core::graph::EntitiesAfterIdParams {
+                    after_id: &after_id,
+                    after_group_id: &after_group_id,
+                    limit: batch_size,
+                })
+                .await
+                .unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(
+                page.len() <= batch_size,
+                "a page must never exceed the requested batch_size"
+            );
+            for row in &page {
+                assert!(
+                    !visited.contains(&row.id),
+                    "id {} was visited twice — the cursor did not advance correctly",
+                    row.id
+                );
+                visited.push(row.id.clone());
+            }
+            let last = page.last().expect("page checked non-empty above");
+            after_id.clone_from(&last.id);
+            after_group_id.clone_from(&last.group_id);
+        }
+
+        let mut sorted_ids = ids.clone();
+        sorted_ids.sort();
+        assert_eq!(
+            visited, sorted_ids,
+            "every entity id must be visited exactly once, in ascending id \
+             order, including the ones that already carry an embedding \
+             (ids[0] and ids[2] here)"
+        );
+    }
+
+    /// TD-112 composite-PK cursor regression: `entities` has PRIMARY KEY
+    /// `(id, group_id)` (ADR-029d per-namespace-open), so the SAME `id` can
+    /// legitimately exist as two independent rows in two namespaces. A bare
+    /// `id`-only cursor (`WHERE id > last_id`) would silently DROP one of
+    /// them whenever a page boundary falls between the two tied rows — this
+    /// pins that `entities_after_id`'s composite `(id, group_id)` cursor
+    /// visits BOTH rows even at `batch_size = 1` (the worst case: the tied
+    /// pair is guaranteed to straddle a page boundary).
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn entities_after_id_visits_both_rows_of_a_cross_namespace_id_collision() {
+        use crate::core::graph::InsertEntityWithGroupParams;
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        // Same surface name ("alice") normalizes to the same id-slug in two
+        // different namespaces — a legitimate, permitted collision per
+        // ADR-029d (per-namespace-open), not an error.
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": "Alice A" }),
+            group_id: Some("namespace-a"),
+        })
+        .await
+        .unwrap();
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": "Alice B" }),
+            group_id: Some("namespace-b"),
+        })
+        .await
+        .unwrap();
+
+        let mut after_id = String::new();
+        let mut after_group_id = String::new();
+        let mut visited_group_ids = Vec::new();
+        for _ in 0..5 {
+            let page = g
+                .entities_after_id(crate::core::graph::EntitiesAfterIdParams {
+                    after_id: &after_id,
+                    after_group_id: &after_group_id,
+                    limit: 1,
+                })
+                .await
+                .unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert_eq!(page.len(), 1);
+            visited_group_ids.push(page[0].group_id.clone());
+            after_id.clone_from(&page[0].id);
+            after_group_id.clone_from(&page[0].group_id);
+        }
+
+        let mut sorted = visited_group_ids.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec!["namespace-a".to_string(), "namespace-b".to_string()],
+            "both rows sharing id='alice' across two namespaces must be \
+             visited exactly once each — a bare id-only cursor would have \
+             skipped one of them at batch_size=1; got {visited_group_ids:?}"
+        );
+    }
+
+    /// TD-112 fact sibling of
+    /// `episodes_after_id_pages_every_row_including_already_embedded` —
+    /// `facts_after_id` must return EVERY fact row (including ones that
+    /// already carry an embedding), and the id-cursor loop must terminate
+    /// without revisiting a row.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn facts_after_id_pages_every_row_including_already_embedded() {
+        use crate::core::graph::{FactInsert, InsertEntityWithGroupParams};
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": "Alice" }),
+            group_id: None,
+        })
+        .await
+        .unwrap();
+
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let fact_id = g
+                .insert_fact_with_group(
+                    FactInsert {
+                        subject_id: "alice",
+                        predicate: "likes",
+                        object_id: None,
+                        object_value: Some(&format!("thing-{i}")),
+                        valid_from: Utc::now(),
+                        confidence: 1.0,
+                        source_episode_id: None,
+                        embedding: None,
+                    },
+                    Some("default"),
+                )
+                .await
+                .unwrap();
+            ids.push(fact_id);
+        }
+
+        // Give SOME of them an existing embedding — facts_after_id must
+        // still return them.
+        g.set_fact_embedding(ids[0], &make_embedding(1.0))
+            .await
+            .unwrap();
+        g.set_fact_embedding(ids[2], &make_embedding(2.0))
+            .await
+            .unwrap();
+
+        let batch_size = 2usize;
+        let mut after_id = 0i64;
+        let mut visited = Vec::new();
+        for _ in 0..(ids.len() + 3) {
+            let page = g.facts_after_id(after_id, batch_size).await.unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(
+                page.len() <= batch_size,
+                "a page must never exceed the requested batch_size"
+            );
+            for (id, text) in &page {
+                assert!(
+                    !visited.contains(id),
+                    "id {id} was visited twice — the cursor did not advance correctly"
+                );
+                visited.push(*id);
+                assert!(
+                    text.starts_with("Alice likes thing-"),
+                    "fact text must resolve the subject's display name + \
+                     predicate + literal object value; got: {text:?}"
+                );
+            }
+            after_id = page
+                .last()
+                .map(|(id, _)| *id)
+                .expect("page was checked non-empty above");
+        }
+
+        assert_eq!(
+            visited, ids,
+            "every fact id must be visited exactly once, in ascending id \
+             order, including the ones that already carry an embedding \
+             (ids[0] and ids[2] here)"
+        );
+    }
+
     /// Migration 026 is idempotent: `open_in_memory` runs it once; running it
     /// again is a clean no-op (PRAGMA column gate + `CREATE INDEX IF NOT EXISTS`).
     #[cfg(feature = "content-search")]

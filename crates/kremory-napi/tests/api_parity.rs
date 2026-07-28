@@ -383,7 +383,7 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 81 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 83 (sanity cap — over-finding guard).
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
     // aggressive or the skip list is being used as an escape hatch.
     // Lowered 100 → 90 by TD-053 (2026-06-25) after pruning 13 doc-rot entries, then
@@ -396,11 +396,15 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // with_fact_dense_enabled / with_embed_task_prefix_enabled /
     // with_proximity_weight), all already skip-listed for the identical ADR-030
     // Form B reason. The register was already sitting exactly at the prior cap
-    // (80) before this addition — not a symptom of walker over-finding.
+    // (80) before this addition — not a symptom of walker over-finding. Raised
+    // 81 → 83 (TD-112, 2026-07-28) for two new legitimate entries —
+    // `Memory::reembed_all_entity_embeddings` / `Memory::reembed_all_fact_embeddings`
+    // — which follow the SAME one-shot-CLI-maintenance-entrypoint pattern as
+    // their already-skipped sibling `Memory::reembed_all_episode_embeddings`.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 81,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 81. \
+        skip_count <= 83,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 83. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."
