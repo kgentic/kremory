@@ -62,7 +62,13 @@ class CodememClient:
         # of stage time — tripping this client's default 30.0s timeout
         # with an httpx.ReadTimeout mid-store. 120s gives headroom for a
         # slow store plus one ladder-arm fallback retry.
-        self.store_timeout = 90.0
+        # Env-overridable because the right value is a property of the CORPUS,
+        # not a constant. 90s was tuned on LoCoMo episodes; LongMemEval stores
+        # whole ~9.7K-char SESSIONS, measured at 75.2s and 175.7s (mean 125s,
+        # ~40 LLM calls each), so 90s aborts on the first question. Default is
+        # unchanged so LoCoMo behaviour is byte-identical; raise it per corpus
+        # via KREMORY_STORE_TIMEOUT_S.
+        self.store_timeout = float(_os.environ.get("KREMORY_STORE_TIMEOUT_S", "90"))
         # kremory's POST /consolidation/{cycle} runs the full dream()
         # reconciliation (discover/aliases/reclassify/consistency_check/
         # canonicalize passes) over every episode in the namespace — scales
