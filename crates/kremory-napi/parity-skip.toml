@@ -185,7 +185,7 @@ revisit = "never"
 
 [[skip]]
 symbol = "RecallRequest::content"
-reason = "ADR-072 seq1 (2026-07-11): new .content() BM25 content-search terminal + ContentPassage projection, feature-gated behind `content-search` (not part of the default build). Foundation-lane scope explicitly deferred napi parity to a later increment (per the seq1 impl-spec 'Explicitly NOT in seq1' + build-sequencing note) — revisit alongside the seq2 dense-embedding arm so both content-RAG surfaces land in kremory-napi together."
+reason = "ADR-072 seq1 (2026-07-11): new .content() BM25 content-search terminal + ContentPassage projection, feature-gated behind `content-search`. UPDATED 2026-07-28 (ADR-078): this entry's own revisit trigger — 'alongside the seq2 dense-embedding arm' — HAS FIRED (TD-136 landed `db4abbdc`, 2026-07-23), and the `content-search` Cargo passthrough it presupposed was added in the same pass. What remains skipped is only the EXPLICIT `.content()` terminal + its `ContentPassage` JS projection. The load-bearing half is no longer blocked by it: the BM25 + dense fusion happens inside the ordinary `recall()` path (`facade/recall.rs::fuse_content_stream`), so a Node consumer compiled with `content-search` now gets it WITHOUT `.content()`. Deferred because a JS `ContentPassage` projection is a new output type, not a same-shape field mirror."
 revisit = "v0.2.0 (or seq2, whichever lands first)"
 
 [[skip]]
@@ -193,10 +193,11 @@ symbol = "RecallRequest::opts"
 reason = "SearchOpts escape hatch; not on JS surface"
 revisit = "never"
 
-[[skip]]
-symbol = "SearchOpts::rerank_k"
-reason = "TD-062 (spec td-066-recall-scoring-foundation-spec-2026-07-21.md §3 Increment 3): new field gating the `rerank` Cargo feature's cross-encoder pass. This increment's scope is explicitly Rust core + the kremory-mcp tool surface (handlers.rs/params.rs) only — kremory-napi wiring (mirroring rerank_k onto JsRecallOptions, per the existing k/as_of mirroring convention) is a same-shape follow-up, not done in this commit."
-revisit = "next kremory-napi surface pass (alongside any other TD-066 fields not yet mirrored)"
+# CLOSED 2026-07-28 (ADR-078): `SearchOpts::rerank_k` is no longer skipped — the
+# "same-shape follow-up" this entry deferred is done. `RecallOptions.rerankK`
+# (convert.rs) now mirrors it onto the JS surface via the existing k/as_of
+# convention, and `kremory-napi/Cargo.toml` gained the `rerank` +
+# `content-search` passthroughs the binding had never had.
 
 # NOTE (TD-053 boy-scout, 2026-06-25): RecallRequest::{filter_metadata,
 # in_namespace, in_namespaces, per_namespace_top_k, best_effort, k, as_of} skip

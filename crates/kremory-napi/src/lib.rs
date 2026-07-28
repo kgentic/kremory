@@ -931,6 +931,16 @@ impl JsMemory {
             .as_ref()
             .and_then(|o| o.as_of.as_deref())
             .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+        // ADR-078: a negative or zero `rerankK` is dropped rather than coerced
+        // to a default — `rerank_k` takes `usize`, and silently reranking at
+        // some invented depth would be the "silent default" this project bans
+        // on parsed input. Omit the knob and you get no rerank, which is the
+        // same outcome as omitting the field.
+        let rerank_k = opts
+            .as_ref()
+            .and_then(|o| o.rerank_k)
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| *n > 0);
 
         let results = {
             let mut builder = self.inner.recall(query);
@@ -955,6 +965,9 @@ impl JsMemory {
             }
             if let Some(as_of_ts) = as_of {
                 builder = builder.as_of(as_of_ts);
+            }
+            if let Some(n) = rerank_k {
+                builder = builder.rerank_k(n);
             }
 
             // B9: wire filterMetadata entries. Each entry maps to one

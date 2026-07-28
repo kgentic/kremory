@@ -81,10 +81,26 @@ def groq_chat(prompt: str, model: str, key: str, base: str) -> str:
     req = urllib.request.Request(
         f"{base.rstrip('/')}/chat/completions",
         data=body,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            # Groq's edge 403s the default `Python-urllib/3.x` agent; the identical
+            # request succeeds under curl. Without this the probe's FIRST EVER run
+            # (2026-07-28) generated nothing at all and reported a clean-looking
+            # "0.0% mean overlap" — which would have been filed as a doc2query KILL
+            # when it was in fact a total generation outage.
+            "User-Agent": "kremory-bench-probe/1.0",
+        },
     )
     with urllib.request.urlopen(req, timeout=120) as r:
-        return json.loads(r.read())["choices"][0]["message"]["content"]
+        msg = json.loads(r.read())["choices"][0]["message"]
+    content = (msg.get("content") or "").strip()
+    if not content:
+        raise RuntimeError(
+            "empty `content` (gpt-oss spent the budget on its `reasoning` channel) "
+            "— raise max_tokens"
+        )
+    return content
 
 
 def ollama_embed(text: str) -> list[float] | None:
@@ -160,6 +176,12 @@ def main() -> int:
         return 2
 
     ep_scores, fact_scores, base_scores = [], [], []
+    # Generation-health counters. Without these, a total LLM outage is
+    # INDISTINGUISHABLE from "the model generated useless questions": both print
+    # 0.0% mean overlap. That is exactly what happened on this probe's first run
+    # (2026-07-28) and it would have been filed as a doc2query KILL. Silent
+    # in ≠ out is a measurement bug, not a finding.
+    gen_ok, gen_fail = 0, 0
     ep_cos, fact_cos, base_cos = [], [], []
     samples = []
 
@@ -175,8 +197,10 @@ def main() -> int:
         )
         try:
             ep_qs = [l.strip(" -*") for l in groq_chat(ep_prompt, model, key, base).splitlines() if l.strip()][:3]
+            gen_ok += 1
         except Exception as e:
             print(f"  [{i}] episode-gen failed: {e}", file=sys.stderr)
+            gen_fail += 1
             ep_qs = []
         ep_best = max((overlap(q_real, q) for q in ep_qs), default=0.0)
         ep_scores.append(ep_best)
@@ -216,10 +240,21 @@ def main() -> int:
     def stat(xs):
         return f"mean {100*statistics.mean(xs):5.1f}%  median {100*statistics.median(xs):5.1f}%" if xs else "n/a"
 
+    # Instrument validation BEFORE any verdict is printed: a probe that generated
+    # nothing has measured nothing, and must refuse to emit a number that would
+    # read as a kill.
+    if gen_ok == 0:
+        print(f"\nABORT: all {gen_fail} episode-generation calls FAILED — this run "
+              f"measured NOTHING.\nDo NOT record a doc2query verdict from it. "
+              f"See the stderr lines above for the cause.", file=sys.stderr)
+        return 2
+
     print("\n" + "=" * 78)
     print("DOC2QUERY CEILING PROBE — would generated questions have matched the real ones?")
     print("=" * 78)
     print(f"n misses = {len(misses)}   (fact-linked: {with_facts})")
+    print(f"generation health: {gen_ok} ok / {gen_fail} failed"
+          + ("   ⚠️ PARTIAL — scores below are diluted by the failures" if gen_fail else ""))
     print("\nLEXICAL overlap with the REAL missed question (higher = better match):")
     print(f"  BASELINE  raw gold turn (what we index today) : {stat(base_scores)}")
     print(f"  EPISODE   generated questions from the turn   : {stat(ep_scores)}")

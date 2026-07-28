@@ -303,6 +303,17 @@ pub struct JsRecallOptions {
     /// combine with AND. Substrate-generic — a consumer might filter on
     /// document type, conversation id, session id, or any custom key.
     pub filter_metadata: Option<Vec<JsMetadataFilter>>,
+    /// Rerank the top-`n` fused candidates with a cross-encoder before
+    /// returning (substrate `SearchOpts::rerank_k` / TD-062). Omitted (the
+    /// default) = no rerank.
+    ///
+    /// Mirrors the substrate field's own always-present contract: the option
+    /// is ACCEPTED regardless of build features (Rule 16 surface parity), and
+    /// is a documented no-op unless the binding was compiled with the
+    /// `rerank` feature. ADR-078 measured `n = 50` as the only depth that
+    /// changes which items reach the top-10 — `n = 20` permutes the same set
+    /// and leaves recall/hit-rate identical to no rerank at all.
+    pub rerank_k: Option<i64>,
 }
 
 // ── Output types ──────────────────────────────────────────────────────────────

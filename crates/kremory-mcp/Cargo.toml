@@ -18,7 +18,14 @@ edition = "2021"
 # kremory_list_mutations (SEE) + kremory_undo (unified FIX dispatcher).
 
 [features]
-default = []
+# ADR-078 (2026-07-28): `content-search` promoted to a default. This crate's
+# `/search` endpoint defaults to `SearchMode::Hybrid`, which HARD-FAILS 422
+# without the feature — so a default-features build of the server could not serve
+# its own default endpoint at all (verified by running one: every question
+# returned `mode=hybrid requires the content-search feature`). `rerank` and
+# `prometheus` stay opt-in: a heavy ONNX dependency, and a pull-exporter the
+# sibling stdio bin cannot use, respectively.
+default = ["content-search"]
 # content-search: passthrough to kremory's ADR-072 seq1 BM25/FTS5 content
 # recall (`mem.recall(q).content()` -> `ContentPassage`). Wires
 # `GET /search?mode=content|hybrid` on the `kremory-http` REST bin

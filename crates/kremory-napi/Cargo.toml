@@ -14,9 +14,16 @@ repository = "https://github.com/kgentic/kremory"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# NEW-003 cycle-2 fix: explicit `default` prevents `--all-features` CI builds
-# from silently enabling unstable surfaces. Empty default = consumer must opt-in.
-default = []
+# NEW-003 cycle-2 fix: an explicit `default` prevents `--all-features` CI builds
+# from silently enabling unstable surfaces — consumers must still opt in to
+# unstable-graph / unstable-tags / ner.
+#
+# ADR-078 (2026-07-28): no longer EMPTY. `content-search` is a default here for
+# the same reason as in the substrate, plus one specific to this crate: until
+# 2026-07-28 the binding had NO passthrough for it at all, so Node consumers
+# (aidocs, the TS MCP server) were locked to entity/fact-only recall with no
+# opt-in available — a Rule-16 surface-parity gap on the Cargo-feature axis.
+default = ["content-search"]
 
 # unstable-graph: passes through to substrate. Gates B11 (JsMemory.getRelated).
 # Mirrors substrate `kremory/unstable-graph` per Vera cycle-2 IRREV-002 mitigation.
@@ -35,6 +42,25 @@ ner = ["kremory/ner"]
 # adopt indexed tag filtering without opting into the higher-risk CTE graph
 # surface. Mirrors substrate `kremory/unstable-tags`.
 unstable-tags = ["kremory/unstable-tags"]
+
+# content-search: passes through to substrate ADR-072. NOT merely an extra API
+# surface — this is the load-bearing correction of ADR-078. The substrate gates
+# THREE things behind it: the BM25 content arm, the dense episode arm (the whole
+# `fuse_content_stream` fn is content-search-gated, `facade/recall.rs`), and
+# Migrations 022 + 026 (so a feature-off DB has neither `episodes_fts` nor
+# `episodes.embedding`). Without this passthrough a Node consumer could not
+# reach ANY of it — `recall()` was entity/fact-only with no opt-in available,
+# which is why every LoCoMo number the project publishes was unreachable from
+# the binding. Adding it needs no new JS API: the fusion happens inside the
+# ordinary `recall()` path.
+content-search = ["kremory/content-search"]
+
+# rerank: passes through to substrate TD-062's cross-encoder. Unlike
+# `content-search` this ALSO needs a JS-visible knob to have any effect —
+# `SearchOpts::rerank_k` defaults to `None`, so the feature alone is inert.
+# Paired with `RecallOptions.rerankK` (convert.rs), which closes the
+# `SearchOpts::rerank_k` parity-skip entry.
+rerank = ["kremory/rerank"]
 
 [dependencies]
 kremory = { path = "../kremory" }
