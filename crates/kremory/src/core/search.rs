@@ -4700,12 +4700,22 @@ mod tests {
 
     // ─── TD-136: dense episode retrieval arm ─────────────────────────────────
 
-    /// Byte-identical guard: the dense arm ships OFF by default, so a default
-    /// `SearchConfig` never enables the episode dense arm (recall + ingest stay
-    /// BM25-only).
+    /// The dense episode arm ships **ON** by default since 2026-07-28 (ADR-078).
+    ///
+    /// This test previously asserted the opposite as a "byte-identical guard".
+    /// The guard outlived its purpose: the arm sat OFF while every published
+    /// benchmark set `KREMORY_EPISODE_DENSE=1`, so the numbers described a
+    /// configuration no consumer received — the same defect ADR-078 fixed for
+    /// `content-search`. Measured worth **+5.1 recall@10 at full corpus**, and
+    /// it adds no dependency (an embedder is already required for entities and
+    /// facts). Pinned as a test so the default is a DECISION, not an accident.
     #[test]
-    fn episode_dense_enabled_defaults_off() {
-        assert!(!crate::core::config::SearchConfig::default().episode_dense_enabled);
+    fn episode_dense_enabled_defaults_on() {
+        assert!(
+            crate::core::config::SearchConfig::default().episode_dense_enabled,
+            "ADR-078: the dense episode arm is a shipped default; turning it off \
+             is `.with_episode_dense_enabled(false)` / KREMORY_EPISODE_DENSE=0"
+        );
     }
 
     #[cfg(feature = "content-search")]

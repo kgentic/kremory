@@ -426,9 +426,23 @@ impl Default for SearchConfig {
             // TD-066 Increment 2 — 1.0 = neutral/no-op, today's equal-weight
             // RRF fusion (Increment 1's behaviour, byte-identical).
             content_stream_weight: 1.0,
-            // TD-136 — dense episode arm OFF by default: byte-identical BM25-only
-            // recall + ingest until KREMORY_EPISODE_DENSE flips it on.
-            episode_dense_enabled: false,
+            // TD-136 dense episode arm. **DEFAULT-ON since 2026-07-28 (ADR-078).**
+            //
+            // It shipped OFF and stayed OFF while every published benchmark set
+            // `KREMORY_EPISODE_DENSE=1` — so the measured numbers described a
+            // configuration no consumer received. Measured worth: **+5.1
+            // recall@10 at full corpus.** It adds NO dependency: an embedder is
+            // already a hard requirement of `Memory` (entities and facts are
+            // embedded regardless), so this is more calls of something the
+            // consumer already supplies, not a new one. Costs: one embed per
+            // episode at ingest, one per query at recall (~3.8ms vector search,
+            // measured).
+            //
+            // Turn it off with `.with_episode_dense_enabled(false)` or
+            // `KREMORY_EPISODE_DENSE=0`. Existing corpora ingested before this
+            // flip have no episode vectors until `backfill-episode-embeddings`
+            // runs; the arm degrades to BM25-only until then rather than failing.
+            episode_dense_enabled: true,
             // TD-139 DoD item 2 — dense fact arm OFF by default: facts stay
             // reachable only via 1-hop entity expansion until KREMORY_FACT_DENSE
             // flips it on.

@@ -210,9 +210,16 @@ async fn unset_knobs_match_documented_defaults() {
         cfg.rrf_k, 60,
         "default rrf_k must stay 60 (Cormack et al.) — byte-identical to pre-TD-141"
     );
+    // ADR-078 (2026-07-28): flipped from false. The "byte-identical" framing
+    // this assertion carried was the bug, not the guarantee — the arm sat OFF
+    // while every published benchmark set KREMORY_EPISODE_DENSE=1, so the
+    // shipped default was the one configuration nobody measured. Worth +5.1
+    // recall@10 at full corpus, and no new dependency (an embedder is already
+    // required for entities and facts).
     assert!(
-        !cfg.episode_dense_enabled,
-        "default episode_dense_enabled must stay false (BM25-only) — byte-identical to pre-TD-141"
+        cfg.episode_dense_enabled,
+        "default episode_dense_enabled must be TRUE (ADR-078) — the dense episode \
+         arm is a shipped default; opt out via .with_episode_dense_enabled(false)"
     );
     assert_eq!(
         cfg.proximity_weight, 0.0,
@@ -337,8 +344,11 @@ async fn unset_knob_still_honours_its_own_env_override() {
          a sibling knob being set programmatically must not clobber it"
     );
     assert!(
-        !cfg.episode_dense_enabled,
-        "the UNSET, no-env knob must fall through to its default (false)"
+        cfg.episode_dense_enabled,
+        "the UNSET, no-env knob must fall through to its default — which is TRUE \
+         since ADR-078 (2026-07-28). What this test actually pins is the SPARSE
+         OVERLAY (setting one knob must not clobber another's env override), not \
+         any particular default value."
     );
 
     clear_search_env();
