@@ -375,6 +375,20 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Explicit cap (in `char`s) on the SUMMARY portion of each rerank
+    /// candidate's text (`SearchConfig::rerank_candidate_max_chars`,
+    /// reranker latency lever 1). Default (unset): `0` (unlimited — today's
+    /// behaviour, byte-identical) unless overridden by
+    /// `KREMORY_RERANK_CANDIDATE_MAX_CHARS` at construction time. Calling
+    /// this setter wins over BOTH the default and any env override, for this
+    /// `Memory` only. `entity_name` is never truncated.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::rerank_candidate_max_chars`](crate::core::config::PipelineConfigBuilder::rerank_candidate_max_chars).
+    pub fn with_rerank_candidate_max_chars(mut self, v: usize) -> Self {
+        self.search_overrides.rerank_candidate_max_chars = Some(v);
+        self
+    }
+
     /// Configure automatic dream-pass scheduling.
     ///
     /// Default: [`DreamSchedule::Off`] — no background task is spawned.

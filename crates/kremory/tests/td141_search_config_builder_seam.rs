@@ -170,6 +170,26 @@ async fn with_proximity_weight_reaches_live_search_config() {
     );
 }
 
+/// Reranker latency lever 1 — same builder seam, new knob. Mirrors
+/// `with_proximity_weight_reaches_live_search_config` exactly.
+#[tokio::test]
+async fn with_rerank_candidate_max_chars_reaches_live_search_config() {
+    clear_search_env();
+    std::env::remove_var("KREMORY_RERANK_CANDIDATE_MAX_CHARS");
+    let mem = Memory::open(unique_db("rerank_candidate_max_chars"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_rerank_candidate_max_chars(256)
+        .await
+        .expect("build with with_rerank_candidate_max_chars");
+
+    assert_eq!(
+        mem.search_config().rerank_candidate_max_chars,
+        256,
+        "programmatic with_rerank_candidate_max_chars(256) must reach the live SearchConfig"
+    );
+}
+
 // ── 2. Unset knobs reproduce today's byte-identical defaults ────────────────
 
 #[tokio::test]
@@ -198,6 +218,10 @@ async fn unset_knobs_match_documented_defaults() {
         cfg.proximity_weight, 0.0,
         "default proximity_weight must stay 0.0 (axis-C off) — byte-identical to pre-ADR-062"
     );
+    assert_eq!(
+        cfg.rerank_candidate_max_chars, 0,
+        "default rerank_candidate_max_chars must stay 0 (unlimited) — byte-identical pre-lever"
+    );
 }
 
 /// ADR-062 / ADR-067 Phase 3 precedence test — mirrors
@@ -220,6 +244,29 @@ async fn proximity_weight_explicit_wins_over_env_override() {
     );
 
     std::env::remove_var("KREMORY_PROXIMITY_WEIGHT");
+}
+
+/// Reranker latency lever 1 precedence test — mirrors
+/// `proximity_weight_explicit_wins_over_env_override` for the new knob.
+#[tokio::test]
+async fn rerank_candidate_max_chars_explicit_wins_over_env_override() {
+    std::env::set_var("KREMORY_RERANK_CANDIDATE_MAX_CHARS", "999999");
+
+    let mem = Memory::open(unique_db("precedence_rerank_candidate_max_chars_explicit_wins"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_rerank_candidate_max_chars(128)
+        .await
+        .expect("build with explicit rerank_candidate_max_chars override + conflicting env");
+
+    assert_eq!(
+        mem.search_config().rerank_candidate_max_chars,
+        128,
+        "explicit with_rerank_candidate_max_chars(128) must win over \
+         KREMORY_RERANK_CANDIDATE_MAX_CHARS=999999"
+    );
+
+    std::env::remove_var("KREMORY_RERANK_CANDIDATE_MAX_CHARS");
 }
 
 // ── 3. Precedence: explicit programmatic config wins over env override ──────
