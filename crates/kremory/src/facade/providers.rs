@@ -574,6 +574,32 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
+    // ADR-062 axis-C hop bound, sweepable for the SAME reason the weight is.
+    // Added 2026-07-27 after the first axis-C A/B: at the default
+    // `proximity_hop_bound = 2` the per-recall trace showed
+    // `seed_count=50 boosted_count=48` — the walk reaches neighbours for ~96%
+    // of seeds, so the boost is a near-uniform additive offset and cannot
+    // discriminate at ANY weight (measured flat across w=0.05/0.15/0.40). The
+    // hop bound, not the weight, is the parameter that controls selectivity —
+    // and it was the one knob NOT sweepable without a rebuild, which is the
+    // TD-141 lesson (a knob you cannot set is a knob you cannot evaluate)
+    // recurring inside axis-C's own tuning surface.
+    if let Ok(raw) = std::env::var("KREMORY_PROXIMITY_HOP_BOUND") {
+        match raw.trim().parse::<u32>() {
+            Ok(v) => {
+                tracing::info!(
+                    proximity_hop_bound = v,
+                    "KREMORY_PROXIMITY_HOP_BOUND override applied to SearchConfig"
+                );
+                b = b.proximity_hop_bound(v);
+            }
+            Err(e) => tracing::warn!(
+                value = %raw,
+                error = %e,
+                "KREMORY_PROXIMITY_HOP_BOUND is not a valid u32 — ignoring (default retained)"
+            ),
+        }
+    }
     b
 }
 
