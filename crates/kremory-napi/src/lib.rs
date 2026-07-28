@@ -898,6 +898,70 @@ impl JsMemory {
             .collect())
     }
 
+    /// Search memory and return kremory's **prompt-ready rendering** of the
+    /// results — the string form built for an LLM consumer, rather than the
+    /// structured rows [`recall`] returns.
+    ///
+    /// TD-155 (2026-07-28): the binding previously hardcoded `.raw()`, so a Node
+    /// consumer could not reach this rendering at all — even though the Rust
+    /// facade has always offered both terminals and the MCP tool surface
+    /// DEFAULTS to it. Measured worth on LoCoMo: **~+4pt answerability, +10.8pt
+    /// on temporal questions**, on identical retrieval — the graph's output is
+    /// far more usable when an agent can tell facts from source text.
+    ///
+    /// Mirrors the substrate's terminal shape deliberately (two methods, not a
+    /// `format` enum): the CONSUMER chooses by picking a terminal, exactly as in
+    /// Rust. No default is imposed on either side.
+    ///
+    /// `template` selects the rendering: `"temporal_facts"` (default — facts
+    /// with their `valid_at` annotations), `"entities"`, or `"edge_summary"`.
+    /// An unrecognised value is rejected rather than silently substituted.
+    #[napi]
+    pub async fn recall_as_prompt_text(
+        &self,
+        query: String,
+        template: Option<String>,
+        opts: Option<JsRecallOptions>,
+    ) -> napi::Result<String> {
+        let tmpl = match template.as_deref() {
+            None | Some("temporal_facts") => kremory::RecallTemplate::TemporalFacts,
+            Some("entities") => kremory::RecallTemplate::Entities,
+            Some("edge_summary") => kremory::RecallTemplate::EdgeSummary,
+            Some(other) => {
+                return Err(napi::Error::from_reason(format!(
+                    "unknown template {other:?} — expected one of: temporal_facts, \
+                     entities, edge_summary"
+                )))
+            }
+        };
+        let namespace = convert::resolve_recall_namespace(&opts)
+            .or_else(|| self.default_namespace.clone());
+        let k = opts
+            .as_ref()
+            .and_then(|o| o.k)
+            .map(|k_val| usize::try_from(k_val).unwrap_or(10));
+
+        let mut builder = self.inner.recall(query);
+        if let Some(ns) = namespace {
+            builder = builder.in_namespace(ns);
+        }
+        if let Some(k_val) = k {
+            builder = builder.k(k_val);
+        }
+        if let Some(n) = opts
+            .as_ref()
+            .and_then(|o| o.rerank_k)
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| *n > 0)
+        {
+            builder = builder.rerank_k(n);
+        }
+        builder
+            .as_template(tmpl)
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory recall failed: {e}")))
+    }
+
     /// Search memory for context matching `query`.
     ///
     /// Returns up to `opts.k` (default 10) results ranked by relevance.
