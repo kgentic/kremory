@@ -24,6 +24,13 @@ from pathlib import Path
 import httpx
 from tqdm import tqdm
 
+# Single source of truth for which categories no presence-style scorer may
+# score. Defined in judge_rescore.py and already imported by qa_eval.py; the
+# harness imports the SAME constant rather than declaring a second one, so the
+# substring scorer and the LLM-judge scorer cannot drift onto different
+# denominators (they previously did: n=1986 here vs n=1540 there).
+from judge_rescore import ABSTENTION_CATEGORIES
+
 # recall-improvement-e2e-spec-2026-07-22 §S0-infra [G1]: provenance stamp helper.
 # Sibling module so both the harness (build) and the tally/gate (assert) share it.
 try:
@@ -352,7 +359,54 @@ def check_answer_in_memories(
     Returns (is_correct, confidence, explanation).
     This matches AutoMem's evaluation approach.
     """
+    # An abstention category is NOT SCOREABLE by a retrieval-presence metric,
+    # and this refusal is structural rather than a caller convention (an
+    # `if` at one of N call sites is a check you can forget at the N+1th).
+    #
+    # Every LoCoMo category-5 question is a SPEAKER-ATTRIBUTION FALSE PREMISE:
+    # "What did Caroline realize after HER charity race?" — the race was
+    # MELANIE's. All 446 carry real `evidence`, and `adversarial_answer` is a
+    # true fact re-attributed to the wrong person. So a good retriever SHOULD
+    # surface that turn; detecting the false premise is an ANSWERER judgement
+    # made over retrieved text, not a property of retrieval.
+    #
+    # A presence metric is therefore BLIND to abstention, and every number it
+    # can emit here is an artefact of which branch fires, not a measurement:
+    # steps 1-2 below return True on ANY match (so finding the distractor
+    # "passes"), while the old step-3 block returned False in the 0.2-0.5 band
+    # and True below 0.2 — a non-monotonic step function where high overlap and
+    # low overlap both score correct and only the middle fails. On the
+    # 2026-07-28 out-of-the-box run those three readings gave 100%, 98.4% and
+    # 0.9% over the SAME retrievals. `qa_eval.py` already excludes this
+    # category via `ABSTENTION_CATEGORIES`; the substring scorer now agrees, so
+    # both scorers share the n=1540 denominator and are directly comparable.
+    # Recall still runs and `recalled_memories` is still persisted, so a real
+    # abstention judge can score these offline without re-running retrieval.
+    if category in ABSTENTION_CATEGORIES:
+        raise ValueError(
+            f"category {category!r} is an abstention category and cannot be scored "
+            "by this retrieval-presence scorer — abstention is an answerer property. "
+            "Exclude it from the scored denominator (see ABSTENTION_CATEGORIES)."
+        )
+
     expected = str(expected_answer)
+
+    # An EMPTY gold is a data-loss bug in the caller, never a scoreable input:
+    # `"" in anything` is True, so step 1 below would short-circuit EVERY such
+    # question to "correct, exact substring match" and the category branches
+    # further down would never run. This is exactly the defect that forced
+    # AutoMem to retract their published LoCoMo figure (see the note by the
+    # baselines block below) — and this harness shipped it too, scoring 446/446
+    # adversarial because category-5 gold lives under `adversarial_answer`,
+    # not `answer`. Fail LOUDLY rather than default: a missing gold must abort
+    # the run, not silently inflate it.
+    if not expected.strip():
+        raise ValueError(
+            f"empty gold answer for a {category!r} question — refusing to score. "
+            "The caller lost the gold field (LoCoMo category-5 gold is under "
+            "`adversarial_answer`, not `answer`); fix extraction, do not default."
+        )
+
     combined_text = "\n".join(memories)
 
     # 1. Exact substring match (case-insensitive)
@@ -401,30 +455,17 @@ def check_answer_in_memories(
             return True, score, f"list-item overlap {score:.2f} (fraction of gold items matched)"
         return True, score, f"word overlap {score:.2f} in memory {best_memory_idx}"
 
-    # 3. Adversarial: if no memories match, that's correct (should abstain).
+    # 3. (was: adversarial abstention credit — DELETED 2026-07-28.)
     #
-    # Bug A fix (W0.2): a genuine abstention requires the system to have
-    # HAD content to reason over and correctly found none of it relevant
-    # (best_score computed across non-empty `memories`). If recall returned
-    # ZERO memories, best_score is 0.0 by initialization (the scoring loop
-    # never ran) — that's indistinguishable, under the old code, from "found
-    # content, low overlap, correctly abstained". A broken/stalled retrieval
-    # path was silently credited as a correct abstention, inflating the
-    # adversarial-category score. Only credit abstention when memories is
-    # non-empty; empty recall is scored False (a retrieval failure, not a
-    # demonstrated abstention) so it surfaces in the accuracy number instead
-    # of hiding behind it.
-    if category == "adversarial":
-        if not memories:
-            return (
-                False,
-                0.0,
-                "adversarial credit withheld: recall returned zero memories "
-                "(retrieval failure, not a demonstrated abstention)",
-            )
-        if best_score < 0.2:
-            return True, 0.9, "low overlap suggests correct abstention"
-        return False, best_score, "found unexpected match for adversarial question"
+    # This block tried to infer abstention from low overlap, but was
+    # unreachable above the 0.5 threshold, so the composite behaviour was
+    # non-monotonic and unusable (see the refusal at the top of this
+    # function). Patching its thresholds would have produced a fourth
+    # arbitrary number rather than a measurement, so the category is now
+    # refused outright instead. Its one sound instinct — never credit an
+    # abstention that a ZERO-memory retrieval failure produced — is preserved
+    # by the `recall_empty` circuit-breaker, which aborts a run whose empty
+    # rate crosses CIRCUIT_EMPTY_RATE.
 
     # 4. Fuzzy date matching for temporal questions
     if category == "temporal":
@@ -517,16 +558,42 @@ def extract_questions(conversation: dict) -> list[dict]:
     """Extract QA pairs from a LoCoMo conversation.
 
     Returns list of {question_id, question, answer, category, evidence_ids}.
+
+    `answer` is the string this run SCORES AGAINST, and its meaning is
+    category-dependent:
+
+      * categories 1-4 — the gold answer, from `answer`. Present on all 1540.
+      * category 5 (adversarial) — the DISTRACTOR, from `adversarial_answer`:
+        the plausible-but-wrong answer a naive system gives by retrieving the
+        topically-adjacent turn (which does exist — all 446 carry `evidence`).
+        It is carried here for offline abstention judging only:
+        `check_answer_in_memories` REFUSES this category outright, because a
+        retrieval-presence metric cannot see abstention.
+        444 of 446 category-5 records have NO `answer` key at all; the 2 that
+        carry both make the roles explicit (`answer: "No"` /
+        `adversarial_answer: "Yes"` on a false-premise yes/no question).
+
+    Reading `answer` unconditionally is what produced a false 446/446
+    adversarial score: the `""` default fed an empty gold into a substring
+    check that matches everything. Every question in locomo10 has a gold under
+    exactly one of the two fields, so an empty result here is a bug — raise.
     """
     qa_list = conversation.get("qa", [])
     questions = []
     for i, qa in enumerate(qa_list):
         raw_cat = qa.get("category", 0)
         category = CATEGORY_NAMES.get(raw_cat, f"cat-{raw_cat}")
+        gold = qa.get("adversarial_answer") if category == "adversarial" else qa.get("answer")
+        if gold is None or not str(gold).strip():
+            raise ValueError(
+                f"question {i} (category {raw_cat}) has no usable gold: "
+                f"answer={qa.get('answer')!r} "
+                f"adversarial_answer={qa.get('adversarial_answer')!r}"
+            )
         questions.append({
             "question_id": f"q_{i}",
             "question": qa.get("question", ""),
-            "answer": qa.get("answer", ""),
+            "answer": gold,
             "category": category,
             "evidence": qa.get("evidence", []),
         })
@@ -741,6 +808,8 @@ def run_benchmark(config: Config) -> dict:
 
     all_results = []
     category_stats: dict[str, dict] = {}
+    # Categories retrieved but deliberately NOT scored (see ABSTENTION_CATEGORIES).
+    unscored_stats: dict[str, int] = {}
 
     # --- Observability-first + fail-fast-and-loud instrumentation ---
     # A multi-hour benchmark must be diagnosable (WHY is a score low: retrieval
@@ -846,10 +915,21 @@ def run_benchmark(config: Config) -> dict:
                 memories = recall_codemem(client, qa["question"], namespace, limit)
             recall_latency_ms = round((time.monotonic() - recall_t0) * 1000.0, 1)
 
-            # Check if gold answer is in recalled memories (AutoMem-style)
-            is_correct, confidence, explanation = check_answer_in_memories(
-                qa["answer"], memories, category,
-            )
+            # Check if gold answer is in recalled memories (AutoMem-style).
+            # Abstention categories are retrieved + persisted but NOT scored —
+            # a presence metric cannot see abstention (see the refusal in
+            # check_answer_in_memories). `is_correct` is None, not False, so
+            # "unscored" is distinguishable downstream from "scored wrong".
+            if category in ABSTENTION_CATEGORIES:
+                is_correct, confidence, explanation = (
+                    None, None,
+                    "not scored: abstention is an answerer property, invisible to a "
+                    "retrieval-presence scorer",
+                )
+            else:
+                is_correct, confidence, explanation = check_answer_in_memories(
+                    qa["answer"], memories, category,
+                )
 
             result = {
                 "sample_id": sample_id,
@@ -881,7 +961,7 @@ def run_benchmark(config: Config) -> dict:
                     else []
                 ),
                 "is_correct": is_correct,
-                "confidence": round(confidence, 4),
+                "confidence": None if confidence is None else round(confidence, 4),
                 "explanation": explanation,
                 "mode": config.mode,
                 "recall_latency_ms": recall_latency_ms,
@@ -920,12 +1000,19 @@ def run_benchmark(config: Config) -> dict:
                       f"server/Ollama down. Aborting. Records: {jsonl_path}", file=sys.stderr)
                 sys.exit(3)
 
-            # Track per-category
-            if category not in category_stats:
-                category_stats[category] = {"correct": 0, "total": 0}
-            category_stats[category]["total"] += 1
-            if is_correct:
-                category_stats[category]["correct"] += 1
+            # Track per-category. Unscored categories are counted in a SEPARATE
+            # bucket so they stay visible in the summary without silently
+            # entering the accuracy denominator — the failure mode being fixed
+            # here is precisely a category that inflated the total while
+            # measuring nothing.
+            if category in ABSTENTION_CATEGORIES:
+                unscored_stats[category] = unscored_stats.get(category, 0) + 1
+            else:
+                if category not in category_stats:
+                    category_stats[category] = {"correct": 0, "total": 0}
+                category_stats[category]["total"] += 1
+                if is_correct:
+                    category_stats[category]["correct"] += 1
 
     jsonl_f.close()
 
@@ -960,8 +1047,19 @@ def run_benchmark(config: Config) -> dict:
         s = category_stats[cat]
         acc = s["correct"] / s["total"] * 100 if s["total"] else 0
         print(f"{cat:<25} {s['correct']:>8} {s['total']:>8} {acc:>9.1f}%")
+    for cat in sorted(unscored_stats.keys()):
+        print(f"{cat:<25} {'—':>8} {unscored_stats[cat]:>8} {'NOT SCORED':>10}")
     print(f"{'-'*25} {'-'*8} {'-'*8} {'-'*10}")
     print(f"{'OVERALL':<25} {total_correct:>8} {total_questions:>8} {overall:>9.1f}%")
+    if unscored_stats:
+        n_unscored = sum(unscored_stats.values())
+        print(f"\n  {n_unscored} question(s) EXCLUDED from the denominator above "
+              f"({', '.join(sorted(unscored_stats))}).")
+        print(f"  Abstention is an answerer property and is invisible to this")
+        print(f"  retrieval-presence scorer, so no number is emitted for it in")
+        print(f"  either direction. `recalled_memories` is still persisted, so an")
+        print(f"  abstention judge can score these offline. Denominator now")
+        print(f"  matches `qa_eval.py`, which already excluded the same set.")
     # Baselines — protocol-matched ONLY. Canonical SoT:
     #   .ai-docs/specs/locomo-benchmark-protocol-2026-07-27.md
     #   .ai-docs/research/locomo-competitor-baselines-protocol-audit-2026-07-27.md
@@ -976,6 +1074,12 @@ def run_benchmark(config: Config) -> dict:
     #   "AutoMem: 90.53%" — RETRACTED at source ("That number was wrong",
     #       https://automem.ai/blog/benchmarking-honesty; re-fetched + confirmed).
     #       Cause included a category-5 bug scoring answers against EMPTY STRINGS.
+    #       THIS HARNESS SHIPPED THE IDENTICAL BUG until 2026-07-28: category-5
+    #       gold lives under `adversarial_answer`, `extract_questions` read
+    #       `answer` with a `""` default, and `"" in anything` is True — so all
+    #       446 scored a false "exact substring match". Recording the other
+    #       project's defect in a comment did not prevent our own; only the
+    #       structural refusal now at the top of check_answer_in_memories does.
     #   "CORE: 88.24%"    — vendor marketing figure; CORE's own reproducible repo
     #       reports 85% on a different 1,247-question subset, and CORE is
     #       generate-then-judge, so it never belonged beside a substring score.
@@ -983,6 +1087,9 @@ def run_benchmark(config: Config) -> dict:
     print(f"  AutoMem:  84.74%  (1683/1986, all 5 categories)")
     print(f"            hybrid: cats 1-4 via check_answer_in_memories (use_llm_extraction=False),")
     print(f"            judge only for cat-5.  https://automem.ai/benchmarks/")
+    print(f"            ⚠ DIFFERENT DENOMINATOR: theirs is n=1986 including a")
+    print(f"              JUDGED cat-5; the score above is n=1540 with cat-5")
+    print(f"              excluded. Not directly comparable without rescoring one.")
     print(f"\n  NB generate-then-judge systems (CORE 85% @1247q, Mem0 92.5%) are NOT")
     print(f"     comparable to the number above — compare those against `qa_eval.py")
     print(f"     answer-tally`, minding the k / judge deltas (we run k=10 + gpt-4o")
@@ -1037,6 +1144,7 @@ def run_benchmark(config: Config) -> dict:
         "total_questions": len(all_results),
         "o11y": o11y,
         "category_stats": category_stats,
+        "unscored_stats": unscored_stats,
         "results": all_results,
         # TD-128 (B6): conversations excluded from this matrix due to ingest abort.
         "ingest_aborted": ingest_aborted,
