@@ -344,6 +344,38 @@ struct SearchQuery {
     k: Option<usize>,
     #[serde(default)]
     mode: SearchMode,
+    /// Output rendering — `structured` (default) returns the entity-shaped
+    /// rows; `text` returns kremory's prompt-ready rendering of the same
+    /// recall, chosen by [`SearchQuery::template`].
+    ///
+    /// Added 2026-07-28 (ADR-078 / TD-155). This endpoint previously HARDCODED
+    /// `RecallFormat::Structured` and discarded the template, so a REST caller
+    /// could not reach the prompt-ready rendering at all — even though the MCP
+    /// tool surface has always exposed both and **defaults to `Text` +
+    /// `TemporalFacts`**. The consequence was not merely ergonomic: the LoCoMo
+    /// harness drives THIS endpoint, so every number this project has published
+    /// measured the rendering MCP agents do NOT get. Measured worth of the
+    /// rendering: ~+4pt answerability, and +10.8pt on temporal questions
+    /// specifically, on identical retrieval.
+    ///
+    /// The default stays `structured` deliberately: a REST caller may be an
+    /// application, not a model, and picking a rendering FOR the consumer is
+    /// the mistake this field exists to undo. Offer the choice; do not impose one.
+    ///
+    /// ⚠️ `Option<_>` and NOT `#[serde(default)]`, because `RecallFormat`'s own
+    /// `#[default]` is **`Text`** — right for the MCP tool, whose consumers are
+    /// models, and wrong here, where omitting the param has always meant
+    /// structured rows. Deriving this surface's default from the type's would
+    /// have silently flipped an existing endpoint's contract — the exact
+    /// "default changed without anyone deciding" failure this whole change set
+    /// exists to fix. Two surfaces, two appropriate defaults, both explicit.
+    /// (Caught by the pre-existing `/search` tests, which is why they drive the
+    /// real HTTP path rather than the handler's internals.)
+    format: Option<RecallFormat>,
+    /// Which prompt-ready rendering to use when `format=text`. Ignored
+    /// otherwise. Mirrors the MCP tool's `template` param exactly.
+    #[serde(default)]
+    template: RecallTemplateWire,
 }
 
 /// What a `/search` result item IS — TD-139 measurement prerequisite
@@ -417,6 +449,40 @@ async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // TD-155: `format=text` returns kremory's OWN prompt-ready rendering
+    // (`RecallRequest::as_template`) instead of the flattened rows. It is the
+    // rendering the MCP tool surface has always defaulted to, and which this
+    // endpoint could not reach — so the LoCoMo harness, which drives this
+    // endpoint, has never measured it. Fails loud rather than silently ignoring
+    // the parameter, mirroring the B1 `mode=hybrid`-without-the-feature arm:
+    // a request that asks for a rendering we cannot produce must not come back
+    // as if it had been honoured.
+    if query.format == Some(RecallFormat::Text) {
+        if query.mode == SearchMode::Content {
+            return Err(ApiError(ToolError::InvalidParams(
+                "format=text renders the entity/fact recall surface \
+                 (RecallRequest::as_template) and has no meaning for mode=content, \
+                 which returns BM25 passages. Use mode=recall or mode=hybrid."
+                    .to_string(),
+            )));
+        }
+        let value = handlers::do_recall(
+            &state.mem,
+            RecallParams {
+                namespace: query.namespace,
+                thread: None,
+                query: query.q,
+                k: query.k,
+                as_of: None,
+                format: RecallFormat::Text,
+                template: query.template,
+                rerank_k: *RERANK_K,
+            },
+        )
+        .await?;
+        return Ok(Json(value));
+    }
+
     let params = RecallParams {
         namespace: query.namespace,
         thread: None,
@@ -424,7 +490,7 @@ async fn search(
         k: query.k,
         as_of: None,
         format: RecallFormat::Structured,
-        template: RecallTemplateWire::default(),
+        template: query.template,
         // TD-134 measurement: the TD-062 reranker is exposed on this bench/eval
         // REST route via the `KREMORY_RERANK_K` boot override (read once into the
         // `RERANK_K` static above), mirroring the `KREMORY_RRF_K` sweep pattern so
@@ -440,7 +506,17 @@ async fn search(
         SearchMode::Content => content_mode_results(&state.mem, params).await?,
         SearchMode::Hybrid => hybrid_mode_results(&state.mem, params, state.rrf_k).await?,
     };
-    Ok(Json(SearchResponseWire { results }))
+    // Serialised through `Value` so both arms of this handler share one return
+    // type — the `format=text` arm above returns kremory's rendered string
+    // rather than a results array. Existing `format=structured` callers see a
+    // byte-identical `{"results":[…]}` body.
+    Ok(Json(serde_json::to_value(SearchResponseWire { results }).map_err(
+        |e| {
+            ApiError(ToolError::Internal(format!(
+                "kremory-http: failed to serialize search results: {e}"
+            )))
+        },
+    )?))
 }
 
 /// `mode=recall` — the entity-shaped keyword/semantic/graph path
@@ -1720,6 +1796,73 @@ mod tests {
     /// asserts a passage carrying the pinned subject's snippet comes back
     /// through the SAME `{id, content, score}` wire contract `mode=recall`
     /// uses.
+    /// TD-155: `GET /search?format=text` must return kremory's OWN prompt-ready
+    /// rendering, and `format=structured` (the default) must stay byte-identical.
+    ///
+    /// This endpoint hardcoded `RecallFormat::Structured` and discarded
+    /// `template`, so a REST caller could not reach the rendering the MCP tool
+    /// surface has always DEFAULTED to (`Text` + `TemporalFacts`). Because the
+    /// LoCoMo harness drives this endpoint, every published number measured the
+    /// rendering MCP agents do not get — worth ~+4pt answerability, +10.8pt on
+    /// temporal, on identical retrieval.
+    ///
+    /// Drives the real HTTP path so it cannot pass while the parameter is
+    /// silently ignored — the failure mode being fixed.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_format_text_returns_the_prompt_ready_rendering() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState {
+            mem: mem.clone(),
+            rrf_k: 60,
+        });
+        let ns = "ns-http-format-text";
+        pin_fact(&mem, ns, "Zephyrine").await;
+
+        let text = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!(
+                        "/search?q=Zephyrine&namespace={ns}&k=10&format=text&template=temporal_facts"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(text.status(), StatusCode::OK);
+        let json = body_json(text.into_body()).await;
+        assert!(
+            json.get("results").is_none(),
+            "format=text must NOT return the structured results array — that would \
+             mean the parameter was accepted and ignored: {json}"
+        );
+        let rendered = serde_json::to_string(&json).unwrap();
+        assert!(
+            rendered.contains("Zephyrine"),
+            "format=text must carry the recalled subject in kremory's rendering: {json}"
+        );
+
+        // The default is unchanged: omitting `format` still yields the rows.
+        let structured = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/search?q=Zephyrine&namespace={ns}&k=10"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(structured.into_body()).await;
+        assert!(
+            json["results"].as_array().is_some(),
+            "omitting ?format= must stay byte-identical (structured rows): {json}"
+        );
+    }
+
     /// ADR-078 Phase A regression: on the FUSED recall path, a content-derived
     /// item must be reported as `kind: episode`, not `entity`.
     ///
