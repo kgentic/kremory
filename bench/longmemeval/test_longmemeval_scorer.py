@@ -14,7 +14,22 @@ from __future__ import annotations
 
 import pytest
 
-import harness
+import importlib.util as _ilu
+import sys as _sys
+from pathlib import Path as _Path
+
+# Both bench harnesses are named `harness`, so a plain `import harness` binds to
+# whichever directory happens to be first on sys.path — the other suite then
+# silently tests the WRONG module. Load this one by explicit path under a unique
+# name so the suites can run together.
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "common"))
+_spec = _ilu.spec_from_file_location(
+    "_lme_harness", _Path(__file__).resolve().parent / "harness.py"
+)
+harness = _ilu.module_from_spec(_spec)
+_sys.modules["_lme_harness"] = harness
+_spec.loader.exec_module(harness)
 
 
 def test_answer_failure_raises_rather_than_faking_an_abstention() -> None:

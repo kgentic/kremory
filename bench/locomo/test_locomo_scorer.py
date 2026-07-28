@@ -18,7 +18,22 @@ from pathlib import Path
 
 import pytest
 
-import harness
+import importlib.util as _ilu
+import sys as _sys
+from pathlib import Path as _Path
+
+# Both bench harnesses are named `harness`, so a plain `import harness` binds to
+# whichever directory happens to be first on sys.path — the other suite then
+# silently tests the WRONG module. Load this one by explicit path under a unique
+# name so the suites can run together.
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "common"))
+_spec = _ilu.spec_from_file_location(
+    "_locomo_harness", _Path(__file__).resolve().parent / "harness.py"
+)
+harness = _ilu.module_from_spec(_spec)
+_sys.modules["_locomo_harness"] = harness
+_spec.loader.exec_module(harness)
 
 DATA = Path(__file__).parent / "data" / "locomo10.json"
 
@@ -94,3 +109,19 @@ def test_adversarial_gold_comes_from_the_adversarial_answer_field() -> None:
         assert str(q["answer"]).strip()
         with pytest.raises(ValueError):
             harness.check_answer_in_memories(q["answer"], ["some text"], q["category"])
+
+
+def test_shared_client_identity_is_not_shadowed() -> None:
+    """Both harnesses must use the SAME classes from bench/common.
+
+    Guards a bug introduced and caught during the 2026-07-28 de-fork: the
+    harness kept a local `class KremoryStalled` while the shared client raised
+    its own, producing two DISTINCT classes. `except KremoryStalled` then
+    silently stops catching a stalled ingest — the fail-fast path goes dead
+    while still looking present in the source. Identity, not just name.
+    """
+    import kremory_client
+
+    assert harness.CodememClient is kremory_client.CodememClient
+    assert harness.KremoryStalled is kremory_client.KremoryStalled
+    assert harness.INGEST_BUDGET_S == kremory_client.INGEST_BUDGET_S
