@@ -91,6 +91,8 @@ class CodememClient:
         # hybrid) — see Config.server_mode docstring above for why this is a
         # separate axis from --mode.
         self.server_mode = server_mode
+        # Raw wire rows from the most recent `recall()` — see the comment there.
+        self.last_results: list[dict] = []
         # kremory's POST /memories runs a SYNCHRONOUS 3-stage LLM extraction
         # pipeline (entities -> relations -> triplets, then per-entity
         # ResolutionVerdict dedup calls) on every store — this is not a
@@ -188,7 +190,17 @@ class CodememClient:
             },
         )
         if r.status_code == 200:
-            return r.json().get("results", [])
+            results = r.json().get("results", [])
+            # ADR-078 Phase A: stash the RAW wire rows so the caller can persist
+            # per-item provenance (`kind`, `source_episode_id` — TD-139's
+            # `SearchResultWire`) alongside the flattened content strings. The
+            # flattening below is lossy: it turns entity summaries, facts and
+            # verbatim episode turns into one anonymous list, which is exactly
+            # the format the answerer has always been fed. Keeping the kinds
+            # lets us test whether LABELLED context beats the flat blob.
+            self.last_results = results
+            return results
+        self.last_results = []
         self.total_http_errors += 1
         print(f"  [warn] recall failed ({r.status_code}): {r.text[:200]}", file=sys.stderr)
         return []
@@ -853,6 +865,21 @@ def run_benchmark(config: Config) -> dict:
                 # re-running recall. The strict substring scorer above only
                 # consumes len(memories); the judge needs the strings.
                 "recalled_memories": memories,
+                # TD-139 / ADR-078 Phase A: index-aligned with `recalled_memories`
+                # (only for the codemem paths, which flatten `client.last_results`
+                # one-for-one; empty for `baseline`/`graph` which build their own
+                # lists). `evidence_eval.py` already reads this field, and
+                # `qa_eval.py --structured` uses it to group the answerer's
+                # context into labelled blocks instead of one anonymous list.
+                "recalled_memory_provenance": (
+                    [
+                        {"kind": r.get("kind"), "source_episode_id": r.get("source_episode_id")}
+                        for r in client.last_results
+                        if r.get("content")
+                    ]
+                    if config.mode in ("codemem", "rag")
+                    else []
+                ),
                 "is_correct": is_correct,
                 "confidence": round(confidence, 4),
                 "explanation": explanation,

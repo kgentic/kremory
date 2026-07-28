@@ -187,14 +187,94 @@ def format_memories(memories: list[str]) -> str:
     return "\n\n".join(parts)
 
 
+# Wire `kind` values (`SearchResultKindWire`, kremory-http.rs) -> the section a
+# retrieved item belongs in. Order is deliberate: verbatim conversation LAST,
+# because it is the longest and the answerer is instructed to read to the end;
+# the distilled graph output goes first, as orientation.
+_SECTIONS = [
+    ("Fact", "STRUCTURED FACTS extracted from these conversations",
+     "Each line is a fact the memory system derived. Use them to orient, but "
+     "prefer the conversation excerpts below where they disagree."),
+    ("Entity", "ENTITY PROFILES",
+     "Short profiles of the people, places and things mentioned."),
+    ("Episode", "CONVERSATION EXCERPTS (verbatim, with inline dates)",
+     "The source dialogue. These carry the dates and the exact wording."),
+]
+
+
+def format_memories_structured(
+    memories: list[str],
+    provenance: list[dict] | None,
+) -> str:
+    """ADR-078 Phase A - group retrieved items by WHAT THEY ARE, rather than
+    flattening entity summaries, facts and verbatim turns into one anonymous list.
+
+    Why this exists: measured on conv0, adding the graph to retrieval moves
+    single-hop +15.6pt (entity lookup - the graph doing its job) but temporal
+    -8.1pt and multi-hop -7.7pt. Of the questions it flips right->wrong, **8 of 8
+    had the gold evidence present in context anyway** - so the loss is not
+    eviction, it is DILUTION: the model gets 20 undifferentiated items and must
+    work out for itself which are source text and which are derived summaries.
+
+    kremory already ships a structured renderer for exactly this
+    (`RecallTemplate::{Entities, EdgeSummary, TemporalFacts}` / `as_prompt_text`)
+    and no benchmark has ever used it. This is the cheap harness-side equivalent,
+    so the FORMAT can be A/B'd before anything is built.
+
+    Falls back to the flat format when provenance is absent or short, so any run
+    file without `recalled_memory_provenance` scores exactly as before.
+    """
+    if not memories:
+        return "(No relevant memories found)"
+    if not provenance or len(provenance) < len(memories):
+        return format_memories(memories)
+
+    buckets: dict[str, list[str]] = {}
+    for mem, prov in zip(memories, provenance):
+        kind = (prov or {}).get("kind") or "Episode"
+        buckets.setdefault(str(kind), []).append(mem)
+
+    known = {k for k, _, _ in _SECTIONS}
+    # Anything unrecognised joins the verbatim section rather than vanishing - a
+    # silently-dropped item would be a measurement bug, not a formatting choice.
+    for k in list(buckets):
+        if k not in known:
+            buckets.setdefault("Episode", []).extend(buckets.pop(k))
+
+    out: list[str] = [
+        "The following was retrieved from past conversations, grouped by what "
+        "each item IS. Read every section to the end:",
+    ]
+    for kind, title, blurb in _SECTIONS:
+        items = buckets.get(kind) or []
+        if not items:
+            continue
+        out.append(f"### {title}\n({blurb})")
+        for i, mem in enumerate(items, 1):
+            out.append(f"[{kind} {i}]\n{mem}")
+    return "\n\n".join(out)
+
+
 def build_answer_prompt(
     question: str,
     memories: list[str],
     reference_date: str = "2023",
+    provenance: list[dict] | None = None,
+    structured: bool = False,
 ) -> str:
-    """Fill the ported ANSWER_GENERATION_PROMPT for kremory string memories."""
+    """Fill the ported ANSWER_GENERATION_PROMPT for kremory string memories.
+
+    `structured=True` groups memories by wire `kind` (see
+    [`format_memories_structured`]); the default is byte-identical to the flat
+    format every published number was measured on.
+    """
+    rendered = (
+        format_memories_structured(memories, provenance)
+        if structured
+        else format_memories(memories)
+    )
     return ANSWER_GENERATION_PROMPT.format(
-        memories=format_memories(memories),
+        memories=rendered,
         question=question,
         reference_date=reference_date,
     )

@@ -197,6 +197,10 @@ def load_batch(path: Path) -> list[dict]:
             "sample_id": sample_id, "question_id": r["question_id"],
             "category": category, "question": r.get("question", ""),
             "gold": gold, "memories": memories,
+            # ADR-078 Phase A: index-aligned wire `kind` / `source_episode_id`
+            # (TD-139). Absent on every pre-2026-07-28 run file, in which case
+            # `--structured` degrades to the flat format rather than erroring.
+            "provenance": r.get("recalled_memory_provenance") or [],
         })
     if n_abstain or n_no_mem:
         print(f"[load] {len(batch)} answerable ({n_abstain} adversarial skipped, "
@@ -223,6 +227,23 @@ def _extract_answer(text: str) -> str:
 def cmd_answer_gen(a: argparse.Namespace) -> int:
     key = _load_api_key()
     batch = load_batch(a.input)
+    structured = getattr(a, "structured", False)
+    if structured:
+        # The cache key must include the CONTEXT FORMAT, or a structured run
+        # silently replays the flat run's cached answers and the A/B reads null.
+        # That is the same class of defect as a probe reporting a number it did
+        # not measure — make it impossible rather than remembering not to.
+        n_prov = sum(1 for b in batch if b.get("provenance"))
+        for b in batch:
+            b["key"] = f"{b['key']}|structured"
+        print(f"[answer-gen] STRUCTURED context: {n_prov}/{len(batch)} rows carry "
+              f"provenance", flush=True)
+        if n_prov == 0:
+            print("[answer-gen] ABORT: --structured requested but NO row carries "
+                  "`recalled_memory_provenance` — every prompt would silently fall "
+                  "back to the flat format and the A/B would measure nothing. "
+                  "Re-run the harness to capture provenance first.", file=sys.stderr)
+            return 2
     done = _load_done_keys(a.output) if a.resume else set()
     todo = [b for b in batch if b["key"] not in done]
     print(f"[answer-gen] {len(batch)} questions, {len(todo)} to do "
@@ -234,7 +255,9 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
     def work(b: dict) -> dict:
         mems = (b.get("memories") or [])[: a.k]
         prompt = prompts_qa.build_answer_prompt(
-            b["question"], mems, reference_date=a.reference_date)
+            b["question"], mems, reference_date=a.reference_date,
+            provenance=(b.get("provenance") or [])[: a.k],
+            structured=structured)
         content, ptok, ctok = _chat(key, a.model, "", prompt, max_tokens=a.max_tokens)
         return {"key": b["key"], "sample_id": b.get("sample_id", ""),
                 "question_id": b["question_id"], "category": b.get("category", ""),
@@ -358,6 +381,17 @@ def cmd_answer_tally(a: argparse.Namespace) -> int:
         if l.strip():
             v = json.loads(l)
             verdicts[v["key"]] = v
+    # `answer-gen --structured` suffixes its cache keys so the two context
+    # formats cannot share cached answers. The tally MUST apply the same suffix
+    # or every row is "unjudged" and the report prints 0.0% — which is what
+    # happened on this flag's first use (2026-07-28). Detected rather than
+    # declared: if none of the plain keys match but the suffixed ones do, use
+    # those, so the caller cannot get it wrong by forgetting a flag.
+    if verdicts and not any(b["key"] in verdicts for b in batch):
+        if any(f"{b['key']}|structured" in verdicts for b in batch):
+            for b in batch:
+                b["key"] = f"{b['key']}|structured"
+            print("[answer-tally] matched STRUCTURED verdict keys", file=sys.stderr)
 
     cats: dict[str, list[int]] = {}     # category -> [correct, total]
     unjudged, unparsed = [], 0
@@ -374,6 +408,19 @@ def cmd_answer_tally(a: argparse.Namespace) -> int:
             continue  # unparsed = not-correct (fail-loud, depresses the number)
         if v.get("correct"):
             row[0] += 1
+
+    # Instrument validation BEFORE any number is printed. A tally where most
+    # rows found no verdict has measured nothing, and MUST NOT render a score —
+    # an unmatched join and a genuinely-wrong system look identical on the
+    # output (0.0% across every category). Same defect class as a probe
+    # reporting 0.0% after its LLM calls all failed; both were real, same day.
+    if batch and len(unjudged) > len(batch) // 2:
+        print(f"\nABORT: {len(unjudged)}/{len(batch)} rows have NO matching verdict "
+              f"— this tally measured NOTHING and will not print a score.\n"
+              f"       The verdicts file almost certainly belongs to a different run, "
+              f"or was generated with a different --structured setting.\n"
+              f"       first unmatched: {unjudged[:3]}", file=sys.stderr)
+        return 2
 
     print("=" * 66)
     print(f"LoCoMo QA-GEN accuracy [HEADLINE] (answerer={a.answerer_label}, "
@@ -441,6 +488,10 @@ def main() -> int:
     g.add_argument("--max-tokens", type=int, default=1024)
     g.add_argument("--concurrency", type=int, default=8)
     g.add_argument("--keep-raw", action="store_true", help="store full CoT text")
+    g.add_argument("--structured", action="store_true",
+                   help="group the answerer's context by wire `kind` (facts / "
+                        "entities / conversation excerpts) instead of one flat "
+                        "list; requires `recalled_memory_provenance` on the run")
     g.add_argument("--no-resume", dest="resume", action="store_false")
     g.add_argument("--cache-dir", default="results/qa/.cache",
                    help="content-addressed response cache (VCR); replays identical calls for $0")

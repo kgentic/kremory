@@ -61,9 +61,31 @@
 //! `content-search` is compiled in — so `recall_mode_results` below (which
 //! calls `handlers::do_recall` → `.raw()`) is **no longer entity-graph-only**
 //! in a `content-search`-enabled build; it now collaterally receives the
-//! SAME fusion `mode=hybrid` does. `mode=recall` vs `mode=hybrid` therefore
-//! no longer differ when this bin is built with `content-search` — both
-//! reach the fused surface. This is a known, deliberate consequence of
+//! SAME fusion `mode=hybrid` does.
+//!
+//! ⚠️ **CORRECTED 2026-07-28 (ADR-078 / TD-153).** The sentence that used to
+//! stand here — *"`mode=recall` vs `mode=hybrid` therefore no longer differ
+//! when this bin is built with `content-search` — both reach the fused
+//! surface"* — is **FALSE, and was measured false**: conv0, same server, same
+//! DB, dense arm on, rerank off, explicit `?mode=`:
+//!
+//! | mode | recall@10 | nDCG@10 | hit |
+//! |---|---|---|---|
+//! | `recall` (what `Memory::recall().raw()` returns) | 77.2 | 63.7 | 83.2 |
+//! | `hybrid` | **82.1** | **69.3** | **87.9** |
+//!
+//! The premise was right and the conclusion did not follow: `recall` DOES now
+//! receive the substrate's `rrf_fuse_with_content`, but `hybrid_mode_results`
+//! then runs a **SECOND, independent `content_mode_results` pass** and
+//! `rrf_merge`s it on top of that already-fused list. So hybrid double-weights
+//! the content arm and adds a REST-depth BM25 pass the library never issues.
+//! Net effect: **the LIBRARY under-performs its own HTTP wrapper by 4.9
+//! recall@10** — and since the library is the product, that is backwards.
+//! Tracked as TD-153; do not treat the two modes as interchangeable, and note
+//! that any benchmark which omits `?mode=` is measuring HYBRID, not the
+//! library path (the LoCoMo harness did exactly this until 2026-07-28).
+//!
+//! This is a known, deliberate consequence of
 //! wiring fusion into the canonical facade terminal (the spec explicitly
 //! sanctions the default-behaviour change with no separate HITL), not an
 //! oversight — flagged here rather than silently left stale. Untangling the
@@ -451,16 +473,32 @@ async fn recall_mode_results(
             // `"ContentPassage"` one layer down. `fact_dense_enabled`
             // defaults `false`, so no live result carries this tag unless
             // the knob is on.
-            let is_fact = r.entity_type_name == "Fact";
+            //
+            // ADR-078 Phase A FIX (2026-07-28): `"ContentPassage"` was NOT
+            // mapped, so every content-arm hit on this path was reported as
+            // `kind: Entity` — i.e. a consumer was told that VERBATIM EPISODE
+            // TEXT is a derived entity summary. Measured on conv0: 3980 of 3980
+            // items across the top-20 came back `entity`, zero `episode`, on a
+            // fused path where most of the useful items ARE episode passages.
+            // `SearchResultKindWire::Episode` already existed and is documented
+            // as exactly this case; only the mapping was missing.
+            //
+            // Why it matters beyond tidiness: an agent cannot tell distilled
+            // summary from source text, so it cannot weight them differently.
+            // That is the mechanism behind the measured dilution — adding the
+            // graph moves single-hop +15.6pt but temporal -8.1pt, and of the
+            // questions it flips right->wrong, 8 of 8 had the gold evidence
+            // present in context anyway (RECALL-LEDGER §2quater).
+            let kind = match r.entity_type_name.as_str() {
+                "Fact" => SearchResultKindWire::Fact,
+                "ContentPassage" => SearchResultKindWire::Episode,
+                _ => SearchResultKindWire::Entity,
+            };
             SearchResultWire {
                 id: r.entity_id.clone(),
                 content: flatten_result_content(r),
                 score: r.score,
-                kind: if is_fact {
-                    SearchResultKindWire::Fact
-                } else {
-                    SearchResultKindWire::Entity
-                },
+                kind,
                 // The entity's connected facts each carry their OWN
                 // `source_episode_ids` (`RetrievedFactWire`, params.rs) but
                 // that provenance is discarded by `flatten_result_content`'s
@@ -474,7 +512,7 @@ async fn recall_mode_results(
                 // `SourceKind::Episode` ref stamped by
                 // `fact_hit_into_retrieved_context`) carries its provenance —
                 // recover it here.
-                source_episode_id: if is_fact {
+                source_episode_id: if kind == SearchResultKindWire::Fact {
                     r.source_refs
                         .iter()
                         .find(|sr| sr.kind == "episode")
@@ -1480,16 +1518,25 @@ mod tests {
                 r["score"].as_f64().is_some(),
                 "result.score must be numeric: {r}"
             );
-            // TD-139 measurement prerequisite: `mode=recall` items are
-            // ENTITY-kind with no per-fact episode provenance (the
-            // connected facts' own `source_episode_ids` are discarded by
-            // `flatten_result_content`'s join — see doc comment on
-            // `SearchResultWire::source_episode_id`). No live arm emits
-            // `kind: "fact"` yet.
-            assert_eq!(
-                r["kind"].as_str(),
-                Some("entity"),
-                "mode=recall result.kind must be \"entity\": {r}"
+            // TD-139: `mode=recall` items carry no per-fact episode provenance
+            // (the connected facts' own `source_episode_ids` are discarded by
+            // `flatten_result_content`'s join — see the doc comment on
+            // `SearchResultWire::source_episode_id`).
+            //
+            // ⚠️ AMENDED 2026-07-28 (ADR-078 / TD-154). This previously asserted
+            // `kind == "entity"` for EVERY `mode=recall` item — which **encoded
+            // the bug as the contract**. In a `content-search` build the fused
+            // recall path also returns content passages, and one of them
+            // (`"Episode #2: Zephyrine wrote the first algorithm"`) was being
+            // reported as an `entity`. The mapper simply never matched
+            // `"ContentPassage"`. The correct invariant is not "everything is an
+            // entity" — it is "nothing on this path is a FACT unless the
+            // dense-fact arm is on", which the sibling tests
+            // `http_search_fact_dense_arm_{off,on}_*` already pin.
+            assert!(
+                matches!(r["kind"].as_str(), Some("entity") | Some("episode")),
+                "mode=recall result.kind must be entity or episode (never fact with \
+                 the dense-fact arm off): {r}"
             );
             assert!(
                 r["source_episode_id"].is_null(),
@@ -1673,6 +1720,60 @@ mod tests {
     /// asserts a passage carrying the pinned subject's snippet comes back
     /// through the SAME `{id, content, score}` wire contract `mode=recall`
     /// uses.
+    /// ADR-078 Phase A regression: on the FUSED recall path, a content-derived
+    /// item must be reported as `kind: episode`, not `entity`.
+    ///
+    /// `recall_mode_results` matched only `entity_type_name == "Fact"` and
+    /// defaulted everything else to `Entity`, while `core::search` tags a fused
+    /// content passage `"ContentPassage"` (`search.rs:1995`) and
+    /// `SearchResultKindWire::Episode` is documented as exactly that case. The
+    /// mapping was simply missing, so a consumer was told VERBATIM EPISODE TEXT
+    /// is a derived entity summary. Measured on conv0 before the fix: 3980 of
+    /// 3980 items across the top-20 came back `entity`, zero `episode`.
+    ///
+    /// This drives the real HTTP path end-to-end rather than calling the mapper
+    /// with a hand-built `RetrievedContext` — a pure-function test would assert
+    /// the arithmetic of a mapping while remaining blind to whether the fused
+    /// path reaches it at all (the TD-140 failure mode).
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_recall_mode_labels_content_items_as_episode() {
+        let mem = mock_memory().await;
+        let router = build_router(AppState {
+            mem: mem.clone(),
+            rrf_k: 60,
+        });
+        let ns = "ns-http-kind-fix";
+
+        pin_fact(&mem, ns, "Zephyrine").await;
+
+        // `mode=recall` (NOT `mode=content`) — the fused path the library's own
+        // `recall()` uses and the one every benchmark measures.
+        let search = Request::builder()
+            .method("GET")
+            .uri(format!("/search?q=Zephyrine&namespace={ns}&k=10&mode=recall"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(search).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let results = json["results"].as_array().expect("results array");
+        assert!(!results.is_empty(), "expected fused results: {json}");
+
+        let kinds: Vec<&str> = results.iter().filter_map(|r| r["kind"].as_str()).collect();
+        assert_eq!(
+            kinds.len(),
+            results.len(),
+            "every result must carry a `kind`: {json}"
+        );
+        assert!(
+            kinds.contains(&"episode"),
+            "the fused recall path must label content-derived items `episode`, not \
+             collapse everything to `entity` — a consumer cannot otherwise tell \
+             verbatim source text from a derived summary. got kinds={kinds:?}: {json}"
+        );
+    }
+
     #[cfg(feature = "content-search")]
     #[tokio::test]
     async fn http_search_mode_content_returns_bm25_passage() {
