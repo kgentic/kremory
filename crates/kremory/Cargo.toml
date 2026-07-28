@@ -111,7 +111,15 @@ content-search = []
 # HF-Hub-download dependency surface (and its network/disk footprint) out of
 # builds that never use reranking, mirroring the `ner`/`embeddings` gating
 # convention above.
-rerank = ["dep:fastembed"]
+# `dep:ort` added 2026-07-28 (reranker latency lever 2, execution-provider
+# spike): `core::rerank` constructs `ort::ep::CoreML::default().build()`
+# directly — fastembed re-exports only `ort::execution_providers::
+# ExecutionProviderDispatch` (the RESULT type), not the `ort::ep` EP builders
+# themselves, so kremory needs its own activated `ort` dependency to build
+# one. Same pinned version fastembed already uses (`=2.0.0-rc.12`) — no new
+# version, no conflict; `ort`'s own `features = ["ndarray"]` in this Cargo.toml
+# is unconditional regardless of which feature activates `dep:ort`.
+rerank = ["dep:fastembed", "dep:ort"]
 
 [lib]
 name = "kremory"
@@ -182,7 +190,16 @@ unicode-segmentation = "1.11"
 dashmap = "6"
 # LRU cache for NamespacePolicyCache (ADR-029b Decision 4)
 lru = "0.12"
-ort = { version = "=2.0.0-rc.12", features = ["ndarray"], optional = true }
+# `coreml` added 2026-07-28 (reranker latency lever 2, execution-provider
+# spike): required for `ort::ep::CoreML` to actually REGISTER at runtime —
+# verified empirically that without it, `SessionBuilder::with_execution_providers`
+# logs `ort::ep WARN: Couldn't register CoreMLExecutionProvider: ... its
+# corresponding Cargo feature is not enabled` and silently falls back to CPU
+# (never errors the session — same fallback-chain behaviour either way, this
+# feature just makes the CoreML arm of `KREMORY_RERANK_EXECUTION_PROVIDER`
+# non-dead). `ort`'s prebuilt downloaded ONNX Runtime dylib already bundles
+# CoreML support on macOS; this feature only unlocks the Rust-side call.
+ort = { version = "=2.0.0-rc.12", features = ["ndarray", "coreml"], optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.23", optional = true }
 hf-hub = { version = "0.5", optional = true }

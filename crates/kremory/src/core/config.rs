@@ -380,6 +380,25 @@ pub struct SearchConfig {
     /// (`facade::providers::search_env_overrides`), mirroring
     /// `episode_dense_enabled`'s `KREMORY_EPISODE_DENSE`.
     pub embed_task_prefix_enabled: bool,
+
+    /// Reranker latency lever 1 (`.ai-docs/tech-debt/` cross-encoder latency
+    /// spike, 2026-07-28): caps the SUMMARY portion of each rerank candidate's
+    /// text (`entity_name + " " + summary`, `facade::recall::apply_rerank_with`)
+    /// at this many `char`s before it is handed to the cross-encoder.
+    /// `entity_name` is never truncated. **Default `0` = unlimited (today's
+    /// behaviour, byte-identical)** — a content-fused candidate's `summary` can
+    /// carry the FULL episode body, and BGE-reranker-base's own tokenizer caps
+    /// at 512 tokens, so anything beyond that is silently truncated by the
+    /// tokenizer today anyway; this knob truncates on a cheap `char` boundary
+    /// BEFORE tokenization, which is the measured majority of reranker latency
+    /// (attention cost grows ~quadratically with sequence length). Truncation
+    /// is on a Unicode scalar-value boundary (`str::chars`), never a byte
+    /// index, so it cannot panic or produce invalid UTF-8 on multi-byte input.
+    /// Wired from the `KREMORY_RERANK_CANDIDATE_MAX_CHARS` boot override
+    /// (`facade::providers::search_env_overrides`), mirroring `rrf_k`'s
+    /// `KREMORY_RRF_K`, so a truncation-length sweep costs a restart, not a
+    /// rebuild.
+    pub rerank_candidate_max_chars: usize,
 }
 
 impl Default for SearchConfig {
@@ -418,6 +437,10 @@ impl Default for SearchConfig {
             // bare text, byte-identical to pre-TD-143, until KREMORY_EMBED_TASK_PREFIX
             // flips it on (and the corpus has been re-embedded to match).
             embed_task_prefix_enabled: false,
+            // Reranker latency lever 1 — 0 = unlimited (today's behaviour,
+            // byte-identical) until KREMORY_RERANK_CANDIDATE_MAX_CHARS /
+            // with_rerank_candidate_max_chars sets a positive cap.
+            rerank_candidate_max_chars: 0,
         }
     }
 }
@@ -463,6 +486,9 @@ pub(crate) struct SearchConfigOverrides {
     /// `expansion_hop_bound`/`expansion_fan_out_cap`'s own precedent (only
     /// the weight is the A/B lever that needs a restart-not-rebuild seam).
     pub proximity_weight: Option<f32>,
+    /// Explicit override for [`SearchConfig::rerank_candidate_max_chars`]
+    /// (reranker latency lever 1).
+    pub rerank_candidate_max_chars: Option<usize>,
 }
 
 impl SearchConfigOverrides {
@@ -493,6 +519,9 @@ impl SearchConfigOverrides {
         }
         if let Some(v) = self.proximity_weight {
             builder = builder.proximity_weight(v);
+        }
+        if let Some(v) = self.rerank_candidate_max_chars {
+            builder = builder.rerank_candidate_max_chars(v);
         }
         builder
     }
@@ -813,6 +842,16 @@ impl PipelineConfigBuilder {
         self
     }
 
+    /// Reranker latency lever 1: cap the SUMMARY portion of each rerank
+    /// candidate at `v` chars. Default `0` (unlimited, byte-identical).
+    /// Wired from the `KREMORY_RERANK_CANDIDATE_MAX_CHARS` env override at
+    /// server boot (`facade::providers::search_env_overrides`) so a
+    /// truncation-length sweep costs a restart, not a rebuild.
+    pub fn rerank_candidate_max_chars(mut self, v: usize) -> Self {
+        self.inner.search.rerank_candidate_max_chars = v;
+        self
+    }
+
     // ── Ontology ─────────────────────────────────────────────────────────────
 
     pub fn allowed_entity_types(mut self, v: Vec<String>) -> Self {
@@ -989,6 +1028,26 @@ mod tests {
             .search;
         assert_eq!(tuned.content_stream_weight, 2.5);
         assert_eq!(tuned.rrf_k, 1);
+    }
+
+    /// Reranker latency lever 1 — `0` (unlimited) is the default, byte-
+    /// identical to pre-lever behaviour, and the builder setter reaches the
+    /// live `SearchConfig`.
+    #[test]
+    fn rerank_candidate_max_chars_defaults_to_zero_unlimited() {
+        assert_eq!(
+            SearchConfig::default().rerank_candidate_max_chars,
+            0,
+            "default must stay 0 (unlimited, byte-identical pre-lever)"
+        );
+        let built = PipelineConfig::builder().build().unwrap().search;
+        assert_eq!(built.rerank_candidate_max_chars, 0);
+        let tuned = PipelineConfig::builder()
+            .rerank_candidate_max_chars(512)
+            .build()
+            .unwrap()
+            .search;
+        assert_eq!(tuned.rerank_candidate_max_chars, 512);
     }
 
     /// ADR-062 / ADR-067 Phase 3 — proximity ships OFF by default (byte-

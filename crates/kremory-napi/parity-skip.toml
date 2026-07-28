@@ -391,6 +391,11 @@ symbol = "MemoryBuilder::with_proximity_weight"
 reason = "ADR-062 / ADR-067 Phase 3: new per-knob SearchConfig override setter (axis-C graph-proximity boost A/B). Same rationale as with_embed_task_prefix_enabled — Tier-2 builder wiring deferred per ADR-030 Form B."
 revisit = "v0.2.0"
 
+[[skip]]
+symbol = "MemoryBuilder::with_rerank_candidate_max_chars"
+reason = "Reranker latency lever 1 (cross-encoder candidate-text truncation spike, 2026-07-28): new per-knob SearchConfig override setter. Same rationale as with_proximity_weight — Tier-2 builder wiring deferred per ADR-030 Form B."
+revisit = "v0.2.0"
+
 # ── B9 substrate gaps ─────────────────────────────────────────────────────────
 #
 # JsRecallOptions.sourceIdIn / sourceIdPrefix are specified in the B9 spec but

@@ -110,6 +110,63 @@ pub(crate) fn parse_reranker_model(raw: Option<&str>) -> fastembed::RerankerMode
     }
 }
 
+/// Reranker latency lever 2 (cross-encoder execution-provider spike,
+/// 2026-07-28): which ONNX Runtime execution provider `FastEmbedReranker`
+/// requests via `fastembed::RerankInitOptions::with_execution_providers`.
+/// `Cpu` (the default) is a total no-op — an EMPTY `execution_providers`
+/// Vec, byte-identical to pre-lever behaviour (`ort` defaults to CPU-only
+/// when the Vec is empty).
+///
+/// ⚠️ `CoreMl` is a MEASURED NEGATIVE RESULT — kept as an explicit opt-in,
+/// NOT recommended. It requests Apple's CoreML EP (`ort::ep::CoreML`).
+/// Per-OP fallback to CPU is real (an unsupported op does not error the
+/// session), but that is NOT the failure mode observed here: on this BGE
+/// reranker session, CoreML registration succeeds and ONNX Runtime
+/// partitions the graph into 30+ separate small CoreML sub-models (many
+/// `ort::logging: Writing CoreML Model to ...mlmodel` lines per session
+/// init) — classic excessive-partitioning pathology for BERT-class encoders
+/// under ORT's default "arbitrary" CoreML registration. Empirically this
+/// ballooned RSS from the CPU path's ~340MB to 7GB+ and a single rerank
+/// call never completed within 60s (one run's server process was killed —
+/// almost certainly OOM — after 89s with no response). Verified NOT a
+/// system-memory-pressure artifact (18GB free at the time) and reproduced
+/// twice. Do not default this on; do not assume "registers cleanly" implies
+/// "runs fast" — the aggregate session-level behaviour can be catastrophic
+/// even when no single op registration hard-errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RerankExecutionProvider {
+    /// Default — no execution providers registered, `ort` runs CPU-only.
+    Cpu,
+    /// Apple CoreML EP (`ort::ep::CoreML`).
+    CoreMl,
+}
+
+/// Resolves [`RerankExecutionProvider`] from the
+/// `KREMORY_RERANK_EXECUTION_PROVIDER` boot override. Default `Cpu` —
+/// byte-identical to pre-lever behaviour when unset. Fail-loud on an
+/// unrecognised value (WARN + default), mirroring [`parse_reranker_model`]'s
+/// own discipline — a benchmark that silently ran on a different EP than its
+/// provenance stamp claims is exactly the measurement corruption CLAUDE.md
+/// Rule 36 exists to prevent. Pure fn so it is unit-testable without a model
+/// load, per the `parse_reranker_model` precedent.
+pub(crate) fn parse_rerank_execution_provider(raw: Option<&str>) -> RerankExecutionProvider {
+    let Some(raw) = raw else {
+        return RerankExecutionProvider::Cpu;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "cpu" => RerankExecutionProvider::Cpu,
+        "coreml" | "core-ml" | "core_ml" => RerankExecutionProvider::CoreMl,
+        other => {
+            tracing::warn!(
+                value = %other,
+                "KREMORY_RERANK_EXECUTION_PROVIDER is not a recognised execution provider — \
+                 falling back to cpu. Valid: cpu | coreml"
+            );
+            RerankExecutionProvider::Cpu
+        }
+    }
+}
+
 /// Default `Reranker` impl wrapping `fastembed::TextRerank` (BGE reranker
 /// base model by default; see [`parse_reranker_model`] for the
 /// `KREMORY_RERANK_MODEL` sweep override).
@@ -141,16 +198,40 @@ impl FastEmbedReranker {
                 // Hub download on first-ever run, ONNX session build always) —
                 // run it off the async runtime's worker threads so a cold
                 // model load doesn't stall other in-flight recalls.
-                // Read the override BEFORE `spawn_blocking` so the chosen model
-                // is observable in the log line below even if the load fails.
+                // Read the overrides BEFORE `spawn_blocking` so the chosen
+                // model + execution provider are observable in the log line
+                // below even if the load fails.
                 let chosen =
                     parse_reranker_model(std::env::var("KREMORY_RERANK_MODEL").ok().as_deref());
+                let execution_provider = parse_rerank_execution_provider(
+                    std::env::var("KREMORY_RERANK_EXECUTION_PROVIDER")
+                        .ok()
+                        .as_deref(),
+                );
                 tracing::info!(
                     reranker_model = ?chosen,
-                    "kremory.rerank.model_selected (KREMORY_RERANK_MODEL; default bge-base)"
+                    execution_provider = ?execution_provider,
+                    "kremory.rerank.model_selected (KREMORY_RERANK_MODEL; default bge-base) / \
+                     kremory.rerank.execution_provider_selected \
+                     (KREMORY_RERANK_EXECUTION_PROVIDER; default cpu)"
                 );
                 let init_result = tokio::task::spawn_blocking(move || {
-                    fastembed::TextRerank::try_new(fastembed::RerankInitOptions::new(chosen))
+                    // Lever 2 (2026-07-28): `Cpu` passes an EMPTY Vec — `ort`'s
+                    // own default when `RerankInitOptions::new` isn't given
+                    // `.with_execution_providers(..)` — so this branch is
+                    // byte-identical to pre-lever behaviour. `CoreMl` requests
+                    // `ort::ep::CoreML` — MEASURED NEGATIVE (see
+                    // `RerankExecutionProvider` doc comment above): this is a
+                    // real opt-in knob, not a safe-by-construction one.
+                    let init_options = match execution_provider {
+                        RerankExecutionProvider::Cpu => fastembed::RerankInitOptions::new(chosen),
+                        RerankExecutionProvider::CoreMl => {
+                            fastembed::RerankInitOptions::new(chosen).with_execution_providers(
+                                vec![ort::ep::CoreML::default().build()],
+                            )
+                        }
+                    };
+                    fastembed::TextRerank::try_new(init_options)
                 })
                 .await;
                 let elapsed_secs = start.elapsed().as_secs_f64();
@@ -278,6 +359,57 @@ mod tests {
         assert_eq!(
             parse_reranker_model(Some("cohere-rerank-v3")),
             fastembed::RerankerModel::BGERerankerBase
+        );
+    }
+
+    /// Reranker latency lever 2 — `KREMORY_RERANK_EXECUTION_PROVIDER`
+    /// resolution. Unset/empty/`cpu` all resolving to `Cpu` is the load-
+    /// bearing assertion (mirrors `parse_reranker_model_defaults_and_
+    /// resolves_each_alias`): it pins that the override is byte-identical to
+    /// pre-override behaviour unless deliberately set to `coreml`.
+    #[test]
+    fn parse_rerank_execution_provider_defaults_and_resolves_each_alias() {
+        assert_eq!(
+            parse_rerank_execution_provider(None),
+            RerankExecutionProvider::Cpu,
+            "unset"
+        );
+        assert_eq!(
+            parse_rerank_execution_provider(Some("")),
+            RerankExecutionProvider::Cpu,
+            "empty"
+        );
+        assert_eq!(
+            parse_rerank_execution_provider(Some("cpu")),
+            RerankExecutionProvider::Cpu
+        );
+        assert_eq!(
+            parse_rerank_execution_provider(Some("coreml")),
+            RerankExecutionProvider::CoreMl
+        );
+        assert_eq!(
+            parse_rerank_execution_provider(Some("core-ml")),
+            RerankExecutionProvider::CoreMl
+        );
+        assert_eq!(
+            parse_rerank_execution_provider(Some("core_ml")),
+            RerankExecutionProvider::CoreMl
+        );
+        // Case- and whitespace-insensitive, matching parse_reranker_model.
+        assert_eq!(
+            parse_rerank_execution_provider(Some("  CoreML  ")),
+            RerankExecutionProvider::CoreMl
+        );
+    }
+
+    /// An unrecognised value falls back to `Cpu` LOUDLY (a WARN is emitted
+    /// alongside) rather than erroring the whole recall — mirrors
+    /// `parse_reranker_model_unknown_value_falls_back_to_default`.
+    #[test]
+    fn parse_rerank_execution_provider_unknown_value_falls_back_to_cpu() {
+        assert_eq!(
+            parse_rerank_execution_provider(Some("tensorrt")),
+            RerankExecutionProvider::Cpu
         );
     }
 

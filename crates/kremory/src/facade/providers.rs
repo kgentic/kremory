@@ -432,6 +432,7 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
 /// - `KREMORY_CONTENT_WEIGHT` (f32)  → `SearchConfig::content_stream_weight`
 /// - `KREMORY_RRF_K` (usize)         → `SearchConfig::rrf_k`
 /// - `KREMORY_PROXIMITY_WEIGHT` (f32) → `SearchConfig::proximity_weight` (ADR-062 / ADR-067 Phase 3)
+/// - `KREMORY_RERANK_CANDIDATE_MAX_CHARS` (usize) → `SearchConfig::rerank_candidate_max_chars` (reranker latency lever 1)
 ///
 /// Absent env → defaults preserved (byte-identical, DoD #1). **Fail-loud**
 /// (Rule 21 / observability-at-write-time): a malformed value is WARN-logged +
@@ -597,6 +598,27 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
                 value = %raw,
                 error = %e,
                 "KREMORY_PROXIMITY_HOP_BOUND is not a valid u32 — ignoring (default retained)"
+            ),
+        }
+    }
+    // Reranker latency lever 1 — cap the SUMMARY portion of each rerank
+    // candidate's text (`SearchConfig::rerank_candidate_max_chars`). Absent
+    // env / `0` → unlimited (default, byte-identical). Same parse/fail-loud
+    // discipline as KREMORY_RRF_K above (a usize, not a boolean).
+    if let Ok(raw) = std::env::var("KREMORY_RERANK_CANDIDATE_MAX_CHARS") {
+        match raw.trim().parse::<usize>() {
+            Ok(v) => {
+                tracing::info!(
+                    rerank_candidate_max_chars = v,
+                    "KREMORY_RERANK_CANDIDATE_MAX_CHARS override applied to SearchConfig"
+                );
+                b = b.rerank_candidate_max_chars(v);
+            }
+            Err(e) => tracing::warn!(
+                value = %raw,
+                error = %e,
+                "KREMORY_RERANK_CANDIDATE_MAX_CHARS is not a valid usize — ignoring \
+                 (default 0/unlimited retained)"
             ),
         }
     }
@@ -1104,5 +1126,39 @@ mod search_env_override_tests {
 
         std::env::remove_var("KREMORY_CONTENT_WEIGHT");
         std::env::remove_var("KREMORY_RRF_K");
+    }
+
+    /// Reranker latency lever 1 — same default/apply/fail-loud sequencing as
+    /// `search_env_overrides_apply_default_and_failloud` above, for
+    /// `KREMORY_RERANK_CANDIDATE_MAX_CHARS`.
+    #[test]
+    fn search_env_overrides_rerank_candidate_max_chars() {
+        std::env::remove_var("KREMORY_RERANK_CANDIDATE_MAX_CHARS");
+        let default_cfg = search_env_overrides(PipelineConfig::builder())
+            .build()
+            .expect("default config builds");
+        assert_eq!(default_cfg.search.rerank_candidate_max_chars, 0);
+
+        std::env::set_var("KREMORY_RERANK_CANDIDATE_MAX_CHARS", "512");
+        let over_cfg = search_env_overrides(PipelineConfig::builder())
+            .build()
+            .expect("override config builds");
+        assert_eq!(
+            over_cfg.search.rerank_candidate_max_chars, 512,
+            "KREMORY_RERANK_CANDIDATE_MAX_CHARS=512 must reach \
+             SearchConfig.rerank_candidate_max_chars"
+        );
+
+        // Malformed → fail-loud ignore (default retained), never panics.
+        std::env::set_var("KREMORY_RERANK_CANDIDATE_MAX_CHARS", "not-a-usize");
+        let bad_cfg = search_env_overrides(PipelineConfig::builder())
+            .build()
+            .expect("garbage-env config still builds");
+        assert_eq!(
+            bad_cfg.search.rerank_candidate_max_chars, 0,
+            "garbage KREMORY_RERANK_CANDIDATE_MAX_CHARS must be ignored, default 0 retained"
+        );
+
+        std::env::remove_var("KREMORY_RERANK_CANDIDATE_MAX_CHARS");
     }
 }

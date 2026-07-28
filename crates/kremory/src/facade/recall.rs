@@ -460,6 +460,12 @@ struct ApplyRerankParams<'a> {
     query: &'a str,
     rerank_k: Option<usize>,
     results: Vec<RetrievedContext>,
+    /// Reranker latency lever 1 (`SearchConfig::rerank_candidate_max_chars`):
+    /// caps the SUMMARY portion of each candidate at this many `char`s. `0` =
+    /// unlimited (today's behaviour). Read from the live `SearchConfig` at
+    /// each call site (`Memory::search_config()`), mirroring how `rerank_k`
+    /// itself threads through.
+    rerank_candidate_max_chars: usize,
 }
 
 /// Reranks the top-`rerank_k` of `results` (already fused by Increment 1/2)
@@ -480,6 +486,7 @@ async fn apply_rerank(params: ApplyRerankParams<'_>) -> Result<Vec<RetrievedCont
         query,
         rerank_k,
         results,
+        rerank_candidate_max_chars,
     } = params;
     let reranker = crate::core::rerank::default_reranker();
     apply_rerank_with(ApplyRerankWithParams {
@@ -487,6 +494,7 @@ async fn apply_rerank(params: ApplyRerankParams<'_>) -> Result<Vec<RetrievedCont
         query,
         rerank_k,
         results,
+        rerank_candidate_max_chars,
     })
     .await
 }
@@ -499,6 +507,79 @@ struct ApplyRerankWithParams<'a> {
     query: &'a str,
     rerank_k: Option<usize>,
     results: Vec<RetrievedContext>,
+    /// See [`ApplyRerankParams::rerank_candidate_max_chars`].
+    rerank_candidate_max_chars: usize,
+}
+
+/// Builds a rerank candidate's text: `entity_name` (never truncated) + a
+/// single space + `summary`, with `summary` capped at `max_chars` `char`s
+/// (reranker latency lever 1, `SearchConfig::rerank_candidate_max_chars`).
+/// `max_chars == 0` means unlimited (today's behaviour, byte-identical).
+///
+/// Truncates on a Unicode scalar-value boundary via [`str::chars`] — never a
+/// byte index — so it cannot split a multi-byte UTF-8 character or panic.
+#[cfg(feature = "rerank")]
+fn build_rerank_candidate_text(entity_name: &str, summary: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return format!("{entity_name} {summary}");
+    }
+    let truncated_summary: String = summary.chars().take(max_chars).collect();
+    format!("{entity_name} {truncated_summary}")
+}
+
+#[cfg(all(test, feature = "rerank"))]
+mod rerank_candidate_truncation_tests {
+    use super::build_rerank_candidate_text;
+
+    /// `0` (the `SearchConfig::rerank_candidate_max_chars` default) must stay
+    /// byte-identical to the pre-lever `format!("{} {}", name, summary)` —
+    /// the whole point of the default being `0`.
+    #[test]
+    fn zero_max_chars_is_unlimited_and_byte_identical() {
+        let long_summary = "word ".repeat(1000);
+        let text = build_rerank_candidate_text("Alice", &long_summary, 0);
+        assert_eq!(text, format!("Alice {long_summary}"));
+    }
+
+    #[test]
+    fn positive_max_chars_truncates_summary_only() {
+        let text = build_rerank_candidate_text("Alice", "hello world this is long", 5);
+        assert_eq!(
+            text, "Alice hello",
+            "entity_name must survive intact; summary caps at 5 chars"
+        );
+    }
+
+    #[test]
+    fn max_chars_larger_than_summary_is_a_no_op() {
+        let text = build_rerank_candidate_text("Alice", "short", 500);
+        assert_eq!(text, "Alice short");
+    }
+
+    /// UTF-8 safety: `char`-based truncation must never split a multi-byte
+    /// scalar value or panic, unlike a byte-index slice (`&s[..n]`) would on
+    /// non-ASCII input.
+    #[test]
+    fn truncation_is_utf8_boundary_safe_on_multibyte_chars() {
+        // Each of 🎉 (U+1F389) and 日 (U+65E5) is a single `char` but spans
+        // multiple UTF-8 bytes (4 and 3 respectively) — a byte-index slice at
+        // an arbitrary offset would panic or produce invalid UTF-8 here.
+        let summary = "🎉🎉🎉日本語のテスト";
+        let text = build_rerank_candidate_text("Bob", summary, 3);
+        assert_eq!(text, "Bob 🎉🎉🎉", "must cut on a whole-char boundary");
+        // Also prove it never panics across every prefix length.
+        for n in 0..=summary.chars().count() + 2 {
+            let _ = build_rerank_candidate_text("Bob", summary, n);
+        }
+    }
+
+    #[test]
+    fn empty_summary_and_zero_cap_both_produce_trailing_space() {
+        // Documents existing (pre-lever) behaviour: the join is unconditional
+        // `"{name} {summary}"`, so an empty summary still yields a trailing space.
+        assert_eq!(build_rerank_candidate_text("Alice", "", 0), "Alice ");
+        assert_eq!(build_rerank_candidate_text("Alice", "", 10), "Alice ");
+    }
 }
 
 /// The actual reorder logic, parameterised over `&dyn Reranker` so the fast
@@ -515,6 +596,7 @@ async fn apply_rerank_with(params: ApplyRerankWithParams<'_>) -> Result<Vec<Retr
         query,
         rerank_k,
         results,
+        rerank_candidate_max_chars,
     } = params;
 
     let Some(k) = rerank_k else {
@@ -543,13 +625,22 @@ async fn apply_rerank_with(params: ApplyRerankWithParams<'_>) -> Result<Vec<Retr
     // (`content_passage_into_retrieved_context`); for entity-only entries
     // it's the recall-time entity summary. Good-enough v1 candidate text;
     // not spec-mandated to be more elaborate.
+    //
+    // Latency lever 1 — `rerank_candidate_max_chars` caps the `summary`
+    // portion (see `build_rerank_candidate_text`); `0` is a total no-op
+    // (byte-identical `format!` above). Always-on char-length histogram
+    // (Rule 19 / observability-first-class) records what actually reaches
+    // the cross-encoder BEFORE any truncation, so `p50`/`p95`/`max` are
+    // observable from a live server's `/metrics` regardless of whether this
+    // knob is enabled — the measurement this knob's own tuning depends on.
     let candidates: Vec<(String, String)> = head
         .iter()
         .map(|ctx| {
-            (
-                ctx.entity_id.clone(),
-                format!("{} {}", ctx.entity_name, ctx.summary),
-            )
+            let text =
+                build_rerank_candidate_text(&ctx.entity_name, &ctx.summary, rerank_candidate_max_chars);
+            metrics::histogram!("kremory.rerank.candidate_char_len")
+                .record(text.chars().count() as f64);
+            (ctx.entity_id.clone(), text)
         })
         .collect();
     let original_rank: HashMap<String, usize> = head
@@ -625,15 +716,18 @@ async fn apply_rerank(params: ApplyRerankParams<'_>) -> Result<Vec<RetrievedCont
         query,
         rerank_k,
         results,
+        rerank_candidate_max_chars,
     } = params;
     if rerank_k.is_some() {
         metrics::counter!("kremory.rerank.feature_off_total").increment(1);
-        // `query` genuinely used here (not just discarded) — gives a caller
-        // wondering why `rerank_k` had no effect the query context to
-        // correlate against, rather than an unused-field `#[allow(dead_code)]`
-        // band-aid on a field the `rerank`-on build DOES read.
+        // `query` + `rerank_candidate_max_chars` genuinely used here (not just
+        // discarded) — gives a caller wondering why `rerank_k` had no effect
+        // the query context to correlate against, rather than an unused-field
+        // `#[allow(dead_code)]` band-aid on fields the `rerank`-on build DOES
+        // read.
         tracing::debug!(
             query,
+            rerank_candidate_max_chars,
             "kremory.rerank requested via rerank_k but the 'rerank' Cargo \
              feature is not compiled in — no-op"
         );
@@ -989,6 +1083,7 @@ impl<'a> RecallRequest<'a> {
             query: &self.query,
             rerank_k,
             results,
+            rerank_candidate_max_chars: self.memory.search_config().rerank_candidate_max_chars,
         })
         .await?;
         Ok(memory::context_block(&results, template.into()))
@@ -1266,6 +1361,7 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
                 query: &inner.query,
                 rerank_k,
                 results: filtered,
+                rerank_candidate_max_chars: inner.memory.search_config().rerank_candidate_max_chars,
             })
             .await?;
             Ok(filtered)
@@ -2001,6 +2097,7 @@ mod apply_rerank_tests {
             query: "query",
             rerank_k: None,
             results: results.clone(),
+            rerank_candidate_max_chars: 0,
         })
         .await
         .unwrap();
@@ -2034,6 +2131,7 @@ mod apply_rerank_tests {
             query: "query",
             rerank_k: Some(3),
             results,
+            rerank_candidate_max_chars: 0,
         })
         .await
         .unwrap();
@@ -2063,6 +2161,7 @@ mod apply_rerank_tests {
             query: "query",
             rerank_k: Some(1),
             results,
+            rerank_candidate_max_chars: 0,
         })
         .await
         .unwrap();
@@ -2087,6 +2186,7 @@ mod apply_rerank_tests {
             query: "query",
             rerank_k: Some(5),
             results,
+            rerank_candidate_max_chars: 0,
         })
         .await
         .unwrap();
@@ -2102,6 +2202,7 @@ mod apply_rerank_tests {
             query: "query",
             rerank_k: Some(2),
             results,
+            rerank_candidate_max_chars: 0,
         })
         .await
         .expect("a reranker error must fail OPEN, not propagate Err");
@@ -2156,6 +2257,7 @@ mod apply_rerank_tests {
             query: "query",
             rerank_k: Some(4),
             results,
+            rerank_candidate_max_chars: 0,
         })
         .await
         .unwrap();
@@ -2203,6 +2305,7 @@ mod apply_rerank_tests {
             query: "query",
             rerank_k: Some(2),
             results,
+            rerank_candidate_max_chars: 0,
         })
         .await
         .unwrap();
