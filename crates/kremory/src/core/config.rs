@@ -486,6 +486,15 @@ pub(crate) struct SearchConfigOverrides {
     /// `expansion_hop_bound`/`expansion_fan_out_cap`'s own precedent (only
     /// the weight is the A/B lever that needs a restart-not-rebuild seam).
     pub proximity_weight: Option<f32>,
+    /// Explicit override for [`SearchConfig::temporal_weight`] (TD-157).
+    ///
+    /// Added 2026-07-28. This axis has had working compute behind it all along
+    /// (`core/context.rs`, `core/scoring/temporal.rs`) and was **unreachable**:
+    /// unlike its sibling `proximity_weight` it had no builder method, no env
+    /// override and no config-file path, so its `0.0` default could not be
+    /// changed without editing this crate's source. A computed axis multiplied
+    /// by an unreachable zero is dead weight, not a default.
+    pub temporal_weight: Option<f32>,
     /// Explicit override for [`SearchConfig::rerank_candidate_max_chars`]
     /// (reranker latency lever 1).
     pub rerank_candidate_max_chars: Option<usize>,
@@ -519,6 +528,9 @@ impl SearchConfigOverrides {
         }
         if let Some(v) = self.proximity_weight {
             builder = builder.proximity_weight(v);
+        }
+        if let Some(v) = self.temporal_weight {
+            builder = builder.temporal_weight(v);
         }
         if let Some(v) = self.rerank_candidate_max_chars {
             builder = builder.rerank_candidate_max_chars(v);
@@ -823,6 +835,24 @@ impl PipelineConfigBuilder {
     /// a restart, not a rebuild.
     pub fn proximity_weight(mut self, v: f32) -> Self {
         self.inner.search.proximity_weight = v;
+        self
+    }
+
+    /// ADR-067 temporal-recency axis weight (`SearchConfig::temporal_weight`),
+    /// default `0.0` = axis off (byte-identical to pre-TD-157 behaviour).
+    ///
+    /// TD-157 (2026-07-28): this axis shipped with working compute
+    /// (`core/context.rs`, `core/scoring/temporal.rs`) and **no way to enable
+    /// it** — no builder method, no env override, and `SearchConfig` derives no
+    /// `Deserialize`, so there was no config-file path either. Its sibling
+    /// `proximity_weight` has all three. The value was therefore pinned at
+    /// `0.0` for every consumer, and the axis was computed and then multiplied
+    /// by an unreachable zero. That is dead weight, not a default: a knob
+    /// nobody can turn is indistinguishable from an unimplemented feature, and
+    /// the axis has consequently NEVER been measured. This adds the missing
+    /// seam so it can be A/B'd; the default is unchanged.
+    pub fn temporal_weight(mut self, v: f32) -> Self {
+        self.inner.search.temporal_weight = v;
         self
     }
 

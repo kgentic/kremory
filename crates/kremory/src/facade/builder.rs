@@ -375,6 +375,23 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Explicit weight for the ADR-067 temporal-recency axis
+    /// (`SearchConfig::temporal_weight`). Default (unset): `0.0` (axis OFF,
+    /// byte-identical to pre-TD-157) unless overridden by
+    /// `KREMORY_TEMPORAL_WEIGHT` at construction time. Calling this setter wins
+    /// over BOTH the default and any env override, for this `Memory` only.
+    ///
+    /// TD-157 (2026-07-28): until this existed the axis was **unreachable** —
+    /// real compute (`core/context.rs`, `core/scoring/temporal.rs`)
+    /// permanently multiplied by a `0.0` that no builder method, env override
+    /// or config file could change. It has therefore never been measured.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::temporal_weight`](crate::core::config::PipelineConfigBuilder::temporal_weight).
+    pub fn with_temporal_weight(mut self, v: f32) -> Self {
+        self.search_overrides.temporal_weight = Some(v);
+        self
+    }
+
     /// Explicit cap (in `char`s) on the SUMMARY portion of each rerank
     /// candidate's text (`SearchConfig::rerank_candidate_max_chars`,
     /// reranker latency lever 1). Default (unset): `0` (unlimited — today's

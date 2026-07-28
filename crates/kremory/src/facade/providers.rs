@@ -575,6 +575,29 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
+    // TD-157 (2026-07-28): ADR-067's temporal-recency axis had working compute
+    // and NO way to enable it — no builder method, no env override, and
+    // `SearchConfig` derives no `Deserialize`, so no config-file path either.
+    // Its `0.0` default was therefore unreachable-by-construction and the axis
+    // has never been measured. Same parse/fail-loud discipline as
+    // KREMORY_PROXIMITY_WEIGHT directly above; default 0.0 (axis OFF) retained
+    // on absent/malformed, so this is byte-identical unless explicitly set.
+    if let Ok(raw) = std::env::var("KREMORY_TEMPORAL_WEIGHT") {
+        match raw.trim().parse::<f32>() {
+            Ok(v) => {
+                tracing::info!(
+                    temporal_weight = v,
+                    "KREMORY_TEMPORAL_WEIGHT override applied to SearchConfig"
+                );
+                b = b.temporal_weight(v);
+            }
+            Err(e) => tracing::warn!(
+                value = %raw,
+                error = %e,
+                "KREMORY_TEMPORAL_WEIGHT is not a valid f32 — ignoring (default 0.0 retained)"
+            ),
+        }
+    }
     // ADR-062 axis-C hop bound, sweepable for the SAME reason the weight is.
     // Added 2026-07-27 after the first axis-C A/B: at the default
     // `proximity_hop_bound = 2` the per-recall trace showed
