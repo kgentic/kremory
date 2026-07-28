@@ -319,6 +319,99 @@ impl TemporalGraph {
         Ok(())
     }
 
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): select up
+    /// to `limit` facts with `id > after_id`, ordered by `id` ASC, for the
+    /// `Memory::reembed_all_fact_embeddings` maintenance loop. Returns
+    /// `(fact_id, fact_text)` pairs — mirrors [`TemporalGraph::episodes_after_id`]'s
+    /// return shape exactly (`facts.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`,
+    /// globally unique, so — unlike `entities_after_id` — a bare `i64` cursor
+    /// is correct here; no composite-PK skip risk).
+    ///
+    /// **`fact_text` reconstruction**: ingest embeds a NEW fact as
+    /// `format!("{} {} {}", fact.subject, fact.predicate, fact.object)` — the
+    /// RAW extracted subject/object strings
+    /// (`core/ingest/pipeline/ingest_with.rs:~1799`). Those raw strings are
+    /// NOT persisted (`facts` stores only `subject_id`/`object_id`, the
+    /// normalized entity slugs, plus `object_value` for literal objects) — so
+    /// a bulk re-embed cannot reproduce them byte-for-byte. This reconstructs
+    /// the closest available equivalent: `predicate` is the exact stored
+    /// column (byte-identical to ingest); `subject`/`object` are each
+    /// resolved via [`super::entity_display_name`] against the REFERENCED
+    /// entity's OWN `properties.name` (falling back to that entity's id-slug)
+    /// — i.e. the same resolution `entities_after_id` uses for that entity's
+    /// own re-embed, so a fact's embedded subject/object text stays
+    /// consistent with what the subject/object entity itself embeds. A
+    /// literal (non-entity) object uses `object_value` directly — this IS
+    /// byte-identical to ingest's literal-object case
+    /// (`object_value = Some(fact.object.as_str())` verbatim at insert). An
+    /// objectless fact (`object_id` and `object_value` both `None`) resolves
+    /// to an empty object segment, matching the `unwrap_or_default()` pattern
+    /// already used for the objectless case elsewhere in this pipeline
+    /// (`ingest_with.rs`'s `ContradictionDetected` sink payload).
+    ///
+    /// The subject/object entity lookup is a same-query LEFT JOIN keyed on
+    /// `(id, group_id)` — `facts.group_id` is threaded as BOTH the subject's
+    /// and (when `object_id` is set) the object's `group_id` at insert time
+    /// (`try_insert_fact_with_group`'s `object_group_id = object_id.and(group_id)`
+    /// / `subject_group_id = group_id`), so joining on `f.group_id` directly
+    /// (COALESCEd to `'default'`, matching `entities.group_id`'s own
+    /// COALESCE convention) resolves the correct namespaced entity row
+    /// without needing the separate `subject_group_id`/`object_group_id`
+    /// columns (which may be NULL on pre-migration-004 rows).
+    ///
+    /// NOT filtered by embedding state — pages through EVERY fact row,
+    /// including ones that already carry an embedding (identical TD-143
+    /// rationale to the episode/entity siblings: a full re-embed must be able
+    /// to overwrite an existing vector, which a `WHERE embedding IS NULL`
+    /// predicate never can). Feature-gated behind `content-search`.
+    #[cfg(feature = "content-search")]
+    pub async fn facts_after_id(
+        &self,
+        after_id: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, String)>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT f.id, f.predicate, \
+                        f.subject_id, se.properties AS subject_properties, \
+                        f.object_id, f.object_value, oe.properties AS object_properties \
+                 FROM facts f \
+                 LEFT JOIN entities se \
+                   ON se.id = f.subject_id \
+                   AND se.group_id = COALESCE(f.group_id, 'default') \
+                 LEFT JOIN entities oe \
+                   ON oe.id = f.object_id \
+                   AND oe.group_id = COALESCE(f.group_id, 'default') \
+                 WHERE f.id > ?1 \
+                 ORDER BY f.id ASC \
+                 LIMIT ?2",
+                libsql::params![after_id, limit as i64],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let fact_id: i64 = row.get::<i64>(0)?;
+            let predicate: String = row.get::<String>(1)?;
+            let subject_id: String = row.get::<String>(2)?;
+            let subject_properties: Option<String> = row.get::<Option<String>>(3)?;
+            let object_id: Option<String> = row.get::<Option<String>>(4)?;
+            let object_value: Option<String> = row.get::<Option<String>>(5)?;
+            let object_properties: Option<String> = row.get::<Option<String>>(6)?;
+
+            let subject_text =
+                super::entity_display_name(subject_properties.as_deref(), &subject_id);
+            let object_text = match (&object_id, &object_value) {
+                (Some(oid), _) => super::entity_display_name(object_properties.as_deref(), oid),
+                (None, Some(val)) => val.clone(),
+                (None, None) => String::new(),
+            };
+            let fact_text = format!("{subject_text} {predicate} {object_text}");
+            out.push((fact_id, fact_text));
+        }
+        Ok(out)
+    }
+
     // === Episode CRUD ===
 
     /// Insert a fact with an optional group_id.

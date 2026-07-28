@@ -992,6 +992,154 @@ async fn main() -> Result<()> {
         }
     }
 
+    // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): one-shot
+    // maintenance subcommand `kremory-http reembed-entity-embeddings
+    // [batch_size]` — re-embed EVERY entity's display name (overwriting any
+    // vector already stored), then exit WITHOUT starting the HTTP server.
+    // Sibling of `reembed-episode-embeddings` above — remedies BOTH a live
+    // correctness bug (entity embeddings go stale after a dream-phase
+    // merge/alias) and de-confounds a clean TD-143 A/B (that A/B previously
+    // only re-embedded episodes, leaving entity/fact arms in a mismatched
+    // task space — see TD-112's register entry). Requires the
+    // `content-search` feature.
+    if std::env::args().nth(1).as_deref() == Some("reembed-entity-embeddings") {
+        #[cfg(feature = "content-search")]
+        {
+            let batch_size: usize = std::env::args()
+                .nth(2)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(256);
+            tracing::info!(
+                batch_size,
+                "kremory-http: running full entity-embedding re-embed (TD-112), then exiting"
+            );
+            let stats = mem
+                .reembed_all_entity_embeddings(batch_size)
+                .await
+                .context("entity-embedding re-embed failed")?;
+            tracing::info!(
+                embedded = stats.embedded,
+                failed = stats.failed,
+                "kremory-http: entity-embedding re-embed complete"
+            );
+            println!(
+                "reembed-entity-embeddings: embedded={} failed={}",
+                stats.embedded, stats.failed
+            );
+            return Ok(());
+        }
+        #[cfg(not(feature = "content-search"))]
+        {
+            anyhow::bail!(
+                "reembed-entity-embeddings requires a `content-search` build — \
+                 rebuild with `--features content-search`"
+            );
+        }
+    }
+
+    // TD-112: one-shot maintenance subcommand `kremory-http
+    // reembed-fact-embeddings [batch_size]` — re-embed EVERY fact's `subject
+    // predicate object` triple text (overwriting any vector already stored),
+    // then exit WITHOUT starting the HTTP server. Run entity re-embed FIRST
+    // when both are needed (facts resolve their subject/object text from the
+    // CURRENT entity rows — `reembed-all-embeddings` below does this in the
+    // right order). Requires the `content-search` feature.
+    if std::env::args().nth(1).as_deref() == Some("reembed-fact-embeddings") {
+        #[cfg(feature = "content-search")]
+        {
+            let batch_size: usize = std::env::args()
+                .nth(2)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(256);
+            tracing::info!(
+                batch_size,
+                "kremory-http: running full fact-embedding re-embed (TD-112), then exiting"
+            );
+            let stats = mem
+                .reembed_all_fact_embeddings(batch_size)
+                .await
+                .context("fact-embedding re-embed failed")?;
+            tracing::info!(
+                embedded = stats.embedded,
+                failed = stats.failed,
+                "kremory-http: fact-embedding re-embed complete"
+            );
+            println!(
+                "reembed-fact-embeddings: embedded={} failed={}",
+                stats.embedded, stats.failed
+            );
+            return Ok(());
+        }
+        #[cfg(not(feature = "content-search"))]
+        {
+            anyhow::bail!(
+                "reembed-fact-embeddings requires a `content-search` build — \
+                 rebuild with `--features content-search`"
+            );
+        }
+    }
+
+    // TD-112: convenience subcommand `kremory-http reembed-all-embeddings
+    // [batch_size]` — runs all three bulk re-embeds (episode, entity, fact)
+    // in sequence, in the dependency-correct order (entities BEFORE facts,
+    // since fact text is resolved from entity rows), then exits. This is
+    // what a clean full-corpus TD-143 A/B actually needs — re-embedding
+    // episodes alone leaves entity/fact arms in a mismatched task space (the
+    // exact confound TD-112 was filed to close). Requires `content-search`.
+    if std::env::args().nth(1).as_deref() == Some("reembed-all-embeddings") {
+        #[cfg(feature = "content-search")]
+        {
+            let batch_size: usize = std::env::args()
+                .nth(2)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(256);
+            tracing::info!(
+                batch_size,
+                "kremory-http: running full episode+entity+fact re-embed (TD-112/TD-143), \
+                 then exiting"
+            );
+            let episodes = mem
+                .reembed_all_episode_embeddings(batch_size)
+                .await
+                .context("episode-embedding re-embed failed")?;
+            let entities = mem
+                .reembed_all_entity_embeddings(batch_size)
+                .await
+                .context("entity-embedding re-embed failed")?;
+            let facts = mem
+                .reembed_all_fact_embeddings(batch_size)
+                .await
+                .context("fact-embedding re-embed failed")?;
+            tracing::info!(
+                episodes_embedded = episodes.embedded,
+                episodes_failed = episodes.failed,
+                entities_embedded = entities.embedded,
+                entities_failed = entities.failed,
+                facts_embedded = facts.embedded,
+                facts_failed = facts.failed,
+                "kremory-http: full episode+entity+fact re-embed complete"
+            );
+            println!(
+                "reembed-all-embeddings: episodes(embedded={} failed={}) \
+                 entities(embedded={} failed={}) facts(embedded={} failed={})",
+                episodes.embedded,
+                episodes.failed,
+                entities.embedded,
+                entities.failed,
+                facts.embedded,
+                facts.failed
+            );
+            return Ok(());
+        }
+        #[cfg(not(feature = "content-search"))]
+        {
+            anyhow::bail!(
+                "reembed-all-embeddings requires a `content-search` build — \
+                 rebuild with `--features content-search`"
+            );
+        }
+    }
+
     // TD-132 / ratified ADR-D2: the CONSUMER binary installs the recorder (the
     // `kremory` lib never does). A Prometheus PULL exporter (HTTP is scrapeable;
     // the sibling stdio bin uses a different channel — hence the `prometheus`

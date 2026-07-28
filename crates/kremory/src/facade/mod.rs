@@ -451,17 +451,24 @@ impl From<RecallTemplate> for ContextTemplate {
 /// free functions directly — they remain public and unchanged.
 ///
 /// TD-136 (dense episode retrieval): tally returned by
-/// [`Memory::backfill_episode_embeddings`] and, since TD-143, also by
-/// [`Memory::reembed_all_episode_embeddings`] — both drive the same
-/// embed+store body over a different page source (NULL-only gap-fill vs
-/// every-row re-embed), so they share this tally shape. Feature-gated behind
-/// `content-search` (the whole embedding path only exists there).
+/// [`Memory::backfill_episode_embeddings`] and, since TD-143/TD-112, also by
+/// [`Memory::reembed_all_episode_embeddings`],
+/// [`Memory::reembed_all_entity_embeddings`], and
+/// [`Memory::reembed_all_fact_embeddings`] — all four drive the same
+/// embed+store shape (embed a page item's text, persist the vector, count
+/// success/failure) over a different table/page-source, so they share this
+/// tally shape rather than each declaring an identical `{embedded, failed}`
+/// struct (Rule 37 — reuse an existing shape before declaring a new one).
+/// Field names stay table-agnostic ("items", not "episodes") accordingly.
+/// Feature-gated behind `content-search` (the whole embedding path only
+/// exists there).
 #[cfg(feature = "content-search")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EpisodeEmbeddingBackfill {
-    /// Episodes whose `content` was embedded + stored this run.
+    /// Items (episodes/entities/facts, depending on which method returned
+    /// this tally) whose text was embedded + stored this run.
     pub embedded: u64,
-    /// Episodes skipped due to a per-episode embed/store failure (WARN-logged;
+    /// Items skipped due to a per-item embed/store failure (WARN-logged;
     /// re-run to retry them).
     pub failed: u64,
 }
@@ -473,6 +480,26 @@ pub struct EpisodeEmbeddingBackfill {
 /// [`Memory::reembed_all_episode_embeddings`], not part of the public API.
 #[cfg(feature = "content-search")]
 struct EmbedEpisodePageParams<'a> {
+    tg: &'a TemporalGraph,
+    batch: Vec<(i64, String)>,
+    stats: &'a mut EpisodeEmbeddingBackfill,
+    op: &'static str,
+}
+
+/// Args-as-object for [`Memory::embed_and_store_entity_page`] — TD-112
+/// sibling of [`EmbedEpisodePageParams`], same rationale.
+#[cfg(feature = "content-search")]
+struct EmbedEntityPageParams<'a> {
+    tg: &'a TemporalGraph,
+    batch: Vec<crate::core::graph::EntityReembedRow>,
+    stats: &'a mut EpisodeEmbeddingBackfill,
+    op: &'static str,
+}
+
+/// Args-as-object for [`Memory::embed_and_store_fact_page`] — TD-112 sibling
+/// of [`EmbedEpisodePageParams`], same rationale.
+#[cfg(feature = "content-search")]
+struct EmbedFactPageParams<'a> {
     tg: &'a TemporalGraph,
     batch: Vec<(i64, String)>,
     stats: &'a mut EpisodeEmbeddingBackfill,
@@ -1467,13 +1494,38 @@ impl Memory {
         Ok(stats)
     }
 
+    /// TD-112/TD-143 shared embed step: document-prefix `text` (WRITE side —
+    /// always [`document_embed_text`](crate::core::embed_prefix::document_embed_text),
+    /// never the query-side prefix) and hand it to the configured embedder.
+    ///
+    /// Shared by all THREE bulk re-embed page loops
+    /// ([`embed_and_store_episode_page`](Self::embed_and_store_episode_page),
+    /// [`embed_and_store_entity_page`](Self::embed_and_store_entity_page),
+    /// [`embed_and_store_fact_page`](Self::embed_and_store_fact_page)) — the
+    /// one piece of "embed+write" body that is byte-identical across all
+    /// three. The write-BACK half deliberately stays in each caller instead
+    /// of behind a generic/closure dispatch: the id type differs (`i64` for
+    /// episodes/facts, the entity's TEXT slug for entities) and so does the
+    /// setter (`set_episode_embedding` / `set_entity_embedding` /
+    /// `set_fact_embedding`) — a fully generic write dispatch would need
+    /// either a discriminated-union id type or a closure-per-call-site, more
+    /// machinery than the ~6 lines of per-caller match-arm plumbing it would
+    /// save.
+    #[cfg(feature = "content-search")]
+    async fn embed_document_text(&self, text: &str) -> crate::core::error::Result<Vec<f32>> {
+        let embed_task_prefix_enabled = self.search_config().embed_task_prefix_enabled;
+        let prefixed_content =
+            crate::core::embed_prefix::document_embed_text(text, embed_task_prefix_enabled);
+        self.embedder.embed_dyn(&prefixed_content).await
+    }
+
     /// Shared per-page embed+store body for
     /// [`backfill_episode_embeddings`](Self::backfill_episode_embeddings) and
     /// [`reembed_all_episode_embeddings`](Self::reembed_all_episode_embeddings)
-    /// — same embed call, same TD-143 document-prefix routing, same
-    /// per-episode failure handling; the two callers differ only in which
-    /// paging query selected `batch`. `op` labels the WARN log lines so a
-    /// failure can be attributed to the caller that hit it. Args-as-object
+    /// — same embed call ([`embed_document_text`](Self::embed_document_text)),
+    /// same per-episode failure handling; the two callers differ only in
+    /// which paging query selected `batch`. `op` labels the WARN log lines so
+    /// a failure can be attributed to the caller that hit it. Args-as-object
     /// per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`).
     #[cfg(feature = "content-search")]
     async fn embed_and_store_episode_page(&self, params: EmbedEpisodePageParams<'_>) {
@@ -1483,12 +1535,8 @@ impl Memory {
             stats,
             op,
         } = params;
-        let embed_task_prefix_enabled = self.search_config().embed_task_prefix_enabled;
         for (episode_id, content) in batch {
-            // TD-143: WRITE into `episodes.embedding` — document-prefix it.
-            let prefixed_content =
-                crate::core::embed_prefix::document_embed_text(&content, embed_task_prefix_enabled);
-            match self.embedder.embed_dyn(&prefixed_content).await {
+            match self.embed_document_text(&content).await {
                 Ok(embedding) => match tg.set_episode_embedding(episode_id, &embedding).await {
                     Ok(()) => stats.embedded += 1,
                     Err(e) => {
@@ -1504,6 +1552,215 @@ impl Memory {
                 Err(e) => {
                     stats.failed += 1;
                     tracing::warn!(error = %e, episode_id, op, "embedder failed");
+                }
+            }
+        }
+    }
+
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): re-embed
+    /// **every** entity's display name, overwriting any embedding already
+    /// stored. Sibling of [`reembed_all_episode_embeddings`](Self::reembed_all_episode_embeddings)
+    /// — same shape, same TD-143 document-prefix routing, different page
+    /// source ([`TemporalGraph::entities_after_id`], composite-`(id,
+    /// group_id)`-cursored — see that fn's doc for why).
+    ///
+    /// This is the remedy for TWO distinct staleness sources: (1) a live
+    /// correctness bug — after a dream-phase merge/alias, a de-duplicated
+    /// entity's identity may have changed (a new canonical name) while its
+    /// stored embedding still encodes the pre-merge surface form, and no
+    /// production path re-persisted it in bulk before this method existed
+    /// (the merge-time re-embed at `core::canonicalization::apply_merge_with_audit`
+    /// only covers the LIVE merge sites, not a full-corpus catch-up); and (2)
+    /// an embedding-CONFIG change (flipping
+    /// [`SearchConfig::embed_task_prefix_enabled`](crate::core::config::SearchConfig::embed_task_prefix_enabled),
+    /// swapping the embedder model, or changing the embedding dimension).
+    ///
+    /// ⚠️ This rewrites every `entities.embedding` value in the database. Run
+    /// it against a COPY of the DB before measuring — see
+    /// [`reembed_all_episode_embeddings`](Self::reembed_all_episode_embeddings)'s
+    /// doc for the full safe sequence. Idempotent: safe to re-run (e.g. to
+    /// retry any per-entity failures from a prior run).
+    ///
+    /// Feature-gated behind `content-search` (mirrors the episode/fact
+    /// siblings — all three bulk re-embed paths ship together, even though
+    /// entity/fact embeddings do not themselves depend on the content-RAG
+    /// column; the `content-search` gate is this method family's existing
+    /// convention, not a new dependency).
+    #[cfg(feature = "content-search")]
+    pub async fn reembed_all_entity_embeddings(
+        &self,
+        batch_size: usize,
+    ) -> Result<EpisodeEmbeddingBackfill> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::reembed_all_entity_embeddings requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        let batch_size = batch_size.max(1);
+
+        let mut stats = EpisodeEmbeddingBackfill::default();
+        let mut after_id = String::new();
+        let mut after_group_id = String::new();
+        loop {
+            let batch = tg
+                .entities_after_id(crate::core::graph::EntitiesAfterIdParams {
+                    after_id: &after_id,
+                    after_group_id: &after_group_id,
+                    limit: batch_size,
+                })
+                .await
+                .map_err(MemoryError::Core)?;
+            // Advance the composite cursor to the LAST row in THIS page
+            // before consuming `batch` below — same rationale as
+            // `reembed_all_episode_embeddings`'s cursor advance (an
+            // unfiltered page source never self-consumes). No `.expect()`
+            // (banned in src/): an empty page ends the loop via the
+            // `let-else`, same as a `.is_empty()` break would, without
+            // needing a fallible unwrap on `.last()` right after.
+            let Some(last) = batch.last() else {
+                break;
+            };
+            after_id.clone_from(&last.id);
+            after_group_id.clone_from(&last.group_id);
+            self.embed_and_store_entity_page(EmbedEntityPageParams {
+                tg,
+                batch,
+                stats: &mut stats,
+                op: "reembed_all_entity_embeddings",
+            })
+            .await;
+        }
+        tracing::info!(
+            embedded = stats.embedded,
+            failed = stats.failed,
+            "kremory.reembed_all_entity_embeddings complete"
+        );
+        Ok(stats)
+    }
+
+    /// Shared per-page embed+store body for
+    /// [`reembed_all_entity_embeddings`](Self::reembed_all_entity_embeddings)
+    /// — mirrors [`embed_and_store_episode_page`](Self::embed_and_store_episode_page);
+    /// differs only in the id type (`&str` slug, not `i64`) and setter
+    /// ([`TemporalGraph::set_entity_embedding`]). Args-as-object per TD-042.
+    #[cfg(feature = "content-search")]
+    async fn embed_and_store_entity_page(&self, params: EmbedEntityPageParams<'_>) {
+        let EmbedEntityPageParams {
+            tg,
+            batch,
+            stats,
+            op,
+        } = params;
+        for row in batch {
+            match self.embed_document_text(&row.embed_text).await {
+                Ok(embedding) => match tg.set_entity_embedding(&row.id, &embedding).await {
+                    Ok(()) => stats.embedded += 1,
+                    Err(e) => {
+                        stats.failed += 1;
+                        tracing::warn!(
+                            error = %e,
+                            entity_id = %row.id,
+                            op,
+                            "set_entity_embedding failed"
+                        );
+                    }
+                },
+                Err(e) => {
+                    stats.failed += 1;
+                    tracing::warn!(error = %e, entity_id = %row.id, op, "embedder failed");
+                }
+            }
+        }
+    }
+
+    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): re-embed
+    /// **every** fact's `subject predicate object` triple text, overwriting
+    /// any embedding already stored. Sibling of
+    /// [`reembed_all_episode_embeddings`](Self::reembed_all_episode_embeddings)
+    /// — same shape, same TD-143 document-prefix routing, different page
+    /// source ([`TemporalGraph::facts_after_id`] — see that fn's doc for how
+    /// the subject/object text is reconstructed from stored entity rows,
+    /// since the raw extraction strings themselves are not persisted).
+    ///
+    /// De-confounds a fact's dependency on its subject/object entities: when
+    /// [`reembed_all_entity_embeddings`](Self::reembed_all_entity_embeddings)
+    /// changes an entity's resolved display name (e.g. its `properties.name`
+    /// was corrected), facts referencing that entity should be re-embedded
+    /// too so their triple text stays in sync — run entity re-embed BEFORE
+    /// fact re-embed when both are needed (the `reembed-all-embeddings`
+    /// `kremory-http` subcommand does this in the right order).
+    ///
+    /// ⚠️ This rewrites every `facts.embedding` value in the database. Run it
+    /// against a COPY of the DB before measuring. Idempotent: safe to re-run.
+    /// Feature-gated behind `content-search`.
+    #[cfg(feature = "content-search")]
+    pub async fn reembed_all_fact_embeddings(
+        &self,
+        batch_size: usize,
+    ) -> Result<EpisodeEmbeddingBackfill> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::reembed_all_fact_embeddings requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        let batch_size = batch_size.max(1);
+
+        let mut stats = EpisodeEmbeddingBackfill::default();
+        let mut after_id: i64 = 0;
+        loop {
+            let batch = tg
+                .facts_after_id(after_id, batch_size)
+                .await
+                .map_err(MemoryError::Core)?;
+            if batch.is_empty() {
+                break;
+            }
+            after_id = batch.last().map(|(id, _)| *id).unwrap_or(after_id);
+            self.embed_and_store_fact_page(EmbedFactPageParams {
+                tg,
+                batch,
+                stats: &mut stats,
+                op: "reembed_all_fact_embeddings",
+            })
+            .await;
+        }
+        tracing::info!(
+            embedded = stats.embedded,
+            failed = stats.failed,
+            "kremory.reembed_all_fact_embeddings complete"
+        );
+        Ok(stats)
+    }
+
+    /// Shared per-page embed+store body for
+    /// [`reembed_all_fact_embeddings`](Self::reembed_all_fact_embeddings) —
+    /// mirrors [`embed_and_store_episode_page`](Self::embed_and_store_episode_page);
+    /// differs only in the setter ([`TemporalGraph::set_fact_embedding`]).
+    /// Args-as-object per TD-042.
+    #[cfg(feature = "content-search")]
+    async fn embed_and_store_fact_page(&self, params: EmbedFactPageParams<'_>) {
+        let EmbedFactPageParams {
+            tg,
+            batch,
+            stats,
+            op,
+        } = params;
+        for (fact_id, fact_text) in batch {
+            match self.embed_document_text(&fact_text).await {
+                Ok(embedding) => match tg.set_fact_embedding(fact_id, &embedding).await {
+                    Ok(()) => stats.embedded += 1,
+                    Err(e) => {
+                        stats.failed += 1;
+                        tracing::warn!(error = %e, fact_id, op, "set_fact_embedding failed");
+                    }
+                },
+                Err(e) => {
+                    stats.failed += 1;
+                    tracing::warn!(error = %e, fact_id, op, "embedder failed");
                 }
             }
         }
