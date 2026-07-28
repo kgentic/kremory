@@ -173,9 +173,28 @@ def _chat(key: str, model: str, system: str, user: str, *,
     raise RuntimeError(f"chat failed after {max_retry} tries: {last}")
 
 
+_WARNED_UNPRICED: set[str] = set()
+
+
 def _cost(model: str, ptok: int, ctok: int) -> float:
+    """USD estimate, or 0.0 with a LOUD one-time warning for an unpriced model.
+
+    Returning a silent 0.0 for an unknown model is the same defect class this
+    harness hit twice on 2026-07-28 — a meter reporting a number it never
+    measured. The gpt-5 run for the Mem0-protocol comparison printed
+    `est $0.000` on ~4.8M tokens for exactly this reason. The value stays 0.0
+    (there is no honest number to invent) but it can no longer pass as measured.
+    """
     r = _RATES.get(model)
     if not r:
+        if model not in _WARNED_UNPRICED:
+            _WARNED_UNPRICED.add(model)
+            print(
+                f"[cost] WARNING: no rate for {model!r} — reported spend is NOT "
+                f"measured and will read $0.000. Token counts below are real; the "
+                f"dollar figure is absent, not zero. Add a rate to _RATES.",
+                file=sys.stderr, flush=True,
+            )
         return 0.0
     return ptok / 1e6 * r[0] + ctok / 1e6 * r[1]
 
