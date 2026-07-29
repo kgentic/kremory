@@ -173,7 +173,72 @@ pub(crate) fn build_dual_list_prompt(
         idx += 1;
     }
 
-    prompt.push_str("\nFor each existing fact that the new fact CONTRADICTS (makes false or outdated), return its index number.\nIf the new fact is an UPDATE (same relationship but newer value), return that index too.\nIf no contradictions, use an empty indices list.\n\nOutput JSON in this exact format: {\"indices\": [n, n, ...], \"reason\": \"<brief justification>\"} where each n is the 1-based index of a contradicted fact and reason explains the judgment. Example: {\"indices\": [1, 3], \"reason\": \"facts 1 and 3 state a prior job title now superseded by the new fact\"}. If no contradictions: {\"indices\": [], \"reason\": \"no existing fact is contradicted\"}.");
+    // TD-167. The previous instruction was:
+    //
+    //   "For each existing fact that the new fact CONTRADICTS ... return its index.
+    //    If the new fact is an UPDATE (same relationship but newer value), return
+    //    that index too."
+    //
+    // That second sentence describes EVERY item in a list, so it instructed the
+    // model to destroy set-valued facts: a festival's 2nd..6th performer each
+    // superseded the previous. Measured on the production model
+    // (openai/gpt-oss-120b, temp 0, 2026-07-29): **7 of 8** genuinely set-valued
+    // pairs were superseded. Note the direction — the WEAKER local model scored
+    // 5/8. Capability made it WORSE, because the defect was in the INSTRUCTION,
+    // not the judgement: a better model follows a wrong instruction more
+    // faithfully. Model upgrades would have degraded this further.
+    //
+    // Replaced with a COEXISTENCE question, which measured **0 of 8** destroyed
+    // on the same model — no cardinality model needed, declared or derived
+    // (deriving it is impossible here: 67% of predicates appear exactly once).
+    //
+    // The coexistence question alone then MISSED 4 of 6 genuine updates
+    // (`works_at`, `current_job_title`, ...) — because the model is arguably
+    // right that both COULD be true (a person can hold two jobs). "Can both be
+    // true?" is world knowledge; "did they mean ALSO or INSTEAD?" is TEMPORAL.
+    // So the second half below leans on the `valid from:` timestamps already
+    // rendered above. Same two-signal shape as Graphiti (LLM verdict + temporal
+    // order, edge_operations.py:538-573) but with the RIGHT question in the LLM
+    // slot — Graphiti asks "does this contradict?", which is what produces its
+    // own version of this bug.
+    //
+    // Worked examples of BOTH outcomes are deliberate. Every competitor audited
+    // (Graphiti, CORE, mem0's legacy path) shows the model only a
+    // supersession example, which is exactly what biases it toward destruction.
+    //
+    // Refs: TD-167; .ai-docs/research/td-167-set-valued-fact-destruction-2026-07-29.md
+    prompt.push_str(
+        "\nDecide, for each existing fact above, whether the NEW fact REPLACES it.\n\
+         \n\
+         Step 1 — Can both facts be true AT THE SAME TIME?\n\
+         Many relationships naturally hold SEVERAL values at once: a festival has many\n\
+         performers, a recipe has many ingredients, a system processes many inputs, a\n\
+         place is found in many regions. If the new fact is simply ANOTHER value of\n\
+         such a relationship, it is an ADDITION — do NOT return that index.\n\
+         \n\
+         Step 2 — Only if both CANNOT hold at once, is this a replacement?\n\
+         Some relationships hold one value at a time: a current employer, a current\n\
+         job title, a scheduled time, a status, a place of residence. When the new\n\
+         fact states a later value for such a relationship, it REPLACES the earlier\n\
+         one — return that index. Use the 'valid from' timestamps to judge which is\n\
+         later: a replacement supersedes an EARLIER fact, never a later one.\n\
+         \n\
+         When genuinely unsure, prefer ADDITION (an empty list). Keeping a stale fact\n\
+         is recoverable; deleting a correct one is not.\n\
+         \n\
+         Examples:\n\
+           existing: festival -> has_performer -> billie eilish\n\
+           new:      festival -> has_performer -> the 1975\n\
+           => {\"indices\": [], \"reason\": \"a festival has many performers; this is an additional value\"}\n\
+         \n\
+           existing: alice -> works_at -> acme corp   (valid from: 2023-01-01)\n\
+           new:      alice -> works_at -> globex      (valid from: 2024-06-01)\n\
+           => {\"indices\": [1], \"reason\": \"one current employer at a time; the later fact replaces the earlier\"}\n\
+         \n\
+         Output JSON in this exact format: {\"indices\": [n, n, ...], \"reason\": \"<brief justification>\"} \
+         where each n is the 1-based index of a fact the new fact REPLACES. \
+         If nothing is replaced: {\"indices\": [], \"reason\": \"<why both can coexist>\"}.",
+    );
 
     (prompt, index_map)
 }
@@ -469,6 +534,28 @@ mod tests {
         }
     }
 
+    /// Find a `{"indices": [<non-empty>], "reason": ...}` example in the prompt.
+    ///
+    /// Returns the example's text so the caller can assert on it. Deliberately
+    /// matches the SHAPE (populated index list) rather than specific digits —
+    /// see the caller for why. Char-boundary-safe: only ever slices at byte
+    /// offsets returned by `find`, which are always boundaries (TD-164).
+    fn regex_lite_find_populated_indices_example(prompt: &str) -> Option<&str> {
+        let mut from = 0usize;
+        while let Some(rel) = prompt[from..].find(r#"{"indices": ["#) {
+            let start = from + rel;
+            let after_open = start + r#"{"indices": ["#.len();
+            let close = after_open + prompt[after_open..].find(']')?;
+            // Populated = at least one digit between the brackets.
+            if prompt[after_open..close].chars().any(|c| c.is_ascii_digit()) {
+                let end = close + prompt[close..].find('}').map_or(1, |i| i + 1);
+                return Some(&prompt[start..end.min(prompt.len())]);
+            }
+            from = after_open;
+        }
+        None
+    }
+
     fn make_extracted(subject: &str, predicate: &str, object: &str) -> ExtractedFact {
         ExtractedFact {
             subject: subject.to_string(),
@@ -651,8 +738,17 @@ mod tests {
         // Both the populated example and the empty-indices example must
         // also demonstrate `reason` — a model that only sees `reason` in
         // one example may omit it in the other case.
+        // Asserts the INVARIANT ("a populated-indices example carries reason"),
+        // not the literal `[1, 3]` the prompt happened to use in 2026-07.
+        // TD-167 reworded the prompt and its example became `[1]` — a single
+        // replacement, which is what that example now demonstrates. Pinning the
+        // exact digits made this test fail on a legitimate rewording while
+        // protecting nothing extra: the property TD-133 needs is that BOTH the
+        // populated and the empty case show `reason`, which is checked here at
+        // full strength.
+        let populated_example = regex_lite_find_populated_indices_example(&prompt);
         assert!(
-            prompt.contains(r#"{"indices": [1, 3], "reason":"#),
+            populated_example.is_some_and(|e| e.contains("\"reason\"")),
             "populated-indices example must include reason — prompt was: {prompt}"
         );
         assert!(
