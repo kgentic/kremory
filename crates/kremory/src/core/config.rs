@@ -720,9 +720,16 @@ impl PipelineConfig {
                 resolution_min_cosine: 0.0,
                 resolution_strategy: ResolutionStrategy::default(),
                 resolution_batch_max_entities: 32,
-                // TD-167: OFF by default — see the field doc. Destroys
-                // set-valued facts; opt in via KREMORY_CONTRADICTION_DETECTION.
-                contradiction_detection_enabled: false,
+                // TD-167 / ADR-079 rev.2: ON. Was default-OFF for ~4h on
+                // 2026-07-29 while the destruction bug was open; the prompt fix
+                // (coexistence + temporal ordering) measured 0/8 set-valued
+                // destroyed and a corpus run confirmed it (contradiction rate
+                // 38.8% -> 11.3%, no multi-valued predicate destroyed). Scope
+                // moved MVP -> v1, and LongMemEval's knowledge-update category
+                // (78 of 500 questions) TESTS this mechanism — shipping the
+                // benchmark with it disabled would publish a number with the
+                // relevant feature switched off.
+                contradiction_detection_enabled: true,
             },
         }
     }

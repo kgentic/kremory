@@ -560,6 +560,29 @@ impl Error {
             _ => "other",
         }
     }
+
+    /// True when this is a SQLite UNIQUE-constraint violation.
+    ///
+    /// TD-168. `insert_entity_with_group` issues a bare `INSERT INTO entities`
+    /// and returns the libsql error UNMAPPED, so callers could not distinguish
+    /// "this entity already exists" (benign — a real row IS present) from a
+    /// genuine database failure. Two call sites then guessed OPPOSITELY:
+    /// `ingest_with.rs:1114` (stub path) treats a duplicate as fine — its own
+    /// comment says so — while the insert-new path did `break 'phases Err(e)`
+    /// on ANY error and so killed the whole ingest on a benign duplicate.
+    /// Observed 2026-07-29: 1 of 8 LongMemEval sessions returned HTTP 500 with
+    /// `UNIQUE constraint failed: entities.id, entities.group_id`.
+    ///
+    /// This makes the distinction EXPRESSIBLE rather than accidental. It
+    /// deliberately does NOT swallow the error inside the insert: a caller that
+    /// genuinely cannot tolerate a duplicate must still be able to fail on one.
+    ///
+    /// Message-text driven, matching the sibling
+    /// [`Self::fact_insert_failure_reason`] convention — libsql surfaces
+    /// constraint failures as `SqliteFailure(code, message)`.
+    pub(crate) fn is_unique_violation(&self) -> bool {
+        matches!(self, Error::Database(db_err) if db_err.to_string().contains("UNIQUE"))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

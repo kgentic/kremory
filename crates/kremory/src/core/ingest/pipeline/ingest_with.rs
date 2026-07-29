@@ -1462,7 +1462,37 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         })
                         .await
                     {
-                        break 'phases Err(e);
+                        // TD-168: a UNIQUE violation here means the row ALREADY
+                        // EXISTS — benign, and exactly what the sibling stub
+                        // path at :1114 already concluded ("that is fine — a
+                        // real row is present"). This path previously failed the
+                        // ENTIRE ingest on it, because the raw libsql error was
+                        // indistinguishable from a genuine DB failure. Observed
+                        // 2026-07-29: 1 of 8 LongMemEval sessions HTTP 500'd on
+                        // `UNIQUE constraint failed: entities.id, entities.group_id`.
+                        //
+                        // The reachable cause is the extractor emitting the same
+                        // NORMALISED name twice within one episode — this path
+                        // believes the entity is new because it just decided so.
+                        //
+                        // NOT a blanket swallow (Rule 8): only the unique case
+                        // is tolerated, and it is COUNTED so the rate stays
+                        // visible. Every other error still fails the ingest.
+                        if e.is_unique_violation() {
+                            metrics::counter!(
+                                "kremory.ingest.entity_insert_duplicate_tolerated_total",
+                                "via" => "insert_new",
+                            )
+                            .increment(1);
+                            tracing::warn!(
+                                entity_id = %entity_id,
+                                "kremory.ingest.entity_insert_duplicate — row already \
+                                 exists; continuing (TD-168). Extractor likely emitted \
+                                 the same normalised name twice in one episode."
+                            );
+                        } else {
+                            break 'phases Err(e);
+                        }
                     }
                     metrics::counter!(
                         "rql.ingest.entity_persisted_total",
@@ -2141,6 +2171,40 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             Ok(result) => Ok(result),
             Err(e) => {
                 fire_failed(&e);
+                // TD-168 (second defect): persist Failed. Previously the inline
+                // path left the row at 'Pending', while BackgroundIngestor
+                // writes 'Failed' — so a FAILED inline ingest was
+                // indistinguishable from an IN-FLIGHT one. That is the
+                // absence-read-as-measurement shape: a crashed episode looked
+                // exactly like a slow one, forever.
+                //
+                // engine_handle.rs:392 claimed the inline path "cannot without
+                // episode_id" — true THERE, but `episode_id` is in scope HERE
+                // (it is already in the fire_failed tracing above), and
+                // engine_handle.rs:432 shows the same UPDATE on the success
+                // path. So this was a fixable defect, not a real limit.
+                //
+                // Best-effort by necessity: the ingest has already failed, so a
+                // status-write failure must not mask the original error — but
+                // it IS counted, never silent.
+                if let Err(status_err) = self
+                    .graph
+                    .conn
+                    .execute(
+                        "UPDATE episodes SET episode_processing_status = 'Failed' WHERE id = ?1",
+                        libsql::params![episode_id],
+                    )
+                    .await
+                {
+                    metrics::counter!("kremory.ingest.failed_status_write_failed_total")
+                        .increment(1);
+                    tracing::warn!(
+                        episode_id,
+                        error = %status_err,
+                        "kremory.ingest.failed_status_write_failed — episode remains \
+                         Pending and is indistinguishable from in-flight (TD-168)"
+                    );
+                }
                 Err(e)
             }
         }
