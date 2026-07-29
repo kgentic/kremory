@@ -179,11 +179,20 @@ impl ExtractionWindowSplitter {
     }
 }
 
+// UTF-8 boundary snapping lives in `core::text_utils` — ONE implementation
+// for the whole crate. Four private copies of this idea is exactly how the
+// 2026-07-28 crash happened: `core/ingest/helpers.rs` already had a correct
+// floor/ceil pair and this module never inherited it.
+use crate::core::text_utils::floor_char_boundary;
+
 /// Find the nearest sentence boundary (period, exclamation, question mark) at or before
-/// `approx_pos`, searching up to 200 characters backwards.
+/// `approx_pos`, searching up to 200 bytes backwards.
+///
+/// Both ends of the search window are snapped to character boundaries first —
+/// see `floor_char_boundary` for why that is mandatory rather than defensive.
 fn find_sentence_boundary(text: &str, approx_pos: usize) -> usize {
-    let pos = approx_pos.min(text.len());
-    let search_start = pos.saturating_sub(200);
+    let pos = floor_char_boundary(text, approx_pos);
+    let search_start = floor_char_boundary(text, pos.saturating_sub(200));
     let slice = &text[search_start..pos];
 
     // Walk backwards looking for sentence-ending punctuation.
@@ -422,5 +431,76 @@ mod tests {
         let chunks = splitter.split(text, &ContentType::Text);
         assert_eq!(chunks.len(), 1, "single-chunk text should stay one chunk");
         assert_eq!(chunks[0], text, "single chunk content must be unchanged");
+    }
+}
+
+#[cfg(test)]
+mod utf8_boundary_tests {
+    use super::*;
+    use crate::core::config::ExtractionWindowConfig;
+
+    /// Reproduces the panic that took kremory-http down mid-run against
+    /// LongMemEval on 2026-07-28:
+    ///   `byte index 6809 is not a char boundary; it is inside 'è'`
+    ///
+    /// The split offsets are reconstructed by BYTE arithmetic (a sum of
+    /// `str::len()` plus one assumed separator byte per word, then a flat
+    /// `- 200` for the backward search window), so on multi-byte text either
+    /// end of `&text[search_start..pos]` can land mid-character and panic.
+    /// LoCoMo never hit it because that corpus is effectively ASCII.
+    ///
+    /// Built to trip the density heuristic (many Capitalised words) with
+    /// accented characters dense enough that a byte-derived offset is
+    /// overwhelmingly unlikely to land on a boundary by luck.
+    #[test]
+    fn chunking_does_not_panic_on_multibyte_text() {
+        let sentence = "Català València Perpinyà Andorra Eivissa Menorca Mallorca \
+                        Lleida Girona Tarragona Sabadell Terrassa Badalona Mataró. ";
+        let text = sentence.repeat(80);
+        assert!(text.len() > 6809, "fixture must exceed the observed panic offset");
+        assert!(!text.is_char_boundary(text.len() / 2 + 1)
+                || text.chars().any(|c| c.len_utf8() > 1),
+                "fixture must actually contain multi-byte characters");
+
+        for (min, max, density) in [(10, 60, 0.3), (5, 40, 0.2), (20, 120, 0.5)] {
+            let splitter = ExtractionWindowSplitter::new(ExtractionWindowConfig {
+                min_words: min,
+                max_words: max,
+                density_threshold: density,
+                overlap_words: 0,
+            });
+            // Pre-fix this panics rather than returning.
+            let chunks: Vec<String> = splitter.split(&text, &ContentType::Text);
+            assert!(!chunks.is_empty());
+            // No chunk may be empty or have sliced a character in half — a
+            // successful round-trip through String proves every boundary held.
+            for c in &chunks {
+                assert!(!c.is_empty());
+                assert!(c.is_char_boundary(0));
+            }
+        }
+    }
+
+    /// `floor_char_boundary` must never return an index that would panic, and
+    /// must never round UP (callers rely on `split_pos < text.len()`).
+    #[test]
+    fn floor_char_boundary_is_safe_and_monotone() {
+        let text = "aè b€ c𝄞 d";
+        for i in 0..=text.len() + 5 {
+            let f = floor_char_boundary(text, i);
+            assert!(text.is_char_boundary(f), "returned non-boundary {f} for {i}");
+            assert!(f <= i.min(text.len()), "rounded UP: {f} > {i}");
+            let _ = &text[..f]; // would panic if f were not a boundary
+        }
+    }
+
+    /// ASCII behaviour must be byte-identical to before the fix — on ASCII,
+    /// every byte index is already a character boundary, so the snap is a no-op.
+    #[test]
+    fn floor_char_boundary_is_identity_on_ascii() {
+        let text = "the quick brown fox. jumps over the lazy dog.";
+        for i in 0..=text.len() {
+            assert_eq!(floor_char_boundary(text, i), i);
+        }
     }
 }
