@@ -80,7 +80,12 @@ async fn real_llm_contradiction_supersedes_prior_fact() {
             .await
             .expect("open_in_memory"),
     );
-    let config = PipelineConfig::builder().build().expect("PipelineConfig");
+    // TD-167: contradiction detection is now DEFAULT-OFF (it supersedes
+    // set-valued facts). This test asserts the capability, so it opts in.
+    let config = PipelineConfig::builder()
+        .contradiction_detection_enabled(true)
+        .build()
+        .expect("PipelineConfig");
     let dim = config.embedding_dim.0;
 
     let model = ollama_chat_model();

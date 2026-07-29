@@ -387,6 +387,28 @@ pub async fn with_ollama(path: impl AsRef<Path>) -> Result<Memory> {
 /// (`OLLAMA_HOST` / `OLLAMA_CHAT_MODEL`); the `with_ollama_*` layer is the
 /// batteries-included boot surface, not the pure library core.
 fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
+    // TD-167: opt back INTO contradiction detection, which is default-OFF
+    // because it supersedes SET-VALUED facts (a festival's second performer
+    // supersedes the first). Accepts 1/true/yes/on; anything unrecognised
+    // WARNS and stays OFF rather than silently defaulting — this knob
+    // re-enables a destructive path, so a typo must not quietly arm it.
+    if let Ok(v) = std::env::var("KREMORY_CONTRADICTION_DETECTION") {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => {
+                tracing::warn!(
+                    "KREMORY_CONTRADICTION_DETECTION enabled — this path supersedes \
+                     SET-VALUED facts (TD-167). Use only where predicates are \
+                     single-valued."
+                );
+                b = b.contradiction_detection_enabled(true);
+            }
+            "0" | "false" | "no" | "off" => b = b.contradiction_detection_enabled(false),
+            other => tracing::warn!(
+                value = %other,
+                "KREMORY_CONTRADICTION_DETECTION must be a boolean — ignoring (staying OFF)"
+            ),
+        }
+    }
     if let Ok(k) = std::env::var("KREMORY_RESOLUTION_BLOCK_K") {
         if let Ok(k) = k.parse::<usize>() {
             b = b.resolution_block_k(k);

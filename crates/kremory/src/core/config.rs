@@ -672,6 +672,31 @@ pub struct PipelineConfig {
     /// pooled candidates and system prompt, totals roughly 2-3k tokens).
     /// Raise on a large-context model to shrink call count further.
     pub resolution_batch_max_entities: usize,
+    /// TD-167: run LLM contradiction detection during ingest. **Default: `false`.**
+    ///
+    /// Defaulted OFF because the mechanism currently DESTROYS SET-VALUED FACTS.
+    /// It treats every predicate as functional (one value per subject), so
+    /// ingesting a list supersedes all but the last member. Measured on 8
+    /// LongMemEval sessions, 2026-07-29: 81 of 1,021 facts invalidated, of
+    /// which ≥31% are provably multi-valued rather than contradictory —
+    /// `has_performer: billie eilish / tove lo / lana del rey` all superseded
+    /// by `the 1975`; `contain: rolled oats` superseded by `seeds`.
+    ///
+    /// The prompt specifies the behaviour (`core/contradiction.rs:176` — "if
+    /// the new fact is an UPDATE (same relationship but newer value), return
+    /// that index too"), and no predicate-cardinality model exists anywhere in
+    /// the crate, so this is a design gap rather than a tuning problem.
+    ///
+    /// Turning it OFF is SAFE and REVERSIBLE:
+    ///   * supersession is a SOFT delete (`invalid_at` is set; the row stays),
+    ///     so no data written under the old default was destroyed;
+    ///   * `core::dream::provenance::reversal::unsupersede` (ADR-073) already
+    ///     exists to reverse individual false positives;
+    ///   * genuine temporal supersession ("works_at Acme" → "works_at Globex")
+    ///     is the capability being deferred — real and wanted, but currently
+    ///     net-negative. Opt back in with `KREMORY_CONTRADICTION_DETECTION=1`
+    ///     once TD-167 lands derived predicate cardinality.
+    pub contradiction_detection_enabled: bool,
 }
 
 impl PipelineConfig {
@@ -695,6 +720,9 @@ impl PipelineConfig {
                 resolution_min_cosine: 0.0,
                 resolution_strategy: ResolutionStrategy::default(),
                 resolution_batch_max_entities: 32,
+                // TD-167: OFF by default — see the field doc. Destroys
+                // set-valued facts; opt in via KREMORY_CONTRADICTION_DETECTION.
+                contradiction_detection_enabled: false,
             },
         }
     }
@@ -941,6 +969,17 @@ impl PipelineConfigBuilder {
     /// (`futures::buffered`, order-preserving). `1` = sequential. Default 5.
     pub fn extraction_concurrency(mut self, n: usize) -> Self {
         self.inner.extraction_concurrency = n;
+        self
+    }
+
+    /// TD-167: enable LLM contradiction detection during ingest. Default OFF.
+    ///
+    /// OFF because it currently treats every predicate as functional and so
+    /// SUPERSEDES SET-VALUED FACTS — a festival's second performer supersedes
+    /// the first. Enable only if you have verified your predicates are
+    /// single-valued, or once TD-167 lands derived cardinality.
+    pub fn contradiction_detection_enabled(mut self, on: bool) -> Self {
+        self.inner.contradiction_detection_enabled = on;
         self
     }
 
