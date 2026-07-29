@@ -638,16 +638,19 @@ async fn td167_set_valued_facts_survive_when_contradiction_detection_is_off() {
             .expect("open_in_memory failed"),
     );
 
-    // DEFAULT config — no .contradiction_detection_enabled(..) call. The point
-    // of the test is that the DEFAULT is safe; opting in here would prove
-    // nothing about what a consumer actually gets.
+    // Contradiction detection explicitly OFF. As of ADR-079 rev.2 the DEFAULT
+    // is ON again (the prompt fix measured 0/8 set-valued destroyed and a
+    // corpus run confirmed it), so this must be set rather than assumed — the
+    // property under test here is that the APPEND-ONLY path still preserves
+    // set-valued facts, which is the fallback posture if the flag is ever
+    // turned back off.
     let config = PipelineConfig::builder()
+        .contradiction_detection_enabled(false)
         .build()
         .expect("PipelineConfig build failed");
     assert!(
         !config.contradiction_detection_enabled,
-        "TD-167: contradiction detection must default OFF — if this flips, the \
-         set-valued data-loss bug is live again for every consumer"
+        "explicit opt-out must be honoured — if this fails the flag is not wired"
     );
 
     let dim = config.embedding_dim.0;
@@ -705,5 +708,35 @@ async fn td167_set_valued_facts_survive_when_contradiction_detection_is_off() {
          predicate) invalidated the first. A festival has MANY performers — \
          this is set-valued data, not a contradiction. Invalidated: {:?}",
         r2.invalidated_fact_ids
+    );
+}
+
+/// ADR-079 rev.2: contradiction detection is ON by default.
+///
+/// Pinned as a test because this default has now moved TWICE in one day, in
+/// both directions, and each move is a product decision with real consequences:
+///
+///   * OFF (morning) — the prompt destroyed set-valued facts: a festival's
+///     2nd..6th performer each superseded the previous. 7/8 destroyed on the
+///     production model.
+///   * ON  (after the fix) — the coexistence + temporal prompt measured 0/8
+///     destroyed; a corpus run confirmed it (contradiction rate 38.8% -> 11.3%,
+///     no multi-valued predicate destroyed). LongMemEval's knowledge-update
+///     category (78 of 500 questions) TESTS this mechanism, so shipping the v1
+///     benchmark with it disabled would publish a number with the relevant
+///     feature switched off.
+///
+/// If this assertion fails, someone changed a shipped product decision. Read
+/// ADR-079 before "fixing" the test.
+#[tokio::test]
+async fn adr079_contradiction_detection_is_on_by_default() {
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("PipelineConfig build failed");
+    assert!(
+        config.contradiction_detection_enabled,
+        "ADR-079 rev.2: contradiction detection ships ON. If this was flipped \
+         deliberately, update ADR-079 and this test together — a silent flip \
+         changes whether kremory can correct a stale fact at all."
     );
 }
