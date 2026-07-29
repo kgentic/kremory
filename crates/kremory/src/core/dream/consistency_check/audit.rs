@@ -289,10 +289,19 @@ pub(super) fn build_verify_messages(
                 .source_episode
                 .as_deref()
                 .map(|s| {
-                    let truncated = if s.len() > 8000 {
-                        format!("{}…[truncated]", &s[..8000])
-                    } else {
-                        s.to_string()
+                    // `s.len() > 8000` is a BYTE check and `&s[..8000]` is a
+                    // BYTE slice, so a multi-byte character straddling byte
+                    // 8000 panics — and `s` is arbitrary user episode text.
+                    // Same defect class that crashed kremory-http on
+                    // 2026-07-28 (core/extraction_window.rs, 'è' then an
+                    // emoji). Reachable here via POST /consolidation.
+                    let truncated = {
+                        let head = crate::core::text_utils::truncate_on_char_boundary(s, 8000);
+                        if head.len() < s.len() {
+                            format!("{head}…[truncated]")
+                        } else {
+                            s.to_string()
+                        }
                     };
                     crate::core::extraction::injection_patterns::sanitize_for_verify_prompt(
                         &truncated,

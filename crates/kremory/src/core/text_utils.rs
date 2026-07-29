@@ -795,3 +795,109 @@ mod tests {
         assert!(candidates.is_empty());
     }
 }
+
+// ─── UTF-8 boundary-safe slicing ─────────────────────────────────────────────
+//
+// Slicing a `&str` at a byte offset that is not a character boundary PANICS.
+// Every offset computed by arithmetic — a word-length sum, a `- 200` search
+// window, a `.min(100)` truncation, a fixed `8000` cap — can land mid-character
+// on any non-ASCII input, and LLM responses and user episodes are both
+// arbitrary UTF-8.
+//
+// This is a RECURRING defect class in this crate, not a one-off:
+//   * `core/extraction_window.rs` crashed kremory-http mid-run on 2026-07-28
+//     against LongMemEval — `byte index 6809 is not a char boundary; it is
+//     inside 'è'` (Catalan), and again on an emoji. It took the whole server
+//     down because the panic unwinds a tokio worker.
+//   * `core/ingest/helpers.rs` had ALREADY solved it with its own private
+//     floor/ceil helpers — the guard existed in one module and the sibling
+//     module never inherited it.
+//   * `core/extraction/structured.rs` and
+//     `core/dream/consistency_check/audit.rs` were both still unguarded.
+//
+// Four private copies of the same idea is how that drift happened, so this is
+// the ONE implementation. Import it; do not re-roll it locally.
+//
+// Refs: `.ai-docs/research/v0.1.5-test-pyramid-audit/property-fuzz-api-gaps-2026-05-28.md`
+// ranked "LLM output is untrusted UTF-8 … a panic here crashes every
+// remember() call with no recovery path" as the #1 fuzz target — filed
+// 2026-05-28, unactioned until the crash forced it.
+
+/// Round `i` DOWN to the nearest UTF-8 character boundary in `s`.
+///
+/// Clamps to `s.len()` first, so an out-of-range index is safe. Rounding down
+/// (never up) guarantees the result is `<= i`, which callers relying on
+/// `pos < s.len()` depend on.
+pub(crate) fn floor_char_boundary(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Truncate `s` to at most `max_bytes`, never splitting a character.
+///
+/// Returns the whole string when it already fits, so callers can use it
+/// unconditionally without a length check of their own — a length check is
+/// exactly what tends to be written in BYTES and then get this wrong.
+pub(crate) fn truncate_on_char_boundary(s: &str, max_bytes: usize) -> &str {
+    &s[..floor_char_boundary(s, max_bytes)]
+}
+
+#[cfg(test)]
+mod utf8_boundary_util_tests {
+    use super::*;
+
+    #[test]
+    fn floor_never_returns_a_non_boundary() {
+        for s in ["aè b€ c𝄞 d", "🤔🤔🤔", "Català València", "plain ascii"] {
+            for i in 0..=s.len() + 4 {
+                let f = floor_char_boundary(s, i);
+                assert!(s.is_char_boundary(f), "{s:?} @{i} -> {f} is not a boundary");
+                assert!(f <= i.min(s.len()), "rounded UP: {f} > {i}");
+                let _ = &s[..f]; // panics if f is not a boundary
+            }
+        }
+    }
+
+    #[test]
+    fn floor_is_identity_on_ascii() {
+        let s = "the quick brown fox";
+        for i in 0..=s.len() {
+            assert_eq!(floor_char_boundary(s, i), i);
+        }
+    }
+
+    #[test]
+    fn truncate_never_splits_a_character() {
+        // 'è' is 2 bytes; truncating at 1 must yield "" not a split char.
+        assert_eq!(truncate_on_char_boundary("è", 1), "");
+        assert_eq!(truncate_on_char_boundary("è", 2), "è");
+        // Emoji is 4 bytes — every interior offset must round down to 0.
+        for n in 0..4 {
+            assert_eq!(truncate_on_char_boundary("🤔", n), "");
+        }
+        assert_eq!(truncate_on_char_boundary("🤔", 4), "🤔");
+        // Already-fits case returns the whole string.
+        assert_eq!(truncate_on_char_boundary("abc", 999), "abc");
+    }
+
+    #[test]
+    fn truncate_reproduces_the_two_live_crash_sites() {
+        // structured.rs:635 shape — `&trimmed[..trimmed.len().min(100)]`
+        // 'é' is 2 bytes, so its boundaries are all EVEN and byte 100 would be
+        // safe by luck — the one-byte 'x' prefix shifts them odd so byte 100
+        // genuinely straddles a character. (The assertion below caught this
+        // when the fixture was wrong, which is the point of asserting it.)
+        let llm_garbage = format!("x{}", "é".repeat(80)); // 161 bytes
+        assert!(!llm_garbage.is_char_boundary(100), "fixture must straddle byte 100");
+        let _ = truncate_on_char_boundary(&llm_garbage, 100); // pre-fix: panic
+
+        // audit.rs:293 shape — `&s[..8000]` guarded by a BYTE length check
+        let episode = "ü".repeat(5000); // 10,000 bytes; byte 8000 is a boundary…
+        let episode = format!("x{episode}"); // …shift by 1 so it is not
+        assert!(!episode.is_char_boundary(8000), "fixture must straddle byte 8000");
+        let _ = truncate_on_char_boundary(&episode, 8000); // pre-fix: panic
+    }
+}

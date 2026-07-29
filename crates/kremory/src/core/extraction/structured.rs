@@ -630,9 +630,16 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
 
     match arm {
         FallbackArm::PromptOnly => Ok(Value::Object(serde_json::Map::new())),
+        // `&trimmed[..n]` PANICS when byte `n` is mid-character, and `trimmed`
+        // is a raw LLM response — arbitrary UTF-8. This is the ERROR arm, so
+        // the old code turned a RECOVERABLE parse failure into a server-wide
+        // crash: the panic unwinds the tokio worker and takes kremory-http
+        // down, on the shared path used by every structured call (extraction,
+        // contradiction, resolution). Same defect class that crashed the
+        // server on 2026-07-28 via core/extraction_window.rs.
         _ => Err(ExtractionError::Parse(format!(
             "failed to parse LLM response as JSON: {}",
-            &trimmed[..trimmed.len().min(100)]
+            crate::core::text_utils::truncate_on_char_boundary(trimmed, 100)
         ))),
     }
 }
