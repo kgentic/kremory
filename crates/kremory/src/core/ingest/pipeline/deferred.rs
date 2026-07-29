@@ -157,17 +157,29 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
 
         // Store facts (contradiction detection + insert), same logic as ingest_with.
-        let llm_for_batch_detector =
-            self.llm
-                .as_ref()
-                .ok_or_else(|| crate::core::error::Error::LlmRequired {
-                    method: "ingest_batch",
-                    hint: "wire an LLM via Memory::open(…).with_llm(…) to enable \
-                       contradiction detection; or use .with_facts(…) to pin \
-                       triples without LLM",
-                })?;
-        let detector =
-            TwoPoolDetector::new(Arc::clone(llm_for_batch_detector)).with_model(self.model.clone());
+        //
+        // TD-167: gated identically to `ingest_with`. This is the SECOND call
+        // site — gating only the first would leave the deferred/background
+        // ingest path still destroying set-valued facts, which is exactly the
+        // fork-shaped bug this codebase keeps hitting. Facts are still stored;
+        // only the invalidation and its LLM call are skipped.
+        let detector = if self.config.contradiction_detection_enabled {
+            let llm_for_batch_detector =
+                self.llm
+                    .as_ref()
+                    .ok_or_else(|| crate::core::error::Error::LlmRequired {
+                        method: "ingest_batch",
+                        hint: "wire an LLM via Memory::open(…).with_llm(…) to enable \
+                           contradiction detection; or use .with_facts(…) to pin \
+                           triples without LLM",
+                    })?;
+            Some(
+                TwoPoolDetector::new(Arc::clone(llm_for_batch_detector))
+                    .with_model(self.model.clone()),
+            )
+        } else {
+            None
+        };
         let mut inserted_count: usize = 0;
 
         // MED-01 fire-once flags (ADR-052 §3.1 normative):
@@ -255,14 +267,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 fired_deduplicating = true;
             }
 
-            let contradiction_result = detector
-                .detect(DetectParams {
-                    new_fact: fact,
-                    pool_a: &pool_a,
-                    pool_b: &pool_b,
-                    reference_time: &ref_time,
-                })
-                .await?;
+            // TD-167: skipped when disabled — no LLM call, no invalidation.
+            let contradiction_result = match &detector {
+                Some(d) => {
+                    d.detect(DetectParams {
+                        new_fact: fact,
+                        pool_a: &pool_a,
+                        pool_b: &pool_b,
+                        reference_time: &ref_time,
+                    })
+                    .await?
+                }
+                None => crate::core::contradiction::ContradictionResult::no_conflicts(),
+            };
 
             // Build combined pool for prior-fact lookup (used by on_contradiction below).
             let all_pool: Vec<&crate::core::schema::Fact> =

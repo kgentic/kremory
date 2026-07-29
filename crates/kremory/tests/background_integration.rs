@@ -182,6 +182,10 @@ async fn background_ingestor_contradiction_round_trip() {
     );
 
     let config = PipelineConfig::builder()
+        // TD-167: contradiction detection is now DEFAULT-OFF (it supersedes
+        // set-valued facts). This test asserts the capability itself, so it
+        // opts in EXPLICITLY rather than relying on a default that changed.
+        .contradiction_detection_enabled(true)
         .build()
         .expect("PipelineConfig build failed");
 
@@ -266,6 +270,10 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     );
 
     let config = PipelineConfig::builder()
+        // TD-167: contradiction detection is now DEFAULT-OFF (it supersedes
+        // set-valued facts). This test asserts the capability itself, so it
+        // opts in EXPLICITLY rather than relying on a default that changed.
+        .contradiction_detection_enabled(true)
         .build()
         .expect("PipelineConfig build failed");
 
@@ -596,5 +604,106 @@ async fn background_ingestor_drains_without_errors() {
         errors_seen.is_empty(),
         "BackgroundIngestor should process both utterances without errors; got: {:?}",
         errors_seen.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+/// TD-167: with contradiction detection at its DEFAULT (off), a second value
+/// for the same (subject, predicate) must be STORED ALONGSIDE the first, not
+/// supersede it.
+///
+/// This is the regression guard for a silent data-loss bug. kremory treated
+/// every predicate as functional, so ingesting a LIST destroyed all but the
+/// last member. Measured on 8 LongMemEval sessions (2026-07-29): 81 of 1,021
+/// facts invalidated, ≥31% provably multi-valued —
+/// `has_performer: billie eilish / tove lo / lana del rey` all superseded by
+/// `the 1975`; `contain: rolled oats` superseded by `seeds`.
+///
+/// The fixture deliberately uses a genuinely SET-VALUED predicate
+/// (`has_performer`) and scripts the LLM to claim a contradiction anyway —
+/// mirroring what the real model does, because the prompt at
+/// `core/contradiction.rs:176` instructs it to treat "same relationship but
+/// newer value" as an update. With the flag off that verdict is never
+/// requested, so both facts survive.
+///
+/// Pairs with `rql_graph_contradiction_invalidates_superseded_fact` above,
+/// which opts INTO the flag and asserts supersession still works when wanted.
+#[tokio::test]
+async fn td167_set_valued_facts_survive_when_contradiction_detection_is_off() {
+    let recorder = DebuggingRecorder::new();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let temporal = Arc::new(
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("open_in_memory failed"),
+    );
+
+    // DEFAULT config — no .contradiction_detection_enabled(..) call. The point
+    // of the test is that the DEFAULT is safe; opting in here would prove
+    // nothing about what a consumer actually gets.
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("PipelineConfig build failed");
+    assert!(
+        !config.contradiction_detection_enabled,
+        "TD-167: contradiction detection must default OFF — if this flips, the \
+         set-valued data-loss bug is live again for every consumer"
+    );
+
+    let dim = config.embedding_dim.0;
+    // Only 4 responses: two entity/triplet pairs. A 5th (contradiction verdict)
+    // is deliberately NOT scripted — if the gate leaks and the detector runs,
+    // the queue is exhausted and the test fails loudly rather than silently
+    // passing for the wrong reason.
+    let llm = Arc::new(ScriptedLlmClient::new(vec![
+        r#"{"entities": [{"name": "festival", "entity_type_id": 0}]}"#,
+        r#"[{"subject":"festival","predicate":"has_performer","object":"billie eilish","is_entity_ref":false,"confidence":0.9}]"#,
+        r#"{"entities": [{"name": "festival", "entity_type_id": 0}]}"#,
+        r#"[{"subject":"festival","predicate":"has_performer","object":"the 1975","is_entity_ref":false,"confidence":0.9}]"#,
+    ]));
+    let embedder = Arc::new(ScriptedEmbeddingProvider::new(dim));
+
+    let graph = Engine::new(kremory::core::ingest::EngineNewParams {
+        graph: temporal,
+        llm: Arc::clone(&llm),
+        embedder,
+        config,
+        model: None,
+    });
+    let extractor = LlmExtractor::new(Arc::clone(&llm));
+
+    let ingest = |text: &'static str| {
+        let g = &graph;
+        let e = &extractor;
+        async move {
+            g.ingest_with(
+                e,
+                kremory::core::ingest::IngestWithParams {
+                    text,
+                    reference_time: Some(Utc::now()),
+                    group_id: None,
+                    content_type: None,
+                    source_params: kremory::core::ingest::SourceParams::default(),
+                },
+            )
+            .await
+            .expect("ingest failed")
+        }
+    };
+
+    let r1 = ingest("the festival has billie eilish performing").await;
+    assert_eq!(r1.inserted_fact_ids.len(), 1, "first performer should store");
+    assert!(r1.invalidated_fact_ids.is_empty(), "nothing to invalidate yet");
+
+    let r2 = ingest("the 1975 are also performing at the festival").await;
+    assert_eq!(r2.inserted_fact_ids.len(), 1, "second performer should store");
+
+    // THE ASSERTION THIS TEST EXISTS FOR.
+    assert!(
+        r2.invalidated_fact_ids.is_empty(),
+        "TD-167 REGRESSION: adding a second value for the same (subject, \
+         predicate) invalidated the first. A festival has MANY performers — \
+         this is set-valued data, not a contradiction. Invalidated: {:?}",
+        r2.invalidated_fact_ids
     );
 }

@@ -1580,17 +1580,37 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             }
 
             // ── Phase 2: detect contradictions and store facts ───────────────────────
-            let llm_for_detector =
-                self.llm
-                    .as_ref()
-                    .ok_or_else(|| crate::core::error::Error::LlmRequired {
-                        method: "ingest_with",
-                        hint: "wire an LLM via Memory::open(…).with_llm(…) to enable \
-                           contradiction detection; or use .with_facts(…) to pin \
-                           triples without LLM",
-                    })?;
-            let detector =
-                TwoPoolDetector::new(Arc::clone(llm_for_detector)).with_model(self.model.clone());
+            //
+            // TD-167: contradiction detection is DEFAULT-OFF because it treats
+            // every predicate as functional and therefore SUPERSEDES SET-VALUED
+            // FACTS — measured on 8 LongMemEval sessions, 81 of 1,021 facts
+            // invalidated, ≥31% provably multi-valued (a festival's 2nd..6th
+            // performer superseded by the last; "contain: rolled oats"
+            // superseded by "seeds"). Facts are still STORED by this loop; only
+            // the invalidation is skipped, so this is a pure loss-of-capability,
+            // never a loss of data. Opt in with KREMORY_CONTRADICTION_DETECTION=1.
+            //
+            // Building the detector conditionally also removes a spurious
+            // `LlmRequired` error: with detection off there is nothing here that
+            // needs an LLM, so a caller pinning triples via `.with_facts(…)`
+            // should not be forced to wire one for a pass that will not run.
+            let detector = if self.config.contradiction_detection_enabled {
+                let llm_for_detector =
+                    self.llm
+                        .as_ref()
+                        .ok_or_else(|| crate::core::error::Error::LlmRequired {
+                            method: "ingest_with",
+                            hint: "wire an LLM via Memory::open(…).with_llm(…) to enable \
+                               contradiction detection; or use .with_facts(…) to pin \
+                               triples without LLM",
+                        })?;
+                Some(
+                    TwoPoolDetector::new(Arc::clone(llm_for_detector))
+                        .with_model(self.model.clone()),
+                )
+            } else {
+                None
+            };
 
             for fact in &all_facts {
                 // Resolve subject and object IDs through the merge map
@@ -1639,22 +1659,133 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(hits) => hits,
                     Err(e) => break 'phases Err(e),
                 };
-                let pool_b: Vec<crate::core::schema::Fact> =
-                    pool_b_hits.into_iter().map(|h| h.item).collect();
-
-                // Run contradiction detection
-                let contradiction_result = match detector
-                    .detect(DetectParams {
-                        new_fact: fact,
-                        pool_a: &pool_a,
-                        pool_b: &pool_b,
-                        reference_time: &ref_time,
+                // TD-165: keep only candidates that SHARE AN ENTITY with the new
+                // fact. The FTS above matches on the PREDICATE alone, so without
+                // this it returns other subjects' facts entirely — "Alice likes
+                // tea" pulls in "Bob likes coffee" and buys a full LLM
+                // round-trip to ask whether they contradict. They cannot.
+                //
+                // Measured before adding this filter (Groq, 8 sessions,
+                // 2026-07-29, counters below):
+                //   pool_a contributed to 85 LLM-reachable checks -> 33 contradictions + 4 duplicates
+                //   pool_b contributed to 63 LLM-reachable checks ->  0 contradictions,  0 duplicates
+                // 0/63 gives a 95% CI upper bound of 4.8% on pool_b's hit rate,
+                // against ~43% for pool_a. It was pure cost.
+                //
+                // This is a COST fix, not a capability removal: same-subject
+                // contradiction is unaffected (that is pool_a's job, and pool_b
+                // candidates sharing the subject survive the filter). What it
+                // drops is the CROSS-ENTITY case, which was never designed —
+                // the pool_b search is documented above as a "semantically
+                // related facts" recall heuristic, and genuine cross-entity
+                // contradiction ("X is CEO of Acme" vs "Y is CEO of Acme")
+                // needs predicate CARDINALITY, which kremory does not model.
+                // Build that deliberately if wanted; do not leave it as an
+                // accident of a text search. See TD-165.
+                //
+                // The `contradiction_outcome_total{source=...}` counter added
+                // alongside this keeps the decision falsifiable: if pool_b ever
+                // starts earning its keep, `source="pool_b"` will show it.
+                let pool_b: Vec<crate::core::schema::Fact> = pool_b_hits
+                    .into_iter()
+                    .map(|h| h.item)
+                    .filter(|f| {
+                        let shares_subject = f.subject_id == subject_id;
+                        let shares_object = match (&f.object_id, &object_id) {
+                            (Some(a), Some(b)) => a == b,
+                            _ => false,
+                        };
+                        // A candidate whose OBJECT is our SUBJECT (or vice
+                        // versa) is still about the same entity — keep it.
+                        let cross_ref = f.object_id.as_deref() == Some(subject_id.as_str())
+                            || object_id.as_deref() == Some(f.subject_id.as_str());
+                        shares_subject || shares_object || cross_ref
                     })
-                    .await
-                {
-                    Ok(r) => r,
-                    Err(e) => break 'phases Err(e),
+                    .collect();
+
+                // Run contradiction detection (TD-167: skipped when disabled —
+                // no LLM call, no invalidation; the fact below is still stored)
+                let contradiction_result = match &detector {
+                    Some(d) => match d
+                        .detect(DetectParams {
+                            new_fact: fact,
+                            pool_a: &pool_a,
+                            pool_b: &pool_b,
+                            reference_time: &ref_time,
+                        })
+                        .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => break 'phases Err(e),
+                    },
+                    None => crate::core::contradiction::ContradictionResult::no_conflicts(),
                 };
+
+                // ── TD-165 o11y: did this check EARN its LLM call? ──────────────
+                //
+                // Contradiction detection is 38.4% of all ingest LLM calls
+                // (361/941 measured over 20 real sessions, 2026-07-29) and had
+                // NO success metric of any kind — the only related counter in
+                // the crate was `kremory.graph.unsupersede_total`, which meters
+                // the REVERSE operation. So the single largest consumer of the
+                // ingest budget could not be shown to find anything, and a 48x
+                // token amplification went unnoticed for months.
+                //
+                // `source` is the load-bearing label. `pool_a` is scoped to
+                // (subject, predicate); `pool_b` is an FTS hit on the PREDICATE
+                // ALONE (see the search above), so it can return other
+                // subjects' facts entirely. Splitting outcomes by which pool
+                // supplied the candidates answers, with data, whether the
+                // predicate-only arm earns its cost — the question that
+                // otherwise has to be settled by opinion.
+                //
+                // Cardinality is bounded: 3 outcomes x 3 sources = 9 series.
+                {
+                    let a_ids: std::collections::HashSet<i64> =
+                        pool_a.iter().map(|f| f.id).collect();
+                    let (mut from_a, mut from_b) = (false, false);
+                    for id in contradiction_result
+                        .contradictions
+                        .iter()
+                        .chain(contradiction_result.duplicates.iter())
+                    {
+                        if a_ids.contains(id) {
+                            from_a = true;
+                        } else {
+                            from_b = true;
+                        }
+                    }
+                    let source = match (from_a, from_b) {
+                        (true, true) => "mixed",
+                        (true, false) => "pool_a",
+                        (false, true) => "pool_b",
+                        (false, false) => "none",
+                    };
+                    let outcome = if !contradiction_result.contradictions.is_empty() {
+                        "contradiction"
+                    } else if !contradiction_result.duplicates.is_empty() {
+                        "duplicate"
+                    } else {
+                        "no_conflict"
+                    };
+                    metrics::counter!(
+                        "kremory.ingest.contradiction_outcome_total",
+                        "outcome" => outcome,
+                        "source" => source,
+                    )
+                    .increment(1);
+                    // Was the LLM actually consulted? `detect` short-circuits on
+                    // empty/all-duplicate pools (contradiction.rs:365-376), so a
+                    // call here is NOT guaranteed. Label by whether the
+                    // predicate-only arm contributed candidates, which is what
+                    // makes the call reachable in the first place.
+                    metrics::counter!(
+                        "kremory.ingest.contradiction_pool_total",
+                        "pool_a_nonempty" => if pool_a.is_empty() { "false" } else { "true" },
+                        "pool_b_nonempty" => if pool_b.is_empty() { "false" } else { "true" },
+                    )
+                    .increment(1);
+                }
 
                 // Invalidate contradicted facts
                 for fact_id in &contradiction_result.contradictions {
