@@ -211,6 +211,13 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                     {
                         Ok(r) => r,
                         Err(_) => {
+                            // TD-166 known gap (Quinn MNT-005): a timed-out arm emits
+                            // NO token usage, though the provider may already have
+                            // spent tokens server-side before we gave up. So
+                            // kremory_core_tokens_total UNDER-reports by whatever the
+                            // timed-out arms cost. Cross-reference this counter to
+                            // size that gap — a high arm_timeout with low token totals
+                            // means the totals are incomplete, not that ingest was cheap.
                             counter!(
                                 "rql.extraction.arm_timeout",
                                 "schema" => schema_name,
@@ -522,6 +529,71 @@ fn arm_usage_of(response: &dyn autoagents_llm::chat::ChatResponse) -> Option<Arm
     })
 }
 
+/// Which PHASE a structured call belongs to, derived from its schema name.
+///
+/// **This exists because `try_arm` is the funnel for EVERY structured call in the
+/// crate — not just ingest.** The dream phase builds `StructuredCallBuilder` too
+/// (`core/dream/reclassify.rs`, `discover_types.rs`, `type_registry_collapse.rs`,
+/// `acronym_nickname_recall.rs`, `consistency_check/verify.rs`). Labelling every
+/// call `operation="extraction"` would attribute reconciliation cost to ingest —
+/// an OVER-count presented as authoritative — and double-count against the dream
+/// phase's own `dream_pass_budget_usage` accounting (`core/ingest/mod.rs`).
+/// (Quinn ARCH-001, 2026-08-03: the first cut of TD-166 did exactly that.)
+///
+/// The split is finer than ingest-vs-dream on purpose: `extraction` /
+/// `resolution` / `contradiction` are the three ingest cost centres, so a
+/// consumer can sum by `operation` to get the breakdown the 48×-amplification
+/// work needs, while `schema` keeps the per-call detail.
+///
+/// An unrecognised schema is labelled **`"unclassified"` and warns** — it is
+/// never folded into `"extraction"`, because a silent default is precisely how
+/// the original defect existed. The source-gate test
+/// `every_production_schema_is_classified` fails if a new call site introduces a
+/// schema that lands here.
+fn operation_for_schema(schema_name: &str) -> &'static str {
+    match schema_name {
+        // ── ingest: entity/relation/triple extraction ────────────────────────
+        "EntityListIntegerId"
+        | "EntityList"
+        | "RelTypeList"
+        | "TripletList"
+        | "HybridTyping"
+        | "EntityTyping"
+        | "NuExtractBoth"
+        | "NuExtractRelationsOnly"
+        | "RelOnlyForceFallback" => "extraction",
+
+        // ── ingest: entity resolution / dedup ────────────────────────────────
+        "ResolutionVerdict" | "BatchedResolution" => "resolution",
+
+        // ── ingest: supersession ─────────────────────────────────────────────
+        "ContradictionVerdict" => "contradiction",
+
+        // ── dream: reconciliation passes (NOT ingest — see doc comment) ──────
+        "ReclassifyBatch"
+        | "Reclassify"
+        | "DiscoveryProposalBatch"
+        | "IdentityVerdictBatch"
+        | "VerifyBatch" => "dream",
+
+        other => {
+            UNCLASSIFIED_SCHEMA_WARNED.call_once(|| {
+                tracing::warn!(
+                    target: "kremory.extraction.unclassified_schema",
+                    schema = %other,
+                    "structured-call schema is not classified into an operation — its \
+                     tokens are being counted under operation=\"unclassified\". Add it to \
+                     operation_for_schema (see every_production_schema_is_classified)."
+                );
+            });
+            "unclassified"
+        }
+    }
+}
+
+/// Warn once per process about an unclassified schema (see `operation_for_schema`).
+static UNCLASSIFIED_SCHEMA_WARNED: std::sync::Once = std::sync::Once::new();
+
 /// Span fields for one arm's usage: `(input, output, reported)`.
 ///
 /// The `reported` flag is load-bearing, not decoration: without it a span
@@ -551,11 +623,13 @@ static USAGE_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
 /// `tokens_total` of 0 would be indistinguishable from "ingest was free", which
 /// is the absence-read-as-measurement defect this TD exists to remove.
 fn emit_arm_usage(schema_name: &'static str, arm: FallbackArm, usage: Option<ArmUsage>) {
+    // Derived, never hardcoded — the dream phase shares this funnel (ARCH-001).
+    let operation = operation_for_schema(schema_name);
     match usage {
         Some(u) => {
             counter!(
                 "kremory_core_tokens_total",
-                "operation" => "extraction",
+                "operation" => operation,
                 "schema" => schema_name,
                 "arm" => arm_name(arm),
                 "direction" => "input",
@@ -563,7 +637,7 @@ fn emit_arm_usage(schema_name: &'static str, arm: FallbackArm, usage: Option<Arm
             .increment(u.input_tokens);
             counter!(
                 "kremory_core_tokens_total",
-                "operation" => "extraction",
+                "operation" => operation,
                 "schema" => schema_name,
                 "arm" => arm_name(arm),
                 "direction" => "output",
@@ -573,7 +647,7 @@ fn emit_arm_usage(schema_name: &'static str, arm: FallbackArm, usage: Option<Arm
         None => {
             counter!(
                 "kremory_core_tokens_usage_missing_total",
-                "operation" => "extraction",
+                "operation" => operation,
                 "schema" => schema_name,
                 "arm" => arm_name(arm),
             )
@@ -1747,6 +1821,142 @@ mod tests {
                 .any(|(k, _, _, _)| k.key().name() == "kremory_core_tokens_total"),
             "no token counter may be emitted when usage is unreported — a 0 here \
              reads as 'ingest was free' and is the defect this TD removes"
+        );
+    }
+
+    /// T4 (Quinn ARCH-001) — the dream phase shares this funnel. Its calls must NOT
+    /// be attributed to ingest extraction: doing so over-counts ingest cost AND
+    /// double-counts against dream's own `dream_pass_budget_usage` accounting.
+    #[test]
+    fn dream_schema_is_not_attributed_to_extraction() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        let mock = UsageMockProvider {
+            text: r#"{"items":[]}"#.to_string(),
+            input: 11,
+            output: 5,
+        };
+
+        run_with_recorder(&recorder, || async {
+            // "ReclassifyBatch" is what core/dream/reclassify.rs:256 passes.
+            let _ = StructuredCallBuilder::new(&mock, &SCHEMA_ENTITY_LIST, "ReclassifyBatch")
+                .model("qwen2.5:14b")
+                .messages(vec![crate::core::provider::chat_msg_user("reclassify")])
+                .call()
+                .await;
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+
+        assert_eq!(
+            counter_sum(&snapshot, "kremory_core_tokens_total", |l| {
+                l.get("operation") == Some(&"extraction")
+            }),
+            0,
+            "a DREAM call must not be counted as ingest extraction — that is the \
+             over-count ARCH-001 found"
+        );
+        assert_eq!(
+            counter_sum(&snapshot, "kremory_core_tokens_total", |l| {
+                l.get("operation") == Some(&"dream")
+            }),
+            16,
+            "the dream call's tokens must be attributed to operation=dream"
+        );
+    }
+
+    /// T5 — the mapping itself, including the three ingest cost centres the 48×
+    /// work needs to sum separately.
+    #[test]
+    fn operation_for_schema_splits_ingest_cost_centres_and_dream() {
+        assert_eq!(operation_for_schema("EntityListIntegerId"), "extraction");
+        assert_eq!(operation_for_schema("TripletList"), "extraction");
+        assert_eq!(operation_for_schema("ResolutionVerdict"), "resolution");
+        assert_eq!(operation_for_schema("BatchedResolution"), "resolution");
+        assert_eq!(operation_for_schema("ContradictionVerdict"), "contradiction");
+        assert_eq!(operation_for_schema("ReclassifyBatch"), "dream");
+        assert_eq!(operation_for_schema("DiscoveryProposalBatch"), "dream");
+        assert_eq!(operation_for_schema("IdentityVerdictBatch"), "dream");
+        assert_eq!(operation_for_schema("VerifyBatch"), "dream");
+        // Unknown must be LOUD, never silently folded into "extraction" — a silent
+        // default is exactly how ARCH-001 existed.
+        assert_eq!(operation_for_schema("SomeNewSchema"), "unclassified");
+    }
+
+    /// T6 — SOURCE GATE. Fails when a new `StructuredCallBuilder` call site
+    /// introduces a schema that `operation_for_schema` does not classify.
+    ///
+    /// This is the enforcement that ARCH-001 lacked: without it, a future call
+    /// site silently lands in `"unclassified"` and its cost is mis-attributed
+    /// with nothing failing. Scans production code only — each file is truncated
+    /// at its `mod tests` boundary, and comment lines are skipped.
+    #[test]
+    fn every_production_schema_is_classified() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        walk(&src, &mut files);
+        assert!(!files.is_empty(), "source gate found no .rs files under {src:?}");
+
+        let mut unclassified: Vec<String> = Vec::new();
+        let mut seen = 0usize;
+
+        for f in &files {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            // Production code only — stop at the test module.
+            let prod = match text.find("\nmod tests {") {
+                Some(i) => &text[..i],
+                None => &text[..],
+            };
+            let lines: Vec<&str> = prod.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let t = line.trim_start();
+                if t.starts_with("//") {
+                    continue; // doc/comment examples are not call sites
+                }
+                if !line.contains("StructuredCallBuilder::new(") {
+                    continue;
+                }
+                // The schema NAME is the first string literal at or after the call.
+                let window = lines[i..(i + 6).min(lines.len())].join("\n");
+                let Some(start) = window.find('"') else { continue };
+                let rest = &window[start + 1..];
+                let Some(end) = rest.find('"') else { continue };
+                let name = &rest[..end];
+                seen += 1;
+                if operation_for_schema(name) == "unclassified" {
+                    unclassified.push(format!(
+                        "{}: schema {name:?}",
+                        f.strip_prefix(&src).unwrap_or(f).display()
+                    ));
+                }
+            }
+        }
+
+        assert!(seen > 0, "source gate matched no production call sites — the scan is broken");
+        assert!(
+            unclassified.is_empty(),
+            "these production StructuredCallBuilder call sites use a schema that \
+             operation_for_schema does not classify, so their token cost would be \
+             attributed to operation=\"unclassified\":\n  {}\n\nAdd each to \
+             operation_for_schema under the correct phase.",
+            unclassified.join("\n  ")
         );
     }
 

@@ -76,15 +76,20 @@ _HEALTH_REPORTABLE_FEATURES = frozenset({"content-search", "rerank", "prometheus
 _EXEMPT_FROM_DEFAULTS_GATE = frozenset({"prometheus"})
 
 
-def shipped_default_features(repo_root: str | os.PathLike | None = None) -> frozenset[str]:
-    """DERIVE the shipped default cargo feature set from `crates/kremory/Cargo.toml`.
+# BOTH manifests are load-bearing and they are edited independently:
+#   crates/kremory          — the library a `cargo add kremory` user gets
+#   crates/kremory-mcp      — builds `kremory-http`, the binary the bench measures
+#                             and the one GET /health reports features for
+# Deriving from only ONE and comparing against the OTHER's stamp is a silent-drift
+# hazard: they agree today (both `default = ["content-search"]`), and nothing
+# would tell us if that stopped being true. (Quinn REL-002, 2026-08-03.)
+_DEFAULT_MANIFESTS = (
+    ("kremory", Path("crates") / "kremory" / "Cargo.toml"),
+    ("kremory-mcp", Path("crates") / "kremory-mcp" / "Cargo.toml"),
+)
 
-    This is what `cargo add kremory` turns on. Parsed, not restated — if someone
-    changes the default in Cargo.toml, this follows automatically and the gate
-    below starts checking the new value on the next run.
-    """
-    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
-    manifest = root / "crates" / "kremory" / "Cargo.toml"
+
+def _default_features_of(manifest: Path) -> frozenset[str]:
     if not manifest.exists():
         raise ShippedDefaultsMismatch(
             f"cannot derive shipped defaults: {manifest} not found. The gate refuses "
@@ -101,6 +106,31 @@ def shipped_default_features(repo_root: str | os.PathLike | None = None) -> froz
             f"build. Refusing rather than guessing."
         )
     return frozenset(default)
+
+
+def shipped_default_features(repo_root: str | os.PathLike | None = None) -> frozenset[str]:
+    """DERIVE the shipped default cargo feature set — from BOTH manifests, which
+    must agree.
+
+    Parsed, not restated: change a default in Cargo.toml and the gate follows on
+    the next run. If the library and the server binary ever disagree about their
+    default set, that is itself reported rather than silently resolved — the
+    comparison would otherwise be checking a server build against a library
+    default and calling the result 'shipped'.
+    """
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+    derived = {name: _default_features_of(root / rel) for name, rel in _DEFAULT_MANIFESTS}
+
+    distinct = set(map(frozenset, derived.values()))
+    if len(distinct) > 1:
+        detail = "\n".join(f"  {name}: {sorted(feats)}" for name, feats in derived.items())
+        raise ShippedDefaultsMismatch(
+            "the library and the server binary declare DIFFERENT default feature "
+            "sets, so 'the shipped build' is ambiguous and this gate cannot certify "
+            "anything:\n" + detail + "\n\nReconcile the manifests, or pass "
+            "--allow-unverified-build to score this as a diagnostic."
+        )
+    return next(iter(distinct))
 
 
 def assert_shipped_defaults(
@@ -165,8 +195,13 @@ def assert_shipped_defaults(
         if extra:
             detail.append(f"  EXTRA (run had it, consumers do NOT): {extra}")
         raise ShippedDefaultsMismatch(
-            "this run was NOT measured on the shipped default build — refusing to "
-            "certify the number (ROADMAP W0.2):\n"
+            # Scoped claim, deliberately: what this gate can certify is that the
+            # SERVER BUILD matched the declared default feature set. It does NOT
+            # certify that the measured call path equals a library consumer's —
+            # the bench drives the REST layer, which re-composes results (ROADMAP
+            # W0.1). Overclaiming here would be its own false certification.
+            "this run's server build does NOT match the declared default feature "
+            "set — refusing to certify the number (ROADMAP W0.2):\n"
             + "\n".join(detail)
             + f"\n  shipped default (derived from crates/kremory/Cargo.toml): {sorted(want)}"
             + f"\n  this run: {sorted(got)}"
