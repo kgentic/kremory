@@ -42,6 +42,144 @@ class ProvenanceMismatch(RuntimeError):
     a mismatched file (recall-improvement-e2e-spec-2026-07-22 §S0-infra [G1])."""
 
 
+class ShippedDefaultsMismatch(ProvenanceMismatch):
+    """Raised by `assert_shipped_defaults` when a run was measured on a build that
+    is not the one a `cargo add kremory` user receives (ROADMAP W0.2)."""
+
+
+# ── W0.2 — the shipped-default gate ──────────────────────────────────────────
+#
+# ADR-078 is the failure this exists to make structurally impossible: a measured
+# +30.2pt sat above `content-search = []` for months, every published benchmark
+# ran with the feature ON, and no consumer received it. Measured gap when finally
+# checked: -32.2pt. "Remember to check the features" is not a control.
+#
+# The default set is DERIVED from Cargo.toml, never declared here — a
+# hand-maintained copy would drift from the thing it claims to describe, and the
+# drift would be silent (see `contract-first-before-new-public-surface`:
+# derive > observe > declare).
+
+# Features that /health can report back. `_features_from_health` reconstructs the
+# stamp from exactly these three booleans, so a recall-affecting default OUTSIDE
+# this set is unverifiable: its absence from the stamp would be indistinguishable
+# from it being switched off. That case raises rather than passing quietly.
+_HEALTH_REPORTABLE_FEATURES = frozenset({"content-search", "rerank", "prometheus"})
+
+# Exempt from the comparison, with reasons. Keep this list SHORT and justified:
+# every entry is a hole in the gate.
+#
+#   prometheus — compile-time gate on the `/metrics` endpoint only. The benchmark
+#   REQUIRES it (the harness scrapes /metrics for the o11y block), so a strict
+#   set-equality would fail every legitimate run and the gate would be disabled
+#   within a day. It cannot change what recall returns: it installs a recorder
+#   and adds a route, and touches no search path.
+_EXEMPT_FROM_DEFAULTS_GATE = frozenset({"prometheus"})
+
+
+def shipped_default_features(repo_root: str | os.PathLike | None = None) -> frozenset[str]:
+    """DERIVE the shipped default cargo feature set from `crates/kremory/Cargo.toml`.
+
+    This is what `cargo add kremory` turns on. Parsed, not restated — if someone
+    changes the default in Cargo.toml, this follows automatically and the gate
+    below starts checking the new value on the next run.
+    """
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+    manifest = root / "crates" / "kremory" / "Cargo.toml"
+    if not manifest.exists():
+        raise ShippedDefaultsMismatch(
+            f"cannot derive shipped defaults: {manifest} not found. The gate refuses "
+            f"to assume a default set — an assumed default is the ADR-078 defect."
+        )
+    import tomllib
+
+    with open(manifest, "rb") as f:
+        data = tomllib.load(f)
+    default = data.get("features", {}).get("default")
+    if default is None:
+        raise ShippedDefaultsMismatch(
+            f"{manifest} has no [features] default key — cannot derive the shipped "
+            f"build. Refusing rather than guessing."
+        )
+    return frozenset(default)
+
+
+def assert_shipped_defaults(
+    stamp: Mapping[str, Any],
+    *,
+    repo_root: str | os.PathLike | None = None,
+) -> frozenset[str]:
+    """Assert a run's provenance stamp describes the SHIPPED DEFAULT build.
+
+    Returns the compared feature set on success; raises `ShippedDefaultsMismatch`
+    otherwise. This is the W0.2 gate: a number measured on a build no consumer
+    receives is not a number about the product.
+
+    Three refusals, in order:
+
+    1. **env-fallback stamps.** `build_provenance` falls back to reading the
+       HARNESS's own env when `/health` is unreachable, and says in its own
+       docstring that such a stamp "MAY BE UNFAITHFUL to the server's active
+       config". Gating on it would be gating on a value the measured party
+       supplies about itself — the same self-attestation trap the ADR-078 defect
+       lived in. Only a `/health`-sourced stamp is admissible.
+    2. **Unverifiable defaults.** A recall-affecting default that `/health`
+       cannot report is a blind spot, not a pass.
+    3. **The actual comparison**, over non-exempt features.
+    """
+    source = stamp.get("provenance_source")
+    if source != "health":
+        raise ShippedDefaultsMismatch(
+            f"provenance_source is {source!r}, not 'health' — the stamp was built "
+            f"from the HARNESS's env, which build_provenance itself documents as "
+            f"possibly unfaithful to the server's real config. Refusing to certify "
+            f"a shipped-default run on a self-reported stamp. Start the server so "
+            f"GET /health answers, then re-run."
+        )
+
+    if "features" not in stamp:
+        raise ShippedDefaultsMismatch(
+            "stamp carries no `features` key — cannot verify the build. Refusing."
+        )
+
+    shipped = shipped_default_features(repo_root)
+
+    unverifiable = (shipped - _EXEMPT_FROM_DEFAULTS_GATE) - _HEALTH_REPORTABLE_FEATURES
+    if unverifiable:
+        raise ShippedDefaultsMismatch(
+            f"shipped defaults include {sorted(unverifiable)}, which GET /health does "
+            f"not report — so this gate cannot see whether the run had them. Extend "
+            f"`_features_from_health` (and the server's /health) before quoting a "
+            f"number from this build. A blind spot must not read as a pass."
+        )
+
+    run = frozenset(f for f in str(stamp["features"]).split(",") if f)
+    want = shipped - _EXEMPT_FROM_DEFAULTS_GATE
+    got = run - _EXEMPT_FROM_DEFAULTS_GATE
+
+    if got != want:
+        missing = sorted(want - got)
+        extra = sorted(got - want)
+        detail = []
+        if missing:
+            detail.append(f"  MISSING (shipped by default, absent from the run): {missing}")
+        if extra:
+            detail.append(f"  EXTRA (run had it, consumers do NOT): {extra}")
+        raise ShippedDefaultsMismatch(
+            "this run was NOT measured on the shipped default build — refusing to "
+            "certify the number (ROADMAP W0.2):\n"
+            + "\n".join(detail)
+            + f"\n  shipped default (derived from crates/kremory/Cargo.toml): {sorted(want)}"
+            + f"\n  this run: {sorted(got)}"
+            + "\n  Exempt from comparison: "
+            + f"{sorted(_EXEMPT_FROM_DEFAULTS_GATE)}"
+            + "\n\nThis is the ADR-078 defect class: a +30.2pt win sat above "
+            "`content-search = []` for months while every published benchmark ran "
+            "with it ON and no consumer received it."
+        )
+
+    return want
+
+
 def _git_sha() -> str:
     """`git rev-parse HEAD`, or an explicit sentinel on failure (never silently
     blank — the stamp MUST be present)."""

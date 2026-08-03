@@ -19,8 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import (  # noqa: E402
     ProvenanceMismatch,
+    ShippedDefaultsMismatch,
     assert_provenance,
+    assert_shipped_defaults,
     build_provenance,
+    shipped_default_features,
 )
 
 
@@ -174,6 +177,77 @@ def test_assert_provenance_missing_stamp_raises():
         assert raised, "absent provenance stamp must raise ProvenanceMismatch"
 
 
+
+# ── W0.2 — shipped-default gate ──────────────────────────────────────────────
+
+
+def _health_stamp(features: str) -> dict:
+    """A stamp shaped like one build_provenance produces from GET /health."""
+    return {
+        "git_sha": "deadbeef",
+        "features": features,
+        "provenance_source": "health",
+    }
+
+
+def test_shipped_defaults_derived_from_cargo_toml():
+    """The default set is PARSED, not restated. If this drifts, the gate is
+    checking a fiction."""
+    got = shipped_default_features()
+    assert "content-search" in got, f"expected content-search in derived defaults, got {got}"
+    assert "rerank" not in got, (
+        f"rerank is deliberately opt-in (it pulls ort/ONNX) — derived set was {got}"
+    )
+
+
+def test_shipped_defaults_accepts_a_default_build():
+    stamp = _health_stamp("content-search,prometheus")
+    assert_shipped_defaults(stamp)
+
+
+def test_shipped_defaults_rejects_missing_default_feature():
+    """The literal ADR-078 case: the run lacked what consumers get."""
+    stamp = _health_stamp("prometheus")
+    try:
+        assert_shipped_defaults(stamp)
+    except ShippedDefaultsMismatch as e:
+        assert "MISSING" in str(e), f"error must name the missing feature: {e}"
+        return
+    raise AssertionError("a run without content-search must NOT certify as default")
+
+
+def test_shipped_defaults_rejects_extra_feature():
+    """The inverse, and the one people forget: a run with MORE than consumers get
+    is equally unquotable."""
+    stamp = _health_stamp("content-search,rerank,prometheus")
+    try:
+        assert_shipped_defaults(stamp)
+    except ShippedDefaultsMismatch as e:
+        assert "EXTRA" in str(e), f"error must name the extra feature: {e}"
+        return
+    raise AssertionError("a run WITH rerank must NOT certify as the default build")
+
+
+def test_shipped_defaults_rejects_env_fallback_stamp():
+    """An env-fallback stamp is the harness describing itself. Gating on it is the
+    self-attestation trap."""
+    stamp = {"features": "content-search", "provenance_source": "env-fallback"}
+    try:
+        assert_shipped_defaults(stamp)
+    except ShippedDefaultsMismatch as e:
+        assert "env-fallback" in str(e), f"error must name the cause: {e}"
+        return
+    raise AssertionError("an env-fallback stamp must NOT certify a shipped-default run")
+
+
+def test_shipped_defaults_prometheus_alone_does_not_fail():
+    """False-positive guard. The harness REQUIRES prometheus to scrape /metrics;
+    if its presence failed the gate, the gate would be switched off within a day
+    (over-blocking is a control failure, not a strictness virtue)."""
+    assert_shipped_defaults(_health_stamp("content-search,prometheus"))
+    assert_shipped_defaults(_health_stamp("content-search"))
+
+
 def _run() -> int:
     tests = [
         test_build_provenance_reflects_env,
@@ -183,6 +257,12 @@ def _run() -> int:
         test_assert_provenance_roundtrip_match,
         test_assert_provenance_mismatch_raises,
         test_assert_provenance_missing_stamp_raises,
+        test_shipped_defaults_derived_from_cargo_toml,
+        test_shipped_defaults_accepts_a_default_build,
+        test_shipped_defaults_rejects_missing_default_feature,
+        test_shipped_defaults_rejects_extra_feature,
+        test_shipped_defaults_rejects_env_fallback_stamp,
+        test_shipped_defaults_prometheus_alone_does_not_fail,
     ]
     failed = 0
     for t in tests:
