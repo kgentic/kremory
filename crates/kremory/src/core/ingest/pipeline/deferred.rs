@@ -405,6 +405,32 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 continue;
             }
 
+            // ADR-045 §11's DETECTION intent, preserved additively — deferred path.
+            // Mirrors the inline path exactly (see `ingest_with.rs` for the full
+            // reasoning): fires when ONE episode asserts multiple DISTINCT objects for
+            // the same subject+predicate. The value is now STORED rather than dropped;
+            // this counter is what makes the phenomenon measurable so contradiction
+            // policy can later be designed against real counts. Parity matters here in
+            // particular because this is the path `Memory::remember()` drives (§6d).
+            let deferred_within_multivalue = pool_a
+                .iter()
+                .any(|f| f.source_episode_id == Some(episode_id));
+            if deferred_within_multivalue {
+                let ns = group_id.unwrap_or("default");
+                metrics::counter!(
+                    "rql.ingest.within_episode_multivalue",
+                    "namespace" => ns.to_string()
+                )
+                .increment(1);
+                tracing::debug!(
+                    subject = %subject_id,
+                    predicate = %fact.predicate,
+                    episode_id,
+                    namespace = %ns,
+                    "kremory.ingest.within_episode_multivalue: deferred path — stored, not dropped"
+                );
+            }
+
             // ADR-035 §5 Option A: caller-pin dedup parity with the inline path.
             // MUST be `_with_group(.., Some(deferred_effective_gid))`: entities are
             // upserted into this namespace (entity_group_id: group_id below), and the
