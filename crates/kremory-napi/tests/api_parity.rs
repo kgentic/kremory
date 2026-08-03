@@ -145,6 +145,30 @@ fn has_attr(attrs: &[syn::Attribute], attr_name: &str) -> bool {
     })
 }
 
+/// Check whether an item is gated by `#[cfg(test)]` specifically.
+///
+/// PAR-G2 (V1-CANONICAL §4.2): the walker previously called `has_attr(attrs, "cfg")`,
+/// which skips **every** `#[cfg(...)]` method — so the gate was blind exactly on the
+/// feature axis it most needed to police. Its own comment said it meant `#[cfg(test)]`;
+/// the code said "any cfg". Proven live by `backfill_episode_embeddings`, which is
+/// `#[cfg(feature = "content-search")]` and had neither a napi mirror nor a skip entry,
+/// yet the gate stayed GREEN.
+///
+/// Only a literal `#[cfg(test)]` is a genuine test-only item. Feature gates
+/// (`#[cfg(feature = "...")]`) are part of the consumer surface and MUST be walked.
+fn is_cfg_test_gated(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        if a.path().segments.last().is_none_or(|s| s.ident != "cfg") {
+            return false;
+        }
+        // `#[cfg(test)]` parses as a single path token `test`; anything else
+        // (`feature = "x"`, `all(..)`, `not(..)`) is a real conditional-compilation
+        // gate on shipped API and must not be skipped.
+        a.parse_args::<syn::Path>()
+            .is_ok_and(|p| p.is_ident("test"))
+    })
+}
+
 /// Check whether `#[napi(object)]` is present (napi attribute with `object` arg).
 fn has_napi_object(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| {
@@ -220,8 +244,12 @@ fn extract_substrate_symbols(sources: &[&str]) -> Vec<String> {
                         if !matches!(method.vis, syn::Visibility::Public(_)) {
                             continue;
                         }
-                        // Skip items inside `#[cfg(test)]` impl blocks or deprecated items.
-                        if has_attr(&method.attrs, "cfg") || has_attr(&method.attrs, "deprecated") {
+                        // Skip genuinely test-only items (`#[cfg(test)]`) and deprecated
+                        // ones. PAR-G2: this used to skip EVERY `#[cfg(...)]`, which made
+                        // the gate blind on the feature axis — see `is_cfg_test_gated`.
+                        if is_cfg_test_gated(&method.attrs)
+                            || has_attr(&method.attrs, "deprecated")
+                        {
                             continue;
                         }
                         let fn_name = method.sig.ident.to_string();
@@ -360,16 +388,37 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // (syn::File is !Send and would cause issues in the threaded test harness).
     // facade/mod.rs + facade/builder.rs both scanned: MemoryBuilder was extracted
     // to builder.rs in TD-015; both files carry tracked impl blocks.
+    // PAR-G1 (V1-CANONICAL §4.2): the walker read only `mod.rs` + `builder.rs`, but the
+    // 10 tracked types are defined across SEVEN files — `Memory` impls also live in
+    // `update.rs`; `RememberRequest`/`RememberBatchBuilder`/`EpisodeEntryBuilder` in
+    // `remember.rs`; `RecallRequest` in `recall.rs`; `ForgetRequest` in `forget.rs`;
+    // `DreamRequest` in `dream.rs`. Five of seven were never parsed, so most of the
+    // tracked request-builder surface had never been parity-checked at all while the
+    // gate reported GREEN.
     let facade_mod_src = parse_file_to_string(&root.join("crates/kremory/src/facade/mod.rs"));
     let facade_builder_src =
         parse_file_to_string(&root.join("crates/kremory/src/facade/builder.rs"));
+    let facade_update_src = parse_file_to_string(&root.join("crates/kremory/src/facade/update.rs"));
+    let facade_remember_src =
+        parse_file_to_string(&root.join("crates/kremory/src/facade/remember.rs"));
+    let facade_recall_src = parse_file_to_string(&root.join("crates/kremory/src/facade/recall.rs"));
+    let facade_forget_src = parse_file_to_string(&root.join("crates/kremory/src/facade/forget.rs"));
+    let facade_dream_src = parse_file_to_string(&root.join("crates/kremory/src/facade/dream.rs"));
     let napi_lib_src = parse_file_to_string(&root.join("crates/kremory-napi/src/lib.rs"));
     let napi_convert_src = parse_file_to_string(&root.join("crates/kremory-napi/src/convert.rs"));
     let skip_list_path = root.join("crates/kremory-napi/parity-skip.toml");
 
     let skip_list = load_skip_list(&skip_list_path);
     let napi_symbols = extract_napi_symbols(&[&napi_lib_src, &napi_convert_src]);
-    let substrate_symbols = extract_substrate_symbols(&[&facade_mod_src, &facade_builder_src]);
+    let substrate_symbols = extract_substrate_symbols(&[
+        &facade_mod_src,
+        &facade_builder_src,
+        &facade_update_src,
+        &facade_remember_src,
+        &facade_recall_src,
+        &facade_forget_src,
+        &facade_dream_src,
+    ]);
 
     // Governance check: no duplicate skip-list entries.
     {
@@ -410,10 +459,19 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // and on the record rather than by reshaping what the guard measures — the
     // register was already sitting exactly at the prior cap (83) before this
     // addition, so this is register growth, not walker over-finding.
+    // Raised 84 → 86 (PAR-G1/PAR-G2, 2026-08-03) for exactly the two symbols the
+    // repaired walker surfaced on its first run: `Memory::group_id_for_test` (test-only,
+    // same gate as the already-skipped `temporal_graph_for_test`) and
+    // `Memory::backfill_episode_embeddings` (one-shot CLI maintenance, same shape as its
+    // already-skipped sibling `reembed_all_episode_embeddings`). Both are register growth
+    // from FIXING the guard, not walker over-finding — the walker had been reading 2 of
+    // the 7 files holding tracked types and skipping every `#[cfg(...)]` method, so this
+    // is the first time either symbol was ever examined. Measured before the fix and
+    // confirmed after: 2 new entries, not the ~59 initially estimated.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 84,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 84. \
+        skip_count <= 86,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 86. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."
