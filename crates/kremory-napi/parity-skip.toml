@@ -543,3 +543,13 @@ revisit = "never"
 symbol = "MemoryBuilder::with_provider_rates_path"
 reason = "DOC-1 (V1-CANONICAL §4.2, 2026-08-03): this setter was ADDED, not newly deferred. The `provider_rates_path` field, its threading through every builder state transition, and the `rates::init_from_path` call at builder.rs:941 were all already implemented — only the setter was missing, so a fully-wired capability was unreachable while SIX doc sites documented it as working, including crates/kremory/README.md which is the README crates.io renders. An outsider copying the published quickstart hit a non-compiling call (same class as INS-1, and against v1 done-test 7). Skipped for napi on exactly the Tier-2 rationale as the sibling MemoryBuilder knobs (with_content_stream_weight / with_rrf_k / with_temporal_weight): Memory.open is the single JS construction entry point and the WHOLE builder surface is deferred together per ADR-030 Form B, so mirroring this one knob alone would break that architecture rather than serve it."
 revisit = "TD-159 parity sweep (with the rest of the Tier-2 builder-knob cluster, not piecemeal)"
+
+[[skip]]
+symbol = "Memory::group_id_for_test"
+reason = "Test-only accessor, gated `#[cfg(any(test, feature = 'test-utils'))]` — the IDENTICAL gate as the already-skipped `Memory::temporal_graph_for_test`, and the same rationale applies verbatim: never available in a release build, not part of the stable API surface, no napi exposure needed. Surfaced for the first time by the PAR-G2 fix (2026-08-03): the walker previously skipped EVERY `#[cfg(...)]` method, so no feature- or test-gated item was ever checked. Skip-listed rather than skipped by the walker so the exemption is explicit and auditable — a walker-level skip for `test-utils` would silently re-open the same blindness if real API were ever placed behind that feature."
+revisit = "never"
+
+[[skip]]
+symbol = "Memory::backfill_episode_embeddings"
+reason = "One-shot corpus-maintenance entrypoint gated `#[cfg(feature = 'content-search')]`, whose actual consumer is the kremory-http `backfill-episode-embeddings` CLI subcommand — a Rust transport concern, not a JS-consumer runtime surface. Identical rationale to its already-skipped sibling `Memory::reembed_all_episode_embeddings`, whose own skip reason ALREADY described this symbol as 'also unskipped-but-never-mirrored'. That is the point: the skip-list documented the gap in prose while the gate reported GREEN, because PAR-G2's blanket `#[cfg]` skip meant this method was never walked. V1-CANONICAL §3.2 cites this exact symbol as the proof the gate was blind; surfacing it here closes that finding. Revisit only if a JS consumer needs to trigger a full episode backfill at runtime."
+revisit = "never"
