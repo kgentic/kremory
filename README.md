@@ -26,11 +26,29 @@ Supporting capabilities: **bi-temporal** facts (ask "what did the agent know, an
 ```toml
 [dependencies]
 kremory = "0.5"
+
+# kremory's API is async and returns errors, so a runtime and an error type are
+# needed to run the Quickstart below.
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+
+# The Quickstart below builds an Ollama provider directly (BYOM). kremory depends
+# on autoagents-llm internally but does NOT re-export it, so constructing a
+# provider yourself needs it as a direct dependency, with the backend feature you
+# use. Not needed if you stick to `Memory::auto` / `Memory::with_ollama`, which
+# build the provider for you.
+autoagents-llm = { version = "0.3", features = ["ollama"] }
 ```
 
-That's it — no git dependency, no `[patch.crates-io]` stanza. kremory builds against the
-published `autoagents-llm` (the model id flows as plain data, not a trait accessor). No model
-weights are bundled; bring your own LLM + embedder (see [BYOM](#byom--bring-your-own-model)).
+No git dependency and no `[patch.crates-io]` stanza — kremory builds against the published
+`autoagents-llm` (the model id flows as plain data, not a trait accessor). No model weights are
+bundled; bring your own LLM + embedder (see [BYOM](#byom--bring-your-own-model)).
+
+Two optional extras, only if you want to observe kremory's own telemetry: `metrics` +
+`metrics-util` to capture counters (**version-locked** — the global recorder registry is keyed by
+the `metrics` crate's minor version, so a mismatch silently captures nothing; kremory is on
+`metrics 0.24` / `metrics-util 0.18`), and `tracing-subscriber` to see `KREMORY_DEBUG` traces
+(kremory emits via `tracing` but does not re-export a subscriber).
 
 ---
 
@@ -127,7 +145,8 @@ Tier 1.5 — Named shortcuts (auto-wrap providers with observability)
 Tier 2 — Customizable builder
 
     let mem = Memory::open("./agent.db")
-        .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))  // wraps with metric emission
+        .with_llm(Arc::new(my_llm))
+        .with_token_tracking("openai", "gpt-4o-mini")  // wraps with metric emission
         .with_embedder(Arc::new(my_embedder))
         .default_namespace(Namespace::new("acme-corp"))
         .await?;
@@ -190,7 +209,7 @@ Wire it via `.with_embedder(MyEmbedder.into_dyn())` (or `Arc::new(MyEmbedder)`).
 
 Wire any provider — OpenAI, Ollama, local GGUF, sentence-transformers via HTTP, anything. Your API keys, your inference costs, your data.
 
-Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays under 1MB published. See [ADR-002](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
+Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays around 1 MB. Measured 2026-08-03: `cargo package` on the 0.5.0 tree produces a **1.04 MB** `.crate` (4.3 MiB across 150 files, 1.0 MiB compressed); the published 0.5.0 is 0.885 MB. The prior "under 1MB" wording was true of the published artifact and would have become false at the next publish (N-1). See [ADR-002](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
 
 ### What about GLiNER? (when you opt into NER)
 
@@ -365,7 +384,7 @@ Every undo returns an **honest outcome** (the actual counts reversed, never a ba
 
 ## Observability (v0.1.2+)
 
-kremory emits structured metrics + tracing spans for every LLM and embedding call when you wire BYOM providers via Tier 1 shortcuts or `with_llm_tracked`. The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) auto-wrap providers in `TokenTrackingChatProvider` internally.
+kremory emits structured metrics + tracing spans for every LLM and embedding call when you wire BYOM providers via Tier 1 shortcuts or `.with_llm(...).with_token_tracking(...)`. The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) auto-wrap providers in `TokenTrackingChatProvider` internally.
 
 **Emitted metrics** (via the [`metrics`](https://crates.io/crates/metrics) crate):
 
@@ -396,7 +415,8 @@ let handle = init_telemetry(TelemetryConfig::default())?;
 ```rust
 let mem = Memory::open("./agent.db")
     .with_provider_rates_path("./my-rates.toml")
-    .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))
+    .with_llm(Arc::new(my_llm))
+        .with_token_tracking("openai", "gpt-4o-mini")
     .with_embedder(Arc::new(my_embedder))
     .await?;
 ```
@@ -421,7 +441,7 @@ A structural summary (not a benchmark) — how kremory differs in *shape*, not j
 | **Reverse a merge / edit / delete (undo)** | ✅ built-in, deterministic | — | — | — |
 | Bi-temporal (world-time *and* system-time) | ✅ | — | partial (valid-time) | — |
 | Runs embedded, no server process | ✅ single libSQL file | varies | needs a graph DB / cloud | SDK → cloud or self-host |
-| Language / footprint | Rust, <1 MB crate | — | Python | Python |
+| Language / footprint | Rust, ~1 MB crate | — | Python | Python |
 | Bring your own model (no weights bundled) | ✅ | n/a | ✅ | ✅ |
 | Self-consolidation (a "dream" pass) | ✅ | — | partial | ✅ |
 
