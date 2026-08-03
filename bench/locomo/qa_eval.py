@@ -41,6 +41,7 @@ from pathlib import Path
 # same-dir imports (script dir is on sys.path[0] when run directly)
 import prompts_qa
 from judge_rescore import ABSTENTION_CATEGORIES, cache_key, load_results
+from provenance import ShippedDefaultsMismatch, assert_shipped_defaults
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -202,10 +203,72 @@ def _cost(model: str, ptok: int, ctok: int) -> float:
 # ---------------------------------------------------------------------------
 # input loading — accept a prepared batch JSONL OR a raw harness results JSON
 # ---------------------------------------------------------------------------
-def load_batch(path: Path) -> list[dict]:
+def gate_shipped_defaults(path: Path, *, allow_nondefault: bool) -> None:
+    """ROADMAP W0.2 — refuse to score a run that was not measured on the SHIPPED
+    DEFAULT build.
+
+    qa-gen is the only externally-quotable protocol (W0.3), so this is the gate
+    that matters. ADR-078 is the failure it exists to prevent: a +30.2pt measured
+    win sat above `content-search = []` for months, every published benchmark ran
+    with the feature ON, and no consumer received it.
+
+    `--allow-nondefault-build` exists deliberately. A hard, unoverridable refusal
+    on a diagnostic sweep would get the gate switched off, and a control people
+    route around protects nothing — but the override prints a banner rather than
+    passing quietly, so a non-default run can never be MISTAKEN for a quotable one.
+    """
+    if path.suffix != ".json":
+        # A prepared .jsonl batch carries no stamp — it was derived from a results
+        # JSON upstream. Say so; do not pretend the build was verified.
+        print(
+            "[W0.2] input is a prepared batch (.jsonl) — it carries no provenance "
+            "stamp, so the BUILD IS UNVERIFIED here. Gate the upstream results "
+            ".json instead if this number is going to be quoted.",
+            file=sys.stderr,
+        )
+        return
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[W0.2] could not read {path} for the build gate: {e}", file=sys.stderr)
+        return
+    stamp = data.get("provenance")
+    if stamp is None:
+        msg = (
+            f"[W0.2] {path} carries NO provenance stamp — the build that produced "
+            f"it is unknown, so the number is not attributable to any kremory "
+            f"configuration."
+        )
+        if not allow_nondefault:
+            raise SystemExit(msg + "  Re-run the harness, or pass --allow-nondefault-build.")
+        print(msg + "  (--allow-nondefault-build: continuing)", file=sys.stderr)
+        return
+    try:
+        assert_shipped_defaults(stamp)
+    except ShippedDefaultsMismatch as e:
+        if not allow_nondefault:
+            raise SystemExit(
+                f"{e}\n\nThis number is NOT quotable. Re-run on the default build, "
+                f"or pass --allow-nondefault-build to score it as a diagnostic."
+            ) from e
+        print(
+            "\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            " NON-DEFAULT BUILD — DIAGNOSTIC ONLY, NOT A QUOTABLE NUMBER\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            f"{e}\n",
+            file=sys.stderr,
+        )
+        return
+    print("[W0.2] build verified: run matches the shipped default feature set.",
+          file=sys.stderr)
+
+
+def load_batch(path: Path, *, allow_nondefault: bool = False) -> list[dict]:
     """Return answerable {key, sample_id, question_id, category, question, gold,
     memories} records. .jsonl = already-prepared batch (judge_rescore prepare
     shape); .json = raw harness results -> filter answerable + build keys."""
+    gate_shipped_defaults(path, allow_nondefault=allow_nondefault)
     if path.suffix == ".jsonl":
         return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
     # harness results JSON -> mirror judge_rescore.cmd_prepare filtering
@@ -255,7 +318,7 @@ def _extract_answer(text: str) -> str:
 
 def cmd_answer_gen(a: argparse.Namespace) -> int:
     key = _load_api_key()
-    batch = load_batch(a.input)
+    batch = load_batch(a.input, allow_nondefault=getattr(a, 'allow_nondefault_build', False))
     structured = getattr(a, "structured", False)
     if structured:
         # The cache key must include the CONTEXT FORMAT, or a structured run
@@ -517,6 +580,10 @@ def main() -> int:
     g.add_argument("--max-tokens", type=int, default=1024)
     g.add_argument("--concurrency", type=int, default=8)
     g.add_argument("--keep-raw", action="store_true", help="store full CoT text")
+    g.add_argument("--allow-nondefault-build", action="store_true",
+                   help="score a run measured on a NON-default build as a "
+                        "diagnostic. Prints a banner; the number is not quotable "
+                        "(ROADMAP W0.2).")
     g.add_argument("--structured", action="store_true",
                    help="group the answerer's context by wire `kind` (facts / "
                         "entities / conversation excerpts) instead of one flat "
