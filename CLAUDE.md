@@ -17,7 +17,7 @@ Correct the primer in place when reality changes (verify vs code, not memory).
 **Current baseline (verified 2026-06-25):**
 
 - Releases **0.3.0 → 0.3.1 → 0.3.2** shipped, tagged, on crates.io; `main` fast-forwarded through all. 0.3.0 yanked (broken default); 0.3.1 + 0.3.2 live.
-- **TD-053 (napi parity hygiene) CLOSED + on main** (`a05be15` doc-rot pass, `fad4d5d` boy-scout pass): `parity-skip.toml` = **72 entries ≤ 80 cap**, `cargo test -p kremory-napi --test api_parity` **7/0 GREEN**. The napi 1:1 surface is verified 1:1 (ADR-034 landed); parity-skip now lists only genuinely-absent symbols.
+- **TD-053 (napi parity hygiene) CLOSED + on main** (`a05be15` doc-rot pass, `fad4d5d` boy-scout pass): ~~`parity-skip.toml` = **72 entries ≤ 80 cap**~~ **← STALE, corrected 2026-08-03: the cap is now 83, not 80, and `parity-skip.toml` sits at 83/83 — i.e. AT the cap, not comfortably under it.** Raised twice since this line was written (80→81 for a reranker-latency knob, 81→83 for two TD-112 reembed methods; `api_parity.rs:386-411`). `cargo test -p kremory-napi --test api_parity` **7/0 GREEN**. **The next added skip fails the gate** — treat 83/83 as a live constraint, not headroom. The napi 1:1 surface is verified 1:1 (ADR-034 landed); parity-skip now lists only genuinely-absent symbols.
 - **Standing test fails: NONE (TD-138 RESOLVED 2026-07-23).** The 3 recall-branch fails (`facade_as_of_warn` ×2 + `with_facts_integration::td116_recall_returns_connected_facts_under_null_embedder`) were a silent recall regression — `rrf_fuse_with_content`'s no-limit cap `entity_count.max(content_count)` (from TD-066 Increment 1) dropped a distinct arm's items, evicting the entity under `content-search`. Fixed: no-limit cap = full union (`entity_count + content_count`); explicit-limit path unchanged. Workspace nextest now **1516/1516** (`content-search,test-utils`). See TD-138. (TD-013 `with_facts_empty_vec_equivalent_to_no_facts` was verified **CLOSED 2026-07-15**.) The old "napi parity-cap fail" was never real (the "103>100" number was fabricated per `feedback_subagent_fabricates_gate_results`). NB: this "Active Sprint" block still describes the 0.3.2 line and is broadly stale — current baseline is **0.5.0** (crates.io); see `.ai-docs/planning/pre-public-launch-readiness-roadmap-2026-07-15.md` + the MVP-to-public-flip execution plan for live state.
 - `cargo fmt --check` is NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
 - The napi parity test is invisible to `cargo test -p kremory` (cross-crate gate) — run workspace-wide to see it.
@@ -67,3 +67,34 @@ Every phase commit MUST satisfy these gates in order — they apply to any sprin
 Replace this entire "Active Sprint" section with the actual sprint plan reference + per-phase DoD. The phase-boundary discipline above is the persistent baseline; sprint-specific items are layered on top.
 
 <!-- sprint-activate-end -->
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+### Search precedence — graphify vs repomix (added 2026-08-03, reconciles with user-scope Rule 38)
+
+**These are two different jobs. Use the one that matches the question.**
+
+| Question shape | Tool | Why |
+|---|---|---|
+| **Structural** — "what is X", "what calls/references X", "how do A and B connect", "what are the hubs", "blast radius of changing X" | **`graphify` FIRST** | Answers from the AST graph with exact `file:line`. This is what Rule 38's *"codebase-memory MCP where available (which comes first)"* exception is for — a structured index outranks a text sweep. |
+| **Textual** — "every occurrence of this string/literal", "which files mention X", auditing for a leaked path, sweeping comments/docs/config | **`repomix` (Rule 38)** | graphify indexes **symbols, not text**. It cannot answer "does this literal appear anywhere" — a string inside a function body is not a node. Raw `grep`/`rg`/`git grep` remain banned: they silently skip NUL-byte files and exit 0. |
+| **Single known file + single known string** | native `Read` / `Grep` | unchanged |
+
+**graphify does NOT supersede Rule 38 — it slots in above it for structural questions and is useless for textual ones.** A negative graphify result is NOT evidence a string is absent.
+
+**Practical notes (measured 2026-08-03):**
+- `graphify query` defaults to a **~2000-token budget and silently truncates** — a real query returned *"showing 71 of 400 nodes"*. Raise it with `--budget` or narrow with `--context`, and treat a truncated result as incomplete, not as an answer.
+- The graph is **code-only** (`--code-only`), so `.ai-docs/` markdown is NOT indexed. Doc questions go to repomix or `search_docs`.
+- Rust caveat: Rust is not in graphify's language-specific member-call resolver set. **Type/import/structure/cross-crate edges are strong; call-graph depth through trait dispatch is weaker.** Don't treat an absent call edge as proof there is no caller.
+- **Keeping the graph fresh in a Conductor worktree.** The git post-commit auto-rebuild **deliberately does not fire in linked worktrees** (`hooks.py:258-267` — it exits when git-dir ≠ git-common-dir). That guard is correct: the post-commit rebuild is *delta-based*, so in a worktree with no baseline it would write a `graph.json` containing only the commit's changed files — confidently wrong, worse than absent (upstream #1809; the sibling #1810 saw 5 worktrees inflate a graph from 9,400 nodes/10 MB to 210,000/311 MB). Use instead:
+  - `graphify watch .` — filesystem daemon, **no worktree guard**, AST-only, 3s debounce. The intended path here.
+  - `graphify extract . --code-only` — full rebuild, ~40s, free.
+- ⚠️ **Do NOT set `GRAPHIFY_OUT` to a shared path across Conductor workspaces.** That option exists (upstream #686) but assumes worktrees of the *same* code; these workspaces are divergent branches, so a shared graph would reflect whichever rebuilt last. Per-workspace `graphify-out/` (gitignored) is correct.
