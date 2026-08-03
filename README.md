@@ -18,8 +18,9 @@ tool does:
   ("dream") phase makes is logged and reversible — `mem.undo(mutation_id)` reverses it, deterministically,
   no LLM involved. Nothing kremory writes is a silent overwrite.
 
-Supporting capabilities: **bi-temporal** facts (ask "what did the agent know, and when" via
-`.as_of(ts)`), and **BYOM** — bring your own LLM + embedder; kremory bundles no model weights.
+Supporting capabilities: **bi-temporal** facts (ask "what was true at time t" via
+`.as_of(ts)` — and keep the second clock, `recorded_at`, on every row for audit), and
+**BYOM** — bring your own LLM + embedder; kremory bundles no model weights.
 
 ## Install
 
@@ -274,7 +275,14 @@ Every fact in kremory carries two independent time dimensions:
 | `valid_from` | Valid time | Mutable | When the fact became true in the world |
 | `valid_to` | Valid time | Mutable | When the fact stopped being true (NULL = currently valid) |
 
-This enables: **"What did the agent know at time X if asked at time Y?"**
+Both clocks are stored on every fact, retroactive correction never overwrites history, and
+**every recalled fact returns both** — `RetrievedFact` carries `valid_at`, `invalid_at`,
+`recorded_at` and `expired_at`.
+
+`.as_of(t)` filters the **valid-time** axis server-side: *"what was true in the world at t"*.
+The transaction-time axis is **returned but not queryable** — you filter `recorded_at`
+yourself on the results. See [the audit-query section](docs/api.md#audit-query) for the worked
+example and its limits.
 
 See [ADR-003](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-003-bitemporal-audit-compliance-2026-05-22.md).
 
