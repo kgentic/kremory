@@ -2015,8 +2015,10 @@ fn content_passage_into_retrieved_context(
 /// `ContentPassage.score` is set to the fused RRF score (higher = more
 /// relevant) so a consumer that DOES inspect it sees the fused ranking; the
 /// downstream `rrf_fuse_with_content` re-ranks by position regardless.
-/// `limit` caps the fused output (`None` ⇒ the larger single arm, mirroring
-/// `rrf_fuse_with_content`'s flood-truncation fallback).
+/// `limit` caps the fused output (`None` ⇒ the **union** of both arms, mirroring
+/// `rrf_fuse_with_content`'s flood-truncation fallback — so a no-limit fuse never
+/// truncates. Corrected 2026-08-03 with PAR-D3; this comment previously said "the
+/// larger single arm", which described the defect rather than the intent).
 #[cfg(feature = "content-search")]
 pub(crate) struct RrfFuseContentStreamsParams {
     /// BM25 `content_search` episode stream, ranked best-first (`rank` ASC).
@@ -2087,8 +2089,16 @@ pub(crate) fn rrf_fuse_content_streams(params: RrfFuseContentStreamsParams) -> V
             .then_with(|| a.episode_id.cmp(&b.episode_id))
     });
 
-    let cap = limit.unwrap_or_else(|| bm25_count.max(dense_count));
+    // PAR-D3 (V1-CANONICAL §4.2): the no-limit fallback must be the UNION of the
+    // two arms. This was `bm25_count.max(dense_count)` — the third copy of the
+    // TD-138 cap bug — which silently dropped `min(bm25_count, dense_count)`
+    // distinct episodes whenever the arms disagreed. Post-dedup the map holds at
+    // most `bm25_count + dense_count`, so with no explicit limit this never
+    // truncates; the explicit `--recall-limit N` path is unchanged. Mirrors the
+    // fix already applied to `rrf_fuse_with_content` and the fact-dense fuser.
+    let cap = limit.unwrap_or(bm25_count + dense_count);
     if fused.len() > cap {
+        metrics::counter!("kremory.recall.content_stream_fusion_truncated_total").increment(1);
         fused.truncate(cap);
     }
     fused
@@ -4768,6 +4778,42 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), ids.len(), "no duplicate episode_ids");
+    }
+
+    /// PAR-D3 (V1-CANONICAL §4.2): with NO explicit limit, the no-limit fallback
+    /// cap must be the **union** of the two arms, not the larger single arm.
+    ///
+    /// This is the third copy of the TD-138 cap bug. Its two siblings —
+    /// `rrf_fuse_with_content` and the fact-dense fuser — were fixed to
+    /// `a_count + b_count`; this one kept `bm25_count.max(dense_count)`, which
+    /// silently drops `min(bm25_count, dense_count)` distinct episodes whenever
+    /// the arms disagree. Two disjoint single-item arms are the minimal case:
+    /// the union is 2, `max(1, 1)` is 1, so one real result is discarded.
+    ///
+    /// FAILS before the fix: `fused.len() == 1`.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_content_streams_no_limit_keeps_full_union() {
+        // Disjoint arms: BM25 finds ep1, dense finds ep2. Nothing to dedup.
+        let bm25 = vec![episode_passage(1, -1.0)];
+        let dense = vec![episode_passage(2, 0.1)];
+
+        let fused = rrf_fuse_content_streams(RrfFuseContentStreamsParams {
+            bm25_stream: bm25,
+            dense_stream: dense,
+            rrf_k: 60,
+            limit: None,
+        });
+
+        assert_eq!(
+            fused.len(),
+            2,
+            "PAR-D3: no-limit fallback must cap at the union (1 + 1 = 2), not at \
+             max(1, 1) = 1 — a distinct episode from one arm was dropped"
+        );
+        let mut ids: Vec<i64> = fused.iter().map(|p| p.episode_id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2], "both arms' episodes must survive");
     }
 
     /// `rrf_fuse_content_streams` honours the explicit output cap.

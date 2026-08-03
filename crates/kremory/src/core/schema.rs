@@ -25,6 +25,37 @@ use crate::core::error::Result;
 /// Built at const time from `NonZeroUsize::MIN + 255` — no expect/unwrap.
 pub(crate) const DEFAULT_NS_POLICY_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(255);
 
+/// Identity of whoever currently owns the open `BEGIN IMMEDIATE` transaction.
+///
+/// DUR-1 (V1-CANONICAL §4.1) exists because `begin_immediate_if_needed` could not
+/// tell **re-entrancy** (the same logical operation nesting, which must be a no-op)
+/// from **concurrency** (a different writer, which must wait). Both looked identical:
+/// `has_outer_transaction == true`. The concurrent writer was handed a nested no-op
+/// guard, wrote into the owner's transaction, and its `commit()` returned `Ok(())`
+/// — so an owner rollback destroyed data the caller was told had been committed.
+///
+/// Task id is the correct key when one exists, because a task keeps its id across
+/// `.await` points even if the scheduler migrates it to another worker thread.
+/// `try_id()` returns `None` outside a spawned task (notably `Runtime::block_on`,
+/// which is what `#[tokio::test]` bodies run on), and there we fall back to the
+/// thread id — sound precisely because `block_on` does not migrate. The two
+/// variants never compare equal, which is correct: a `block_on` caller and a
+/// spawned task are genuinely different writers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum WriterId {
+    Task(tokio::task::Id),
+    Thread(std::thread::ThreadId),
+}
+
+impl WriterId {
+    fn current() -> Self {
+        match tokio::task::try_id() {
+            Some(id) => Self::Task(id),
+            None => Self::Thread(std::thread::current().id()),
+        }
+    }
+}
+
 /// LRU cache for namespace policies (ADR-029b Decision 4).
 ///
 /// Capacity-bounded (default 256 entries); no TTL — entries are invalidated
@@ -209,14 +240,42 @@ pub struct BeginGuard<'a> {
     opened: bool,
     /// Whether `commit()` or `rollback()` has been called (prevents double-dispatch).
     dispatched: bool,
+    /// The write-serialiser, held for the **whole life of the transaction** when
+    /// this guard opened it (`None` for a nested guard, which is covered by the
+    /// outer guard's lock).
+    ///
+    /// DUR-1 fix: previously `begin_immediate_if_needed` released the serialiser
+    /// when it *returned*, so it only serialised the `BEGIN` statement and not the
+    /// transaction. A second writer therefore proceeded immediately, lost the CAS,
+    /// and silently joined the first writer's transaction. Holding the lock here
+    /// is what makes that second writer **wait** — which is the behaviour
+    /// `concurrent_begin_immediate_serialises_via_write_lock` already claimed in
+    /// prose while asserting nothing that could detect its absence.
+    _lock: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 impl<'a> BeginGuard<'a> {
-    pub(crate) fn new(graph: &'a TemporalGraph, opened: bool) -> Self {
+    /// Guard for a transaction **this** call opened. Owns the serialiser.
+    pub(crate) fn owning(
+        graph: &'a TemporalGraph,
+        lock: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Self {
         Self {
             graph,
-            opened,
+            opened: true,
             dispatched: false,
+            _lock: Some(lock),
+        }
+    }
+
+    /// Guard for a re-entrant call nesting under a transaction the **same writer**
+    /// already owns. Holds no lock; commit/rollback are no-ops.
+    pub(crate) fn nested(graph: &'a TemporalGraph) -> Self {
+        Self {
+            graph,
+            opened: false,
+            dispatched: false,
+            _lock: None,
         }
     }
 
@@ -239,9 +298,7 @@ impl<'a> BeginGuard<'a> {
             // not a process-global. FU.6: prevents one TG instance's writes
             // from invalidating another's speculative cache.
             self.graph.dirty.store(true, Ordering::Release);
-            self.graph
-                .has_outer_transaction
-                .store(false, Ordering::Release);
+            self.graph.release_transaction_ownership();
         }
         Ok(())
     }
@@ -251,9 +308,7 @@ impl<'a> BeginGuard<'a> {
         self.dispatched = true;
         if self.opened {
             let _ = self.graph.conn.execute("ROLLBACK", ()).await;
-            self.graph
-                .has_outer_transaction
-                .store(false, Ordering::Release);
+            self.graph.release_transaction_ownership();
         }
         Ok(())
     }
@@ -261,6 +316,15 @@ impl<'a> BeginGuard<'a> {
 
 impl Drop for BeginGuard<'_> {
     fn drop(&mut self) {
+        // Release ownership on EVERY opened-guard drop, including the paths where
+        // `commit()`/`rollback()` returned early via `?` after setting
+        // `dispatched = true`. Without this, a failed COMMIT would leave a stale
+        // owner recorded, and the next writer — which correctly waits for the
+        // serialiser — would then be mis-identified as re-entrant and handed a
+        // no-op guard, reintroducing DUR-1 on the error path. Idempotent.
+        if self.opened {
+            self.graph.release_transaction_ownership();
+        }
         if !self.dispatched && self.opened {
             tracing::warn!(
                 target: "kremory::db",
@@ -290,6 +354,17 @@ impl Drop for BeginGuard<'_> {
             // actually closed.
             let conn = self.graph.conn.clone();
             let flag = Arc::clone(&self.graph.has_outer_transaction);
+            // DUR-1: MOVE the write-serialiser into the spawned task rather than
+            // letting it drop when this function returns. Struct fields drop after
+            // the body, so without this the lock would be released while the
+            // deferred ROLLBACK is still queued — letting the next writer acquire
+            // the serialiser and issue `BEGIN IMMEDIATE` on a connection SQLite
+            // still considers mid-transaction, which is the exact
+            // "cannot start a transaction within a transaction" poisoning this
+            // defensive rollback exists to prevent. Holding the lock until the
+            // ROLLBACK completes makes the waiting writer's `BEGIN` safe by
+            // construction instead of by timing.
+            let held_lock = self._lock.take();
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
                     handle.spawn(async move {
@@ -302,6 +377,8 @@ impl Drop for BeginGuard<'_> {
                             );
                         }
                         flag.store(false, Ordering::Release);
+                        // Released only now that the connection is genuinely idle.
+                        drop(held_lock);
                     });
                 }
                 Err(_) => {
@@ -338,6 +415,13 @@ pub struct TemporalGraph {
     /// defensive-rollback task can hold its own clone without borrowing
     /// `&'a TemporalGraph` past the guard's lifetime.
     pub(crate) has_outer_transaction: Arc<AtomicBool>,
+    /// Which writer owns the currently-open `BEGIN IMMEDIATE`, if any (DUR-1).
+    ///
+    /// Read on every `begin_immediate_if_needed` to answer the question the old
+    /// code could not: *is this call re-entrant, or is it a different writer?*
+    /// `std::sync::Mutex` (not async) because the critical section is a single
+    /// compare and holds across no `.await`.
+    pub(crate) transaction_owner: Arc<std::sync::Mutex<Option<WriterId>>>,
     /// Per-handle dirty flag. Set to `true` by `BeginGuard::commit()` after a
     /// successful write. `flush_if_dirty()` CAS-clears it and checkpoints.
     /// `SpeculativeCache::check_dirty_and_invalidate()` takes `&Arc<AtomicBool>`
@@ -371,6 +455,7 @@ impl TemporalGraph {
             conn,
             write_lock: Arc::new(AsyncMutex::new(())),
             has_outer_transaction: Arc::new(AtomicBool::new(false)),
+            transaction_owner: Arc::new(std::sync::Mutex::new(None)),
             dirty: Arc::new(AtomicBool::new(false)),
             embedding_dim,
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
@@ -388,6 +473,7 @@ impl TemporalGraph {
             conn,
             write_lock: Arc::new(AsyncMutex::new(())),
             has_outer_transaction: Arc::new(AtomicBool::new(false)),
+            transaction_owner: Arc::new(std::sync::Mutex::new(None)),
             dirty: Arc::new(AtomicBool::new(false)),
             embedding_dim: 384,
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),
@@ -407,27 +493,56 @@ impl TemporalGraph {
     /// (i.e., `has_outer_transaction == true`), the guard is returned without issuing
     /// another BEGIN — the outer transaction covers the nested operation.
     pub async fn begin_immediate_if_needed(&self) -> Result<BeginGuard<'_>> {
-        let _guard = self.write_lock.lock().await;
-        // Deliberately drop `_guard` after the mutex is taken but BEFORE await — the
-        // write_lock is a serialiser (ensures single concurrent writer), not a
-        // transaction scope holder. SQLite's BEGIN IMMEDIATE itself holds the writer
-        // lock at the DB level for the duration of the transaction.
-        let already_open = self
-            .has_outer_transaction
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err();
-        if already_open {
-            // Nested call — outer transaction already active; return a no-op guard.
-            return Ok(BeginGuard::new(self, false));
+        let me = WriterId::current();
+
+        // Re-entrancy check FIRST, and it must not touch the serialiser: this
+        // writer already holds the lock via its outer guard, so waiting on it
+        // here would deadlock against itself.
+        if self.owns_open_transaction(me) {
+            return Ok(BeginGuard::nested(self));
         }
-        self.conn
-            .execute("BEGIN IMMEDIATE", ())
-            .await
-            .inspect_err(|_e| {
-                // Reset the flag — we failed to open the transaction.
-                self.has_outer_transaction.store(false, Ordering::Release);
-            })?;
-        Ok(BeginGuard::new(self, true))
+
+        // A DIFFERENT writer either holds the transaction or is about to. Wait.
+        // The guard returned below keeps this lock for the transaction's whole
+        // life, so the next writer blocks here until we COMMIT or ROLLBACK
+        // rather than silently joining our transaction (DUR-1).
+        let lock = Arc::clone(&self.write_lock).lock_owned().await;
+
+        // Holding the serialiser means no other writer can be mid-transaction,
+        // so this is now an unconditional BEGIN rather than a CAS race.
+        self.conn.execute("BEGIN IMMEDIATE", ()).await?;
+        self.claim_transaction_ownership(me);
+        Ok(BeginGuard::owning(self, lock))
+    }
+
+    /// `true` when `writer` is the current owner of an open transaction — i.e. this
+    /// call is genuine re-entrancy and must nest rather than open a second BEGIN.
+    fn owns_open_transaction(&self, writer: WriterId) -> bool {
+        let owner = self
+            .transaction_owner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *owner == Some(writer)
+    }
+
+    /// Record `writer` as the transaction owner and raise the open-transaction flag.
+    fn claim_transaction_ownership(&self, writer: WriterId) {
+        *self
+            .transaction_owner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(writer);
+        self.has_outer_transaction.store(true, Ordering::Release);
+    }
+
+    /// Clear the transaction owner and lower the open-transaction flag. Idempotent —
+    /// called from `commit`, `rollback` and `Drop` so no error path can strand
+    /// ownership (see `BeginGuard::drop`).
+    pub(crate) fn release_transaction_ownership(&self) {
+        *self
+            .transaction_owner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        self.has_outer_transaction.store(false, Ordering::Release);
     }
 
     /// Flush pending writes to storage if the `DIRTY` flag is set.
@@ -1095,35 +1210,180 @@ mod schema_tests {
         );
     }
 
-    /// Story #210: concurrent BEGIN IMMEDIATE calls serialise via write_lock.
-    /// Two tasks both call begin_immediate_if_needed concurrently — one opens,
-    /// the other blocks until the first commits. Both writes succeed without error.
+    /// Story #210: concurrent `BEGIN IMMEDIATE` calls serialise via `write_lock` —
+    /// one opens, the other **blocks until the first commits**.
+    ///
+    /// REWRITTEN 2026-08-03 (V1-CANONICAL §3.2). The previous version of this test
+    /// asserted only that `has_outer_transaction` was clear once both tasks had
+    /// finished. That is true whether or not serialisation happens — a flag set and
+    /// cleared by the *winner* alone reads identically when the loser silently
+    /// joined the winner's transaction. It therefore documented blocking that did
+    /// not occur, and passed for as long as the DUR-1 defect existed.
+    ///
+    /// This version measures the property the doc comment claims: the **maximum
+    /// number of writers simultaneously inside a transaction**. Serialised ⇒ 1.
+    /// Verified sensitive in both directions — restoring the old
+    /// `has_outer_transaction`-only re-entrancy check makes this test fail with
+    /// `max_concurrent == 2`.
     #[tokio::test]
     async fn concurrent_begin_immediate_serialises_via_write_lock() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+
         let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
+        let inside = Arc::new(AtomicUsize::new(0));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+
+        let spawn_writer = |graph: Arc<TemporalGraph>,
+                            inside: Arc<AtomicUsize>,
+                            max_concurrent: Arc<AtomicUsize>,
+                            label: &'static str| {
+            tokio::spawn(async move {
+                let guard = graph
+                    .begin_immediate_if_needed()
+                    .await
+                    .unwrap_or_else(|e| panic!("{label} begin: {e}"));
+
+                let now_inside = inside.fetch_add(1, Ordering::AcqRel) + 1;
+                max_concurrent.fetch_max(now_inside, Ordering::AcqRel);
+                // Hand the scheduler a chance to run the other writer while this
+                // transaction is open — the interleaving the old test invited and
+                // then failed to observe.
+                tokio::task::yield_now().await;
+                inside.fetch_sub(1, Ordering::AcqRel);
+
+                guard
+                    .commit()
+                    .await
+                    .unwrap_or_else(|e| panic!("{label} commit: {e}"));
+            })
+        };
+
+        let t1 = spawn_writer(
+            Arc::clone(&graph),
+            Arc::clone(&inside),
+            Arc::clone(&max_concurrent),
+            "t1",
+        );
+        let t2 = spawn_writer(
+            Arc::clone(&graph),
+            Arc::clone(&inside),
+            Arc::clone(&max_concurrent),
+            "t2",
+        );
+
+        t1.await.expect("t1 join");
+        t2.await.expect("t2 join");
+
+        assert_eq!(
+            max_concurrent.load(Ordering::Acquire),
+            1,
+            "two writers were inside a transaction at once — the write_lock is \
+             serialising the BEGIN statement but not the transaction (DUR-1)"
+        );
+        assert!(
+            !graph.has_outer_transaction.load(Ordering::Acquire),
+            "flag must be clear after both tasks complete"
+        );
+    }
+
+    /// DUR-1 (V1-CANONICAL §4.1): two CONCURRENT writers on one `TemporalGraph`
+    /// must not silently share a transaction.
+    ///
+    /// Today the loser of the `has_outer_transaction` CAS receives a *nested*
+    /// no-op guard — the same guard shape used for legitimate re-entrancy — so it
+    /// writes into the winner's transaction and its `commit()` returns `Ok(())`
+    /// having committed nothing of its own. When the winner then rolls back, the
+    /// loser's rows are destroyed **after it was told it succeeded**.
+    ///
+    /// This test writes real rows inside both transactions, which is precisely
+    /// what `concurrent_begin_immediate_serialises_via_write_lock` fails to do —
+    /// that test observes only the bookkeeping flag and therefore cannot see the
+    /// loss (V1-CANONICAL §3.2, "guards that pass while asserting properties the
+    /// code lacks").
+    ///
+    /// FAILS before the fix: t2's row count is 0 because t1's ROLLBACK took it.
+    #[tokio::test]
+    async fn concurrent_writers_do_not_share_a_transaction() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Notify;
+
+        let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
+        graph
+            .conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS dur1_probe (who TEXT NOT NULL)",
+                (),
+            )
+            .await
+            .expect("create probe table");
+
+        // t1 has opened its transaction and written its row.
+        let t1_holding = Arc::new(Notify::new());
+        // t2 believes it has durably committed.
+        let t2_committed = Arc::new(Notify::new());
 
         let g1 = Arc::clone(&graph);
+        let h1 = Arc::clone(&t1_holding);
+        let c1 = Arc::clone(&t2_committed);
         let t1 = tokio::spawn(async move {
             let guard = g1.begin_immediate_if_needed().await.expect("t1 begin");
-            // Yield to allow t2 to attempt begin while we hold the lock
-            tokio::task::yield_now().await;
-            guard.commit().await.expect("t1 commit");
+            g1.conn
+                .execute("INSERT INTO dur1_probe (who) VALUES ('t1')", ())
+                .await
+                .expect("t1 insert");
+            h1.notify_one();
+            // Give t2 a bounded window to interleave. Once the fix lands t2
+            // blocks here instead, so this timeout expiring is the healthy path.
+            let _ = tokio::time::timeout(Duration::from_millis(250), c1.notified()).await;
+            // t1 abandons its work — a rollback must destroy ONLY t1's row.
+            guard.rollback().await.expect("t1 rollback");
         });
 
         let g2 = Arc::clone(&graph);
+        let h2 = Arc::clone(&t1_holding);
+        let c2 = Arc::clone(&t2_committed);
         let t2 = tokio::spawn(async move {
+            h2.notified().await;
             let guard = g2.begin_immediate_if_needed().await.expect("t2 begin");
+            g2.conn
+                .execute("INSERT INTO dur1_probe (who) VALUES ('t2')", ())
+                .await
+                .expect("t2 insert");
+            // Returns Ok(()) today even though it committed nothing of its own.
             guard.commit().await.expect("t2 commit");
+            c2.notify_one();
         });
 
         t1.await.expect("t1 join");
         t2.await.expect("t2 join");
-        // After both commits, flag must be clear
-        use std::sync::atomic::Ordering;
-        assert!(
-            !graph.has_outer_transaction.load(Ordering::Acquire),
-            "flag must be clear after both tasks complete"
+
+        let mut rows = graph
+            .conn
+            .query("SELECT COUNT(*) FROM dur1_probe WHERE who = 't2'", ())
+            .await
+            .expect("count t2 rows");
+        let row = rows.next().await.expect("row result").expect("one row");
+        let t2_rows: i64 = row.get(0).expect("count column");
+
+        assert_eq!(
+            t2_rows, 1,
+            "DUR-1: t2's commit() returned Ok(()) so its row MUST be durable, but \
+             t1's rollback destroyed it — the two writers shared one transaction"
+        );
+
+        let mut rows = graph
+            .conn
+            .query("SELECT COUNT(*) FROM dur1_probe WHERE who = 't1'", ())
+            .await
+            .expect("count t1 rows");
+        let row = rows.next().await.expect("row result").expect("one row");
+        let t1_rows: i64 = row.get(0).expect("count column");
+        assert_eq!(
+            t1_rows, 0,
+            "t1 rolled back, so its own row must be gone — if this fires the \
+             rollback itself is broken, not the isolation"
         );
     }
 
@@ -1807,6 +2067,7 @@ mod schema_tests {
             conn,
             write_lock: Arc::new(AsyncMutex::new(())),
             has_outer_transaction: Arc::new(AtomicBool::new(false)),
+            transaction_owner: Arc::new(std::sync::Mutex::new(None)),
             dirty: Arc::new(AtomicBool::new(false)),
             embedding_dim: 384,
             policy_cache: NamespacePolicyCache::new(DEFAULT_NS_POLICY_CACHE_CAP),

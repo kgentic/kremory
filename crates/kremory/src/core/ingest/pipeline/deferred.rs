@@ -373,17 +373,25 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 );
             }
 
-            // F5 — within-episode contradiction pre-check (deferred path).
-            // Same check as the inline ingest path: if pool_a already contains a
-            // non-expired fact for this subject+predicate originating from this
-            // episode, skip and emit the counter.
-            let deferred_within_conflict = pool_a
-                .iter()
-                .any(|f| f.source_episode_id == Some(episode_id));
-            if deferred_within_conflict {
+            // F5 — within-episode DUPLICATE pre-check (deferred path).
+            //
+            // DUR-2 second copy. V1-CANONICAL §4.1 cited only the inline path
+            // (`ingest_with.rs`); this identical object-agnostic check lives here too,
+            // and this is the path `Memory::remember()` actually drives (Path β — see
+            // V1-CANONICAL §6d), so this copy is the one most consumers hit.
+            //
+            // Must match on the FULL TRIPLE: `pool_a` is object-agnostic, so comparing
+            // subject+predicate alone dropped every value but the first for a
+            // set-valued predicate asserted once in a single episode.
+            let deferred_within_duplicate = pool_a.iter().any(|f| {
+                f.source_episode_id == Some(episode_id)
+                    && f.object_id.as_deref() == object_id.as_deref()
+                    && f.object_value.as_deref() == object_value
+            });
+            if deferred_within_duplicate {
                 let ns = group_id.unwrap_or("default");
                 metrics::counter!(
-                    "rql.ingest.within_episode_contradiction",
+                    "rql.ingest.within_episode_duplicate_triple",
                     "namespace" => ns.to_string()
                 )
                 .increment(1);
@@ -392,7 +400,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     predicate = %fact.predicate,
                     episode_id,
                     namespace = %ns,
-                    "kremory.ingest.within_episode_contradiction: deferred path skipping duplicate triple"
+                    "kremory.ingest.within_episode_duplicate_triple: deferred path skipping exact repeat"
                 );
                 continue;
             }

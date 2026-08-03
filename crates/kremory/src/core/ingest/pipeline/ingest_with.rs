@@ -1887,20 +1887,37 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     tracing::debug!(prior_fact_id = *fact_id, episode_id, "kremory.sink.contradiction");
                 }
 
-                // F5 — within-episode contradiction pre-check (SQL-only).
-                // If pool_a already contains a non-expired fact for this subject+predicate
-                // that was created BY THIS episode (`source_episode_id == episode_id`), a
-                // same-episode ingest round is about to emit a contradicting triple.
-                // Emit the observability counter and skip insertion — the first fact wins.
-                // This is purely a client-side filter on data already fetched; no extra
-                // DB round-trip is needed.
-                let within_episode_conflict = pool_a
-                    .iter()
-                    .any(|f| f.source_episode_id == Some(episode_id));
-                if within_episode_conflict {
+                // F5 — within-episode DUPLICATE pre-check (SQL-only).
+                //
+                // DUR-2 (V1-CANONICAL §4.1): this compared subject+predicate only, and
+                // `pool_a` comes from `get_facts_by_subject_predicate` — i.e. it is
+                // object-agnostic. So one episode asserting "Alice speaks English",
+                // "Alice speaks French", "Alice speaks Spanish" stored ONLY THE FIRST:
+                // facts 2 and 3 matched an existing same-episode row on the pair and
+                // were dropped. Set-valued predicates lost every value but one, with no
+                // count surfaced to the caller.
+                //
+                // The check must be on the FULL TRIPLE. Within a single episode there is
+                // no temporal ordering that could make one assertion supersede another —
+                // they are co-asserted, so differing objects are multiple values, not a
+                // contradiction. Cross-episode supersession remains the separate,
+                // temporally-ordered mechanism and is unaffected.
+                //
+                // Purely a client-side filter on data already fetched; no extra DB
+                // round-trip is needed.
+                let within_episode_duplicate = pool_a.iter().any(|f| {
+                    f.source_episode_id == Some(episode_id)
+                        && f.object_id.as_deref() == object_id.as_deref()
+                        && f.object_value.as_deref() == object_value
+                });
+                if within_episode_duplicate {
                     let ns = group_id.unwrap_or("default");
+                    // Renamed from `within_episode_contradiction` with DUR-2: the check
+                    // now fires only on an exact repeated triple, which is a duplicate,
+                    // not a contradiction. The old name described what the code was
+                    // wrongly doing.
                     metrics::counter!(
-                        "rql.ingest.within_episode_contradiction",
+                        "rql.ingest.within_episode_duplicate_triple",
                         "namespace" => ns.to_string()
                     )
                     .increment(1);
@@ -1909,7 +1926,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         predicate = %fact.predicate,
                         episode_id,
                         namespace = %ns,
-                        "kremory.ingest.within_episode_contradiction: skipping duplicate triple"
+                        "kremory.ingest.within_episode_duplicate_triple: skipping exact repeat"
                     );
                     continue;
                 }

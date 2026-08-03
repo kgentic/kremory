@@ -137,7 +137,14 @@ pub fn capability_of(model: &str) -> ProviderCaps {
     if let Some(rest) = model.strip_prefix(GPT4O_STRICT_PREFIX) {
         // rest is e.g. "2024-08-06", "2024-12-17", "mini", or "preview".
         // Treat as NativeStructuredOutput only when rest is a YYYY-MM-DD date >= threshold.
-        let date_candidate = if rest.len() >= 10 { &rest[..10] } else { "" };
+        // DUR-8: `rest.get(..10)` instead of `&rest[..10]`. `len()` counts BYTES,
+        // so a multi-byte suffix (e.g. "日本語テスト") satisfied `len() >= 10`
+        // while byte 10 landed mid-character — and slicing a `str` off a char
+        // boundary panics. `get` returns `None` there, which is also the correct
+        // semantic: a YYYY-MM-DD date is pure ASCII, so anything that is not a
+        // clean 10-byte boundary cannot be one and must fall through
+        // conservatively. Last of the TD-164 byte-slice family.
+        let date_candidate = rest.get(..10).unwrap_or("");
         let looks_like_date = date_candidate.len() == 10
             && date_candidate.as_bytes()[4] == b'-'
             && date_candidate.as_bytes()[7] == b'-';

@@ -61,6 +61,222 @@ fn staged_mock() -> MockChatProvider {
     MockChatProvider::new(map)
 }
 
+/// Mock staged to emit a SET-VALUED predicate: three distinct objects for one
+/// subject+predicate, all inside a single episode. DUR-2 fixture.
+fn staged_mock_multivalued() -> MockChatProvider {
+    let mut map = HashMap::new();
+    map.insert(
+        "Each entity must appear exactly once".to_string(),
+        r#"{"entities":[{"name":"Alice","entity_type_id":1}]}"#.to_string(),
+    );
+    map.insert(
+        "Output a JSON array of relationship name strings.".to_string(),
+        r#"["speaks"]"#.to_string(),
+    );
+    // Three literal objects (is_entity_ref:false) — English, French, Spanish.
+    map.insert(
+        "Output a concise JSON array of objects with".to_string(),
+        r#"[{"subject":"Alice","predicate":"speaks","object":"English","is_entity_ref":false,"confidence":0.95},{"subject":"Alice","predicate":"speaks","object":"French","is_entity_ref":false,"confidence":0.95},{"subject":"Alice","predicate":"speaks","object":"Spanish","is_entity_ref":false,"confidence":0.95}]"#
+            .to_string(),
+    );
+    map.insert(
+        "Are these two entities".to_string(),
+        "\"different\"".to_string(),
+    );
+    map.insert(
+        "Output a JSON array of index numbers".to_string(),
+        "[]".to_string(),
+    );
+    MockChatProvider::new(map)
+}
+
+/// DUR-2 (V1-CANONICAL §4.1) — a set-valued predicate asserted once in a SINGLE
+/// episode must store every value, not just the first.
+///
+/// The F5 within-episode pre-check tested `source_episode_id == episode_id` against
+/// `pool_a`, which comes from `get_facts_by_subject_predicate` and is therefore
+/// **object-agnostic**. So after "Alice speaks English" landed, "Alice speaks French"
+/// and "Alice speaks Spanish" each matched an existing same-episode row on the
+/// subject+predicate pair alone and were silently dropped — no error, and no dropped
+/// count anywhere in `IngestionResult`.
+///
+/// Within one episode there is no temporal ordering that could make one assertion
+/// supersede another; they are co-asserted. Differing objects are multiple values,
+/// not a contradiction. Cross-episode supersession is a separate, temporally-ordered
+/// mechanism and is untouched by this fix.
+///
+/// FAILS before the fix with `facts == 1`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn within_episode_set_valued_predicate_keeps_every_value() {
+    let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("graph"));
+    let config = PipelineConfig::builder().build().expect("config");
+    let dim = config.embedding_dim.0;
+    let llm = Arc::new(staged_mock_multivalued());
+    let engine = Engine::new(EngineNewParams {
+        graph,
+        llm: Arc::clone(&llm),
+        embedder: Arc::new(MockEmbeddingProvider::new(dim)),
+        config,
+        model: None,
+    });
+    let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
+
+    let r = engine
+        .ingest_with(
+            &extractor,
+            IngestWithParams {
+                text: "Alice speaks English, French and Spanish.",
+                reference_time: None,
+                group_id: Some("dur2-multivalued"),
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
+        )
+        .await
+        .expect("ingest_with");
+
+    assert_eq!(
+        r.inserted_fact_ids.len(),
+        3,
+        "DUR-2: all three values of the set-valued predicate `speaks` must persist \
+         from a single episode — got {} fact(s). The within-episode pre-check is \
+         matching on subject+predicate instead of the full triple.",
+        r.inserted_fact_ids.len()
+    );
+}
+
+/// DUR-2 companion — an EXACT repeated triple in one episode must still dedup to one.
+///
+/// Guards the other direction of the same fix: making the check triple-exact must not
+/// turn it into a no-op. Without this, a fix that simply deleted the pre-check would
+/// pass the test above while silently regressing duplicate suppression.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn within_episode_exact_duplicate_triple_still_dedups() {
+    let mut map = HashMap::new();
+    map.insert(
+        "Each entity must appear exactly once".to_string(),
+        r#"{"entities":[{"name":"Alice","entity_type_id":1}]}"#.to_string(),
+    );
+    map.insert(
+        "Output a JSON array of relationship name strings.".to_string(),
+        r#"["speaks"]"#.to_string(),
+    );
+    // The SAME triple three times.
+    map.insert(
+        "Output a concise JSON array of objects with".to_string(),
+        r#"[{"subject":"Alice","predicate":"speaks","object":"English","is_entity_ref":false,"confidence":0.95},{"subject":"Alice","predicate":"speaks","object":"English","is_entity_ref":false,"confidence":0.95},{"subject":"Alice","predicate":"speaks","object":"English","is_entity_ref":false,"confidence":0.95}]"#
+            .to_string(),
+    );
+    map.insert(
+        "Are these two entities".to_string(),
+        "\"different\"".to_string(),
+    );
+    map.insert(
+        "Output a JSON array of index numbers".to_string(),
+        "[]".to_string(),
+    );
+
+    let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("graph"));
+    let config = PipelineConfig::builder().build().expect("config");
+    let dim = config.embedding_dim.0;
+    let llm = Arc::new(MockChatProvider::new(map));
+    let engine = Engine::new(EngineNewParams {
+        graph,
+        llm: Arc::clone(&llm),
+        embedder: Arc::new(MockEmbeddingProvider::new(dim)),
+        config,
+        model: None,
+    });
+    let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
+
+    let r = engine
+        .ingest_with(
+            &extractor,
+            IngestWithParams {
+                text: "Alice speaks English. Alice speaks English. Alice speaks English.",
+                reference_time: None,
+                group_id: Some("dur2-exact-dup"),
+                content_type: None,
+                source_params: SourceParams::default(),
+            },
+        )
+        .await
+        .expect("ingest_with");
+
+    assert_eq!(
+        r.inserted_fact_ids.len(),
+        1,
+        "an exact repeated triple within one episode must still collapse to a single \
+         fact — got {}",
+        r.inserted_fact_ids.len()
+    );
+}
+
+/// DUR-2 on the DEFERRED path (Path β) — the second, previously-uncited copy.
+///
+/// V1-CANONICAL §4.1 cited only `ingest_with.rs`, but `deferred.rs` carried an
+/// identical object-agnostic within-episode check — and per V1-CANONICAL §6d the
+/// deferred path is what `Memory::remember()` actually drives, so this copy is the
+/// one most consumers hit. A fix applied only to the inline path would have left
+/// the shipping path broken while the inline test went green.
+///
+/// FAILS before the fix with 1 fact instead of 3.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deferred_path_set_valued_predicate_keeps_every_value() {
+    use kremory::core::background::{BackgroundIngestor, IngestorConfig, SendParams};
+    let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("graph"));
+    let config = PipelineConfig::builder().build().expect("config");
+    let dim = config.embedding_dim.0;
+    let engine = Engine::new(EngineNewParams {
+        graph: Arc::clone(&graph),
+        llm: Arc::new(staged_mock_multivalued()),
+        embedder: Arc::new(MockEmbeddingProvider::new(dim)),
+        config,
+        model: None,
+    });
+    let (ingestor, guard) = BackgroundIngestor::new(
+        engine,
+        IngestorConfig {
+            deferred_extraction_enabled: true,
+            ..IngestorConfig::default()
+        },
+    );
+    ingestor
+        .send(
+            "Alice speaks English, French and Spanish.",
+            SendParams {
+                group_id: Some("dur2-deferred-ns".to_string()),
+                ..SendParams::default()
+            },
+        )
+        .expect("send");
+
+    // Poll until the deferred facts land. Wait for the FULL expected set, not just
+    // the first row — breaking on `!is_empty()` would pass on the buggy 1-fact
+    // outcome, which is exactly the shape of guard this fix exists to prevent.
+    let mut facts = Vec::new();
+    for _ in 0..50 {
+        facts = graph.facts_at(chrono::Utc::now()).await.expect("facts_at");
+        if facts.len() >= 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    drop(ingestor);
+    tokio::task::spawn_blocking(move || guard.shutdown())
+        .await
+        .expect("guard.shutdown panicked");
+
+    let speaks: Vec<_> = facts.iter().filter(|f| f.predicate == "speaks").collect();
+    assert_eq!(
+        speaks.len(),
+        3,
+        "DUR-2 (deferred path): all three `speaks` values must persist from one \
+         episode — got {}. This is the path Memory::remember() drives.",
+        speaks.len()
+    );
+}
+
 /// Control: Engine `ingest_with` directly, bisecting `group_id` (None vs a fresh namespace),
 /// with the SAME staged mock. Isolates whether passing a `group_id` (as the facade does) is
 /// what drops the fact.
