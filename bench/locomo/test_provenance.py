@@ -248,6 +248,37 @@ def test_shipped_defaults_prometheus_alone_does_not_fail():
     assert_shipped_defaults(_health_stamp("content-search"))
 
 
+
+def _fake_repo(lib_default: list[str], mcp_default: list[str]) -> Path:
+    """A minimal two-manifest repo root for the drift test."""
+    root = Path(tempfile.mkdtemp())
+    for crate, feats in (("kremory", lib_default), ("kremory-mcp", mcp_default)):
+        d = root / "crates" / crate
+        d.mkdir(parents=True)
+        feats_str = ", ".join(f'"{f}"' for f in feats)
+        (d / "Cargo.toml").write_text(f"[features]\ndefault = [{feats_str}]\n")
+    return root
+
+
+def test_shipped_defaults_fails_when_the_two_manifests_disagree():
+    """REL-002. The library and the server binary are edited independently. If they
+    diverge, 'the shipped build' is ambiguous and the gate must say so rather than
+    silently certifying a server build against a library default."""
+    root = _fake_repo(["content-search"], ["content-search", "rerank"])
+    try:
+        shipped_default_features(root)
+    except ShippedDefaultsMismatch as e:
+        assert "DIFFERENT default feature" in str(e), f"must name the cause: {e}"
+        assert "kremory-mcp" in str(e), f"must name both manifests: {e}"
+        return
+    raise AssertionError("disagreeing manifests must not silently resolve to one of them")
+
+
+def test_shipped_defaults_agreeing_manifests_resolve():
+    root = _fake_repo(["content-search"], ["content-search"])
+    assert shipped_default_features(root) == frozenset({"content-search"})
+
+
 def _run() -> int:
     tests = [
         test_build_provenance_reflects_env,
@@ -263,6 +294,8 @@ def _run() -> int:
         test_shipped_defaults_rejects_extra_feature,
         test_shipped_defaults_rejects_env_fallback_stamp,
         test_shipped_defaults_prometheus_alone_does_not_fail,
+        test_shipped_defaults_fails_when_the_two_manifests_disagree,
+        test_shipped_defaults_agreeing_manifests_resolve,
     ]
     failed = 0
     for t in tests:

@@ -203,7 +203,7 @@ def _cost(model: str, ptok: int, ctok: int) -> float:
 # ---------------------------------------------------------------------------
 # input loading — accept a prepared batch JSONL OR a raw harness results JSON
 # ---------------------------------------------------------------------------
-def gate_shipped_defaults(path: Path, *, allow_nondefault: bool) -> None:
+def gate_shipped_defaults(path: Path, *, allow_unverified: bool) -> None:
     """ROADMAP W0.2 — refuse to score a run that was not measured on the SHIPPED
     DEFAULT build.
 
@@ -212,7 +212,7 @@ def gate_shipped_defaults(path: Path, *, allow_nondefault: bool) -> None:
     win sat above `content-search = []` for months, every published benchmark ran
     with the feature ON, and no consumer received it.
 
-    `--allow-nondefault-build` exists deliberately. A hard, unoverridable refusal
+    `--allow-unverified-build` exists deliberately. A hard, unoverridable refusal
     on a diagnostic sweep would get the gate switched off, and a control people
     route around protects nothing — but the override prints a banner rather than
     passing quietly, so a non-default run can never be MISTAKEN for a quotable one.
@@ -239,17 +239,17 @@ def gate_shipped_defaults(path: Path, *, allow_nondefault: bool) -> None:
             f"it is unknown, so the number is not attributable to any kremory "
             f"configuration."
         )
-        if not allow_nondefault:
-            raise SystemExit(msg + "  Re-run the harness, or pass --allow-nondefault-build.")
-        print(msg + "  (--allow-nondefault-build: continuing)", file=sys.stderr)
+        if not allow_unverified:
+            raise SystemExit(msg + "  Re-run the harness, or pass --allow-unverified-build.")
+        print(msg + "  (--allow-unverified-build: continuing)", file=sys.stderr)
         return
     try:
         assert_shipped_defaults(stamp)
     except ShippedDefaultsMismatch as e:
-        if not allow_nondefault:
+        if not allow_unverified:
             raise SystemExit(
                 f"{e}\n\nThis number is NOT quotable. Re-run on the default build, "
-                f"or pass --allow-nondefault-build to score it as a diagnostic."
+                f"or pass --allow-unverified-build to score it as a diagnostic."
             ) from e
         print(
             "\n"
@@ -264,11 +264,11 @@ def gate_shipped_defaults(path: Path, *, allow_nondefault: bool) -> None:
           file=sys.stderr)
 
 
-def load_batch(path: Path, *, allow_nondefault: bool = False) -> list[dict]:
+def load_batch(path: Path, *, allow_unverified: bool = False) -> list[dict]:
     """Return answerable {key, sample_id, question_id, category, question, gold,
     memories} records. .jsonl = already-prepared batch (judge_rescore prepare
     shape); .json = raw harness results -> filter answerable + build keys."""
-    gate_shipped_defaults(path, allow_nondefault=allow_nondefault)
+    gate_shipped_defaults(path, allow_unverified=allow_unverified)
     if path.suffix == ".jsonl":
         return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
     # harness results JSON -> mirror judge_rescore.cmd_prepare filtering
@@ -318,7 +318,7 @@ def _extract_answer(text: str) -> str:
 
 def cmd_answer_gen(a: argparse.Namespace) -> int:
     key = _load_api_key()
-    batch = load_batch(a.input, allow_nondefault=getattr(a, 'allow_nondefault_build', False))
+    batch = load_batch(a.input, allow_unverified=getattr(a, 'allow_unverified_build', False))
     structured = getattr(a, "structured", False)
     if structured:
         # The cache key must include the CONTEXT FORMAT, or a structured run
@@ -467,7 +467,7 @@ def cmd_answer_judge(a: argparse.Namespace) -> int:
 # answer-tally
 # ---------------------------------------------------------------------------
 def cmd_answer_tally(a: argparse.Namespace) -> int:
-    batch = load_batch(a.input)
+    batch = load_batch(a.input, allow_unverified=getattr(a, 'allow_unverified_build', False))
     verdicts: dict[str, dict] = {}
     for l in a.verdicts.read_text().splitlines():
         if l.strip():
@@ -580,7 +580,7 @@ def main() -> int:
     g.add_argument("--max-tokens", type=int, default=1024)
     g.add_argument("--concurrency", type=int, default=8)
     g.add_argument("--keep-raw", action="store_true", help="store full CoT text")
-    g.add_argument("--allow-nondefault-build", action="store_true",
+    g.add_argument("--allow-unverified-build", action="store_true",
                    help="score a run measured on a NON-default build as a "
                         "diagnostic. Prints a banner; the number is not quotable "
                         "(ROADMAP W0.2).")
@@ -607,6 +607,10 @@ def main() -> int:
 
     t = sub.add_parser("answer-tally", help="QA-gen accuracy per category")
     t.add_argument("input", type=Path, help="batch .jsonl or harness results .json")
+    t.add_argument("--allow-unverified-build", action="store_true",
+                   help="tally a run whose build could not be verified (no stamp) or "
+                        "does not match the declared defaults. Prints a banner; the "
+                        "number is not quotable (ROADMAP W0.2).")
     t.add_argument("--verdicts", type=Path, required=True)
     t.add_argument("--answerer-label", default="gpt-4o-mini")
     t.add_argument("--judge-label", default="gpt-4o")
