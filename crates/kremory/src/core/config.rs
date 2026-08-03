@@ -691,30 +691,48 @@ pub struct PipelineConfig {
     /// pooled candidates and system prompt, totals roughly 2-3k tokens).
     /// Raise on a large-context model to shrink call count further.
     pub resolution_batch_max_entities: usize,
-    /// TD-167: run LLM contradiction detection during ingest. **Default: `false`.**
+    /// TD-167 / ADR-079 rev.2: run LLM contradiction detection during ingest.
+    /// **Default: `true`.**
     ///
-    /// Defaulted OFF because the mechanism currently DESTROYS SET-VALUED FACTS.
-    /// It treats every predicate as functional (one value per subject), so
-    /// ingesting a list supersedes all but the last member. Measured on 8
-    /// LongMemEval sessions, 2026-07-29: 81 of 1,021 facts invalidated, of
-    /// which ≥31% are provably multi-valued rather than contradictory —
-    /// `has_performer: billie eilish / tove lo / lana del rey` all superseded
-    /// by `the 1975`; `contain: rolled oats` superseded by `seeds`.
+    /// ## History — this default moved TWICE on 2026-07-29, and both moves were right
     ///
-    /// The prompt specifies the behaviour (`core/contradiction.rs:176` — "if
-    /// the new fact is an UPDATE (same relationship but newer value), return
-    /// that index too"), and no predicate-cardinality model exists anywhere in
-    /// the crate, so this is a design gap rather than a tuning problem.
+    /// **OFF (rev.1)** — the mechanism DESTROYED SET-VALUED FACTS. It treated every
+    /// predicate as functional (one value per subject), so ingesting a list
+    /// superseded all but the last member. Measured on 8 LongMemEval sessions:
+    /// 81 of 1,021 facts invalidated, ≥31% provably multi-valued rather than
+    /// contradictory — `has_performer: billie eilish / tove lo / lana del rey` all
+    /// superseded by `the 1975`; `contain: rolled oats` superseded by `seeds`.
     ///
-    /// Turning it OFF is SAFE and REVERSIBLE:
-    ///   * supersession is a SOFT delete (`invalid_at` is set; the row stays),
-    ///     so no data written under the old default was destroyed;
-    ///   * `core::dream::provenance::reversal::unsupersede` (ADR-073) already
-    ///     exists to reverse individual false positives;
-    ///   * genuine temporal supersession ("works_at Acme" → "works_at Globex")
-    ///     is the capability being deferred — real and wanted, but currently
-    ///     net-negative. Opt back in with `KREMORY_CONTRADICTION_DETECTION=1`
-    ///     once TD-167 lands derived predicate cardinality.
+    /// **ON (rev.2)** — the cause was the PROMPT, not the model: it instructed
+    /// *"if the new fact is an UPDATE (same relationship but newer value), return
+    /// that index too"*, which describes every item in a list. Replaced by a
+    /// coexistence question (*"can both be true at the same time?"*) plus a
+    /// temporal-ordering tiebreak. Measured on the production model: **7/8
+    /// set-valued destroyed → 0/8**, total errors 7 → 2; a corpus run moved the
+    /// contradiction rate 38.8% → 11.3% with no multi-valued predicate destroyed.
+    /// Scope also moved MVP → v1, and LongMemEval's `knowledge-update` category
+    /// (78 of 500 questions) tests exactly this mechanism.
+    ///
+    /// ⚠️ **A high contradiction rate is a WARNING, not a success metric.** The
+    /// original bug was found only because 43% looked "good". On coherent
+    /// conversational data, genuine contradictions are rare.
+    ///
+    /// ## Turning it off
+    ///
+    /// `KREMORY_CONTRADICTION_DETECTION=0` (or the builder setter). Off is safe
+    /// and loses only auto-correction of stale facts: supersession is a SOFT
+    /// delete (`invalid_at` is set, the row stays) and
+    /// `core::dream::provenance::reversal::unsupersede` (ADR-073) reverses
+    /// individual false positives, so nothing written under either default is
+    /// unrecoverable.
+    ///
+    /// **Note on the deeper fix (TD-167, still open):** derived predicate
+    /// cardinality — the approach an earlier version of this comment pointed at —
+    /// was investigated and **REFUTED**: 67% of predicates appear exactly once in
+    /// a real corpus and only 6% ever show multi-valuedness, so there is nothing
+    /// to derive from. The open work is the residual 2-of-6 missed genuine
+    /// updates (`works_at`, `current_job_title`), which is an intent problem, not
+    /// a cardinality one.
     pub contradiction_detection_enabled: bool,
 }
 
