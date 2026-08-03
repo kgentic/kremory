@@ -165,6 +165,39 @@ fn capability_of_openai_strict() {
     );
 }
 
+/// DUR-8 (V1-CANONICAL §4.3): `capability_of` must not panic on a model id whose
+/// `gpt-4o-` suffix contains multi-byte UTF-8.
+///
+/// The date sniff used `&rest[..10]`, a **byte** slice. `rest.len() >= 10` counts
+/// bytes, so a suffix like "日本語テスト…" passes the length guard while byte 10
+/// lands inside a 3-byte character — and slicing a `str` off a char boundary
+/// panics. Last of the TD-164 byte-slice family. Amplified by `panic = "abort"`
+/// in release (`Cargo.toml:26`): this would take the whole host process down, not
+/// just the request.
+///
+/// Model ids are caller-supplied (config, env, a napi/MCP argument), so this is
+/// reachable from outside the crate.
+///
+/// FAILS before the fix with a byte-index panic rather than an assertion.
+#[test]
+fn capability_of_multibyte_model_id_does_not_panic() {
+    // "日本語テスト" — 3 bytes per char. `rest` is 18 bytes, so `len() >= 10`
+    // holds, but byte offset 10 is mid-character (chars start at 0,3,6,9,12,15).
+    assert_eq!(
+        capability_of("gpt-4o-日本語テスト"),
+        ProviderCaps::PromptOnly,
+        "a non-date multi-byte suffix must fall through conservatively"
+    );
+    // Emoji: 4 bytes each, boundaries at 0,4,8,12 — offset 10 is mid-character.
+    assert_eq!(
+        capability_of("gpt-4o-🎯🎯🎯"),
+        ProviderCaps::PromptOnly,
+        "4-byte code points must not panic the date sniff either"
+    );
+    // Boundary case: exactly-10-byte non-date suffix must still be handled.
+    assert_eq!(capability_of("gpt-4o-abcdefghij"), ProviderCaps::PromptOnly);
+}
+
 #[test]
 fn capability_of_openai_strict_later_dates() {
     // Dates strictly after 2024-08-06 must also be NativeStructuredOutput.
