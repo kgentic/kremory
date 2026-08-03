@@ -401,10 +401,19 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // `Memory::reembed_all_entity_embeddings` / `Memory::reembed_all_fact_embeddings`
     // — which follow the SAME one-shot-CLI-maintenance-entrypoint pattern as
     // their already-skipped sibling `Memory::reembed_all_episode_embeddings`.
+    // Raised 83 → 84 (DOC-1, 2026-08-03) for exactly one entry —
+    // `MemoryBuilder::with_provider_rates_path` — which is the SAME Tier-2
+    // builder-knob pattern as its already-skipped siblings
+    // (with_content_stream_weight / with_rrf_k / with_temporal_weight): the whole
+    // builder surface is deferred to JS together per ADR-030 Form B, since
+    // `Memory.open` is the single JS construction entry point. Raised deliberately
+    // and on the record rather than by reshaping what the guard measures — the
+    // register was already sitting exactly at the prior cap (83) before this
+    // addition, so this is register growth, not walker over-finding.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 83,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 83. \
+        skip_count <= 84,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 84. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."
