@@ -1949,7 +1949,22 @@ mod tests {
             }
         }
 
-        assert!(seen > 0, "source gate matched no production call sites — the scan is broken");
+        // A FLOOR, not `> 0`. `seen > 0` would still pass if the scan silently
+        // degraded — wrong path, a formatting change moving the literal outside the
+        // 6-line window, a call site written with a non-literal schema name (which
+        // this scan skips). Then the gate would report "all classified" having
+        // examined almost nothing: a control that certifies by not looking, which is
+        // the exact defect class this whole change exists to remove.
+        // 21 production call sites live outside structured.rs alone (2026-08-03).
+        const MIN_EXPECTED_CALL_SITES: usize = 20;
+        assert!(
+            seen >= MIN_EXPECTED_CALL_SITES,
+            "source gate examined only {seen} production call sites (expected >= \
+             {MIN_EXPECTED_CALL_SITES}) — the SCAN is broken, not the code. Do not \
+             read this as 'all schemas classified'. Check: did the src path resolve, \
+             did a call site move its schema literal >6 lines from the call, or was \
+             one written with a non-literal name?"
+        );
         assert!(
             unclassified.is_empty(),
             "these production StructuredCallBuilder call sites use a schema that \
