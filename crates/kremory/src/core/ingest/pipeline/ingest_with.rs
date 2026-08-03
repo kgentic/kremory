@@ -1933,6 +1933,42 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     continue;
                 }
 
+                // ADR-045 §11's DETECTION intent, preserved additively.
+                //
+                // ADR-045 specified a *contradiction* check — same subject+predicate with a
+                // DIFFERENT object — that kept the higher-confidence fact and surfaced the
+                // loser via `IngestError`. That mechanism never shipped; what shipped
+                // silently dropped, object-agnostically (DUR-2). The DUR-2 fix stores every
+                // value, because within one episode there is no temporal ordering that
+                // could make one assertion supersede another, and a set-valued predicate is
+                // indistinguishable from a contradiction without predicate-cardinality
+                // knowledge the engine does not have.
+                //
+                // Rather than discard the signal, emit it: this fires when ONE episode
+                // asserts multiple DISTINCT objects for the same subject+predicate. Data
+                // loss is irreversible; detection is additive — so measure the phenomenon
+                // first, then design policy against real counts instead of assumptions.
+                // ADR-045 §11 is superseded with this reasoning recorded inline.
+                let within_episode_multivalue = pool_a
+                    .iter()
+                    .any(|f| f.source_episode_id == Some(episode_id));
+                if within_episode_multivalue {
+                    let ns = group_id.unwrap_or("default");
+                    metrics::counter!(
+                        "rql.ingest.within_episode_multivalue",
+                        "namespace" => ns.to_string()
+                    )
+                    .increment(1);
+                    tracing::debug!(
+                        subject = %subject_id,
+                        predicate = %fact.predicate,
+                        episode_id,
+                        namespace = %ns,
+                        "kremory.ingest.within_episode_multivalue: same subject+predicate, \
+                         distinct object, same episode — stored, not dropped"
+                    );
+                }
+
                 // Insert the new fact — skip gracefully if FK constraint fails
                 // (e.g., fact references an entity not in the extraction results).
                 //

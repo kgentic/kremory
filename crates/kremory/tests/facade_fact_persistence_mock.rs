@@ -27,6 +27,25 @@ use kremory::core::provider::{MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::TemporalGraph;
 use kremory::memory::ChatProvider;
 use kremory::{DynEmbeddingProvider, Memory, Namespace};
+use metrics_util::debugging::{DebuggingRecorder, Snapshot};
+
+/// Sum a labeled counter across all label-value variants. Mirrors the helper in
+/// `with_facts_integration.rs` — labeled counters can have multiple variants, so a
+/// single `.find()` would under-report ([[observability-first-class]] failure #9).
+fn find_counter_labeled(snapshot: Snapshot, name: &str) -> u64 {
+    snapshot
+        .into_vec()
+        .into_iter()
+        .filter_map(|(key, _unit, _desc, value)| {
+            if key.key().name() == name {
+                if let metrics_util::debugging::DebugValue::Counter(v) = value {
+                    return Some(v);
+                }
+            }
+            None
+        })
+        .sum()
+}
 
 /// Mock staged for IntegerIdLlmExtractor's 3 stages (substring-keyed) → one works_at fact.
 fn staged_mock() -> MockChatProvider {
@@ -143,6 +162,70 @@ async fn within_episode_set_valued_predicate_keeps_every_value() {
          matching on subject+predicate instead of the full triple.",
         r.inserted_fact_ids.len()
     );
+}
+
+/// ADR-045 §11 detection intent — the multi-value counter must actually FIRE.
+///
+/// The DUR-2 fix stores every value instead of dropping all but the first. ADR-045's
+/// contradiction-detection intent is preserved additively via
+/// `rql.ingest.within_episode_multivalue`. A counter nobody asserts on is an
+/// unverified claim about observability ([[observability-first-class]] failure #4:
+/// "counters that are 0 when work happened"), so this drives the real ingest path and
+/// reads the metric back.
+///
+/// Three `speaks` values in one episode ⇒ 2 increments (values 2 and 3 each see a
+/// prior same-episode row for the pair; the first does not).
+#[test]
+fn within_episode_multivalue_counter_fires() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+
+    metrics::with_local_recorder(&recorder, || {
+        rt.block_on(async {
+            let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("graph"));
+            let config = PipelineConfig::builder().build().expect("config");
+            let dim = config.embedding_dim.0;
+            let llm = Arc::new(staged_mock_multivalued());
+            let engine = Engine::new(EngineNewParams {
+                graph,
+                llm: Arc::clone(&llm),
+                embedder: Arc::new(MockEmbeddingProvider::new(dim)),
+                config,
+                model: None,
+            });
+            let extractor = IntegerIdLlmExtractor::new(Arc::clone(&llm));
+            let r = engine
+                .ingest_with(
+                    &extractor,
+                    IngestWithParams {
+                        text: "Alice speaks English, French and Spanish.",
+                        reference_time: None,
+                        group_id: Some("multivalue-counter"),
+                        content_type: None,
+                        source_params: SourceParams::default(),
+                    },
+                )
+                .await
+                .expect("ingest_with");
+
+            assert_eq!(r.inserted_fact_ids.len(), 3, "all three values must persist");
+
+            let fired = find_counter_labeled(
+                snapshotter.snapshot(),
+                "rql.ingest.within_episode_multivalue",
+            );
+            assert_eq!(
+                fired, 2,
+                "the multi-value signal ADR-045 wanted must be observable — expected 2 \
+                 increments for 3 co-asserted values, got {fired}"
+            );
+        });
+    });
 }
 
 /// DUR-2 companion — an EXACT repeated triple in one episode must still dedup to one.
