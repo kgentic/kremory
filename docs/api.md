@@ -964,19 +964,54 @@ mem.remember("Q4 2025 policy")
 
 ### Audit query
 
-The two clocks enable: *"What did the agent know as of real-world date X, as recorded before system time Y?"*
+`.as_of(t)` is a **valid-time** query — *"what was TRUE in the world at t"* — and it is wired
+end-to-end (ADR-068). This is the predicate the engine actually issues:
 
 ```sql
--- kremory issues this internally for as_of queries (v0.1.1):
-SELECT * FROM facts
-WHERE recorded_at <= :system_time_Y
-  AND valid_from  <= :real_world_time_X
-  AND (valid_to IS NULL OR valid_to > :real_world_time_X)
+-- what kremory issues for as_of(t) — ONE bound parameter, valid-time only:
+SELECT … FROM facts
+WHERE (subject_id = ?1 OR object_id = ?1)
+  AND expired_at IS NULL
+  AND valid_from <= ?2
+  AND (valid_to IS NULL OR valid_to > ?2)
 ```
 
-Up through v0.1.3, `.as_of()` on `RecallRequest` is accepted and emits `tracing::warn` — the
-filter wiring to SQL lands in a later release. Caller code is forward-compatible: same API,
-no migration required.
+Note what `as_of` does **not** do: it never gates on `recorded_at`. A fact kremory learned
+*after* `t` still counts if its `valid_from` precedes `t` — learning something retroactively
+does not change whether it was true then. `invalid_at` is likewise excluded from the
+predicate: a fact contradicted in 2026 but valid across March 2024 still appears for
+`as_of("2024-03-01")`, which is the point of a bi-temporal audit trail.
+
+#### The second clock
+
+**Every recalled fact carries both clocks.** `RetrievedFact` exposes all four temporal
+fields — `valid_at`, `invalid_at` (world clock) and `recorded_at`, `expired_at` (system
+clock) — so transaction time is available to you on every result:
+
+```rust
+// `.raw()` is required: bare `.recall(..)` resolves to a rendered String.
+// `.raw()` yields Vec<RetrievedContext>, one per matched entity, each with `.facts`.
+let contexts = mem.recall("alice's role").as_of(x).raw().await?;
+let known_at_y: Vec<_> = contexts
+    .into_iter()
+    .flat_map(|c| c.facts)            // valid-time already filtered server-side by as_of(x)
+    .filter(|f| f.recorded_at <= y)   // transaction time — filtered by you
+    .collect();
+```
+
+**Limits, stated plainly.** `recorded_at` is *returned*, not *queryable*: kremory has no
+server-side filter on it, so the snippet above post-filters whatever the top-k recall
+returned rather than scanning history. That is enough to answer *"of the facts I retrieved,
+which did the agent already know at Y"* — it is **not** a graph-wide audit scan.
+
+`TemporalGraph::entity_history` does return one entity's full unfiltered history, but it is
+**not reachable on the stable public API** (the only accessor, `temporal_graph_for_test`, is
+`#[cfg(feature = "test-utils")]` and documented as not-public).
+
+A server-side two-clock filter is a known, small, additive extension — one predicate and one
+bound parameter on a query that already selects `recorded_at`. It is **not built**, because
+nothing has asked for it and it cannot improve recall (a conjunctive filter only ever shrinks
+a result set).
 
 ### Memory types (7-type taxonomy)
 
