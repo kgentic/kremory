@@ -691,7 +691,23 @@ async fn hybrid_mode_results(
     // WITHOUT dropping surfaced answers (the answer ranks near the top). Honour
     // `k` when given; absent it, bound hybrid to at most its largest single arm
     // so the union never floods past what either mode alone would return.
-    let cap = k.unwrap_or_else(|| recall.len().max(content.len()));
+    // TD-173: absent an explicit `k`, the bound is the FULL deduped union,
+    // matching the library's `core::search::rrf_fuse_with_content` (TD-138
+    // regression fix). It previously read `recall.len().max(content.len())` —
+    // an expression that assumes the two arms OVERLAP so `union ≈ max`. They
+    // do not: `rrf_merge`'s own doc records the streams as having DISJOINT
+    // id-spaces (entity-ids vs episode-ids), so `.max()` silently dropped
+    // `min(recall, content)` distinct results with no error and no warning.
+    //
+    // Note the direction of travel: `.max()` ORIGINATED here and was specified
+    // INTO the library (`specs/td-066-recall-scoring-foundation-spec-
+    // 2026-07-21.md` Increment 1 step 2 — "matching the REST fix's fallback").
+    // TD-138 then fixed the library and nothing propagated back to the source.
+    //
+    // The bench never hit this (`bench/common/kremory_client.py:145` always
+    // sends `k`); consumers of `GET /search?mode=hybrid` — the DEFAULT mode —
+    // did.
+    let cap = fused_cap(k, recall.len(), content.len());
     let mut merged = rrf_merge(recall, content, rrf_k);
     merged.truncate(cap);
     Ok(merged)
@@ -740,6 +756,28 @@ async fn hybrid_mode_results(
 /// 1/(RRF_K + rank_list(d))`, rank 1-based; dedup by id (a result present in
 /// both streams accrues both contributions). Deterministic: fused-score desc,
 /// then id asc on ties.
+/// Truncation bound for the fused hybrid result set (TD-173).
+///
+/// Extracted from [`hybrid_mode_results`] so the invariant it encodes is
+/// nameable and testable. The invariant is an EQUIVALENCE, not an arithmetic
+/// fact: this bin's fusion is a deliberate parallel implementation of the
+/// library's `core::search::rrf_fuse_with_content`, and the two must agree on
+/// what "no explicit limit" means.
+///
+/// - **explicit `k`** → honour it, exactly as the library honours `limit`.
+/// - **no `k`** → the FULL deduped union, `recall_len + content_len`. Both
+///   fusions dedupe by id into a `HashMap`, so the union is at most that many
+///   and this bound therefore never truncates.
+///
+/// It previously read `recall_len.max(content_len)` — an expression that is
+/// only correct if the two arms OVERLAP. They do not: see [`rrf_merge`]'s doc
+/// on the disjoint entity-id/episode-id spaces. For disjoint arms `.max()`
+/// silently discards `min(recall_len, content_len)` distinct results, the same
+/// defect TD-138 fixed on the library side and did not fix here.
+fn fused_cap(k: Option<usize>, recall_len: usize, content_len: usize) -> usize {
+    k.unwrap_or(recall_len + content_len)
+}
+
 fn rrf_merge(
     a: Vec<SearchResultWire>,
     b: Vec<SearchResultWire>,
@@ -2244,6 +2282,74 @@ mod tests {
             score,
             kind: SearchResultKindWire::Entity,
             source_episode_id: None,
+        }
+    }
+
+    /// TD-173 regression — with NO explicit `k`, hybrid must return the full
+    /// deduped union of both arms, never `max(recall, content)`.
+    ///
+    /// This drives the same composition [`hybrid_mode_results`] performs — the
+    /// real [`rrf_merge`] followed by the real [`fused_cap`], in that order —
+    /// rather than asserting the cap arithmetic in isolation. Isolated
+    /// arithmetic is what TD-140 taught us not to trust: a test over
+    /// hand-shaped inputs to one pure function passed while the knob it
+    /// claimed to verify reached only one of two call sites.
+    ///
+    /// The arms are DISJOINT here on purpose. That is the condition under
+    /// which the old `.max()` bound was wrong, and this module's own
+    /// [`rrf_merge`] doc records it as the measured normal case (entity-ids vs
+    /// episode-ids). Under `.max()` this fusion returned 2 of 4 results.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn hybrid_no_k_returns_full_deduped_union_not_max_arm() {
+        let recall = vec![sr("e1", "entity-1", 0.9), sr("e2", "entity-2", 0.8)];
+        let content = vec![sr("ep7", "episode-7", 0.7), sr("ep9", "episode-9", 0.6)];
+        let (recall_len, content_len) = (recall.len(), content.len());
+
+        let mut merged = rrf_merge(recall, content, 60);
+        merged.truncate(fused_cap(None, recall_len, content_len));
+
+        let mut ids: Vec<&str> = merged.iter().map(|r| r.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec!["e1", "e2", "ep7", "ep9"],
+            "disjoint arms must all survive when the caller sets no limit; \
+             the pre-TD-138 `max(2, 2) = 2` bound silently dropped two of these"
+        );
+    }
+
+    /// An explicit `k` still bounds the fused set — the fix must not turn the
+    /// context-budget flood back on.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn fused_cap_honours_explicit_k_over_union_size() {
+        assert_eq!(fused_cap(Some(3), 2, 2), 3, "explicit k below union size");
+        assert_eq!(fused_cap(Some(15), 2, 2), 15, "explicit k above union size");
+        assert_eq!(fused_cap(Some(0), 9, 9), 0, "k=0 is honoured, not ignored");
+    }
+
+    /// Equivalence with the library fusion's no-limit rule
+    /// (`core::search::rrf_fuse_with_content`: `limit.unwrap_or(entity_count +
+    /// content_count)`).
+    ///
+    /// **What this does and does not prove.** `rrf_fuse_with_content` is
+    /// `pub(crate)` in `kremory`, so it cannot be called from this bin and the
+    /// two implementations cannot be executed against one input here. This
+    /// therefore pins the REST side to the library's *stated* rule rather than
+    /// its *behaviour* — it catches a future edit to this bin, not a future
+    /// edit to the library. Closing that gap means either making the library fn
+    /// reachable for test, or collapsing this bin into a thin caller of it;
+    /// both are the open half of TD-173.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn fused_cap_matches_library_no_limit_rule() {
+        for (r, c) in [(0, 0), (1, 0), (0, 1), (1, 1), (73, 50), (5, 5)] {
+            assert_eq!(
+                fused_cap(None, r, c),
+                r + c,
+                "no-limit bound must be the full union for arms ({r}, {c})"
+            );
         }
     }
 
