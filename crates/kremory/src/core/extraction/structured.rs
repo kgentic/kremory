@@ -248,7 +248,14 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
             .record(call_start.elapsed().as_secs_f64() * 1000.0);
 
             match result {
-                Ok(value) => {
+                Ok(ArmOutcome { value, usage }) => {
+                    // TD-166: emit token cost as soon as the provider returned Ok —
+                    // BEFORE the validation branch below. An arm whose output fails
+                    // schema validation still cost tokens, and attributing cost only
+                    // to validated calls would under-report precisely the failing arms
+                    // a cost investigation is looking for.
+                    emit_arm_usage(schema_name, arm, usage);
+                    let (usage_in, usage_out, usage_reported) = usage_fields(usage);
                     // Phase D iter 3 (2026-06-10): per Rule 19 — log which arm succeeded
                     // so we can verify NativeSchema fires for capable providers vs falling
                     // through to LlmJsonRepair (schema-not-enforced).
@@ -270,9 +277,9 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
 
                     if !should_validate {
                         // Dual-emit (ADR D1 / R1.1): counter + fused OTel gen_ai.* per SPEC-001.
-                        // gen_ai.usage tokens = honest 0 + system "unknown": try_arm drops the
-                        // ChatResponse before .usage() is read, and ChatProvider exposes no
-                        // provider_name(). Both ARE recoverable — wiring tracked as TD-090.
+                        // TD-166/TD-090 CLOSED: token counts are now real. `usage_reported`
+                        // disambiguates a genuine 0 from "the backend never told us"
+                        // (Ollama does not implement ChatResponse::usage).
                         counter!(
                             "rql.extraction.structured_call_success",
                             "schema" => schema_name,
@@ -283,8 +290,9 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                             "gen_ai.system" = "unknown",
                             "gen_ai.operation.name" = "extraction",
                             "gen_ai.request.model" = %model_str,
-                            "gen_ai.usage.input_tokens" = 0_u64,
-                            "gen_ai.usage.output_tokens" = 0_u64,
+                            "gen_ai.usage.input_tokens" = usage_in,
+                            "gen_ai.usage.output_tokens" = usage_out,
+                            "kremory.usage_reported" = usage_reported,
                             schema = schema_name,
                             arm = arm_name(arm),
                             "kremory.extraction.structured_call_success"
@@ -295,8 +303,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                     match validate_against_schema(&value, schema) {
                         Ok(()) => {
                             // Dual-emit (ADR D1 / R1.1): counter + fused OTel gen_ai.* per SPEC-001.
-                            // gen_ai.usage tokens 0 / system "unknown": try_arm drops the
-                            // ChatResponse before .usage(); recoverable, tracked as TD-090.
+                            // TD-166/TD-090 CLOSED — see the `!should_validate` branch above.
                             counter!(
                                 "rql.extraction.structured_call_success",
                                 "schema" => schema_name,
@@ -307,8 +314,9 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                 "gen_ai.system" = "unknown",
                                 "gen_ai.operation.name" = "extraction",
                                 "gen_ai.request.model" = %model_str,
-                                "gen_ai.usage.input_tokens" = 0_u64,
-                                "gen_ai.usage.output_tokens" = 0_u64,
+                                "gen_ai.usage.input_tokens" = usage_in,
+                                "gen_ai.usage.output_tokens" = usage_out,
+                                "kremory.usage_reported" = usage_reported,
                                 schema = schema_name,
                                 arm = arm_name(arm),
                                 "kremory.extraction.structured_call_success"
@@ -346,11 +354,20 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                 })
                                 .await;
 
-                                if let Ok(retry_value) = retry_result {
+                                if let Ok(ArmOutcome {
+                                    value: retry_value,
+                                    usage: retry_usage,
+                                }) = retry_result
+                                {
+                                    // TD-166: the self-correction retry is a SECOND paid
+                                    // call. Emitted unconditionally — a retry that then
+                                    // fails validation still cost tokens, and this arm is
+                                    // exactly where a runaway retry ladder would hide.
+                                    emit_arm_usage(schema_name, arm, retry_usage);
+                                    let (retry_in, retry_out, retry_reported) =
+                                        usage_fields(retry_usage);
                                     if validate_against_schema(&retry_value, schema).is_ok() {
                                         // Dual-emit (ADR D1 / R1.1): retry success path, fused OTel gen_ai.* per SPEC-001.
-                                        // gen_ai.usage tokens 0 / system "unknown" — see TD-090 (try_arm drops response before .usage()).
-                                        // Token counts / provider not available at StructuredCallBuilder layer.
                                         counter!(
                                             "rql.extraction.structured_call_success",
                                             "schema" => schema_name,
@@ -361,8 +378,9 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                             "gen_ai.system" = "unknown",
                                             "gen_ai.operation.name" = "extraction",
                                             "gen_ai.request.model" = %model_str,
-                                            "gen_ai.usage.input_tokens" = 0_u64,
-                                            "gen_ai.usage.output_tokens" = 0_u64,
+                                            "gen_ai.usage.input_tokens" = retry_in,
+                                            "gen_ai.usage.output_tokens" = retry_out,
+                                            "kremory.usage_reported" = retry_reported,
                                             schema = schema_name,
                                             arm = arm_name(arm),
                                             "kremory.extraction.structured_call_success"
@@ -474,9 +492,108 @@ struct TryArmParams<'a, L: ?Sized + ChatProvider> {
     debug_enabled: bool,
 }
 
+/// Provider-reported token usage for a single arm attempt (TD-166).
+#[derive(Debug, Clone, Copy)]
+struct ArmUsage {
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+/// One arm attempt's result: the parsed value **plus what the provider said the
+/// call cost** (TD-166 / TD-090).
+///
+/// Usage is carried OUT of `try_arm` rather than emitted inside it so there is a
+/// single emit point in the caller, alongside the existing `schema`/`arm`
+/// dual-emit. `usage: None` means the backend did not report — never "free".
+struct ArmOutcome {
+    value: Value,
+    usage: Option<ArmUsage>,
+}
+
+/// Read usage off a response before it is consumed.
+///
+/// This is the whole of TD-090: `try_arm` previously dropped the `ChatResponse`
+/// after `.text()`, so every extraction span reported a hard-coded
+/// `gen_ai.usage.*_tokens = 0`.
+fn arm_usage_of(response: &dyn autoagents_llm::chat::ChatResponse) -> Option<ArmUsage> {
+    response.usage().map(|u| ArmUsage {
+        input_tokens: u64::from(u.prompt_tokens),
+        output_tokens: u64::from(u.completion_tokens),
+    })
+}
+
+/// Span fields for one arm's usage: `(input, output, reported)`.
+///
+/// The `reported` flag is load-bearing, not decoration: without it a span
+/// showing `input_tokens = 0` is ambiguous between a genuinely free call and a
+/// backend that never reported. That ambiguity is what TD-090 shipped for
+/// months as a hard-coded `0_u64`.
+fn usage_fields(usage: Option<ArmUsage>) -> (u64, u64, bool) {
+    match usage {
+        Some(u) => (u.input_tokens, u.output_tokens, true),
+        None => (0, 0, false),
+    }
+}
+
+/// Warn once per process that the wired backend reports no token usage.
+static USAGE_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
+
+/// Emit token counters for one arm attempt (TD-166).
+///
+/// Called as soon as the provider returns `Ok`, **before** schema validation —
+/// tokens spent on an arm whose output later fails validation were still spent,
+/// and attributing cost only to validated calls would under-report exactly the
+/// failing arms a cost investigation cares about.
+///
+/// `None` usage increments a SEPARATE counter and never a zero-valued token
+/// increment. Ollama's `ChatResponse` does not override `usage()` (the trait
+/// default returns `None`), so on a local build every call lands here — and a
+/// `tokens_total` of 0 would be indistinguishable from "ingest was free", which
+/// is the absence-read-as-measurement defect this TD exists to remove.
+fn emit_arm_usage(schema_name: &'static str, arm: FallbackArm, usage: Option<ArmUsage>) {
+    match usage {
+        Some(u) => {
+            counter!(
+                "kremory_core_tokens_total",
+                "operation" => "extraction",
+                "schema" => schema_name,
+                "arm" => arm_name(arm),
+                "direction" => "input",
+            )
+            .increment(u.input_tokens);
+            counter!(
+                "kremory_core_tokens_total",
+                "operation" => "extraction",
+                "schema" => schema_name,
+                "arm" => arm_name(arm),
+                "direction" => "output",
+            )
+            .increment(u.output_tokens);
+        }
+        None => {
+            counter!(
+                "kremory_core_tokens_usage_missing_total",
+                "operation" => "extraction",
+                "schema" => schema_name,
+                "arm" => arm_name(arm),
+            )
+            .increment(1);
+            USAGE_MISSING_WARNED.call_once(|| {
+                tracing::warn!(
+                    target: "kremory.extraction.usage_missing",
+                    "chat backend reports no token usage — kremory_core_tokens_total will \
+                     stay 0 for extraction. This is NOT a zero-cost ingest; see \
+                     kremory_core_tokens_usage_missing_total. (Ollama does not implement \
+                     ChatResponse::usage.)"
+                );
+            });
+        }
+    }
+}
+
 async fn try_arm<L: ?Sized + ChatProvider>(
     params: TryArmParams<'_, L>,
-) -> Result<Value, ExtractionError> {
+) -> Result<ArmOutcome, ExtractionError> {
     let TryArmParams {
         llm,
         arm,
@@ -490,7 +607,7 @@ async fn try_arm<L: ?Sized + ChatProvider>(
         return try_delimited_tuple_arm(llm, messages).await;
     }
 
-    let text = match arm {
+    let (text, usage) = match arm {
         FallbackArm::NativeSchema | FallbackArm::FormatSchema => {
             // Pass schema to the provider via StructuredOutputFormat.
             // description MUST be non-null: Groq's OpenAI-compatible endpoint
@@ -511,7 +628,9 @@ async fn try_arm<L: ?Sized + ChatProvider>(
                 .chat_with_tools(messages, None, Some(fmt))
                 .await
                 .map_err(|e| ExtractionError::Llm(e.to_string()))?;
-            response.text().unwrap_or_default()
+            // TD-166: read usage BEFORE the response is consumed by `.text()`.
+            let usage = arm_usage_of(response.as_ref());
+            (response.text().unwrap_or_default(), usage)
         }
         FallbackArm::LlmJsonRepair | FallbackArm::PromptOnly => {
             // No provider-side schema enforcement — get raw text.
@@ -519,7 +638,8 @@ async fn try_arm<L: ?Sized + ChatProvider>(
                 .chat_with_tools(messages, None, None)
                 .await
                 .map_err(|e| ExtractionError::Llm(e.to_string()))?;
-            response.text().unwrap_or_default()
+            let usage = arm_usage_of(response.as_ref());
+            (response.text().unwrap_or_default(), usage)
         }
         // Handled above — unreachable, but exhaustiveness requires the arm.
         FallbackArm::DelimitedTuple => unreachable!("DelimitedTuple handled above"),
@@ -540,7 +660,10 @@ async fn try_arm<L: ?Sized + ChatProvider>(
     }
 
     // Parse the response text to a JSON Value.
-    parse_response_to_value(&text, arm)
+    Ok(ArmOutcome {
+        value: parse_response_to_value(&text, arm)?,
+        usage,
+    })
 }
 
 /// Attempt the L6 DelimitedTuple arm.
@@ -556,7 +679,7 @@ async fn try_arm<L: ?Sized + ChatProvider>(
 async fn try_delimited_tuple_arm<L: ?Sized + ChatProvider>(
     llm: &L,
     messages: &[ChatMessage],
-) -> Result<Value, ExtractionError> {
+) -> Result<ArmOutcome, ExtractionError> {
     use crate::core::provider::{ChatRole, MessageType};
 
     // Append the pipe-delimited format instruction as a follow-up user message.
@@ -574,8 +697,15 @@ async fn try_delimited_tuple_arm<L: ?Sized + ChatProvider>(
         .await
         .map_err(|e| ExtractionError::Llm(e.to_string()))?;
 
+    // TD-166: this is the second (and only other) `chat_with_tools` call in the
+    // extraction path — instrumented identically, else the DelimitedTuple arm
+    // would be a silent hole in the token accounting.
+    let usage = arm_usage_of(response.as_ref());
     let text = response.text().unwrap_or_default();
-    Ok(delimited_tuple::parse_delimited_tuple_response(&text))
+    Ok(ArmOutcome {
+        value: delimited_tuple::parse_delimited_tuple_response(&text),
+        usage,
+    })
 }
 
 /// Parse a raw LLM response string into a `serde_json::Value`.
@@ -834,6 +964,7 @@ mod tests {
         SCHEMA_NUEXTRACT_RELATIONS_ONLY_FORCE_ARM,
     };
     use crate::core::provider::{MockChatProvider, MockChatResponse, ProviderCaps};
+    use metrics_util::debugging::DebuggingRecorder;
     use std::collections::HashMap;
 
     // ── MockErrorChatProvider — always returns LLMError (T5.2) ───────────────
@@ -1413,5 +1544,245 @@ mod tests {
                 "rql.extraction.structured_call_success must fire at least once"
             );
         });
+    }
+
+    // ── TD-166 — ingest token attribution at the structured-call funnel ───────
+    //
+    // Spec: .ai-docs/specs/td-166-ingest-token-attribution-spec-2026-08-03.md
+    //
+    // These drive the REAL ladder through `StructuredCallBuilder::call()`, not
+    // `try_arm` directly — the emit site is in the caller, so a test that called
+    // `try_arm` would validate a model of the code rather than the code.
+
+    /// Mock whose `ChatResponse` DOES report usage (the production shape for
+    /// Groq/OpenAI). `MockChatResponse` deliberately does not, which is what
+    /// makes it the correct fixture for the absence test below.
+    struct UsageMockProvider {
+        text: String,
+        input: u32,
+        output: u32,
+    }
+
+    struct UsageMockResponse {
+        text: String,
+        input: u32,
+        output: u32,
+    }
+
+    impl std::fmt::Debug for UsageMockResponse {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "UsageMockResponse({}/{})", self.input, self.output)
+        }
+    }
+
+    impl std::fmt::Display for UsageMockResponse {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.text)
+        }
+    }
+
+    impl autoagents_llm::chat::ChatResponse for UsageMockResponse {
+        fn text(&self) -> Option<String> {
+            Some(self.text.clone())
+        }
+        fn tool_calls(&self) -> Option<Vec<autoagents_llm::ToolCall>> {
+            None
+        }
+        fn usage(&self) -> Option<autoagents_llm::chat::Usage> {
+            Some(autoagents_llm::chat::Usage {
+                prompt_tokens: self.input,
+                completion_tokens: self.output,
+                total_tokens: self.input + self.output,
+                completion_tokens_details: None,
+                prompt_tokens_details: None,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::core::provider::ChatProvider for UsageMockProvider {
+        async fn chat_with_tools(
+            &self,
+            _messages: &[crate::core::provider::ChatMessage],
+            _tools: Option<&[autoagents_llm::chat::Tool]>,
+            _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
+        ) -> std::result::Result<
+            Box<dyn autoagents_llm::chat::ChatResponse>,
+            autoagents_llm::error::LLMError,
+        > {
+            Ok(Box::new(UsageMockResponse {
+                text: self.text.clone(),
+                input: self.input,
+                output: self.output,
+            }))
+        }
+    }
+
+    /// Sum a counter's value across every label set matching `pred`.
+    fn counter_sum(
+        snapshot: &[(
+            metrics_util::CompositeKey,
+            Option<metrics::Unit>,
+            Option<metrics::SharedString>,
+            metrics_util::debugging::DebugValue,
+        )],
+        name: &str,
+        pred: impl Fn(&std::collections::HashMap<&str, &str>) -> bool,
+    ) -> u64 {
+        snapshot
+            .iter()
+            .filter(|(k, _, _, _)| k.key().name() == name)
+            .filter(|(k, _, _, _)| {
+                let labels: std::collections::HashMap<&str, &str> =
+                    k.key().labels().map(|l| (l.key(), l.value())).collect();
+                pred(&labels)
+            })
+            .map(|(_, _, _, v)| match v {
+                metrics_util::debugging::DebugValue::Counter(n) => *n,
+                other => panic!("{name} must be a Counter, got {other:?}"),
+            })
+            .sum()
+    }
+
+    fn run_with_recorder<F: std::future::Future<Output = ()>>(
+        recorder: &DebuggingRecorder,
+        fut: impl FnOnce() -> F,
+    ) {
+        metrics::with_local_recorder(recorder, || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime builds");
+            rt.block_on(fut());
+        });
+    }
+
+    /// T1 — a provider that reports usage produces real, correctly-labelled
+    /// token counters. RED-verified: before TD-166 this emitted nothing.
+    #[test]
+    fn reported_usage_emits_labelled_token_counters() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        let mock = UsageMockProvider {
+            text: r#"{"items":[]}"#.to_string(),
+            input: 100,
+            output: 50,
+        };
+
+        run_with_recorder(&recorder, || async {
+            StructuredCallBuilder::new(&mock, &SCHEMA_ENTITY_LIST, "EntityList")
+                .model("qwen2.5:14b")
+                .messages(vec![crate::core::provider::chat_msg_user("extract")])
+                .call()
+                .await
+                .expect("mock returns valid JSON");
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+
+        assert_eq!(
+            counter_sum(&snapshot, "kremory_core_tokens_total", |l| {
+                l.get("direction") == Some(&"input")
+            }),
+            100,
+            "input tokens must be the provider-reported 100"
+        );
+        assert_eq!(
+            counter_sum(&snapshot, "kremory_core_tokens_total", |l| {
+                l.get("direction") == Some(&"output")
+            }),
+            50,
+            "output tokens must be the provider-reported 50"
+        );
+        assert_eq!(
+            counter_sum(&snapshot, "kremory_core_tokens_total", |l| {
+                l.get("schema") == Some(&"EntityList") && l.get("operation") == Some(&"extraction")
+            }),
+            150,
+            "tokens must carry schema + operation labels — per-schema attribution is \
+             the whole point of TD-166 (it is what makes the 48× breakdown measurable)"
+        );
+        assert_eq!(
+            counter_sum(&snapshot, "kremory_core_tokens_usage_missing_total", |_| true),
+            0,
+            "usage WAS reported — the missing-counter must stay at zero"
+        );
+    }
+
+    /// T2 — the load-bearing one. A provider that reports NO usage (the Ollama
+    /// shape: `ChatResponse::usage()` is not overridden, trait default `None`)
+    /// must increment the missing-counter and emit NO zero-valued token
+    /// increment. A `tokens_total` of 0 would be indistinguishable from a free
+    /// ingest, which is the exact absence-read-as-measurement defect TD-166
+    /// exists to remove.
+    #[test]
+    fn unreported_usage_counts_as_missing_never_as_zero() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        // MockChatResponse does not override usage() → None, like Ollama.
+        let mock = MockChatProvider::with_response("", r#"{"items":[]}"#);
+
+        run_with_recorder(&recorder, || async {
+            StructuredCallBuilder::new(&mock, &SCHEMA_ENTITY_LIST, "EntityList")
+                .model("qwen2.5:14b")
+                .messages(vec![crate::core::provider::chat_msg_user("extract")])
+                .call()
+                .await
+                .expect("mock returns valid JSON");
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+
+        assert!(
+            counter_sum(&snapshot, "kremory_core_tokens_usage_missing_total", |l| {
+                l.get("schema") == Some(&"EntityList")
+            }) >= 1,
+            "a provider that reports no usage must be COUNTED as missing"
+        );
+        assert!(
+            !snapshot
+                .iter()
+                .any(|(k, _, _, _)| k.key().name() == "kremory_core_tokens_total"),
+            "no token counter may be emitted when usage is unreported — a 0 here \
+             reads as 'ingest was free' and is the defect this TD removes"
+        );
+    }
+
+    /// T3 — the DelimitedTuple arm has its own `chat_with_tools` call site and
+    /// would otherwise be a silent hole in the accounting.
+    #[test]
+    fn delimited_tuple_arm_is_instrumented_too() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        let mock = UsageMockProvider {
+            text: "Alice|Person".to_string(),
+            input: 7,
+            output: 3,
+        };
+
+        run_with_recorder(&recorder, || async {
+            let _ = StructuredCallBuilder::new(&mock, &SCHEMA_ENTITY_LIST, "EntityList")
+                .model("claude-sonnet-4-5")
+                .force_arm(FallbackArm::DelimitedTuple)
+                .messages(vec![crate::core::provider::chat_msg_user("extract")])
+                .call()
+                .await;
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+
+        assert!(
+            counter_sum(&snapshot, "kremory_core_tokens_total", |l| {
+                l.get("arm") == Some(&"delimited_tuple")
+            }) > 0,
+            "the DelimitedTuple arm must report its tokens; got: {:?}",
+            snapshot
+                .iter()
+                .map(|(k, _, _, _)| k.key().name().to_string())
+                .collect::<Vec<_>>()
+        );
     }
 }
