@@ -30,7 +30,7 @@ For every LLM call (chat) and embedding call (embed), kremory emits:
 
 Emission is **automatic** when you use:
 - Tier 1 shortcuts (`Memory::with_ollama`, `with_openai`, `with_anthropic`) — auto-wrap providers
-- `MemoryBuilder::with_llm_tracked(provider, model, llm)` — explicit tracked wrap
+- `MemoryBuilder::with_token_tracking(provider, model)` — explicit tracked wrap, applied after `.with_llm(...)`
 
 Emission is **not** automatic for `MemoryBuilder::with_llm(llm)` — that path is intentionally untracked for users who don't want metric emission overhead.
 
@@ -124,7 +124,8 @@ let my_llm = Arc::new(MyCustomChatProvider::new());
 let my_embedder = Arc::new(MyCustomEmbeddingProvider::new());
 
 let mem = Memory::open("./agent.db")
-    .with_llm_tracked("my-provider", "my-model-v2", my_llm)
+    .with_llm(my_llm)
+    .with_token_tracking("my-provider", "my-model-v2")
     .with_embedder(my_embedder)
     .await?;
 // Provider="my-provider", model="my-model-v2" on all emitted metrics
@@ -194,7 +195,8 @@ Fields:
 ```rust
 let mem = Memory::open("./agent.db")
     .with_provider_rates_path("./my-rates.toml")
-    .with_llm_tracked("openai", "gpt-4o-mini", my_llm)
+    .with_llm(my_llm)
+    .with_token_tracking("openai", "gpt-4o-mini")
     .with_embedder(my_embedder)
     .await?;
 ```
@@ -281,7 +283,7 @@ Per [ADR-rql-core-memory-observability-first-class-2026-05-20](../.ai-docs/adrs/
 
 | Limitation | Cause | Workaround | Resolution path |
 |---|---|---|---|
-| `with_ollama` Tier 1 emits 0 token counts | `autoagents-llm 0.3.7` Ollama backend's `usage()` returns `None` | Use `with_llm_tracked("ollama", model, custom_provider)` with a custom `ChatProvider` that overrides `usage()` by parsing Ollama's `prompt_eval_count` + `eval_count` fields | Awaiting `autoagents-llm 0.3.8` upstream PR (Ollama backend `usage()` override). Tracked in [.ai-docs/planning/roadmap-post-v013-2026-05-28.md](../.ai-docs/planning/roadmap-post-v013-2026-05-28.md) item B.2 |
+| `with_ollama` Tier 1 emits 0 token counts | `autoagents-llm 0.3.7` Ollama backend's `usage()` returns `None` | Use `.with_llm(custom_provider).with_token_tracking("ollama", model)` with a custom `ChatProvider` that overrides `usage()` by parsing Ollama's `prompt_eval_count` + `eval_count` fields | Awaiting `autoagents-llm 0.3.8` upstream PR (Ollama backend `usage()` override). Tracked in [.ai-docs/planning/roadmap-post-v013-2026-05-28.md](../.ai-docs/planning/roadmap-post-v013-2026-05-28.md) item B.2 |
 | Google Gemini backend emits 0 token counts | Same — AA's `google.rs` doesn't override `usage()` | Same workaround | Awaiting `autoagents-llm 0.3.8`. Tracked roadmap item B.3 |
 | Anthropic prompt-cache tokens not surfaced separately | v0.1.2 scope deferred; AA already parses the fields | Read `cache_creation_input_tokens` + `cache_read_input_tokens` from your own logs in the interim | v0.1.4 — kremory-side wiring; tracked roadmap item B.1 |
 | `rate_limited` / `timeout` error.type labels not producible | `autoagents-llm 0.3.7` `LLMError` has no structured variants for these | Both route through `HttpError`/`ProviderError` → `"server_error"` bucket. Query span attributes for raw error message detail | Awaiting `autoagents-llm 0.3.8`+ |

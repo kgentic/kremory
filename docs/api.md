@@ -88,7 +88,7 @@ let mem = Memory::open("./agent.db")
 ```
 
 The builder is type-state guarded: `.await` on a `MemoryBuilder` without calling both
-`.with_llm()` (or `.with_llm_tracked()`) and `.with_embedder()` is a **compile error**, not a runtime error.
+`.with_llm()` (optionally followed by `.with_token_tracking()`) and `.with_embedder()` is a **compile error**, not a runtime error.
 
 ```rust
 // Compile error — missing .with_embedder()
@@ -97,23 +97,25 @@ let mem = Memory::open("./agent.db").with_llm(llm).await?; // ERROR
 
 ### Tier 2 — Builder with observability (v0.1.2+)
 
-For automatic token + cost + duration metric emission, use `with_llm_tracked` instead of `with_llm`:
+For automatic token + cost + duration metric emission, add `.with_token_tracking(provider, model)` after `.with_llm(...)`:
 
 ```rust
 let mem = Memory::open("./agent.db")
-    .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))  // explicit labels
+    .with_llm(Arc::new(my_llm))
+    .with_token_tracking("openai", "gpt-4o-mini")  // explicit labels
     .with_embedder(Arc::new(my_embedder))
     .await?;
 ```
 
-The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) internally upgrade to `with_llm_tracked` — no opt-in required.
+The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) apply token tracking internally — no opt-in required.
 
 To override the bundled cost rates table:
 
 ```rust
 let mem = Memory::open("./agent.db")
     .with_provider_rates_path("./my-rates.toml")  // override bundled rates
-    .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))
+    .with_llm(Arc::new(my_llm))
+    .with_token_tracking("openai", "gpt-4o-mini")
     .with_embedder(Arc::new(my_embedder))
     .await?;
 ```
@@ -1031,10 +1033,10 @@ LLM observability parity. Additive only — no breaking changes.
 
 | API | Change |
 |---|---|
-| `MemoryBuilder::with_llm_tracked(provider, model, llm)` | **NEW** — wraps in `TokenTrackingChatProvider` with explicit labels |
+| `MemoryBuilder::with_token_tracking(provider, model)` | Composable knob — wraps the already-configured LLM in `TokenTrackingChatProvider` with explicit labels. Supersedes the deprecated `with_llm_tracked(WithLlmTrackedParams, llm)` |
 | `MemoryBuilder::with_provider_rates_path(PathBuf)` | **NEW** — override bundled cost-rates table |
 | `MemoryBuilder::with_llm(llm)` | Unchanged — backward compatible (untracked path) |
-| Tier 1 shortcuts (`with_ollama` etc.) | Internally upgraded to `with_llm_tracked` — auto-emit metrics |
+| Tier 1 shortcuts (`with_ollama` etc.) | Apply token tracking internally — auto-emit metrics |
 | `kremory::observability` module | **NEW** — re-exports `TokenTrackingChatProvider`, `ProviderRates`, `TelemetryConfig`, `init_telemetry`, etc. |
 | `init_telemetry(TelemetryConfig)` | Real implementation (was stub). Returns `TelemetryHandle`. Behind `otel` cargo feature. |
 | `otel` cargo feature | Off by default. When enabled: installs `tracing-subscriber` + `tracing-opentelemetry` + OTLP gRPC exporter |
@@ -1082,9 +1084,9 @@ empty). Opt into the surfaces below as needed:
 | `ner` | off | GLiNER hybrid extractor (`.with_gliner()` + `.with_llm(...)`); auto-downloads the ONNX GLiNER model on first use (`ort` / `ndarray` / `tokenizers` / `hf-hub`). |
 | `embeddings` | off | Local ONNX embedding-provider support (`ort` / `ndarray` / `tokenizers` / `hf-hub`). BYOM embedders work without it. |
 | `otel` | off | OTLP export — `tracing-subscriber` + `tracing-opentelemetry` + OTLP exporter; enables `init_telemetry(...)` (see [observability.md](observability.md)). |
-| `trace` | off | Hot-path span emission (ADR D3). Off by default to keep non-OTel throughput overhead near zero. |
-| `unstable-graph` | off | v0.1.6 preview graph surface — `Memory::get_related` traversal (G9). Promotes to stable in a later release. |
-| `unstable-tags` | off | v0.1.6 preview tag surface — `episode_tags` junction + `with_tags` / `filter_tag_any` / `filter_tag_all` (G3.b). |
+| `trace` | off | **RESERVED — NOT YET WIRED. Enabling it does nothing.** Zero `#[cfg(feature = "trace")]` sites exist in the crate (`Cargo.toml:59`). Was intended for hot-path span emission (ADR D3). |
+| `unstable-graph` | off | **RESERVED — NOT YET WIRED. Enabling it does nothing.** Zero `#[cfg(feature = "unstable-graph")]` sites exist (`Cargo.toml:80-87`). The planned v0.1.6 `Memory::get_related` traversal (G9) **never landed**; this row previously described it as if it had. |
+| `unstable-tags` | off | **RESERVED — NOT YET WIRED. Enabling it does nothing.** Zero `#[cfg(feature = "unstable-tags")]` sites exist (`Cargo.toml:88-93`). The planned `episode_tags` junction + `with_tags` / `filter_tag_any` / `filter_tag_all` (G3.b) **never landed**; this row previously described it as if it had. |
 | `test-utils` / `llm-smoke` / `llm-integration` | off | Test-harness gating only — not part of the stable consumer surface. |
 
 ```toml

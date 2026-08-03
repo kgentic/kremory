@@ -38,10 +38,17 @@ pub struct ExtractionWindowConfig {
     /// Default: 300 words (~1500 chars, ~400 BPE tokens).  Sized so 3 chunks
     /// fit in the default 4096-token context with room for system prompt,
     /// query, and generation.  Optimised for latency on the real-time meeting
-    /// assistant path.  Users with more memory can increase via
-    /// `LLM_CONTEXT_SIZE` + `CHUNK_MAX_WORDS` env vars (see KGT-69 for UI
-    /// presets).  Must stay aligned with `max_chunk_chars` in
+    /// assistant path.  Must stay aligned with `max_chunk_chars` in
     /// the host application's pipeline config (1500 chars).
+    ///
+    /// Increase it via `PipelineConfig::builder().max_words(n)` (verified against
+    /// the setter at `config.rs:767`; siblings: `min_words`, `overlap_words`,
+    /// `density_threshold`). CFG-2
+    /// (V1-CANONICAL §6c): this previously said to set `LLM_CONTEXT_SIZE` +
+    /// `CHUNK_MAX_WORDS` env vars. **Neither has any effect on the pipeline** —
+    /// `PipelineConfig` builds this struct via `Default` (see its `Default` impl
+    /// below), never via [`from_env`](Self::from_env), and `LLM_CONTEXT_SIZE`
+    /// appears in no source file at all. The builder setters are the supported path.
     pub max_words: usize,
 
     /// Number of words from the end of `chunk[i]` to prepend to `chunk[i+1]`.
@@ -52,6 +59,18 @@ pub struct ExtractionWindowConfig {
 
 impl ExtractionWindowConfig {
     /// Build from environment variables, falling back to sensible defaults.
+    ///
+    /// ⚠️ **The kremory pipeline does NOT call this.** CFG-2 (V1-CANONICAL §6c):
+    /// `PipelineConfig` constructs its `extraction_window` via `Default`
+    /// (`config.rs:708`), so **setting the env vars below changes nothing** unless a
+    /// consumer calls `from_env()` themselves and passes the result in. This method
+    /// has zero callers in the workspace. The supported way to tune chunking is the
+    /// `PipelineConfig` builder (`max_words` / `min_words` / `overlap_words` /
+    /// `density_threshold`).
+    ///
+    /// Kept rather than deleted because it is `pub` and works correctly *if called* —
+    /// but it is documented here as opt-in, not as ambient configuration, because the
+    /// previous wording sent users to set env vars that silently did nothing.
     ///
     /// | Env var | Default | Rationale |
     /// |---------|---------|-----------|

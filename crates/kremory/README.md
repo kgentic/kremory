@@ -16,12 +16,24 @@ LLM + embedder), no server process, no subscription to ship.
 
 ```toml
 [dependencies]
-kremory = "0.4"
+kremory = "0.5"
+
+# kremory's API is async and returns errors, so a runtime and an error type are
+# needed to run the Quickstart below. These are the same deps the in-repo
+# consumer smoke test (`e2e-consumer/Cargo.toml`) uses.
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
 ```
 
-That's it — no git dependency, no `[patch.crates-io]` stanza. kremory builds against the
-published `autoagents-llm` (the model id flows as plain data, not a trait accessor). No model
-weights are bundled; bring your own LLM + embedder (see [BYOM](#byom--bring-your-own-model)).
+No git dependency and no `[patch.crates-io]` stanza — kremory builds against the published
+`autoagents-llm` (the model id flows as plain data, not a trait accessor). No model weights are
+bundled; bring your own LLM + embedder (see [BYOM](#byom--bring-your-own-model)).
+
+Two optional extras, only if you want to observe kremory's own telemetry: `metrics` +
+`metrics-util` to capture counters (**version-locked** — the global recorder registry is keyed by
+the `metrics` crate's minor version, so a mismatch silently captures nothing; kremory is on
+`metrics 0.24` / `metrics-util 0.18`), and `tracing-subscriber` to see `KREMORY_DEBUG` traces
+(kremory emits via `tracing` but does not re-export a subscriber).
 
 ---
 
@@ -89,7 +101,8 @@ Tier 1.5 — Named shortcuts (auto-wrap providers with observability)
 Tier 2 — Customizable builder
 
     let mem = Memory::open("./agent.db")
-        .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))  // wraps with metric emission
+        .with_llm(Arc::new(my_llm))
+        .with_token_tracking("openai", "gpt-4o-mini")  // wraps with metric emission
         .with_embedder(Arc::new(my_embedder))
         .default_namespace(Namespace::new("acme-corp"))
         .await?;
@@ -152,7 +165,7 @@ Wire it via `.with_embedder(MyEmbedder.into_dyn())` (or `Arc::new(MyEmbedder)`).
 
 Wire any provider — OpenAI, Ollama, local GGUF, sentence-transformers via HTTP, anything. Your API keys, your inference costs, your data.
 
-Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays under 1MB published. See [ADR-002](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
+Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays around 1 MB. Measured 2026-08-03: `cargo package` on the 0.5.0 tree produces a **1.04 MB** `.crate` (4.3 MiB across 150 files, 1.0 MiB compressed); the published 0.5.0 is 0.885 MB. The prior "under 1MB" wording was true of the published artifact and would have become false at the next publish (N-1). See [ADR-002](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
 
 ### What about GLiNER? (when you opt into NER)
 
@@ -326,7 +339,7 @@ Every undo returns an **honest outcome** (the actual counts reversed, never a ba
 
 ## Observability (v0.1.2+)
 
-kremory emits structured metrics + tracing spans for every LLM and embedding call when you wire BYOM providers via Tier 1 shortcuts or `with_llm_tracked`. The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) auto-wrap providers in `TokenTrackingChatProvider` internally.
+kremory emits structured metrics + tracing spans for every LLM and embedding call when you wire BYOM providers via Tier 1 shortcuts or `.with_llm(...).with_token_tracking(...)`. The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) auto-wrap providers in `TokenTrackingChatProvider` internally.
 
 **Emitted metrics** (via the [`metrics`](https://crates.io/crates/metrics) crate):
 
@@ -357,7 +370,8 @@ let handle = init_telemetry(TelemetryConfig::default())?;
 ```rust
 let mem = Memory::open("./agent.db")
     .with_provider_rates_path("./my-rates.toml")
-    .with_llm_tracked("openai", "gpt-4o-mini", Arc::new(my_llm))
+    .with_llm(Arc::new(my_llm))
+    .with_token_tracking("openai", "gpt-4o-mini")
     .with_embedder(Arc::new(my_embedder))
     .await?;
 ```
@@ -382,7 +396,7 @@ A structural summary (not a benchmark) — how kremory differs in *shape*, not j
 | **Reverse a merge / edit / delete (undo)** | ✅ built-in, deterministic | — | — | — |
 | Bi-temporal (world-time *and* system-time) | ✅ | — | partial (valid-time) | — |
 | Runs embedded, no server process | ✅ single libSQL file | varies | needs a graph DB / cloud | SDK → cloud or self-host |
-| Language / footprint | Rust, <1 MB crate | — | Python | Python |
+| Language / footprint | Rust, ~1 MB crate | — | Python | Python |
 | Bring your own model (no weights bundled) | ✅ | n/a | ✅ | ✅ |
 | Self-consolidation (a "dream" pass) | ✅ | — | partial | ✅ |
 
@@ -399,14 +413,15 @@ delete/undo`). What 1.0 still needs: an API freeze, a cross-provider model matri
 load/concurrency/durability testing.
 
 **API stability:** on the pre-1.0 lane, minor releases (`0.3 → 0.4`) may contain breaking
-changes — pin a minor (`kremory = "0.4"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
+changes — pin a minor (`kremory = "0.5"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
 
 ## When *not* to reach for kremory
 
 - **You want a hosted, zero-config memory API.** kremory is an *embeddable Rust crate* you wire
   your own LLM + embedder into — not a managed service. (Bring your own model is the point; it's
   also the work.)
-- **You're not in Rust (or a Node app via the [napi binding](https://www.npmjs.com/package/@kgentic/kremory-node)).** There's no Python SDK.
+- **You're not in Rust.** A Node binding exists in-tree (`crates/kremory-napi`) but is **not
+  published to npm yet**, and there's no Python SDK.
 - **You need proven horizontal scale / high-concurrency multi-tenant *today*.** Storage is a
   single embedded libSQL writer; large-scale concurrency is on the 1.0 roadmap, not yet load-tested.
 - **You just want document RAG.** A vector DB is simpler. kremory earns its keep when you need a

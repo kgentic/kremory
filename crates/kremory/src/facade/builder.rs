@@ -140,6 +140,32 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Override the bundled `provider-rates.toml` with a custom cost-rates file.
+    ///
+    /// The rates table maps `(provider, model)` to token prices; without a match,
+    /// `kremory_core_cost_usd_total` stays zero. Use this when running a model the
+    /// bundled table does not price (a self-hosted or newly-released one), or to
+    /// pin negotiated rates.
+    ///
+    /// Load failures are logged and do **not** fail the build — cost counters go
+    /// quiet, the rest of the system runs. Pairs with
+    /// [`with_token_tracking`](MemoryBuilder::with_token_tracking), which emits the
+    /// counters this table prices.
+    ///
+    /// DOC-1 (V1-CANONICAL §4.2): this setter did not exist. The field, the
+    /// threading through every builder state transition, and the
+    /// `rates::init_from_path` call were all already implemented — only the setter
+    /// was missing, so the capability was unreachable while **six** doc sites
+    /// documented it as working (README, crate README, `docs/api.md` ×2,
+    /// `docs/observability.md` ×2) and a seventh referenced it from this file's own
+    /// rustdoc. Adding the setter is what makes those docs true; deleting them
+    /// would have discarded a fully-wired capability one line short of usable.
+    /// Same shape as CFG-4's "a knob you cannot set is a knob you cannot evaluate".
+    pub fn with_provider_rates_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.provider_rates_path = Some(path.into());
+        self
+    }
+
     /// Set the default namespace used by operations that don't specify `.in_namespace()`.
     pub fn default_namespace(mut self, ns: Namespace) -> Self {
         self.default_namespace = Some(ns);
