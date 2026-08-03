@@ -19,8 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import (  # noqa: E402
     ProvenanceMismatch,
+    ShippedDefaultsMismatch,
     assert_provenance,
+    assert_shipped_defaults,
     build_provenance,
+    shipped_default_features,
 )
 
 
@@ -174,6 +177,108 @@ def test_assert_provenance_missing_stamp_raises():
         assert raised, "absent provenance stamp must raise ProvenanceMismatch"
 
 
+
+# ── W0.2 — shipped-default gate ──────────────────────────────────────────────
+
+
+def _health_stamp(features: str) -> dict:
+    """A stamp shaped like one build_provenance produces from GET /health."""
+    return {
+        "git_sha": "deadbeef",
+        "features": features,
+        "provenance_source": "health",
+    }
+
+
+def test_shipped_defaults_derived_from_cargo_toml():
+    """The default set is PARSED, not restated. If this drifts, the gate is
+    checking a fiction."""
+    got = shipped_default_features()
+    assert "content-search" in got, f"expected content-search in derived defaults, got {got}"
+    assert "rerank" not in got, (
+        f"rerank is deliberately opt-in (it pulls ort/ONNX) — derived set was {got}"
+    )
+
+
+def test_shipped_defaults_accepts_a_default_build():
+    stamp = _health_stamp("content-search,prometheus")
+    assert_shipped_defaults(stamp)
+
+
+def test_shipped_defaults_rejects_missing_default_feature():
+    """The literal ADR-078 case: the run lacked what consumers get."""
+    stamp = _health_stamp("prometheus")
+    try:
+        assert_shipped_defaults(stamp)
+    except ShippedDefaultsMismatch as e:
+        assert "MISSING" in str(e), f"error must name the missing feature: {e}"
+        return
+    raise AssertionError("a run without content-search must NOT certify as default")
+
+
+def test_shipped_defaults_rejects_extra_feature():
+    """The inverse, and the one people forget: a run with MORE than consumers get
+    is equally unquotable."""
+    stamp = _health_stamp("content-search,rerank,prometheus")
+    try:
+        assert_shipped_defaults(stamp)
+    except ShippedDefaultsMismatch as e:
+        assert "EXTRA" in str(e), f"error must name the extra feature: {e}"
+        return
+    raise AssertionError("a run WITH rerank must NOT certify as the default build")
+
+
+def test_shipped_defaults_rejects_env_fallback_stamp():
+    """An env-fallback stamp is the harness describing itself. Gating on it is the
+    self-attestation trap."""
+    stamp = {"features": "content-search", "provenance_source": "env-fallback"}
+    try:
+        assert_shipped_defaults(stamp)
+    except ShippedDefaultsMismatch as e:
+        assert "env-fallback" in str(e), f"error must name the cause: {e}"
+        return
+    raise AssertionError("an env-fallback stamp must NOT certify a shipped-default run")
+
+
+def test_shipped_defaults_prometheus_alone_does_not_fail():
+    """False-positive guard. The harness REQUIRES prometheus to scrape /metrics;
+    if its presence failed the gate, the gate would be switched off within a day
+    (over-blocking is a control failure, not a strictness virtue)."""
+    assert_shipped_defaults(_health_stamp("content-search,prometheus"))
+    assert_shipped_defaults(_health_stamp("content-search"))
+
+
+
+def _fake_repo(lib_default: list[str], mcp_default: list[str]) -> Path:
+    """A minimal two-manifest repo root for the drift test."""
+    root = Path(tempfile.mkdtemp())
+    for crate, feats in (("kremory", lib_default), ("kremory-mcp", mcp_default)):
+        d = root / "crates" / crate
+        d.mkdir(parents=True)
+        feats_str = ", ".join(f'"{f}"' for f in feats)
+        (d / "Cargo.toml").write_text(f"[features]\ndefault = [{feats_str}]\n")
+    return root
+
+
+def test_shipped_defaults_fails_when_the_two_manifests_disagree():
+    """REL-002. The library and the server binary are edited independently. If they
+    diverge, 'the shipped build' is ambiguous and the gate must say so rather than
+    silently certifying a server build against a library default."""
+    root = _fake_repo(["content-search"], ["content-search", "rerank"])
+    try:
+        shipped_default_features(root)
+    except ShippedDefaultsMismatch as e:
+        assert "DIFFERENT default feature" in str(e), f"must name the cause: {e}"
+        assert "kremory-mcp" in str(e), f"must name both manifests: {e}"
+        return
+    raise AssertionError("disagreeing manifests must not silently resolve to one of them")
+
+
+def test_shipped_defaults_agreeing_manifests_resolve():
+    root = _fake_repo(["content-search"], ["content-search"])
+    assert shipped_default_features(root) == frozenset({"content-search"})
+
+
 def _run() -> int:
     tests = [
         test_build_provenance_reflects_env,
@@ -183,6 +288,14 @@ def _run() -> int:
         test_assert_provenance_roundtrip_match,
         test_assert_provenance_mismatch_raises,
         test_assert_provenance_missing_stamp_raises,
+        test_shipped_defaults_derived_from_cargo_toml,
+        test_shipped_defaults_accepts_a_default_build,
+        test_shipped_defaults_rejects_missing_default_feature,
+        test_shipped_defaults_rejects_extra_feature,
+        test_shipped_defaults_rejects_env_fallback_stamp,
+        test_shipped_defaults_prometheus_alone_does_not_fail,
+        test_shipped_defaults_fails_when_the_two_manifests_disagree,
+        test_shipped_defaults_agreeing_manifests_resolve,
     ]
     failed = 0
     for t in tests:

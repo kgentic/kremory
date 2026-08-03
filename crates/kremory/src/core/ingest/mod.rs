@@ -180,6 +180,31 @@ pub struct IngestionResult {
     /// Entity pairs merged (canonical_id, alias_id).
     pub merged_entities: Vec<(String, String)>,
     /// Token usage across all LLM calls.
+    ///
+    /// ⚠️ **ALWAYS ZERO — this field does not work yet (TD-179).** It is set from
+    /// `TokenUsage::default()` at `ingest/pipeline/ingest_with.rs:228` and never
+    /// written. Do NOT read it as a cost figure: a `0` here means *"not
+    /// measured"*, not *"free"*.
+    ///
+    /// **Why it is not simply wired:** filling it honestly needs a token
+    /// accumulator that sees EVERY call an ingest makes, and no such seam exists
+    /// at this layer — each `EntityExtractor` implementation owns its own
+    /// `Arc<L>` chat provider (`extraction/graphiti.rs`, `hybrid_typer.rs`,
+    /// `default_extractor.rs`, `single_call.rs`, `programmatic.rs`) and is
+    /// constructed *before* `ingest_with` receives it. Wrapping `self.llm` here
+    /// would silently capture only the resolution + contradiction calls and miss
+    /// extraction — roughly 27 of ~47 calls per session — producing an
+    /// authoritative-looking undercount, which is worse than the honest zero.
+    ///
+    /// **Measure ingest cost via metrics instead**, which ARE wired (TD-166):
+    /// `kremory_core_tokens_total{operation="extraction", schema, arm, direction}`
+    /// — and check `kremory_core_tokens_usage_missing_total` before believing any
+    /// total, because local Ollama reports no usage at all.
+    ///
+    /// Filling this field requires wrapping the provider at BUILDER time so all
+    /// holders share one accumulator; that is a real design decision (per-`Memory`
+    /// totals vs per-`remember()` attribution under concurrent ingests), not a
+    /// mechanical fix. Tracked as TD-179.
     pub token_usage: TokenUsage,
     /// Forward references in the fact list that had no corresponding extracted entity
     /// and were inserted as UNKNOWN stub entities so facts can resolve correctly.

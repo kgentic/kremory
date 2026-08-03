@@ -1611,14 +1611,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
             // ── Phase 2: detect contradictions and store facts ───────────────────────
             //
-            // TD-167: contradiction detection is DEFAULT-OFF because it treats
-            // every predicate as functional and therefore SUPERSEDES SET-VALUED
-            // FACTS — measured on 8 LongMemEval sessions, 81 of 1,021 facts
-            // invalidated, ≥31% provably multi-valued (a festival's 2nd..6th
-            // performer superseded by the last; "contain: rolled oats"
-            // superseded by "seeds"). Facts are still STORED by this loop; only
-            // the invalidation is skipped, so this is a pure loss-of-capability,
-            // never a loss of data. Opt in with KREMORY_CONTRADICTION_DETECTION=1.
+            // TD-167 / ADR-079 rev.2: contradiction detection is DEFAULT-ON again.
+            // It was default-OFF for ~4h on 2026-07-29 while it treated every
+            // predicate as functional and SUPERSEDED SET-VALUED FACTS (81 of 1,021
+            // facts invalidated over 8 LongMemEval sessions, ≥31% provably
+            // multi-valued — a festival's 2nd..6th performer superseded by the
+            // last). The cause was the PROMPT, and the coexistence rewrite measured
+            // 7/8 destroyed -> 0/8. Disable with KREMORY_CONTRADICTION_DETECTION=0.
+            //
+            // When disabled, facts are still STORED by this loop and only the
+            // invalidation is skipped — a loss of capability, never of data.
             //
             // Building the detector conditionally also removes a spurious
             // `LlmRequired` error: with detection off there is nothing here that
