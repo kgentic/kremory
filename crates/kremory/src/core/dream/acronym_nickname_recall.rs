@@ -322,7 +322,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                     report.rejected += 1;
                     continue;
                 };
-                crate::core::canonicalization::apply_merge_with_audit(
+                match crate::core::canonicalization::apply_merge_with_audit(
                     graph,
                     crate::core::canonicalization::ApplyMergeWithAuditParams {
                         loser_id: &pair.b,
@@ -357,8 +357,52 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                         embedder,
                     },
                 )
-                .await?;
-                report.merges_applied += 1;
+                .await
+                {
+                    Ok(()) => report.merges_applied += 1,
+                    Err(e) => {
+                        // ── PER-PAIR ISOLATION (V1-CANONICAL §0b-sexies, E2E-1) ──
+                        //
+                        // This was a bare `?`, so ONE bad candidate pair aborted the
+                        // ENTIRE pass and silently abandoned every remaining
+                        // nomination. Observed live: `snapshot: keeper entity `acme
+                        // corporation` not found in namespace` — a pair endpoint that
+                        // was present at `load_entity_ids` (`:1105`) and gone by the
+                        // time `apply_merge_with_audit` snapshotted it.
+                        //
+                        // An endpoint disappearing between load and apply is a BENIGN
+                        // race — a concurrent writer, another pass — and the correct
+                        // response is to drop that pair, not the other N-1 merges the
+                        // pass had already adjudicated (each of which cost an LLM
+                        // call).
+                        //
+                        // ⚠️ THIS IS NOT A FIX FOR THE DISAPPEARANCE ITSELF, and must
+                        // not be read as one. Why `acme corporation` vanished is still
+                        // UNKNOWN — four hypotheses have been tested and killed
+                        // (phrase-shaped stub extraction; a stale candidate list after
+                        // an earlier in-loop merge; id normalisation in
+                        // `load_entity_ids`; the aliases pass deleting rows). The
+                        // counter + WARN below exist so the next occurrence is
+                        // DIAGNOSABLE rather than swallowed — per
+                        // [[observability-first-class]], isolating an error without
+                        // making it visible would just move the silence.
+                        counter!(
+                            "kremory.identity.merge_apply_failed_total",
+                            "site" => "site5",
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            target: "kremory.l5",
+                            keeper_id = %pair.a,
+                            loser_id = %pair.b,
+                            error = %e,
+                            "site5 merge apply FAILED for one pair — skipping that pair \
+                             and continuing the pass. Root cause of a vanished endpoint \
+                             is not yet understood (V1-CANONICAL E2E-1); this counter is \
+                             the signal to investigate, not evidence it is handled."
+                        );
+                    }
+                }
             }
             WriteDecision::PotentialAlias => {
                 // spec §3.3: reuse `insert_potential_alias_fact` — confidence
