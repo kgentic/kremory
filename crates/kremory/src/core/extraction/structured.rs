@@ -560,6 +560,13 @@ fn operation_for_schema(schema_name: &str) -> &'static str {
         | "HybridTyping"
         | "EntityTyping"
         | "NuExtractBoth"
+        // Added 2026-08-05. Its two siblings were classified from the start; this
+        // one sat UNCLASSIFIED because it reaches the builder through the
+        // `&[(&SCHEMA_X, "Name")]` fallback-ladder table (`:997`) rather than a
+        // literal call site, and the source gate below scanned only call sites.
+        // Found by a real end-to-end run emitting `unclassified_schema`, not by
+        // the gate that exists to prevent exactly this.
+        | "NuExtractEntitiesOnly"
         | "NuExtractRelationsOnly"
         | "RelOnlyForceFallback" => "extraction",
 
@@ -1914,6 +1921,10 @@ mod tests {
 
         let mut unclassified: Vec<String> = Vec::new();
         let mut seen = 0usize;
+        // Counted SEPARATELY from `seen`, and floored separately below. Folding
+        // them together would let the table form drop to zero unnoticed behind a
+        // healthy call-site count — which is exactly how the blind spot survived.
+        let mut table_entries_seen = 0usize;
 
         for f in &files {
             let Ok(text) = std::fs::read_to_string(f) else {
@@ -1930,16 +1941,46 @@ mod tests {
                 if t.starts_with("//") {
                     continue; // doc/comment examples are not call sites
                 }
-                if !line.contains("StructuredCallBuilder::new(") {
+                // ── FORM 1: a direct call site ───────────────────────────────
+                //   StructuredCallBuilder::new(.., "SchemaName", ..)
+                //
+                // ── FORM 2: a TABLE entry ────────────────────────────────────
+                //   (&SCHEMA_X, "SchemaName"),
+                //
+                // Form 2 was the blind spot, and it was a real one: this gate
+                // shipped scanning only Form 1, so the fallback-ladder table in
+                // this very file (`let schemas: &[(&Value, &str)]`) was invisible
+                // to it. `NuExtractEntitiesOnly` sat there UNCLASSIFIED and the
+                // gate stayed green — while its two siblings, `NuExtractBoth` and
+                // `NuExtractRelationsOnly`, were classified. Caught by a real
+                // end-to-end run emitting the `unclassified_schema` warning, not
+                // by this test.
+                //
+                // The lesson generalises past this fix: a source gate models HOW
+                // it expects the thing to appear, and is blind to every other
+                // shape. The `MIN_EXPECTED_CALL_SITES` floor below guards against
+                // the scan silently finding NOTHING — it cannot guard against the
+                // scan finding everything of one shape and nothing of another.
+                let is_call_site = line.contains("StructuredCallBuilder::new(");
+                let is_table_entry = t.starts_with("(&SCHEMA_");
+                if !is_call_site && !is_table_entry {
                     continue;
                 }
-                // The schema NAME is the first string literal at or after the call.
-                let window = lines[i..(i + 6).min(lines.len())].join("\n");
+                // The schema NAME is the first string literal at or after the
+                // match. A table entry is one line; a call site may wrap.
+                let window = if is_table_entry {
+                    (*line).to_owned()
+                } else {
+                    lines[i..(i + 6).min(lines.len())].join("\n")
+                };
                 let Some(start) = window.find('"') else { continue };
                 let rest = &window[start + 1..];
                 let Some(end) = rest.find('"') else { continue };
                 let name = &rest[..end];
                 seen += 1;
+                if is_table_entry {
+                    table_entries_seen += 1;
+                }
                 if operation_for_schema(name) == "unclassified" {
                     unclassified.push(format!(
                         "{}: schema {name:?}",
@@ -1957,6 +1998,19 @@ mod tests {
         // the exact defect class this whole change exists to remove.
         // 21 production call sites live outside structured.rs alone (2026-08-03).
         const MIN_EXPECTED_CALL_SITES: usize = 20;
+        // Per-FORM floor. The aggregate floor above cannot detect one form going
+        // to zero while the other stays healthy — and that is not hypothetical:
+        // the table form scanned ZERO entries for this gate's entire life before
+        // 2026-08-05, while `seen` comfortably cleared 20.
+        const MIN_EXPECTED_TABLE_ENTRIES: usize = 10;
+        assert!(
+            table_entries_seen >= MIN_EXPECTED_TABLE_ENTRIES,
+            "source gate examined only {table_entries_seen} TABLE-form schema \
+             entries (expected >= {MIN_EXPECTED_TABLE_ENTRIES}) — the table scan is \
+             broken, not the code. Schema names also reach StructuredCallBuilder \
+             through `&[(&SCHEMA_X, \"Name\")]` fallback ladders; if that shape \
+             moved or was reformatted, this gate is certifying by not looking."
+        );
         assert!(
             seen >= MIN_EXPECTED_CALL_SITES,
             "source gate examined only {seen} production call sites (expected >= \
