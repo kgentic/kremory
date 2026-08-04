@@ -59,6 +59,25 @@ Every phase commit MUST satisfy these gates in order — they apply to any sprin
 1. **`/quality-gate` PASS** — typecheck + lint + test + build per CLAUDE.md "Pre-Commit Gate NON-NEGOTIABLE". No band-aids — cause-fix any failure per Rule 8.
 2. **Quinn `/ship-build-review` PASS or CONCERNS-resolved** — Sonnet adversarial review over the phase's aggregate diff. HIGH findings BLOCK; MEDIUM findings folded into the same PR or follow-up; LOW findings filed as new TDs OR rolled into boy-scout sweep per `feedback_boy_scout_includes_quinn_low_findings`.
 3. **LLM integration smoke PASS** — phase-specific real-LLM end-to-end verification when relevant (skip for pure-docs sprints).
+4. **CONSUMER E2E TIER — `./scripts/run-e2e-consumer.sh 3` — MANDATORY BEFORE ANY RELEASE.**
+   Not per-commit (it needs Ollama and takes ~4 min/run), but **no release is cut without
+   it**. It is the ONLY tier that drives the **published surface** as an external consumer
+   against a real model; every other test builds from the tree and calls internals.
+
+   **Why it is a hard release gate.** Nothing ran it for weeks, and in that window ADR-078's
+   `content-search` default flip silently broke the consumer journey (`recall().raw()` began
+   returning content passages in a field named `entity_id`). 1,772 deterministic tests stayed
+   green throughout and could not see it. The harness's own lockfile was still pinned at
+   kremory 0.4.0 — proof nobody had run it since before the 0.5.0 bump.
+
+   **Run it ≥3× and read the RATE, never a single result.** The journey depends on LLM output
+   and is not deterministic: on 2026-08-05 a real defect surfaced in exactly 1 run of 5. One
+   green run is one sample, not evidence. The script reports the tally and fails if ANY run
+   fails.
+
+   ⚠️ **Never report "green" for a multi-tier suite — name the tiers that ran AND the ones
+   that did not.** "Gate green" collapses five tiers into one word and has been wrong in both
+   directions on this repo.
 
 **The orchestrator MAY NOT make Quinn optional.** Quinn is automatic between phases per `feedback_quinn_review_mandatory_between_phases_never_optional`. The orchestrator MAY decide HOW to triage Quinn's findings AFTER receiving the verdict, but the review itself is unconditional.
 
