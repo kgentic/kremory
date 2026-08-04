@@ -16,7 +16,7 @@ LLM + embedder), no server process, no subscription to ship.
 
 ```toml
 [dependencies]
-kremory = "0.5"
+kremory = "0.6"
 
 # kremory's API is async and returns errors, so a runtime and an error type are
 # needed to run the Quickstart below. These are the same deps the in-repo
@@ -413,7 +413,7 @@ delete/undo`). What 1.0 still needs: an API freeze, a cross-provider model matri
 load/concurrency/durability testing.
 
 **API stability:** on the pre-1.0 lane, minor releases (`0.3 → 0.4`) may contain breaking
-changes — pin a minor (`kremory = "0.5"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
+changes — pin a minor (`kremory = "0.6"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
 
 ## When *not* to reach for kremory
 
