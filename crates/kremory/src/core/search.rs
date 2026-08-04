@@ -1992,7 +1992,11 @@ fn content_passage_into_retrieved_context(
         source_refs: vec![passage.source_ref],
         incomplete: false,
         entity_type_id: 0,
-        entity_type_name: "ContentPassage".to_string(),
+        // ONE literal, shared with `RetrievedContext::is_content_passage()`. Before
+        // 2026-08-05 this string was the sole discriminator and existed only here,
+        // so every consumer had to hardcode it — and the project's own E2E got it
+        // wrong instead (V1-CANONICAL §0b-sexies, E2E-2).
+        entity_type_name: crate::memory::types::CONTENT_PASSAGE_TYPE_NAME.to_string(),
         namespace,
         facts: Vec::new(),
     }
@@ -2492,6 +2496,76 @@ mod tests {
         FactInsert, InsertEntityParams, InsertEntityWithGroupParams, UpdateEntityGroupParams,
     };
     use chrono::{Duration, Utc};
+
+    /// **E2E-2 regression pin** (V1-CANONICAL §0b-sexies).
+    ///
+    /// Drives the REAL producer — `content_passage_into_retrieved_context`, the only
+    /// thing that mints a content-derived `RetrievedContext` — and asserts the
+    /// discriminator a consumer relies on to tell it from a graph entity.
+    ///
+    /// # Why this exists
+    ///
+    /// The project's own consumer E2E harvested a content passage as an entity and
+    /// every downstream entity call failed with `no entity '1' in namespace`. Its
+    /// filter (`!entity_id.is_empty() && !incomplete`) was a reasonable reading of
+    /// the API — the result set is heterogeneous and nothing said so.
+    ///
+    /// # What is asserted, and why each half matters
+    ///
+    /// Both arms, because a predicate that always returns `true` would satisfy the
+    /// passage half alone and silently classify every real entity as a passage —
+    /// the mirror of the bug being fixed.
+    ///
+    /// `entity_type_id` is asserted to be `0` deliberately: that is ALSO the
+    /// unknown-entity catch-all, which is precisely why it cannot serve as the
+    /// discriminator and why `is_content_passage()` has to exist.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn content_passages_are_distinguishable_from_graph_entities() {
+        let passage = ContentPassage {
+            episode_id: 42,
+            snippet: "Ada Lovelace wrote the first algorithm.".to_owned(),
+            score: 1.0,
+            source_ref: SourceRef {
+                kind: SourceKind::Document,
+                id: "doc-1".to_owned(),
+                occurred_at: Utc::now(),
+                published_at: None,
+            },
+        };
+        let ctx = content_passage_into_retrieved_context(passage, None);
+
+        assert!(
+            ctx.is_content_passage(),
+            "a content-derived result MUST report is_content_passage() == true — \
+             this is the only discriminator a consumer has"
+        );
+        assert_eq!(
+            ctx.entity_id, "42",
+            "a passage's entity_id is the EPISODE id — the trap E2E-2 fell into"
+        );
+        assert_eq!(
+            ctx.entity_type_id, 0,
+            "passages carry entity_type_id 0, which is ALSO the unknown-entity \
+             catch-all — proving entity_type_id cannot be used to discriminate"
+        );
+
+        // NON-VACUITY: a real graph entity must report false. Without this, a
+        // predicate hardcoded to `true` passes the assertion above.
+        let entity = RetrievedContext::new(crate::memory::types::RetrievedContextNewParams {
+            entity_id: "alice johnson".to_owned(),
+            entity_name: "Alice Johnson".to_owned(),
+            summary: String::new(),
+            score: 1.0,
+            source_refs: Vec::new(),
+        });
+        assert!(
+            !entity.is_content_passage(),
+            "a graph entity MUST report false — a predicate that always returns \
+             true would pass the passage assertion while classifying every real \
+             entity as a passage"
+        );
+    }
 
     // === TD-066 Change 2 / recall-v2 Phase 2a: graph_degree_bonus ===
     //

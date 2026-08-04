@@ -804,6 +804,28 @@ pub struct JsRetrievedContext {
     /// already present in all entity SELECT paths. `"Entity"` is the fallback
     /// for the catch-all sentinel (id=0) or any unknown id.
     pub entity_type_name: String,
+    /// `true` when this result came from the **content-search** arm (a passage of
+    /// episode text) rather than from the entity graph.
+    ///
+    /// The JS projection of `RetrievedContext::is_content_passage()` — a FIELD
+    /// rather than a method, because values crossing the napi boundary are plain
+    /// objects. Same information, the modality's own shape (ADR-031 parity).
+    ///
+    /// **Read this before using `entityId`.** Since ADR-078 made `content-search`
+    /// a default, `recall(..).raw()` returns a HETEROGENEOUS list, and a passage's
+    /// `entityId` is an **episode id**, not an entity id — passing it to any
+    /// entity-scoped call fails with `no entity '<n>' in namespace '<ns>'`.
+    /// `entityTypeId` cannot disambiguate either: a passage carries `0`, which is
+    /// also the unknown-entity catch-all.
+    ///
+    /// ```js
+    /// const entities = (await mem.recall("Alice").raw())
+    ///   .filter(r => !r.isContentPassage);
+    /// ```
+    ///
+    /// Added 2026-08-05 — the Rust consumer E2E fell into exactly this
+    /// (V1-CANONICAL §0b-sexies, E2E-2), and the JS surface had the same trap.
+    pub is_content_passage: bool,
     /// The namespace this result was retrieved from. Set for both single-namespace
     /// (`namespace`) and multi-namespace (`in_namespaces`) recall. `None` for
     /// raw substrate-level queries that bypass the facade.
@@ -822,6 +844,12 @@ pub struct JsRetrievedContext {
 
 /// Convert a `kremory::RetrievedContext` to the napi-facing `JsRetrievedContext`.
 pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
+    // FIRST, before any field of `ctx` is moved out below. Derived from the
+    // SUBSTRATE predicate rather than by re-testing the string here — two
+    // independent implementations of one discriminator is how the JS surface
+    // silently drifts from the Rust one.
+    let is_content_passage = ctx.is_content_passage();
+
     let source_refs = ctx
         .source_refs
         .into_iter()
@@ -840,6 +868,7 @@ pub fn retrieved_context_to_js(ctx: RetrievedContext) -> JsRetrievedContext {
         incomplete: ctx.incomplete,
         entity_type_id: ctx.entity_type_id,
         entity_type_name: ctx.entity_type_name,
+        is_content_passage,
         namespace,
         facts,
     }
