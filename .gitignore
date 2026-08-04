@@ -1,5 +1,8 @@
 # Rust
 /target/
+# Separate CARGO_TARGET_DIR for e2e-consumer runs — keeps the E2E build cache
+# out of the main target/ so a workspace rebuild does not evict it (and vice versa).
+/target-e2e/
 **/target/
 Cargo.lock.bak
 *.rs.bk
