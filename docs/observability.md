@@ -102,6 +102,68 @@ For error-type breakdown in dashboards, query the span attribute (Langfuse / Pho
 
 ---
 
+## ⚠️ Custom tracing targets — `RUST_LOG` by module path will MISS them
+
+**Read this before writing any `RUST_LOG` filter against kremory.**
+
+kremory declares **38 custom `target:` strings** on its `tracing` events. A `RUST_LOG`
+directive matches the event's **target**, and when an event sets `target:` explicitly that
+target *replaces* the module path. So:
+
+```bash
+# ❌ SILENTLY MATCHES NOTHING — merges are on target "kremory.l5", not this module path
+RUST_LOG=kremory::core::canonicalization=debug
+
+# ✅ filter on the TARGET string
+RUST_LOG=warn,kremory=info,kremory.l5=debug,kremory.graph.provenance=debug
+```
+
+**Why this is called out so loudly.** The wrong-looking filter produces an *empty result*,
+and an empty result is indistinguishable from "the thing did not happen". On 2026-08-05 that
+cost three failed diagnoses of one bug (V1-CANONICAL §0b-sexies, E2E-1) and — worse —
+produced a *recorded* "hypothesis eliminated" note about what turned out to be the **correct**
+root cause. A filter that captures nothing looks exactly like a system that did nothing.
+
+**Compounding trap:** on the merge path, **success logs at `debug` while failure logs at
+`warn`**. A run at `kremory=info` therefore shows failures and no successes — which reads as
+"no merges occurred" when in fact none were visible.
+
+### The targets that matter most when debugging
+
+| target | what it carries |
+|---|---|
+| `kremory.l4` | ingest-time entity merges + lexical merge blocks |
+| `kremory.l5` | dream-time canonicalization merges, blocks, per-pair failures |
+| `kremory.l7` | alias resolution |
+| `kremory.graph.provenance` | reversible-mutation rows — **the record that a merge committed** |
+| `kremory.graph.merge_reembed` | post-merge keeper re-embedding |
+| `kremory.dream.consolidation` / `.cross_episode` | consolidation decisions |
+| `kremory.ingest.stub` | UNKNOWN stubs inserted for forward references |
+| `kremory.ingest.namespace_mismatch` | composite-FK namespace drops (needs `KREMORY_DEBUG`) |
+| `kremory.recall` / `.intent` / `.content_search` | recall path + arm selection |
+| `kremory.extraction.parsers` | LLM output parse + repair arms |
+
+Enumerate the current set at any time:
+
+```bash
+grep -rhoE 'target: "kremory[a-z0-9_.]*"' --include='*.rs' crates/kremory/src/ | sort -u
+```
+
+### Debugging recipe
+
+```bash
+# Everything on the merge/dream path — the filter to use when a dream pass misbehaves
+RUST_LOG='warn,kremory=info,kremory.l4=debug,kremory.l5=debug,kremory.l7=debug,kremory.graph.provenance=debug'
+```
+
+`scripts/run-e2e-consumer.sh` sets exactly this and is the reference for a correct filter.
+
+**Before concluding "X never happened" from a log**, prove your filter can produce a
+positive: grep for something you are certain is in that run. A negative from an unvalidated
+filter is not evidence.
+
+---
+
 ## Wiring observability into your app
 
 ### Recommended pattern (Tier 1 shortcut — zero config)
