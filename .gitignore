@@ -58,6 +58,9 @@ repomix-*.xml
 .claude/worktrees/
 
 # Obsidian — vault is rooted at .ai-docs/. Track config, ignore user-local state.
+# Obsidian vault config at the REPO ROOT. The .ai-docs/.obsidian/* siblings below
+# were already ignored; this one was not, and it blocked gah's pre-push clean check.
+/.obsidian/
 .ai-docs/.obsidian/workspace.json
 .ai-docs/.obsidian/workspaces.json
 .ai-docs/.obsidian/workspace-mobile.json
