@@ -156,63 +156,115 @@ impl<'a> ForgetRequest<'a> {
                     to_delete.push(entity_id);
                 }
             }
-            let entities_deleted = if to_delete.is_empty() {
-                0
-            } else {
-                tg.batch_forget(&to_delete)
-                    .await
-                    .map_err(MemoryError::Core)?
-            };
+            // ── DUR-4 cause-fix (V1-CANONICAL §4.2, 2026-08-04) ─────────────────
+            // This cascade issues up to four destructive statements. Until now they
+            // ran with NO enclosing transaction — each auto-committed independently,
+            // so a failure partway through left the database permanently inconsistent
+            // with no rollback and no mutation record.
+            //
+            // The worst shape is not the obvious one. If the `episodes_fts` purge
+            // commits and the `episodes` delete then fails, the episodes are STILL
+            // STORED but NO LONGER FINDABLE — the full-text index has been emptied of
+            // them and cannot be rebuilt from the failing subquery. Nothing surfaces
+            // it: the caller's error is about the episode delete. Content silently
+            // stops being retrievable and the error message points elsewhere.
+            //
+            // Proven by `tests/forget_atomicity.rs`, which injects a BEFORE DELETE
+            // trigger on `episodes` and asserts FINDABILITY via a real FTS `MATCH`.
+            // That detail is load-bearing: `episodes_fts` is an EXTERNAL-CONTENT FTS5
+            // table, so `COUNT(*) ... WHERE rowid IN (SELECT id FROM episodes ...)`
+            // reads THROUGH to `episodes` and reports the rows as still present. Two
+            // earlier drafts of that test passed against this very defect for exactly
+            // that reason.
+            let guard = tg
+                .begin_immediate_if_needed()
+                .await
+                .map_err(MemoryError::Core)?;
+            let txn_result: Result<(u64, u64)> = async {
+                let entities_deleted = if to_delete.is_empty() {
+                    0
+                } else {
+                    tg.batch_forget(&to_delete)
+                        .await
+                        .map_err(MemoryError::Core)?
+                };
 
-            // ADR-072 §11 (RISK-003 boy-scout): drop this source_id's
-            // `episodes_fts` shadow rows BEFORE the `episodes` rows
-            // themselves are deleted below — `episodes_fts` is an
-            // external-content FTS5 table keyed on `episodes.id`
-            // (Migration 022); once the episode row is gone, `rowid IN
-            // (SELECT id FROM episodes WHERE ...)` can no longer resolve
-            // which ids to purge. This is the ONLY code path in the crate
-            // that issues `DELETE FROM episodes` (`by_source_id` is 1:1 with
-            // source_id, never shared) — `core/graph/queries.rs::batch_forget`
-            // never touches the `episodes` table itself, so it cannot host
-            // this cascade (contrary to the seq1 impl-spec's citation of
-            // `queries.rs:306`; verified against current HEAD — see commit
-            // message / session report). Mirrors the sole existing purge
-            // precedent (`facts_fts` cleanup in dream `archive.rs::move_fact`,
-            // RISK-003) — that gap does NOT auto-generalize to shadow FTS
-            // tables (ADR-072 §11).
-            #[cfg(feature = "content-search")]
-            let episodes_fts_purged: u64 = conn
-                .execute(
-                    "DELETE FROM episodes_fts WHERE rowid IN \
+                // ADR-072 §11 (RISK-003 boy-scout): drop this source_id's
+                // `episodes_fts` shadow rows BEFORE the `episodes` rows
+                // themselves are deleted below — `episodes_fts` is an
+                // external-content FTS5 table keyed on `episodes.id`
+                // (Migration 022); once the episode row is gone, `rowid IN
+                // (SELECT id FROM episodes WHERE ...)` can no longer resolve
+                // which ids to purge. This is the ONLY code path in the crate
+                // that issues `DELETE FROM episodes` (`by_source_id` is 1:1 with
+                // source_id, never shared) — `core/graph/queries.rs::batch_forget`
+                // never touches the `episodes` table itself, so it cannot host
+                // this cascade (contrary to the seq1 impl-spec's citation of
+                // `queries.rs:306`; verified against current HEAD — see commit
+                // message / session report). Mirrors the sole existing purge
+                // precedent (`facts_fts` cleanup in dream `archive.rs::move_fact`,
+                // RISK-003) — that gap does NOT auto-generalize to shadow FTS
+                // tables (ADR-072 §11).
+                #[cfg(feature = "content-search")]
+                let episodes_fts_purged: u64 = conn
+                    .execute(
+                        "DELETE FROM episodes_fts WHERE rowid IN \
+                         (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
+                        libsql::params![sid.clone(), group_id.clone()],
+                    )
+                    .await
+                    .map_err(CoreError::Database)?;
+
+                // Quinn C3 — spec §G8 says "only the episode row(s) AND edges
+                // exclusively owned by this source_id are removed". Episode rows
+                // are 1:1 with source_id (not shared across consumers), so
+                // delete the matched episode rows after entity cleanup. The
+                // FK (episodic_edges.episode_id → episodes.id) means we must
+                // also drop any remaining episodic_edges pointing to these
+                // episodes first (entities sharing with other sources stayed
+                // pinned, but their edges to THIS source's episodes go).
+                conn.execute(
+                    "DELETE FROM episodic_edges WHERE episode_id IN \
                      (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
                     libsql::params![sid.clone(), group_id.clone()],
                 )
                 .await
                 .map_err(CoreError::Database)?;
+                conn.execute(
+                    "DELETE FROM episodes WHERE source_id = ?1 AND group_id = ?2",
+                    libsql::params![sid, group_id],
+                )
+                .await
+                .map_err(CoreError::Database)?;
 
-            // Quinn C3 — spec §G8 says "only the episode row(s) AND edges
-            // exclusively owned by this source_id are removed". Episode rows
-            // are 1:1 with source_id (not shared across consumers), so
-            // delete the matched episode rows after entity cleanup. The
-            // FK (episodic_edges.episode_id → episodes.id) means we must
-            // also drop any remaining episodic_edges pointing to these
-            // episodes first (entities sharing with other sources stayed
-            // pinned, but their edges to THIS source's episodes go).
-            conn.execute(
-                "DELETE FROM episodic_edges WHERE episode_id IN \
-                 (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
-                libsql::params![sid.clone(), group_id.clone()],
-            )
-            .await
-            .map_err(CoreError::Database)?;
-            conn.execute(
-                "DELETE FROM episodes WHERE source_id = ?1 AND group_id = ?2",
-                libsql::params![sid, group_id],
-            )
-            .await
-            .map_err(CoreError::Database)?;
+                #[cfg(feature = "content-search")]
+                let purged = episodes_fts_purged;
+                #[cfg(not(feature = "content-search"))]
+                let purged = 0u64;
+                Ok((entities_deleted, purged))
+            }
+            .await;
 
-            // Rule 19: emitted after the DELETE that actually removes the
+            let (entities_deleted, episodes_fts_purged) = match txn_result {
+                Ok(v) => {
+                    guard.commit().await.map_err(MemoryError::Core)?;
+                    v
+                }
+                Err(e) => {
+                    // Best-effort rollback: if it fails there is nothing further we
+                    // can do, and the ORIGINAL error is the one the caller needs.
+                    let _ = guard.rollback().await;
+                    return Err(e);
+                }
+            };
+
+            // Rule 19 + DUR-4: this counter is now emitted strictly POST-COMMIT.
+            // Previously "post-commit" meant "after the statement returned Ok" because
+            // there was no transaction to commit; a metric increment cannot be rolled
+            // back, so had the cascade been wrapped without moving this, a rolled-back
+            // purge would still have incremented it. Same class as the
+            // `supersession.rs::window_closeout` fix (ADR-070 Phase B).
+            // Original note retained: emitted after the DELETE that actually removes the
             // `episodes_fts` rows (this sequence has no enclosing explicit
             // transaction today — each statement auto-commits — so "post-
             // commit" here means "after the purge statement returned Ok",
