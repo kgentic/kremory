@@ -552,7 +552,53 @@ pub struct RetrievedContextNewParams {
     pub source_refs: Vec<SourceRef>,
 }
 
+/// The `entity_type_name` stamped on a recall result that came from the
+/// **content-search** arm rather than the entity graph.
+///
+/// Exported so producer and consumer reference ONE literal. `search.rs`'s
+/// `content_passage_into_retrieved_context` stamps it; [`RetrievedContext::is_content_passage`]
+/// tests it. Two copies of a magic string in two files is precisely how a
+/// discriminator silently drifts.
+pub const CONTENT_PASSAGE_TYPE_NAME: &str = "ContentPassage";
+
 impl RetrievedContext {
+    /// `true` when this result came from the **content-search** arm (a passage of
+    /// episode text) rather than from the entity graph.
+    ///
+    /// # Why you almost certainly need this
+    ///
+    /// `recall(..).raw()` returns a **heterogeneous** list. Since ADR-078 made
+    /// `content-search` a default feature, content passages are interleaved with
+    /// graph entities — and a passage's [`entity_id`](Self::entity_id) is an
+    /// **episode id**, not an entity id. Passing it to any entity-scoped call
+    /// (`edit_entity`, `mutation_history`, …) fails with a confusing
+    /// `no entity '<n>' in namespace '<ns>'`.
+    ///
+    /// Nor does [`entity_type_id`](Self::entity_type_id) help: a passage carries
+    /// `0`, which is also the unknown-entity catch-all.
+    ///
+    /// ```ignore
+    /// // Entities only — what most consumers want from `.raw()`.
+    /// let entities: Vec<_> = mem.recall("Alice").raw().await?
+    ///     .into_iter()
+    ///     .filter(|r| !r.is_content_passage())
+    ///     .collect();
+    /// ```
+    ///
+    /// # Provenance
+    ///
+    /// Added 2026-08-05 after the project's OWN consumer E2E fell into this
+    /// (V1-CANONICAL §0b-sexies, E2E-2). Its filter — `!entity_id.is_empty() &&
+    /// !incomplete` — was a reasonable reading of the API and silently harvested a
+    /// passage as an entity. `search.rs:1975` had already recorded the gap
+    /// deliberately ("`RetrievedContext` has no dedicated 'kind' discriminator …
+    /// out of scope"); this is the smallest thing that closes it, because a method
+    /// on a `#[non_exhaustive]` type widens no data contract at all.
+    #[must_use]
+    pub fn is_content_passage(&self) -> bool {
+        self.entity_type_name == CONTENT_PASSAGE_TYPE_NAME
+    }
+
     /// Construct a `RetrievedContext` with the required fields. Optional fields
     /// (`incomplete`, `namespace`, future additions) default to their sensible
     /// defaults; use the `with_*` fluent setters to override.

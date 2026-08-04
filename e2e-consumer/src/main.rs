@@ -199,7 +199,24 @@ async fn main() -> anyhow::Result<()> {
             raw.iter().map(|r| format!("{} ({})", r.entity_id, r.entity_type_name)).collect::<Vec<_>>()
         );
         if entity_id.is_none() {
-            if let Some(r) = raw.iter().find(|r| !r.entity_id.trim().is_empty() && !r.incomplete) {
+            // `!r.is_content_passage()` is LOAD-BEARING, not defensive.
+            //
+            // Since ADR-078 made `content-search` a default, `.raw()` returns a
+            // HETEROGENEOUS list — content passages interleaved with graph entities —
+            // and a passage's `entity_id` is an EPISODE id. Without this filter the
+            // first hit is often `"1" (ContentPassage)`, which then fails every
+            // entity-scoped call below with `no entity '1' in namespace 'acme-e2e'`.
+            //
+            // That is exactly how this harness failed on 2026-08-05
+            // (V1-CANONICAL §0b-sexies, E2E-2). The old filter —
+            // `!entity_id.trim().is_empty() && !incomplete` — is a reasonable reading
+            // of the API and silently harvested a passage. `is_content_passage()` was
+            // added to the public surface in response, so a consumer no longer has to
+            // hardcode the magic string `"ContentPassage"` to get this right.
+            if let Some(r) = raw
+                .iter()
+                .find(|r| !r.entity_id.trim().is_empty() && !r.incomplete && !r.is_content_passage())
+            {
                 entity_id = Some(r.entity_id.clone());
             }
         }
