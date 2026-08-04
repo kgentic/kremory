@@ -23,6 +23,10 @@ set -uo pipefail
 LOG="$1"; STALL_SECS="$2"; MAX_SECS="$3"; shift 3
 : > "$LOG"
 
+# Capture the command for diagnostics BEFORE backgrounding it. Inside diagnose(),
+# `$*` refers to the FUNCTION's arguments, not the script's — so the command has to
+# be saved to a variable or the diagnostic reprints its own banner. (Found by review.)
+CMD_DESC="$*"
 "$@" > "$LOG" 2>&1 &
 CMD_PID=$!
 START=$(date +%s)
@@ -35,7 +39,7 @@ diagnose() {
   echo "════════════════════════════════════════════════════════════════"
   echo "  $1"
   echo "════════════════════════════════════════════════════════════════"
-  echo "  command : $*"
+  echo "  command : $CMD_DESC"
   echo "  log     : $LOG ($(wc -l < "$LOG" 2>/dev/null || echo 0) lines)"
   echo "  elapsed : $(( $(date +%s) - START ))s"
   echo ""
