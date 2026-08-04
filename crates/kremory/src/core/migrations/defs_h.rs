@@ -7,11 +7,21 @@
 /// that migration 004 installed. After this migration both tables reference
 /// `entities(id, group_id)` rather than the now-invalid single-column `entities(id)`.
 ///
-/// Idempotency gates:
-///   G1 — facts already has composite FK shape → already ran, return Ok(()).
+/// Idempotency gates (DUR-5 2026-08-05: G4 is now evaluated BEFORE G1 — see below):
+///   G4 — `episodic_edges_new` exists → the edges half needs resuming.
+///   G1 — facts already has composite FK shape **AND no edges scratch** → return Ok(()).
+///        The `AND` is load-bearing: G1 asked only about the FIRST of the two tables this
+///        migration rebuilds, so once the facts half had completed it returned early and
+///        G4 was never read — leaving the edges resume path unreachable in exactly the
+///        scenario it exists for.
 ///   G2 — entities does NOT have composite PK → migration 004 not yet applied, return Err.
 ///   G3 — `facts_new` exists → partial migration, resume from drop+rename.
-///   G4 — `episodic_edges_new` exists → same for episodic_edges half.
+///
+/// Resume is CONTENT-based, not existence-based (Quinn REL-001): a leftover scratch table
+/// proves a run started, never that it finished copying, so each resume compares the
+/// scratch against its immutable `_bak_006` snapshot and repopulates from that snapshot
+/// before the swap. Renaming an incomplete scratch over live data would destroy it
+/// silently — `PRAGMA foreign_key_check` cannot detect missing rows.
 ///
 /// The `dim` parameter is required because `facts` contains an `F32_BLOB(dim)`
 /// vector column; the new table DDL must embed the same dimension value.
@@ -40,6 +50,23 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
             .await?;
         let found = rows.next().await?.is_some();
         Ok(found)
+    }
+
+    /// Row count that is safe on vector-indexed tables.
+    ///
+    /// NOT `COUNT(*)`: on `facts`/`entities` the libsql vector index makes it return 0
+    /// for a populated table (SYSTEM-PRIMER gotcha #1). Here that would read as "the
+    /// scratch is empty" and trigger exactly the repopulation this measures.
+    async fn row_count(
+        conn: &libsql::Connection,
+        table: &str,
+    ) -> std::result::Result<usize, libsql::Error> {
+        let mut rows = conn.query(&format!("SELECT rowid FROM {table}"), ()).await?;
+        let mut n = 0usize;
+        while rows.next().await?.is_some() {
+            n += 1;
+        }
+        Ok(n)
     }
 
     // Helper: does `facts` already have a composite FK column?
@@ -71,11 +98,36 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
         Ok(false)
     }
 
-    // G1 — primary idempotency gate (SHAPE-based):
-    if facts_has_composite_fk(conn)
+    // G4 is computed BEFORE G1 — see the DUR-5 note on the gate below.
+    let edges_partial = table_exists(conn, "episodic_edges_new")
         .await
-        .map_err(step("g1_facts_fk_shape"))?
-    {
+        .map_err(step("g4_check_episodic_edges_new"))?;
+
+    let facts_done = facts_has_composite_fk(conn)
+        .await
+        .map_err(step("g1_facts_fk_shape"))?;
+
+    // G1 — primary idempotency gate (SHAPE-based).
+    //
+    // ── DUR-5 (V1-CANONICAL §4.2): `&& !edges_partial` is load-bearing ───────
+    //
+    // This migration rebuilds TWO tables, `facts` first and `episodic_edges`
+    // second, and G1 asked only about the FIRST. So once the facts half had
+    // completed — which is the normal state of every migrated database — this
+    // gate returned `Ok(())` unconditionally, **before G4 was ever read**. The
+    // `edges_partial` recovery path below was therefore unreachable in precisely
+    // the scenario it exists for: a crash during the SECOND half.
+    //
+    // What that cost a real user: `open()` recreates the dropped `episodic_edges`
+    // from the base DDL in its LEGACY pre-006 shape, G1 returns early so the
+    // rename never happens, and `migrate_017` then fails with `no such column:
+    // entity_group_id` on every subsequent open — with the correctly-shaped rows
+    // still sitting untouched in `episodic_edges_new`.
+    //
+    // Found by `tests/migration_crash_resume.rs`, which drives the real `open()`;
+    // no unit test on this function could have seen it, because the defect is that
+    // one gate shadows another.
+    if facts_done && !edges_partial {
         return Ok(());
     }
 
@@ -96,10 +148,13 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
         .await
         .map_err(step("g3_check_facts_new"))?;
 
-    // G4 — partial migration recovery: episodic_edges_new exists.
-    let edges_partial = table_exists(conn, "episodic_edges_new")
-        .await
-        .map_err(step("g4_check_episodic_edges_new"))?;
+    // (G4 — `edges_partial` — is computed above G1, where it is needed.)
+
+    // DUR-5: reaching here with `facts_done` means we are ONLY here to finish the
+    // edges half after a crash. Re-running the facts rebuild in that state would be
+    // pure risk — it opens a second DROP/RENAME window on a table that is already
+    // correct — so the facts half is skipped entirely.
+    let rebuild_facts = !facts_done;
 
     // PRAGMA foreign_keys = OFF for the duration of the restructure.
     conn.execute("PRAGMA foreign_keys = OFF", ())
@@ -108,6 +163,11 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
     let body_result: crate::core::error::Result<()> = async {
 
     // ── facts half ───────────────────────────────────────────────────────────
+    //
+    // DUR-5: skipped wholesale when `facts` already carries the composite FK — see
+    // `rebuild_facts` above. Reaching that state means the crash happened in the
+    // EDGES half, and re-swapping a correct table would only add risk.
+    if rebuild_facts {
 
     if facts_partial {
         tracing::warn!(
@@ -181,6 +241,11 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
         .map_err(step("copy_facts"))?;
     }
 
+    // DUR-5 (V1-CANONICAL §4.2): `IF EXISTS` completes the resume path this migration
+    // already declares at its own §G3 ("`facts_new` exists → partial migration, resume
+    // from drop+rename", :13). The `facts_partial` gate (:95) skips the copy block on
+    // re-entry, so control reaches this line with `facts` already dropped by the
+    // crashed run — and the bare DROP then errored, failing `open()` forever.
     conn.execute("DROP TABLE facts", ())
         .await
         .map_err(step("drop_facts"))?;
@@ -273,6 +338,8 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
         )
         .await;
 
+    } // end `if rebuild_facts` — the facts half
+
     // ── episodic_edges half ──────────────────────────────────────────────────
 
     if edges_partial {
@@ -280,6 +347,68 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
             target: "kremory::migrations",
             "migrate_006: episodic_edges_new already exists — resuming partial migration"
         );
+
+        // ── CONTENT-BASED RESUME (Quinn REL-001) ─────────────────────────────
+        //
+        // A leftover scratch table proves only that a run STARTED, never that it
+        // finished copying — `CREATE TABLE episodic_edges_new` and the `INSERT …
+        // SELECT` below are separate statements, so a crash between them leaves the
+        // scratch EMPTY. Resuming on existence alone would then DROP the live table
+        // and rename an empty scratch over it: total, silent loss of every presence
+        // edge, reported as a successful migration. `PRAGMA foreign_key_check` cannot
+        // catch it either — fewer rows means fewer violations.
+        //
+        // That hazard was DORMANT until the G1 gate above learned to reach this branch
+        // (a stale scratch used to be permanently unreachable), so hoisting G4 without
+        // this check would have traded a loud failure with intact data for a quiet one
+        // with none. This is `migrate_023`'s H3 invariant (`defs_j.rs:74-93`), which
+        // V1-CANONICAL names as the template: compare against the IMMUTABLE
+        // pre-migration snapshot and repopulate FROM THE SNAPSHOT — never from the live
+        // table, which a prior crashed run may already have dropped.
+        if table_exists(conn, "episodic_edges_bak_006")
+            .await
+            .map_err(step("resume_check_edges_bak"))?
+        {
+            let scratch = row_count(conn, "episodic_edges_new")
+                .await
+                .map_err(step("resume_count_edges_new"))?;
+            let snapshot = row_count(conn, "episodic_edges_bak_006")
+                .await
+                .map_err(step("resume_count_edges_bak"))?;
+            if scratch < snapshot {
+                tracing::warn!(
+                    target: "kremory::migrations",
+                    scratch_rows = scratch,
+                    snapshot_rows = snapshot,
+                    "migrate_006: episodic_edges_new is INCOMPLETE — the prior run \
+                     crashed mid-copy. Repopulating from episodic_edges_bak_006 before \
+                     the swap; renaming it as-is would silently destroy presence edges."
+                );
+                conn.execute("DELETE FROM episodic_edges_new", ())
+                    .await
+                    .map_err(step("resume_clear_edges_new"))?;
+                conn.execute(
+                    "INSERT INTO episodic_edges_new (id, episode_id, entity_id, entity_group_id, role, recorded_at)
+                     SELECT id, episode_id, entity_id,
+                            COALESCE(entity_group_id, 'default'),
+                            role, recorded_at
+                     FROM episodic_edges_bak_006",
+                    (),
+                )
+                .await
+                .map_err(step("resume_repopulate_edges_from_bak"))?;
+            }
+        } else {
+            // No snapshot means the crash predates it, which in this migration's
+            // control flow means the scratch cannot have been populated either. Refuse
+            // rather than rename an unverifiable table over live data.
+            return Err(crate::core::error::Error::Other(anyhow::anyhow!(
+                "migrate_006: episodic_edges_new exists but episodic_edges_bak_006 does \
+                 not, so the scratch table's completeness cannot be verified. Refusing \
+                 to swap it over the live table. Inspect episodic_edges_new by hand; \
+                 dropping it restarts the migration cleanly from the live table."
+            )));
+        }
     } else {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS episodic_edges_bak_006 AS SELECT * FROM episodic_edges",
@@ -316,6 +445,8 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
         .map_err(step("copy_episodic_edges"))?;
     }
 
+    // DUR-5: same as the `facts` drop above — the `edges_partial` gate (:100) routes a
+    // resumed run straight here, so `IF EXISTS` is what makes that route work.
     conn.execute("DROP TABLE episodic_edges", ())
         .await
         .map_err(step("drop_episodic_edges"))?;
