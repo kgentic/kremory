@@ -174,6 +174,29 @@ pub(crate) async fn migrate_004_composite_pk_entities(
         .await
         .map_err(step("check_entities_new_next"))?
         .is_some();
+    // ── DUR-5 (V1-CANONICAL §4.2): THE crash-resume fix for migrate_004 ─────────
+    //
+    // Drop the Rows handle before any DDL — an open cursor locks the connection.
+    // `defs_d.rs:82` and `defs_e.rs:55` already carried this line and this comment;
+    // migrate_004 never did.
+    //
+    // The omission was invisible because it bites ONLY on the path that matters. When
+    // `entities_new` does not exist — every ordinary run — `.next()` returns `None`,
+    // which exhausts the cursor and releases it as a side effect. When it DOES exist —
+    // i.e. exactly when resuming a migration that crashed between the DROP and the
+    // RENAME — `.next()` returns a row, the cursor stays open, and the `DROP TABLE`
+    // below fails with `database table is locked`. So the resume path could never
+    // complete, and no ordinary run could ever reveal that.
+    //
+    // ⚠️ Proven, in both directions, by `tests/migration_crash_resume.rs`. Two other
+    // candidate fixes were tried FIRST and both were measured to be NO-OPS here —
+    // recorded so nobody re-adds them believing they do something:
+    //   • `DROP TABLE IF EXISTS entities` — unreachable. `ensure_schema` runs
+    //     `CREATE TABLE IF NOT EXISTS entities` (`schema.rs:599`) on EVERY open before
+    //     any migration, so by the time this code runs the table is always back. The
+    //     bare DROP always has something to drop.
+    //   • dropping `entities_vec_idx` first — the lock was the CURSOR, not the index.
+    drop(rows2);
 
     if partial_migration_in_progress {
         tracing::warn!(
@@ -191,6 +214,93 @@ pub(crate) async fn migrate_004_composite_pk_entities(
         .map_err(step("fk_off"))?;
 
     let body_result: crate::core::error::Result<()> = async {
+        if partial_migration_in_progress {
+            // ── CONTENT-BASED RESUME (Quinn REL-002) ─────────────────────────
+            //
+            // The `drop(rows2)` fix above makes this branch REACHABLE for the first
+            // time — it previously always died on `database table is locked`, so the
+            // lock was accidentally acting as a guard. Un-blocking it without this
+            // check would trade a loud failure (data intact in `entities_new` +
+            // `entities_bak_004`) for a quiet one: `entities_new` existing proves only
+            // that a run STARTED, and `CREATE TABLE entities_new` is a separate
+            // statement from the `INSERT … SELECT` below, so a crash between them
+            // leaves it EMPTY. The swap would then rename an empty table over every
+            // entity and report success.
+            //
+            // `migrate_023`'s H3 invariant (`defs_j.rs:74-93`): compare against the
+            // IMMUTABLE snapshot and repopulate FROM THE SNAPSHOT — never from live
+            // `entities`, which a prior crashed run may already have dropped (and
+            // which `ensure_schema` may since have recreated EMPTY, `schema.rs:599`,
+            // making it actively misleading as a source).
+            async fn row_count(
+                conn: &libsql::Connection,
+                table: &str,
+            ) -> std::result::Result<usize, libsql::Error> {
+                // NOT `COUNT(*)` — the libsql vector index returns 0 for a populated
+                // `entities` (SYSTEM-PRIMER gotcha #1), which here would read as
+                // "the snapshot is empty" and skip the repair.
+                let mut rows = conn.query(&format!("SELECT rowid FROM {table}"), ()).await?;
+                let mut n = 0usize;
+                while rows.next().await?.is_some() {
+                    n += 1;
+                }
+                Ok(n)
+            }
+
+            let mut bak = conn
+                .query(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='entities_bak_004'",
+                    (),
+                )
+                .await
+                .map_err(step("resume_check_bak"))?;
+            let bak_present = bak
+                .next()
+                .await
+                .map_err(step("resume_check_bak_next"))?
+                .is_some();
+            drop(bak);
+
+            if !bak_present {
+                return Err(crate::core::error::Error::Other(anyhow::anyhow!(
+                    "migrate_004: entities_new exists but entities_bak_004 does not, so \
+                     the scratch table's completeness cannot be verified. Refusing to \
+                     swap it over the live table. Inspect entities_new by hand; dropping \
+                     it restarts the migration cleanly from the live table."
+                )));
+            }
+
+            let scratch = row_count(conn, "entities_new")
+                .await
+                .map_err(step("resume_count_entities_new"))?;
+            let snapshot = row_count(conn, "entities_bak_004")
+                .await
+                .map_err(step("resume_count_bak"))?;
+            if scratch < snapshot {
+                tracing::warn!(
+                    target: "kremory::migrations",
+                    scratch_rows = scratch,
+                    snapshot_rows = snapshot,
+                    "migrate_004: entities_new is INCOMPLETE — the prior run crashed \
+                     mid-copy. Repopulating from entities_bak_004 before the swap; \
+                     renaming it as-is would silently destroy entities."
+                );
+                conn.execute("DELETE FROM entities_new", ())
+                    .await
+                    .map_err(step("resume_clear_entities_new"))?;
+                conn.execute(
+                    "INSERT INTO entities_new (id, label, properties, embedding, recorded_at, updated_at, group_id, access_count)
+                     SELECT id, label, properties, embedding, recorded_at, updated_at,
+                            COALESCE(group_id, 'default') AS group_id,
+                            COALESCE(access_count, 0) AS access_count
+                     FROM entities_bak_004",
+                    (),
+                )
+                .await
+                .map_err(step("resume_repopulate_from_bak"))?;
+            }
+        }
+
         if !partial_migration_in_progress {
             // Step 1: backup. Left in place as a rollback artifact.
             conn.execute(
