@@ -3,6 +3,59 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
+## [0.6.0] - 2026-08-05
+
+**Minor (breaking): out-of-the-box recall quality goes from ~25.7% to ~86%+ because
+`content-search` and the dense episode arm are now DEFAULT features.** Every prior
+published version shipped `default = []`, so `cargo add kremory` silently produced the
+weakest possible build. If you pinned `default-features = false`, nothing changes for you.
+
+Also lands the v1 durability sweep: sink events and durable-write counters no longer
+describe rows a rollback erased, and two migration crash-resume defects are fixed.
+
+### Changed (breaking)
+- **`content-search` is a DEFAULT feature (ADR-078).** Measured 25.7% -> 86.2% recall
+  out of the box. This is the headline reason to upgrade.
+- **Dense episode arm ON by default.**
+- **Contradiction detection default flipped OFF then back ON** with a rewritten prompt
+  after it was found to destroy set-valued facts (TD-167/TD-165).
+
+### Added
+- **`RetrievedContext::is_content_passage()` + `CONTENT_PASSAGE_TYPE_NAME`.** Since
+  `content-search` became a default, `recall(..).raw()` returns a HETEROGENEOUS list —
+  content passages interleaved with graph entities — and a passage's `entity_id` is an
+  EPISODE id, not an entity id. Passing it to an entity-scoped call fails with
+  `no entity '<n>' in namespace`. `entity_type_id` cannot disambiguate either (a passage
+  carries `0`, which is also the unknown-entity catch-all). Filter with
+  `.filter(|r| !r.is_content_passage())`. Mirrored on the napi surface as the
+  `isContentPassage` field.
+- **`IngestStatus::Skipped`** — a terminal status for `skip_extraction` ingests, which
+  previously stayed `Pending` forever and surfaced to callers as `WaitTimeout`.
+
+### Fixed
+- **Sink events + durable-write counters fired INSIDE the ingest transaction**, so a
+  rolled-back ingest told consumers about entities and edges that do not exist, and never
+  corrected itself. Now buffered and flushed only after the durable commit.
+- **`forget().by_source_id()` was a 4-statement cascade with no transaction** — a failure
+  mid-cascade left content stored but permanently unfindable.
+- **Two migration crash-resume defects**: an un-dropped `sqlite_master` cursor that made
+  `migrate_004`'s resume path fail with `database table is locked` (only ever on the
+  resume path, which is why it was invisible), and `migrate_006`'s idempotency gate
+  shadowing its own `episodic_edges` recovery gate — leaving `open()` permanently broken
+  after a crash in the second half.
+- **Migration resume is now CONTENT-based**, comparing against the immutable `_bak_`
+  snapshot rather than trusting that a scratch table exists — an incomplete scratch was
+  being renamed over live data.
+- **A single bad candidate pair no longer aborts the whole `acronym_nickname_recall`
+  dream pass**, discarding every other adjudicated merge.
+- **`NuExtractEntitiesOnly` token cost was attributed to `operation="unclassified"`.**
+
+### Known issues
+- **A dream pass can still fail intermittently (~1 run in 5)** when a merge candidate's
+  endpoint is absent at apply time. The failure is now isolated to that pair and counted
+  (`kremory.identity.merge_apply_failed_total{site="site5"}`) instead of aborting the
+  pass, but the root cause is not yet understood.
+
 ## [0.5.0] - 2026-07-14
 
 Minor: the recall response becomes LLM-consumable (returns connected facts),

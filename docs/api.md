@@ -1,6 +1,6 @@
 # kremory API Reference
 
-> **v0.4.0** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
+> **v0.6.0** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
 > (`kremory::memory::submit_episode`, etc.) remain public for advanced users; most applications
 > should use the facade described below. Since v0.1.3 the facade gained a fully-wired dream
 > consolidation phase (§6), reversible graph mutations with a see/undo surface (§6a), opt-in
@@ -395,7 +395,7 @@ since ADR-078 (2026-07-28) — so the terminal and the `ContentPassage` type exi
 If you have disabled default features, re-enable it explicitly:
 
 ```toml
-kremory = { version = "0.5", default-features = false, features = ["content-search"] }
+kremory = { version = "0.6", default-features = false, features = ["content-search"] }
 ```
 
 ⚠️ Disabling it does **not** just remove `.content()` — it also removes the BM25 content arm and the
