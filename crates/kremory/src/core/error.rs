@@ -52,6 +52,35 @@ pub enum IngestStatus {
     ///
     /// Added in v0.2.4 (ADR-050 Phase 5 crash-safety + idempotency sink events).
     SkippedIdempotent,
+    /// Phase 2 extraction was **never requested** — the caller chained
+    /// [`RememberRequest::skip_extraction`](crate::facade::remember::RememberRequest::skip_extraction),
+    /// so the episode, its embedding and any caller-supplied facts are durably
+    /// stored and **nothing further will happen**.
+    ///
+    /// Corresponds to SQL `'Skipped'` in `episode_processing_status`, and it is a
+    /// **terminal** state: `Memory::wait_for_processing` resolves `Ok(())` on it.
+    ///
+    /// # Not to be confused with [`SkippedIdempotent`](Self::SkippedIdempotent)
+    ///
+    /// They differ by *reason*, which is why both exist. `SkippedIdempotent`
+    /// means extraction *was* requested and the verify stage declined a
+    /// duplicate content hash at Guard #1. This variant means extraction was
+    /// never on the table.
+    ///
+    /// # Why the vocabulary needed a new value (DUR-3, v1)
+    ///
+    /// Before this, `skip_extraction` ingests stayed `'Pending'` forever, because
+    /// writing `'Verified'` would have been semantically false — nothing was
+    /// verified. But `'Pending'` means *work is still coming*, and for these
+    /// episodes nothing was ever enqueued. A consumer combining
+    /// `skip_extraction()` with `wait_for_processing()` therefore burned its whole
+    /// timeout budget and received `WaitTimeout` — **failure reported for an
+    /// ingest that succeeded**. The column conflated "not processed yet" with
+    /// "will never be processed"; this variant separates them.
+    ///
+    /// Spelling follows the ecosystem convention for a deliberately-not-run step
+    /// (GitHub Actions, Argo Workflows, Tekton all use `skipped`).
+    ExtractionSkipped,
 }
 
 /// Error kind for per-entity/edge ingestion failures during Phase 2 enrichment.
