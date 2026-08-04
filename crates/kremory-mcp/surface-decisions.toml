@@ -1,0 +1,106 @@
+# MCP surface decisions — PAR-G3
+#
+# WHAT THIS IS NOT
+# ----------------
+# NOT a parity list. `kremory-napi` mirrors the facade 1:1 because a Node consumer
+# is the same consumer in a different language. An MCP client is an LLM AGENT, and
+# the surface audit
+# (.ai-docs/research/kremory-mcp-tool-surface-audit--mcp-tool-design-best-practice-2026-07-13.md)
+# ratified a deliberately SMALL, WAVED surface for it — because semantically
+# overlapping tools cost the agent disambiguation, not because the rest is missing.
+# That audit collapsed two inherited tools into one on exactly that principle.
+#
+# So the default here is DEFERRED, and that is correct. Exposing all 46 facade
+# operations as tools would be a regression against a researched decision.
+#
+# WHAT IT IS FOR
+# --------------
+# Every public `Memory` operation must carry a DECISION. The gate
+# (`tests/surface_decisions.rs`) fails when a facade op has no row — i.e. when a new
+# capability ships and nobody decided whether an agent should reach it.
+#
+# That is a real drift class on this repo: ADR-078 flipped `content-search` on by
+# default and nobody re-checked the consumer surfaces, which is how E2E-2 (a broken
+# consumer journey) survived weeks of green builds.
+#
+# The gate is bidirectional — a row naming a facade op that no longer exists also
+# fails, so a rename cannot leave a stale decision behind.
+#
+# FIELDS
+#   exposed_as = "kremory_x"   the MCP tool that reaches this operation
+#   deferred   = "reason"      deliberately not a tool; reason is mandatory
+
+# ── EXPOSED (5 tools — audit Floor + Wave 2) ─────────────────────────────────
+[ops]
+remember       = { exposed_as = "kremory_remember" }
+recall         = { exposed_as = "kremory_recall" }
+dream          = { exposed_as = "kremory_dream" }
+list_mutations = { exposed_as = "kremory_list_mutations" }
+undo           = { exposed_as = "kremory_undo" }
+
+# ── CONSTRUCTION / LIFECYCLE — server-owned, never agent-facing ──────────────
+# An MCP client connects to a server that is ALREADY constructed. Exposing these
+# would let an agent re-point storage or close the connection under itself.
+auto            = { deferred = "server-owned: the process constructs Memory before any tool call" }
+open            = { deferred = "server-owned construction" }
+with_ollama     = { deferred = "server-owned construction" }
+with_ollama_at  = { deferred = "server-owned construction" }
+with_openai     = { deferred = "server-owned construction" }
+with_anthropic  = { deferred = "server-owned construction" }
+close           = { deferred = "server-owned lifecycle — an agent closing the shared handle would break every other client" }
+cancel          = { deferred = "server-owned lifecycle" }
+search_config   = { deferred = "server-owned tuning; per-call knobs belong on kremory_recall's params if ever needed" }
+
+# ── NAMESPACE ADMIN — operator concern, not an agent concern ─────────────────
+# The namespace is a TENANCY boundary. An agent that can create or re-policy
+# namespaces can escape its own tenancy, so these stay operator-side.
+register_namespace           = { deferred = "tenancy boundary: agent-writable namespaces would defeat isolation" }
+register_namespace_with_seed = { deferred = "tenancy boundary" }
+upgrade_namespace_policy     = { deferred = "tenancy boundary — policy changes are an operator act" }
+
+# ── WAVE 2 CANDIDATES — the 'fixable memory' value prop (ADR-073) ────────────
+# Audit Wave 2 folded inspect+reverse into ONE bounded tool. `undo` +
+# `list_mutations` shipped; these are the rest of the same concern and are the
+# strongest candidates for the next tool, most likely as params on the existing
+# pair rather than new tools (principle #2: avoid semantic overlap).
+mutation_history    = { deferred = "wave 2: fold into kremory_list_mutations as an entity filter, not a second tool" }
+supersede           = { deferred = "wave 2: retract/correct a fact — the audit's tool #4, not yet built" }
+unsupersede         = { deferred = "wave 2: inverse of supersede; ships with it" }
+unmerge             = { deferred = "wave 2: reachable via kremory_undo for merge mutations" }
+restore_archived_fact = { deferred = "wave 2: ships with supersede" }
+edit_entity         = { deferred = "wave 2: entity edit surface — needs a rekey story for agents before exposure" }
+undo_entity_edit    = { deferred = "wave 2: reachable via kremory_undo" }
+delete_entity       = { deferred = "wave 2: destructive; gate behind an explicit confirm param before exposing to an agent" }
+undo_delete_entity  = { deferred = "wave 2: reachable via kremory_undo" }
+delete_fact         = { deferred = "wave 2: destructive; same confirm requirement" }
+undo_delete_fact    = { deferred = "wave 2: reachable via kremory_undo" }
+forget              = { deferred = "wave 2: bulk-destructive (GDPR erase). An agent MUST NOT hold this without an operator-set confirm gate" }
+
+# ── BATCH / ASYNC PLUMBING — wrong shape for a tool call ─────────────────────
+# A tool call is request/response. These are handle-and-poll APIs whose value is
+# in holding state across calls, which MCP does not model.
+remember_batch      = { deferred = "handle-and-poll shape; kremory_remember is the request/response equivalent" }
+send_batched        = { deferred = "batch plumbing beneath kremory_remember" }
+await_batch         = { deferred = "poll primitive — the tool call already awaits completion" }
+await_enrichment    = { deferred = "poll primitive" }
+await_dream         = { deferred = "poll primitive — kremory_dream awaits internally" }
+wait_for_processing = { deferred = "poll primitive" }
+status_of           = { deferred = "poll primitive; surface as a field on kremory_remember's result if agents ever need it" }
+
+# ── DREAM SCHEDULING / MAINTENANCE — operator concern ────────────────────────
+start_dream_scheduler = { deferred = "operator concern: a background schedule is not a per-call agent decision" }
+stop_dream_scheduler  = { deferred = "operator concern" }
+cancel_dream          = { deferred = "operator concern" }
+run_dream_pass_sync   = { deferred = "test/diagnostic entry point, not a product surface" }
+
+# ── EMBEDDING MAINTENANCE — expensive, operator-triggered ────────────────────
+# Each re-embeds an entire corpus. An agent triggering one would spend the
+# operator's money and latency budget without their knowledge.
+reembed_all_entity_embeddings  = { deferred = "operator maintenance: full-corpus re-embed, real cost" }
+reembed_all_fact_embeddings    = { deferred = "operator maintenance: full-corpus re-embed" }
+reembed_all_episode_embeddings = { deferred = "operator maintenance: full-corpus re-embed" }
+backfill_episode_embeddings    = { deferred = "operator maintenance: migration-time backfill" }
+
+# ── DIAGNOSTIC / INTERNAL ────────────────────────────────────────────────────
+ghost_episodes     = { deferred = "diagnostic query for operators debugging ingest" }
+assert_entity_type = { deferred = "internal type-registry helper, not a memory operation" }
