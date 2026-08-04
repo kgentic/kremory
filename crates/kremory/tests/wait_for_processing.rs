@@ -350,3 +350,102 @@ async fn wait_for_processing_returns_err_on_failed_status() {
 
     drop(tmp);
 }
+
+// ─── Test 4: DUR-3 — skip_extraction must reach a TERMINAL status ────────────
+
+/// **DUR-3 regression pin.** A `skip_extraction()` ingest succeeds and is durably
+/// stored, but leaves `episode_processing_status = 'Pending'` forever, because
+/// `engine_handle` gates the terminal write on `opts.enrich_per_episode`. Since
+/// `wait_for_processing` treats `Pending` as non-terminal, a consumer that
+/// combines the two burns its entire timeout budget and is then told
+/// `WaitTimeout` — **failure reported for an ingest that succeeded**.
+///
+/// # Why the fix is not "write `Verified`"
+///
+/// `engine_handle`'s comment is right that `Verified` would be semantically false
+/// — no extraction ran, so nothing was verified. The broken invariant is neither
+/// consumer's: the status vocabulary **conflates "not processed yet" with "will
+/// never be processed"**. The fix adds the missing terminal state, `'Skipped'`
+/// (the spelling GitHub Actions / Argo / Tekton use for a deliberately-not-run
+/// step), and teaches every reader of the column about it.
+///
+/// # Sensitivity
+///
+/// Proven in BOTH directions — reverting the `engine_handle` write back to
+/// `Pending` makes this fail with `WaitTimeout` after the full 3 s budget, and
+/// reverting only the `wait_for_processing` arm makes it fail the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn skip_extraction_reaches_a_terminal_status_and_does_not_time_out() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("dur3-skip-extraction.db");
+
+    let emb: Arc<dyn kremory::DynEmbeddingProvider> = Arc::new(NullEmbeddingProvider { dim: 384 });
+
+    let mem = Memory::open(db_path.to_str().expect("utf-8"))
+        .with_llm(Arc::new(EmptyArrayLlmClient) as Arc<dyn ChatProvider>)
+        .with_embedder(emb)
+        .default_namespace(Namespace::new("test-ns"))
+        .await
+        .expect("Memory open must succeed");
+
+    let commit = mem
+        .remember("Bulk-imported row; the caller is the sole source of truth.")
+        .skip_extraction()
+        .await
+        .expect("remember().skip_extraction() must succeed");
+
+    let episode_id: i64 = commit
+        .episode_entity_id
+        .parse()
+        .expect("episode_entity_id must be a parseable i64 rowid on the inline path");
+
+    let tg = mem
+        .temporal_graph_for_test()
+        .expect("temporal_graph must be set on builder path");
+
+    // (1) The column must carry a TERMINAL status — not 'Pending'.
+    let status = read_status(&tg.conn, episode_id).await;
+    assert_eq!(
+        status, "Skipped",
+        "a skip_extraction episode must land in the terminal 'Skipped' state, not \
+         '{status}' — 'Pending' means work is still coming, and for this episode \
+         nothing was ever enqueued, so it would never leave that state"
+    );
+
+    // (2) The waiter must agree, and must not burn the budget to say so.
+    // A 3 s timeout is deliberately generous relative to the ~50 ms first poll:
+    // if the fix regresses, this test costs 3 s and fails loudly rather than
+    // hanging.
+    let before = Instant::now();
+    let result = mem
+        .wait_for_processing(episode_id, Duration::from_secs(3))
+        .await;
+    let elapsed = before.elapsed();
+
+    assert!(
+        result.is_ok(),
+        "wait_for_processing must return Ok for a skip_extraction episode — the \
+         ingest SUCCEEDED and is durably stored. Got: {:?}",
+        result.err()
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "must resolve on the first poll (~50 ms), not by exhausting the budget; \
+         took {elapsed:?}"
+    );
+
+    // (3) The SQL->enum bridge must not report this success as a FAILURE.
+    // `from_sql_status` maps anything it does not recognise to
+    // `IngestStatus::Failed("unknown_sql_status:...")`, so adding the column
+    // value without teaching the bridge would turn a successful skip into a
+    // reported failure for every sink consumer.
+    let bridged = kremory::core::sink::from_sql_status(&status);
+    assert_eq!(
+        bridged,
+        kremory::core::error::IngestStatus::ExtractionSkipped,
+        "from_sql_status must bridge 'Skipped' to a non-failure variant; an \
+         unmapped value silently becomes Failed(\"unknown_sql_status:..\")"
+    );
+
+    drop(tmp);
+}

@@ -418,30 +418,55 @@ impl GraphHandle for EngineGraphHandle {
         // Gate the Verified write on `enrich_per_episode`. When skip_extraction=true
         // (enrich_per_episode=false), extraction was intentionally skipped — writing
         // Verified would be semantically wrong ("extraction was verified" when no
-        // extraction ran). Leave status at Pending for the skip_extraction path.
-        // The episode is durably stored; future background workers that filter for
-        // Pending episodes will not attempt to re-extract (the episode was never
-        // enqueued to the background worker), which is correct behavior.
+        // extraction ran).
+        //
+        // ── DUR-3 cause-fix (V1-CANONICAL §4.2, 2026-08-04) ──────────────────
+        // That reasoning is correct and its REMEDY was not: leaving the status at
+        // `Pending` made the episode terminally indistinguishable from one whose
+        // work is still coming. Nothing is ever enqueued for a skip_extraction
+        // episode, so it could never leave `Pending` — and `wait_for_processing`
+        // treats `Pending` as non-terminal. A consumer combining the two burned
+        // its whole timeout budget and was then told `WaitTimeout`: FAILURE
+        // reported for an ingest that SUCCEEDED and is durably stored.
+        //
+        // The broken invariant was in neither consumer. The status vocabulary
+        // conflated "not processed yet" with "will never be processed". So both
+        // arms now write a TERMINAL status and only the VALUE differs — which is
+        // why the write is no longer inside the `if`. `'Skipped'` follows the
+        // ecosystem spelling for a deliberately-not-run step (GitHub Actions,
+        // Argo, Tekton). Bridged by `sink::from_sql_status` to
+        // `IngestStatus::ExtractionSkipped`; resolved `Ok(())` by
+        // `Memory::wait_for_processing`. No migration needed — the column is
+        // plain `TEXT NOT NULL DEFAULT 'Pending'` with no CHECK constraint
+        // (`migrations/defs_f.rs:120`).
+        //
+        // Best-effort: a status write failure is non-fatal for the ingest itself
+        // — we log it and continue. The episode data is fully committed; only the
+        // status column is affected.
         let episode_id_for_status = ingest_result.episode_id;
-        if opts.enrich_per_episode {
-            if let Err(e) = self
-                .engine
-                .graph()
-                .conn
-                .execute(
-                    "UPDATE episodes SET episode_processing_status = 'Verified' WHERE id = ?1",
-                    libsql::params![episode_id_for_status],
-                )
-                .await
-            {
-                tracing::warn!(
-                    target: "kremory.engine_handle",
-                    episode_id = episode_id_for_status,
-                    error = %e,
-                    "inline ingest: failed to write Verified status — \
-                     wait_for_processing may stall for this episode"
-                );
-            }
+        let terminal_status = if opts.enrich_per_episode {
+            "Verified"
+        } else {
+            "Skipped"
+        };
+        if let Err(e) = self
+            .engine
+            .graph()
+            .conn
+            .execute(
+                "UPDATE episodes SET episode_processing_status = ?2 WHERE id = ?1",
+                libsql::params![episode_id_for_status, terminal_status],
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "kremory.engine_handle",
+                episode_id = episode_id_for_status,
+                status = terminal_status,
+                error = %e,
+                "inline ingest: failed to write terminal status — \
+                 wait_for_processing may stall for this episode"
+            );
         }
 
         Ok(EpisodeCommit {

@@ -1311,6 +1311,21 @@ impl Memory {
                     .record(elapsed_ms);
                     return Ok(());
                 }
+                // DUR-3 (V1-CANONICAL §4.2): `skip_extraction` ingests are
+                // TERMINAL on commit — nothing is ever enqueued for them, so
+                // polling on would never resolve. Before this arm existed they
+                // sat at `Pending` and every caller burned its full timeout
+                // budget to be told `WaitTimeout`, i.e. FAILURE for an ingest
+                // that succeeded and is durably stored.
+                "Skipped" => {
+                    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                    metrics::histogram!(
+                        "kremory.wait_for_processing.duration_ms",
+                        "outcome" => "skipped"
+                    )
+                    .record(elapsed_ms);
+                    return Ok(());
+                }
                 "Failed" => {
                     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
                     metrics::histogram!(

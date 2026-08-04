@@ -954,7 +954,36 @@ pub fn ingest_status_to_js(s: kremory::IngestStatus) -> JsIngestStatusResult {
             status: "failed".to_string(),
             error_message: Some(msg),
         },
+        // ── DUR-3 wire-layer cause-fix (V1-CANONICAL §4.2, 2026-08-04) ───────
+        // These three arms were all falling through the catch-all below and
+        // being reported to JS as "pending". Two of them are TERMINAL, so a Node
+        // consumer polling `statusOf` would poll forever on an episode that was
+        // already finished — DUR-3's exact shape, on the napi surface.
+        //
+        // `EntitiesReady` is the pre-existing one and the worst: it is SQL
+        // 'Verified', the state `Memory::wait_for_processing` resolves `Ok(())`
+        // on. Rust callers saw success; JS callers saw "pending".
+        //
+        // Found by enumerating every layer the new status value touches, not by
+        // a gate — `api_parity` walks METHODS, so an enum variant that silently
+        // widens the catch-all is invisible to it. `ingest_status_maps_every_known_variant_off_the_catch_all`
+        // below is the guard that makes the next one visible.
+        kremory::IngestStatus::EntitiesReady => JsIngestStatusResult {
+            status: "entities_ready".to_string(),
+            error_message: None,
+        },
+        kremory::IngestStatus::ExtractionSkipped => JsIngestStatusResult {
+            status: "skipped".to_string(),
+            error_message: None,
+        },
+        kremory::IngestStatus::SkippedIdempotent => JsIngestStatusResult {
+            status: "skipped_idempotent".to_string(),
+            error_message: None,
+        },
         // Non-exhaustive guard: forward-compat for variants added after v0.1.8.
+        // `IngestStatus` is `#[non_exhaustive]`, so this arm cannot be removed —
+        // which is exactly why it must not be allowed to accumulate silent
+        // members. See the test named above.
         _ => JsIngestStatusResult {
             status: "pending".to_string(),
             error_message: None,
@@ -1732,5 +1761,73 @@ mod tests {
         assert_eq!(js.confidence, 1.0);
         assert!(!js.source_episode_ids.is_empty());
         assert!(js.score >= 0.0);
+    }
+
+    /// **DUR-3 sibling guard (V1-CANONICAL §4.2).** Every known `IngestStatus`
+    /// variant must map to its OWN discriminator — never silently into the
+    /// `_ =>` forward-compat arm, which returns `"pending"`.
+    ///
+    /// This is the defect this test exists for: three variants
+    /// (`EntitiesReady`, `SkippedIdempotent`, `ExtractionSkipped`) were falling
+    /// through that arm, and two of them are **terminal**. A Node consumer
+    /// polling `statusOf` therefore saw `"pending"` on an episode that had
+    /// already finished — the same "poll forever on a completed ingest" shape as
+    /// DUR-3 itself, but on the wire rather than in the column. `EntitiesReady`
+    /// is SQL `'Verified'`, the exact state `Memory::wait_for_processing`
+    /// resolves `Ok(())` on, so Rust callers saw success while JS callers saw
+    /// pending.
+    ///
+    /// # Honest limits — read before trusting this
+    ///
+    /// `IngestStatus` is `#[non_exhaustive]`, so the catch-all arm **cannot** be
+    /// removed and this test **cannot** mechanically discover a variant nobody
+    /// listed here. It is a hand-maintained roster, not structural enforcement,
+    /// and it will not fail on its own the day someone adds a tenth variant.
+    /// What it does buy: the moment anyone *does* add a variant and comes here,
+    /// the roster and the assertion below state the obligation plainly, and any
+    /// regression that re-routes an existing variant into the catch-all fails
+    /// loudly. Real enforcement would need the enum to stop being
+    /// `#[non_exhaustive]`, which is a breaking change and not v1 scope.
+    #[test]
+    fn ingest_status_maps_every_known_variant_off_the_catch_all() {
+        use crate::convert::ingest_status_to_js;
+        use kremory::IngestStatus as S;
+
+        // The roster. Update this when adding a variant — see limits above.
+        let cases = vec![
+            (S::Pending, "pending"),
+            (S::Extracting, "extracting"),
+            (S::EntitiesReady, "entities_ready"),
+            (S::Deduplicating, "deduplicating"),
+            (S::Invalidating, "invalidating"),
+            (S::Complete, "complete"),
+            (S::Failed("boom".to_string()), "failed"),
+            (S::SkippedIdempotent, "skipped_idempotent"),
+            (S::ExtractionSkipped, "skipped"),
+        ];
+
+        for (variant, expected) in cases {
+            let label = format!("{variant:?}");
+            let js = ingest_status_to_js(variant);
+            assert_eq!(
+                js.status, expected,
+                "{label} must map to {expected:?}, not {:?}. A value of \
+                 \"pending\" here almost always means the variant fell through \
+                 the `_ =>` forward-compat arm — which is a silent bug for any \
+                 TERMINAL state, because JS consumers poll on \"pending\".",
+                js.status
+            );
+        }
+
+        // Sensitivity in the other direction: the catch-all must still be
+        // reachable and must still say "pending", so the assertion above is
+        // actually discriminating rather than passing vacuously.
+        assert_eq!(
+            ingest_status_to_js(S::Pending).status,
+            "pending",
+            "the catch-all's own value must remain \"pending\" — if this ever \
+             changes, the checks above stop distinguishing a real mapping from \
+             a fall-through"
+        );
     }
 }

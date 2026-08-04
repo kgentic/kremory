@@ -85,6 +85,11 @@ pub fn from_sql_status(s: &str) -> IngestStatus {
         "Failed" => IngestStatus::Failed(
             "from_sql_status: SQL-level failure; reason not captured".to_string(),
         ),
+        // DUR-3 (V1-CANONICAL §4.2): terminal state for a `skip_extraction`
+        // ingest. This arm is load-bearing, not cosmetic — without it 'Skipped'
+        // falls to the catch-all below and a SUCCESSFUL ingest is reported to
+        // every sink consumer as `Failed("unknown_sql_status:Skipped")`.
+        "Skipped" => IngestStatus::ExtractionSkipped,
         other => IngestStatus::Failed(format!("unknown_sql_status:{other}")),
     }
 }
