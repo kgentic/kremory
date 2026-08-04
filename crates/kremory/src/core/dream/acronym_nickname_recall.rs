@@ -179,6 +179,47 @@ pub struct AcronymNicknameRecallParams<'a> {
 /// `pub` + `#[doc(hidden)]` — see [`AcronymNicknameRecallParams`]'s doc
 /// comment for the MNT-002 re-export rationale (S2 spike integration test).
 #[doc(hidden)]
+/// Follow `loser -> keeper` links to the entity id that actually still exists.
+///
+/// **E2E-1 (V1-CANONICAL §0b-sexies).** `acronym_nickname_recall` nominates all
+/// candidate pairs up front from an upper-triangle enumeration, then applies merges
+/// sequentially — and each merge DELETES its loser. Without this resolution, every
+/// later pair referencing a consumed entity passes a dead id to
+/// `apply_merge_with_audit`, whose snapshot then fails and (before the per-pair
+/// isolation) aborted the whole pass.
+///
+/// Resolution, not skipping, is the correct response: `A≡B` and `B≡C` means all
+/// three are the same entity, so `C` must still fold into the survivor.
+///
+/// Module-scope rather than nested inside the pass so it is unit-testable — the
+/// nested version could not be reached from the test module, and an untestable
+/// helper on a correctness path is a seam worth fixing rather than deferring.
+fn resolve_survivor(merged_into: &HashMap<String, String>, id: &str) -> String {
+    let mut cur = id.to_string();
+    // Bounded: `merged_into` is built only from applied merges and is acyclic by
+    // construction, but a cycle here would HANG the dream phase. A bound is cheaper
+    // than trusting the invariant, and it fails loud rather than spinning.
+    for _ in 0..MAX_MERGE_CHAIN_HOPS {
+        match merged_into.get(&cur) {
+            Some(next) => cur = next.clone(),
+            None => return cur,
+        }
+    }
+    tracing::warn!(
+        target: "kremory.l5",
+        start = %id,
+        max_hops = MAX_MERGE_CHAIN_HOPS,
+        "merge-chain resolution exceeded its hop bound — returning the last id. This \
+         indicates a CYCLE in the merge map, which should be impossible; investigate \
+         rather than raising the bound."
+    );
+    cur
+}
+
+/// Hop ceiling for [`resolve_survivor`]. Far above any real chain (it would need 64
+/// transitive merges of one entity within a single pass) and low enough to fail fast.
+const MAX_MERGE_CHAIN_HOPS: usize = 64;
+
 pub async fn acronym_nickname_recall<L: ChatProvider>(
     llm: &L,
     params: AcronymNicknameRecallParams<'_>,
@@ -273,6 +314,30 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
     let nogoods =
         crate::core::dream::provenance::reversal::load_merge_nogoods(graph, group_id).await?;
 
+    // ── E2E-1 ROOT-CAUSE FIX: follow the merge chain ─────────────────────────
+    //
+    // `nominated` is built ONCE from an upper-triangle enumeration of `ids`
+    // (`:221-229`), then merges are applied SEQUENTIALLY below — and each merge
+    // DELETES its loser. Nothing tracked that, so an entity consumed by an earlier
+    // merge was still referenced by every later pair containing it:
+    //
+    //   ids = [A, B, C]  ->  pairs (A,B), (A,C), (B,C)
+    //   (A,B) merges: B is deleted, A survives
+    //   (B,C) then calls apply_merge(loser=C, keeper=B) -- B IS GONE
+    //
+    // That is not a hypothesis; it falls directly out of the enumeration, and it
+    // explains BOTH observed failures. Index `j` appears as `pair.b` (loser) in
+    // pairs (0,j)..(j-1,j) — merge one and the rest have a DELETED LOSER — and as
+    // `pair.a` (keeper) in pairs (j,k) — a DELETED KEEPER. Observed live:
+    //   run A: "loser entity `alice johnsons work…` not found"   <- first shape
+    //   run B: "keeper entity `acme corporation` not found"      <- second shape
+    // Measured failure rate before this fix: 1 in 5 real-Ollama runs.
+    //
+    // SKIPPING the stale pair would be wrong: A≡B and B≡C means all three are the
+    // SAME entity, so C must still fold in. Following the chain preserves that,
+    // and it is why this is a union-find resolve rather than a `continue`.
+    let mut merged_into: HashMap<String, String> = HashMap::new();
+
     for (pair_id, pair) in nominated.iter().enumerate() {
         let verdict = verdicts_by_pair_id.get(&pair_id).cloned();
         let decision = write_gate(WriteGateInputs {
@@ -322,11 +387,38 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                     report.rejected += 1;
                     continue;
                 };
+
+                // E2E-1: resolve BOTH endpoints through the chain of merges this
+                // loop has already applied. Either side may have been consumed —
+                // both shapes were observed live.
+                let keeper_id = resolve_survivor(&merged_into, &pair.a);
+                let loser_id = resolve_survivor(&merged_into, &pair.b);
+
+                if keeper_id == loser_id {
+                    // Already the same entity via a transitive merge (A≡B, B≡C, and
+                    // (A,C) is also nominated). Not an error and not a rejection —
+                    // the merge this pair asked for HAS happened. Counted separately
+                    // so it can never be mistaken for an LLM "no".
+                    counter!(
+                        "kremory.identity.merge_already_transitive_total",
+                        "site" => "site5",
+                    )
+                    .increment(1);
+                    tracing::debug!(
+                        target: "kremory.l5",
+                        candidate_a = %pair.a,
+                        candidate_b = %pair.b,
+                        survivor = %keeper_id,
+                        "site5 pair already merged transitively — skipping"
+                    );
+                    continue;
+                }
+
                 match crate::core::canonicalization::apply_merge_with_audit(
                     graph,
                     crate::core::canonicalization::ApplyMergeWithAuditParams {
-                        loser_id: &pair.b,
-                        keeper_id: &pair.a,
+                        loser_id: &loser_id,
+                        keeper_id: &keeper_id,
                         group_id,
                         site: crate::core::dream::provenance::MergeSite::Site5AcronymNickname,
                         // Site #5 nominates via the deterministic structural
@@ -359,7 +451,14 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 )
                 .await
                 {
-                    Ok(()) => report.merges_applied += 1,
+                    Ok(()) => {
+                        report.merges_applied += 1;
+                        // E2E-1: record the link so every LATER pair referencing
+                        // this loser — as loser OR keeper — resolves to the
+                        // survivor instead of a deleted row. Keyed on the RESOLVED
+                        // loser, which is the id that actually ceased to exist.
+                        merged_into.insert(loser_id.clone(), keeper_id.clone());
+                    }
                     Err(e) => {
                         // ── PER-PAIR ISOLATION (V1-CANONICAL §0b-sexies, E2E-1) ──
                         //
@@ -1315,6 +1414,91 @@ async fn write_audit_row(params: WriteAuditRowParams<'_>) -> Result<()> {
 mod tests {
     use super::*;
     use crate::core::dream::wilson_lower_upper;
+
+    // ── E2E-1 regression pins (V1-CANONICAL §0b-sexies) ──────────────────────
+    //
+    // The pass nominates ALL pairs up front from an upper-triangle enumeration of
+    // `ids`, then applies merges sequentially — and each merge DELETES its loser.
+    // Both failure shapes observed live fall directly out of that:
+    //
+    //   ids = [A, B, C]  ->  pairs (A,B), (A,C), (B,C)
+    //   index j is `pair.b` (LOSER)  in (0,j)..(j-1,j)  -> deleted loser
+    //   index j is `pair.a` (KEEPER) in (j,k)           -> deleted keeper
+    //
+    // Measured rate before the fix: 1 failed run in 5 (real Ollama, 2026-08-05).
+
+    /// Shape 1 — **deleted KEEPER**, the `acme corporation` failure.
+    ///
+    /// `(A,B)` merges B into A. A later pair `(B,C)` has `keeper = B`, which no
+    /// longer exists. Resolution must redirect it to A.
+    #[test]
+    fn a_consumed_keeper_resolves_to_its_survivor() {
+        let mut merged: HashMap<String, String> = HashMap::new();
+        merged.insert("b".to_owned(), "a".to_owned()); // (A,B): B -> A
+
+        assert_eq!(
+            resolve_survivor(&merged, "b"),
+            "a",
+            "a keeper consumed by an earlier merge MUST resolve to the survivor — \
+             passing the dead id is what produced `keeper entity `acme corporation` \
+             not found in namespace`"
+        );
+    }
+
+    /// Shape 2 — **deleted LOSER**, the `alice johnsons work on…` failure.
+    ///
+    /// The same entity is `pair.b` in several pairs; the first merge deletes it and
+    /// every later pair still names it as the loser.
+    #[test]
+    fn a_consumed_loser_resolves_to_its_survivor() {
+        let mut merged: HashMap<String, String> = HashMap::new();
+        merged.insert("c".to_owned(), "a".to_owned()); // (A,C): C -> A
+
+        assert_eq!(resolve_survivor(&merged, "c"), "a");
+    }
+
+    /// TRANSITIVE chain — why this is a resolve and not a `continue`.
+    ///
+    /// `A≡B` and `B≡C` means all three are one entity, so C must fold into A rather
+    /// than be dropped. Skipping the stale pair would silently lose a real merge.
+    #[test]
+    fn transitive_chains_resolve_to_the_final_survivor() {
+        let mut merged: HashMap<String, String> = HashMap::new();
+        merged.insert("c".to_owned(), "b".to_owned()); // C -> B
+        merged.insert("b".to_owned(), "a".to_owned()); // B -> A
+
+        assert_eq!(
+            resolve_survivor(&merged, "c"),
+            "a",
+            "C -> B -> A must resolve to A, not stop at the already-dead B"
+        );
+        // NON-VACUITY: an untouched id must resolve to ITSELF. Without this, a
+        // resolver hardcoded to return "a" would satisfy every assertion above.
+        assert_eq!(
+            resolve_survivor(&merged, "untouched"),
+            "untouched",
+            "an id that was never merged must resolve to itself — otherwise a \
+             constant-returning resolver passes every other case here"
+        );
+    }
+
+    /// A cycle must TERMINATE rather than hang the dream phase.
+    ///
+    /// `merged_into` is acyclic by construction, so this is defence against a future
+    /// change breaking that invariant — the failure mode being prevented is an
+    /// infinite loop inside `mem.dream()`, which no timeout in the pass would catch.
+    #[test]
+    fn a_cyclic_merge_map_terminates_instead_of_hanging() {
+        let mut merged: HashMap<String, String> = HashMap::new();
+        merged.insert("x".to_owned(), "y".to_owned());
+        merged.insert("y".to_owned(), "x".to_owned());
+
+        let got = resolve_survivor(&merged, "x");
+        assert!(
+            got == "x" || got == "y",
+            "must return one of the cycle members and STOP; got {got:?}"
+        );
+    }
     use crate::core::graph::{
         InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
     };
