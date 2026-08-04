@@ -51,7 +51,28 @@ resolved_end="${resolved_end:-$(wc -l < "$REGISTER")}"
 # Follow-up markers: recording progress in place is deliberate and good. What is
 # banned is re-using a number for a DIFFERENT item. Extend deliberately — every
 # addition widens what the guard stops seeing.
-FOLLOWUP_MARKERS='RESOLVED|CORRECTION|update|UPDATE|A/B RESULT|Stage [A-Z]|CLOSED|✅|❌|NOT VIABLE|erratum|ERRATUM'
+# `→` is the register's status-transition marker: a NEW declaration reads
+# `### TD-037 — <description>` (em dash), a follow-up reads `### TD-166 → PARTIAL`.
+# Matching the ARROW rather than the word "PARTIAL" is deliberately the narrower
+# widening — "PARTIAL" could legitimately appear in a genuine new item's title,
+# whereas the arrow only ever marks a transition on an EXISTING id.
+#
+# Added 2026-08-04 after implementing the collision-index exemption, which made
+# the guard live again and immediately produced three false positives (TD-090,
+# TD-132, TD-166) — all follow-ups. Per this guard's own design note: a guard that
+# fires on correct work gets ignored.
+# `[Cc]orrection` because the list was case-sensitive and the register writes
+# "reference correction" in lower case.
+#
+# ⚠️ The arrow is matched POSITIONALLY — `### TD-nnn →`, immediately after the id —
+# never as a bare `→`. A bare arrow was tried first and silently swallowed a REAL
+# declaration whose TITLE contains one:
+#     ### TD-080 — Swap `llm_json` → `jsonrepair`: drop transitive `clap` ...
+# That turned a false-positive fix into a false NEGATIVE, which is strictly worse:
+# the guard would have gone green while a genuine collision went unreported. Same
+# defect class as matching signals anywhere in an input instead of within the same
+# sub-unit. Scope every marker that could plausibly appear in prose.
+FOLLOWUP_MARKERS='RESOLVED|[Cc]orrection|CORRECTION|update|UPDATE|A/B RESULT|Stage [A-Z]|CLOSED|✅|❌|NOT VIABLE|erratum|ERRATUM|### TD-[0-9]{3} →'
 
 fail=0
 
@@ -73,16 +94,78 @@ fi
 total="$(echo "$declarations" | wc -l | tr -d ' ')"
 dupes="$(echo "$declarations" | sed -E 's/^[0-9]+:### (TD-[0-9]{3}).*/\1/' | sort | uniq -d)"
 
+# ── The COLLISION INDEX exemption ────────────────────────────────────────────
+#
+# This guard's own failure message has always offered two remediations: renumber
+# the newer item, OR — when renumbering would break live references — "record both
+# in a collision index and never re-use the number." The register wrote that index.
+# The guard could not READ it, so it stayed red forever.
+#
+# That is a guard whose policy is incomplete, and a permanently-red guard is a
+# DISABLED guard: it trains everyone to ignore the signal, so a genuinely NEW
+# collision would land in the noise. Implementing the exemption is what makes the
+# guard live again — it goes green on the four known, documented collisions while
+# still failing on a fifth.
+#
+# Checked in BOTH directions, so the index cannot rot:
+#   forward  — a duplicate id is tolerated ONLY if the index declares it
+#   backward — an index entry with no corresponding duplicate is itself a failure
+# Without the backward check the index would silently accumulate stale entries and
+# quietly widen what the guard stops seeing.
+index_ids="$(
+  awk '/^## .*ID COLLISION INDEX/{inidx=1; next}
+       inidx && /^## /{exit}
+       inidx' "$REGISTER" \
+    | grep -oE '^\| \*\*TD-[0-9]{3}\*\*' \
+    | grep -oE 'TD-[0-9]{3}' \
+    | sort -u \
+    || true
+)"
+
+unindexed_dupes=""
 if [[ -n "$dupes" ]]; then
+  while read -r id; do
+    [[ -z "$id" ]] && continue
+    if ! grep -qx "$id" <<< "$index_ids"; then
+      unindexed_dupes+="${id}"$'\n'
+    fi
+  done <<< "$dupes"
+fi
+
+if [[ -n "${unindexed_dupes//[$'\n' ]/}" ]]; then
   fail=1
-  echo "FAIL [check 1] — TD id declared twice for different items; refs are ambiguous:"
+  echo "FAIL [check 1] — TD id declared twice for different items, and NOT recorded"
+  echo "                 in the ID COLLISION INDEX; refs are ambiguous:"
   echo
   while read -r id; do
     [[ -z "$id" ]] && continue
     echo "  $id"
     echo "$declarations" | grep -E "^[0-9]+:### ${id}" | sed 's/^/      line /' | cut -c1-120
     echo
-  done <<< "$dupes"
+  done <<< "$unindexed_dupes"
+fi
+
+# ── CHECK 1b — stale index entries ───────────────────────────────────────────
+# An id listed in the index that is no longer actually duplicated means the index
+# is describing a condition that no longer exists. Left unchecked, the index grows
+# into a blanket exemption nobody audits.
+stale_index=""
+if [[ -n "$index_ids" ]]; then
+  while read -r id; do
+    [[ -z "$id" ]] && continue
+    if ! grep -qx "$id" <<< "$dupes"; then
+      stale_index+="${id}"$'\n'
+    fi
+  done <<< "$index_ids"
+fi
+
+if [[ -n "${stale_index//[$'\n' ]/}" ]]; then
+  fail=1
+  echo "FAIL [check 1b] — ID COLLISION INDEX lists ids that are no longer duplicated."
+  echo "                  Remove them; a stale exemption widens what the guard cannot see:"
+  echo
+  echo "$stale_index" | sed '/^$/d' | sed 's/^/      /'
+  echo
 fi
 
 # ── CHECK 2 — OPEN/PARTIAL entries filed under `## Resolved` ─────────────────
@@ -108,8 +191,15 @@ if [[ -n "$misfiled" ]]; then
 fi
 
 if [[ $fail -eq 0 ]]; then
-  echo "PASS: ${total} TD declarations outside '## Resolved', all ids unique;"
-  echo "      no OPEN/PARTIAL entries misfiled under '## Resolved'."
+  indexed_count="$(echo "$index_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+  echo "PASS: ${total} TD declarations outside '## Resolved'."
+  echo "      Every duplicated id is recorded in the ID COLLISION INDEX (${indexed_count})."
+  echo "      No stale index entries; no OPEN/PARTIAL entries misfiled under '## Resolved'."
+  if [[ "$indexed_count" -gt 0 ]]; then
+    echo
+    echo "NOTE: ${indexed_count} id(s) are DOCUMENTED collisions, not resolved ones."
+    echo "      Cite them by item, never by bare id. No new TD may reuse these numbers."
+  fi
   exit 0
 fi
 
