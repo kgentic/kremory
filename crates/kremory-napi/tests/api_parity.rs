@@ -432,7 +432,11 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 83 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 86 (sanity cap — over-finding guard).
+    // ⚠️ This lead line read "83" until 2026-08-06 while the assertion below said 86 —
+    // it was not updated by the two raises recorded at the end of this comment block.
+    // A cap documented as one number and enforced as another is how "we are at the
+    // cap" gets mis-read; the figure now matches the `skip_count <= 86` assert.
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
     // aggressive or the skip list is being used as an escape hatch.
     // Lowered 100 → 90 by TD-053 (2026-06-25) after pruning 13 doc-rot entries, then

@@ -1125,8 +1125,11 @@ empty). Opt into the surfaces below as needed:
 | `test-utils` / `llm-smoke` / `llm-integration` | off | Test-harness gating only — not part of the stable consumer surface. |
 
 ```toml
-# Example: content recall + OTLP export
-kremory = { version = "0.3", features = ["content-search", "otel"] }
+# Example: content recall + OTLP export.
+# `content-search` is listed explicitly for clarity, but it is ON by default
+# since ADR-078 (2026-07-28) — you only need to name it if you have set
+# `default-features = false`.
+kremory = { version = "0.6", features = ["content-search", "otel"] }
 ```
 
 ---

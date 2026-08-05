@@ -285,7 +285,7 @@ Enable the `otel` cargo feature:
 
 ```toml
 [dependencies]
-kremory = { version = "0.1", features = ["otel"] }
+kremory = { version = "0.6", features = ["otel"] }
 ```
 
 In your app:
