@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "f92afa6a8aa2bca3c8c3b39f585548c5e8abab5245f0a0b583f1ed01f3b960c5": [
+    "c92f1241baa9b971cfc1893a031542003c466288ced720910154a0c38339dacc": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The Proposed entity is a specific legal *document* or *directive* issued by a court. The Existing entity is the *institution* itself. They are related, but distinct concepts.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"A 'Court Order' is an action or document *issued by* a court, whereas 'Court' is the physical or organizational *body* that issues the order. They are related but describe different semantic concepts.\"\n    }\n  ]\n}"
       }
     ]
   }

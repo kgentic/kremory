@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "f9102426198e13adf9551b208a27ff9ea1121716174f7812914a8f559678ae11": [
+    "fa1107717cb853a39bdecbec34c01d999d9fc5df889f84ec9c26fc587671bb01": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The 'Contract' is the entire agreement document/relationship, while 'Contractual Obligation' is a specific *component* or *duty* arising *from* the contract.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.8,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"A 'Contract' is the entire agreement, whereas 'Contractual Obligation' describes a specific duty or requirement *within* that agreement. They are distinct concepts, one being the whole and the other being a part.\"\n    }\n  ]\n}"
       }
     ]
   }

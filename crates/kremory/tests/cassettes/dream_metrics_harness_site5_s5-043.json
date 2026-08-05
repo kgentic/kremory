@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "32d33b0d420d43a60b2d26ddf9ba904915c3e8d49cd2b987d9c53e4063f8def6": [
+    "2394b4ea2c3e2013b5b48df1514f428927a362d82458bb3988776c2f6ee9a6a9": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state they have different surnames and different organizational roles (CEO vs intern), indicating two distinct individuals.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that the individuals have different surnames and different roles (CEO vs. intern), indicating they are separate people.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "73b009c6abf2ed560cd83a7e4d6632e843f80c09b35ee28a2786b542fd53b3a6": [
+    "4573c026bfbc250da53ff110a8e06e3f384e3ad3d893d78315425a4d5b359116": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.8,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While both relate to electronics manufacturing, 'Smartphone Maker' is too narrow (only smartphones), whereas 'Mobile Device Manufacturer' is broader (includes tablets, wearables, etc.), making them distinct categories.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.7,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Smartphone Maker is too specific (only phones), while Mobile Device Manufacturer is a broader category including tablets and wearables.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "a05e72603e16b67244cc880d6cc98548ca2863f2827aff8b8e0bfec3ef881c85": [
+    "14a2dda26051513e81ad48d4253c239e5f803630247076894aa43e4272b0744a": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While both involve providing or expecting a financial return, an Investor focuses on equity/asset ownership for profit, whereas a Lender specifically involves the provision of funds that must be repaid (debt).\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"While both involve providing capital, 'Investor' focuses on profit/return on an asset, while 'Lender' specifically implies a loan structure with repayment expectations.\"}]}"
       }
     ]
   }

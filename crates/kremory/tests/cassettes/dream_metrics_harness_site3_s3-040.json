@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "cda95308b81145c8f8c80f3156872ae5b812f26265931410f863c0f62991fc26": [
+    "275135e03cb6730608c53b06c9c3d4515a121741b8546abde410ebfa1e8f5c1c": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"One refers to the content/concept of 'News' (information), while the other is a general adjective 'New'.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"News refers to a category of information/content, whereas 'New' is an adjective describing a quality of something.\"\n    }\n  ]\n}"
       }
     ]
   }

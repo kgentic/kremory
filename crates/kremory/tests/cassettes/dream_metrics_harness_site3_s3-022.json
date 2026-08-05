@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "7150e4bbbedcf464d3e89ccc1874d9df7e95efd7cfa28c7c9ba47667fc952041": [
+    "a31126ab2a6504b5981cad2adbcaf83ffa2b05cbecb601ba67e78e13e2a63733": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.8,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Corporation specifically implies a formal, legally incorporated structure, whereas Enterprise is a broader term for any business venture or organization without specific structural constraints.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Corporation implies a specific, legally structured entity, while Enterprise is a broader term for any business venture and doesn't necessitate a specific legal form.\"}]}"
       }
     ]
   }

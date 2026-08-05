@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "4f37e6495d1a7734aaeb4a8a2f9722bbe140384990c8bbe9202eb9ddcfff604b": [
+    "b19f593a8f53c25ea784ca96a786ccaa1de85e8c85eae0bc9d47bf1e24dc5c82": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The context explicitly suggests that 'Chuck' is a traditional nickname for 'Charles', and both names share the same surname 'Delgado', making it highly probable they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Chuck' is a traditional nickname for 'Charles', and they share the same surname, making it highly probable they refer to the same person.\"\n    }\n  ]\n}"
       }
     ]
   }

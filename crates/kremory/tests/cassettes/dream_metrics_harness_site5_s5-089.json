@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "1af4fb9feddd5cf9ae59b5960501edf1f50449c213a685f0d2d8213ae24834af": [
+    "7f5256f006c8742efdbd6f54f3de941c967f89205394292dfa27639250882c7f": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym and the other is the full name, and the context explicitly links the acronym to the full name.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (IAEA) and the other is the full name, which is explicitly stated to correspond to the acronym.\"\n    }\n  ]\n}"
       }
     ]
   }

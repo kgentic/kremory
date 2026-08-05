@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "a72b08959cf9b943f70fcf7baad69d1d82170363553e5715e8cb04c77aa6d29d": [
+    "7aa9f2afba30ded556d0da18a459446af5399e08fb8d11579fa59ee321bed9b5": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms refer to businesses in the software industry, distinguishing between selling/licensing and developing/selling, which are closely related and likely interchangeable in a general type registry.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both types describe businesses involved in the software industry (selling/developing software). They are semantically overlapping and likely interchangeable.\"}]}"
       }
     ]
   }

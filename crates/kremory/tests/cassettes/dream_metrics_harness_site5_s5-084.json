@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b88086f9e3f63acf3af9d424dfcd79baeeb2a893f8e1f38aa6b7b017a7403650": [
+    "f3e6e55ce8ed0e5f4a83659305a196817b85242a85f929429202cc81d2d94c1c": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Vicky is a conventional nickname for Victoria' and they share the same surname, indicating they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Vicky' is a conventional nickname for 'Victoria' and they share the same surname.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "3399950b84a4cbc61a52e2ac797d0f0409e5efccc16546f56ed9002da1329f1e": [
+    "c26289837c290751f72f8c148c2326b58b8e05a60dd50e167cdce2278e5a3b05": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two individuals, one in legal and one in product, are documented as separate individuals despite sharing a surname.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that Christina Doyle (legal) and Christopher Doyle (product) are documented as separate individuals, despite sharing a surname.\"}]}"
       }
     ]
   }

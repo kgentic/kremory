@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "295d07d8a0761926f6206cbe1545b9080c39012196db4424ad4f0d3ccb11a618": [
+    "39c31a405c94acf5c9b117d052a005825a0b6f7ffc8357426df7705e3b852003": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One entity is the acronym (AA) and the other is the full name (Automobile Association) for the same organization.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym (AA) and the other is the full name (Automobile Association), which are explicitly stated to refer to the same organization in the description and facts.\"}]}"
       }
     ]
   }

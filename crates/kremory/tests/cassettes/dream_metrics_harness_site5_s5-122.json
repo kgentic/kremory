@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "92bcd487390968ee72f6b92f1400af3b386025525ddbaba22026b02b8b4234b1": [
+    "f4956205d38e3bb8f4683341937e095c779e045c87940a6b34393007a6961f2b": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The pair uses the same acronym 'MAS' but clearly refers to two distinct entities: Monetary Authority of Singapore (a central bank) and Malaysia Airlines System (an airline). They are separate organizations.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The prompt clearly describes two distinct entities (MAS as airline vs. MAS as central bank) that share an acronym but are separate organizations.\"}]}"
       }
     ]
   }

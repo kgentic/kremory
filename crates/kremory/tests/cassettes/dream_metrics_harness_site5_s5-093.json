@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "c64afb7d257984a53bcb70d52a09506c404f385194862da800f2553cd0587a76": [
+    "fa4412b5fc471eb3aa6ac1e22238b8330607b05f8be7a9c86d0f0806db18c5e1": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (IOC) and the other is the full name (International Olympic Committee), and the description explicitly states the acronym stands for the full name.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Pair A is the acronym for the full name in Pair B, and the description explicitly confirms this relationship.\"\n    }\n  ]\n}"
       }
     ]
   }

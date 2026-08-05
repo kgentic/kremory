@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ecdf893824afad878d64ca7edcbd3ba00a92be1efa36ba85fa83d84086fb405c": [
+    "59bc016fa2e9cdce1cbb34cf6c6bc7bb0bca87b6d46839fd44608c6af2580a20": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"A is the acronym for B, and the description confirms this standard acronym relationship.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One entity is the acronym (PAN) and the other is the full name (Personal Area Network) for the exact same concept, as stated in the descriptions.\"\n    }\n  ]\n}"
       }
     ]
   }

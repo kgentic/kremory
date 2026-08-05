@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "4fb191fb53b434ec1785d01cde719973b3b643c77f9fcc40cb9c6ee729016ccf": [
+    "07d6a47ca2516a25b816ddeae97c932e3a890e8800c7640ef62cd5cfcdf242b6": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions indicate two distinct individuals: Francesca Costa and Frank Costa. Although 'Frankie (Francesca Costa)' uses a nickname for Francesca, the context strongly differentiates her from 'Frankie (Frank Costa)' (who refers to Frank), noting separate employee IDs and meetings.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The names are distinct due to the inclusion of '(Francesca Costa)' in A and '(Frank Costa)' in B, despite both referring to members of the same family/company context.\"}]}"
       }
     ]
   }

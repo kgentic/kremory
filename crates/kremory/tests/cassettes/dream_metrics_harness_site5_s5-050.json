@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "2e59290d57bb1aa9c18b4b90039db2ee04815c422fe09c29b89362ba6cf19f28": [
+    "7751883ee619c970c1e4d05b07bf3dfa4c2a465f0c644a3016d1f2e46cd32043": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly differentiate the two individuals: one is current ('Francesca Lombardi'), and the other is a former lead ('Francis Lombardi'), suggesting they are different people despite the shared surname.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions clearly differentiate the individuals: A is 'Francesca Lombardi' (current member) and B is 'Francis Lombardi' (former lead), despite the shared surname context.\"}]}"
       }
     ]
   }

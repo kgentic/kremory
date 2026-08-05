@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0d509eab730c9867883e5b80f36484159abd579e36465aaeccd26bbe7bbb282e": [
+    "07515758c8f57edd5ff590ec7fd1b0e841882785c9e7b86cabb7792a95f88748": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Painting and Sculpture are both forms of art, but they describe different media/dimensions (2D surface vs 3D form).\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While both are types of art, 'Painting' is a 2D medium, and 'Sculpture' is a 3D medium. They represent distinct artistic forms.\"\n    }\n  ]\n}"
       }
     ]
   }

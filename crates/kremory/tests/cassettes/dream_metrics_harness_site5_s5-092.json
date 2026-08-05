@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "18fbd395649f15c8fcdeb8a1d5361a52ceb43be320cdd5b061cc4e5e9bf53aa9": [
+    "621e2a088d6a3a45afac8216dbd59023c7049fd957cd4dbaecd3174f75663f66": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is the full name/description of the acronym CERN (A).\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The full name 'European Organization for Nuclear Research' is the standard English expansion of the acronym 'CERN', and the provided context confirms this relationship.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "657e775c8f1625dec7dbf2093f9e856921bd6ed410ed3875a29420205ad2bbb3": [
+    "1722dd3ccc45fa9f1e3554c6e9a37771b4d6b32e36ffd485224eea5e0e28a177": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The context explicitly states that 'NIH' could plausibly mean the phrase 'Not Invented Here', suggesting they refer to the same concept/term in this context.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.85, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The context explicitly states that 'NIH' could plausibly mean 'Not Invented Here' within the same discussion, indicating they refer to the same concept/phrase in this instance.\"}]}"
       }
     ]
   }

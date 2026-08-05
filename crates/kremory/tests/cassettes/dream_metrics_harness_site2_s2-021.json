@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "db98d368d7294b2edac861298f1a8599f4e6fc6693c5dbaf77548d4b82f04002": [
+    "84800ff234f86d7441daaa25061bcc55f47ec26384b534cf3ae43eb7dcd7dccc": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The proposed and existing types have virtually identical names (ignoring capitalization/spelling variation, which is common) and descriptions, indicating they refer to the same semantic category.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions are semantically identical, differing only in the spelling of 'Organization' vs 'Organisation' (a common localization difference), indicating the same underlying concept.\"\n    }\n  ]\n}"
       }
     ]
   }

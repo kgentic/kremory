@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "a635d1debf63c8cdb1db692f2fc22489cb3b010cac86592777239e73571265cf": [
+    "0b5cd3d90e1e368f04fad0f38320fbe4597275fc10641ff3ba95977ef4b3c7cb": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state the two forms differ only by an acute accent on the letter 'e' and share an identical registration number, indicating they are the same legal entity name variations.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states the two names differ only by an acute accent, and a shared factual constraint (identical registration number) confirms they refer to the same legal entity.\"}]}"
       }
     ]
   }

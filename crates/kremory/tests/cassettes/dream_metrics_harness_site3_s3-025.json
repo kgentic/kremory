@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ef798fa184b3fa2270376e3155d4540a5b5c617e61fd8c07cf7ff06eeafb18f6": [
+    "fafbd36f2a96966530faecab6852d9bdcfe696a442d3091907ad553273c945ba": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Manuscripts are a specific, older, or creative form of document. Semantically, they both refer to written records of information.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.85, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"A manuscript is a specific type of document, referring to a written composition. The semantic category of 'written composition/record' is shared.\"}]}"
       }
     ]
   }

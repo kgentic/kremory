@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "c799d7d97831441d311880e37617e7705dded2d5a549a4ba0799ce17040a6263": [
+    "b451537119d4b18cb59b3acb0a34450c13e53a486b11c3cc7fb1f9037fe2e45e": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Clinics provide consultation/treatment, while pharmacies are retail dispensing locations. They are distinct types of healthcare facilities.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.85,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"A Clinic focuses on medical consultation/treatment, while a Pharmacy focuses specifically on dispensing and selling medicines.\"\n    }\n  ]\n}"
       }
     ]
   }

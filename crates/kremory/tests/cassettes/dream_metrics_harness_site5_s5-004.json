@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d898df6e5393a30849fd4263e911bdc15b594bfc54eb1dfc70f4d099653a9446": [
+    "1baf1fcefdf260c02beaec6205c472ac3fd657537bb7c2c7ffbe5eeee435f1b4": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One name is the recognized acronym (NATO) for the other name (North Atlantic Treaty Organization), indicating they refer to the same organization.\"\n}\n]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the well-known acronym for the other name.\"\n    }\n  ]\n}"
       }
     ]
   }

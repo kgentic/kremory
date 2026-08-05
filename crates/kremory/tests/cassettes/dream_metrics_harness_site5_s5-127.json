@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "472e3cd5ea8a5b646369b18da27f0023879de7d5cbbbad54467a999523ab3d0b": [
+    "a9e225e31265c6597bad35ff092c52a02b030b00319a6057455f3a1d0b15cf3b": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.8, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair presents two different meanings for the abbreviation 'BA' (Academic Degree vs. Airline). Although they share the same initials, they refer to distinct concepts in the real world, making them different entities.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The context explicitly notes that 'BA' can mean two different things (British Airways and Bachelor of Arts), and this pair compares the general abbreviation 'BA (Bachelor of Arts)' against the specific entity 'BA (British Airways)', indicating they are distinct entities in this comparison.\"}]}"
       }
     ]
   }

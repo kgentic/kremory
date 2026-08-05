@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d1b4893c51223620dde1df908d5d5c49f56a3c4dce949940c79b3d233a8b5fd1": [
+    "43ace927a150459e31dfae35d98638c9c1453ddcaa85c90a4c16695a83bc6e19": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Physician and Doctor are near-synonyms for the same professional category of medical practitioner.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms refer to a medical practitioner, which are semantically equivalent roles.\"}]}"
       }
     ]
   }

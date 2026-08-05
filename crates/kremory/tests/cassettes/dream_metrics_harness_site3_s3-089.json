@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "4cb74cd885c2541475b4408a84c6f995cb6d1477d52f7607f974f87fb7be50d5": [
+    "abe769728e45fe0fb286dd630304aded150fb2903ba7e61defcec8f54836f631": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These are identical concepts, differing only by capitalization, indicating the same entity type.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These are identical concepts with only case differences in spelling/naming.\"}]}"
       }
     ]
   }

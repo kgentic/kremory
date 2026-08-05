@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "8aa5dcb56c07daae2c79eca4a9f105c51c21c64e1ae0c45b8f83d51bcbcf80d9": [
+    "6d0aa0e4ed1c67612c40ebef148cee496432b292d5ba9078844d7a71e9eca71b": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"In most semantic contexts, 'Nation' and 'Country' are used synonymously, though 'Country' often implies a political state ('Nation-State'). They refer to the same core concept of a sovereign territory.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"In most common usage, 'Nation' and 'Country' refer to the same geopolitical entity, although 'Country' sometimes implies statehood which 'Nation' does not guarantee.\"}]}"
       }
     ]
   }

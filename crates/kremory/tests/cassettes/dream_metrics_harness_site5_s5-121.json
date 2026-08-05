@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b7139595ca4c1e66230c69a263e79b3b2c568398e5066e72947165cbb3e00203": [
+    "63458c33750b7e2c6005440a7f0ad6874c9131bd0e273530cfaf5a33e367bec1": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are identical except for case and the presence/absence of a diaeresis, which the context explicitly states refers to the same startup.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that the two forms differ only in casing and diacritics, and the facts confirm they refer to the identical startup name from the same funding announcement.\"\n    }\n  ]\n}"
       }
     ]
   }

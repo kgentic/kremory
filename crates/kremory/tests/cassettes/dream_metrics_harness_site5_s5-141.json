@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "34ae0bc11f0ed1e2d5369fb3e12cdc010b6dfceb634cc5e254c29acdf57a78be": [
+    "fb678b2cfa43f0210daea435e06c8715d7e4705f59775569c7b5f22093316178": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that 'Jo (Joanna Reyes)' and 'Jo (Joseph Reyes)' are two distinct individuals, even though they are a married couple and share context. They have separate IDs (AM-8834 vs AM-9012).\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The description explicitly mentions two different individuals, Joanna Reyes and Joseph Reyes, with distinct IDs and separate client sets, indicating they are different people.\"}]}"
       }
     ]
   }

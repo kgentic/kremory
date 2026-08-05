@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "c0f159848c8f9c47775ba18dee964713f919e2d4eb4439879b411c6903c81dee": [
+    "d787bdcfa80e225ccee4dc76c27b5739375c1b6bdfd12644671b0aabfb0a359c": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The context explicitly states that 'Fred is a standard nickname for Frederick', and both share the same surname, indicating they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Fred' is a standard nickname for 'Frederick', and the names share the same surname.\"}]}"
       }
     ]
   }

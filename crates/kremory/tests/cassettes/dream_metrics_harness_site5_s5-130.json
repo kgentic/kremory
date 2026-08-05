@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "03fed6da90ce8b235b18cc2cd474e70ae3d9860816d38de07ac39a133aa2d304": [
+    "21eb23ceff53772fa4dc10fe29319df7e8182454d92ec73f205c851995cc9957": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.5, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The provided context explicitly states that 'AA' can refer to two different, distinct entities: Alcoholics Anonymous and Automobile Association. The pair compares these two different meanings of the same acronym.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair highlights the ambiguity of the acronym 'AA'. While both entries use 'AA' and share context, they refer to two distinct entities (Alcoholics Anonymous vs. Automobile Association). They are not the same real-world entity.\"}]}"
       }
     ]
   }

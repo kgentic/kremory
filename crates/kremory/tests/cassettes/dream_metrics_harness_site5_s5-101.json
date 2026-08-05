@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "c48fbe742bc4a9344a4855ffe921582493e03ab3935715e0092ee4d7872b6a7f": [
+    "788f8fb4be612ee8cb9ebbff725b4648fe61b83e35266c98a901be61b58dcfbd": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that 'Dick' is a traditional nickname for 'Richard', and they share the same surname, indicating they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Dick' is a traditional nickname for 'Richard', and they share the same surname.\"\n    }\n  ]\n}"
       }
     ]
   }

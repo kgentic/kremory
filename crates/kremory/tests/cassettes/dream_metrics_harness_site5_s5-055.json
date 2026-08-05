@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "06575113cc192f2d838dad7586c64380cc16ea0efd7624a07753335b30c0322d": [
+    "3728b22e0721746d020f859ed93aca8b437d7520268e1178298f43cf1e2cf5b0": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair B is a full expansion of one of the plausible interpretations of the acronym 'CAP' in Pair A. The descriptions and facts strongly suggest they refer to the same policy.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The context strongly suggests that 'CAP' could refer to the EU's Common Agricultural Policy, and the second name is the full name for that acronym, making them highly likely to be the same entity.\"}]}"
       }
     ]
   }

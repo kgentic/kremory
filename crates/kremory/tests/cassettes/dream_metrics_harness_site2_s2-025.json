@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b07b8adc2b7da54b70d01e6a83c84251acf6f1a4ecf688496738929a0e683bfd": [
+    "86f125d3e25fd6ec64b0d18bf6ed1c5474c7779a1be5609da2eac549e450a379": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While many employers are companies, 'Employer' focuses specifically on the relationship of hiring/paying labor, which is a functional role. 'Company' is a broader legal/commercial structure. They describe overlapping but distinct concepts.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.85,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While a 'Company' is often an employer, the 'Employer' definition is broader as it includes 'individual' and focuses purely on the labor/wage relationship, whereas 'Company' specifically defines a commercial, profit-seeking 'business entity'.\"\n    }\n  ]\n}"
       }
     ]
   }

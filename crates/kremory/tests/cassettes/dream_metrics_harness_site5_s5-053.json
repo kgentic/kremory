@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "983a02f509da7c2109b87147f360fb9a0faf256c34313dca17abebcde9d3c295": [
+    "daa2c846494811ca1dc8e8364e6e506674f00424a263e866ebd5793446ba9083": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The context explicitly names them with different surnames (Delacroix vs Osei) and different roles (product manager vs engineering manager), suggesting they are two different individuals.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.5, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state they are two different people (Delacroix vs Osei) despite sharing the first name 'Robin' and appearing in the same context.\"}]}"
       }
     ]
   }

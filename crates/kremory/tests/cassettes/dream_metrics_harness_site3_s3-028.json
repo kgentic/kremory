@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0168f42d75ac4916ae5bb4f55c352fcb489db826afe6eb80f5f64c5362838dbd": [
+    "208584a3b81c319e50206320a84c86b612e1d4e2821056874fca69d645918e99": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Cash is a specific form of money (physical currency), while Currency is the broader system or concept of legal tender, which includes digital forms that are not physical cash.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Cash is a physical manifestation of money, while Currency is the broader, systemic concept of recognized money (which includes digital forms). They are related but distinct types.\"}]}"
       }
     ]
   }

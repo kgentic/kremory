@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "20f78dbf04e5562954c49f6c5b20447660308c68ea2db7c20fa0352a41c423f4": [
+    "c05016e6015eaab52212bde8c3886f05c684e396aed8cd14eb8752e57f16dce0": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The two names are identical except for the presence of an umlaut (ö vs o) on the same letter, which is a common variation in naming conventions for the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The two names are identical except for the presence or absence of an umlaut (ö), which is a common variation for the same person's name.\"\n    }\n  ]\n}"
       }
     ]
   }

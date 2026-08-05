@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0319e60c50c968f0173182dccec71db07170506b741e56119cc4880a0a5ac6f7": [
+    "a2df4f71033d494ef7860f928b64a09e174e60c0807cc6b7abc2c82b39fbe60b": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair uses the same acronym 'IRA' but refers to two distinct, well-documented entities (Financial Account vs. Paramilitary Group). The context suggests disambiguation is necessary, implying they are different entities.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair uses the same acronym 'IRA' but refers to two distinct concepts: a US financial account and an Irish paramilitary group. The descriptions confirm they are different entities.\"}]}"
       }
     ]
   }

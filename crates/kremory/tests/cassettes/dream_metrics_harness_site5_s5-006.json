@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "363c4cfb04ec7cb600b5ae2c0fc4900c0bca4b796f2e98438fc5dd2f36308570": [
+    "7b526ebd205162d82caec7b975f01c000b275ebb0afa8a5b1467c0df724e6aa4": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One name is the standard abbreviation (UN) of the other name (United Nations), indicating they refer to the same organization.\"\n}\n]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the standard abbreviation (UN) of the other full name (United Nations).\"\n    }\n  ]\n}"
       }
     ]
   }

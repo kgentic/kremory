@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "6510accc878a38f87e3f3e5198f1f9b4e7f9e544eb840bf708896751cee4e4a2": [
+    "d67b2f9c0a3471222a4d5f51f2475efcd0c24a1d609cef07298b49b11ab54888": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two definitions are identical in both name and description.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The definitions are identical, indicating the same semantic category.\"\n    }\n  ]\n}"
       }
     ]
   }

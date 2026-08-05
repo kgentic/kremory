@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "9d20852825f92432a008581e7aba801c1180161001cafca60207f6b387a9e163": [
+    "a20e1bd8cc41751632f00d28a18e35d14b940db0828a7a4f6c0ae13d44977a8d": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions are nearly identical, both defining a financial exchange for goods or services. 'Purchase' is a specific, common instantiation of the general concept covered by 'Transaction'.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions are virtually identical. 'Purchase' is a specific type of transaction, but semantically within this knowledge graph context, they likely refer to the same core concept: a monetary exchange for goods/services.\"\n    }\n  ]\n}"
       }
     ]
   }

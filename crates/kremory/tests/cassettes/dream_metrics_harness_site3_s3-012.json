@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ac8ae8865165b5a1a29ebf21227c04a15506be1bd5fb45014b542d891ba48051": [
+    "8abe3a5e3ddff078d1233f3e224fad184f4a6995c15e36633838b7591847ea60": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The difference is only in singular vs. plural form ('University' vs 'Universities'), referring to the same concept: institutions of higher education.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two definitions are synonymous; one is singular and the other is plural form of the same concept.\"}]}"
       }
     ]
   }

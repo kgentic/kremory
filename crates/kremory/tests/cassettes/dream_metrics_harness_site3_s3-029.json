@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "dd825677c04667dfd1bdf801b820893f90b9829bd20320e02a1ca2155fdce7e7": [
+    "c8140b1912088bb6cf9a0aec476ef3ec7269fed6befe1f5ae8be11d6de3252b1": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions describe the same concept: a portable, wireless telephone.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms refer to the same physical category of portable telecommunication devices.\"}]}"
       }
     ]
   }

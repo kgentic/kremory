@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "375b2160675a690217c39fbf33ea0f708fd9400e6f05567484be652e17594f2e": [
+    "7a8e5b98c302ce4098d429e249c386f54dde93e60776f4fa2b55543e52192a75": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms describe a physical structure used for storing goods or materials.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms describe physical structures or locations dedicated to holding goods.\"}]}"
       }
     ]
   }

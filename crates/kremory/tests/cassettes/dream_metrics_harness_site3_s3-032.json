@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "fa3dbc0c5400d8c40e0b28f32b2faee3f614b68336247170d2583da73e2dc020": [
+    "2df4fe742927ea1c6218c3fd8b2ee6d14824959cd75377255f85ebb80df27091": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Ethics refers to the academic/philosophical field (the study), while Ethic refers to the principles themselves (the rules/set of guidelines).\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Ethics is the academic field (discipline), while Ethic is the set of principles (concept/set). They are related but distinct types.\"\n    }\n  ]\n}"
       }
     ]
   }

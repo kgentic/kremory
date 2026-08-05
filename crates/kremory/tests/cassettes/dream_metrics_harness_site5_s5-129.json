@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "a0c21330e62274f80398398f661e21d033cdcdc27074a84c7c4fb8af6b767953": [
+    "1b4f54853b9b3d5e84b1db2efa024eab718a339e0eb17a3c53ccb0e4f489ad72": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Although both names are acronyms for the same letters, 'Prostate-Specific Antigen' (a biological marker) and 'Public Service Announcement' (a media type) refer to two distinct real-world concepts.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.1, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The two names are different concepts that happen to share the same acronym (PSA). One refers to a medical marker, and the other refers to a media type.\"}]}"
       }
     ]
   }

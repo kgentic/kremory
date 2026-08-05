@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "e81129212b59db919fa10c41f1d7ef4940afd734de999c4f2742f652ff47bf4b": [
+    "624b5e98895993b3a9889774a833dc6767801a0f58656e23cb91542de4fe94b2": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms refer to a place where a person lives. 'Residence' is formal, while 'Home' is more connotative, but they describe the same underlying semantic category of dwelling.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both refer to a place of dwelling for a person; 'Home' is often a colloquial synonym for 'Residence'.\"}]}"
       }
     ]
   }

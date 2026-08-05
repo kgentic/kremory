@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d3f83265a097a4b6ee9aef1dfd7c67ae4de5091c7d53d023b0b8dae252508217": [
+    "2140ba8a7577d63373910803d19b4a2317d8786fdeb1a32a0d230db0b8b6e0c9": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are variants (full name vs. nickname) of the same person, sharing the same surname and description indicating a direct relationship.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The pair shows 'Liz' is explicitly stated to be a common short form of 'Elizabeth', and they share the same surname 'Turner'.\"}]}"
       }
     ]
   }

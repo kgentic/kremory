@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "955e41825672a0f88eebaccdb7eca2b4ff99cabca2ac96b3ecc523b33bdd275a": [
+    "98518ff31568288caab14dff432009acc5e79a4fdcdfbb84d988ffe712790800": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the recognized acronym (FDA) and the other is the full name, and the context explicitly links them as the full name of the acronym.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The name 'FDA' is explicitly described and stated to be the acronym for 'Food and Drug Administration'.\"\n    }\n  ]\n}"
       }
     ]
   }

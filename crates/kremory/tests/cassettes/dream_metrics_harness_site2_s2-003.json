@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "616e1ca5d0502c141004645dcf185558389f1e0e123c82bbe0c825c768c5bffb": [
+    "64484824b440761c6dfda9f0a040fed874f168225052e1f99065679767b78e67": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms describe the exact same professional role with identical functional definitions (licensed medical professionals diagnosing and treating illness).\"\n    }\n  ]\n}\n"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions refer to the same concept: a licensed medical professional who diagnoses and treats patients. 'Physician' and 'Doctor' are near-synonyms for this professional role.\"\n    }\n  ]\n}"
       }
     ]
   }

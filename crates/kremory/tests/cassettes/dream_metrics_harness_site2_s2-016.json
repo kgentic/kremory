@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d8cdc78dc8a2eaaff81c3d26f1100b950d48bfbb723d36dd4731c5fd9e86a34a": [
+    "fe4873dcbb5bb6eff42e1fb78036ed4286b0572d6b12e5a23b392e2989de8fec": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The Proposed entity is the 'Job Title' (the name/label of the role), while the Existing entity is the 'Job Description' (the document detailing the duties and responsibilities of that role). They describe two distinct concepts.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Job Title refers to the *name* or *label* of a role (e.g., 'Software Engineer'), while Job Description refers to the *document* detailing the duties associated with that role. They are related but semantically distinct concepts.\"\n    }\n  ]\n}"
       }
     ]
   }

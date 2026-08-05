@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "957956c8373600c573d6ac8f682242ecfe22639a701a7c0fd95c7165fe9f4152": [
+    "20ce3fca6778758927b96f2e85d4ebb1cf1af6e533fcfc1cade9b512b6873dcc": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The full name 'Master of Arts' is the unambiguous expansion of the acronym 'MA' in an academic context.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The full name 'Master of Arts' is the unambiguous expansion of the acronym 'MA' in an academic context, strongly suggesting they refer to the same degree.\"\n    }\n  ]\n}"
       }
     ]
   }

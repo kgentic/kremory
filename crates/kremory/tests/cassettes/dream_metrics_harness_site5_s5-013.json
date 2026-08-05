@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "8fbfd8b1a8d8b573d945f71bbc8a78067952e946dd2c21014af34afc53fc4c56": [
+    "4988ea3d33ff12903ce4f4fae2412d7f46615d9c4da89d313e1fb029a67ea317": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The pair consists of an acronym (SEC) and its full, officially recognized name (Securities and Exchange Commission), and the provided descriptions confirm this relationship.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (SEC) and the other is the full name (Securities and Exchange Commission), and the context explicitly confirms they refer to the same US regulatory body.\"\n    }\n  ]\n}"
       }
     ]
   }

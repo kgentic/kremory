@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "73ae2e140f82ddc2a0b32849499e1eafd929cd5b0a60544ed122d4a532c059a8": [
+    "771e20bbc8cdabc7de930449d2c1aeaea2b25a461a60a4fade0d2867ae0fc25c": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Reg' is a nickname for 'Reginald', and both names are linked to the same role (Head of Compliance).\"} ]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Reg' is a standard British nickname for 'Reginald' and ties both names to the same individual, the Head of Compliance.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "3134fd11cdc051f251916d13fe9ab99764beaf0930b69f10ae4edbcbca66f438": [
+    "f310680b5db1531ddf9ac2fa7027c38dd8e0b6ae04146b7a2bdf09537ecab66c": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Debbie is a common nickname for Deborah,' and they share the surname 'Marsh.' This strongly suggests they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Debbie' is a common nickname for 'Deborah' and they share the same surname, strongly indicating they are the same person.\"\n    }\n  ]\n}"
       }
     ]
   }

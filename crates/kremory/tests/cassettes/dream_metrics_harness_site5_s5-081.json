@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ada1a95e247a72dbe137aea2d00a810e8b0f67a3ea82c08335e7943f8791f036": [
+    "6a552ea1bd406617f4ae2f32aaf65848c9fc3f7c9278caaccfb19da106d9afa7": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Entity B is the full name and entity A is its established acronym, indicating they represent the same organization.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (UNICEF) and the other is the full name (United Nations Children's Fund), which the description explicitly states are the same entity.\"\n    }\n  ]\n}"
       }
     ]
   }

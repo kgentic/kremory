@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "6f2ff15e7fab299fa3bd14966a185fc4aa8f939637e82b48b8e5826547af7c69": [
+    "c933fb91c732770841787d641c0ebd89ef3af39f753b298b487d0f5a8bddc117": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The names ('Wristwatch' vs 'Wrist Watch') and descriptions are nearly identical and refer to the same physical object category.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are slight variations (spacing) but describe the exact same physical object: a timepiece worn on the wrist.\"}]}"
       }
     ]
   }

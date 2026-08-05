@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d10d17df2e8984011f4fadf33c68c782e86ebd189e28bf94a7f1e8c735d41068": [
+    "b3f0bcac517dcbc8a19a2e8b73699f15f03b89c49a2bc002aa57dad9226d74eb": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that 'Jack' is a well-established nickname for 'John', and they share the same surname.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Jack' is a well-established nickname for 'John', and they share the same surname, strongly indicating they refer to the same person.\"}]}"
       }
     ]
   }

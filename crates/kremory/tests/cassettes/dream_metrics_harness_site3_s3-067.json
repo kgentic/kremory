@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0618f8b4229ff7c543b8d7f895e7e8c2ec02f64b2c3cb6fff2db34065ded2e1a": [
+    "8586695e8eb0b274b0bb7f7c824491f97e110cff02ac4616dbc7f12ae5ac65d9": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Beverages and Foodstuffs are distinct categories; one is for drinking, the other is for eating.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Beverage is a specific subset of Foodstuff (liquids), while Foodstuff is much broader, including solids and ingredients.\"}]}"
       }
     ]
   }

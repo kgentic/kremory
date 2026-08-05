@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "238f9959cf20d6821c309bec45b45d8a0c77bb61ec7e05f3800fa8fb2162decd": [
+    "7208263abd604d89c9ec5ffa45aba04cd50bb44bc95baa9462c570d75e090a70": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The context explicitly assigns different roles (warehouse lead vs. sales director) and uses different full names (Bobby Jones vs. Robert Smith) for the two 'Bob' entries, suggesting they are distinct individuals.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The names are associated with different roles (warehouse lead vs. sales director) and different specific names mentioned in the facts (Bobby Jones vs. Robert Smith), indicating they are distinct individuals.\"}]}"
       }
     ]
   }
