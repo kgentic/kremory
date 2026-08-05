@@ -529,3 +529,270 @@ async fn migrate_025_creates_active_only_partial_when_index_absent() {
         "must create the active-only partial form, got: {after}"
     );
 }
+
+// ── migrate_004 crash-resume — the NON-VACUOUS drive (Quinn REL-002) ─────────
+//
+// `tests/migration_crash_resume.rs::an_incomplete_entities_scratch_is_not_renamed_
+// over_live_data` asserts the right property but **cannot reach the code that
+// guarantees it**: its fixture has been through every migration, so migrate_004's
+// G1 shape gate (`defs_a.rs:146-161`) sees the composite PK and returns `Ok(())`
+// before the resume branch. That was MEASURED — neutering the repair left it green.
+//
+// The repair therefore shipped **reasoned and unverified**, on the consumer
+// `open()` path, for anyone upgrading from a pre-004 database. These tests close
+// that: `migrate_004_composite_pk_entities` takes only a `Connection`, so a
+// genuinely **pre-004** fixture (single-column PK, no children tables to drag FKs
+// along) is ~20 lines here, versus the integration fixture that could not cheaply
+// build one.
+//
+// ⚠️ RED-PROVEN, not assumed: inverting `if scratch < snapshot` to `if false` in
+// `defs_a.rs` makes `an_empty_scratch_is_repopulated_from_the_snapshot_before_the_swap`
+// fail with `0 != 3` — the empty scratch renamed over three live entities, which is
+// exactly the silent total data loss the branch exists to prevent.
+
+/// The `entities` shape as it existed BEFORE migration 004: single-column PK, a
+/// `label` column (dropped later at 009) and a nullable `group_id`. Built by hand
+/// rather than by running the migration chain — the whole point is a database that
+/// migrate_004's G1 gate will NOT short-circuit on.
+async fn seed_pre_004_entities(conn: &libsql::Connection, rows: usize) {
+    conn.execute_batch(
+        "CREATE TABLE entities (
+            id           TEXT PRIMARY KEY,
+            label        TEXT NOT NULL,
+            properties   TEXT,
+            embedding    BLOB,
+            recorded_at  TEXT NOT NULL,
+            updated_at   TEXT,
+            group_id     TEXT,
+            access_count INTEGER
+         );",
+    )
+    .await
+    .expect("create pre-004 entities");
+
+    for i in 0..rows {
+        conn.execute(
+            "INSERT INTO entities (id, label, properties, recorded_at, group_id, access_count) \
+             VALUES (?1, 'Person', '{}', '2026-01-01T00:00:00Z', 'g', 0)",
+            libsql::params![format!("e{i}")],
+        )
+        .await
+        .expect("seed entity row");
+    }
+}
+
+/// Rowid-based count. NOT `COUNT(*)` — the libsql vector index can return 0 for a
+/// populated `entities` (SYSTEM-PRIMER gotcha #1), and migrate_004 recreates that
+/// index at step 6, so a `COUNT(*)` assertion here could read as data loss that
+/// did not happen. Mirrors the migration's own internal helper for the same reason.
+async fn rowid_count(conn: &libsql::Connection, table: &str) -> usize {
+    let mut rows = conn
+        .query(&format!("SELECT rowid FROM {table}"), ())
+        .await
+        .expect("rowid query");
+    let mut n = 0usize;
+    while rows.next().await.expect("row iter").is_some() {
+        n += 1;
+    }
+    n
+}
+
+/// True when `group_id` is part of the `entities` primary key — the exact predicate
+/// migrate_004's G1 gate uses. Used here as an INSTRUMENT CHECK: if this is already
+/// true before the call, the migration short-circuits and the test proves nothing.
+async fn group_id_is_in_pk(conn: &libsql::Connection) -> bool {
+    let mut rows = conn
+        .query("PRAGMA table_info('entities')", ())
+        .await
+        .expect("table_info");
+    while let Some(r) = rows.next().await.expect("table_info row") {
+        let name: String = r.get(1).unwrap_or_default();
+        let pk: i64 = r.get(5).unwrap_or(0);
+        if name == "group_id" && pk > 0 {
+            return true;
+        }
+    }
+    false
+}
+
+async fn table_exists(conn: &libsql::Connection, table: &str) -> bool {
+    let mut rows = conn
+        .query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?1",
+            libsql::params![table],
+        )
+        .await
+        .expect("sqlite_master query");
+    rows.next().await.expect("row iter").is_some()
+}
+
+/// **THE hazard.** A run crashed between `CREATE TABLE entities_new` and the
+/// `INSERT … SELECT` that fills it, leaving an EMPTY scratch beside a full backup.
+/// Renaming that scratch over `entities` destroys every row and reports a successful
+/// migration. The content check must repopulate from the snapshot first.
+#[tokio::test]
+async fn an_empty_scratch_is_repopulated_from_the_snapshot_before_the_swap() {
+    let conn = in_memory_conn().await;
+    seed_pre_004_entities(&conn, 3).await;
+
+    // The two artifacts a crash between step 2 and step 3 leaves behind.
+    conn.execute("CREATE TABLE entities_bak_004 AS SELECT * FROM entities", ())
+        .await
+        .expect("snapshot");
+    conn.execute_batch(
+        "CREATE TABLE entities_new (
+            id           TEXT NOT NULL,
+            label        TEXT NOT NULL,
+            properties   TEXT,
+            embedding    BLOB,
+            recorded_at  TEXT NOT NULL,
+            updated_at   TEXT,
+            group_id     TEXT NOT NULL DEFAULT 'default',
+            access_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (id, group_id)
+         );",
+    )
+    .await
+    .expect("empty scratch");
+
+    // ── INSTRUMENT VALIDATION — without these the test can pass for the wrong
+    // reason, which is precisely how its integration sibling went vacuous.
+    assert!(
+        !group_id_is_in_pk(&conn).await,
+        "INSTRUMENT: the fixture must be genuinely PRE-004, or G1 short-circuits \
+         and the resume branch under test is never entered"
+    );
+    assert_eq!(
+        rowid_count(&conn, "entities_bak_004").await,
+        3,
+        "INSTRUMENT: the snapshot must be full — it is the repair's source"
+    );
+    assert_eq!(
+        rowid_count(&conn, "entities_new").await,
+        0,
+        "INSTRUMENT: the scratch must be EMPTY — that is the crash being simulated"
+    );
+
+    migrate_004_composite_pk_entities(&conn)
+        .await
+        .expect("migrate_004 must complete the partial migration");
+
+    assert_eq!(
+        rowid_count(&conn, "entities").await,
+        3,
+        "REL-002: every entity must survive. A 0 here means the resume trusted that \
+         `entities_new` EXISTED rather than checking it was COMPLETE, dropped the live \
+         table and renamed an empty scratch over it — total silent data loss reported \
+         as a successful migration."
+    );
+    assert!(
+        group_id_is_in_pk(&conn).await,
+        "the migration must still have done its actual job — composite PK"
+    );
+    assert!(
+        !table_exists(&conn, "entities_new").await,
+        "the scratch must be consumed by the rename, not left behind"
+    );
+}
+
+/// The OTHER direction — a repair that fires unconditionally would also pass the
+/// test above. A scratch that is already COMPLETE must be swapped as-is, with the
+/// rows the interrupted run copied, not re-derived from the snapshot. Proves
+/// `scratch < snapshot` is a real discriminator rather than an always-true guard.
+#[tokio::test]
+async fn a_complete_scratch_is_swapped_as_is_without_repair() {
+    let conn = in_memory_conn().await;
+    seed_pre_004_entities(&conn, 3).await;
+    conn.execute("CREATE TABLE entities_bak_004 AS SELECT * FROM entities", ())
+        .await
+        .expect("snapshot");
+    conn.execute_batch(
+        "CREATE TABLE entities_new (
+            id           TEXT NOT NULL,
+            label        TEXT NOT NULL,
+            properties   TEXT,
+            embedding    BLOB,
+            recorded_at  TEXT NOT NULL,
+            updated_at   TEXT,
+            group_id     TEXT NOT NULL DEFAULT 'default',
+            access_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (id, group_id)
+         );",
+    )
+    .await
+    .expect("scratch");
+    // A COMPLETE copy, plus a marker row that exists ONLY in the scratch. If the
+    // repair fires anyway it clears the scratch and repopulates from the snapshot,
+    // and the marker disappears — which is what this asserts on.
+    conn.execute(
+        "INSERT INTO entities_new (id, label, properties, recorded_at, group_id, access_count) \
+         SELECT id, label, properties, recorded_at, COALESCE(group_id,'default'), \
+                COALESCE(access_count,0) FROM entities_bak_004",
+        (),
+    )
+    .await
+    .expect("complete copy");
+    conn.execute(
+        "INSERT INTO entities_new (id, label, properties, recorded_at, group_id, access_count) \
+         VALUES ('scratch-only', 'Person', '{}', '2026-01-01T00:00:00Z', 'g', 0)",
+        (),
+    )
+    .await
+    .expect("marker row");
+
+    migrate_004_composite_pk_entities(&conn)
+        .await
+        .expect("migrate_004 on a complete scratch");
+
+    assert_eq!(
+        rowid_count(&conn, "entities").await,
+        4,
+        "a complete scratch must be swapped AS IS (3 copied + 1 scratch-only marker). \
+         A 3 here means the repair fired when it should not have — `scratch < snapshot` \
+         would be an always-true guard, and the test above would pass vacuously"
+    );
+}
+
+/// The refusal path. A scratch with NO snapshot beside it cannot be checked for
+/// completeness, so the migration must fail LOUDLY rather than guess. Silence here
+/// would be a coin-flip on the user's whole entity table.
+#[tokio::test]
+async fn a_scratch_without_a_snapshot_refuses_to_swap() {
+    let conn = in_memory_conn().await;
+    seed_pre_004_entities(&conn, 3).await;
+    conn.execute_batch(
+        "CREATE TABLE entities_new (
+            id           TEXT NOT NULL,
+            label        TEXT NOT NULL,
+            properties   TEXT,
+            embedding    BLOB,
+            recorded_at  TEXT NOT NULL,
+            updated_at   TEXT,
+            group_id     TEXT NOT NULL DEFAULT 'default',
+            access_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (id, group_id)
+         );",
+    )
+    .await
+    .expect("orphan scratch");
+    assert!(
+        !table_exists(&conn, "entities_bak_004").await,
+        "INSTRUMENT: no snapshot — that is the condition under test"
+    );
+
+    let err = migrate_004_composite_pk_entities(&conn)
+        .await
+        .expect_err("an uncheckable scratch must refuse, not guess");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("entities_bak_004"),
+        "the error must name the missing snapshot so the operator can act; got: {msg}"
+    );
+
+    assert_eq!(
+        rowid_count(&conn, "entities").await,
+        3,
+        "refusing must leave the live table INTACT — a refusal that already dropped \
+         the table is not a refusal"
+    );
+}
