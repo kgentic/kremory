@@ -26,6 +26,18 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 tempfile = "3"
 
+# ⚠️ DX FINDING (2026-08-06) — a FOURTH undocumented direct dependency, same class
+# as INS-1's tokio/anyhow/autoagents-llm. `RecallRequest::as_of()` takes a
+# `chrono::DateTime<Utc>` and `RetrievedFact` exposes all four clocks as chrono
+# types, but kremory does NOT re-export chrono (no `pub use chrono` in `lib.rs`).
+#
+# A consumer can do SOME bi-temporal work without naming the type — harvest
+# `fact.recorded_at` and pass it straight to `.as_of()`, type inferred. But any
+# arithmetic ("an hour before", "a day after") needs `chrono::Duration`, so the
+# dependency becomes mandatory the moment `as_of` is used for anything but an
+# exact replay. The install docs do not mention it.
+chrono = "0.4"
+
 # O11y capture. VERSION-LOCKED to kremory's own metrics stack: the global
 # recorder registry is keyed by the `metrics` crate MINOR version, so a mismatch
 # would silently capture ZERO of kremory's emissions. kremory = metrics 0.24 +
