@@ -187,7 +187,28 @@ impl GraphHandle for EngineGraphHandle {
             sink,
         } = params;
         let group_id = namespace_to_group_id(namespace);
-        let reference_time = Some(source_ref.occurred_at);
+        // TD-181: prefer the caller's declared document anchor over ingest
+        // wall-clock. `reference_time` becomes `valid_from` for every
+        // LLM-EXTRACTED fact (`ingest/pipeline/deferred.rs:73` ->  `:450`), so
+        // using `occurred_at` meant a document the caller explicitly dated (a
+        // 2019 transcript, say) produced facts valid from the moment ingest
+        // happened to run.
+        //
+        // `published_at` already carried exactly this meaning for CALLER-SUPPLIED
+        // structured facts (`:224` below, and the `published_at()` doc comment:
+        // "the bi-temporal anchor for the source document"). It was simply never
+        // consulted on the extraction path — so the same document yielded two
+        // different anchors depending on who produced the fact.
+        //
+        // Opt-in and default-identical: `published_at` is `None` unless the caller
+        // sets it, and this falls straight back to `occurred_at`, so no existing
+        // behaviour moves.
+        //
+        // It also makes the extraction path REPRODUCIBLE, which is what TD-181
+        // needs: `valid_from` is rendered into the `ContradictionVerdict` prompt
+        // (`core/contradiction.rs:143`), so a wall-clock anchor changed the prompt
+        // — and therefore the VCR fingerprint — on every single run.
+        let reference_time = Some(source_ref.published_at.unwrap_or(source_ref.occurred_at));
 
         // ── ADR-052 Gap 1: coerce the memory-layer EnrichmentEventSink to the
         // core-layer IngestEventSink supertrait so the unified extraction routine
