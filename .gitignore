@@ -104,3 +104,4 @@ bench-*.db
 
 # Empty/partial bench result scratch
 bench/longmemeval/results/
+__pycache__/
