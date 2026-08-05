@@ -132,6 +132,7 @@ mod sink_wiring_integration;
 mod source_id_round_trip;
 mod spike_background_plus_engine_handle_concurrent;
 mod spike_c6_uses_pub_crate_primitives;
+mod stub_entity_recallability;
 mod spike_comprehensive_fix;
 mod spike_dyn_compat;
 mod spike_f2_cross_namespace_dedup;

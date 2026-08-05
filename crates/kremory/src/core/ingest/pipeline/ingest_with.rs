@@ -1258,6 +1258,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // the other cross-phase accumulators so it survives the `'phases` block.
         let mut deferred: Vec<DeferredEmission> = Vec::new();
 
+        // Forward-reference stub names awaiting an embedding, flushed POST-COMMIT
+        // beside `flush_deferred_emissions` for the same DUR-7 reason: embedding is a
+        // network round-trip, and holding the write transaction open across it would
+        // serialise every other writer behind an LLM call. Collected here so it
+        // survives the `'phases` block.
+        let mut stub_names_to_embed: Vec<String> = Vec::new();
+
         // Helper closure-like block that returns Result<()> so we can commit or
         // rollback in one place.  We use a labelled block instead of an async
         // closure to avoid capture/lifetime complexity.
@@ -1293,8 +1300,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     //
                     // Strategy: attempt insert_entity_with_group; if the entity already exists
                     // (UNIQUE constraint error), that is fine — a real row is present.
-                    let stub_props =
-                        serde_json::json!({ "stub": true, "source": "forward_reference" });
+                    // TD-113: `properties["name"]` is REQUIRED for FTS findability.
+                    // `entities_fts` indexes `properties` ONLY — `entities_fts.label` is
+                    // empty post-Migration-009 — so a stub without a name token is
+                    // invisible to the FTS seed arm. TD-113 established exactly this for
+                    // the `with_facts` pinned path (`:458-466`: *"A bare `{"stub": false}`
+                    // stub carried no name token → recall returned 0"*), but the
+                    // EXTRACTION forward-reference path never received the same fix.
+                    //
+                    // So these stubs were unreachable by BOTH retrieval arms: no
+                    // `properties["name"]` (no FTS) and no embedding (no dense — see the
+                    // post-commit embed below). It also feeds `graph_search`'s
+                    // original-case `entity_name` render.
+                    let stub_props = serde_json::json!({
+                        "name": norm_name,
+                        "stub": true,
+                        "source": "forward_reference",
+                    });
                     match self
                         .graph
                         .insert_entity_with_group(InsertEntityWithGroupParams {
@@ -1312,6 +1334,17 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             // DUR-7: both counters claim a persisted stub row, so they
                             // are replayed after the outer commit, never here.
                             deferred.push(DeferredEmission::StubInserted);
+                            // A stub written here carries NO embedding, so it is absent
+                            // from the ANN index while still being counted by
+                            // `plan_index_fetch`'s `namespace_rows` — which is exactly
+                            // the TD-114 shortfall `search.rs:353-383` reports. Measured
+                            // on LoCoMo conv-26: 25 of 67 entities (37%) had a NULL
+                            // embedding and were unreachable by dense retrieval, and the
+                            // filtered-ANN arm under-filled (requested=10 delivered=7)
+                            // even with the group filter matching every row.
+                            //
+                            // Queued, not embedded inline: see `stub_names_to_embed`.
+                            stub_names_to_embed.push(norm_name.clone());
                             tracing::warn!(
                                 target: "kremory.ingest.stub",
                                 name = %norm_name,
@@ -2323,6 +2356,70 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // return for nested callers only, which is the hardest variant to see.
                 outer_guard.commit().await?;
                 flush_deferred_emissions(deferred, sink, episode_id);
+
+                // ── Embed forward-reference stubs (TD-114 shortfall root cause) ──
+                //
+                // POST-COMMIT for the DUR-7 reason above plus one of its own: each
+                // iteration is a network round-trip to the embedder, and running it
+                // inside the write transaction would hold the lock across an LLM call.
+                //
+                // BEST-EFFORT, deliberately. A stub is already the degraded path — a
+                // forward reference to an entity the extractor never described. Failing
+                // the whole ingest because its name vector could not be written would
+                // trade a retrieval gap for data loss. The per-reason counter is what
+                // makes the failure visible instead of silent
+                // ([[observability-first-class]]).
+                //
+                // TD-143: this is a WRITE into `entities.embedding`, so it MUST go
+                // through `document_embed_text` with the same `embed_task_prefix_enabled`
+                // config as the main entity path (`:1699-1714`). Embedding the bare name
+                // here would place the vector in a DIFFERENT space from every other
+                // entity and silently degrade dense recall rather than fix it.
+                for stub_name in stub_names_to_embed {
+                    let text = document_embed_text(
+                        &stub_name,
+                        self.config.search.embed_task_prefix_enabled,
+                    );
+                    match self.embedder.embed(&text).await {
+                        Ok(v) => match self.graph.set_entity_embedding(&stub_name, &v).await {
+                            Ok(()) => {
+                                metrics::counter!(
+                                    "kremory.ingest.stub_embedded_total",
+                                    "outcome" => "ok",
+                                )
+                                .increment(1);
+                            }
+                            Err(e) => {
+                                metrics::counter!(
+                                    "kremory.ingest.stub_embedded_total",
+                                    "outcome" => "store_failed",
+                                )
+                                .increment(1);
+                                tracing::warn!(
+                                    target: "kremory.ingest.stub",
+                                    name = %stub_name,
+                                    error = %e,
+                                    "stub embedding computed but NOT stored — this stub \
+                                     stays invisible to dense retrieval"
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            metrics::counter!(
+                                "kremory.ingest.stub_embedded_total",
+                                "outcome" => "embed_failed",
+                            )
+                            .increment(1);
+                            tracing::warn!(
+                                target: "kremory.ingest.stub",
+                                name = %stub_name,
+                                error = %e,
+                                "stub embedding FAILED — this stub stays invisible to \
+                                 dense retrieval (ingest continues)"
+                            );
+                        }
+                    }
+                }
                 if let Some(s) = sink {
                     s.on_stage_change(crate::core::error::IngestStatus::EntitiesReady);
                     s.on_stage_change(crate::core::error::IngestStatus::Complete);
