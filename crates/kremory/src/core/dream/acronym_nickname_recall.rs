@@ -1843,6 +1843,227 @@ mod tests {
         );
     }
 
+    /// A `ChatProvider` that DELETES an entity as a side effect of adjudication,
+    /// then returns its scripted verdicts.
+    ///
+    /// This is not a contrived hook: it fires at exactly the seam the live failure
+    /// occupied. `acronym_nickname_recall` reads its ids ONCE at `:241`
+    /// (`load_entity_ids`) and applies merges later at `:417`; adjudication sits
+    /// between them. Deleting here reproduces "a pair endpoint that was present at
+    /// load and gone by apply" — a concurrent writer, another pass — deterministically,
+    /// with no sleep, no thread and no flake.
+    struct DeletingVerdictProvider {
+        conn: libsql::Connection,
+        delete_id: &'static str,
+        group_id: &'static str,
+        json: String,
+    }
+
+    impl std::fmt::Debug for DeletingVerdictProvider {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("DeletingVerdictProvider")
+                .field("delete_id", &self.delete_id)
+                .finish_non_exhaustive()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for DeletingVerdictProvider {
+        async fn chat_with_tools(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[Tool]>,
+            _json_schema: Option<StructuredOutputFormat>,
+        ) -> std::result::Result<Box<dyn ChatResponse>, LLMError> {
+            self.conn
+                .execute(
+                    "DELETE FROM entities WHERE id = ?1 AND group_id = ?2",
+                    libsql::params![self.delete_id, self.group_id],
+                )
+                .await
+                .expect("simulated concurrent delete");
+            Ok(Box::new(MockChatResponse {
+                text: self.json.clone(),
+            }))
+        }
+    }
+
+    /// **PER-PAIR ISOLATION (V1-CANONICAL §0b-sexies, E2E-1).** One pair whose merge
+    /// FAILS must not abandon the pass's other, already-adjudicated merges.
+    ///
+    /// `:462`'s error arm was a bare `?`. One bad candidate aborted the whole pass and
+    /// silently discarded every remaining nomination — each of which had already cost
+    /// an LLM call. Observed live as `snapshot: keeper entity `acme corporation` not
+    /// found in namespace`.
+    ///
+    /// Sensitivity, in both directions:
+    /// * restore the bare `?` and this test fails TWICE over — `.expect()` on the
+    ///   pass result (it returns `Err`) and `merges_applied` (0, not 1);
+    /// * the failing pair is deliberately FIRST in enumeration order (ids sort ASC at
+    ///   `:1248`, so `IBM` precedes `NASA`), because a failure in the LAST pair would
+    ///   leave the earlier merge applied even WITHOUT isolation and the test would
+    ///   pass vacuously.
+    ///
+    /// The failure injected is a missing KEEPER, which `snapshot_merge_pre_state`
+    /// rejects at `canonicalization.rs:1113-1118` — parse-loudly, since an
+    /// un-snapshottable merge could not be reversed.
+    ///
+    /// It also pins `kremory.identity.merge_apply_failed_total`, which until now
+    /// appeared ONLY at its emit site. That counter is the sole standing signal for
+    /// E2E-1's still-unknown root cause, so an untested counter here is an unverified
+    /// alarm ([[observability-first-class]]) — isolating an error without proving it
+    /// stays visible would just move the silence. Captured via
+    /// `metrics::with_local_recorder` on a single-threaded runtime (the library-safe
+    /// pattern from `tests/b1_observability.rs`; the recorder is thread-local, so the
+    /// runtime must not move the work off-thread).
+    #[test]
+    fn one_failing_pair_does_not_abandon_the_rest_of_the_pass() {
+        use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter: Snapshotter = recorder.snapshotter();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime builds");
+
+        metrics::with_local_recorder(&recorder, || {
+            rt.block_on(one_failing_pair_body());
+        });
+
+        // ── The failure must be COUNTED, not merely survived ──
+        let emitted: Vec<String> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .map(|(k, _, _, _)| k.key().name().to_string())
+            .collect();
+        assert!(
+            emitted
+                .iter()
+                .any(|n| n == "kremory.identity.merge_apply_failed_total"),
+            "the skipped pair MUST increment `kremory.identity.merge_apply_failed_total` \
+             — it is the only standing signal for E2E-1's unknown root cause, and a \
+             silently-skipped pair is indistinguishable from one that never existed. \
+             Emitted: {emitted:?}"
+        );
+    }
+
+    async fn one_failing_pair_body() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+
+        // Two INDEPENDENT initialism pairs. `load_entity_ids` sorts ASC, so the ids
+        // order IBM < International… < NASA < National…, and the upper-triangle
+        // enumeration nominates the IBM pair as index 0 and the NASA pair as index 1.
+        insert_entity(&graph, "IBM", "g_iso", "A technology company.").await;
+        insert_entity(
+            &graph,
+            "International Business Machines",
+            "g_iso",
+            "A technology company headquartered in New York.",
+        )
+        .await;
+        insert_entity(&graph, "NASA", "g_iso", "A space agency.").await;
+        insert_entity(
+            &graph,
+            "National Aeronautics and Space Administration",
+            "g_iso",
+            "The United States civil space programme.",
+        )
+        .await;
+
+        let llm = DeletingVerdictProvider {
+            conn: conn.clone(),
+            // The KEEPER of pair 0 — `pair.a`, the `acme corporation` shape.
+            delete_id: "IBM",
+            group_id: "g_iso",
+            json: r#"{"verdicts":[
+                {"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"acronym"},
+                {"pair_id":1,"is_same_entity":true,"confidence":0.95,"reasoning":"acronym"}
+            ]}"#
+            .to_string(),
+        };
+
+        let report = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g_iso",
+                model_id: "test-model",
+                embedder: None,
+            },
+        )
+        .await
+        .expect(
+            "ISOLATION: one failing pair must NOT fail the pass. An Err here is the bare \
+             `?` regression — the remaining nominations are discarded, each having already \
+             cost an LLM call",
+        );
+
+        assert_eq!(
+            report.candidates_nominated, 2,
+            "INSTRUMENT: both initialism pairs must be nominated, or the test cannot \
+             distinguish isolation from there being nothing left to isolate"
+        );
+        assert_eq!(
+            report.merges_applied, 1,
+            "the SECOND pair must still merge after the first one's keeper vanished. \
+             0 means the failure aborted the pass; 2 means the injection did not fire"
+        );
+
+        // The surviving pair really merged in the DB — not merely counted.
+        assert_eq!(
+            count_entities(&conn, "g_iso").await,
+            2,
+            "4 seeded - 1 deleted mid-pass - 1 consumed by the NASA merge = 2 \
+             (the orphaned `International Business Machines`, and the merged NASA)"
+        );
+        let mut rows = conn
+            .query(
+                "SELECT id FROM entities WHERE group_id = 'g_iso' ORDER BY id ASC",
+                (),
+            )
+            .await
+            .expect("survivors query");
+        let mut survivors: Vec<String> = Vec::new();
+        while let Some(r) = rows.next().await.expect("row iter") {
+            survivors.push(r.get::<String>(0).expect("id col"));
+        }
+        assert_eq!(
+            survivors,
+            vec![
+                "International Business Machines".to_owned(),
+                "NASA".to_owned()
+            ],
+            "NASA must be the surviving keeper of the second pair, and the failed pair's \
+             other endpoint must be left untouched rather than half-merged"
+        );
+
+        // Exactly ONE merge audit row — the failed pair must not leave an audit
+        // record claiming a merge that never happened.
+        let mut audit = conn
+            .query(
+                "SELECT COUNT(*) FROM identity_verdict_audit \
+                 WHERE group_id = 'g_iso' AND decision = 'merge'",
+                (),
+            )
+            .await
+            .expect("audit query");
+        let n: i64 = audit
+            .next()
+            .await
+            .expect("row")
+            .expect("count row")
+            .get(0)
+            .expect("count col");
+        assert_eq!(
+            n, 1,
+            "the failed pair must leave NO merge audit row — an audit trail that records \
+             a merge which did not happen is worse than no audit trail"
+        );
+    }
+
     /// Reversible-graph-mutations §6.2 V3-fix proof (Site #5): merge → `unmerge`
     /// → re-run the SAME pass → the split pair is NOT re-merged. Site #5's
     /// `WriteDecision::Merge` arm was the previously-UNGUARDED bypass; this test

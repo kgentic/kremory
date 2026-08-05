@@ -484,8 +484,22 @@ async fn simulate_crash_before_the_copy(
 /// non-vacuous — proven red by disabling `defs_h`'s repair — so REL-001, the regression
 /// actually introduced by this change, is genuinely covered.
 ///
-/// TODO_VERIFY: build a pre-004 fixture, or drive `migrate_004` directly once it is
-/// reachable from an integration test.
+/// ## ✅ The gap this comment described is CLOSED — 2026-08-05
+///
+/// The repair is no longer "reasoned and unverified". It is driven directly, at unit
+/// level, by `core::migrations::tests::an_empty_scratch_is_repopulated_from_the_snapshot_
+/// before_the_swap` — which builds a genuinely **pre-004** `entities` (single-column PK,
+/// no children tables to drag composite FKs along) so G1 cannot short-circuit, and is
+/// **RED-PROVEN**: inverting `defs_a.rs`'s `if scratch < snapshot` fails it with
+/// `left: 0, right: 3`. Two siblings pin the other directions — a COMPLETE scratch must
+/// be swapped as-is (so the guard is not always-true), and a scratch with no snapshot
+/// must refuse loudly with the live table intact.
+///
+/// The earlier note that a pre-004 fixture "cannot be cheaply constructed" was true of
+/// THIS integration fixture and false of the unit path: `migrate_004_composite_pk_entities`
+/// takes only a `Connection`. **This test is kept** — it still pins the ordinary
+/// already-migrated case (a stale scratch on a modern database must stay inert), which is
+/// the case real users hit. It simply is not, and never was, the REL-002 proof.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_incomplete_entities_scratch_is_not_renamed_over_live_data() {
     let db = unique_db_path("entities-partial");
