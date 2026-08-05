@@ -21,37 +21,41 @@ cargo build --features llm,embeddings
 ### Integration tests (no models required, always run)
 
 ```bash
-# Full suite — 153 lib tests + 7 retrieval benchmark + spike tests
-cargo test
+# Full suite — 1782 tests (measured 2026-08-06, `content-search,test-utils`).
+# Prefer nextest: it is process-per-test and ~16x faster than `cargo test` here (TD-109).
+cargo nextest run --workspace --features content-search,test-utils
+
+# Doctests are a SEPARATE tier — nextest does not run them.
+cargo test --doc -p kremory --features content-search,test-utils
 
 # Retrieval benchmark with detailed output
-cargo test --test retrieval_benchmark -- --nocapture
+cargo test --test it retrieval_benchmark:: -- --nocapture
 ```
 
 ### E2E tests (require local model files, opt-in)
 
 ```bash
-# E2E ingest with LLM extraction
-RQL_MODEL_PATH=../models/Phi-4-mini-instruct.Q4_K_M.gguf \
-  cargo test --features llm --test e2e_local_llm test_e2e_ingest -- --ignored --nocapture
-
-# NuExtract template extraction benchmark
-RQL_NUEXTRACT_MODEL_PATH=../models/NuExtract-2.0-4B-Q4_K_M.gguf \
-  cargo test --features llm --test e2e_local_llm test_e2e_nuextract -- --ignored --nocapture
-
-# Multi-model comparison (all available models)
-RQL_BENCHMARK_MODELS=1 \
-RQL_MODEL_PATH=../models/Phi-4-mini-instruct.Q4_K_M.gguf \
-RQL_NUEXTRACT_MODEL_PATH=../models/NuExtract-2.0-4B-Q4_K_M.gguf \
-  cargo test --features llm --test model_comparison -- --ignored --nocapture
-
-# Multi-domain extraction (14 fixtures, ground truth validation)
-RQL_MODEL_PATH=../models/Phi-4-mini-instruct.Q4_K_M.gguf \
-  cargo test --features llm --test multi_domain_extraction -- --ignored --nocapture
-
 # Real embedding retrieval (downloads model on first run)
-cargo test --features embeddings --test retrieval_semantic -- --ignored --nocapture
+cargo test --features embeddings --test it retrieval_semantic:: -- --ignored --nocapture
 ```
+
+> ⚠️ **WRONG-DOC CORRECTION, 2026-08-06.** This section previously listed four further
+> GGUF-model commands (`e2e_local_llm::test_e2e_ingest`, `e2e_local_llm::test_e2e_nuextract`,
+> `model_comparison::`, `multi_domain_extraction::`). **None of them could run.** All four
+> target modules carry `#![cfg(any())]` — `any()` with no arguments is always false, so the
+> whole file compiles to nothing and the named tests do not exist. They have been parked
+> since 2026-05-18 (the D.1a BYOM strict gate removed `autoagents-llamacpp` from the crate,
+> so the tests' concrete `LlamaCppProvider` dependency vanished). The commands were carried
+> forward untouched through the 2026-08-06 `tests/it/` consolidation — the paths were even
+> mechanically rewritten to the new `--test it <module>::` form, which made them look
+> *more* current while remaining unrunnable.
+>
+> Thirteen such permanently-dead modules exist (8,223 LoC). Their disposition is tracked
+> under **TD-109** ("delete the 13 permanently-dead `#![cfg(any())]` files"). Do not restore
+> a command here without first confirming its module is not `cfg(any())`-gated.
+
+> `RQL_MODEL_PATH`, `RQL_NUEXTRACT_MODEL_PATH` and `RQL_BENCHMARK_MODELS` (documented under
+> Environment variables below) are read only by those dead modules. They are inert today.
 
 ## Metrics
 
@@ -119,9 +123,9 @@ Exported to `logs/{unix_timestamp}-{label}-metrics.json`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `RQL_MODEL_PATH` | _(unset)_ | Path to GGUF model for E2E LLM tests |
-| `RQL_NUEXTRACT_MODEL_PATH` | _(unset)_ | Path to NuExtract GGUF model |
-| `RQL_BENCHMARK_MODELS` | _(unset)_ | Set to `1` to opt in to multi-model comparison |
+| `RQL_MODEL_PATH` | _(unset)_ | **INERT** — read only by `cfg(any())`-dead modules. See the Test section warning. |
+| `RQL_NUEXTRACT_MODEL_PATH` | _(unset)_ | **INERT** — same. |
+| `RQL_BENCHMARK_MODELS` | _(unset)_ | **INERT** — same. |
 
 ## Cargo Features
 

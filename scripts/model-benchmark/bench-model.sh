@@ -63,7 +63,7 @@ caffeinate -dims env \
   KREMORY_BENCH_REPORT="$REPORT" \
   ${KREMORY_BENCH_THINK:+KREMORY_BENCH_THINK="$KREMORY_BENCH_THINK"} \
   cargo test -p kremory --features llm-integration \
-    --test label_precision_benchmark --manifest-path "$REPO/Cargo.toml" \
+    --test it label_precision_benchmark:: --manifest-path "$REPO/Cargo.toml" \
     -- label_precision_gte_0_75_on_mock_interview --ignored --nocapture \
     >>"$LOG" 2>&1
 RC=$?

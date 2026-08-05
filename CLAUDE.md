@@ -23,7 +23,7 @@ two disagree, THIS wins.**
 | **crates.io** | **0.5.0**, `default = []` — every `cargo add kremory` user gets search OFF (~25.7% vs ~86.2% on the conv0 paired run) |
 | `default` features | `["content-search"]` in **all three** crates (`kremory`, `kremory-mcp`, `kremory-napi`) — verified 2026-08-06 |
 | workspace nextest | **1782 passed / 1782 run, 6 skipped** (`content-search,test-utils`), `NEXTEST_EXIT=0` captured off the binary |
-| doctests | **25 passed, 5 ignored**, exit 0 — ⚠️ nextest does NOT run these; they are a separate tier |
+| doctests | `-p kremory` → **25 passed, 5 ignored**; `--workspace` → **25 passed, 6 ignored** (re-measured 2026-08-06, `content-search,test-utils`). ⚠️ nextest does NOT run these — separate tier. **State the scope or the number is meaningless**: the 6th ignored is `kremory-eval/src/layer_b/graph_integrity.rs:19`; `kremory-mcp`/`kremory-napi` have 0 and `kremory-admin` has no lib target at all. A prior "CLAUDE.md says 5, measured 6" drift note was NOT a drift — both numbers were right at different scopes. |
 | clippy | `--workspace --all-targets --all-features` → **exit 0** |
 | consumer E2E | **5 passed / 0 failed of 5** (real Ollama). Extended 2026-08-06 with `.content()` / `.as_of()` / `supersede`-reachability — all three ran in **all 5** runs, and `as_of(−10y) → 0 facts` vs `as_of(+1d) → 10–15` held **every** run |
 | parity skip-list | **86 / cap 86 — AT the cap**; the next added skip fails the gate |
@@ -32,12 +32,22 @@ two disagree, THIS wins.**
 release tags · **any paid benchmark run, which INCLUDES re-ingesting the bench corpora** (that
 path uses the paid Groq extraction model, not local Ollama).
 
-**⚠️ macOS Gatekeeper tax on a cold full relink.** After a fresh `--all-features` build, nextest
-appears to hang before printing `Starting N tests`. It is not hung: each of ~180 freshly-linked
-test binaries must be executed once for `syspolicyd` to clear it, at **~34s each** (~1h total).
-Warm them **serially** (`<binary> --list` in a loop) for visible progress. **Scope the warm to
-`target/debug/deps/` only** — the naive binary list also contains real `src/bin` targets, one of
-which (`entity_extraction_baseline`) rewrites a COMMITTED baseline file when executed.
+**⚠️ macOS Gatekeeper tax on a cold full relink — LARGELY RESOLVED 2026-08-06.** After a fresh
+`--all-features` build, nextest appears to hang before printing `Starting N tests`. It is not
+hung: each freshly-linked test binary must be executed once for `syspolicyd` to clear it, at
+**~34s each**. **This used to mean ~180 binaries ≈ 1h** — measured again on 2026-08-06 at
+**~35s/binary with `syspolicyd` pegged at ~65%, taking 90 of that run's 120 minutes.**
+
+Consolidating `crates/kremory/tests/*.rs` (157 separate test binaries) into the single `it`
+binary cut the workspace from **180 → 24 binaries**, so the tax is now seconds, not an hour.
+The remaining 24 can still stall briefly on a cold relink; if they do, warm them **serially**
+(`<binary> --list` in a loop) for visible progress. **Scope the warm to `target/debug/deps/`
+only** — the naive binary list also contains real `src/bin` targets, one of which
+(`entity_extraction_baseline`) rewrites a COMMITTED baseline file when executed.
+
+**Consequence for `cargo test --test <name>`:** kremory has exactly ONE integration-test target
+now. `--test foo` no longer resolves; use `--test it foo::` or, preferably,
+`cargo nextest run -p kremory -E 'test(/^foo::/)'`.
 
 **Live plan:** `.ai-docs/plans/v1-debt-and-gap-closure-2026-08-06.md`. Ordering note: the
 benchmark is a **GO/NO-GO gate ON publishing**, not a follow-up to it.
