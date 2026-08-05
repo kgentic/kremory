@@ -459,13 +459,14 @@ The two rows nobody else fills: **reversible graph mutations** (see [Reversible 
 
 ## Status & maturity
 
-**Pre-1.0 (`0.5.x`), used in earnest but still evolving.** Correctness coverage is strong —
+**Pre-1.0 (`0.6.x`), used in earnest but still evolving.** Correctness coverage is strong —
 the full suite runs under every feature combination (default / `ner` / `content-search` /
 all-features) plus real-Ollama end-to-end journeys (`remember → dream → recall → unmerge/edit/
-delete/undo`). What 1.0 still needs: an API freeze, a cross-provider model matrix, and
-load/concurrency/durability testing.
+delete/undo`). Crash-resume and transaction-rollback paths carry regression tests that have each
+been observed to FAIL against the un-fixed code, not merely to pass. What 1.0 still needs: an API
+freeze, a cross-provider model matrix, and **load/concurrency** testing.
 
-**API stability:** on the pre-1.0 lane, minor releases (e.g. `0.4 → 0.5`) may contain breaking
+**API stability:** on the pre-1.0 lane, minor releases (e.g. `0.5 → 0.6`) may contain breaking
 changes — pin a minor (`kremory = "0.6"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
 
 ## Node.js / MCP — not yet published

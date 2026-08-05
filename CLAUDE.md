@@ -12,13 +12,45 @@ Correct the primer in place when reality changes (verify vs code, not memory).
 
 ## Active Sprint
 
-**No active sprint.** Last shipped: **kremory 0.3.2** (live on crates.io — episodic-edge presence-uniqueness fix). `origin/main` = `fad4d5d` (0.3.2 + TD-053 napi-parity hygiene). The post-v0.2.4 Tech-Debt Clearance sprint and the 0.3.x release line are **DONE and merged to main** — the prior "30 commits ahead / UNPUSHED / v0.2.4 bundle" framing is retired (it predated the 0.3.x releases).
+## ⚠️ CURRENT STATE — verified against code + a real gate run, 2026-08-06
 
-**Current baseline (verified 2026-06-25):**
+**This supersedes the 0.3.2-era block below, which is retained for provenance only. Where the
+two disagree, THIS wins.**
+
+| fact | value |
+|---|---|
+| tree version | **0.6.0 — staged, changelogged, dry-run verified, and NOT PUBLISHED** |
+| **crates.io** | **0.5.0**, `default = []` — every `cargo add kremory` user gets search OFF (~25.7% vs ~86.2% on the conv0 paired run) |
+| `default` features | `["content-search"]` in **all three** crates (`kremory`, `kremory-mcp`, `kremory-napi`) — verified 2026-08-06 |
+| workspace nextest | **1782 passed / 1782 run, 6 skipped** (`content-search,test-utils`), `NEXTEST_EXIT=0` captured off the binary |
+| doctests | **25 passed, 5 ignored**, exit 0 — ⚠️ nextest does NOT run these; they are a separate tier |
+| clippy | `--workspace --all-targets --all-features` → **exit 0** |
+| consumer E2E | **5 passed / 0 failed of 5** (real Ollama). Extended 2026-08-06 with `.content()` / `.as_of()` / `supersede`-reachability — all three ran in **all 5** runs, and `as_of(−10y) → 0 facts` vs `as_of(+1d) → 10–15` held **every** run |
+| parity skip-list | **86 / cap 86 — AT the cap**; the next added skip fails the gate |
+
+**🛑 Standing HITL gates — no autonomous action on any of these:** `cargo publish` · `git push` ·
+release tags · **any paid benchmark run, which INCLUDES re-ingesting the bench corpora** (that
+path uses the paid Groq extraction model, not local Ollama).
+
+**⚠️ macOS Gatekeeper tax on a cold full relink.** After a fresh `--all-features` build, nextest
+appears to hang before printing `Starting N tests`. It is not hung: each of ~180 freshly-linked
+test binaries must be executed once for `syspolicyd` to clear it, at **~34s each** (~1h total).
+Warm them **serially** (`<binary> --list` in a loop) for visible progress. **Scope the warm to
+`target/debug/deps/` only** — the naive binary list also contains real `src/bin` targets, one of
+which (`entity_extraction_baseline`) rewrites a COMMITTED baseline file when executed.
+
+**Live plan:** `.ai-docs/plans/v1-debt-and-gap-closure-2026-08-06.md`. Ordering note: the
+benchmark is a **GO/NO-GO gate ON publishing**, not a follow-up to it.
+
+---
+
+~~**No active sprint.** Last shipped: **kremory 0.3.2** (live on crates.io — episodic-edge presence-uniqueness fix). `origin/main` = `fad4d5d` (0.3.2 + TD-053 napi-parity hygiene). The post-v0.2.4 Tech-Debt Clearance sprint and the 0.3.x release line are **DONE and merged to main** — the prior "30 commits ahead / UNPUSHED / v0.2.4 bundle" framing is retired (it predated the 0.3.x releases).~~ **← SUPERSEDED, see the table above.**
+
+**Current baseline (~~verified 2026-06-25~~ — historical, superseded above):**
 
 - Releases **0.3.0 → 0.3.1 → 0.3.2** shipped, tagged, on crates.io; `main` fast-forwarded through all. 0.3.0 yanked (broken default); 0.3.1 + 0.3.2 live.
-- **TD-053 (napi parity hygiene) CLOSED + on main** (`a05be15` doc-rot pass, `fad4d5d` boy-scout pass): ~~`parity-skip.toml` = **72 entries ≤ 80 cap**~~ **← STALE, corrected 2026-08-03: the cap is now 83, not 80, and `parity-skip.toml` sits at 83/83 — i.e. AT the cap, not comfortably under it.** Raised twice since this line was written (80→81 for a reranker-latency knob, 81→83 for two TD-112 reembed methods; `api_parity.rs:386-411`). `cargo test -p kremory-napi --test api_parity` **7/0 GREEN**. **The next added skip fails the gate** — treat 83/83 as a live constraint, not headroom. The napi 1:1 surface is verified 1:1 (ADR-034 landed); parity-skip now lists only genuinely-absent symbols.
-- **Standing test fails: NONE (TD-138 RESOLVED 2026-07-23).** The 3 recall-branch fails (`facade_as_of_warn` ×2 + `with_facts_integration::td116_recall_returns_connected_facts_under_null_embedder`) were a silent recall regression — `rrf_fuse_with_content`'s no-limit cap `entity_count.max(content_count)` (from TD-066 Increment 1) dropped a distinct arm's items, evicting the entity under `content-search`. Fixed: no-limit cap = full union (`entity_count + content_count`); explicit-limit path unchanged. Workspace nextest now **1516/1516** (`content-search,test-utils`). See TD-138. (TD-013 `with_facts_empty_vec_equivalent_to_no_facts` was verified **CLOSED 2026-07-15**.) The old "napi parity-cap fail" was never real (the "103>100" number was fabricated per `feedback_subagent_fabricates_gate_results`). NB: this "Active Sprint" block still describes the 0.3.2 line and is broadly stale — current baseline is **0.5.0** (crates.io); see `.ai-docs/planning/pre-public-launch-readiness-roadmap-2026-07-15.md` + the MVP-to-public-flip execution plan for live state.
+- **TD-053 (napi parity hygiene) CLOSED + on main** (`a05be15` doc-rot pass, `fad4d5d` boy-scout pass): ~~`parity-skip.toml` = **72 entries ≤ 80 cap**~~ ~~**← corrected 2026-08-03: cap 83, sitting 83/83**~~ **← THAT correction is ALSO stale. Re-measured against the code 2026-08-06: the cap is 86 (`api_parity.rs:474`) and `parity-skip.toml` holds exactly 86 `[[skip]]` entries — 86/86.** The 83 figure missed two later raises, both on 2026-08-03 (83→84 for `with_provider_rates_path`; 84→86 for the two symbols the REPAIRED PAR-G1/G2 walker surfaced on its first run). `cargo test -p kremory-napi --test api_parity` **7/0 GREEN**. ⚠️ **The operational conclusion was right and is unchanged: it is AT the cap, so the next added skip fails the gate — treat 86/86 as a live constraint, not headroom.** Only the numbers were wrong, which is why this was worth re-measuring rather than re-reading. (`api_parity.rs:435`'s own lead comment still says "must not exceed 83" while `:474` asserts 86 — the same doc-rot, inside the gate file itself.) The napi 1:1 surface is verified 1:1 (ADR-034 landed); parity-skip now lists only genuinely-absent symbols.
+- **Standing test fails: NONE (TD-138 RESOLVED 2026-07-23).** The 3 recall-branch fails (`facade_as_of_warn` ×2 + `with_facts_integration::td116_recall_returns_connected_facts_under_null_embedder`) were a silent recall regression — `rrf_fuse_with_content`'s no-limit cap `entity_count.max(content_count)` (from TD-066 Increment 1) dropped a distinct arm's items, evicting the entity under `content-search`. Fixed: no-limit cap = full union (`entity_count + content_count`); explicit-limit path unchanged. Workspace nextest now ~~**1516/1516**~~ **1782/1782 (6 skipped), re-measured 2026-08-06** (`content-search,test-utils`). See TD-138. (TD-013 `with_facts_empty_vec_equivalent_to_no_facts` was verified **CLOSED 2026-07-15**.) The old "napi parity-cap fail" was never real (the "103>100" number was fabricated per `feedback_subagent_fabricates_gate_results`). NB: this "Active Sprint" block still describes the 0.3.2 line and is broadly stale — current baseline is **0.5.0** (crates.io); see `.ai-docs/planning/pre-public-launch-readiness-roadmap-2026-07-15.md` + the MVP-to-public-flip execution plan for live state.
 - `cargo fmt --check` is NOT hard-enforced (main has drift in `sink_fires_through_ingest.rs`).
 - The napi parity test is invisible to `cargo test -p kremory` (cross-crate gate) — run workspace-wide to see it.
 
