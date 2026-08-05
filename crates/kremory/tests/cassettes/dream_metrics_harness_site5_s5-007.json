@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "26d9a9eed1b1c0563bf641f543e249ca7854c7e9cf04784107dbc83e68c3a3a3": [
+    "c5b4424038fb1ab5780eb9aeb53d91424a399a2eca9994bb15b43a4d7deeffea": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair A is the acronym for the full name in Pair B, and the descriptions confirm this relationship.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym and the other is the full name, and the description explicitly links them as the definition of each other.\"\n    }\n  ]\n}"
       }
     ]
   }

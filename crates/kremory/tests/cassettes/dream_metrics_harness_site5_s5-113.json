@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "90c055aef109ee77d9a4b56171dbdd48fc4a2adfefdf587085dbcd62f24026c3": [
+    "ca356fab305e71d8b652df1c910303e0e7f10483fc0d3298e1f552b109f9272b": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The second name (Vinny Castiglione) appears to be a common nickname variation (Vinny for Vincent) of the first name (Vincent Castiglione) within the same context, strongly suggesting they refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The context explicitly states that 'Vinny' is a common nickname for 'Vincent', and both share the same surname, strongly suggesting they refer to the same person.\"}]}"
       }
     ]
   }

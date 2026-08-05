@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ee0ec3928433aa573450946913cacd59230cfed4c12c2c037b03719c1c6b91ee": [
+    "c429a64038fd7ccc6cff453dc46ca562d9403cc6583ccb343f0af21ef4b4d8b5": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The terms 'Pass' and 'Passes' refer to the same underlying concept (a permit/ticket), with 'Passes' being the plural form.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two definitions describe the same concept (access credentials) differing only in number/pluralization, which is semantically negligible for type classification.\"}]}"
       }
     ]
   }

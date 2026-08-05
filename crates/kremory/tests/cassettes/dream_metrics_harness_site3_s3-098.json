@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b6a299c2733fb36d922038a3e165270a8fa604d84c413b8aeaf1a60239002d59": [
+    "8687c12a5f0a62c9e69f22471738154878b7f05d3830b505cdb07f677a482529": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"In a B2B context, 'Vendor' and 'Supplier' are often interchangeable terms referring to an entity providing goods or services.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Vendors and Suppliers are highly interchangeable terms in business contexts, both referring to an entity providing goods or services.\"\n    }\n  ]\n}"
       }
     ]
   }

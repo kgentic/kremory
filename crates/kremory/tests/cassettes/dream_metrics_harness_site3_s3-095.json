@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b43f509185a55fda4e255d94fd0d89b8cc878db174b96973e722d1280e5761f8": [
+    "17b1cac0d70018f89be0a63e210a9f449a95c02bbc9158506635e7beb5b39351": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Vocation and Occupation are highly related concepts, often used interchangeably in general contexts, referring to a person's chosen or expected line of work.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Vocation and Occupation are very close synonyms referring to one's chosen or habitual work/career path.\"}]}"
       }
     ]
   }

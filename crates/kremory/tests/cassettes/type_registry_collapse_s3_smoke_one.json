@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b833b296f2975a1f73c639c86879069747574a82eab1778ae5262dea115875a2": [
+    "15b5312e0d74a1f6cb449441aca49bb19376c54a4b7763f9dcc93f8dfff0950c": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.98,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions clearly refer to a living, single person identified by biographical details (name, life facts, relationships).\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both definitions refer to a single, living person, described by biographical facts and relationships.\"}]}"
       }
     ]
   }

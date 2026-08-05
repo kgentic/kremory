@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ef4965c82f229631cc7897bc7f170e1b927a2ed263c2ebfa3eb9f859b63e8647": [
+    "43e4cdaa119b701ad91e95e2441de67fccdab4e1dd7ee232b7e20b6f967a2fe1": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms describe the same physical object category (motor passenger vehicles). 'Automobile' is the broader, more formal term, and 'Car' is the common synonym.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions describe the same fundamental concept of a passenger vehicle powered by an engine suitable for road travel.\"\n    }\n  ]\n}"
       }
     ]
   }

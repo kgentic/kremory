@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "c513ccca0c932a2dc19078060301936bbaf7a4afe40c1a3679d196bb210df19b": [
+    "b5a3275f103a06ddc3b4995dfc1d0b2e088cc0dbe66f126eea6731b5aa6dd3dc": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Educator and Teacher are highly overlapping roles describing a person whose profession is instruction.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both 'Educator' and 'Teacher' refer to a person whose profession is imparting knowledge or education, making them synonyms.\"\n    }\n  ]\n}"
       }
     ]
   }

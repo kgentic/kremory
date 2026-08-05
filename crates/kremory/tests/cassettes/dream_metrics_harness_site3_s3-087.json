@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "1758129a63352a3d33c161b6c98c31ac6154de48008a6d3032c6980c9d9e23fe": [
+    "e38dfe42f12353be1bcbbac165d5bb36ecec5c74d2b4672b0cc03d3927a1c956": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.6,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"One refers to a group/body of people (Corps), while the other is an abbreviation for a corporate structure (Corp).\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.8, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions indicate different concepts: 'Corps' relates to a body of people or military unit, while 'Corp' here is used as an abbreviation specifically for a 'large business entity' (Corporation). They refer to distinct semantic categories.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "7df5c9b0a7975d5926110a7149c58553fbe8d54b700390e021e876214082d1c9": [
+    "9de14ac7d27e1c95f712209d257520a503022fce2fb31b536ac460c1229e1109": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.85, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"While both are medical practitioners, 'Surgeon' implies performing operations, whereas 'Dentist' is specialized in oral health. They are distinct professional roles.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.8, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Both are types of medical practitioners, but they describe distinct specializations (Surgery vs. Dentistry). They are sub-types of 'Medical Professional', not the same type.\"}]}"
       }
     ]
   }

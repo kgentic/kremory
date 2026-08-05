@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "7ff384736aac785406ae7ce132f00d388af03cf326a959472baeee16b02a6eb6": [
+    "906cde05fbfa7b95001e58ead2302a4f5b5601fa099d29bf69ba185b3a032ab3": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym (SCUBA) and the other is its full expansion (Self-Contained Underwater Breathing Apparatus), which is explicitly stated in the facts.\"}, {\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 1, \"reasoning\": \"The entity pair is identical (Apple Computer / Apple Computer), indicating they are the same.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the all-caps acronym for the other name, and the description explicitly confirms this relationship.\"\n    }\n  ]\n}"
       }
     ]
   }

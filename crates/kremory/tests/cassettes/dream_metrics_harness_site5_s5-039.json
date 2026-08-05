@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "5ca04c2b5fd4cf67a2ea61ce96511e8cc18b34cfa20932923c6002ff74200b60": [
+    "6df0ba86d1f8c6c0fc5565d7491466b4bc1e22899ae7fce41e1969c601b3af8f": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair B is the full name and Pair A is its known acronym, indicating they refer to the same entity.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'CIA' is the acronym for 'Culinary Institute of America'.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d582cced461305420b2fdde0da65bae0fd05bacafb67d5be57971a885268b787": [
+    "6c5ada02562d2da737b6917fdc8f92e97368e192b967af72f2d0e859ba2e4311": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"These two types refer to the same underlying concept (academic courses), differing only in pluralization (Singular vs Plural).\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The difference is pluralization ('Class' vs 'Classes'), which does not change the underlying semantic type of an educational offering.\"}]}"
       }
     ]
   }

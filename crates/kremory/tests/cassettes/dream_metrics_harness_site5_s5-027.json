@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "e1eae287aaf8270afa39b4b210ebd98ccad177dffd98b2ff369370a6203d5a60": [
+    "1c6b837a62f9be1a469397041e7aca4932ad6ba6e7bb1db9b04c195ca549bf8c": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Trish' is a common short form of 'Patricia' and both share the same surname 'Bowman', indicating they refer to the same person.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Trish' is a common short form of 'Patricia', and both share the same surname, indicating they refer to the same person.\"}]}"
       }
     ]
   }

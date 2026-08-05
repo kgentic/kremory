@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ff9ca966fea0d4fe892a7887526e08c854fe572b6077d5ce4070182b85b291ff": [
+    "48d0169eb1889e8bd5529c9faae9f30db32216a42019b0baee07a728f105cee5": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are a direct acronym and its full form, as confirmed by the description and facts.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'CVS' is the acronym for 'Concurrent Versions System'.\"}]}"
       }
     ]
   }

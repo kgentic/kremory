@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "43c3484fed9953fffe3e8cde5ba4985d3a8df1b25c21547402907ae8541b5a67": [
+    "2eecf171476af86fbe987c3165e3f42ea05ffcdfd9425e7acf2f7307b4de7028": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are case variations ('Café' vs 'Cafe'), and the descriptions are identical, indicating they refer to the same type of place/business.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"These are the same type with minor capitalization differences (Café vs Cafe).\"} ]}"
       }
     ]
   }

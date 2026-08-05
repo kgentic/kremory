@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0ce8b419e831be8ad7dafaeb2e967dcd2d37f5b4df4e1ca7694d1c4427a842ff": [
+    "8cd15a166bedc059920c221cec66bd411d1c47336fe43de5aec5799753129a9e": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Ted' is a conventional nickname for 'Theodore', and both share the same surname.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Ted is a conventional nickname for Theodore' and they share the surname.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "779dfe55145049712a48dc43c4e3952ca6d3eafdf16992790b00a64e6de73f75": [
+    "ae9981c649f97c3d02b860ac4766d3d0f9960dee3aebb308b2a5fce8dc70896b": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Terry' (A) and 'Theresa Volkov' (B) are different people; A is associated with Terrence Volkov's situation, while B is Theresa Volkov (the ops lead). The context separates them as siblings.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the two names refer to siblings (Terrence and Theresa), and the provided context confirms they are not the same person.\"}]}"
       }
     ]
   }

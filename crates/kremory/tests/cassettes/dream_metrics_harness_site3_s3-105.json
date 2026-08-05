@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "cd198d5d6456dda612ecc62a877407268580bb9259fabb493651a2f42b1d896e": [
+    "101d1f736d932e976a51398bf6d91ad4365f72ca1649d21fa215c0869d874e10": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Beverage is specifically a liquid consumable, whereas Foodstuff is a broader category encompassing solids for nourishment. They are distinct semantic types.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Beverages are liquids, while foodstuff generally refers to solids or semi-solids eaten for nourishment.\"}]}"
       }
     ]
   }

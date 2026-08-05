@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "984d6cf671eadba814d47d17d838703c732833c598d2f25b73f61614e11a50da": [
+    "b51c642844fae1c3d60e1297d5b428ffa91ccb416190fb2fb3f367c426972c4c": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the standard abbreviation (BA) and the other is the full name (Bachelor of Arts) for the same academic degree.\"}]}"
+        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"The pair represents an acronym and its full name, which are explicitly stated to be the same entity.\"\n}\n]\n}"
       }
     ]
   }

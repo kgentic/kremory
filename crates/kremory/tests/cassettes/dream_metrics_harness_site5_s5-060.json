@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "1ce74ef3dbfa037cabe23582d0a57b7452c31a1254daddf0eaa1d4f12dcbcb5d": [
+    "de111331db63ed6fb89a9721687f011513d19c32a9a25fbaae746d7de364bd01": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is the full name of the acronym A, making them the same entity.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Name B is the full expansion/description of the acronym A, making them refer to the same concept (Common Admission Test).\"} ]}"
       }
     ]
   }

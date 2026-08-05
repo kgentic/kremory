@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ce9aeff741a80bb574c52133c13d272ba262f42e6d29ca44b9d4d6db7127365b": [
+    "a33e25ce4d051358cbf9f9c11d0f6c99916507ed54967edfdaaa550a98ffc4e9": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that ACE (Advanced Computing Environment) and ACE Hardware are unrelated entities in different industries.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that ACE (Advanced Computing Environment) and ACE Hardware are unrelated organizations.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "e43aaf8d4e8f9b5758f0f9a54d712f9e1d4370c4c5a1fcdbd018106c10726ad0": [
+    "97466eeaa20cd9dc8befdd2e4abd1b988dcf5d11a02817594c7fa0cd128cee7f": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'UNESCO' is the acronym for 'United Nations Educational, Scientific and Cultural Organization', indicating they refer to the exact same entity.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (UNESCO) and the other is the full name, and the description/facts explicitly state they refer to the same organization.\"\n    }\n  ]\n}"
       }
     ]
   }

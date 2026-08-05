@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "a9189dd6c7c8db69e49a601b73e9acd223a58b763800fde7b1ed03ab0f50f715": [
+    "8c8a6f0e91eb830136fdceba0dfcaf3fd2175584c27e650ada98c5f2292bc045": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that the individuals have different surnames (Nguyen vs. Torres) and different departments (sales vs. IT), indicating they are separate people.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The names refer to two different individuals with different surnames (Nguyen vs. Torres) who work in different departments (sales vs. IT), despite sharing the first name 'Mike'/'Michael'.\"}]}"
       }
     ]
   }

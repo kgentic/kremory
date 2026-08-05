@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "04c34f75d50b3d454efc586c4cadf04f4b5ac4c7d19a490905cdd0274f0da28e": [
+    "89961814c6d9310047b848bd8062a08831c2c3f97ec4d51a572bc3de26976aee": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The only difference is the acute accent on 'e', which is a common variation (spelling/diacritic error) for the same person.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The names are identical except for a diacritical mark (acute accent on 'e'), which is a common variation in name recording for the same individual.\"\n    }\n  ]\n}"
       }
     ]
   }

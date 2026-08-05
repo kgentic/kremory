@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "95101a48d846b91a637792b3e0be028037447095cb2a3977a49497e3b6b5afb1": [
+    "1b82e39a914cca2ee391175d24135187ef81402e883d9c9f005b0aee5e1b48ed": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms refer to commercial business entities. 'Firm' often applies to professional services, while 'Company' is broader, but the underlying semantic category is the same (a type of business).\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms describe commercial business entities, though 'Firm' tends to lean towards service providers (like law/consulting) and 'Company' can be broader, they overlap significantly enough to be considered the same core semantic category.\"}]}"
       }
     ]
   }

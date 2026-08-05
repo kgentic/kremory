@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "b3bc374fae5d66555160e50a7cc3c49a5df35445f027dabf75ae5087fe1e88b5": [
+    "eb1f7622832d583008cead7f902d01616492cb00724d1f17736b8e9d51126ff9": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.85, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The names are a likely acronym and its full name, with the description explicitly mentioning both possibilities, suggesting a high probability of a direct relationship.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.8, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description and facts indicate that 'ICO' is flagged as possibly referring to the 'Information Commissioner's Office', suggesting a strong acronym relationship.\"}]}"
       }
     ]
   }

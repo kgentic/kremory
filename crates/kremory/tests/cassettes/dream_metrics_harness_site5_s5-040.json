@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "55758d7f2f40fa23fb8a5ae008b08997efb99a0f237430547726a8c129138fdb": [
+    "86e1ef7c3c1cd789907b76c09cc5a2617a8f92297d8a4370b983eb2547814ac8": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One entity is an acronym (MADD) and the other is its full name (Mothers Against Drunk Driving), and the description confirms this relationship.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (MADD) and the other is the full name it represents (Mothers Against Drunk Driving), clearly indicating the same organization.\"\n    }\n  ]\n}"
       }
     ]
   }

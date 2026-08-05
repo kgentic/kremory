@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "ced85f01ea9c3b3ee934cea0b9f820327bca6eb5099e957d7b4a909e9559c256": [
+    "c9c6c5c6961486575c47e2f400455b5dc80c001bd9942792165402c254f2b4f1": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"The provided context explicitly states that the two forms differ only in the casing of the umlaut, and a supplier contract cites them as the identical German company name, confirming they are the same entity.\"\n}\n]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions explicitly state that the difference is only in the casing of the umlaut, and context suggests they refer to the identical German company.\"\n    }\n  ]\n}"
       }
     ]
   }

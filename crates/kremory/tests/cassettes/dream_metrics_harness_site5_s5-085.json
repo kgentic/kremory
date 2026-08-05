@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "79dd191496cc71b554ba34b0df6402b278c18c2fc8810433a983c6e833197141": [
+    "1a98da2ba3943fcd46c97af7a4c2a309fb837c783ff229a3c379144acb89b70a": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym and the other is the full name of the same agreement.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One entity is the acronym (NAFTA) and the other is the full name (North American Free Trade Agreement) for the same agreement.\"\n    }\n  ]\n}"
       }
     ]
   }

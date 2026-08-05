@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "78e0c941c9ff648d53df171cb01d70f0420a96c287d5827547d7a728f52349e2": [
+    "f4425cb4e5a212b6d91c86826129b52db623d6e84114924f5675fc33728ca090": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The names have the same common nickname 'Sam' but the descriptions explicitly link them to different full names and departments (Samantha Ruiz vs. Samuel Okoro), suggesting two different people.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly separate them by department (HR vs. finance) and mention different surnames (Ruiz vs. Okoro). Despite the potential nickname 'Sam', the context indicates two distinct individuals.\"}]}"
       }
     ]
   }

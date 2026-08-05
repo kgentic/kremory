@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "0b9e92518e36e4588452f83bbc02bb135616ab4bea40629d69e0e79aed28c24f": [
+    "4f471ed9375a5af58eb97a4a82c4800c6441c6fd4e0218c59e2720999817db6b": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Gus' is a common Anglicized nickname for 'Konstantinos', making them refer to the same person.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Gus' is a common Anglicized nickname for 'Konstantinos', and both share the same surname in the same context, strongly indicating they refer to the same person.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -137,10 +137,10 @@
     "llm_call_ms_p50": null,
     "llm_call_ms_p95": null,
     "llm_call_ms_p99": null,
-    "row_wall_clock_ms_p50": 16.663291,
-    "row_wall_clock_ms_p95": 18.771124999999998,
-    "row_wall_clock_ms_p99": 19.855708,
-    "total_harness_wall_clock_ms": 2003.5200360000013,
+    "row_wall_clock_ms_p50": 40.134499999999996,
+    "row_wall_clock_ms_p95": 66.106125,
+    "row_wall_clock_ms_p99": 440.742458,
+    "total_harness_wall_clock_ms": 6199.673871000002,
     "embed_calls_expected": 238
   },
   "volume": {

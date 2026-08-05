@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "c47e54031f799f1b4c367e155d69920e83c5faf3a9b5e13c4c043564e521a389": [
+    "bb655ad31a8f106c2c55beb2872ec41c13821c9c698f26efe0ed59dede7ba309": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"These describe different governmental roles; a Senator is a legislator, while a Governor is the executive head of a state government.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"A Senator is a legislative role, while a Governor is an executive head of state/government. They are distinct political offices.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d85ba9b8ee6eae28cdb999a61a9d92fa19b157dabafae88f5ceac252827ff80a": [
+    "e8e5b659e5cdb6dc84f014ec710be11073a4d7665692ea75a4311b54d6ebebb5": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Car is a specific, common instance of the broader category Automobile. Semantically, they refer to the same core type of vehicle.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"An 'Automobile' is a broad category, and 'Car' is a very common, and usually synonymous, specific instance/term for that category.\"\n    }\n  ]\n}"
       }
     ]
   }

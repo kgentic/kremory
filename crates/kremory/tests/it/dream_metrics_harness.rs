@@ -727,6 +727,40 @@ struct LatencyMetrics {
     total_harness_wall_clock_ms: f64,
 }
 
+/// TD-180/TD-182: every `kremory.test.cassette_miss_total` bucket, as
+/// `(cassette, count)`, so a stale-cassette run NAMES the files instead of
+/// reporting a mysteriously degraded metric.
+///
+/// Reads the CAUSE. Hoping a downstream quality metric notices is what failed
+/// on 2026-08-05: a MISS defaults the pass to no-verdict, which is a silent
+/// non-merge, and the `warn!` that says so is DISCARDED by libtest whenever the
+/// test passes.
+fn cassette_miss_rows(snapshotter: &Snapshotter) -> Vec<(String, u64)> {
+    let mut rows: Vec<(String, u64)> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(composite_key, _, _, value)| {
+            let key = composite_key.key();
+            if key.name() != "kremory.test.cassette_miss_total" {
+                return None;
+            }
+            let labels: HashMap<&str, &str> = key.labels().map(|l| (l.key(), l.value())).collect();
+            let cassette = labels
+                .get("cassette")
+                .copied()
+                .unwrap_or("<unknown>")
+                .to_string();
+            match value {
+                DebugValue::Counter(n) if n > 0 => Some((cassette, n)),
+                _ => None,
+            }
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
 fn compute_latency_metrics(
     snapshotter: &Snapshotter,
     outcomes: &[RowOutcome],
@@ -1263,6 +1297,28 @@ async fn full_corpus_site5_metrics() {
         }
     }
 
+    // ── TD-180/TD-182: fail on the CAUSE, before any downstream metric ────
+    //
+    // A cassette MISS returns Err from the provider; the adjudication path
+    // deliberately defaults to no-verdict, so a stale cassette becomes a silent
+    // NON-MERGE — a false negative, not an error. And the `warn!` naming it is
+    // destroyed by the test PASSING, because libtest discards per-test output
+    // on success. Assert the cause; it cannot be captured away.
+    let cassette_misses = cassette_miss_rows(&snapshotter);
+    assert!(
+        cassette_misses.is_empty(),
+        "CASSETTE MISS GATE FAILED: {} recorded miss(es). Every metric below is measuring a \
+         pass that never received an LLM verdict, NOT model quality. Re-record with \
+         KREMORY_VCR=record against live Ollama (SERIALLY — record mode is bounded by one \
+         local model server). Offending cassettes:\n{}",
+        cassette_misses.len(),
+        cassette_misses
+            .iter()
+            .map(|(c, n)| format!("  {n:>4} miss(es)  {c}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
     // ── Hard assertions ───────────────────────────────────────────────────
     assert_eq!(
         safety_false_merges, 0,
@@ -1285,6 +1341,25 @@ async fn full_corpus_site5_metrics() {
         overall.fp,
         overall.precision_ci_low,
         overall.precision_ci_high,
+    );
+
+    // ── TD-182: RECALL floor — every gate above is one-sided ──────────────
+    //
+    // The assertions above detect OVER-merging only. A pass that simply stops
+    // merging IMPROVES them all while losing the merges the feature exists to
+    // make — exactly the Site #3 failure of 2026-08-05, which shipped GREEN.
+    // Floor 0.90 against a 2026-07-03 baseline of 0.9878. If this fires, FIND
+    // OUT WHY; do not lower it.
+    let measured_recall = overall
+        .recall
+        .expect("recall is defined whenever any genuinely-same pair exists in the corpus");
+    assert!(
+        measured_recall >= 0.90,
+        "RECALL GATE FAILED: {measured_recall:.4} < 0.90 (2026-07-03 baseline: 0.9878) — \
+         tp={} fn_={}. The precision/safety gates above CANNOT see this. Check the \
+         cassette-miss gate first; a stale cassette becomes a silent non-merge.",
+        overall.tp,
+        overall.fn_,
     );
 
     eprintln!(

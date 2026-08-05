@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "16378b65357253622b7d935670f5c9e11e7b004fd8baa6824599b59f73c78cc7": [
+    "3d886b7ca03edc2f8dccd9400b699f19dddbaf86462a3f96393481299653397f": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.8, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"While both describe writers, they specify different genres (Poetry vs. Novels), indicating distinct roles/types.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.85,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While both are types of writers (People), 'Poet' is specialized to verse, and 'Novelist' is specialized to long-form fiction. They represent distinct writing disciplines.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "aef01f3f23a9ec261a4ab9028c6a284c171ee84f5bd2c2dd5805a78eeebc07c6": [
+    "b906a003ab936a51faea2c7d04cf5ecd5d595cbbdf4545bbe70109fa2d3d644f": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The proposed 'Motor Vehicle' (specific class) is a subset of the general 'Vehicle' type. In a conceptual registry context, they usually map to the same core entity type or the specific one is subsumed by the general one.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The proposed 'Motor Vehicle' is a specific subset (powered vehicle) of the broader category described by 'Vehicle'. Semantically, they describe the same underlying concept: a conveyance for transport.\"\n    }\n  ]\n}"
       }
     ]
   }

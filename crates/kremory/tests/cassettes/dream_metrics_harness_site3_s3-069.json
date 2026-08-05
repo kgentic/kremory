@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "68928ff2c792644ba748286b06107409fba592e2383ff3737b7a9bf516b3f700": [
+    "2cf47088cd9fccab7fcdd5d2402e1af87f1a065d8c3fb28634024776e416b11c": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Novelist and Journalist are both people who write, but their primary subject matter and profession are distinct (fiction vs. current events reporting).\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While both are roles involving writing, 'Novelist' is specialized to fiction (novels), whereas 'Journalist' is specialized to non-fiction reporting on current events.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "349b0e83cf6bf4e257ab4eb0e860f24ca15b2ab2c7c5f812da8f84477802fbde": [
+    "4565c71fa7a66c012f2230c868b0bdf332e627e81790b9980bbb3c3f9cd6973b": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both descriptions define a core concept of a profit-seeking commercial business entity. 'Automobile Manufacturer' is a highly specific sub-domain of the general 'Company' type.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.98, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both definitions describe the core concept of a for-profit commercial business entity. 'Automobile Manufacturer' is a specific *type* of company, but semantically it falls under the broad category covered by 'Company'.\"}]}"
       }
     ]
   }

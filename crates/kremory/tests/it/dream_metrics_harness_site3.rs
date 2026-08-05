@@ -704,6 +704,35 @@ fn sum_counter(snapshotter: &Snapshotter, metric_name: &str, site_filter: Option
 
 /// Sum the `kremory.identity.write_gate_decision_total{site,decision}`
 /// counter for one specific `(site, decision)` label pair.
+/// TD-180/TD-182: every `kremory.test.cassette_miss_total` bucket, as
+/// `(cassette, count)`, so a stale-cassette run names the files rather than
+/// reporting a mysteriously degraded metric.
+///
+/// Reads the CAUSE. The alternative — hoping a downstream quality metric
+/// notices — is what failed on 2026-08-05: recall fell 1.0 -> 0.339 and every
+/// gate stayed green because all of them were precision/safety-shaped.
+fn cassette_miss_rows(snapshotter: &Snapshotter) -> Vec<(String, u64)> {
+    let mut rows: Vec<(String, u64)> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(composite_key, _, _, value)| {
+            let key = composite_key.key();
+            if key.name() != "kremory.test.cassette_miss_total" {
+                return None;
+            }
+            let labels: HashMap<&str, &str> = key.labels().map(|l| (l.key(), l.value())).collect();
+            let cassette = labels.get("cassette").copied().unwrap_or("<unknown>").to_string();
+            match value {
+                DebugValue::Counter(n) if n > 0 => Some((cassette, n)),
+                _ => None,
+            }
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
 fn sum_write_gate_decision_counter(snapshotter: &Snapshotter, site: &str, decision: &str) -> u64 {
     snapshotter
         .snapshot()
@@ -1290,6 +1319,34 @@ async fn full_corpus_site3_metrics() {
         }
     }
 
+    // ── TD-180/TD-182: fail on the CAUSE, before any downstream metric ────
+    //
+    // A cassette MISS returns Err from the provider, which the adjudication
+    // path deliberately defaults to no-verdict — so a stale cassette becomes a
+    // silent NON-MERGE, i.e. a false negative, not an error. On 2026-08-05 that
+    // cost 67 of 119 cassettes and dropped recall 1.0 -> 0.339 with every gate
+    // below still GREEN, because they are all precision/safety-shaped.
+    //
+    // Worse, the `warn!` naming the cause is destroyed by the test PASSING:
+    // libtest captures per-test output and discards it on success, so grepping
+    // afterwards returns empty and empty reads as healthy.
+    //
+    // Assert the cause directly. This cannot be captured away.
+    let cassette_misses = cassette_miss_rows(&snapshotter);
+    assert!(
+        cassette_misses.is_empty(),
+        "CASSETTE MISS GATE FAILED: {} recorded miss(es). Every metric below is measuring a \
+         pass that never received an LLM verdict, NOT model quality. Re-record with \
+         KREMORY_VCR=record against live Ollama (serially — record mode is bounded by one \
+         local model server). Offending cassettes:\n{}",
+        cassette_misses.len(),
+        cassette_misses
+            .iter()
+            .map(|(c, n)| format!("  {n:>4} miss(es)  {c}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
     // ── Hard assertions ───────────────────────────────────────────────────
     assert_eq!(
         safety_false_merges, 0,
@@ -1312,6 +1369,30 @@ async fn full_corpus_site3_metrics() {
         overall.fp,
         overall.precision_ci_low,
         overall.precision_ci_high,
+    );
+
+    // ── TD-182: RECALL floor — the gate above is one-sided ────────────────
+    //
+    // Every assertion before this point detects OVER-merging. None detects
+    // UNDER-merging, so a pass that simply stops merging IMPROVES them all
+    // (precision 0.949 -> 1.0, false-merges 3 -> 0) while losing two thirds of
+    // the merges the feature exists to make. That is exactly what happened on
+    // 2026-08-05 and it shipped as GREEN.
+    //
+    // Floor is 0.90 against a 2026-07-03 baseline of 1.0 — loose enough for
+    // ordinary model drift, tight enough that the 0.339 collapse is impossible
+    // to miss. If this fires, FIND OUT WHY; do not lower it.
+    let measured_recall = overall
+        .recall
+        .expect("recall is defined whenever any genuinely-same pair exists in the corpus");
+    assert!(
+        measured_recall >= 0.90,
+        "RECALL GATE FAILED: {measured_recall:.4} < 0.90 (2026-07-03 baseline: 1.0) — \
+         tp={} fn_={}. The precision/safety gates above CANNOT see this: a pass that stops \
+         merging improves every one of them. Check the cassette-miss gate first; a stale \
+         cassette becomes a silent non-merge.",
+        overall.tp,
+        overall.fn_,
     );
 
     eprintln!(

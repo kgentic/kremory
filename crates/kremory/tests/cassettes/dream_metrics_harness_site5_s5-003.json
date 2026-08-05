@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "71b8e1117e3e1f1402a03f6d4d0f96039182a680c2112536cf7c54f99c5da1a2": [
+    "d497dce9afd9fd4310de42a6a9dae573ac6a8b7f7fb2b6fb6762ba71564c7551": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the standard acronym (FBI) and the other is the full name, which are explicitly stated to be equivalents.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Entity A is the acronym for the full name provided in Entity B, and the descriptions confirm this relationship.\"\n    }\n  ]\n}"
       }
     ]
   }

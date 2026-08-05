@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "64594af4830d79ab427a82dc9202de8c56c891edd1faefb365e3d54397300eeb": [
+    "c99b913e1853687dcfe13deb3c9150e24b900352735a54c13fcb76b2bfabfc46": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly differentiate them as siblings with different roles (Sales vs. Engineering) and separate records.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly distinguish between 'Patricia Nolan' (sister, sales) and 'Patrick Nolan' (brother, engineering), and notes they have separate employee IDs, indicating two distinct individuals.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "23a5c0d5c150ea015db07dcd46d7a581d4efdc757d4bb8014386fc6eee51249f": [
+    "3aff73dee57c58404fced1d1b4cd2f6915a79ba5a3f2902ce661822c544500ef": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One entity is the acronym (ADA) and the other is the full name, and the description/facts confirm they refer to the same US civil rights law.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the acronym (ADA) and the other is the full name (Americans with Disabilities Act), which are explicitly described as referring to the same legislation.\"}]}"
       }
     ]
   }

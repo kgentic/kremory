@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "4966246a2a887909fbe130392d2a4990ddfb45b04a6c3fade7f129ba6e14d009": [
+    "072d664ccd1550680eb05e08236069e8a08328a7b2a3c8aeaf456116fdd199c3": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Aircraft flies through air, while Watercraft travels through water. They are distinct modes of transport.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Aircraft fly in the air, while Watercraft travel on water; they are distinct categories of vehicles.\"}]}"
       }
     ]
   }

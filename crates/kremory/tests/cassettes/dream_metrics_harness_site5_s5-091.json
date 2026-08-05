@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "fc0f8c34fe0d98b71fd9f6f4a90058a95d394ece603dde22dd941869f22e54f2": [
+    "dc5c133bd668b9959292aa51ba77befd940b745df8e0c0b8eeaa53cb633804e2": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Entity B is the full name corresponding directly to the acronym in Entity A.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair B is the full name and Pair A is the standard acronym for the same government institution.\"}]}"
       }
     ]
   }

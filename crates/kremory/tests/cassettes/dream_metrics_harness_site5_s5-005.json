@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "26cd2d57d2ad4ee724012f6b2000202ee845e37e3b437473eb983b5a09fe7909": [
+    "7e6b3563466a9f5785d129dab408d701eb38412688ac83e293fc2257617e0e7a": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One name is the standard acronym and the other is the full name, and the description explicitly links them.\"\n}\n]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the standard abbreviation for the other name, indicating they refer to the same political entity.\"\n    }\n  ]\n}"
       }
     ]
   }

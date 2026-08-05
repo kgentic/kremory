@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "aa41b28c0567d831153b4a1d3046f3a47a8e3ce69a980091f3068bba13898fc7": [
+    "c2f84063bc5c8c560cc9d2ab37b8efd52e272a3268fff690b68fa059cd82e1d6": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 0.95,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"Both terms refer to a professional who practices law and represents clients. 'Attorney' and 'Lawyer' are often used interchangeably, though 'attorney' can sometimes refer to the specific credential or authority.\"\n}\n]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms refer to the same professional role—an individual who practices law and advises clients.\"\n    }\n  ]\n}"
       }
     ]
   }

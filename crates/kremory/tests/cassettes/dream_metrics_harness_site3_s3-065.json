@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "94a08fac1a965d2dc3778c446040c46ce922b74a7b34495bfa5aaeb24ef74e81": [
+    "ba49af6ae6393323198d20919b1571a1edd80ca5b5a36f9d3947896d5b3c50bf": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Physician refers to medical professionals, while Attorney refers to legal professionals. They are distinct professions.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both describe professional roles (Physician and Attorney), but they represent distinct professional categories in medicine and law, respectively.\"\n    }\n  ]\n}"
       }
     ]
   }

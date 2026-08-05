@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "16a0031c8c8d45a22f08b1087c2e963379c83a5e7ef578e0c0f89a7bcf85868a": [
+    "81d9d06b61fa09d0bf1094051b40e3d07b6ba6adac44fc8146860745656d5b07": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The descriptions and facts for both pairs are identical, pointing to the same person who is referred to by both a nickname ('Frankie') and a formal name ('Frank Costa').\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The two names are near-identical, differing only in the parenthetical inclusion of 'Francesca' vs 'Frank'. All contextual facts confirm they refer to the same single individual ('Costa') within the meeting.\"}]}"
       }
     ]
   }

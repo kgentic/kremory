@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "df2d3b29d6c52cc60cd1bf15b9c381dd95c181a56b7319671574bd0d6fe6b5af": [
+    "5367c469d2c4e01aed09feb0f6b2155ef29ed07201f43915377bbd51a25e6f08": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.1, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair represents the same acronym (PAN) but refers to two distinct, unrelated concepts (Tax ID vs. Networking). They are not the same real-world entity.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.5, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair represents two distinct meanings for the same acronym 'PAN' (Permanent Account Number vs. Personal Area Network). They are not the same real-world entity.\"}]}"
       }
     ]
   }

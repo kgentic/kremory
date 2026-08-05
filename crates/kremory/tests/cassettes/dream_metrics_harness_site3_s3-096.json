@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "5d86f40796b189379079bb0ac5f4a01b0189d7120fae874cce0cb613a97479f0": [
+    "4cff078ff8057dc561283cc0a082a9740c38c075c38f0061dd7e0f6375041824": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Illness and Disease are often used interchangeably in common language to refer to a pathological condition affecting health.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Illness and Disease are often used interchangeably in common language to refer to medical conditions, though 'Disease' can sometimes imply a more specific, identifiable pathology.\"}]}"
       }
     ]
   }

@@ -70,10 +70,10 @@
     "llm_call_ms_p50": 0.0,
     "llm_call_ms_p95": 0.0,
     "llm_call_ms_p99": 0.0,
-    "row_wall_clock_ms_p50": 0.607667,
-    "row_wall_clock_ms_p95": 0.843334,
-    "row_wall_clock_ms_p99": 0.856083,
-    "total_harness_wall_clock_ms": 16.738624,
+    "row_wall_clock_ms_p50": 1.161542,
+    "row_wall_clock_ms_p95": 2.452792,
+    "row_wall_clock_ms_p99": 2.502458,
+    "total_harness_wall_clock_ms": 35.803459,
     "rows_needing_llm_verify": 19
   },
   "volume": {

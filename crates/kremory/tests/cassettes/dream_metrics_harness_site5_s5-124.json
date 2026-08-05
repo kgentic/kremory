@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "735b5fa24fb9d6a6b56ffd920d3855baa7d05a8631c2422f633fa678af4a23b3": [
+    "8058aa31b2f8cb2d7603521423ed40f7712fee1e5beb0819729760c7f7097a6e": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.3, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The two names refer to different meanings of the acronym 'CVS' (a company vs. a software tool), suggesting two distinct entities despite the shared initials.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.1, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The two names are identical acronyms (CVS), but the context clearly distinguishes between two different meanings: a pharmacy chain and a software tool. They refer to different entities.\"}]}"
       }
     ]
   }

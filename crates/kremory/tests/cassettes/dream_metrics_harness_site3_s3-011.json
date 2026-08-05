@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "7c0970720cf8a4a3a3cacc4511328e228f43554676ca3be523d11902e1b0056f": [
+    "27acaaca21040ce16a46c635bad4c0e6395900bf0314a87f3fd6295e02fa3c37": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"B is simply the plural form of A and refers to the identical concept: sovereign nations.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The difference is only in plurality ('Country' vs 'Countries'), referring to the same underlying type of geographic/political entity.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "f98ef21302bbf6a31b3092825d8396cfc375f15084f2b255d6b741ec3fae7856": [
+    "a754572fff5e12bdb30608d8eabbde777fa4cbf027029ecc3246e824f4560436": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair B is the full name and Pair A is its official acronym, which are known to refer to the same entity.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym and the other is the full name, and the description explicitly states that the acronym (MAS) stands for the full name (Monetary Authority of Singapore).\"\n    }\n  ]\n}"
       }
     ]
   }

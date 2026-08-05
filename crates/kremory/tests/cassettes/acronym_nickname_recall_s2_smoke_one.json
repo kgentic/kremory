@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "d7d62842c15950cf9d64a476e765f1a32ed21c9f3c48f492fc03c0f471d6b999": [
+    "50633e34ffe86ca6e52fd99982f8d2ad7417ca1080195fdb22b2df07697f066e": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The pair shows an acronym (IBM) and its full name (International Business Machines), which are explicitly linked in description and context.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description and name strongly suggest that 'IBM' is the acronym for 'International Business Machines'.\"}]}"
       }
     ]
   }

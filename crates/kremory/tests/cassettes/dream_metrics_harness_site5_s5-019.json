@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "45283b6116a347cb13edef0c8a79a9143536f5d17c69da7793c73fd7a5ada88b": [
+    "ce354eb637dbe7d3433771f9b99deaa9aa56643554248e2fd23f7fd737a80be9": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The context explicitly suggests that 'Peggy' is a nickname for 'Margaret', and the full names share the same last name, indicating they refer to the same person.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The description explicitly states that 'Peggy' is a traditional nickname for 'Margaret', and both names share the same surname, suggesting they refer to the same individual.\"}]}"
       }
     ]
   }

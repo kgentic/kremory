@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "02ba68327b3abce82bdd222421bb9d8d8f34219b91fbc2cf924e2328551d406d": [
+    "5feabbe07c6bd5813b415a5190fc9c092571c3f8eab112d9be84a697d7a51a0d": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"One name is the acronym (WHO) and the other is the full name, explicitly stated to be the full name for the acronym, indicating they refer to the same organization.\"\n    }\n  ]\n}"
+        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One name is the acronym (WHO) and the other is the full name (World Health Organization), and the description confirms they refer to the same organization.\"\n}\n]\n}"
       }
     ]
   }

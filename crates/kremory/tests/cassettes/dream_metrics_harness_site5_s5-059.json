@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "8145eeccedce6fd307e9853b0f59cec513d1b5975f814458c66778fc102258a1": [
+    "efbeea5a5b5377f1a58d3c22d20a2b34989e769164ca722f3421a8621c86e8ac": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The relationship is a common acronym expansion. 'IT' is the standard abbreviation for 'Information Technology'.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The pair consists of an acronym ('IT') and its common, explicit expansion ('Information Technology'), especially when the context suggests this interpretation.\"}]}"
       }
     ]
   }

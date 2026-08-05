@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "a582c809fb2f12d109f06835ef4dbc5ad84dd6e0b3a3dae3a2c6fc2c95d3e37f": [
+    "664079f48984da4bb6fce1ce07f4c34b8dd8e27dee9472058a5ec3ef20c31926": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both terms relate to a diagnosed health issue. 'Diagnosis' is the process/result of identifying a 'Medical Condition'.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Diagnosis is the identification *of* a Medical Condition. While 'Diagnosis' is a *process* or *result*, in many knowledge graph contexts, it is semantically treated as the type that represents the identified condition itself, making them functionally equivalent for type registration.\"}]}"
       }
     ]
   }

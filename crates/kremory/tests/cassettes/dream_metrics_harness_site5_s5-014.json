@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "7ade3e0c812d18819a8ff2193c95679ed0e3320f2642da3bfa391926c22be683": [
+    "30fba7298689a422b2999a8080daf6a037269f6d7db1b8675e426509b82615ec": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"One entity is the abbreviation (MIT) and the other is the full name (Massachusetts Institute of Technology), and the description explicitly links them as the abbreviation of the full name.\"\n}\n]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair B is the full name corresponding to the abbreviation in Pair A.\"}]}"
       }
     ]
   }

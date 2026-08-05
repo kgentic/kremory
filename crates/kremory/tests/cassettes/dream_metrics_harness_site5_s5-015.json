@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "874b91aa48263e7a92239f2c57e780e2e59c438c184ac38b979dbca8b3a8966e": [
+    "6372ab948e4bf573d6a3b49c74a9e6ed2b8a4cb8da32b5df9af2152b02deb4dd": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The second name is the full title for the acronym used in the first name, indicating they represent the same regulation.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Pair B is the full name and Pair A is the acronym for the same regulation.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "49804e0bfa19d5eb7ea79534df38fa0bea429ed1d784a60ca0e88bb9ecd45a54": [
+    "e13fbe1c22106551c3ca5c6fbefbd6265a5204052832cbd810e32454f70b5e1f": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The pair explicitly distinguishes between the astronomical object 'SUN (the star)' and the former company 'Sun Microsystems'. The description notes there is no relationship between them.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"The context explicitly states that 'the Sun' (star) and 'Sun Microsystems' (company) are two different entities, noting no relationship between the astronomical object and the company.\"\n    }\n  ]\n}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "eac498ffea07811cddde496863062395df11a2ae1a129efea5727c12a4a4b1e7": [
+    "b877e0a7049eda9822fc6dd7a796d7763ee35080549f12b48b0cd67203e66c44": [
       {
         "call_index": 0,
-        "response_text": "{\n\"verdicts\": [\n{\n\"confidence\": 1.0,\n\"is_same_entity\": true,\n\"pair_id\": 0,\n\"reasoning\": \"The description and facts explicitly state that 'OSHA' is the official acronym for 'Occupational Safety and Health Administration', indicating they are two names for the same entity.\"\n}\n]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"One name is the standard acronym (OSHA) for the other name, which is the full name (Occupational Safety and Health Administration). The context confirms this relationship.\"}]}"
       }
     ]
   }

@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "238ffc84cc9cf175413449ddcbc0ddb0c819898b89429c9902d3b7aca0ba55c9": [
+    "bcc98749d030b087dcc92b5fae4b9a92fd2c1bab20f92b0e250196dff21ce7c7": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While a Statute is a type of Law, the definition of 'Law' is much broader, encompassing common law, regulations, and custom, which are distinct from a specific written statute.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Statutes are a specific *type* of law, but 'Law' is the broader semantic category that encompasses statutes, common law, and regulations. They refer to the same semantic concept.\"}, {\"confidence\": 0.8, \"is_same_entity\": false, \"pair_id\": 1, \"reasoning\": \"A 'Vehicle' is a physical machine for transport, while 'Aircraft' is a specific type of vehicle defined by its means of locomotion (air). They are distinct subclasses.\"}, {\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 2, \"reasoning\": \"Both 'Financial Product' and 'Investment Instrument' describe tangible assets or rights that can be bought, sold, or traded in financial markets, making them synonymous in this context.\"}]}"
       }
     ]
   }

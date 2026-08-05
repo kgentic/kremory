@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "1f529e40c9b5654d190fadb2ffb42c32504a80238a85bc457a682e03514c8fe8": [
+    "7e5d6332f317694da34d6f6524fa7316b46883fd5f13f7ebe2ea10ec96eb858a": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description explicitly states that 'Bob' is a nickname for 'Robert', and the facts confirm that both names refer to the same VP of Engineering in the document context.\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"The descriptions explicitly state that 'Bob' is a nickname for 'Robert' and the context links both names to the same VP of Engineering role.\"}]}"
       }
     ]
   }

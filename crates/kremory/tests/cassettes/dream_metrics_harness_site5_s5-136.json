@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "04ebfa9940e592cafaa1cf51dbb6ace09885d78195c5c2704616d8804a39034d": [
+    "8f0aedcf3fabb918e03242142cc663389a4b34323061e06bb22dea4698c45767": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The names differ by gender/first name (Samantha vs Samuel). While the context suggests a single person is involved, the provided names point to different first names, making them likely different people unless more evidence suggests a common nickname/error.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"The names differ by gender/name component ('Samantha' vs 'Samuel'), although the context strongly suggests they refer to the same person based on consistent ID and usage.\"}]}"
       }
     ]
   }

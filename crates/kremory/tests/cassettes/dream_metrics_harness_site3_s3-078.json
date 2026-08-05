@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "313cdf810becb9f71e946c40612f9429aa09cd20490b16912af964ff53f1295e": [
+    "7ec138a42c037249c769feb948ff4fe4e8b3665cb5a5b8cebe8359c3b56d1f54": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both refer to a professional service providing legal advice, with 'Law Firm' being a common structural embodiment of the 'Legal Practice'.\"}]}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both terms describe the same professional service sector involving legal representation, with 'Law Firm' being the organizational structure and 'Legal Practice' describing the function/activity, making them semantically equivalent for type registry purposes.\"\n    }\n  ]\n}"
       }
     ]
   }

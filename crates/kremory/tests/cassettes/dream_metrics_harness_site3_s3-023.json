@@ -3,10 +3,10 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "4bcfd9fa0b1aec72df43a4b9f5b656547c7f5ac4330cc03d75fb1b883ab25e95": [
+    "c904f41f1a9e839e1e9f64e13df51d1eedc95fb5f7ff017e5996e114f7d65f42": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both 'Purchase' and 'Acquisition' in this context describe the act or event of gaining possession of something, often through a transaction.\"}]}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"While 'Acquisition' can be broader, in the context of simple buying actions, they refer to the same core concept of gaining possession via a transaction.\"}]}"
       }
     ]
   }
