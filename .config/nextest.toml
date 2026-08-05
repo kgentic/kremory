@@ -27,9 +27,24 @@ slow-timeout = "60s"
 # 18-20 (verified 2026-07-17). Serializing the resource-touching binaries keeps
 # the timing assertions intact + un-starved. Adding the sibling background/
 # concurrent-spike binaries pre-empts the same class.
+#
+# 2026-08-06 — REWRITTEN FROM `binary(...)` TO `test(...)`. The six names below
+# used to be six separate test BINARIES; they are now six MODULES of the single
+# `it` binary (test-binary consolidation). A `binary(/.../)` filter would have
+# matched NOTHING after that change, silently un-serializing these tests and
+# bringing the five flakes above straight back — a config that still parses,
+# still validates, and quietly enforces nothing. `binary(it)` is NOT the fix
+# either: it would serialize all ~1782 tests onto one thread.
+#
+# Verified empirically (cargo-nextest 0.9.140) rather than assumed:
+#   test(/^alpha::/)        -> selects exactly that module's tests
+#   test(/^nosuchmodule::/) -> selects 0  (so an empty result is detectable,
+#                              which is what makes the positive result mean
+#                              something)
+#   binary(it)              -> selects ALL tests (the wrong fix, confirmed)
 [test-groups]
 serial-resource = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(/adr051_gliner_to_background|background_integration|sink_wiring_integration|spike_background_plus_engine_handle_concurrent|spike_two_engine_concurrent|wait_for_processing/)'
+filter = 'test(/^(adr051_gliner_to_background|background_integration|sink_wiring_integration|spike_background_plus_engine_handle_concurrent|spike_two_engine_concurrent|wait_for_processing)::/)'
 test-group = 'serial-resource'
