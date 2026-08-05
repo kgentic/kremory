@@ -3,46 +3,46 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "20f4e468f7bba697d80664a3c92205247a2d4dc44d10f03ff23fc62d2b9a848e": [
+    "08cb4ba95b84c472d9544bd43debc2fd4c6f8fd1bdbd5c97e4b1e3a021d32359": [
       {
         "call_index": 0,
-        "response_text": "{\"items\": [{\"object\": \"Acme Corporation\", \"predicate\": \"FOUNDED_BY\", \"subject\": \"Jane Smith\", \"is_entity_ref\": true}, {\"object\": \"Acme Corporation\", \"predicate\": \"LOCATED_IN\", \"subject\": \"Ohio\", \"is_entity_ref\": true}]}"
+        "response_text": "{\n  \"items\": [\n    {\n      \"object\": \"Amazon River\",\n      \"predicate\": \"flows_through\",\n      \"subject\": \"Amazon River\",\n      \"is_entity_ref\": true\n    },\n    {\n      \"object\": \"Brazil\",\n      \"predicate\": \"flows_through\",\n      \"subject\": \"Amazon River\",\n      \"is_entity_ref\": true\n    },\n    {\n      \"object\": \"Peru\",\n      \"predicate\": \"flows_through\",\n      \"subject\": \"Amazon River\",\n      \"is_entity_ref\": true\n    },\n    {\n      \"object\": \"Atlantic Ocean\",\n      \"predicate\": \"empties_into\",\n      \"subject\": \"Amazon River\",\n      \"is_entity_ref\": true\n    }\n  ]\n}"
       }
     ],
-    "381f0c6575a6850cb877192fb1a7fc5f1b82cfc9f11c1dfb4aa0aecf606e6f88": [
+    "0dd0c1df7be38b136935978585ecef36f1164b40bd69b818610bd088a8d08232": [
       {
         "call_index": 0,
-        "response_text": "{\"indices\": [], \"reason\": \"The Amazon River flowing through Peru and Amazon River flowing through Brazil are both possible and do not contradict each other; the river flows through multiple countries.\"}"
+        "response_text": "{\"entity_resolutions\": [{\"duplicate_candidate_id\": -1, \"id\": 0, \"name\": \"Chemistry\"}, {\"duplicate_candidate_id\": -1, \"id\": 1, \"name\": \"Marie Curie\"}, {\"duplicate_candidate_id\": -1, \"id\": 2, \"name\": \"Nobel Prizes\"}, {\"duplicate_candidate_id\": -1, \"id\": 3, \"name\": \"Physics\"}, {\"duplicate_candidate_id\": -1, \"id\": 4, \"name\": \"radioactivity\"}, {\"duplicate_candidate_id\": -1, \"id\": 5, \"name\": \"Warsaw\"}]}"
+      }
+    ],
+    "149d9f12ad4573da9a2e9c91addf1f15f27742901fdf7ad4190e37af46700594": [
+      {
+        "call_index": 0,
+        "response_text": "{\"items\": [\n  {\n    \"object\": \"Jane Smith\",\n    \"predicate\": \"FOUNDED_BY\",\n    \"subject\": \"Acme Corporation\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"Ohio\",\n    \"predicate\": \"FOUNDED_BY\",\n    \"subject\": \"Acme Corporation\",\n    \"is_entity_ref\": true\n  }\n]}"
+      }
+    ],
+    "1f27484cfa772a2879827b11d3b8122a19de5d786d5b7e542cb339e09e380064": [
+      {
+        "call_index": 0,
+        "response_text": "{\"indices\": [1], \"reason\": \"The subject 'Acme Corporation' having been founded by 'Ohio' contradicts the existing fact stating it was founded by 'jane smith'. Since 'FOUNDED_BY' typically implies a single founder, this is considered a replacement.\"}"
+      }
+    ],
+    "31ab97578cab078dcb8469eece60fab882f3aac42a0bb177fc7e8d23a57dab9c": [
+      {
+        "call_index": 0,
+        "response_text": "entity<|#|>Paris<|#|>1<|#|>The capital city of France.\nentity<|#|>France<|#|>2<|#|>A country in Western Europe.\n<|COMPLETE|>"
       }
     ],
     "5bf98932042e2d98bf66db951221aca8d87edc26497709fee9f616e8c3a50373": [
       {
         "call_index": 0,
-        "response_text": "{\"items\": [\"FOUNDED_BY\", \"LOCATED_IN\"]}"
-      }
-    ],
-    "725aa050d05ae872a78e40cf74960248b26b904af6cf2fb3475094c8d22f627b": [
-      {
-        "call_index": 0,
-        "response_text": "{\"items\": [\n  {\n    \"object\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"subject\": \"Amazon River\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"Brazil\",\n    \"predicate\": \"flows through\",\n    \"subject\": \"Amazon River\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"Peru\",\n    \"predicate\": \"flows through\",\n    \"subject\": \"Amazon River\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"Atlantic Ocean\",\n    \"predicate\": \"empties into\",\n    \"subject\": \"Amazon River\",\n    \"is_entity_ref\": true\n  }\n]}"
-      }
-    ],
-    "72735e9ddabdd973d14f42cda0cf8ab5a608fd92231c10144060f8f439f43393": [
-      {
-        "call_index": 0,
-        "response_text": "{\"items\": [{\"object\": \"Warsaw\", \"predicate\": \"born_in\", \"subject\": \"Marie Curie\", \"is_entity_ref\": true}, {\"object\": \"Physics\", \"predicate\": \"has_field\", \"subject\": \"Marie Curie\", \"is_entity_ref\": true}, {\"object\": \"Chemistry\", \"predicate\": \"has_field\", \"subject\": \"Marie Curie\", \"is_entity_ref\": true}, {\"object\": \"Nobel Prizes\", \"predicate\": \"awarded_prize_for\", \"subject\": \"Marie Curie\", \"is_entity_ref\": true}, {\"object\": \"radioactivity\", \"predicate\": \"awarded_prize_for\", \"subject\": \"Marie Curie\", \"is_entity_ref\": true}]}"
-      }
-    ],
-    "72ca692b21426911d1afb84bde460a64a3b2d5e93ceb79a66f57b0cad35d0d73": [
-      {
-        "call_index": 0,
-        "response_text": "{\"entity_resolutions\": [{\"duplicate_candidate_id\": -1, \"id\": 0, \"name\": \"Amazon River\"}, {\"duplicate_candidate_id\": -1, \"id\": 1, \"name\": \"Atlantic Ocean\"}, {\"duplicate_candidate_id\": -1, \"id\": 2, \"name\": \"Brazil\"}, {\"duplicate_candidate_id\": -1, \"id\": 3, \"name\": \"Peru\"}, {\"duplicate_candidate_id\": -1, \"id\": 4, \"name\": \"six thousand kilometres\"}]}"
+        "response_text": "{\n  \"items\": [\n    \"MANUFACTURED_IN\",\n    \"FOUNDED_BY\"\n  ]\n}"
       }
     ],
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
       {
         "call_index": 0,
-        "response_text": "How can I help you today?"
+        "response_text": "I'm ready! What can I help you with today? Whether you have a question, need creative writing, want to brainstorm ideas, or something else entirely, just let me know! 😊"
       },
       {
         "call_index": 1,
@@ -58,11 +58,11 @@
       },
       {
         "call_index": 4,
-        "response_text": "Hello! How can I help you today? 😊"
+        "response_text": "How can I help you today? Whether you have a question, need creative writing, want to learn something new, or just want to chat, feel free to let me know! 😊"
       },
       {
         "call_index": 5,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 6,
@@ -70,37 +70,43 @@
       },
       {
         "call_index": 7,
-        "response_text": "How can I help you today? 😊"
+        "response_text": "I'm here and ready to help you with whatever you need! 😊\n\nTo get started, tell me:\n\n* **What are you working on?** (A question, a writing piece, a problem to solve, etc.)\n* **What do you need me to do?** (Explain something, write something, brainstorm ideas, review text, etc.)\n\nThe more details you give me, the better I can assist you!"
       },
       {
         "call_index": 8,
-        "response_text": "Hello! How can I help you today?"
-      },
-      {
-        "call_index": 9,
         "response_text": "How can I help you today? 😊"
       },
       {
+        "call_index": 9,
+        "response_text": "Hello! How can I help you today? 😊"
+      },
+      {
         "call_index": 10,
-        "response_text": "How can I help you today? Whether you need information, creative writing, help with a task, or just want to chat, feel free to let me know! 😊"
+        "response_text": "How can I help you today? 😊"
       }
     ],
-    "76eb80fd3eda8c33bb0a6b699625ddd7b53bd5e15fa99f6d7195b8104277e01b": [
+    "75bffdae33ccd63560e69105b306d14697b9b1d64ce33df371222c5c65199372": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"items\": [\n    \"flows through\",\n    \"flows through\",\n    \"empties into\"\n  ]\n}"
+        "response_text": "{\"entity_resolutions\": [{\"duplicate_candidate_id\": -1, \"id\": 0, \"name\": \"Amazon River\"}, {\"duplicate_candidate_id\": -1, \"id\": 1, \"name\": \"Atlantic Ocean\"}, {\"duplicate_candidate_id\": -1, \"id\": 2, \"name\": \"Brazil\"}, {\"duplicate_candidate_id\": -1, \"id\": 3, \"name\": \"Peru\"}, {\"duplicate_candidate_id\": -1, \"id\": 4, \"name\": \"six thousand kilometres\"}]}"
       }
     ],
-    "87ebfaff7dfbcd06affe116d1772c8621bc3d5fdbc6e6bf8a80251d9bc984757": [
+    "a8cb8f3b0ecdbbafc1bc7f4f19153e2a1673ebe14d10323afd9751864d201041": [
       {
         "call_index": 0,
-        "response_text": "{\"indices\": [], \"reason\": \"Marie Curie has awarded prizes for multiple things, so 'radioactivity' is an additional value and does not replace the existing fact about 'nobel prizes'.\"}"
+        "response_text": "{\"indices\": [], \"reason\": \"The relationship 'awarded_award_for_field' can naturally hold multiple values (e.g., in different fields) for a subject. Therefore, the new fact is considered an addition rather than a replacement.\"}"
       }
     ],
-    "889ccf2b6153b0225a4340b7d8a43b1da7d4b258bcf6a9c9660ca08038e06db8": [
+    "a9099d0ba257f1882583a39a5f610fd8af63b07e6389d1eff69c22552c734815": [
       {
         "call_index": 0,
-        "response_text": "{\"indices\": [], \"reason\": \"A person can have expertise in multiple fields; this is an addition.\"}"
+        "response_text": "{\"indices\": [], \"reason\": \"The Amazon River flowing through Peru and Brazil are two distinct facts describing different geographical passages. The relationship 'flows_through' can hold for multiple countries, meaning the new fact is an addition and does not contradict the existing fact.\"}"
+      }
+    ],
+    "af5654ac6830eb622209463c45872973db5ac3aa1a65d672a3a86d5c329ed266": [
+      {
+        "call_index": 0,
+        "response_text": "{\"indices\": [], \"reason\": \"The existing fact specifies the award type ('nobel prizes'), and the new fact specifies a field ('Physics'). These describe different aspects of an award and can coexist as additional information about Marie Curie's accomplishments.\"}"
       }
     ],
     "b39dc9bd10753c261909c30f7b43deceaec29afc8870c14edebd705713da50ad": [
@@ -112,19 +118,25 @@
     "bc50eb51572372f3a2a6202dd25f21613fec57e49e49ea87a9a782ac6a422fa1": [
       {
         "call_index": 0,
-        "response_text": "{\"items\": [\"born_in\", \"has_field\", \"awarded_prize_for\"]}"
-      }
-    ],
-    "d42b8098c65ad5df270cafe2ef1d98842328c003950ba6b9139cd304810bd445": [
-      {
-        "call_index": 0,
-        "response_text": "{\"entity_resolutions\": [\n    {\"duplicate_candidate_id\": -1, \"id\": 0, \"name\": \"Chemistry\"},\n    {\"duplicate_candidate_id\": -1, \"id\": 1, \"name\": \"Marie Curie\"},\n    {\"duplicate_candidate_id\": -1, \"id\": 2, \"name\": \"Nobel Prizes\"},\n    {\"duplicate_candidate_id\": -1, \"id\": 3, \"name\": \"Physics\"},\n    {\"duplicate_candidate_id\": -1, \"id\": 4, \"name\": \"radioactivity\"},\n    {\"duplicate_candidate_id\": -1, \"id\": 5, \"name\": \"Warsaw\"}\n]}"
+        "response_text": "{\n\"items\": [\n\"is_birth_place\",\n\"awarded_award_for_field\",\n\"awarded_award_for_concept\"\n]\n}"
       }
     ],
     "e0f6d0257233baa23a2f3702d80c56c6a830ac77c00c8ca457e1697ee5f229c5": [
       {
         "call_index": 0,
-        "response_text": "{\"entities\": [{\"entity_type_id\": 2, \"name\": \"Amazon River\"}, {\"entity_type_id\": 7, \"name\": \"six thousand kilometres\"}, {\"entity_type_id\": 3, \"name\": \"Brazil\"}, {\"entity_type_id\": 3, \"name\": \"Peru\"}, {\"entity_type_id\": 3, \"name\": \"Atlantic Ocean\"}]}"
+        "response_text": "{\"entities\": [{\"entity_type_id\": 3, \"name\": \"Amazon River\"}, {\"entity_type_id\": 7, \"name\": \"six thousand kilometres\"}, {\"entity_type_id\": 3, \"name\": \"Brazil\"}, {\"entity_type_id\": 3, \"name\": \"Peru\"}, {\"entity_type_id\": 3, \"name\": \"Atlantic Ocean\"}]}"
+      }
+    ],
+    "ea31e3a15078d05371ec991f0050b0c6e45b09029fc80c113ad50861aa0799ac": [
+      {
+        "call_index": 0,
+        "response_text": "{\"items\": [\n  {\n    \"object\": \"Warsaw\",\n    \"predicate\": \"is_birth_place\",\n    \"subject\": \"Marie Curie\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"Nobel Prizes\",\n    \"predicate\": \"awarded_award_for_field\",\n    \"subject\": \"Marie Curie\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"Physics\",\n    \"predicate\": \"awarded_award_for_field\",\n    \"subject\": \"Marie Curie\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"Chemistry\",\n    \"predicate\": \"awarded_award_for_field\",\n    \"subject\": \"Marie Curie\",\n    \"is_entity_ref\": true\n  },\n  {\n    \"object\": \"radioactivity\",\n    \"predicate\": \"awarded_award_for_concept\",\n    \"subject\": \"Marie Curie\",\n    \"is_entity_ref\": true\n  }\n]}"
+      }
+    ],
+    "f454041bc67f0745f6fcb4d97d579151622af5f0ca3ac6d8dfe9b8204dffbbe1": [
+      {
+        "call_index": 0,
+        "response_text": "{\n\"items\": [\n\"flows_through\",\n\"empties_into\"\n]\n}"
       }
     ],
     "f7385c89f2000fce6762234594e3b8362021fc93d270ed9d817149a04c620a0d": [

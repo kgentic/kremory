@@ -430,10 +430,42 @@ const MULTI_DOMAIN_EPISODES: &[(&str, &str)] = &[
     ),
 ];
 
+/// TD-181: a FIXED document anchor, so these cassettes can replay at all.
+///
+/// `core/contradiction.rs:143` renders each existing fact's `valid_from` into
+/// the `ContradictionVerdict` prompt as RFC-3339. For LLM-EXTRACTED facts that
+/// `valid_from` is the ingest `reference_time`, so with a wall-clock anchor the
+/// prompt text — and therefore the VCR fingerprint — differed on every run. The
+/// call could never replay: each re-record appended one more entry the next run
+/// would not match (observed 14 -> 15 entries, still missing, with the missing
+/// fingerprint changing each time).
+///
+/// Pinning `published_at` fixes the prompt at its SOURCE, which keeps the
+/// fingerprint honest. Normalising timestamps out of the fingerprint instead
+/// would make cassettes match when prompts genuinely differ — re-creating the
+/// exact blindness TD-180 was about.
+///
+/// NOTE: an earlier attempt at this failed because `published_at` was consulted
+/// only for CALLER-SUPPLIED structured facts, never on the extraction path
+/// (`memory/engine_handle.rs:190` used `occurred_at` unconditionally). That is
+/// fixed in the same change; without it this call is a silent no-op.
+///
+/// Distinct per episode (base + index minutes) so ingest ORDER is still
+/// modelled; one shared instant would flatten it.
+const FIXED_ANCHOR_RFC3339: &str = "2026-01-01T00:00:00Z";
+
+fn fixed_anchor(index: i64) -> chrono::DateTime<Utc> {
+    chrono::DateTime::parse_from_rfc3339(FIXED_ANCHOR_RFC3339)
+        .expect("FIXED_ANCHOR_RFC3339 is a valid RFC-3339 literal")
+        .with_timezone(&Utc)
+        + chrono::Duration::minutes(index)
+}
+
 async fn ingest_multi_domain(mem: &Memory) {
-    for (session, text) in MULTI_DOMAIN_EPISODES {
+    for (index, (session, text)) in MULTI_DOMAIN_EPISODES.iter().enumerate() {
         let commit = mem
             .remember(*text)
+            .published_at(fixed_anchor(index as i64))
             .from_chat(*session)
             .await
             .unwrap_or_else(|e| panic!("remember({session}) must succeed: {e:?}"));

@@ -1026,14 +1026,47 @@ fn print_and_write_report(report: &MetricsReport) {
         report.volume.not_nominated,
     );
 
+    // ── TD-180 item 4 / TD-182 item 3: OUTPUT is not the BASELINE ────────
+    //
+    // This harness used to write straight over `tests/corpora/site5_metrics.json`
+    // — the very file it is judged against. A degraded run therefore rewrote
+    // its own expectation, silently. On 2026-08-05 a stale-cassette run
+    // rewrote site3's `recall` from 1.0 to 0.339 and only a hand `git checkout`
+    // stopped that being committed as the new normal.
+    //
+    // Output now always goes to the gitignored workspace `target/`. The
+    // committed baseline is rewritten ONLY under an explicit opt-in, so
+    // updating an expectation is a deliberate act with a visible diff.
+    let json = serde_json::to_string_pretty(report).expect("serialize metrics report");
+
     let out_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("site5_metrics.json");
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("failed to create {parent:?}: {e}"));
+    }
+    std::fs::write(&out_path, &json)
+        .unwrap_or_else(|e| panic!("failed to write metrics report to {out_path:?}: {e}"));
+    eprintln!("  metrics JSON written to {out_path:?} (run output)");
+
+    let baseline_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("corpora")
         .join("site5_metrics.json");
-    let json = serde_json::to_string_pretty(report).expect("serialize metrics report");
-    std::fs::write(&out_path, json)
-        .unwrap_or_else(|e| panic!("failed to write metrics report to {out_path:?}: {e}"));
-    eprintln!("  metrics JSON written to {out_path:?}");
+    if std::env::var("KREMORY_UPDATE_BASELINE").is_ok() {
+        std::fs::write(&baseline_path, &json).unwrap_or_else(|e| {
+            panic!("failed to update baseline {baseline_path:?}: {e}")
+        });
+        eprintln!("  BASELINE UPDATED at {baseline_path:?} (KREMORY_UPDATE_BASELINE set)");
+    } else {
+        eprintln!(
+            "  baseline at {baseline_path:?} left UNTOUCHED \
+             (set KREMORY_UPDATE_BASELINE=1 to rewrite it deliberately)"
+        );
+    }
 }
 
 // ─── smoke-one-before-batch ───────────────────────────────────────────────────
