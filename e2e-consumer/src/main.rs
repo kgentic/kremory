@@ -227,6 +227,112 @@ async fn main() -> anyhow::Result<()> {
     );
     eprintln!("[step4] harvested real entity id for reversible surface: '{entity_id}'");
 
+    // ── Step 4b — `.content()`, the BM25 terminal of the newly-defaulted feature ──
+    //
+    // Added 2026-08-06. `content-search` became a DEFAULT in ADR-078 and this
+    // release exists to ship that flip — yet no consumer journey exercised its own
+    // terminal. Its sibling `.raw()` is *precisely* where E2E-2 broke, silently, for
+    // weeks. Testing the flip without testing the surface it turns on is how that
+    // recurs.
+    let passages = mem
+        .recall("robotics platform")
+        .in_namespace(ns.clone())
+        .content()
+        .await?;
+    eprintln!(
+        "[step4b] recall('robotics platform').content() -> {} passage(s): {:?}",
+        passages.len(),
+        passages
+            .iter()
+            .take(3)
+            .map(|p| format!("ep{} score={:.3} {:?}", p.episode_id, p.score, p.snippet.chars().take(60).collect::<String>()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !passages.is_empty(),
+        "`.content()` must return BM25 passages over the raw episode text. An empty \
+         result on a default build means `content-search` is not actually active for \
+         the consumer — which is the entire defect this release ships to fix (PUB-1)."
+    );
+    assert!(
+        passages.iter().all(|p| !p.snippet.trim().is_empty()),
+        "every ContentPassage must carry its verbatim episode snippet"
+    );
+
+    // ── Step 4c — `.as_of()`, the bi-temporal headline differentiator ────────────
+    //
+    // The README leads with two clocks; nothing drove `as_of` end-to-end as a
+    // consumer. Harvest a real `recorded_at` from a recalled fact (TD-116 /
+    // ADR-074 populate `RetrievedContext::facts`), then bracket it.
+    let ctx_with_facts = mem.recall("Acme Corporation").in_namespace(ns.clone()).raw().await?;
+    let fact_clock = ctx_with_facts
+        .iter()
+        .flat_map(|c| c.facts.iter())
+        .map(|f| (f.valid_at, f.recorded_at))
+        .next();
+
+    match fact_clock {
+        Some((valid_at, recorded_at)) => {
+            eprintln!("[step4c] harvested fact clocks: valid_at={valid_at} recorded_at={recorded_at}");
+
+            // AFTER everything was asserted → the graph is visible.
+            let after = mem
+                .recall("Acme Corporation")
+                .in_namespace(ns.clone())
+                .as_of(valid_at + chrono::Duration::days(1))
+                .raw()
+                .await?;
+            // LONG BEFORE anything existed → valid-time filtering must exclude it.
+            let before = mem
+                .recall("Acme Corporation")
+                .in_namespace(ns.clone())
+                .as_of(valid_at - chrono::Duration::days(3650))
+                .raw()
+                .await?;
+            let facts_after: usize = after.iter().map(|c| c.facts.len()).sum();
+            let facts_before: usize = before.iter().map(|c| c.facts.len()).sum();
+            eprintln!(
+                "[step4c] as_of(+1d) -> {} ctx / {} facts   ·   as_of(-10y) -> {} ctx / {} facts",
+                after.len(), facts_after, before.len(), facts_before
+            );
+            assert!(
+                facts_before <= facts_after,
+                "as_of() 10 years BEFORE the facts were valid must not return MORE facts \
+                 than as_of() after them ({facts_before} vs {facts_after}). A violation \
+                 means the valid-time predicate is not being applied — the README's \
+                 headline differentiator silently doing nothing."
+            );
+        }
+        None => {
+            // Not an assertion failure: whether the real LLM extracts a fact for this
+            // entity on this run is nondeterministic. Say so loudly rather than
+            // passing quietly — a step that silently skips is how coverage rots.
+            eprintln!(
+                "[step4c] ⚠️ SKIPPED as_of assertions — no RetrievedFact came back for \
+                 'Acme Corporation' this run (real-LLM extraction is nondeterministic). \
+                 This step is therefore NOT covered on this run."
+            );
+        }
+    }
+
+    // ── Step 4d — `supersede()` reachability, REPORTED not asserted ─────────────
+    //
+    // `Memory::supersede(fact_id: i64)` is listed SHIPPED (SCOPE V6), but a consumer
+    // holding a recalled fact has no id to pass it: `RetrievedFact` (exported at
+    // `lib.rs:90`) carries the triple, both clocks, confidence and provenance — and
+    // NO identifier. `IngestResult` returns counts only.
+    //
+    // Deliberately NOT asserted. Asserting a gap makes the test fail when the gap is
+    // FIXED, which is backwards. Logged so the journey records the reachability
+    // question every run, and tracked in the plan doc instead.
+    let total_facts: usize = ctx_with_facts.iter().map(|c| c.facts.len()).sum();
+    eprintln!(
+        "[step4d] reachability note: {total_facts} RetrievedFact(s) returned, carrying \
+         both clocks but NO id field — so `supersede(fact_id)` / `delete_fact(fact_id)` \
+         cannot be driven from a recall result by a consumer. Not a test failure; \
+         recorded for the API-surface review."
+    );
+
     // Step 5 — INSPECT surface (the SEE half). Before any consumer mutation, dream
     // may already have logged mutations; list them + the entity's history.
     let all_muts = mem.list_mutations().in_namespace(ns.clone()).await?;

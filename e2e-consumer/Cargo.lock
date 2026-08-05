@@ -1560,6 +1560,7 @@ name = "kremory-e2e-consumer"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "kremory",
  "metrics",
  "metrics-util",
