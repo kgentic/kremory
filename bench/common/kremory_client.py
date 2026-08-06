@@ -77,7 +77,15 @@ class CodememClient:
         # same class of timeout.
         # Raised from 300s (conv0's dream exceeded it → ReadTimeout aborted
         # consolidation → multi-hop under-served). Env-overridable.
-        self.consolidate_timeout = float(_os.environ.get("KREMORY_CONSOLIDATE_TIMEOUT_S", "1800"))
+        # 5400s, not 1800s. MEASURED 2026-08-06 on LoCoMo conv0 (19 sessions / 419 turns)
+        # against local Ollama gemma4:e4b: ingest 19min then dream 57min — 76min total.
+        # The old 1800s default cut dream off mid-flight in EVERY run and reported it as
+        # a ReadTimeout warning, so every published bench number was measured against a
+        # graph whose consolidation never finished.
+        #
+        # Worse, the timeout made "slow" indistinguishable from "hangs" — that ambiguity
+        # was TD-184's whole cost. Raising the ceiling settled it: dream TERMINATES.
+        self.consolidate_timeout = float(_os.environ.get("KREMORY_CONSOLIDATE_TIMEOUT_S", "5400"))
         # Per-source HTTP-error counter (observability-first-class: an
         # aggregate accuracy score alone can't tell you WHY it's low —
         # retrieval-broken vs model-too-weak vs scoring-bug. This is the
