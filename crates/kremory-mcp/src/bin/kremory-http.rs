@@ -845,14 +845,20 @@ struct ConsolidationQuery {
     /// global-consolidation semantics to kremory's namespace-scoped `dream()`.
     ///
     /// FAIL-LOUD (Quinn HIGH): this param is REQUIRED, not defaulted. An
-    /// earlier draft fell back to a single `"default"` namespace when omitted
-    /// — but dream idempotency is keyed on `(namespace, batch_id)`, so every
-    /// benchmark consolidation call would share `(default, <cycle>)` and only
-    /// the FIRST would execute; the rest silently no-op and dream never
-    /// touches real data. Missing `?namespace=` is now a loud 422 (see
-    /// `run_consolidation`) rather than a silent no-op. `cycle` is threaded
-    /// through as `batch_id` so repeated same-`(namespace, cycle)` calls are
-    /// idempotent (`DreamParams::batch_id`).
+    /// earlier draft fell back to a single `"default"` namespace when omitted,
+    /// which would have pointed every benchmark conversation at one shared
+    /// scope. Missing `?namespace=` is a loud 422 (see `run_consolidation`).
+    ///
+    /// ⚠️ **CORRECTED 2026-08-06 — the original rationale here was WRONG.** It
+    /// argued the 422 was needed because *"dream idempotency is keyed on
+    /// `(namespace, batch_id)`, so every benchmark consolidation call would
+    /// share `(default, <cycle>)` and only the FIRST would execute; the rest
+    /// silently no-op"*. **That idempotency does not exist.** `batch_id` is
+    /// never read on the awaited path (`facade/dream.rs::execute_blocking`),
+    /// so repeated calls re-run in full — they do not no-op. The 422 remains
+    /// CORRECT, but for the simpler reason stated above (namespace scoping),
+    /// not for the mechanism the old comment invoked. Left in place because
+    /// requiring the namespace is right either way; see TD-188.
     namespace: Option<String>,
 }
 

@@ -20,8 +20,24 @@ impl<'a> DreamRequest<'a> {
         self
     }
 
-    /// Idempotent batch key. Multiple calls with same `(namespace, batch_id)` return
-    /// the existing handle without starting a new run.
+    /// Batch key, carried into [`DreamHandle::batch_id`] for correlation.
+    ///
+    /// ⚠️ **NOT idempotent today, despite the ADR having specified it.** This doc
+    /// previously claimed *"multiple calls with the same `(namespace, batch_id)`
+    /// return the existing handle without starting a new run"*. That is FALSE and
+    /// was never implemented: `batch_id` is read at exactly one place in this file
+    /// ([`DreamFireAndForget::into_future`]), and the awaited path
+    /// ([`DreamRequest::execute_blocking`]) never reads it at all — so every call
+    /// re-runs the whole pass chain from scratch. The `(namespace, batch_id)`
+    /// registry the ADR describes does not exist; the only idempotency table in
+    /// the tree (`dream_idempotency_keys`, Migration 016) is keyed
+    /// `(pass_name, entity_id, content_hash)` and is written solely by the
+    /// background *ingest* verify stage, never by dream.
+    ///
+    /// Corrected 2026-08-06 per `docs-match-implementation-as-dod` (stale-done
+    /// severity — downstream reasoning rested on a capability that is absent;
+    /// see the sibling corrections at `kremory-mcp/src/bin/kremory-http.rs` and
+    /// `kremory-mcp/src/params.rs`). Tracked as TD-188.
     pub fn for_batch(mut self, id: impl Into<String>) -> Self {
         self.batch_id = Some(id.into());
         self

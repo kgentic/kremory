@@ -242,9 +242,14 @@ pub struct RecallStructuredOutput {
 pub struct DreamParams {
     pub namespace: String,
     pub thread: Option<String>,
-    /// Idempotent batch key. Repeated calls with the same
-    /// `(namespace, batch_id)` return the existing run rather than starting
-    /// a new one.
+    /// Batch key, carried through to `DreamHandle::batch_id` for correlation.
+    ///
+    /// ⚠️ **NOT idempotent today.** This doc previously claimed *"repeated calls
+    /// with the same `(namespace, batch_id)` return the existing run rather than
+    /// starting a new one"* — FALSE, and never implemented. The awaited path
+    /// (`kremory::facade::dream::DreamRequest::execute_blocking`, the one
+    /// `do_dream` selects) never reads `batch_id` at all, so every call re-runs
+    /// the full pass chain. Corrected 2026-08-06; see TD-188.
     pub batch_id: Option<String>,
 }
 
