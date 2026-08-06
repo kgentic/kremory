@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use crate::core::config::ContentType;
 use crate::core::entity_types::EntityTypeSpec;
 use crate::core::error::Result;
@@ -100,6 +102,32 @@ pub struct ExtractionContext<'a> {
     /// (Ollama → `FormatSchema`, OpenAI/Anthropic GA → `NativeSchema`, else
     /// `PromptOnly`) + metric labels. `None`/empty → `PromptOnly`.
     pub model: Option<&'a str>,
+    /// TD-187 (temporal grounding): the caller-DECLARED document anchor —
+    /// `SourceRef::published_at` — and ONLY that. It is deliberately NOT
+    /// `ref_time` / `occurred_at` / `Utc::now()`.
+    ///
+    /// Threaded through so `build_triplet_prompt` (extraction/graphiti.rs) can
+    /// tell the LLM what date the source document was dated, so relative-time
+    /// phrases in the text ("yesterday", "last week") resolve to an absolute
+    /// date. `None` means: render NOTHING extra in the prompt — the prompt is
+    /// byte-identical to the pre-TD-187 prompt.
+    ///
+    /// # Why this must NEVER be wall-clock
+    ///
+    /// The VCR fingerprint (`core/provider/record_replay.rs:225-263`) hashes
+    /// the rendered `messages_json`, which includes this prompt. `occurred_at`
+    /// is `Utc::now()` at every `remember()` call site
+    /// (`facade/remember.rs`) unless the caller explicitly sets it. If THAT
+    /// wall-clock value ever reached the prompt, the fingerprint would change
+    /// on every single test run and permanently break all 303 committed chat
+    /// cassettes under `crates/kremory/tests/cassettes/` (this already
+    /// happened once via the contradiction prompt — see the TD-181 comment at
+    /// `memory/engine_handle.rs:190-210`). `published_at` is the one field
+    /// that stays `None` unless a caller opts in via
+    /// `RememberRequest::published_at()`, so it is safe: `None` in every
+    /// existing cassette-backed test, `Some` only when a caller has
+    /// deliberately dated the document.
+    pub reference_time: Option<DateTime<Utc>>,
 }
 
 impl<'a> Default for ExtractionContext<'a> {
@@ -114,6 +142,7 @@ impl<'a> Default for ExtractionContext<'a> {
             existing_graph_entities: &[],
             arm_budget_ms: 30_000,
             model: None,
+            reference_time: None,
         }
     }
 }
@@ -584,6 +613,16 @@ mod tests {
             subject_group_id: None,
             object_group_id: None,
         }
+    }
+
+    /// TD-187: `reference_time` must default to `None` — `None` is what
+    /// `build_triplet_prompt` (extraction/graphiti.rs) treats as "render
+    /// nothing extra", which keeps every caller that constructs
+    /// `ExtractionContext::default()` (or `..Default::default()`)
+    /// byte-identical to the pre-TD-187 prompt.
+    #[test]
+    fn extraction_context_default_reference_time_is_none() {
+        assert!(ExtractionContext::default().reference_time.is_none());
     }
 
     #[tokio::test]

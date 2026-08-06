@@ -146,6 +146,7 @@ async fn within_episode_set_valued_predicate_keeps_every_value() {
             IngestWithParams {
                 text: "Alice speaks English, French and Spanish.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("dur2-multivalued"),
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -205,6 +206,7 @@ fn within_episode_multivalue_counter_fires() {
                     IngestWithParams {
                         text: "Alice speaks English, French and Spanish.",
                         reference_time: None,
+                        declared_reference_time: None,
                         group_id: Some("multivalue-counter"),
                         content_type: None,
                         source_params: SourceParams::default(),
@@ -282,6 +284,7 @@ async fn within_episode_exact_duplicate_triple_still_dedups() {
             IngestWithParams {
                 text: "Alice speaks English. Alice speaks English. Alice speaks English.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("dur2-exact-dup"),
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -396,6 +399,7 @@ async fn engine_facts_cfg(group_id: Option<&str>, with_allowed_types: bool) -> u
             IngestWithParams {
                 text: "Alice works at Acme Corp.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -467,6 +471,7 @@ async fn engine_ingest_wrapper_dispatches_configured_extractor_persists_facts() 
         .ingest(IngestParams {
             text: "Alice works at Acme Corp.",
             reference_time: None,
+            declared_reference_time: None,
             group_id: Some("b3-ner-guard"),
             content_type: None,
             source_params: SourceParams::default(),

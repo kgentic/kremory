@@ -27,6 +27,18 @@ use crate::core::ingest::Engine;
 pub struct IngestDeferredParams<'a> {
     pub text: &'a str,
     pub reference_time: Option<DateTime<Utc>>,
+    /// TD-187: the caller-DECLARED document anchor (`SourceRef::published_at`)
+    /// ONLY — never `reference_time` / `occurred_at` / wall-clock. Forwarded
+    /// into [`crate::core::intelligence::ExtractionContext::reference_time`]
+    /// below. Currently always `None` on this Phase-2 (background worker)
+    /// path: the `BackgroundIngestor` plumbing (`IngestRequest` /
+    /// `DeferredRequest`) does not carry a caller-declared publish time
+    /// distinct from `reference_time` today — that is a pre-existing gap in
+    /// the background-ingestor surface, out of scope for TD-187, which only
+    /// wires the inline `EngineGraphHandle::graph_ingest_episode` path
+    /// (`memory/engine_handle.rs`). See that field's doc comment for the
+    /// VCR-fingerprint hazard this separation exists to avoid.
+    pub declared_reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<&'a str>,
     pub content_type: Option<ContentType>,
     pub episode_id: i64,
@@ -61,6 +73,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let IngestDeferredParams {
             text,
             reference_time,
+            declared_reference_time,
             group_id,
             content_type,
             episode_id,
@@ -118,6 +131,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 existing_graph_entities: &[],
                 arm_budget_ms: self.config.extraction_arm_budget_ms,
                 model: self.model.as_deref(),
+                reference_time: declared_reference_time,
             };
             let result = extractor.extract(chunk, &ctx).await?;
             all_facts.extend(result.facts);

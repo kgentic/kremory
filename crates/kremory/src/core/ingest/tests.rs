@@ -154,6 +154,7 @@ async fn test_ingest_creates_episode() {
         .ingest(IngestParams {
             text: "Alice works at Acme",
             reference_time: None,
+            declared_reference_time: None,
             group_id: None,
             content_type: None,
             source_params: SourceParams::default(),
@@ -176,6 +177,7 @@ async fn test_ingest_creates_entities_and_facts() {
             IngestWithParams {
                 text: "Alice works at Acme",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -215,6 +217,7 @@ async fn test_ingest_creates_episodic_edges() {
             IngestWithParams {
                 text: "Alice works at Acme",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -279,6 +282,7 @@ async fn episodic_edge_extracted_object_not_duplicated() {
         IngestWithParams {
             text: "Alice works at Acme",
             reference_time: None,
+            declared_reference_time: None,
             group_id: None,
             content_type: None,
             source_params: SourceParams::default(),
@@ -323,6 +327,7 @@ async fn episodic_edge_stub_object_still_linked() {
         IngestWithParams {
             text: "Alice works at Acme",
             reference_time: None,
+            declared_reference_time: None,
             group_id: None,
             content_type: None,
             source_params: SourceParams::default(),
@@ -350,6 +355,7 @@ async fn test_ingest_returns_result_with_correct_counts() {
             IngestWithParams {
                 text: "Alice works at Acme",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -372,6 +378,7 @@ async fn test_ingest_entities_stored_in_graph() {
     rql.ingest(IngestParams {
         text: "Alice works at Acme",
         reference_time: None,
+        declared_reference_time: None,
         group_id: None,
         content_type: None,
         source_params: SourceParams::default(),
@@ -431,6 +438,7 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
             IngestWithParams {
                 text: "Alice discussed the proposal with Zenith Dynamics executives.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -519,6 +527,7 @@ async fn ingest_intra_batch_duplicate_dedupes_silently() {
             IngestWithParams {
                 text: "Alice Corp is a company.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -610,6 +619,7 @@ async fn stub_entity_inserted_on_forward_reference_lib() {
             IngestWithParams {
                 text: "Alice works with Bob on research.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -691,6 +701,7 @@ async fn stub_entity_promoted_on_reingestion_lib() {
             IngestWithParams {
                 text: "Alice works with Bob.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -734,6 +745,7 @@ async fn stub_entity_promoted_on_reingestion_lib() {
             IngestWithParams {
                 text: "Bob is a researcher at Stanford.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -826,6 +838,7 @@ async fn stub_promoted_under_active_blocking_lib() {
             IngestWithParams {
                 text: "Alice and Carol and Dave all work with Bob.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -862,6 +875,7 @@ async fn stub_promoted_under_active_blocking_lib() {
             IngestWithParams {
                 text: "Bob is a researcher at Stanford.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -932,6 +946,7 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
             IngestWithParams {
                 text: "two duplicates submitted in single batch.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -1086,6 +1101,7 @@ async fn ingest_persists_entity_catchall_under_l1_design() {
             IngestWithParams {
                 text: "test text for L1 catch-all persistence.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -1202,6 +1218,7 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
             IngestWithParams {
                 text: "Alice works at Acme",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("fresh"),
                 content_type: None,
                 source_params: SourceParams {
@@ -1335,6 +1352,7 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
             IngestWithParams {
                 text: "WidgetCo is a company.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("g1"),
                 content_type: None,
                 source_params: SourceParams {
@@ -1436,6 +1454,7 @@ async fn test_ingest_with_no_override_fresh_db_extracts_zero_typed_entities() {
             IngestWithParams {
                 text: "Alice works at Acme",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("g_fresh"),
                 content_type: None,
                 source_params: SourceParams {
@@ -1517,6 +1536,7 @@ async fn ingest_persists_runtime_allowed_entity_label() {
             IngestWithParams {
                 text: "some text mentioning a runtime-allowed entity type.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),

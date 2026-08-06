@@ -125,3 +125,66 @@ def test_shared_client_identity_is_not_shadowed() -> None:
     assert harness.CodememClient is kremory_client.CodememClient
     assert harness.KremoryStalled is kremory_client.KremoryStalled
     assert harness.INGEST_BUDGET_S == kremory_client.INGEST_BUDGET_S
+
+
+# ── TD-187: temporal grounding — the session anchor must reach kremory ────────
+
+
+def test_parse_session_datetime_emits_utc_offset() -> None:
+    """The anchor MUST carry a UTC offset or kremory rejects every store.
+
+    kremory parses `published_at` with `DateTime::parse_from_rfc3339`
+    (`crates/kremory-mcp/src/conversions.rs:150`), which REJECTS a naive
+    timestamp; the accepted shape is pinned by `conversions.rs:551`. A first
+    draft of `parse_session_datetime` returned `.isoformat()` on a naive
+    datetime — every store would have 4xx'd and the whole bench run would have
+    been lost. This test is the tripwire for that regression.
+    """
+    import re
+
+    got = harness.parse_session_datetime("1:56 pm on 8 May, 2023")
+    assert got is not None
+    assert re.search(r"([+-]\d{2}:\d{2}|Z)$", got), f"no UTC offset: {got}"
+    assert got.startswith("2023-05-08T13:56:00")
+
+
+def test_parse_session_datetime_returns_none_not_now_on_failure() -> None:
+    """Unparseable MUST stay None — never a wall-clock substitute.
+
+    Load-bearing, not cosmetic: kremory renders the anchor into the extraction
+    prompt ONLY when the caller declared one, because the VCR fingerprint
+    (`core/provider/record_replay.rs:225-263`) hashes the message list. A
+    wall-clock fallback here would change the prompt on every run and make all
+    303 chat cassettes permanently un-replayable.
+    """
+    assert harness.parse_session_datetime("") is None
+    assert harness.parse_session_datetime("   ") is None
+    assert harness.parse_session_datetime("not a date at all") is None
+
+
+def test_parse_session_datetime_covers_the_whole_real_corpus() -> None:
+    """Every session header in the shipped corpus must parse — 272 of 272.
+
+    Drives the REAL corpus, not a hand-made fixture: a hand-shaped string would
+    only validate the author's mental model of the format
+    (`smoke-one-before-batch-llm-validation`, subagent-fixture clause).
+    """
+    import json
+    from pathlib import Path
+
+    corpus = Path(__file__).parent / "data" / "locomo10.json"
+    if not corpus.exists():
+        pytest.skip("locomo10.json not present")
+
+    data = json.loads(corpus.read_text())
+    convs = data if isinstance(data, list) else [data]
+    total = 0
+    parsed = 0
+    for conv in convs:
+        for sess in harness.extract_sessions(conv):
+            total += 1
+            if harness.parse_session_datetime(sess["datetime"]):
+                parsed += 1
+
+    assert total > 0, "corpus yielded no sessions — extract_sessions broke"
+    assert parsed == total, f"only {parsed} of {total} session headers parsed"

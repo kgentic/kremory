@@ -558,6 +558,7 @@ async fn q04_with_facts_object_id_stamped_consumer_pinned() {
             kremory::core::ingest::IngestWithParams {
                 text: "Q-04 symmetric ConsumerPinned test episode.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("default"),
                 content_type: None,
                 source_params: params,
@@ -635,6 +636,7 @@ async fn q04_with_facts_object_value_literal_no_object_stamp() {
             kremory::core::ingest::IngestWithParams {
                 text: "Q-04 literal object_value — no object entity should be created.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("default"),
                 content_type: None,
                 source_params: params,

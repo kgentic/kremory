@@ -247,6 +247,7 @@ async fn b2_builder_seed_populates_registry_for_custom_types() {
             kremory::core::ingest::IngestWithParams {
                 text: "The court reviewed the statute.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("legal"),
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -318,6 +319,7 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
             kremory::core::ingest::IngestWithParams {
                 text: "First document about courts.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("legal2"),
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -336,6 +338,7 @@ async fn b2_builder_seed_idempotent_on_second_ingest() {
             kremory::core::ingest::IngestWithParams {
                 text: "Second document about statutes.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("legal2"),
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -405,6 +408,7 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
                     kremory::core::ingest::IngestWithParams {
                         text: "Document for builder-seed counter test.",
                         reference_time: None,
+                        declared_reference_time: None,
                         group_id: Some("b5-seed-ns"),
                         content_type: None,
                         source_params: SourceParams::default(),
@@ -500,6 +504,7 @@ fn b5_registry_builder_seed_counter_fires_on_seed_not_on_override() {
                     kremory::core::ingest::IngestWithParams {
                         text: "Document for override-path counter test.",
                         reference_time: None,
+                        declared_reference_time: None,
                         group_id: Some("b5-override-ns"),
                         content_type: None,
                         source_params: src,
@@ -631,6 +636,7 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
             kremory::core::ingest::IngestWithParams {
                 text: "alice works at some startup",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("b3-e2e"),
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -696,6 +702,7 @@ async fn b3_e2e_self_learning_via_ingest_with_twice() {
             kremory::core::ingest::IngestWithParams {
                 text: "AcmeCorp builds product software",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: Some("b3-e2e"),
                 content_type: None,
                 source_params: SourceParams::default(),

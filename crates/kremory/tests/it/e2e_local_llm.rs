@@ -107,6 +107,7 @@ three business days after the API merge to run the full regression suite.";
             .ingest(kremory::core::ingest::IngestParams {
                 text: MEETING_TRANSCRIPT,
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: kremory::core::ingest::SourceParams::default(),
@@ -406,6 +407,7 @@ three business days after the API merge to run the full regression suite.";
                 kremory::core::ingest::IngestWithParams {
                     text: MEETING_TRANSCRIPT,
                     reference_time: None,
+                    declared_reference_time: None,
                     group_id: None,
                     content_type: None,
                     source_params: kremory::core::ingest::SourceParams::default(),

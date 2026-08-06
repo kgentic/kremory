@@ -235,6 +235,12 @@ fn flush_deferred_emissions(
 pub struct IngestWithParams<'a> {
     pub text: &'a str,
     pub reference_time: Option<DateTime<Utc>>,
+    /// TD-187: the caller-DECLARED document anchor (`SourceRef::published_at`)
+    /// ONLY — never `reference_time` / `occurred_at` / wall-clock. Forwarded
+    /// unchanged into [`crate::core::intelligence::ExtractionContext::reference_time`]
+    /// at every extraction call site below. See that field's doc comment for
+    /// the VCR-fingerprint hazard this separation exists to avoid.
+    pub declared_reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<&'a str>,
     pub content_type: Option<ContentType>,
     pub source_params: SourceParams,
@@ -398,6 +404,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let IngestWithParams {
             text,
             reference_time,
+            declared_reference_time,
             group_id,
             content_type,
             source_params,
@@ -1027,6 +1034,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         existing_graph_entities: &existing_entities_for_prompt,
                         arm_budget_ms: self.config.extraction_arm_budget_ms,
                         model: self.model.as_deref(),
+                        reference_time: declared_reference_time,
                     };
                     let result = extractor.extract(chunk.as_str(), &ctx).await?;
                     all_entities.extend(result.entities);
@@ -1049,6 +1057,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     existing_graph_entities: &existing_entities_for_prompt,
                     arm_budget_ms: self.config.extraction_arm_budget_ms,
                     model: self.model.as_deref(),
+                    reference_time: declared_reference_time,
                 };
                 // Build the futures eagerly via `Iterator::map` (monomorphised
                 // at the concrete chunk lifetime) rather than `StreamExt::map`

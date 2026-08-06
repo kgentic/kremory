@@ -326,6 +326,52 @@ def load_dataset(path: Path) -> list[dict]:
     return data
 
 
+def parse_session_datetime(raw: str) -> str | None:
+    """Parse a LoCoMo session header date into RFC3339, or None if unparseable.
+
+    LoCoMo stores it as e.g. `"1:56 pm on 8 May, 2023"`. `dateutil` handles every
+    part of that EXCEPT the literal `" on "` separator, which it reads as a token
+    and rejects — so strip it first.
+
+    WHY THIS EXISTS (TD-187): this value is the episode's world-time ANCHOR, and
+    until now the harness embedded it in the content STRING only and never sent it
+    as `published_at`. That mattered because kremory's extractor is never told when
+    an episode happened, so a turn saying "I went yesterday" was stored as an
+    undated assertion — the date was simply not in the graph to retrieve. Four of
+    the six questions that fail in ALL six conv0 runs are "when did X happen"
+    (q_1, q_7, q_26, q_50).
+
+    Returning None on failure is deliberate and load-bearing: kremory renders the
+    anchor into the extraction prompt ONLY when the caller declared one, because a
+    wall-clock fallback would change the VCR fingerprint on every run. A None here
+    must therefore stay None all the way down — never substitute `now()`.
+
+    The returned string MUST carry a UTC offset. kremory parses `published_at`
+    with `DateTime::parse_from_rfc3339` (`crates/kremory-mcp/src/conversions.rs:150`),
+    which REJECTS a naive timestamp — the accepted shape is pinned by the test at
+    `conversions.rs:551` (`"2026-07-14T10:30:00Z"`). An earlier draft of this
+    function returned `.isoformat()` on a naive datetime; every store would have
+    been rejected. Caught by smoke-testing the parser against the real corpus
+    before running the bench, not by review.
+
+    ASSUMPTION (stated, not hidden): LoCoMo session headers carry no timezone, so
+    they are interpreted as UTC. The corpus gives us nothing better, and internal
+    consistency is what matters for resolving "yesterday" against the anchor.
+    """
+    if not raw or not raw.strip():
+        return None
+    try:
+        from datetime import timezone
+
+        from dateutil import parser as date_parser
+        dt = date_parser.parse(raw.replace(" on ", " "))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    except (ValueError, OverflowError, TypeError):
+        return None
+
+
 def extract_sessions(conversation: dict) -> list[dict]:
     """Extract ordered sessions from a LoCoMo conversation.
 
@@ -446,6 +492,11 @@ def ingest_conversation(
 
     for sess in sessions:
         turns = sess["turns"]
+        # TD-187: the session header carries the episode's world-time anchor. Send
+        # it as `published_at` so kremory can ground relative time expressions
+        # ("yesterday") at extraction. None when unparseable — and it must STAY
+        # None rather than falling back to now(), see parse_session_datetime().
+        sess_published_at = parse_session_datetime(sess.get("datetime", ""))
         # Split session into chunks of turns
         for chunk_start in range(0, len(turns), turns_per_chunk):
             chunk_turns = turns[chunk_start:chunk_start + turns_per_chunk]
@@ -476,6 +527,7 @@ def ingest_conversation(
                 memory_type="Context",
                 importance=0.5,
                 tags=tags,
+                published_at=sess_published_at,
             )
             chunk_elapsed = time.monotonic() - chunk_t0
             if mid:

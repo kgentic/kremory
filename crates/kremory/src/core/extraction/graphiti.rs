@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use metrics::histogram;
 use tracing;
 
@@ -309,18 +310,131 @@ pub(crate) fn build_relation_names_prompt(
 }
 
 /// Build full-triplet prompt for the 3-stage IntegerIdLlmExtractor pipeline.
-pub(crate) fn build_triplet_prompt(
-    text: &str,
-    entities: &[ExtractedEntity],
-    relation_names: &[String],
-) -> String {
+///
+/// TD-187 (temporal grounding): `reference_time` is the caller-DECLARED
+/// document anchor (`ExtractionContext::reference_time`) — and ONLY that.
+/// When `Some`, a one-line date-grounding block is appended so the LLM can
+/// resolve relative-time phrases ("yesterday", "last week") in `text` against
+/// an absolute date. When `None` (the default — unchanged from before
+/// TD-187), NOTHING extra is rendered: the returned prompt is byte-identical
+/// to the pre-TD-187 prompt. This is load-bearing for VCR cassette replay —
+/// see `ExtractionContext::reference_time`'s doc comment for why.
+///
+/// Args-as-object (TD-042): adding `reference_time` took this to 4 positional
+/// params and tripped clippy `too_many_arguments` (4/3 — the project threshold
+/// is 3 and `#[allow]` is banned in `src/`). Grouped into a params struct per
+/// the ratified TD-042 pattern rather than suppressed.
+pub(crate) struct TripletPromptParams<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) entities: &'a [ExtractedEntity],
+    pub(crate) relation_names: &'a [String],
+    /// See [`crate::core::intelligence::ExtractionContext::reference_time`] —
+    /// caller-DECLARED anchor only, never wall-clock.
+    pub(crate) reference_time: Option<DateTime<Utc>>,
+}
+
+pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
+    let TripletPromptParams {
+        text,
+        entities,
+        relation_names,
+        reference_time,
+    } = params;
     let entity_list = entities
         .iter()
         .map(|e| format!("{} ({})", e.name, e.label))
         .collect::<Vec<_>>()
         .join(", ");
     let rel_list = relation_names.join(", ");
+    let date_block = match reference_time {
+        Some(ts) => format!(
+            "\nThe source document is dated {}.\nWhen the text refers to a time relatively (\"yesterday\", \"last week\", \"next June\"), resolve it against that date and state the absolute date in the fact.\n",
+            ts.format("%Y-%m-%d")
+        ),
+        None => String::new(),
+    };
     format!(
-        "Given entities: [{entity_list}]\nRelationship types: [{rel_list}]\n\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\nText: {text}\n\nOutput a concise JSON array of objects with \"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0) fields."
+        "Given entities: [{entity_list}]\nRelationship types: [{rel_list}]\n{date_block}\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\nText: {text}\n\nOutput a concise JSON array of objects with \"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0) fields."
     )
+}
+
+// ─── TD-187 unit tests ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod td_187_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn sample_entities() -> Vec<ExtractedEntity> {
+        vec![
+            ExtractedEntity {
+                label: "Person".to_string(),
+                name: "Alice".to_string(),
+                properties: serde_json::Value::Null,
+            },
+            ExtractedEntity {
+                label: "Person".to_string(),
+                name: "Bob".to_string(),
+                properties: serde_json::Value::Null,
+            },
+        ]
+    }
+
+    /// Guards all 303 committed VCR chat cassettes (`crates/kremory/tests/cassettes/`):
+    /// the fingerprint hashes the rendered prompt (`record_replay.rs:225-263`), so
+    /// `reference_time: None` MUST render byte-identically to the pre-TD-187 prompt.
+    #[test]
+    fn build_triplet_prompt_with_none_is_byte_identical_to_pre_td187_prompt() {
+        let entities = sample_entities();
+        let relation_names = vec!["met".to_string()];
+        let text = "Alice met Bob yesterday.";
+
+        let actual = build_triplet_prompt(TripletPromptParams {
+            text,
+            entities: &entities,
+            relation_names: &relation_names,
+            reference_time: None,
+        });
+
+        // Hand-reconstructed from the pre-TD-187 format! literal (no `reference_time`
+        // parameter, no date_block interpolation) — this is the exact string every
+        // one of the 303 cassettes was recorded against.
+        let expected = "Given entities: [Alice (Person), Bob (Person)]\nRelationship types: [met]\n\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\nText: Alice met Bob yesterday.\n\nOutput a concise JSON array of objects with \"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0) fields.";
+
+        assert_eq!(
+            actual, expected,
+            "None must render NOTHING extra — any deviation here breaks all 303 VCR cassette fingerprints"
+        );
+    }
+
+    #[test]
+    fn build_triplet_prompt_with_some_renders_date_grounding_block() {
+        let entities = sample_entities();
+        let relation_names = vec!["met".to_string()];
+        let text = "Alice met Bob yesterday.";
+        let ts = Utc.with_ymd_and_hms(2019, 3, 15, 12, 0, 0).unwrap();
+
+        let actual = build_triplet_prompt(TripletPromptParams {
+            text,
+            entities: &entities,
+            relation_names: &relation_names,
+            reference_time: Some(ts),
+        });
+
+        assert!(
+            actual.contains("The source document is dated 2019-03-15."),
+            "expected date-grounding line with formatted date, got: {actual}"
+        );
+        assert!(
+            actual.contains(
+                "resolve it against that date and state the absolute date in the fact"
+            ),
+            "expected relative-time resolution instruction, got: {actual}"
+        );
+        // No time-of-day rendered — date-only per TD-187 spec (avoid fingerprint churn).
+        assert!(
+            !actual.contains("12:00:00"),
+            "must not render time-of-day, got: {actual}"
+        );
+    }
 }

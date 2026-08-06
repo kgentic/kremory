@@ -383,6 +383,7 @@ async fn legacy_engine_ingest_still_works() {
             kremory::core::ingest::IngestWithParams {
                 text: "Alice works at Acme Corp on the project.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),

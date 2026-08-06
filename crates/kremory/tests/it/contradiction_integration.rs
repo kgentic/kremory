@@ -130,6 +130,7 @@ async fn real_llm_contradiction_supersedes_prior_fact() {
                        where she leads the payments platform team. \
                        Sarah Martinez has worked at Acme Corporation for several years.",
                 reference_time: Some(Utc::now()),
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -164,6 +165,7 @@ async fn real_llm_contradiction_supersedes_prior_fact() {
                        where she leads the cloud infrastructure division. \
                        Sarah Martinez no longer works at Acme Corporation — she works at Globex Industries now.",
                 reference_time: Some(Utc::now()),
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
