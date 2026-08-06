@@ -11,7 +11,9 @@ use std::time::Instant;
 use metrics::{counter, histogram};
 use tracing;
 
-use super::graphiti::{build_entity_prompt, build_relation_names_prompt, build_triplet_prompt};
+use super::graphiti::{
+    build_entity_prompt, build_relation_names_prompt, build_triplet_prompt, TripletPromptParams,
+};
 use super::parsers::{parse_entities_integer, parse_facts_with_raw_count, parse_relation_names};
 use super::{schemas, structured};
 use crate::core::error::Result;
@@ -126,7 +128,12 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
         let relation_names: Vec<String> = parse_relation_names(&stage2_text)?;
 
         // Stage 3: Extract full triplets (with stage 1 + 2 context).
-        let stage3_prompt = build_triplet_prompt(text, &entities, &relation_names);
+        let stage3_prompt = build_triplet_prompt(TripletPromptParams {
+            text,
+            entities: &entities,
+            relation_names: &relation_names,
+            reference_time: ctx.reference_time,
+        });
         let stage3_start = Instant::now();
         let stage3_msgs = vec![
             chat_msg_system("You are a knowledge graph extraction system. Extract (subject, predicate, object) triplets. Output valid JSON only."),

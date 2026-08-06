@@ -266,6 +266,12 @@ impl GraphHandle for EngineGraphHandle {
             // via Memory::update_source_uri() builder (facade/mod.rs G2).
             let source_uri_owned: Option<String> = None;
             let recorded_at_owned = Some(source_ref.occurred_at);
+            // TD-187: the caller-DECLARED anchor ONLY (never the coalesced
+            // `reference_time` above, which falls back to `occurred_at` —
+            // usually wall-clock). `Option<DateTime<Utc>>` is `Copy`, so this
+            // captures cleanly into the `async move` block below like
+            // `reference_time` itself.
+            let declared_reference_time = source_ref.published_at;
 
             // Record pending status before spawning so callers can poll immediately.
             ingest_runs.insert(run_id, IngestStatus::Pending);
@@ -303,6 +309,7 @@ impl GraphHandle for EngineGraphHandle {
                     .ingest(crate::core::ingest::IngestParams {
                         text: &content_owned,
                         reference_time,
+                        declared_reference_time,
                         group_id: Some(&group_id_owned),
                         content_type: None,
                         source_params: sp,
@@ -379,6 +386,9 @@ impl GraphHandle for EngineGraphHandle {
             .ingest(crate::core::ingest::IngestParams {
                 text: content,
                 reference_time,
+                // TD-187: the caller-DECLARED anchor ONLY — see the doc
+                // comment on `IngestParams::declared_reference_time`.
+                declared_reference_time: source_ref.published_at,
                 group_id: Some(&group_id),
                 content_type: None,
                 source_params: SourceParams {

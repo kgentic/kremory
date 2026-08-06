@@ -474,6 +474,10 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
         .ingest_deferred(IngestDeferredParams {
             text: &req.text,
             reference_time: req.reference_time,
+            // TD-187: `DeferredRequest` (background/mod.rs) does not carry a
+            // caller-declared publish time distinct from `reference_time` —
+            // see the doc comment on `IngestDeferredParams::declared_reference_time`.
+            declared_reference_time: None,
             group_id: req.group_id.as_deref(),
             content_type: req.content_type,
             episode_id: req.episode_id,

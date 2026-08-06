@@ -299,6 +299,7 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
             kremory::core::ingest::IngestWithParams {
                 text: "the app needs to go live friday",
                 reference_time: Some(Utc::now()),
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: kremory::core::ingest::SourceParams::default(),
@@ -326,6 +327,7 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
             kremory::core::ingest::IngestWithParams {
                 text: "actually can we deploy on monday instead",
                 reference_time: Some(Utc::now()),
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: kremory::core::ingest::SourceParams::default(),
@@ -682,6 +684,7 @@ async fn td167_set_valued_facts_survive_when_contradiction_detection_is_off() {
                 kremory::core::ingest::IngestWithParams {
                     text,
                     reference_time: Some(Utc::now()),
+                    declared_reference_time: None,
                     group_id: None,
                     content_type: None,
                     source_params: kremory::core::ingest::SourceParams::default(),

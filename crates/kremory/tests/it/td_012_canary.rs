@@ -144,6 +144,7 @@ async fn td_012_no_placeholder_labels_in_fixture_extraction() {
             kremory::core::ingest::IngestWithParams {
                 text: &fixture_text,
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),

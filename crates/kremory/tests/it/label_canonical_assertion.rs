@@ -130,6 +130,7 @@ async fn label_field_populated_with_canonical_type() {
             kremory::core::ingest::IngestWithParams {
                 text: "Alice works at OpenAI in San Francisco.",
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params: SourceParams::default(),
@@ -200,7 +201,7 @@ async fn all_entity_labels_canonical_on_org_location_text() {
 
     let extractor = IntegerIdLlmExtractor::new(llm);
     let result = engine
-        .ingest_with(&extractor, kremory::core::ingest::IngestWithParams { text: "Priya works at Google DeepMind in London and collaborates with teams in Singapore.", reference_time: None, group_id: None, content_type: None, source_params: SourceParams::default() })
+        .ingest_with(&extractor, kremory::core::ingest::IngestWithParams { text: "Priya works at Google DeepMind in London and collaborates with teams in Singapore.", reference_time: None, declared_reference_time: None, group_id: None, content_type: None, source_params: SourceParams::default() })
         .await
         .expect("ingest must succeed");
 

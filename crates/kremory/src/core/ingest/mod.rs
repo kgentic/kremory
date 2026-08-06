@@ -364,6 +364,11 @@ pub struct AssertEntityTypeParams<'a> {
 pub struct IngestParams<'a> {
     pub text: &'a str,
     pub reference_time: Option<DateTime<Utc>>,
+    /// TD-187: the caller-DECLARED document anchor (`SourceRef::published_at`)
+    /// ONLY — never `reference_time` / `occurred_at` / wall-clock. See
+    /// [`crate::core::intelligence::ExtractionContext::reference_time`] for
+    /// why this must stay a distinct channel from `reference_time` above.
+    pub declared_reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<&'a str>,
     pub content_type: Option<ContentType>,
     pub source_params: SourceParams,
@@ -625,6 +630,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         self.ingest(IngestParams {
             text: &doc_text,
             reference_time: None,
+            declared_reference_time: None,
             group_id: None,
             content_type: Some(ContentType::Document),
             source_params: SourceParams::default(),
@@ -1079,6 +1085,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let IngestParams {
             text,
             reference_time,
+            declared_reference_time,
             group_id,
             content_type,
             source_params,
@@ -1089,6 +1096,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             crate::core::ingest::IngestWithParams {
                 text,
                 reference_time,
+                declared_reference_time,
                 group_id,
                 content_type,
                 source_params,

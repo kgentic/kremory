@@ -380,6 +380,7 @@ mod model_comparison_tests {
                 kremory::core::ingest::IngestWithParams {
                     text: &transcript,
                     reference_time: None,
+                    declared_reference_time: None,
                     group_id: None,
                     content_type: Some(fixture.content_type.clone()),
                     source_params: kremory::core::ingest::SourceParams::default(),
@@ -438,6 +439,7 @@ mod model_comparison_tests {
                 kremory::core::ingest::IngestWithParams {
                     text: &transcript,
                     reference_time: None,
+                    declared_reference_time: None,
                     group_id: None,
                     content_type: Some(fixture.content_type.clone()),
                     source_params: kremory::core::ingest::SourceParams::default(),
@@ -496,6 +498,7 @@ mod model_comparison_tests {
                 kremory::core::ingest::IngestWithParams {
                     text: &transcript,
                     reference_time: None,
+                    declared_reference_time: None,
                     group_id: None,
                     content_type: Some(fixture.content_type.clone()),
                     source_params: kremory::core::ingest::SourceParams::default(),
@@ -554,6 +557,7 @@ mod model_comparison_tests {
                 kremory::core::ingest::IngestWithParams {
                     text: &transcript,
                     reference_time: None,
+                    declared_reference_time: None,
                     group_id: None,
                     content_type: Some(fixture.content_type.clone()),
                     source_params: kremory::core::ingest::SourceParams::default(),

@@ -99,6 +99,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 existing_graph_entities: &[],
                 arm_budget_ms: self.config.extraction_arm_budget_ms,
                 model: self.model.as_deref(),
+                // TD-187: Phase 1 is NER-candidate-only (no LLM triplet call),
+                // so `reference_time` is not consulted here — `None` is correct.
+                reference_time: None,
             };
             let extraction = gliner.extract(text, &ctx).await?;
             extraction

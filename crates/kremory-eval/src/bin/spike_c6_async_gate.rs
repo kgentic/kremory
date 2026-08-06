@@ -390,6 +390,7 @@ async fn run_one(
             kremory::core::ingest::IngestWithParams {
                 text: fixture_text,
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params,
@@ -525,6 +526,7 @@ async fn validate_second_fixture(
             kremory::core::ingest::IngestWithParams {
                 text: fixture_text,
                 reference_time: None,
+                declared_reference_time: None,
                 group_id: None,
                 content_type: None,
                 source_params,
