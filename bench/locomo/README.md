@@ -77,7 +77,11 @@ wget -O data/locomo10.json https://huggingface.co/datasets/snap-research/locomo/
 
 ```bash
 # Start kremory-http server (from the pattaya workspace root)
-KREMORY_MCP_DB_PATH=./bench.db cargo run -p kremory-mcp --bin kremory-http
+# --features prometheus,content-search is REQUIRED, not optional. Cargo.toml:49 calls
+# this "the HTTP/bench build"; this README omitted it until 2026-08-06 and that omission
+# cost a wrong conclusion (see below).
+KREMORY_MCP_DB_PATH=./bench.db cargo run -p kremory-mcp --bin kremory-http \
+  --features prometheus,content-search
 
 # Full benchmark (10 conversations, ~1,986 questions)
 python3 harness.py
@@ -93,6 +97,29 @@ python3 harness.py --mode codemem-graph    # Hybrid + graph expansion
 # Custom recall limit
 python3 harness.py --recall-limit 20
 ```
+
+### ⚠️ Why the feature flags are not optional (added 2026-08-06)
+
+Built WITHOUT `prometheus`, the server has no `GET /metrics`, so:
+
+- `harness.py` prints `[warn] /metrics absent — server built without --features prometheus`
+- the `o11y` block in **every** result JSON is silently `{}`
+- **every kremory counter is invisible** — counters are metrics, not tracing, so they
+  never reach the server log either
+
+That last point cost a wrong conclusion on 2026-08-06. A verified-working ingest fix
+appeared not to have run, because `grep stub_embedded_total server.log` came back
+empty — and an empty grep reads as "the code did not execute". The counter was fine;
+the exporter simply was not built in. The database (`SELECT COUNT(*) ... WHERE
+embedding IS NULL` → 0) proved the fix had worked all along.
+
+**The general trap**: with `prometheus` off, an absent counter is indistinguishable
+from an absent code path. Build with the feature, or verify against the DB — never
+treat a silent grep as evidence.
+
+Without `content-search`, BM25 + dense content recall are compiled out entirely
+(ADR-078). Benchmarking that build measures a product no consumer receives — this is
+exactly how 0.5.0 shipped to crates.io with search off and ~32 points unmeasured.
 
 ## Question Categories
 
