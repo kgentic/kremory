@@ -84,6 +84,17 @@ class Config:
     # still runs substring inline and always persists `recalled_memories`, so
     # both scorers report over the same run. Recorded in output metadata only.
     scorer: str = "substring"
+    # OPT-IN, default OFF (RECALL-LEDGER §4.19 / TD-155 / TD-196). When True,
+    # the harness issues a SECOND `GET /search` per question — `format=text&
+    # template=temporal_facts`, kremory's own prompt-ready rendering, WITH
+    # dates — alongside the existing `recall()` call, which is completely
+    # unchanged. Persisted as `recalled_text_block`; `recalled_memories` /
+    # `recalled_memory_provenance` / the inline substring score are byte-
+    # identical whether this is on or off. Default OFF because the second
+    # call is NOT retrieval-equivalent to the primary one under
+    # `--server-mode hybrid` (TD-196) — enabling it there measures two
+    # different retrievals, not one retrieval rendered two ways.
+    capture_text_block: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +792,19 @@ def run_benchmark(config: Config) -> dict:
                 memories = recall_codemem(client, qa["question"], namespace, limit)
             recall_latency_ms = round((time.monotonic() - recall_t0) * 1000.0, 1)
 
+            # OPT-IN, default OFF (Config.capture_text_block — RECALL-LEDGER
+            # §4.19 / TD-155 / TD-196). SECOND request, in ADDITION to the
+            # primary recall above — `memories` / `recall_latency_ms` /
+            # `is_correct` below are computed from the UNCHANGED primary
+            # call only. This is best-effort instrumentation: a failure here
+            # (see `recall_text_block`'s own try/except) degrades to `None`
+            # and never touches `client.total_http_errors` or aborts the run.
+            recalled_text_block = None
+            if config.capture_text_block and config.mode != "baseline":
+                recalled_text_block = client.recall_text_block(
+                    qa["question"], namespace, limit,
+                )
+
             # Check if gold answer is in recalled memories (AutoMem-style).
             # Abstention categories are retrieved + persisted but NOT scored —
             # a presence metric cannot see abstention (see the refusal in
@@ -826,6 +850,16 @@ def run_benchmark(config: Config) -> dict:
                     if config.mode in ("codemem", "rag")
                     else []
                 ),
+                # RECALL-LEDGER §4.19 / TD-155 / Candidate A (dual capture):
+                # kremory's own `format=text&template=temporal_facts`
+                # rendering for THIS question — `None` when
+                # `--capture-text-block` was not passed, `--server-mode
+                # content` (the template has no meaning there), or the
+                # second request failed. NEVER derived from `memories`
+                # above; a second, independent server round-trip.
+                # `qa_eval.py --text-block` consumes this verbatim in place
+                # of `format_memories()`/`format_memories_structured()`.
+                "recalled_text_block": recalled_text_block,
                 "is_correct": is_correct,
                 "confidence": None if confidence is None else round(confidence, 4),
                 "explanation": explanation,
@@ -844,6 +878,10 @@ def run_benchmark(config: Config) -> dict:
                 "namespace": namespace, "recall_returned": len(memories),
                 "recall_empty": recall_empty, "http_errors": client.total_http_errors,
                 "correct": is_correct, "recall_latency_ms": recall_latency_ms,
+                # RECALL-LEDGER §4.19: observability-only, NOT part of the
+                # circuit breaker (see comment on total_text_block_errors in
+                # kremory_client.py's __init__).
+                "text_block_errors": client.total_text_block_errors,
             }) + "\n")
             jsonl_f.flush()
 
@@ -1000,6 +1038,11 @@ def run_benchmark(config: Config) -> dict:
         "mode": config.mode,
         "scorer": config.scorer,
         "server_mode": config.server_mode,
+        # RECALL-LEDGER §4.19 / TD-155: whether the SECOND, opt-in
+        # `recalled_text_block` capture ran for this file. `False` on every
+        # pre-2026-08-10 run (field absent entirely) and on any run that
+        # didn't pass --capture-text-block.
+        "capture_text_block": config.capture_text_block,
         # recall-improvement-e2e-spec-2026-07-22 §S0-infra [G1] + TD-135: stamp the
         # exact sweep point (git SHA + the server's ACTIVE scoring config +
         # build-feature flags, read from its own GET /health — the single source of
@@ -1082,6 +1125,20 @@ def main():
                              "the run captures recalled_memories for an OFFLINE "
                              "cross-family LLM judge (see judge_rescore.py); "
                              "substring still runs inline so both are reported.")
+    parser.add_argument("--capture-text-block", action="store_true",
+                        help="OPT-IN, default OFF (RECALL-LEDGER §4.19 / "
+                             "TD-155). Also issue a SECOND GET /search per "
+                             "question with format=text&template=temporal_facts "
+                             "— kremory's own prompt-ready, DATED rendering, "
+                             "the one MCP tool consumers have always received "
+                             "and this harness has never captured. Persisted "
+                             "as `recalled_text_block`, alongside the existing "
+                             "`recalled_memories` (byte-identical, unaffected). "
+                             "NOT retrieval-equivalent to the primary call "
+                             "under --server-mode hybrid (TD-196) — the two "
+                             "renderings fuse the BM25 content stream a "
+                             "different number of times at the HTTP layer. "
+                             "Retrieval-equivalent under --server-mode recall.")
     args = parser.parse_args()
 
     config = Config(
@@ -1108,6 +1165,7 @@ def main():
         output=args.output,
         server_mode=args.server_mode,
         scorer=args.scorer,
+        capture_text_block=args.capture_text_block,
     )
     run_benchmark(config)
 

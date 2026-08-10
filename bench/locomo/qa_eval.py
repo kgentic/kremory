@@ -293,6 +293,13 @@ def load_batch(path: Path, *, allow_unverified: bool = False) -> list[dict]:
             # (TD-139). Absent on every pre-2026-07-28 run file, in which case
             # `--structured` degrades to the flat format rather than erroring.
             "provenance": r.get("recalled_memory_provenance") or [],
+            # RECALL-LEDGER §4.19 / TD-155: kremory's own server-rendered
+            # `format=text&template=temporal_facts` block for this question.
+            # `None` on every pre-2026-08-10 run file and on any run not
+            # started with `--capture-text-block` — `--text-block` degrades
+            # to an ABORT (not a silent flat-format fallback; see
+            # cmd_answer_gen) rather than scoring a run that never captured it.
+            "text_block": r.get("recalled_text_block"),
         })
     if n_abstain or n_no_mem:
         print(f"[load] {len(batch)} answerable ({n_abstain} adversarial skipped, "
@@ -320,6 +327,13 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
     key = _load_api_key()
     batch = load_batch(a.input, allow_unverified=getattr(a, 'allow_unverified_build', False))
     structured = getattr(a, "structured", False)
+    text_block_flag = getattr(a, "text_block", False)
+    if structured and text_block_flag:
+        print("[answer-gen] ABORT: --structured and --text-block are mutually "
+              "exclusive context sources (grouped-by-kind reconstruction vs "
+              "kremory's own server-rendered block) — pick one.",
+              file=sys.stderr)
+        return 2
     if structured:
         # The cache key must include the CONTEXT FORMAT, or a structured run
         # silently replays the flat run's cached answers and the A/B reads null.
@@ -336,6 +350,24 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
                   "back to the flat format and the A/B would measure nothing. "
                   "Re-run the harness to capture provenance first.", file=sys.stderr)
             return 2
+    if text_block_flag:
+        # Same discipline as --structured immediately above (RECALL-LEDGER
+        # §4.19 / TD-155): the cache key MUST carry the context format, or a
+        # --text-block run silently replays --structured's (or the flat
+        # run's) cached dateless answers under a new label — the exact
+        # failure this suffix scheme exists to make impossible.
+        n_tb = sum(1 for b in batch if b.get("text_block"))
+        for b in batch:
+            b["key"] = f"{b['key']}|textblock"
+        print(f"[answer-gen] TEXT-BLOCK context: {n_tb}/{len(batch)} rows carry "
+              f"recalled_text_block", flush=True)
+        if n_tb == 0:
+            print("[answer-gen] ABORT: --text-block requested but NO row carries "
+                  "`recalled_text_block` — every prompt would silently fall back "
+                  "to the flat format and the A/B would measure nothing. "
+                  "Re-run the harness with --capture-text-block first.",
+                  file=sys.stderr)
+            return 2
     done = _load_done_keys(a.output) if a.resume else set()
     todo = [b for b in batch if b["key"] not in done]
     print(f"[answer-gen] {len(batch)} questions, {len(todo)} to do "
@@ -349,7 +381,14 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
         prompt = prompts_qa.build_answer_prompt(
             b["question"], mems, reference_date=a.reference_date,
             provenance=(b.get("provenance") or [])[: a.k],
-            structured=structured)
+            structured=structured,
+            # Deliberately NOT sliced to `a.k` — this is ONE pre-rendered
+            # server string (F5: `format=text` returns `{block: string}`,
+            # not per-item rows), rendered against the harness's own
+            # per-category recall limit at capture time, not this offline
+            # replay's `--k`. `None` when the flag is off, which routes
+            # `build_answer_prompt` back to `structured`/flat unchanged.
+            text_block=(b.get("text_block") if text_block_flag else None))
         content, ptok, ctok = _chat(key, a.model, "", prompt, max_tokens=a.max_tokens)
         return {"key": b["key"], "sample_id": b.get("sample_id", ""),
                 "question_id": b["question_id"], "category": b.get("category", ""),
@@ -484,6 +523,10 @@ def cmd_answer_tally(a: argparse.Namespace) -> int:
             for b in batch:
                 b["key"] = f"{b['key']}|structured"
             print("[answer-tally] matched STRUCTURED verdict keys", file=sys.stderr)
+        elif any(f"{b['key']}|textblock" in verdicts for b in batch):
+            for b in batch:
+                b["key"] = f"{b['key']}|textblock"
+            print("[answer-tally] matched TEXT-BLOCK verdict keys", file=sys.stderr)
 
     cats: dict[str, list[int]] = {}     # category -> [correct, total]
     unjudged, unparsed = [], 0
@@ -588,6 +631,14 @@ def main() -> int:
                    help="group the answerer's context by wire `kind` (facts / "
                         "entities / conversation excerpts) instead of one flat "
                         "list; requires `recalled_memory_provenance` on the run")
+    g.add_argument("--text-block", action="store_true",
+                   help="use kremory's own server-rendered prompt-ready block "
+                        "(`recalled_text_block` — format=text&template="
+                        "temporal_facts, RECALL-LEDGER §4.19) as the ENTIRE "
+                        "answerer context, verbatim, instead of reconstructing "
+                        "one harness-side; requires the harness to have been "
+                        "run with --capture-text-block. Mutually exclusive "
+                        "with --structured.")
     g.add_argument("--no-resume", dest="resume", action="store_false")
     g.add_argument("--cache-dir", default="results/qa/.cache",
                    help="content-addressed response cache (VCR); replays identical calls for $0")
