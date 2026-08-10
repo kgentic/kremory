@@ -3,38 +3,44 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "41ca0cc55bfcf36d518a178bed177807686a125050fe44b2c3a2adb7a44e6b5f": [
+    "12d4d1a70f606bbd96d6f3512cf7d5e21dc1dc3c660672b437a2796d221c84b0": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person refers to an individual, while Organisation refers to a formal group or company.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person refers to an individual, while Location refers to a geographical place.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person refers to an individual, while Event refers to a specific occurrence in time.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person refers to an individual, while Concept refers to an abstract idea or theory.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 4,\n      \"reasoning\": \"Both definitions describe names pertaining to individual people; 'Person Name' is a more specific subset or synonym of 'Person'.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Person refers to an individual, while 'Organization Acronym' is specifically for companies/corporations, which are organizations.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Person refers to an individual, while 'Organization Name' is for companies/institutions.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Organisation refers to a formal body/company, while Location refers to a geographical place.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Organisation refers to a body/company, while Event refers to a specific occurrence.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Organisation refers to a formal body/company, while Concept refers to an abstract idea or theory.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"Bob\",\n      \"entity_type_id\": 1,\n      \"confidence\": 0.9\n    },\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 2,\n      \"confidence\": 0.85\n    }\n  ]\n}"
       }
     ],
-    "605c247cc0d7ed9b699075f68f406a2fc11321646bc9449605a38411c097b305": [
+    "18da8eaf00f2228eb47e9cdb8bc4df8f5549dcb8a2e2228c6aea602cc438568d": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both entities describe names of individuals. 'Person Name' seems to be a specific manifestation or subset of the general 'Person' type.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions refer to established named bodies like corporations, government agencies, or institutions. 'Organization Name' describes the proper name, while 'Organisation' describes the entity itself, but semantically they map to the same core concept type.\"\n    }\n  ]\n}"
       }
     ],
-    "6d58d3352afe6a6feb00c0422085272b891127ca3c39e5a5c18e06dfaaa7ab6d": [
+    "31ab97578cab078dcb8469eece60fab882f3aac42a0bb177fc7e8d23a57dab9c": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [\n    {\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Common name variation; 'Bob' is likely a nickname or common reference for 'Robert'.\"},\n    {\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 1, \"reasoning\": \"The description for 'International Business Machines' matches the full name represented by the acronym 'IBM'.\"}\n]}"
+        "response_text": "entity<|#|>The Great Gatsby<|#|>1<|#|>A novel by F. Scott Fitzgerald.\nentity<|#|>F. Scott Fitzgerald<|#|>2<|#|>American novelist.\nentity<|#|>Gatsby<|#|>3<|#|>Nickname for Jay Gatsby.\n<|COMPLETE|>"
       }
     ],
-    "71c99711f6e06b626303639bc214c2975f122abbdce1ede1d97ad97a6577f390": [
+    "33071a1ffa6458613d600bc9d94181a80a5a38c743949181ed18df6cab9c5a83": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both entities refer to the formal names of established organizations, companies, or large institutions. 'Organization Name' is a specific attribute/value, while 'Organisation' is the broader type, making them semantically equivalent for registry purposes.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions clearly refer to the same semantic concept: the proper name identifying a human being. 'Person Name' is a component/specific representation of the 'Person' entity.\"\n    }\n  ]\n}"
+      }
+    ],
+    "68a1bd37960259146e5463b7d7ad17eccb066c1db5a613546a4e2763b62c6abf": [
+      {
+        "call_index": 0,
+        "response_text": "{\n    \"verdicts\": [\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 0,\n            \"reasoning\": \"Location refers to physical places, while Event refers to named occurrences or meetings. They are distinct categories.\"\n        },\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 1,\n            \"reasoning\": \"Location refers to physical geography, while Concept refers to abstract theories or methodologies. They are different types of entities.\"\n        },\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 2,\n            \"reasoning\": \"Location is a geographic place, whereas Specie is a type of physical currency (coinage). These are unrelated categories.\"\n        },\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 3,\n            \"reasoning\": \"Date specifies calendar time (day/year), while Time specifies duration or time of day. They are related but distinct semantic categories.\"\n        },\n        {\n            \"confidence\": 0.95,\n            \"is_same_entity\": false,\n            \"pair_id\": 4,\n            \"reasoning\": \"Date is a point on the calendar (e.g., 15 March 2024), whereas Event is a specific named occurrence on a date (e.g., NeurIPS 2024). They are different types of entities.\"\n        },\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 5,\n            \"reasoning\": \"Time relates to temporal measurement (when or for how long), while Quantity relates to measurable amounts, often involving units of measurement.\"\n        },\n        {\n            \"confidence\": 0.9,\n            \"is_same_entity\": false,\n            \"pair_id\": 6,\n            \"reasoning\": \"Money is a general term for monetary value, while Specie is a very specific subset (coinage). While related, they are not semantically identical.\"\n        },\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 7,\n            \"reasoning\": \"Event refers to happenings/meetings, while Concept refers to abstract ideas or theories. These are distinct domains of knowledge.\"\n        },\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 8,\n            \"reasoning\": \"Company refers to a business organization, whereas Specie refers to physical coinage. They represent entirely different types of entities.\"\n        },\n        {\n            \"confidence\": 1.0,\n            \"is_same_entity\": false,\n            \"pair_id\": 9,\n            \"reasoning\": \"Same reasoning as Pair 8. 'company' (lowercase) still denotes a business entity, which is distinct from 'Specie' (coinage).\"\n        }\n    ]\n}"
       }
     ],
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
       {
         "call_index": 0,
-        "response_text": "How can I help you today?"
+        "response_text": "Hello! How can I help you today? 😊"
       },
       {
         "call_index": 1,
-        "response_text": "Hello! How can I help you today? 😊"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 2,
@@ -42,67 +48,33 @@
       },
       {
         "call_index": 3,
-        "response_text": "How can I help you today? Whether you have a question, need some creative writing, want to learn something new, or just want to chat, feel free to let me know! 😊"
-      },
-      {
-        "call_index": 4,
-        "response_text": "How can I help you today? Whether you have a question, need creative writing, want to summarize something, or anything else, just let me know! 😊"
-      },
-      {
-        "call_index": 5,
-        "response_text": "How can I help you today? 😊"
-      },
-      {
-        "call_index": 6,
-        "response_text": "How can I help you today? 😊"
-      },
-      {
-        "call_index": 7,
-        "response_text": "How can I help you today? Whether you have a question, need some creative writing, want to learn something new, or just want to chat, feel free to let me know! 😊"
-      },
-      {
-        "call_index": 8,
         "response_text": "How can I help you today?"
       },
       {
-        "call_index": 9,
-        "response_text": "How can I help you today? 😊"
+        "call_index": 4,
+        "response_text": "How can I help you today?"
+      },
+      {
+        "call_index": 5,
+        "response_text": "How can I help you today? Whether you have a question, need help with a task, want to brainstorm, or just want to chat, feel free to let me know! 😊"
       }
     ],
-    "7ea7332635190148951b8edba8cbf325d73be9d2e27b439815680f09b06069e1": [
+    "bdccd6d3ac44c88368d40030b6c9916d465d4d8d005ce6c6d2b6b54a8a2c93d2": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"Names of individual people (first names or full names).\",\n      \"justification\": \"Covers 'robert' and 'bob', which are common personal names.\",\n      \"name\": \"Person Name\"\n    },\n    {\n      \"description\": \"Companies or corporations by common name or acronym.\",\n      \"justification\": \"Covers 'ibm' as a company/brand.\",\n      \"name\": \"Organization Acronym\"\n    },\n    {\n      \"description\": \"Full names of companies or large institutions.\",\n      \"justification\": \"Covers 'international business machines' as a full company name.\",\n      \"name\": \"Organization Name\"\n    }\n  ]\n}"
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.9, \"is_same_entity\": true, \"pair_id\": 0, \"reasoning\": \"Both are common names, and 'Bob' is a frequent nickname for 'Robert'.\"}, {\"confidence\": 1.0, \"is_same_entity\": true, \"pair_id\": 1, \"reasoning\": \"The description explicitly indicates that 'International Business Machines' is the full name corresponding to the acronym 'IBM'.\"}]}"
       }
     ],
-    "8292ad0899b96429232197965238b79706a90953808b0548e29d010a49d7c219": [
+    "c44189fbaf951bee793ca49a57548bf3fa77bb6c3465627b63a5defe12a419b2": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both entities describe a corporate or formal group. 'Organization Acronym' is a narrower description focusing on the naming convention (acronyms/common names) of the underlying 'Organization'.\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person refers to a human being, while Organisation refers to formal groups or businesses.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person is an individual, and Location is a geographic place.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person is an individual, while Event refers to a specific occurrence or meeting.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person is an individual, while Concept refers to abstract ideas or methodologies.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Organisation refers to groups/institutions, and Location refers to physical places.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Organisation refers to groups/institutions, while Event refers to occurrences.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Organisation refers to groups/institutions, while Concept refers to abstract theories/ideas.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 7,\n      \"reasoning\": \"Company is a specific type of Organisation (a business entity), suggesting a high degree of overlap.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 8,\n      \"reasoning\": \"The descriptions are semantically identical (Organisation vs. company/business organisation).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Organisation refers to groups/institutions, while Specie refers to a type of currency/money.\"\n    }\n  ]\n}"
       }
     ],
-    "c060319fd3139d7aa62a8c0d0fd1b4a10d95812bae9b2a15f4926e29d1cdfe01": [
+    "c9280c6c9e09dc2fc046de4be309defb634a4938044be6fbd49ab896eca11686": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.8,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"Both definitions relate to business organizations, with A being a general term and B specifying the name format for such entities.\"\n    },\n    {\n      \"confidence\": 0.1,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"A refers to a business entity, while B refers to a form of money (specie).\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 2,\n      \"reasoning\": \"Both A and B describe types of business entities, with B being a specific way of identifying that entity (acronym).\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 3,\n      \"reasoning\": \"Both A and B clearly describe a business organization entity; B specifies the full name format.\"\n    },\n    {\n      \"confidence\": 0.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"A is money (Specie), while B is names of people (Person Name). They are completely different semantic categories.\"\n    },\n    {\n      \"confidence\": 0.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"A is money (Specie), while B relates to corporate names/acronyms. No semantic overlap.\"\n    },\n    {\n      \"confidence\": 0.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"A is money (Specie), while B relates to corporate names. No semantic overlap.\"\n    },\n    {\n      \"confidence\": 0.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"A is names of people, while B relates to corporate acronyms. They are different entity types.\"\n    },\n    {\n      \"confidence\": 0.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"A is names of people, while B relates to full corporate names. They are different entity types.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 9,\n      \"reasoning\": \"Both A and B describe types of organizational identifiers (acronym vs. full name), and they both point to the same underlying concept: the name/identifier of an organization.\"\n    }\n  ]\n}"
-      }
-    ],
-    "f7d8b00f51f375ab897b8dd2469bd9936a4eed8c08463443803660df0f600602": [
-      {
-        "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"An Event is a time-bound occurrence, while Person Name refers strictly to individuals.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"An Event is an occurrence, whereas Organization Acronym refers to corporate names/initialisms.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"A Concept is an abstract idea, not a specific judicial body like a Court.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"A Concept is an abstract idea, fundamentally different from an individual's name.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"A Concept is abstract knowledge, while Organization Acronym refers to business entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"A Concept is abstract, while Organization Name describes established companies/institutions.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"A Court is a legal body, distinct from the name of a person.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"A Court is a judicial body, not merely an acronym for a company.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Company is a type of business, while Specie refers to a form of currency.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 9,\n      \"reasoning\": \"A Company (business organization) is very similar in concept to an Organization Acronym, especially if the acronym represents the company.\"\n    }\n  ]\n}"
-      }
-    ],
-    "fc503d53fc5a1a62d7d41b1f3833e1736e22142eb2a61526d41751847e15685e": [
-      {
-        "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While both refer to types of named bodies, 'Organisation' is broad (including universities, agencies), whereas 'Court' is specific to judicial bodies. They are distinct categories.\"\n    },\n    {\n      \"confidence\": 0.85,\n      \"is_same_entity\": true,\n      \"pair_id\": 1,\n      \"reasoning\": \"Both definitions describe named groups that are corporate or institutional in nature. 'Company' is a subset or specific instance of the broader 'Organisation' concept, making them semantically equivalent for this purpose.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 2,\n      \"reasoning\": \"These are near-identical definitions describing general business organizations. Case differences do not change the semantic type.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"'Organisation' refers to formal groups/institutions, while 'Specie' refers specifically to physical forms of money. They are completely different types of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"'Organisation' describes corporate/institutional bodies, whereas 'Person Name' describes individual human people. These are mutually exclusive types.\"\n    },\n    {\n      \"confidence\": 0.9,\n      \"is_same_entity\": true,\n      \"pair_id\": 5,\n      \"reasoning\": \"Both definitions capture the notion of named corporate bodies. 'Organization Acronym' and 'Organisation' serve similar, overlapping purposes for classifying corporate entities.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 6,\n      \"reasoning\": \"Both definitions point to the full names of large institutions or companies. They represent the same underlying semantic category.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"'Location' refers to fixed geographical places, while 'Event' refers to time-bound occurrences. These are distinct semantic categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"'Location' refers to physical places, while 'Concept' refers to abstract ideas or theories. They represent different classes of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"'Location' refers to geographical places, while 'Court' refers to specific judicial bodies. Although a court has a location, the type itself is distinct enough to warrant separation.\"\n    }\n  ]\n}"
-      }
-    ],
-    "fe97e1ed30247108346a132dd62d5c34b1ec0303fd7fe208212a19ec6828db51": [
-      {
-        "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Location is geographic place names, while Specie refers to coined money.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Location is geographical places, while Person Name refers to individual human names.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Location is geographical places, while Organization Acronym refers to business acronyms.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Location is geographical places, while Organization Name refers to full company/institution names.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Date is a calendar date, and Time is a point or duration of time, distinct concepts.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Date is a calendar date, whereas Event describes a specific named occurrence or meeting.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Time refers to time points/duration, while Quantity refers to measurable counts often with units.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 7,\n      \"reasoning\": \"Both Money and Specie relate to monetary value; Specie is a specific type of monetary unit (coined money), making them semantically very close.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Event is a named occurrence, while Concept is an abstract idea, theory, or methodology.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Event is a named occurrence, while Court is a specific legal judicial body.\"\n    }\n  ]\n}"
+        "response_text": "```json\n{\n  \"proposals\": [\n    {\n      \"name\": \"Person Name\",\n      \"description\": \"Proper names identifying individual human beings (e.g., first names, full names).\",\n      \"justification\": \"Covers 'bob' and 'robert' as they represent named individuals.\"\n    },\n    {\n      \"name\": \"Organization Name\",\n      \"description\": \"Proper names of established corporate, governmental, or institutional bodies (e.g., companies, non-profits).\",\n      \"justification\": \"Covers 'ibm' and 'international business machines' which refer to organizations.\"\n    }\n  ]\n}\n```"
       }
     ]
   }

@@ -3,20 +3,38 @@
   "model": "gemma4:e4b",
   "recorded_at": "1970-01-01T00:00:00Z",
   "entries": {
-    "43b8518d11564f48c46c612fe67c492914636e2bb33b23736b621a338ea86f50": [
+    "111b2be44be3f739d2d92f7d11f2b027a520c9cf71e569aaa100dc6f5207cbd3": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 2,\n      \"confidence\": 0.95\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person refers to individuals, while Organisation refers to corporate or institutional bodies. They are distinct semantic categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person refers to individuals, while Location refers to geographic places. These are separate types.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person refers to individuals, while Event refers to specific occurrences. They describe different kinds of entities.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person refers to individuals, while Concept refers to abstract ideas or theories. They are not interchangeable.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Organisation refers to formal groups/companies, while Location refers to geographic places. They are separate concepts.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Organisation refers to enduring institutions, whereas Event refers to transient occurrences over time.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Organisation refers to structured groups/companies, while Concept refers to abstract theories or methodologies. They are different kinds of entities.\"\n    },\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 7,\n      \"reasoning\": \"Technology Corporation is a specialized subset of Organisation, focusing on a domain. Given the strong overlap in defining a business entity, they are semantically equivalent for this registry's purpose.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Location refers to places, while Event refers to happenings in time. They are fundamentally different categories.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Location refers to physical places, while Concept refers to abstract ideas. They belong to different semantic dimensions.\"\n    }\n  ]\n}"
+      }
+    ],
+    "25bef52845b97532777096006eb303b23a3d4eab6377b08a18b16332a131d684": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Date pertains to calendar points in time, while Time pertains to specific points or spans within a day/duration.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Date is a specific calendar measurement (e.g., YYYY-MM-DD), whereas Event is a named, specific occurrence.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Time deals with temporal units (hours, minutes), while Quantity deals with measurable amounts that require units (meters, counts).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Event is a concrete, named occurrence (like a meeting), whereas Concept is an abstract, theoretical idea or methodology.\"\n    }\n  ]\n}"
+      }
+    ],
+    "31ab97578cab078dcb8469eece60fab882f3aac42a0bb177fc7e8d23a57dab9c": [
+      {
+        "call_index": 0,
+        "response_text": "entity<|#|>Google<|#|>2<|#|>A technology company.\nentity<|#|>Mountain View<|#|>3<|#|>A city in California.\n<|COMPLETE|>"
+      }
+    ],
+    "638e51231e9018e806effe7318714f3c9111172ef3b661eb129044d6a98453b1": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"decisions\": [\n    {\n      \"entity_id\": \"IBM\",\n      \"entity_type_id\": 10,\n      \"confidence\": 0.95\n    }\n  ]\n}"
       }
     ],
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
       {
         "call_index": 0,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 1,
-        "response_text": "How can I help you today? Whether you have a question, need some information, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
+        "response_text": "How can I help you today? Whether you have questions, need something written, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
       },
       {
         "call_index": 2,
@@ -28,31 +46,25 @@
       },
       {
         "call_index": 4,
-        "response_text": "What can I help you with today? 😊"
+        "response_text": "How can I help you today? 😊"
       }
     ],
-    "9977e03cf4b8d6c304e498758cb71d0407610057dbf883ba4dbc41a9740610e6": [
+    "b42dc43e280ae5bbed087436bdaaa1ddef641d2f15d5a2a5a9f42b2fd775c9aa": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"Person and Organisation are distinct entities; one refers to individuals, the other to groups/companies.\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 1,\n      \"reasoning\": \"Person (individual) is fundamentally different from Location (geographical place).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 2,\n      \"reasoning\": \"Person (individual) is distinct from Event (a temporal occurrence).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 3,\n      \"reasoning\": \"Person (individual) is distinct from Concept (abstract idea or theory).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 4,\n      \"reasoning\": \"Organisation (a named group) is different from Location (a geographical place).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 5,\n      \"reasoning\": \"Organisation (a named group) is different from Event (a specific occurrence in time).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 6,\n      \"reasoning\": \"Organisation (a named group) is different from Concept (an abstract theory or idea).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 7,\n      \"reasoning\": \"Location (place) is distinct from Event (temporal occurrence).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 8,\n      \"reasoning\": \"Location (place) is distinct from Concept (abstract idea or theory).\"\n    },\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": false,\n      \"pair_id\": 9,\n      \"reasoning\": \"Date refers to a point/span on a calendar, whereas Time refers to a specific time of day or duration.\"\n    }\n  ]\n}"
+        "response_text": "```json\n{\n  \"proposals\": [\n    {\n      \"name\": \"Technology Corporation\",\n      \"description\": \"Large companies primarily operating within the technology sector, including specific brands and institutional names.\",\n      \"justification\": \"Both 'ibm' and 'international business machines' are names of well-known, large-scale technology companies. This type groups organizational entities defined by their industry sector.\"\n    }\n  ]\n}\n```"
       }
     ],
-    "bf56eca06394ef9da7fd4d87042fedb999253cbbd99ba1fda19bb0be94f4849f": [
+    "bdabbe046f5e5bea830acc5ba5bdeeaa850ac4a156e6003af34b5cf2d8f0cc0e": [
       {
         "call_index": 0,
-        "response_text": "{\"verdicts\": [\n    {\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"Date is a specific point in time, while Event is a named occurrence or happening.\"}\n]}\n"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description and names strongly indicate that \\\"IBM\\\" is the acronym for \\\"International Business Machines\\\".\"\n    }\n  ]\n}"
       }
     ],
-    "dfe05a9abef6e36808ce58d43d29a571cde4d2090da6ab848d36eaa55b4a4f0e": [
+    "df1cfcd89ba1c1e539e77eaa9b46de712bddde2d93603d9fc32e514c7530e825": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"The description and capitalization suggest that 'IBM' is the acronym for 'International Business Machines'.\"\n    }\n  ]\n}"
-      }
-    ],
-    "ec2a7dcf6d9efc6921d94fc33fad80089f6c11d99fa8bfdc596b9e584c246ae2": [
-      {
-        "call_index": 0,
-        "response_text": "{\n  \"proposals\": [\n    {\n      \"description\": \"Companies that manufacture or provide technology solutions and services.\",\n      \"justification\": \"Both 'ibm' and 'international business machines' are names of corporations that are technology providers/manufacturers.\"\n    ,\n      \"name\": \"Technology Corporation\"\n    }\n  ]\n}"
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.85,\n      \"is_same_entity\": false,\n      \"pair_id\": 0,\n      \"reasoning\": \"While a 'Technology Corporation' is a type of 'Organisation', the proposed type is highly specialized, focusing only on the technology sector and implying a scale/corporate nature, whereas 'Organisation' is a much broader, general container for any named group or institution (like a university or non-tech agency).\"\n    }\n  ]\n}"
       }
     ]
   }
