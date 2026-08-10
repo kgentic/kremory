@@ -111,6 +111,32 @@ pub const L4_REVOKE_THRESHOLD: f32 = 0.50;
 /// - Otherwise → retain as unresolved alias candidate.
 pub const RESERVED_PREDICATE_POTENTIAL_ALIAS: &str = "potential_alias";
 
+/// `true` when `predicate` is a reserved meta-edge predicate — internal
+/// disambiguation bookkeeping (e.g. [`RESERVED_PREDICATE_POTENTIAL_ALIAS`]),
+/// never a domain fact.
+///
+/// ## TD-197 — the boundary this function is FOR
+///
+/// This function was specified in
+/// `.ai-docs/specs/unified-extraction-implementation-spec-2026-06-03.md` §3
+/// alongside the const above, but was never implemented — so no read path
+/// filtered reserved predicates, and consumers were handed lines like
+/// `adoption potential_alias adoption agencies (valid_at=...)` as if they
+/// were domain knowledge (measured: 71.4% of LoCoMo conv0 questions).
+///
+/// Every consumer-facing recall READ path must call this to exclude reserved
+/// predicates before rendering/serialising a fact — see
+/// `memory::engine_handle` (connected-facts projection) and
+/// `core::search::rrf_fuse_with_facts` (dense fact arm). This is a READ-side
+/// filter only: reserved-predicate facts are still WRITTEN and still
+/// resolved by the dream phase (`resolve_pending_aliases`, below), which
+/// queries them directly via `TemporalGraph::get_alias_facts_in_group` and
+/// never goes through this filter.
+pub fn is_reserved_predicate(predicate: &str) -> bool {
+    matches!(predicate, RESERVED_PREDICATE_POTENTIAL_ALIAS)
+    // Add other reserved predicates here if needed.
+}
+
 // ─── Disambiguation result ────────────────────────────────────────────────────
 
 /// The outcome of a single entity disambiguation.
@@ -688,6 +714,24 @@ mod tests {
             "RESERVED_PREDICATE_POTENTIAL_ALIAS must be snake_case"
         );
         assert_eq!(RESERVED_PREDICATE_POTENTIAL_ALIAS, "potential_alias");
+    }
+
+    #[test]
+    fn is_reserved_predicate_matches_potential_alias() {
+        assert!(is_reserved_predicate(RESERVED_PREDICATE_POTENTIAL_ALIAS));
+        assert!(is_reserved_predicate("potential_alias"));
+    }
+
+    #[test]
+    fn is_reserved_predicate_rejects_domain_predicates() {
+        // TD-197: must not over-match — ordinary domain predicates (including
+        // ones that merely CONTAIN the reserved string as a substring) must
+        // pass through unfiltered.
+        assert!(!is_reserved_predicate("works_at"));
+        assert!(!is_reserved_predicate("invented"));
+        assert!(!is_reserved_predicate(""));
+        assert!(!is_reserved_predicate("potential_alias_but_not_quite"));
+        assert!(!is_reserved_predicate("POTENTIAL_ALIAS"));
     }
 
     // ── ADR-057: lexical-name compatibility gate ──────────────────────────────

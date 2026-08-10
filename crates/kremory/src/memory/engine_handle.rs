@@ -790,11 +790,22 @@ impl GraphHandle for EngineGraphHandle {
             // here each is projected to the LLM-facing `RetrievedFact` shape
             // (natural-language string + structured triple + BOTH bi-temporal
             // clocks + confidence + provenance).
+            //
+            // TD-197: `crate::core::disambiguation::is_reserved_predicate`
+            // excludes internal meta-edges (e.g. `potential_alias`) from this
+            // projection — they are disambiguation bookkeeping, not domain
+            // facts, and must never reach a consumer via `recall()`. This is
+            // a READ-side filter only: `context.facts` (and the underlying
+            // DB rows) are untouched, so the dream phase's own direct query
+            // (`resolve_pending_aliases` / `get_alias_facts_in_group`) still
+            // sees every reserved-predicate fact.
             let facts: Vec<RetrievedFact> = context
                 .facts
                 .iter()
                 .filter(|f| {
-                    f.subject_id == entity.id || f.object_id.as_deref() == Some(entity.id.as_str())
+                    !crate::core::disambiguation::is_reserved_predicate(&f.predicate)
+                        && (f.subject_id == entity.id
+                            || f.object_id.as_deref() == Some(entity.id.as_str()))
                 })
                 .map(|f| {
                     let object_is_entity = f.object_id.is_some();
