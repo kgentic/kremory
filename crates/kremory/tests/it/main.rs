@@ -106,6 +106,7 @@ mod model_comparison;
 mod multi_domain_extraction;
 mod ner_benchmark;
 mod ner_extraction;
+mod no_remote_libsql_surface;
 mod no_workspace_terminology_in_lib;
 mod oob_anthropic_smoke;
 mod otel_integration;

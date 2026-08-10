@@ -1,0 +1,71 @@
+# `cargo audit` configuration — accepted-risk register.
+#
+# An entry here is a DECISION, not a suppression. Each one records WHY the
+# advisory does not apply, the EVIDENCE, and — load-bearing — the STRUCTURAL
+# trigger that will re-open it. An ignore without a trigger is an `#[allow]`
+# by another name (CLAUDE.md Rule 8 / Rule 20).
+#
+# Triaged 2026-08-10. Before this pass: 6 vulnerabilities. Two were real and
+# were FIXED by a targeted `cargo update -p crossbeam-epoch -p quinn-proto`
+# (RUSTSEC-2026-0204 crossbeam-epoch 0.9.18 -> 0.9.20; RUSTSEC-2026-0185
+# quinn-proto 0.11.14 -> 0.11.16). The four below are what remain.
+
+[advisories]
+ignore = [
+    # ── rustls-webpki 0.102.8 — FOUR advisories, one root cause ──────────
+    #
+    # RUSTSEC-2026-0104  reachable panic in certificate revocation list parsing
+    # RUSTSEC-2026-0098  name constraints for URI names incorrectly accepted
+    # RUSTSEC-2026-0099  name constraints accepted for wildcard-name certs
+    # RUSTSEC-2026-0049  CRLs not authoritative by Distribution Point
+    #
+    # CLASSIFICATION (Rule 35): REAL LIMIT (upstream), and NOT REACHABLE.
+    #
+    # 1. NOT REACHABLE. All four live in TLS certificate-chain validation —
+    #    CRL parsing and name-constraint checking. That code is only entered
+    #    when libsql opens a REMOTE connection over TLS. kremory never does:
+    #    a repomix sweep of every file under `crates/kremory/src/**/*.rs`
+    #    (2026-08-10) found ZERO uses of `Builder::new_remote`,
+    #    `new_synced_database`, `new_remote_replica`, `sync_url` or
+    #    `auth_token`. Every `https://` occurrence in the crate is an LLM
+    #    provider base-URL or a doc comment. kremory opens LOCAL database
+    #    files only.
+    #
+    #    Sweep used repomix, not `grep`/`rg`/`git grep`, deliberately: those
+    #    skip any file containing a NUL byte SILENTLY and exit 0, so a bare
+    #    grep can report "no matches" when the truth is "did not look"
+    #    (CLAUDE.md Rule 38).
+    #
+    # 2. UPSTREAM-BLOCKED. Dependency path is
+    #       rustls-webpki 0.102.8
+    #         <- rustls 0.22.4
+    #           <- hyper-rustls 0.25.0
+    #             <- libsql 0.9.30
+    #    and `crates/kremory/Cargo.toml:178` + `crates/kremory-eval/Cargo.toml:23`
+    #    pin `libsql = "=0.9.30"` EXACTLY. `cargo update -p rustls-webpki@0.102.8`
+    #    locks 0 packages: 0.102 -> 0.103 is a semver-incompatible bump for a
+    #    0.x crate, so it cannot be reached without libsql bumping
+    #    hyper-rustls. (The tree already carries rustls-webpki 0.103.13 as a
+    #    SECOND copy for other dependents — the vulnerable one is pinned
+    #    solely by libsql's old chain.)
+    #
+    #    The only published alternative is libsql 0.10.0-pre.4 — a
+    #    PRE-RELEASE. Adopting a pre-release to satisfy an advisory that is
+    #    unreachable in our usage trades a real risk for a theoretical one.
+    #    Declined; revisit when 0.10.0 is stable.
+    #
+    # ── RE-OPEN TRIGGERS (structural, not "remember to look") ────────────
+    #
+    # A. `crates/kremory/tests/it/no_remote_libsql_surface.rs` FAILS. That
+    #    test asserts premise (1) — that no remote-libsql API is used. The
+    #    moment anyone adds remote/replica support, it goes red and names
+    #    this file. Premise (1) is therefore ASSERTED, not attested: it is
+    #    derived from the source, not declared in a comment (Rule 37).
+    # B. libsql ships a stable release whose chain carries
+    #    rustls-webpki >= 0.103.13 -> drop these four and unpin.
+    #
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0049",
+]
