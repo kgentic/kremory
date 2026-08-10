@@ -92,6 +92,14 @@ class CodememClient:
         # cheap half of that signal; recall_empty tracked alongside it in
         # run_benchmark() is the other half).
         self.total_http_errors = 0
+        # Separate counter for the OPT-IN `recall_text_block()` capture
+        # (RECALL-LEDGER §4.19 / TD-155) — deliberately NOT folded into
+        # `total_http_errors`, which feeds `run_benchmark()`'s circuit
+        # breaker (CIRCUIT_HTTP_RATE). This second call is best-effort
+        # instrumentation on top of the primary recall; a flaky/absent
+        # server-side rendering must never trip the breaker or abort a run
+        # that the PRIMARY `/search` call is otherwise completing fine.
+        self.total_text_block_errors = 0
 
     def health(self) -> bool:
         try:
@@ -185,6 +193,79 @@ class CodememClient:
         self.total_http_errors += 1
         print(f"  [warn] recall failed ({r.status_code}): {r.text[:200]}", file=sys.stderr)
         return []
+
+    def recall_text_block(
+        self,
+        query: str,
+        namespace: str,
+        limit: int,
+        template: str = "temporal_facts",
+    ) -> str | None:
+        """SECOND, OPT-IN capture: kremory's OWN prompt-ready rendering —
+        `GET /search?format=text&template=temporal_facts` — the rendering
+        every MCP tool consumer has always received by default (`RecallFormat`'s
+        own `#[default]` is `Text`, `crates/kremory-mcp/src/params.rs:54-56`)
+        and which `recall()` above does NOT request (it sends neither `format`
+        nor `template`, so it silently takes the REST `/search` default of
+        `structured`). See RECALL-LEDGER §4.19 / TD-155.
+
+        Does NOT change what `recall()` returns or persists — this is a
+        SEPARATE request issued in addition to it, never a replacement.
+        `flatten_result_content` (the renderer `recall()`'s response goes
+        through) drops `RetrievedFactWire.valid_at`; this rendering does not.
+
+        ⚠️ NOT retrieval-equivalent to `recall()` under `self.server_mode ==
+        "hybrid"` (TD-196, RECALL-LEDGER §4.19(f)): `format=text` fuses the
+        content stream ONCE (`facade/recall.rs:1070`) while
+        `format=structured` + `mode=hybrid` RRF-merges it a SECOND time at
+        the HTTP layer (`hybrid_mode_results`). Retrieval-equivalent under
+        `mode=recall`. Callers opting into this capture on `mode=hybrid` are
+        measuring two different retrievals rendered two different ways, not
+        one retrieval rendered two ways — the caller (harness) is
+        responsible for surfacing that, this method only fetches.
+
+        `format=text` returns HTTP 422 for `mode=content` BY DESIGN
+        (`kremory-http.rs:479-486` — the template has no meaning for the
+        BM25-only content surface). Skipped BEFORE the request, not caught
+        as an error after — a 422 here would be a client bug, not a server
+        fault.
+
+        Best-effort and silent-safe: never raises. A transport error or
+        non-200 response logs a warning, increments `total_text_block_errors`
+        (NOT `total_http_errors` — see the comment on that counter in
+        `__init__`), and returns `None`. Callers persist `None` as an absent
+        field rather than aborting the run.
+        """
+        if self.server_mode == "content":
+            return None
+        try:
+            r = self.http.get(
+                "/search",
+                params={
+                    "q": query,
+                    "namespace": namespace,
+                    "k": limit,
+                    "mode": self.server_mode,
+                    "format": "text",
+                    "template": template,
+                },
+            )
+        except httpx.HTTPError as e:
+            self.total_text_block_errors += 1
+            print(
+                f"  [warn] recall_text_block transport error "
+                f"({type(e).__name__}: {e})",
+                file=sys.stderr,
+            )
+            return None
+        if r.status_code == 200:
+            return r.json().get("block")
+        self.total_text_block_errors += 1
+        print(
+            f"  [warn] recall_text_block failed ({r.status_code}): {r.text[:200]}",
+            file=sys.stderr,
+        )
+        return None
 
     def scrape_metrics(self) -> dict[str, float]:
         """Scrape GET /metrics (Prometheus text) and sum each metric across its

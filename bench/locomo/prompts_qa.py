@@ -255,24 +255,54 @@ def format_memories_structured(
     return "\n\n".join(out)
 
 
+def format_text_block(block: str | None) -> str:
+    """Pass through kremory's OWN server-rendered prompt-ready block
+    (`GET /search?format=text&template=temporal_facts` — RECALL-LEDGER §4.19
+    / TD-155) VERBATIM into the {memories} slot, instead of reconstructing a
+    rendering harness-side from `recalled_memories` strings. This is what an
+    MCP tool consumer actually receives — including `valid_at`, which
+    `format_memories()`/`format_memories_structured()` never see because
+    `flatten_result_content` (the REST `structured` renderer) drops it.
+
+    `None` or empty means the harness didn't capture this question's second
+    request (not run with `--capture-text-block`, `--server-mode content`,
+    or the request failed) — falls back to the same "no context" sentinel
+    `format_memories()` uses, so the answerer prompt is well-formed either way.
+    """
+    if not block:
+        return "(No relevant memories found)"
+    return block
+
+
 def build_answer_prompt(
     question: str,
     memories: list[str],
     reference_date: str = "2023",
     provenance: list[dict] | None = None,
     structured: bool = False,
+    text_block: str | None = None,
 ) -> str:
     """Fill the ported ANSWER_GENERATION_PROMPT for kremory string memories.
 
     `structured=True` groups memories by wire `kind` (see
     [`format_memories_structured`]); the default is byte-identical to the flat
     format every published number was measured on.
+
+    `text_block`, when not `None`, TAKES PRECEDENCE over both `structured`
+    and the flat format: it is kremory's own server-rendered prompt-ready
+    block (see [`format_text_block`]), passed through rather than
+    reconstructed here. Mutually exclusive with `structured` at the caller
+    (`qa_eval.py`) — this function does not itself enforce that, it simply
+    prefers `text_block` when given.
     """
-    rendered = (
-        format_memories_structured(memories, provenance)
-        if structured
-        else format_memories(memories)
-    )
+    if text_block is not None:
+        rendered = format_text_block(text_block)
+    else:
+        rendered = (
+            format_memories_structured(memories, provenance)
+            if structured
+            else format_memories(memories)
+        )
     return ANSWER_GENERATION_PROMPT.format(
         memories=rendered,
         question=question,
