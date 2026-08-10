@@ -135,7 +135,7 @@ use kremory_mcp::handlers::{self, ToolError};
 use kremory_mcp::health;
 use kremory_mcp::params::{
     DreamParams, RecallFormat, RecallParams, RecallStructuredOutput, RecallTemplateWire,
-    RememberParams, RetrievedContextWire,
+    RecallTextOutput, RememberParams, RetrievedContextWire,
 };
 
 const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
@@ -465,38 +465,62 @@ async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // TD-155: `format=text` returns kremory's OWN prompt-ready rendering
-    // (`RecallRequest::as_template`) instead of the flattened rows. It is the
-    // rendering the MCP tool surface has always defaulted to, and which this
-    // endpoint could not reach — so the LoCoMo harness, which drives this
-    // endpoint, has never measured it. Fails loud rather than silently ignoring
-    // the parameter, mirroring the B1 `mode=hybrid`-without-the-feature arm:
-    // a request that asks for a rendering we cannot produce must not come back
-    // as if it had been honoured.
+    // TD-155 (fixed further by TD-196): `format=text` returns kremory's OWN
+    // prompt-ready rendering instead of the flattened rows. It is the
+    // rendering the MCP tool surface has always defaulted to.
+    //
+    // TD-196: `format=text` previously read `query.mode` ONLY to gate
+    // `mode=content` (422) below, and otherwise ALWAYS retrieved via a
+    // single `handlers::do_recall(format: Text)` call regardless of whether
+    // the caller asked for `mode=recall` or `mode=hybrid` — i.e. `mode` was
+    // silently ignored for every OTHER value. Every REST caller requesting
+    // `format=text` under the default `mode=hybrid` therefore silently got
+    // `mode=recall`-quality retrieval (measured on conv0: 77.2 vs 82.1
+    // recall@10, 63.9 vs 69.6 nDCG@10 — hybrid is the better arm on every
+    // metric, see TD-196).
+    //
+    // Retrieval and rendering are now separated by construction: `mode` is
+    // matched HERE, exactly as it is below for `format=structured`, to fetch
+    // the item set ([`fetch_recall_items`] / [`hybrid_items_for_render`]) —
+    // the SAME functions (or their retrieval halves) `format=structured`
+    // uses for the same `mode`, so the two formats cannot drift apart again.
+    // `format=text` only picks the LAST step (render vs serialize); it
+    // cannot bypass the `mode` dispatch, because there is no other code path
+    // left that reaches this response.
     if query.format == Some(RecallFormat::Text) {
-        if query.mode == SearchMode::Content {
-            return Err(ApiError(ToolError::InvalidParams(
-                "format=text renders the entity/fact recall surface \
-                 (RecallRequest::as_template) and has no meaning for mode=content, \
-                 which returns BM25 passages. Use mode=recall or mode=hybrid."
-                    .to_string(),
-            )));
-        }
-        let value = handlers::do_recall(
-            &state.mem,
-            RecallParams {
-                namespace: query.namespace,
-                thread: None,
-                query: query.q,
-                k: query.k,
-                as_of: None,
-                format: RecallFormat::Text,
-                template: query.template,
-                rerank_k: *RERANK_K,
+        let template = query.template;
+        let params = RecallParams {
+            namespace: query.namespace,
+            thread: None,
+            query: query.q,
+            k: query.k,
+            as_of: None,
+            format: RecallFormat::Structured,
+            template,
+            rerank_k: *RERANK_K,
+        };
+        let items = match query.mode {
+            SearchMode::Content => {
+                return Err(ApiError(ToolError::InvalidParams(
+                    "format=text renders the entity/fact recall surface and has no \
+                     meaning for mode=content, which returns BM25 passages. Use \
+                     mode=recall or mode=hybrid."
+                        .to_string(),
+                )));
+            }
+            SearchMode::Recall => fetch_recall_items(&state.mem, params).await?,
+            SearchMode::Hybrid => {
+                hybrid_items_for_render(&state.mem, params, state.rrf_k).await?
+            }
+        };
+        let block = render_prompt_block(&items, template);
+        return Ok(Json(serde_json::to_value(RecallTextOutput { block }).map_err(
+            |e| {
+                ApiError(ToolError::Internal(format!(
+                    "kremory-http: failed to serialize format=text block: {e}"
+                )))
             },
-        )
-        .await?;
-        return Ok(Json(value));
+        )?));
     }
 
     let params = RecallParams {
@@ -535,6 +559,89 @@ async fn search(
     )?))
 }
 
+/// Fetch the entity/fact recall arm's item SET (`handlers::do_recall`,
+/// structured format) WITHOUT flattening it into the `format=structured`
+/// wire shape — the retrieval half of `recall_mode_results`, extracted so
+/// TD-196's `format=text` path can consume the same full-fidelity items
+/// [`retrieved_context_wire_to_search_result`] flattens for `mode=recall`.
+/// `RecallStructuredOutput.results: Vec<RetrievedContextWire>` already IS
+/// this full-fidelity shape — see `params.rs`.
+async fn fetch_recall_items(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<RetrievedContextWire>, ApiError> {
+    let value = handlers::do_recall(mem, params).await?;
+    let structured: RecallStructuredOutput = serde_json::from_value(value).map_err(|e| {
+        ApiError(ToolError::Internal(format!(
+            "kremory-http: failed to deserialize recall structured output: {e}"
+        )))
+    })?;
+    Ok(structured.results)
+}
+
+/// Flatten one entity/fact recall-arm item into the `format=structured`
+/// wire shape. Extracted verbatim from `recall_mode_results`'s former
+/// inline closure (TD-196) — same logic, same output, now also reusable by
+/// [`fetch_recall_items`]'s other consumer.
+fn retrieved_context_wire_to_search_result(r: &RetrievedContextWire) -> SearchResultWire {
+    // TD-139 DoD item 2: a dense-fact-arm hit is lifted into the
+    // entity+content fusion as a synthetic `RetrievedContext` with
+    // `entity_type_name == "Fact"`
+    // (`core::search::fact_hit_into_retrieved_context`'s
+    // discriminator) — mirrors how a `ContentPassage` is tagged
+    // `"ContentPassage"` one layer down. `fact_dense_enabled`
+    // defaults `false`, so no live result carries this tag unless
+    // the knob is on.
+    //
+    // ADR-078 Phase A FIX (2026-07-28): `"ContentPassage"` was NOT
+    // mapped, so every content-arm hit on this path was reported as
+    // `kind: Entity` — i.e. a consumer was told that VERBATIM EPISODE
+    // TEXT is a derived entity summary. Measured on conv0: 3980 of 3980
+    // items across the top-20 came back `entity`, zero `episode`, on a
+    // fused path where most of the useful items ARE episode passages.
+    // `SearchResultKindWire::Episode` already existed and is documented
+    // as exactly this case; only the mapping was missing.
+    //
+    // Why it matters beyond tidiness: an agent cannot tell distilled
+    // summary from source text, so it cannot weight them differently.
+    // That is the mechanism behind the measured dilution — adding the
+    // graph moves single-hop +15.6pt but temporal -8.1pt, and of the
+    // questions it flips right->wrong, 8 of 8 had the gold evidence
+    // present in context anyway (RECALL-LEDGER §2quater).
+    let kind = match r.entity_type_name.as_str() {
+        "Fact" => SearchResultKindWire::Fact,
+        "ContentPassage" => SearchResultKindWire::Episode,
+        _ => SearchResultKindWire::Entity,
+    };
+    SearchResultWire {
+        id: r.entity_id.clone(),
+        content: flatten_result_content(r),
+        score: r.score,
+        kind,
+        // The entity's connected facts each carry their OWN
+        // `source_episode_ids` (`RetrievedFactWire`, params.rs) but
+        // that provenance is discarded by `flatten_result_content`'s
+        // join — an entity item is not itself a fact, so no single
+        // episode id applies here. TD-139 leaves this loss in place
+        // deliberately: splitting facts out of `flatten_result_content`
+        // would change this arm's result count/content, which the
+        // DoD requires to stay byte-identical. A `Fact`-kind item is
+        // different: it is NOT an entity's connected fact, it IS a
+        // dense-fact-arm hit, and its own `source_refs[0]` (a
+        // `SourceKind::Episode` ref stamped by
+        // `fact_hit_into_retrieved_context`) carries its provenance —
+        // recover it here.
+        source_episode_id: if kind == SearchResultKindWire::Fact {
+            r.source_refs
+                .iter()
+                .find(|sr| sr.kind == "episode")
+                .and_then(|sr| sr.id.parse::<i64>().ok())
+        } else {
+            None
+        },
+    }
+}
+
 /// `mode=recall` — the entity-shaped keyword/semantic/graph path
 /// (`handlers::do_recall`, structured format), flattened via
 /// [`flatten_result_content`]. Byte-identical to `/search`'s pre-W0.1
@@ -543,77 +650,20 @@ async fn search(
 /// format calls `.raw()`, and `.raw()` now fuses in the content stream by
 /// default (TD-066 Increment 1, `core::search::rrf_fuse_with_content`) — see
 /// this module's top-level doc comment.
+///
+/// TD-196: retrieval (`fetch_recall_items`) and flattening
+/// (`retrieved_context_wire_to_search_result`) are now two named steps —
+/// this fn's OUTPUT is unchanged, but the retrieval step is shared with the
+/// `format=text` rendering path so `mode` genuinely selects the item set
+/// regardless of `format`.
 async fn recall_mode_results(
     mem: &Memory,
     params: RecallParams,
 ) -> Result<Vec<SearchResultWire>, ApiError> {
-    let value = handlers::do_recall(mem, params).await?;
-    let structured: RecallStructuredOutput = serde_json::from_value(value).map_err(|e| {
-        ApiError(ToolError::Internal(format!(
-            "kremory-http: failed to deserialize recall structured output: {e}"
-        )))
-    })?;
-    Ok(structured
-        .results
+    let items = fetch_recall_items(mem, params).await?;
+    Ok(items
         .iter()
-        .map(|r| {
-            // TD-139 DoD item 2: a dense-fact-arm hit is lifted into the
-            // entity+content fusion as a synthetic `RetrievedContext` with
-            // `entity_type_name == "Fact"`
-            // (`core::search::fact_hit_into_retrieved_context`'s
-            // discriminator) — mirrors how a `ContentPassage` is tagged
-            // `"ContentPassage"` one layer down. `fact_dense_enabled`
-            // defaults `false`, so no live result carries this tag unless
-            // the knob is on.
-            //
-            // ADR-078 Phase A FIX (2026-07-28): `"ContentPassage"` was NOT
-            // mapped, so every content-arm hit on this path was reported as
-            // `kind: Entity` — i.e. a consumer was told that VERBATIM EPISODE
-            // TEXT is a derived entity summary. Measured on conv0: 3980 of 3980
-            // items across the top-20 came back `entity`, zero `episode`, on a
-            // fused path where most of the useful items ARE episode passages.
-            // `SearchResultKindWire::Episode` already existed and is documented
-            // as exactly this case; only the mapping was missing.
-            //
-            // Why it matters beyond tidiness: an agent cannot tell distilled
-            // summary from source text, so it cannot weight them differently.
-            // That is the mechanism behind the measured dilution — adding the
-            // graph moves single-hop +15.6pt but temporal -8.1pt, and of the
-            // questions it flips right->wrong, 8 of 8 had the gold evidence
-            // present in context anyway (RECALL-LEDGER §2quater).
-            let kind = match r.entity_type_name.as_str() {
-                "Fact" => SearchResultKindWire::Fact,
-                "ContentPassage" => SearchResultKindWire::Episode,
-                _ => SearchResultKindWire::Entity,
-            };
-            SearchResultWire {
-                id: r.entity_id.clone(),
-                content: flatten_result_content(r),
-                score: r.score,
-                kind,
-                // The entity's connected facts each carry their OWN
-                // `source_episode_ids` (`RetrievedFactWire`, params.rs) but
-                // that provenance is discarded by `flatten_result_content`'s
-                // join — an entity item is not itself a fact, so no single
-                // episode id applies here. TD-139 leaves this loss in place
-                // deliberately: splitting facts out of `flatten_result_content`
-                // would change this arm's result count/content, which the
-                // DoD requires to stay byte-identical. A `Fact`-kind item is
-                // different: it is NOT an entity's connected fact, it IS a
-                // dense-fact-arm hit, and its own `source_refs[0]` (a
-                // `SourceKind::Episode` ref stamped by
-                // `fact_hit_into_retrieved_context`) carries its provenance —
-                // recover it here.
-                source_episode_id: if kind == SearchResultKindWire::Fact {
-                    r.source_refs
-                        .iter()
-                        .find(|sr| sr.kind == "episode")
-                        .and_then(|sr| sr.id.parse::<i64>().ok())
-                } else {
-                    None
-                },
-            }
-        })
+        .map(retrieved_context_wire_to_search_result)
         .collect())
 }
 
@@ -669,6 +719,64 @@ async fn content_mode_results(
          without it. Rebuild with `--features content-search`."
             .to_string(),
     )))
+}
+
+/// Lift one BM25 `ContentPassage` (`mode=content`'s raw arm) into this
+/// crate's `RetrievedContextWire` DTO shape (TD-196) — so the `format=text`
+/// rendering path can carry a content-arm item with the SAME full-fidelity
+/// type the entity/fact arm's [`fetch_recall_items`] already returns, and
+/// fuse both through one [`rrf_merge`] + one renderer.
+///
+/// Mirrors `kremory::core::search::content_passage_into_retrieved_context`
+/// (`crates/kremory/src/core/search.rs`, module-private — not reachable from
+/// this crate) field-for-field: `entity_id = episode_id.to_string()`,
+/// `entity_name = "Episode #{episode_id}"`, `summary = snippet`, empty
+/// `facts`, `entity_type_name = "ContentPassage"` (the SAME discriminator
+/// `retrieved_context_wire_to_search_result` already keys its `kind` mapping
+/// off of). This is a second, wire-DTO-shaped copy of that ~20-line
+/// conversion, not a second copy of the fusion algorithm itself
+/// ([`rrf_merge`] does that part, generically, for both wire shapes) —
+/// duplicated rather than exposed cross-crate because this task is scoped to
+/// the HTTP layer only and `core/search.rs` has a concurrent edit in flight
+/// (TD-197) that this change must not touch or conflict with.
+#[cfg(feature = "content-search")]
+fn content_passage_into_context_wire(
+    passage: kremory::memory::ContentPassage,
+) -> RetrievedContextWire {
+    RetrievedContextWire {
+        entity_id: passage.episode_id.to_string(),
+        entity_name: format!("Episode #{}", passage.episode_id),
+        summary: passage.snippet,
+        score: passage.score,
+        incomplete: false,
+        entity_type_id: 0,
+        entity_type_name: "ContentPassage".to_string(),
+        namespace: None,
+        source_refs: vec![passage.source_ref.into()],
+        facts: Vec::new(),
+    }
+}
+
+/// Fetch the BM25 content arm's item SET in the SAME full-fidelity
+/// `RetrievedContextWire` shape [`fetch_recall_items`] returns (TD-196) —
+/// the retrieval half of `content_mode_results`, lifted via
+/// [`content_passage_into_context_wire`] instead of flattened into
+/// [`SearchResultWire`]. `content_mode_results` itself is UNCHANGED and
+/// remains the sole producer of `format=structured&mode=content`'s wire
+/// output — this is a parallel fetch for the `format=text` rendering path
+/// only, never substituted into the structured path (whose `content` field
+/// is the BARE snippet, not `"Episode #N: {snippet}"` — merging the two
+/// would change that byte-for-byte contract).
+#[cfg(feature = "content-search")]
+async fn fetch_content_items(
+    mem: &Memory,
+    params: RecallParams,
+) -> Result<Vec<RetrievedContextWire>, ApiError> {
+    let passages = handlers::do_recall_content(mem, params).await?;
+    Ok(passages
+        .into_iter()
+        .map(content_passage_into_context_wire)
+        .collect())
 }
 
 /// `mode=hybrid` (the DEFAULT) — runs BOTH `mode=recall` and `mode=content`
@@ -751,6 +859,50 @@ async fn hybrid_mode_results(
     )))
 }
 
+/// `format=text`'s `mode=hybrid` item set (TD-196) — the retrieval-only
+/// twin of [`hybrid_mode_results`], operating on the full-fidelity
+/// `RetrievedContextWire` shape ([`fetch_recall_items`] +
+/// [`fetch_content_items`]) instead of the flattened `format=structured`
+/// wire shape, so the RENDERED item set (and its RELATIVE ORDER — the
+/// fused score `rrf_merge` computes) matches
+/// `format=structured&mode=hybrid`'s BY CONSTRUCTION: same params, same
+/// underlying fetches, same generic [`rrf_merge`]/[`fused_cap`] the
+/// structured path uses.
+#[cfg(feature = "content-search")]
+async fn hybrid_items_for_render(
+    mem: &Memory,
+    params: RecallParams,
+    rrf_k: usize,
+) -> Result<Vec<RetrievedContextWire>, ApiError> {
+    let k = params.k;
+    let recall = fetch_recall_items(mem, params.clone()).await?;
+    let content = fetch_content_items(mem, params).await?;
+    let cap = fused_cap(k, recall.len(), content.len());
+    let mut merged = rrf_merge(recall, content, rrf_k);
+    merged.truncate(cap);
+    Ok(merged)
+}
+
+/// Feature-off HARD-FAIL twin of [`hybrid_items_for_render`] — same B1
+/// fail-loud rationale as [`hybrid_mode_results`]'s feature-off arm.
+#[cfg(not(feature = "content-search"))]
+async fn hybrid_items_for_render(
+    _mem: &Memory,
+    _params: RecallParams,
+    _rrf_k: usize,
+) -> Result<Vec<RetrievedContextWire>, ApiError> {
+    tracing::error!(
+        "mode=hybrid (format=text) requested but kremory-http was built WITHOUT the \
+         `content-search` feature — refusing to serve a silently-degraded recall-only \
+         rendering (B1 fail-loud). Rebuild with `--features content-search`."
+    );
+    Err(ApiError(ToolError::InvalidParams(
+        "mode=hybrid requires the `content-search` feature, but this server was built \
+         without it. Rebuild with `--features content-search`."
+            .to_string(),
+    )))
+}
+
 /// NAIVE BASELINE FUSION — real fusion/fairness decision deferred to Arch-1a
 /// post-diagnostic per benchmark-completion-roadmap. Union by `id`
 /// (first-seen wins across the two ranked lists), rank-interleaved
@@ -794,38 +946,201 @@ fn fused_cap(k: Option<usize>, recall_len: usize, content_len: usize) -> usize {
     k.unwrap_or(recall_len + content_len)
 }
 
-fn rrf_merge(
-    a: Vec<SearchResultWire>,
-    b: Vec<SearchResultWire>,
-    rrf_k: usize,
-) -> Vec<SearchResultWire> {
+/// Minimal shape [`rrf_merge`] needs to fuse two ranked streams — id +
+/// mutable score. Implemented for both [`SearchResultWire`] (the
+/// `format=structured` shape `hybrid_mode_results` fuses) and
+/// [`RetrievedContextWire`] (the full-fidelity shape
+/// [`hybrid_items_for_render`] fuses for `format=text`, TD-196) so ONE
+/// fusion function serves both — the alternative (a second, hand-rolled
+/// merge over the rich shape) would be exactly the "duplicated merge logic"
+/// this trait exists to avoid.
+trait RrfItem {
+    fn rrf_id(&self) -> &str;
+    fn rrf_score(&self) -> f32;
+    fn set_rrf_score(&mut self, score: f32);
+}
+
+impl RrfItem for SearchResultWire {
+    fn rrf_id(&self) -> &str {
+        &self.id
+    }
+    fn rrf_score(&self) -> f32 {
+        self.score
+    }
+    fn set_rrf_score(&mut self, score: f32) {
+        self.score = score;
+    }
+}
+
+impl RrfItem for RetrievedContextWire {
+    fn rrf_id(&self) -> &str {
+        &self.entity_id
+    }
+    fn rrf_score(&self) -> f32 {
+        self.score
+    }
+    fn set_rrf_score(&mut self, score: f32) {
+        self.score = score;
+    }
+}
+
+fn rrf_merge<T: RrfItem>(a: Vec<T>, b: Vec<T>, rrf_k: usize) -> Vec<T> {
     // recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): `k` is now the
     // boot-read `KREMORY_RRF_K` value (AppState.rrf_k), NOT a hardcoded
     // `const RRF_K = 60.0`, so this bin-local hybrid-fusion sweep site tracks
     // the same k as the library fusion sites.
     let rrf_k = rrf_k as f32;
-    let mut fused: std::collections::HashMap<String, SearchResultWire> =
+    let mut fused: std::collections::HashMap<String, T> =
         std::collections::HashMap::with_capacity(a.len() + b.len());
     for list in [a, b] {
         for (rank, r) in list.into_iter().enumerate() {
             let contrib = 1.0 / (rrf_k + (rank as f32) + 1.0);
+            let key = r.rrf_id().to_string();
             fused
-                .entry(r.id.clone())
-                .and_modify(|e| e.score += contrib)
-                .or_insert_with(|| SearchResultWire {
-                    score: contrib,
-                    ..r
+                .entry(key)
+                .and_modify(|e| {
+                    let updated = e.rrf_score() + contrib;
+                    e.set_rrf_score(updated);
+                })
+                .or_insert_with(|| {
+                    let mut item = r;
+                    item.set_rrf_score(contrib);
+                    item
                 });
         }
     }
-    let mut merged: Vec<SearchResultWire> = fused.into_values().collect();
+    let mut merged: Vec<T> = fused.into_values().collect();
     merged.sort_by(|x, y| {
-        y.score
-            .partial_cmp(&x.score)
+        y.rrf_score()
+            .partial_cmp(&x.rrf_score())
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| x.id.cmp(&y.id))
+            .then_with(|| x.rrf_id().cmp(y.rrf_id()))
     });
     merged
+}
+
+/// Render an already-computed `format=text` item set into kremory's
+/// prompt-ready text block (TD-196) — the `format=text` twin of
+/// [`SearchResponseWire`]'s JSON serialization for `format=structured`.
+/// Retrieval and rendering are two SEPARATE steps by construction: this fn
+/// takes the item set `mode` already selected ([`fetch_recall_items`] /
+/// [`hybrid_items_for_render`]) and does nothing else — it cannot see or
+/// re-derive `mode`, so there is no code path left where a rendering choice
+/// could silently substitute a different item set.
+///
+/// Mirrors `kremory::memory::context_block`'s three per-template renderers
+/// (`render_entities` / `render_edge_summary` / `render_temporal_facts`,
+/// `crates/kremory/src/memory/mod.rs:353-479`) but operates on this crate's
+/// own [`RetrievedContextWire`] DTO rather than the core crate's
+/// `#[non_exhaustive]` `RetrievedContext` (which cannot be constructed
+/// outside `kremory` — a `mode=content` item has no real `RetrievedContext`
+/// to begin with; it is synthesized via
+/// [`content_passage_into_context_wire`]). Deliberately DROPS the core
+/// renderers' multi-namespace `[ns:{group_id}]` prefix logic: `/search`
+/// takes exactly one `namespace` per request (`RecallParams::namespace:
+/// String`), so results here can never span more than one namespace group —
+/// the prefix would never fire.
+fn render_prompt_block(items: &[RetrievedContextWire], template: RecallTemplateWire) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    match template {
+        RecallTemplateWire::Entities => render_entities_wire(items),
+        RecallTemplateWire::EdgeSummary => render_edge_summary_wire(items),
+        RecallTemplateWire::TemporalFacts => render_temporal_facts_wire(items),
+    }
+}
+
+/// Mirrors `kremory::memory::render_entities` (`memory/mod.rs:364-406`)
+/// minus the multi-namespace prefix — see [`render_prompt_block`].
+fn render_entities_wire(items: &[RetrievedContextWire]) -> String {
+    let mut out = String::new();
+    for (i, r) in items.iter().enumerate() {
+        if i > 0 {
+            out.push_str("\n\n");
+        }
+        out.push_str("## ");
+        out.push_str(&r.entity_name);
+        out.push('\n');
+        out.push_str(&r.summary);
+        if !r.facts.is_empty() {
+            out.push_str("\n\nFacts:");
+            for f in &r.facts {
+                out.push_str("\n- ");
+                out.push_str(&f.fact);
+            }
+        }
+        if !r.source_refs.is_empty() {
+            out.push_str("\n\nSources: ");
+            for (j, sr) in r.source_refs.iter().enumerate() {
+                if j > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&sr.kind);
+                out.push(':');
+                out.push_str(&sr.id);
+            }
+        }
+    }
+    out
+}
+
+/// Mirrors `kremory::memory::render_edge_summary` (`memory/mod.rs:408-424`).
+fn render_edge_summary_wire(items: &[RetrievedContextWire]) -> String {
+    let mut out = String::new();
+    for r in items {
+        for sr in &r.source_refs {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str("- ");
+            out.push_str(&r.entity_name);
+            out.push_str(" <- ");
+            out.push_str(&sr.kind);
+            out.push(':');
+            out.push_str(&sr.id);
+        }
+    }
+    out
+}
+
+/// Mirrors `kremory::memory::render_temporal_facts` (`memory/mod.rs:439-479`)
+/// minus the multi-namespace prefix — see [`render_prompt_block`].
+/// `RetrievedFactWire::valid_at`/`invalid_at` and `SourceRefWire::occurred_at`
+/// are already RFC-3339 strings (stamped at the `conversions.rs` boundary),
+/// so no `.to_rfc3339()` re-format is needed here.
+fn render_temporal_facts_wire(items: &[RetrievedContextWire]) -> String {
+    let mut out = String::new();
+    for (i, r) in items.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if r.facts.is_empty() {
+            // No connected facts — fall back to the entity + source_ref
+            // line (preserves pre-TD-116 rendering for fact-less entities).
+            for sr in &r.source_refs {
+                out.push_str(&r.entity_name);
+                out.push_str(" (valid_at=");
+                out.push_str(&sr.occurred_at);
+                out.push_str(") — ");
+                out.push_str(&r.summary);
+                out.push('\n');
+            }
+        } else {
+            for f in &r.facts {
+                out.push_str(&f.fact);
+                out.push_str(" (valid_at=");
+                out.push_str(&f.valid_at);
+                if let Some(inv) = &f.invalid_at {
+                    out.push_str(", invalid_at=");
+                    out.push_str(inv);
+                }
+                out.push(')');
+                out.push('\n');
+            }
+        }
+    }
+    out.trim_end_matches('\n').to_string()
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -2505,5 +2820,161 @@ mod tests {
             "empty (but present) value must disable reranking, matching the malformed-value \
              path rather than being treated as a distinct absent-value case"
         );
+    }
+
+    /// TD-196: `format=text` must retrieve the SAME item set, in the SAME
+    /// relative ORDER, `format=structured` does for the same `mode` —
+    /// proven via a scenario engineered so `mode=recall`'s single-pass
+    /// internal fusion (`.raw()`) and `mode=hybrid`'s union with a SEPARATE
+    /// `mode=content` BM25 pass disagree on ranking:
+    ///
+    /// - a weak entity match (subject == query text, but episode content is
+    ///   unrelated — findable only via the entity/fact arm)
+    /// - 20 keyword-irrelevant decoys (noise the entity/fact + internal
+    ///   content fusion has to rank against)
+    /// - ONE genuinely relevant content-only passage
+    ///
+    /// Empirically (see TD-196 investigation), `mode=recall` ranks the
+    /// relevant passage LAST (rank 3 of 3, out-competed by the decoy +
+    /// entity within its single fusion pass); `mode=hybrid` ranks it FIRST
+    /// (its RRF contribution is SUMMED across both the recall arm AND the
+    /// separate content arm, per `rrf_merge`'s dedup-by-id accumulation).
+    ///
+    /// Before the fix, `format=text` read `query.mode` ONLY to gate
+    /// `mode=content` (422) — for `mode=recall` and `mode=hybrid` alike it
+    /// always computed via a single `handlers::do_recall(format: Text)`
+    /// call, i.e. `mode=recall`'s underlying fetch. So
+    /// `format=text&mode=hybrid` silently rendered the relevant passage
+    /// LAST, disagreeing with what `format=structured&mode=hybrid` (and any
+    /// other consumer of the documented hybrid ranking) actually retrieves.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn http_search_format_text_hybrid_matches_structured_hybrid_ranking_td196() {
+        let llm: Arc<dyn ChatProvider> = Arc::new(MockChatProvider::null());
+        let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(MockEmbeddingProvider::new(384));
+        let mem = Memory::open(":memory:")
+            .with_llm(llm)
+            .with_embedder(embedder)
+            .await
+            .expect("in-memory Memory must build");
+        let mem = Arc::new(mem);
+        let router = build_router(AppState {
+            mem: mem.clone(),
+            rrf_k: 60,
+        });
+        let ns = "ns-td196-hybrid-ranking";
+
+        let entity_params = RememberParams {
+            namespace: ns.to_string(),
+            thread: None,
+            content: "This document discusses corporate wellness policy trends.".to_string(),
+            source_kind: Some(kremory_mcp::params::SourceKindWire::Note),
+            source_id: Some("entity-only".into()),
+            published_at: None,
+            structured_facts: vec![kremory_mcp::params::StructuredFactWire {
+                subject: "Zephyrine".to_string(),
+                predicate: "is_a".to_string(),
+                object: "notable subject".to_string(),
+                valid_at: None,
+                invalid_at: None,
+            }],
+            skip_extraction: true,
+        };
+        handlers::do_remember(&mem, entity_params)
+            .await
+            .expect("entity remember must succeed");
+
+        for i in 0..20 {
+            let params = RememberParams {
+                namespace: ns.to_string(),
+                thread: None,
+                content: format!("Quarterly report section {i} covers regional sales figures."),
+                source_kind: Some(kremory_mcp::params::SourceKindWire::Note),
+                source_id: Some(format!("noise-{i}")),
+                published_at: None,
+                structured_facts: Vec::new(),
+                skip_extraction: true,
+            };
+            handlers::do_remember(&mem, params)
+                .await
+                .expect("noise remember must succeed");
+        }
+
+        let relevant_params = RememberParams {
+            namespace: ns.to_string(),
+            thread: None,
+            content: "Zephyrine mentioned the wobbling turnstile incident yesterday.".to_string(),
+            source_kind: Some(kremory_mcp::params::SourceKindWire::Note),
+            source_id: Some("relevant-content".into()),
+            published_at: None,
+            structured_facts: Vec::new(),
+            skip_extraction: true,
+        };
+        handlers::do_remember(&mem, relevant_params)
+            .await
+            .expect("relevant remember must succeed");
+
+        // Reference: format=structured&mode=hybrid ranks the relevant
+        // passage FIRST (summed RRF contribution across both streams).
+        let structured = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/search?q=Zephyrine&namespace={ns}&k=3&mode=hybrid"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(structured.status(), StatusCode::OK);
+        let structured_json = body_json(structured.into_body()).await;
+        let results = structured_json["results"]
+            .as_array()
+            .expect("results array");
+        assert!(
+            results[0]["content"]
+                .as_str()
+                .is_some_and(|c| c.contains("Zephyrine mentioned the wobbling turnstile")),
+            "structured&hybrid must rank the relevant passage FIRST: {structured_json}"
+        );
+
+        // format=text&mode=hybrid must retrieve the SAME item set in the
+        // SAME relative order: the relevant passage must render BEFORE the
+        // irrelevant decoy, not after.
+        let text = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!(
+                        "/search?q=Zephyrine&namespace={ns}&k=3&format=text&mode=hybrid&template=entities"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(text.status(), StatusCode::OK);
+        let text_json = body_json(text.into_body()).await;
+        let block = text_json["block"]
+            .as_str()
+            .expect("format=text must return a block string");
+        let relevant_pos =
+            block.find("Zephyrine mentioned the wobbling turnstile incident yesterday.");
+        let decoy_pos = block.find("Quarterly report section");
+        match (relevant_pos, decoy_pos) {
+            (Some(r), Some(d)) => assert!(
+                r < d,
+                "format=text&mode=hybrid must render the SAME item set in the SAME \
+                 order format=structured&mode=hybrid retrieves (TD-196) — the \
+                 relevant passage must appear BEFORE the irrelevant decoy, not \
+                 after (i.e. format=text must not silently fall back to \
+                 mode=recall's ordering). Got block:\n{block}"
+            ),
+            _ => panic!(
+                "format=text&mode=hybrid must contain BOTH the relevant passage and \
+                 the decoy (same item set as structured&hybrid): {block}"
+            ),
+        }
     }
 }
