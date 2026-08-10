@@ -92,6 +92,14 @@ impl<'a> RememberRequest<'a> {
     /// there first. Phase 2 LLM extraction still runs on `content`
     /// (additive default).
     ///
+    /// ⚠️ `StructuredFact.predicate` values recognised as reserved (e.g.
+    /// `"potential_alias"` — see `crate::core::disambiguation::
+    /// is_reserved_predicate`, TD-197) are stored but never returned by any
+    /// `recall()` call. This is a read-side exclusion, not a rejection: the
+    /// call succeeds, the fact is written, and it simply never comes back to
+    /// a consumer. Callers should avoid these predicate strings for their
+    /// own facts.
+    ///
     /// To skip Phase 2 LLM extraction entirely (caller is the sole source of
     /// truth for facts), chain [`RememberRequest::skip_extraction`].
     pub fn with_facts(mut self, facts: Vec<StructuredFact>) -> Self {

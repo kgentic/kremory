@@ -5636,4 +5636,65 @@ mod tests {
             "no limit → full union (1 entity + 1 fact), nothing dropped"
         );
     }
+
+    /// TD-197 review Finding 2: `rrf_fuse_with_facts` embeds EVERY fact row
+    /// via `vector_search_facts` (`ingest_with.rs` → `set_fact_embedding`),
+    /// so a reserved meta-edge predicate (e.g. `potential_alias`) is
+    /// retrievable by this dense fact arm and becomes its own synthetic
+    /// `RetrievedContext` entry — a SEPARATE construction site from
+    /// `memory::engine_handle`'s connected-facts projection (TD-197's fix
+    /// commit: "filtering only the first would have left this live"). This
+    /// drives the fn directly with a reserved-predicate hit and asserts it
+    /// is dropped, plus a non-reserved control in the SAME stream that must
+    /// survive — proving the filter isn't over-broad.
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn rrf_fuse_with_facts_drops_reserved_predicate_hits() {
+        let entity_stream = vec![ctx("alice")];
+        let fact_stream = vec![
+            fact_hit(FactHitParams {
+                id: 1,
+                subject_id: "adoption",
+                predicate: crate::core::disambiguation::RESERVED_PREDICATE_POTENTIAL_ALIAS,
+                object_value: "adoption_agencies",
+                source_episode_id: Some(1),
+                score: -0.01,
+            }),
+            fact_hit(FactHitParams {
+                id: 2,
+                subject_id: "Bob",
+                predicate: "works_at",
+                object_value: "Acme",
+                source_episode_id: Some(2),
+                score: -0.02,
+            }),
+        ];
+
+        let fused = rrf_fuse_with_facts(RrfFuseWithFactsParams {
+            entity_stream,
+            fact_stream,
+            namespace: None,
+            limit: None,
+            rrf_k: 60,
+        });
+
+        assert_eq!(
+            fused.len(),
+            2,
+            "1 entity + 1 SURVIVING fact — the reserved-predicate hit (id=1) must be dropped, \
+             not fused as a 3rd entry"
+        );
+        assert!(
+            fused.iter().all(|c| c.entity_id != "fact:1"),
+            "the reserved-predicate fact (id=1) must never reach the fused output"
+        );
+        let control = fused
+            .iter()
+            .find(|c| c.entity_id == "fact:2")
+            .expect("the non-reserved control fact (id=2) must survive the filter");
+        assert_eq!(
+            control.entity_type_name, "Fact",
+            "control entry must still be a Fact-discriminated entry"
+        );
+    }
 }
