@@ -660,3 +660,74 @@ fn with_facts_rejects_time_inversion_and_does_not_persist_inverted_window() {
         });
     });
 }
+
+// ── TD-197: reserved meta-edge predicates must never reach recall() ────────
+
+/// TD-197: `potential_alias` (`crate::core::disambiguation::
+/// RESERVED_PREDICATE_POTENTIAL_ALIAS`) is internal disambiguation
+/// bookkeeping, not a domain fact — `is_reserved_predicate()` must exclude it
+/// from EVERY consumer-facing recall read path. Pins the reserved predicate
+/// directly via `with_facts` (bypassing the L4 disambiguation flow entirely)
+/// since the read-side filter matches on the predicate STRING alone,
+/// regardless of how the fact was inserted — mirrors the exact leaked line
+/// measured in production: `"adoption potential_alias adoption agencies
+/// (valid_at=...)"` (RECALL-LEDGER §4.19 / tech-debt-register TD-197).
+#[test]
+fn td197_recall_never_surfaces_reserved_predicate() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+
+    rt.block_on(async {
+        let mem = open_with_ns("td197_reserved_predicate").await;
+
+        mem.remember("Adoption is discussed by adoption agencies.")
+            .with_facts(vec![StructuredFact {
+                subject: "adoption".to_string(),
+                predicate: kremory::core::disambiguation::RESERVED_PREDICATE_POTENTIAL_ALIAS
+                    .to_string(),
+                object: "adoption agencies".to_string(),
+                valid_from: None,
+                valid_to: None,
+                memory_type: None,
+            }])
+            .from_document("td197-doc")
+            .skip_extraction()
+            .await
+            .expect("remember(skip_extraction) should succeed");
+
+        // Structured: the reserved-predicate fact must NOT be in `.facts`.
+        let raw = mem
+            .recall("adoption")
+            .raw()
+            .await
+            .expect("raw recall should succeed");
+        let hit = raw
+            .iter()
+            .find(|r| r.entity_name == "adoption")
+            .expect("adoption entity must be in recall results");
+        assert!(
+            hit.facts
+                .iter()
+                .all(|f| !kremory::core::disambiguation::is_reserved_predicate(&f.predicate)),
+            "TD-197: reserved predicate 'potential_alias' must never reach \
+             recall() structured output; got facts: {:?}",
+            hit.facts
+        );
+
+        // Rendered (default TemporalFacts template): must not leak the
+        // predicate text into the LLM-facing prompt string either.
+        let rendered = mem
+            .recall("adoption")
+            .await
+            .expect("rendered recall should succeed");
+        assert!(
+            !rendered.contains(
+                kremory::core::disambiguation::RESERVED_PREDICATE_POTENTIAL_ALIAS
+            ),
+            "TD-197: reserved predicate must never reach rendered recall() \
+             output, got: {rendered:?}"
+        );
+    });
+}

@@ -2244,6 +2244,21 @@ pub(crate) fn rrf_fuse_with_facts(params: RrfFuseWithFactsParams<'_>) -> Vec<Ret
     } = params;
     let rrf_k = rrf_k as f64;
 
+    // TD-197: `vector_search_facts` embeds every fact row indiscriminately
+    // (`ingest_with.rs` → `set_fact_embedding`), so a reserved meta-edge
+    // predicate (e.g. `potential_alias` — internal disambiguation
+    // bookkeeping, not a domain fact) is retrievable by this dense fact arm
+    // exactly like any other fact. Drop reserved-predicate hits here, before
+    // `fact_hit_into_retrieved_context` turns each into its own synthetic
+    // `RetrievedContext` entry — the same read-side boundary
+    // `memory::engine_handle`'s connected-facts projection enforces for the
+    // entity-anchored fact list. Write-side (embedding, storage) and the
+    // dream phase's own direct query are untouched.
+    let fact_stream: Vec<_> = fact_stream
+        .into_iter()
+        .filter(|hit| !crate::core::disambiguation::is_reserved_predicate(&hit.item.predicate))
+        .collect();
+
     let entity_count = entity_stream.len();
     let fact_count = fact_stream.len();
     // Rule 19 anti-pattern #9 — per-stream attribution, so a silently-empty
