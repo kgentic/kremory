@@ -689,26 +689,52 @@ impl GraphHandle for EngineGraphHandle {
         // once, globally, so a fact is counted attached at most once (never
         // double-counted across the per-entity loop; Rule 19 anti-pattern #9,
         // "counters that lie").
+        //
+        // TD-197 review Finding 1: `facts_attached` must reflect the
+        // population the consumer ACTUALLY receives. The per-entity
+        // projection below additionally drops reserved-predicate meta-edges
+        // (`crate::core::disambiguation::is_reserved_predicate`) regardless
+        // of ownership — so a reserved-predicate fact whose endpoint matches
+        // a result entity is NEVER attached, even though the ownership test
+        // alone would say it was. Pre-fix, this counter incremented on
+        // ownership ALONE, computed ahead of (and blind to) that later
+        // filter — the counter said "attached" for facts that were then
+        // silently dropped a few lines below, itself an instance of the Rule
+        // 19 anti-pattern this comment already named. `facts_dropped_reserved`
+        // makes that drop visible as its own bucket instead of folding it
+        // into `facts_attached`; `facts_dropped_ownership` keeps its
+        // pre-existing meaning (a non-reserved fact with no ownership match).
         let result_entity_ids: std::collections::HashSet<&str> =
             context.entities.iter().map(|e| e.id.as_str()).collect();
         let facts_candidates = context.facts.len();
-        let facts_attached = context
+        let (facts_attached, facts_dropped_reserved, facts_dropped_ownership) = context
             .facts
             .iter()
-            .filter(|f| {
-                result_entity_ids.contains(f.subject_id.as_str())
-                    || f.object_id
-                        .as_deref()
-                        .is_some_and(|oid| result_entity_ids.contains(oid))
-            })
-            .count();
-        let facts_dropped_ownership = facts_candidates.saturating_sub(facts_attached);
+            .fold(
+                (0usize, 0usize, 0usize),
+                |(attached, dropped_reserved, dropped_ownership), f| {
+                    if crate::core::disambiguation::is_reserved_predicate(&f.predicate) {
+                        (attached, dropped_reserved + 1, dropped_ownership)
+                    } else if result_entity_ids.contains(f.subject_id.as_str())
+                        || f.object_id
+                            .as_deref()
+                            .is_some_and(|oid| result_entity_ids.contains(oid))
+                    {
+                        (attached + 1, dropped_reserved, dropped_ownership)
+                    } else {
+                        (attached, dropped_reserved, dropped_ownership + 1)
+                    }
+                },
+            );
         metrics::counter!("kremory.recall.facts_attached_total").increment(facts_attached as u64);
         metrics::counter!("kremory.recall.facts_dropped_ownership_total")
             .increment(facts_dropped_ownership as u64);
+        metrics::counter!("kremory.recall.facts_dropped_reserved_total")
+            .increment(facts_dropped_reserved as u64);
         tracing::debug!(
             facts_candidates,
             facts_attached,
+            facts_dropped_reserved,
             facts_dropped_ownership,
             "kremory.recall.facts_attached"
         );
@@ -1251,6 +1277,126 @@ mod tests {
         // Every fact in this fixture has its subject (alice) present in the
         // result set, so none should be dropped by the ownership predicate.
         assert_eq!(dropped, 0, "no facts should be dropped in this fixture");
+    }
+
+    /// TD-197 review Finding 1: `facts_attached_total` must count only the
+    /// facts `recall()` actually served — NOT every ownership-matched fact.
+    /// A reserved-predicate meta-edge (`potential_alias`) whose subject
+    /// matches a result entity satisfies the OWNERSHIP test but is dropped
+    /// by the per-entity projection's `is_reserved_predicate` filter a few
+    /// lines below regardless. Pre-fix, `facts_attached` was computed from
+    /// ownership alone, ahead of that filter, so it counted this fact as
+    /// "attached" even though it never reached the consumer — the exact
+    /// Rule 19 "counters that lie" shape the surrounding comment already
+    /// named for a different case. This fixture has 2 candidate facts (1
+    /// reserved, 1 domain), both subject-owned by `alice`: under the buggy
+    /// ownership-only formula `facts_attached` would read 2; the fix must
+    /// read 1, with the reserved one visible in its own bucket.
+    #[tokio::test]
+    async fn graph_search_facts_attached_excludes_reserved_predicate() {
+        use crate::core::disambiguation::RESERVED_PREDICATE_POTENTIAL_ALIAS;
+        use crate::core::graph::{FactInsert, InsertEntityParams};
+        use crate::memory::types::SearchOpts;
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let handle = make_handle().await;
+        let now = Utc::now();
+
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "alice",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Alice"}),
+            })
+            .await
+            .expect("insert alice");
+        handle
+            .engine
+            .graph
+            .insert_entity(InsertEntityParams {
+                id: "acme",
+                entity_type_id: 0,
+                properties: serde_json::json!({"name": "Acme"}),
+            })
+            .await
+            .expect("insert acme");
+        // Genuine domain fact — must still be counted attached.
+        handle
+            .engine
+            .graph
+            .insert_fact(FactInsert::new("alice", "works_at", now).object_id("acme"))
+            .await
+            .expect("insert domain fact");
+        // Reserved meta-edge — subject "alice" IS in the result set, so the
+        // ownership test alone would (pre-fix) have counted this attached.
+        handle
+            .engine
+            .graph
+            .insert_fact(
+                FactInsert::new("alice", RESERVED_PREDICATE_POTENTIAL_ALIAS, now)
+                    .object_id("acme"),
+            )
+            .await
+            .expect("insert reserved-predicate fact");
+
+        let ns = Namespace::new("default");
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let guard = metrics::set_default_local_recorder(&recorder);
+        let results = handle
+            .graph_search(GraphSearchParams {
+                namespace: &ns,
+                query: "Alice",
+                opts: &SearchOpts::default(),
+            })
+            .await
+            .expect("graph_search ok");
+        drop(guard);
+
+        // The TD-197 fix itself: never serve the reserved predicate.
+        assert!(
+            results
+                .iter()
+                .flat_map(|r| r.facts.iter())
+                .all(|f| f.predicate != RESERVED_PREDICATE_POTENTIAL_ALIAS),
+            "reserved predicate must never appear in served facts"
+        );
+
+        let sum_counter = |name: &str| -> u64 {
+            snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .filter(|(k, _, _, _)| k.key().name() == name)
+                .filter_map(|(_, _, _, v)| match v {
+                    DebugValue::Counter(c) => Some(c),
+                    _ => None,
+                })
+                .sum()
+        };
+
+        let attached = sum_counter("kremory.recall.facts_attached_total");
+        let dropped_reserved = sum_counter("kremory.recall.facts_dropped_reserved_total");
+        let dropped_ownership = sum_counter("kremory.recall.facts_dropped_ownership_total");
+
+        assert_eq!(
+            attached, 1,
+            "facts_attached_total must count ONLY the domain fact — the reserved-predicate \
+             fact's subject matches a result entity, so a lying (ownership-only) counter \
+             would read 2 here"
+        );
+        assert_eq!(
+            dropped_reserved, 1,
+            "the reserved-predicate fact must land in its own visible bucket, not silently \
+             vanish from every counter"
+        );
+        assert_eq!(
+            dropped_ownership, 0,
+            "both candidate facts are subject-owned by a result entity — nothing should be \
+             attributed to ownership-based drop in this fixture"
+        );
     }
 
     /// G5 (gap-register / ADR-074 F1): `graph_search` must attach a fact to

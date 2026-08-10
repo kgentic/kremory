@@ -111,6 +111,22 @@ pub const L4_REVOKE_THRESHOLD: f32 = 0.50;
 /// - Otherwise → retain as unresolved alias candidate.
 pub const RESERVED_PREDICATE_POTENTIAL_ALIAS: &str = "potential_alias";
 
+/// Every reserved meta-edge predicate the crate recognises.
+///
+/// ## TD-197 review Finding 4 — this slice is the ONE place to update
+///
+/// [`is_reserved_predicate`] consults this slice, not a hand-matched arm. A
+/// bare `matches!` with a trailing "add other reserved predicates here if
+/// needed" comment was the entire growth mechanism until this fix — and
+/// TD-197 itself exists because a spec'd symbol went unwired for months with
+/// nothing forcing anyone to notice ([`is_reserved_predicate`]'s own doc
+/// comment tells that story). Rust has no reflection, so this list cannot be
+/// derived from the `RESERVED_PREDICATE_*` consts above automatically —
+/// **when you add a new `RESERVED_PREDICATE_*` const, add it here too.** The
+/// module's test suite pins this pairing explicitly
+/// (`reserved_predicates_slice_contains_every_reserved_predicate_const`).
+pub const RESERVED_PREDICATES: &[&str] = &[RESERVED_PREDICATE_POTENTIAL_ALIAS];
+
 /// `true` when `predicate` is a reserved meta-edge predicate — internal
 /// disambiguation bookkeeping (e.g. [`RESERVED_PREDICATE_POTENTIAL_ALIAS`]),
 /// never a domain fact.
@@ -132,9 +148,11 @@ pub const RESERVED_PREDICATE_POTENTIAL_ALIAS: &str = "potential_alias";
 /// resolved by the dream phase (`resolve_pending_aliases`, below), which
 /// queries them directly via `TemporalGraph::get_alias_facts_in_group` and
 /// never goes through this filter.
+///
+/// Backed by [`RESERVED_PREDICATES`] — see that const's doc comment for the
+/// growth discipline (TD-197 review Finding 4).
 pub fn is_reserved_predicate(predicate: &str) -> bool {
-    matches!(predicate, RESERVED_PREDICATE_POTENTIAL_ALIAS)
-    // Add other reserved predicates here if needed.
+    RESERVED_PREDICATES.contains(&predicate)
 }
 
 // ─── Disambiguation result ────────────────────────────────────────────────────
@@ -732,6 +750,40 @@ mod tests {
         assert!(!is_reserved_predicate(""));
         assert!(!is_reserved_predicate("potential_alias_but_not_quite"));
         assert!(!is_reserved_predicate("POTENTIAL_ALIAS"));
+    }
+
+    /// TD-197 review Finding 4: `RESERVED_PREDICATES` (what
+    /// [`is_reserved_predicate`] actually consults) and the set of
+    /// `RESERVED_PREDICATE_*` consts declared above it are two independent
+    /// lists — Rust has no reflection to derive one from the other. This
+    /// test is a deliberate literal mirror, not a tautology: its entire
+    /// value is forcing whoever adds a new `RESERVED_PREDICATE_*` const to
+    /// ALSO update `all_reserved_predicate_consts` below AND
+    /// `RESERVED_PREDICATES` at the const's definition site — miss either
+    /// one and this test fails. This is the mechanism TD-197 review Finding
+    /// 4 asked for: a trailing "add other reserved predicates here if
+    /// needed" comment was the ONLY thing enforcing this pairing before,
+    /// and TD-197 itself happened because a spec'd symbol went unwired with
+    /// nothing to catch it.
+    ///
+    /// ⚠️ Adding a new `RESERVED_PREDICATE_*` const? You must update BOTH:
+    /// 1. `RESERVED_PREDICATES` (at its definition, above)
+    /// 2. `all_reserved_predicate_consts` (below, in this test)
+    #[test]
+    fn reserved_predicates_slice_contains_every_reserved_predicate_const() {
+        let all_reserved_predicate_consts = [RESERVED_PREDICATE_POTENTIAL_ALIAS];
+        for c in all_reserved_predicate_consts {
+            assert!(
+                RESERVED_PREDICATES.contains(&c),
+                "{c:?} is a RESERVED_PREDICATE_* const but missing from RESERVED_PREDICATES"
+            );
+        }
+        assert_eq!(
+            RESERVED_PREDICATES.len(),
+            all_reserved_predicate_consts.len(),
+            "RESERVED_PREDICATES must contain EXACTLY the RESERVED_PREDICATE_* consts declared \
+             in this module — no extras, no gaps"
+        );
     }
 
     // ── ADR-057: lexical-name compatibility gate ──────────────────────────────

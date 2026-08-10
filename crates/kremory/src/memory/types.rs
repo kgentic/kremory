@@ -330,6 +330,13 @@ pub struct SourceRef {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredFact {
     pub subject: String,
+    /// ⚠️ Reserved predicates are silently excluded from every recall
+    /// surface. If this equals `"potential_alias"` (or any future value
+    /// `crate::core::disambiguation::is_reserved_predicate` recognises), the
+    /// fact is still written to the graph, but no `recall()` call will ever
+    /// render it back to a consumer — it is reserved for internal
+    /// disambiguation bookkeeping (TD-197). There is no write-time error for
+    /// this today; the fact simply never comes back on any read path.
     pub predicate: String,
     pub object: String,
     /// Start of the validity window. `None` = use `SourceRef.published_at` fallback,
