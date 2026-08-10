@@ -461,7 +461,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         predicate: &fact.predicate,
                         object_id: object_id.as_deref(),
                         object_value,
-                        valid_from: ref_time,
+                        // TD-187 round 2 — mirrors the inline path in `ingest_with.rs`.
+                        // Both fact-insert sites MUST apply the same fallback; a divergence
+                        // here would make a fact's world time depend on whether extraction
+                        // ran inline or deferred, which the consumer cannot observe or control.
+                        valid_from: fact.valid_at.unwrap_or(ref_time),
                         confidence: fact.confidence,
                         source_episode_id: Some(episode_id),
                         embedding: None,

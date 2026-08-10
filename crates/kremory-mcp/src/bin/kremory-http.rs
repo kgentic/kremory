@@ -42,7 +42,23 @@
 //! `results[].source_episode_id` (populated ONLY for `kind == "fact"`) are
 //! TD-139 measurement-prerequisite fields, additive over the pre-existing
 //! `{id, content, score}` contract — see [`SearchResultKindWire`] and
-//! [`SearchResultWire::source_episode_id`]. No live arm emits `"fact"` yet.
+//! [`SearchResultWire::source_episode_id`].
+//!
+//! ⚠️ **`"fact"` is emitted ONLY when `SearchConfig::fact_dense_enabled` is on,
+//! which is DEFAULT-OFF** (see the note at `SearchResultKindWire` below, and
+//! RECALL-LEDGER §4.3 — the fact-dense arm measured −0.7 nDCG / −1.3 MRR, hence
+//! off by default). This line previously read "No live arm emits `fact` yet",
+//! which was stale after TD-139 wired the arm and actively misleading: it reads
+//! as "facts can never reach a consumer" when the truth is "not on the shipped
+//! default".
+//!
+//! **Consequence worth knowing before designing any benchmark**: under the
+//! default config the harness receives ZERO `kind == "fact"` rows, so facts —
+//! and everything carried on them, including `valid_at` — are invisible to
+//! EVERY bench scorer (substring, `evidence_eval`, and `qa_eval --structured`
+//! alike). Measured 2026-08-07 on a full conv0 run: 25 `episode` + 25 `entity`
+//! provenance rows per question, 0 `fact`. A lever whose effect lives on a fact
+//! cannot be measured without turning this knob on first.
 //!
 //! `mode` (benchmark-completion-roadmap W0.1) selects which of kremory's
 //! retrieval surfaces `/search` reaches: `recall` is the existing entity/fact

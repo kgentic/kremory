@@ -307,6 +307,14 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
                 object: r.object,
                 is_entity_ref: r.is_entity_ref,
                 confidence: r.confidence,
+                // TD-187 round 2: `RawRelationship` carries no date, so this arm
+                // cannot supply one. Always `None` ⇒ the persist sites fall back
+                // to the episode `ref_time`, i.e. exactly the pre-TD-187
+                // behaviour. Stated rather than left implicit: a payload that
+                // falls back to this arm silently loses per-fact dates, so a
+                // corpus with a high fallback rate will show `valid_at` uptake
+                // far below what the primary arm achieves.
+                valid_at: None,
             })
             .collect();
         if dropped_empty_field > 0 {
@@ -344,7 +352,7 @@ pub(crate) fn parse_json_lenient<T: for<'de> serde::Deserialize<'de> + Default>(
         return Some(v);
     }
     let repaired =
-        llm_json::repair_json(t, &llm_json::RepairOptions::default()).unwrap_or(t.to_owned());
+        jsonrepair::repair_json(t, &jsonrepair::Options::default()).unwrap_or(t.to_owned());
     if let Ok(v) = serde_json::from_str::<T>(&repaired) {
         return Some(v);
     }
@@ -352,7 +360,7 @@ pub(crate) fn parse_json_lenient<T: for<'de> serde::Deserialize<'de> + Default>(
     if let (Some(s), Some(e)) = (t.find('{'), t.rfind('}')) {
         if e > s {
             let slice = &t[s..=e];
-            let repaired2 = llm_json::repair_json(slice, &llm_json::RepairOptions::default())
+            let repaired2 = jsonrepair::repair_json(slice, &jsonrepair::Options::default())
                 .unwrap_or(slice.to_owned());
             if let Ok(v) = serde_json::from_str::<T>(&repaired2) {
                 return Some(v);

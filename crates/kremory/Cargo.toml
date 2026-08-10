@@ -184,7 +184,20 @@ libsql = "=0.9.30"
 autoagents-llm = { version = "0.3", features = ["ollama", "openai", "anthropic"] }
 futures = "0.3"
 async-trait = "0.1"
-llm_json = "1.0.3"
+# TD-192: replaced `llm_json` 1.0.3 (2026-08-07). MEASURED, not preference —
+# `llm_json::repair_json` FLATTENS ARRAYS: for any input it must recover rather
+# than parse cleanly it returns only the FIRST value. 9 of 9 non-clean shapes
+# tested (fenced, ~~~-fenced, prose-prefixed, prose-suffixed, brackets-in-string,
+# and three realistic TRUNCATION shapes) collapsed a 2-element array to one
+# object, silently, returning Ok. `jsonrepair` flattens 0 of 9 and fails LOUDLY
+# on the one shape it cannot recover. It also cuts unique transitive deps 25 -> 14,
+# dropping a `clap` + ANSI-terminal chain that has no place in a library tree.
+# Spike table + verdict: register TD-192 / RECALL-LEDGER 4.18.
+# RISK ACCEPTED: jsonrepair is 0.1.0 (Oct 2025, ~52k downloads). The incumbent
+# had an active silent-data-loss defect, and `extract_first_balanced_value`
+# (structured.rs) still bounds the span before this crate is consulted, so a
+# regression here degrades to the behaviour we already had, not worse.
+jsonrepair = "0.1.0"
 metrics = "0.24"
 tracing = "0.1"
 # runtime parsing of provider-rates.toml override path

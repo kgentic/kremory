@@ -346,15 +346,51 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let rel_list = relation_names.join(", ");
+    // TD-187 round 2. The date rules and the `valid_at` output field are ONE
+    // gated unit, both conditional on `reference_time`.
+    //
+    // Round 1 rendered only the rules, and the output-field sentence — which is
+    // unconditional — still listed five fields, none a date. The model was told
+    // to state a date with nowhere to put it, complied by dropping it, and the
+    // change measured EXACTLY null: zero of 441 facts carried a date. An
+    // instruction cannot create a schema slot.
+    //
+    // The field mention MUST stay inside this gate. It lives one sentence away
+    // from the unconditional field list, and moving it there would re-fingerprint
+    // all 303 committed chat cassettes (`record_replay.rs` hashes the rendered
+    // prompt). With `None` this renders byte-identically to pre-TD-187, which the
+    // guard test below asserts against a hardcoded pre-change literal.
+    //
+    // Wording is graphiti's (`graphiti_core/prompts/extract_edges.py`), adopted
+    // deliberately rather than paraphrased — it is load-bearing, not cosmetic.
+    // On a real failing corpus turn ("We had a blast last year at the Pride
+    // fest", gold 2022) a thinner phrasing returned null and graphiti's
+    // year-granularity rule returned 2022-01-01. The present-tense rule is an
+    // explicit CHOICE, not an accident: an ongoing fact is anchored to the
+    // document date, matching today's behaviour for such facts.
     let date_block = match reference_time {
         Some(ts) => format!(
-            "\nThe source document is dated {}.\nWhen the text refers to a time relatively (\"yesterday\", \"last week\", \"next June\"), resolve it against that date and state the absolute date in the fact.\n",
+            "\nDATE RULES for \"valid_at\" — when the fact became true:\n- The source document is dated {}. Resolve relative expressions (\"yesterday\", \"last week\", \"last year\", \"2 years ago\") against that date.\n- If only a year is resolvable, use January 1st of that year.\n- If the fact is ongoing (present tense), use the document date.\n- Leave \"valid_at\" null if no explicit or resolvable time is stated.\n- Do NOT hallucinate or infer dates from unrelated events.\n",
             ts.format("%Y-%m-%d")
         ),
         None => String::new(),
     };
+    // The WHOLE field list is switched, not suffixed. Appending `, and "valid_at"`
+    // to a list that already reads `..., and "confidence"` produces a double
+    // conjunction ("and X, and Y") — sloppy prose in the one place we are asking a
+    // language model to follow a spec precisely. Switching the whole clause keeps
+    // both arms grammatical, and the `None` arm below is the VERBATIM pre-TD-187
+    // literal, which is what keeps the 303 cassette fingerprints stable.
+    let field_list = match reference_time {
+        Some(_) => {
+            "\"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), \"confidence\" (0.0-1.0), and \"valid_at\" (ISO 8601 date YYYY-MM-DD, or null)"
+        }
+        None => {
+            "\"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0)"
+        }
+    };
     format!(
-        "Given entities: [{entity_list}]\nRelationship types: [{rel_list}]\n{date_block}\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\nText: {text}\n\nOutput a concise JSON array of objects with \"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0) fields."
+        "Given entities: [{entity_list}]\nRelationship types: [{rel_list}]\n{date_block}\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\nText: {text}\n\nOutput a concise JSON array of objects with {field_list} fields."
     )
 }
 
@@ -426,9 +462,7 @@ mod td_187_tests {
             "expected date-grounding line with formatted date, got: {actual}"
         );
         assert!(
-            actual.contains(
-                "resolve it against that date and state the absolute date in the fact"
-            ),
+            actual.contains("Resolve relative expressions"),
             "expected relative-time resolution instruction, got: {actual}"
         );
         // No time-of-day rendered — date-only per TD-187 spec (avoid fingerprint churn).
@@ -436,5 +470,87 @@ mod td_187_tests {
             !actual.contains("12:00:00"),
             "must not render time-of-day, got: {actual}"
         );
+    }
+
+    // ─── TD-187 round 2: the instruction must come WITH a slot ────────────────
+
+    /// The round-1 defect, as an executable assertion.
+    ///
+    /// Round 1 shipped the date instruction while the output-field sentence still
+    /// listed five fields, none a date. The model was told to state a date with
+    /// nowhere to put it and dropped it: 0 of 441 facts carried one, and the
+    /// change measured EXACTLY null. Asserting the two halves together is what
+    /// makes that failure non-repeatable — either half alone passes while the
+    /// feature does nothing.
+    #[test]
+    fn some_renders_the_date_instruction_and_the_valid_at_slot_together() {
+        let entities = sample_entities();
+        let relation_names = vec!["met".to_string()];
+        let ts = Utc.with_ymd_and_hms(2023, 5, 8, 0, 0, 0).unwrap();
+
+        let actual = build_triplet_prompt(TripletPromptParams {
+            text: "Alice met Bob yesterday.",
+            entities: &entities,
+            relation_names: &relation_names,
+            reference_time: Some(ts),
+        });
+
+        assert!(
+            actual.contains("Resolve relative expressions"),
+            "instruction half missing, got: {actual}"
+        );
+        assert!(
+            actual.contains(r#""valid_at" (ISO 8601 date YYYY-MM-DD, or null)"#),
+            "SLOT half missing — this is exactly the round-1 defect: an instruction \
+             to state a date with no field to state it in. Got: {actual}"
+        );
+    }
+
+    /// The `None` arm must NOT mention `valid_at` anywhere.
+    ///
+    /// Byte-identity is already asserted above, but that test compares against one
+    /// hardcoded literal; this one states the INVARIANT the literal exists to
+    /// protect, so a future edit that changes both together still trips here.
+    #[test]
+    fn none_never_mentions_valid_at() {
+        let entities = sample_entities();
+        let relation_names = vec!["met".to_string()];
+
+        let actual = build_triplet_prompt(TripletPromptParams {
+            text: "Alice met Bob yesterday.",
+            entities: &entities,
+            relation_names: &relation_names,
+            reference_time: None,
+        });
+
+        assert!(
+            !actual.contains("valid_at"),
+            "None must render no date slot — mentioning it unconditionally \
+             re-fingerprints all 303 committed cassettes. Got: {actual}"
+        );
+    }
+
+    /// Grammar guard. The field list is switched wholesale rather than suffixed,
+    /// because appending to a list ending `..., and "confidence"` yields a double
+    /// conjunction. Caught in review of this very change; asserted so it stays fixed.
+    #[test]
+    fn field_list_has_no_double_conjunction_in_either_arm() {
+        let entities = sample_entities();
+        let relation_names = vec!["met".to_string()];
+        let ts = Utc.with_ymd_and_hms(2023, 5, 8, 0, 0, 0).unwrap();
+
+        for reference_time in [None, Some(ts)] {
+            let actual = build_triplet_prompt(TripletPromptParams {
+                text: "Alice met Bob yesterday.",
+                entities: &entities,
+                relation_names: &relation_names,
+                reference_time,
+            });
+            assert_eq!(
+                actual.matches(", and ").count(),
+                1,
+                "field list must contain exactly one ', and ' — got: {actual}"
+            );
+        }
     }
 }

@@ -44,6 +44,27 @@ pub struct ExtractedFact {
     /// True if object refers to an entity, false if literal value.
     pub is_entity_ref: bool,
     pub confidence: f64,
+    /// World clock: when THIS fact became true, when the source text stated a
+    /// resolvable time. `None` is the majority case (61% on a 30-turn real-corpus
+    /// sample) and means "the text gave no date" — NOT "no date exists".
+    ///
+    /// TD-187 round 2. Before this field, every fact extracted from one episode
+    /// was written with the SAME `valid_from` (the episode's `ref_time`), so
+    /// per-fact temporal distinctions — "she left in June, joined in September" —
+    /// were unrepresentable, and `RetrievedFact.valid_at`
+    /// (`memory/types.rs`, documented "World clock: when the fact became true")
+    /// could only ever return document granularity. `as_of()` filters on this
+    /// value (ADR-068), so it is load-bearing for the bi-temporal query surface.
+    ///
+    /// `None` MUST fall back to the episode `ref_time` at the persist sites, so
+    /// this is strictly additive: facts without a stated date behave exactly as
+    /// they did before this field existed.
+    ///
+    /// ⚠️ BREAKING for external `EntityExtractor` implementations (BYOE): this
+    /// struct has `pub` fields and no `#[non_exhaustive]`, so struct-literal
+    /// construction sites must add the field. Lands in the 0.6.0 bump, which is
+    /// already a breaking bump under 0.x semver and not yet published.
+    pub valid_at: Option<DateTime<Utc>>,
 }
 
 /// Full extraction result from a text chunk.
@@ -315,6 +336,10 @@ impl EntityExtractor for MockExtractor {
                             object,
                             is_entity_ref: *is_entity_ref,
                             confidence: 1.0,
+                            // TD-187 round 2: this is the zero-LLM pattern-matching
+                            // extractor — it has no date understanding by construction.
+                            // `None` ⇒ episode `ref_time` fallback, unchanged behaviour.
+                            valid_at: None,
                         });
                         matched = true;
                     }
@@ -713,6 +738,7 @@ mod tests {
             object: "newco".to_string(),
             is_entity_ref: true,
             confidence: 1.0,
+            valid_at: None,
         };
         let existing = make_fact(1, "alice", "works_at", Some("acme"), None);
 
@@ -729,6 +755,7 @@ mod tests {
             object: "acme".to_string(),
             is_entity_ref: true,
             confidence: 1.0,
+            valid_at: None,
         };
         let existing = make_fact(1, "alice", "works_at", Some("acme"), None);
 
@@ -745,6 +772,7 @@ mod tests {
             object: "newco".to_string(),
             is_entity_ref: true,
             confidence: 1.0,
+            valid_at: None,
         };
         let existing = make_fact(1, "alice", "works_at", Some("acme"), None);
 

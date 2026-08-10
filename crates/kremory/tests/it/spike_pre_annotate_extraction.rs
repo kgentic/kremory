@@ -281,7 +281,7 @@ mod spike {
         if let Ok(v) = serde_json::from_str::<T>(trimmed) {
             return v;
         }
-        let repaired = llm_json::repair_json(trimmed, &llm_json::RepairOptions::default())
+        let repaired = jsonrepair::repair_json(trimmed, &jsonrepair::Options::default())
             .unwrap_or_else(|_| trimmed.to_owned());
         if let Ok(v) = serde_json::from_str::<T>(&repaired) {
             return v;
@@ -290,7 +290,7 @@ mod spike {
             if let Some(end) = trimmed.rfind('}') {
                 if end > start {
                     let slice = &trimmed[start..=end];
-                    let re = llm_json::repair_json(slice, &llm_json::RepairOptions::default())
+                    let re = jsonrepair::repair_json(slice, &jsonrepair::Options::default())
                         .unwrap_or_else(|_| slice.to_owned());
                     if let Ok(v) = serde_json::from_str::<T>(&re) {
                         return v;

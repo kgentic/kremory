@@ -77,7 +77,7 @@ pub(crate) fn parse_json_lenient<T: for<'de> Deserialize<'de> + Default>(
         return Ok(value);
     }
 
-    let repaired = llm_json::repair_json(trimmed, &llm_json::RepairOptions::default())
+    let repaired = jsonrepair::repair_json(trimmed, &jsonrepair::Options::default())
         .unwrap_or_else(|_| trimmed.to_string());
     if let Ok(value) = serde_json::from_str::<T>(&repaired) {
         return Ok(value);
@@ -86,7 +86,7 @@ pub(crate) fn parse_json_lenient<T: for<'de> Deserialize<'de> + Default>(
     if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
         if end > start {
             let slice = &trimmed[start..=end];
-            let repaired = llm_json::repair_json(slice, &llm_json::RepairOptions::default())
+            let repaired = jsonrepair::repair_json(slice, &jsonrepair::Options::default())
                 .unwrap_or_else(|_| slice.to_string());
             if let Ok(value) = serde_json::from_str::<T>(&repaired) {
                 return Ok(value);

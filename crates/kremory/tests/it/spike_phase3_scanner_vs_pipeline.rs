@@ -237,14 +237,14 @@ mod spike {
             return v;
         }
         let r =
-            llm_json::repair_json(t, &llm_json::RepairOptions::default()).unwrap_or(t.to_owned());
+            jsonrepair::repair_json(t, &jsonrepair::Options::default()).unwrap_or(t.to_owned());
         if let Ok(v) = serde_json::from_str::<T>(&r) {
             return v;
         }
         if let (Some(s), Some(e)) = (t.find('{'), t.rfind('}')) {
             if e > s {
                 let sl = &t[s..=e];
-                let r2 = llm_json::repair_json(sl, &llm_json::RepairOptions::default())
+                let r2 = jsonrepair::repair_json(sl, &jsonrepair::Options::default())
                     .unwrap_or(sl.to_owned());
                 if let Ok(v) = serde_json::from_str::<T>(&r2) {
                     return v;

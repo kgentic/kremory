@@ -2197,6 +2197,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonrepair"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbd084aab201d699b6da54bc10fbedf1ab92c984eeb306d40546fa675184ec06"
+dependencies = [
+ "memchr",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "kremory"
 version = "0.6.0"
 dependencies = [
@@ -2210,9 +2222,9 @@ dependencies = [
  "fastembed",
  "futures",
  "hf-hub 0.5.0",
+ "jsonrepair",
  "kremory",
  "libsql",
- "llm_json",
  "lru",
  "metrics",
  "metrics-util 0.18.0",
@@ -2567,17 +2579,6 @@ dependencies = [
  "find_cuda_helper",
  "glob",
  "walkdir",
-]
-
-[[package]]
-name = "llm_json"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e3a81b4dfc9cbadf5adde6e601f1b8ec0806d2b41da589e40cdc082e8e223b2"
-dependencies = [
- "clap",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "2dedcba6aa529ed85f07145ea161cdabbacdef334217d26fe6e733e522f576c0": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\"entities\": [{\"name\": \"Caroline\", \"entity_type_id\": 1}, {\"name\": \"Mel\", \"entity_type_id\": 1}, {\"name\": \"Pride fest\", \"entity_type_id\": 8}]}\n```"
+      }
+    ],
+    "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
+      {
+        "call_index": 0,
+        "response_text": "I'm here! What can I help you with today? Feel free to ask me anything, or let me know if you want to talk about a specific topic. 😊"
+      },
+      {
+        "call_index": 1,
+        "response_text": "How can I help you today? Feel free to let me know what you're working on or what you'd like to talk about! 😊"
+      },
+      {
+        "call_index": 2,
+        "response_text": "How can I help you today? Feel free to ask me anything you're interested in! 😊"
+      }
+    ],
+    "f23b50a463acd00540f9476c3243eededf255169511c5e2d5a0301908d728703": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  \"Friendship\",\n  \"Shared_Experience_At\"\n]\n```"
+      }
+    ],
+    "f5bf16788c4c92b0540ece90f08da9e944642121db486c114305e8b2e53338a5": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Caroline\",\n    \"predicate\": \"Friendship\",\n    \"object\": \"Mel\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0,\n    \"valid_at\": \"2023-08-17\"\n  },\n  {\n    \"subject\": \"Caroline\",\n    \"predicate\": \"Shared_Experience_At\",\n    \"object\": \"Pride fest\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9,\n    \"valid_at\": \"2022-01-01\"\n  }\n]\n```"
+      }
+    ]
+  }
+}

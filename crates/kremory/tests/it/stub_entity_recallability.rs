@@ -84,6 +84,7 @@ impl EntityExtractor for ForwardReferenceExtractor {
                 object: "Analytical Engine".to_string(),
                 is_entity_ref: true,
                 confidence: 1.0,
+                valid_at: None,
             }],
         })
     }
