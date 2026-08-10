@@ -363,6 +363,20 @@ pub(crate) struct HybridTypingWrapper {
 /// `is_entity_ref` keeps its default: a missing hint means "treat object as a
 /// literal value", a graceful non-corrupting default (no data loss).
 /// `confidence` keeps its default: optional metadata per the rule.
+///
+/// `valid_at` (TD-187 round 2) is the ONE field here that is genuinely optional
+/// *data* rather than an optional *hint*, and it takes `Option<String>` +
+/// `#[serde(default)]` deliberately — the optional-metadata carve-out of
+/// `llm-output-parse-loudly`, NOT the loud-parse rule that governs
+/// subject/predicate/object. A missing date is the COMMON case, not a defect:
+/// measured on 30 real conv0 turns, 61% of facts carry no resolvable time at
+/// all. Making it required would fail the whole payload on the majority path
+/// and send the fallback ladder chasing a non-error.
+///
+/// It is `String`, not `DateTime<Utc>`, on purpose: parsing belongs at the
+/// boundary in `parse_facts` where a malformed value can be counted and
+/// degraded to `None` without failing its siblings. Deserialising straight to
+/// `DateTime` would make one bad date string kill every good fact in the batch.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct RawFact {
     pub(crate) subject: String,
@@ -372,6 +386,10 @@ pub(crate) struct RawFact {
     pub(crate) is_entity_ref: bool,
     #[serde(default = "default_confidence")]
     pub(crate) confidence: f64,
+    /// ISO 8601 date this fact became true, as emitted by the LLM. `None` when
+    /// the text states no resolvable time — which is the majority case.
+    #[serde(default)]
+    pub(crate) valid_at: Option<String>,
 }
 
 // ─── A6: confidence field round-trip (DoD, spec §1.4) ────────────────────────

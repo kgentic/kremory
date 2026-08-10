@@ -13,12 +13,41 @@
 //! (SCOPE-003 wrapper discipline, ASMP-001 ordering invariant, RISK-001
 //! partial-drop visibility, DENT-001 metric-family reuse).
 
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use metrics::counter;
 use tracing;
 
 use super::json_repair::repair_to_array;
 use super::models::{RawEntityIntegerId, RawEntitySimple, RawFact};
 use crate::core::intelligence::{ExtractedEntity, ExtractedFact};
+
+/// Parse an LLM-emitted `valid_at` into UTC, or `None` if it is not a date.
+///
+/// TD-187 round 2. Deliberately accepts exactly TWO shapes and nothing else:
+///
+/// 1. `YYYY-MM-DD` — what our prompt asks for. Midnight UTC.
+/// 2. Full RFC 3339 (`2023-05-07T00:00:00Z`) — what models trained on graphiti's
+///    format emit unprompted, and what graphiti itself specifies.
+///
+/// Everything else returns `None` and is COUNTED by the caller. It is not
+/// `dateparser`-style best-effort on purpose: a lenient parser that coerces
+/// "last Tuesday" into *some* date would manufacture a confident wrong value in
+/// a column `as_of()` FILTERS on (ADR-068), silently excluding legitimate facts.
+/// A missing date is recoverable — the persist sites fall back to the episode's
+/// `ref_time`. A wrong one is not. Refusing to guess is the safe direction here.
+///
+/// No 3p crate (Rule 33): the shapes are two, formally specified, and already
+/// covered by `chrono`, which is a direct dependency. `chrono-english` and
+/// `interim` solve relative-PHRASE resolution, which is the LLM's job here, not
+/// the parser's — see the decision record for why that alternative was rejected
+/// as a whole approach.
+fn parse_llm_date(s: &str) -> Option<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    let d = NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
+    Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?).into()
+}
 
 // ─── Shared shape-tolerant parse helper (C1) ─────────────────────────────────
 
@@ -394,7 +423,7 @@ pub(crate) fn parse_entities_integer(
 
 /// Returns true if `name` contains characters that suggest it is a spliced JSON
 /// fragment rather than a real entity name. Repair paths (`repair_to_array` +
-/// `llm_json::repair_json`) can produce parseable output where a truncated
+/// `jsonrepair::repair_json`) can produce parseable output where a truncated
 /// object's tail bleeds into the next entity's `name`. A real entity name will
 /// never legitimately contain unescaped JSON structural characters.
 pub(crate) fn name_looks_like_json_fragment(name: &str) -> bool {
@@ -449,6 +478,9 @@ pub(crate) fn parse_facts_with_raw_count(
     }
 
     let mut dropped_empty_field = 0u64;
+    let mut valid_at_absent = 0u64;
+    let mut valid_at_parsed = 0u64;
+    let mut valid_at_malformed = 0u64;
     let facts: Vec<ExtractedFact> = raw
         .into_iter()
         .filter(|f| {
@@ -458,12 +490,47 @@ pub(crate) fn parse_facts_with_raw_count(
             }
             keep
         })
-        .map(|f| ExtractedFact {
-            subject: f.subject,
-            predicate: f.predicate,
-            object: f.object,
-            is_entity_ref: f.is_entity_ref,
-            confidence: f.confidence,
+        .map(|f| {
+            // TD-187 round 2 — parse `valid_at` HERE, at the boundary.
+            //
+            // A malformed date degrades this ONE field to `None` and is counted;
+            // it never fails the payload, never drops the fact, and never touches
+            // its siblings. That is deliberate and matches the closest prior art
+            // (graphiti `edge_operations.py` wraps its `fromisoformat` in
+            // try/except and leaves the field None) — with the addition graphiti
+            // lacks: a per-outcome counter, so silent degradation is visible
+            // (Rule 19). A date the model invented in the wrong FORMAT is a
+            // parse problem; a date it invented in the right format is not
+            // detectable here and is bounded by the prompt instead.
+            let valid_at = match f.valid_at.as_deref().map(str::trim) {
+                None | Some("") => {
+                    valid_at_absent += 1;
+                    None
+                }
+                Some(s) => match parse_llm_date(s) {
+                    Some(dt) => {
+                        valid_at_parsed += 1;
+                        Some(dt)
+                    }
+                    None => {
+                        valid_at_malformed += 1;
+                        tracing::warn!(
+                            target: "kremory.extraction.parsers",
+                            raw_valid_at = %s,
+                            "kremory.extraction.valid_at_malformed"
+                        );
+                        None
+                    }
+                },
+            };
+            ExtractedFact {
+                subject: f.subject,
+                predicate: f.predicate,
+                object: f.object,
+                is_entity_ref: f.is_entity_ref,
+                confidence: f.confidence,
+                valid_at,
+            }
         })
         .collect();
 
@@ -471,9 +538,159 @@ pub(crate) fn parse_facts_with_raw_count(
         counter!("rql.extraction.item_dropped", "parser" => "facts", "reason" => "empty_field")
             .increment(dropped_empty_field);
     }
+    // Always-on, per-outcome — an aggregate that hid `malformed` inside `absent`
+    // would make a broken date format indistinguishable from a corpus that simply
+    // states no dates, which is exactly the ambiguity that made TD-187 round 1
+    // measure null for a month.
+    if valid_at_absent > 0 {
+        counter!("rql.extraction.valid_at", "outcome" => "absent").increment(valid_at_absent);
+    }
+    if valid_at_parsed > 0 {
+        counter!("rql.extraction.valid_at", "outcome" => "parsed").increment(valid_at_parsed);
+    }
+    if valid_at_malformed > 0 {
+        counter!("rql.extraction.valid_at", "outcome" => "malformed").increment(valid_at_malformed);
+    }
     emit_parse_yield_metrics("facts", raw_count, facts.len());
 
     Ok((facts, raw_count))
+}
+
+// ─── TD-187 round 2: `valid_at` boundary parsing ─────────────────────────────
+
+#[cfg(test)]
+mod td_187_valid_at_tests {
+    use super::*;
+
+    fn one_fact(json: &str) -> ExtractedFact {
+        let mut f = parse_facts(json).expect("must parse");
+        assert_eq!(f.len(), 1, "fixture must yield exactly one fact: {json}");
+        f.remove(0)
+    }
+
+    /// NON-VACUITY GUARD for this whole module: the fixture shape must actually
+    /// produce a fact, or every assertion below would pass over an empty vec.
+    #[test]
+    fn fixture_shape_yields_a_fact_at_all() {
+        let f = one_fact(r#"{"items":[{"subject":"a","predicate":"b","object":"c"}]}"#);
+        assert_eq!(f.subject, "a");
+        assert!(f.valid_at.is_none(), "no valid_at key ⇒ None");
+    }
+
+    #[test]
+    fn plain_iso_date_parses_to_midnight_utc() {
+        let f = one_fact(
+            r#"{"items":[{"subject":"a","predicate":"b","object":"c","valid_at":"2023-05-07"}]}"#,
+        );
+        let dt = f.valid_at.expect("2023-05-07 must parse");
+        assert_eq!(dt.to_rfc3339(), "2023-05-07T00:00:00+00:00");
+    }
+
+    /// Graphiti's own emitted shape. Models trained on it produce this unprompted.
+    #[test]
+    fn rfc3339_with_z_parses() {
+        let f = one_fact(
+            r#"{"items":[{"subject":"a","predicate":"b","object":"c","valid_at":"2023-05-07T00:00:00Z"}]}"#,
+        );
+        assert_eq!(
+            f.valid_at.expect("rfc3339 must parse").to_rfc3339(),
+            "2023-05-07T00:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn explicit_null_is_none_not_an_error() {
+        let f = one_fact(
+            r#"{"items":[{"subject":"a","predicate":"b","object":"c","valid_at":null}]}"#,
+        );
+        assert!(f.valid_at.is_none());
+    }
+
+    /// The load-bearing one. A malformed date must degrade THIS FIELD to `None`
+    /// and leave the fact — and its siblings — intact. Failing the payload here
+    /// would send the fallback ladder chasing a non-error and drop good facts.
+    #[test]
+    fn malformed_date_degrades_field_only_and_keeps_the_fact() {
+        for bad in [
+            "last Tuesday",
+            "2023-13-45",
+            "sometime in 2023",
+            "07/05/2023",
+            "",
+            "   ",
+        ] {
+            let json = format!(
+                r#"{{"items":[{{"subject":"a","predicate":"b","object":"c","valid_at":"{bad}"}}]}}"#
+            );
+            let facts = parse_facts(&json).unwrap_or_else(|e| {
+                panic!("a malformed valid_at ({bad:?}) must NOT fail the payload: {e}")
+            });
+            assert_eq!(facts.len(), 1, "fact must survive a bad date ({bad:?})");
+            assert!(
+                facts[0].valid_at.is_none(),
+                "bad date ({bad:?}) must degrade to None, never to a guessed value"
+            );
+            assert_eq!(facts[0].subject, "a", "siblings must be untouched");
+        }
+    }
+
+    /// A bad date in one fact must not take out a good date in another.
+    #[test]
+    fn one_bad_date_does_not_poison_its_siblings() {
+        let facts = parse_facts(
+            r#"{"items":[
+                {"subject":"a","predicate":"b","object":"c","valid_at":"garbage"},
+                {"subject":"d","predicate":"e","object":"f","valid_at":"2022-01-01"}
+            ]}"#,
+        )
+        .expect("must parse");
+        assert_eq!(facts.len(), 2);
+        assert!(facts[0].valid_at.is_none());
+        assert!(
+            facts[1].valid_at.is_some(),
+            "a sibling's good date must survive"
+        );
+    }
+
+    /// Per-fact distinctness is the entire point of the field — one date per
+    /// document was the defect. Assert two facts in ONE payload keep two dates.
+    #[test]
+    fn two_facts_in_one_payload_keep_distinct_dates() {
+        let facts = parse_facts(
+            r#"{"items":[
+                {"subject":"c","predicate":"attends","object":"g","valid_at":"2023-05-07"},
+                {"subject":"c","predicate":"joined","object":"g","valid_at":"2023-04-08"}
+            ]}"#,
+        )
+        .expect("must parse");
+        assert_eq!(facts.len(), 2);
+        assert_ne!(
+            facts[0].valid_at, facts[1].valid_at,
+            "per-fact dates must not collapse to one value"
+        );
+    }
+
+    /// `parse_llm_date` must REFUSE to guess. This is the property that keeps a
+    /// wrong value out of a column `as_of()` filters on (ADR-068).
+    #[test]
+    fn parse_llm_date_refuses_ambiguous_and_relative_input() {
+        assert!(parse_llm_date("2023-05-07").is_some());
+        assert!(parse_llm_date("2023-05-07T12:30:00Z").is_some());
+        for bad in [
+            "yesterday",
+            "last year",
+            "May 2023",
+            "2023",
+            "05/07/2023",
+            "not a date",
+            "2023-02-30",
+        ] {
+            assert!(
+                parse_llm_date(bad).is_none(),
+                "{bad:?} must NOT parse — a guessed date is worse than no date"
+            );
+        }
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1003,3 +1220,4 @@ mod tests {
         );
     }
 }
+

@@ -75,7 +75,7 @@ pub(super) fn extract_first_json_object(s: &str) -> &str {
 /// instead of the correct:
 ///   `{"name": "Bob", "label": "Person"}`
 ///
-/// This pattern breaks `serde_json` parsing before `llm_json::repair_json` can
+/// This pattern breaks `serde_json` parsing before `jsonrepair::repair_json` can
 /// help, because the `}` gets absorbed into the unclosed string, mangling the
 /// rest of the document structure.
 ///
@@ -190,7 +190,7 @@ pub(crate) fn parse_nuextract_response(
         Err(_) => {
             // repair_to_array wraps in array — but NuExtract returns an object.
             // Try object-level repair first, then array-unwrap fallback.
-            let repaired = llm_json::repair_json(trimmed, &llm_json::RepairOptions::default())
+            let repaired = jsonrepair::repair_json(trimmed, &jsonrepair::Options::default())
                 .unwrap_or_else(|_| trimmed.to_owned());
             // KREMORY_DEBUG: dump raw before/after the repair so the operator can see what
             // malformed JSON the model emitted and what repair produced (R1.3 json_repair
@@ -297,6 +297,10 @@ pub(crate) fn parse_nuextract_response(
                 object: r.object,
                 is_entity_ref,
                 confidence: r.confidence,
+                // TD-187 round 2: the repair path reconstructs from
+                // `RawRelationship`, which has no date field — see the same note
+                // in `programmatic.rs`. `None` ⇒ episode `ref_time` fallback.
+                valid_at: None,
             }
         })
         .collect();
@@ -309,21 +313,51 @@ pub(crate) fn parse_nuextract_response(
 /// Repair messy LLM JSON into a parseable array.
 /// Handles: markdown fences, missing array brackets, trailing commas,
 /// single quotes, Python booleans (True/False/None).
+/// Strip a markdown code fence (```` ```json … ``` ````) from an LLM response.
+///
+/// Returns `raw` trimmed and unchanged when there is no opening fence, so it is
+/// safe to call unconditionally.
+///
+/// # Why this is its own function (TD-192)
+///
+/// The fence-strip used to live INSIDE [`repair_to_array`], welded to that
+/// function's other job — wrapping a bare `{...}` in an array. That coupling
+/// meant `structured.rs::parse_response_to_value` could not reuse it: it must
+/// preserve object-vs-array shape exactly (the contradiction verdict is a
+/// wrapper OBJECT, and turning it into an array silently loses `reason`). So
+/// `parse_response_to_value` had no fence handling at all, and a fenced payload
+/// fell through to first-balanced-OBJECT extraction — which discarded every
+/// element of a fenced ARRAY after the first. See that call site for the full
+/// failure.
+///
+/// Hand-rolled rather than taking a dependency (Rule 33): the grammar is a
+/// formally-specified, ~10-line, edge-case-free prefix/suffix strip, and the
+/// crate's existing JSON-repair dependency (`llm_json`) demonstrably does NOT
+/// handle fences — it was already in the fallback chain at the call site and
+/// failed on exactly this input.
+pub(crate) fn strip_code_fences(raw: &str) -> &str {
+    let s = raw.trim();
+    let Some(after_ticks) = s.strip_prefix("```") else {
+        return s;
+    };
+    // Drop the optional language tag, which runs to the first newline. A fence
+    // opener with no newline at all is not a fenced block — leave it alone.
+    let Some(nl) = after_ticks.find('\n') else {
+        return s;
+    };
+    let body = &after_ticks[nl + 1..];
+    // A missing CLOSING fence is common in truncated responses; keep the body.
+    body.trim_end()
+        .strip_suffix("```")
+        .unwrap_or(body)
+        .trim()
+}
+
 pub(crate) fn repair_to_array(raw: &str) -> String {
-    let mut s = raw.trim().to_string();
-
-    // Strip markdown code fences.
-    if s.starts_with("```") {
-        if let Some(first_nl) = s.find('\n') {
-            s = s[first_nl + 1..].to_string();
-        }
-        if s.ends_with("```") {
-            s.truncate(s.len() - 3);
-            s = s.trim_end().to_string();
-        }
-    }
-
-    let s = s.trim();
+    // Behaviour-preserving: this is the extracted fence-strip that used to be
+    // inlined here (TD-192). Single source of truth, shared with
+    // `structured.rs::parse_response_to_value`.
+    let s = strip_code_fences(raw);
     if s.is_empty() || s == "[]" {
         return "[]".to_string();
     }
@@ -345,7 +379,7 @@ pub(crate) fn repair_to_array(raw: &str) -> String {
 
     // Use llm_json for fine-grained repairs (quotes, booleans, commas).
     let repaired =
-        llm_json::repair_json(&wrapped, &llm_json::RepairOptions::default()).unwrap_or(wrapped);
+        jsonrepair::repair_json(&wrapped, &jsonrepair::Options::default()).unwrap_or(wrapped);
 
     // llm_json sometimes reduces arrays to a single object — re-wrap if needed.
     let repaired = repaired.trim();

@@ -791,7 +791,7 @@ async fn try_delimited_tuple_arm<L: ?Sized + ChatProvider>(
 
 /// Parse a raw LLM response string into a `serde_json::Value`.
 ///
-/// For `LlmJsonRepair`: attempts direct parse, then `llm_json::repair_json`,
+/// For `LlmJsonRepair`: attempts direct parse, then `jsonrepair::repair_json`,
 /// then brace-extraction + repair — the same pattern used by the existing
 /// extraction parsers.
 ///
@@ -815,6 +815,71 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
         return Ok(v);
     }
 
+    // ── TD-192: recover the TOP-LEVEL VALUE before `llm_json` can flatten it ──
+    //
+    // ## The actual defect (measured, not assumed)
+    //
+    // `jsonrepair::repair_json` DESTROYS ARRAYS. For any input it has to *recover*
+    // — rather than parse cleanly — it returns only the first JSON value it
+    // finds. Measured directly against the crate:
+    //
+    // | input                        | `repair_json` result |
+    // |------------------------------|----------------------|
+    // | `[{a},{b}]` (clean)          | array, 2 elements    |
+    // | ```` ```json\n[{a},{b}]\n``` ````  | **`{a}` — ONE object** |
+    // | `prose…\n[{a},{b}]`          | **`{a}` — ONE object** |
+    // | `[{a},{b}]\nNote: …`         | **`{a}` — ONE object** |
+    //
+    // An earlier revision of this comment blamed markdown fences and claimed
+    // `repair_json` could not strip them. That was WRONG on the mechanism —
+    // it strips fences fine, then flattens the array anyway. Fences were merely
+    // the commonest way to reach the recovery path. Corrected after an
+    // adversarial review challenged the claim and a direct probe settled it.
+    //
+    // Downstream, `extract_json_object` then compounds it: "first balanced
+    // `{...}`" is element ZERO of an array. Either way the parse SUCCEEDS, so
+    // no failure counter ever moves and the loss is invisible.
+    //
+    // ## The fix
+    //
+    // Recover the top-level value STRUCTURALLY, before `llm_json` is consulted:
+    // strip fences, then extract the first balanced span of whichever delimiter
+    // appears FIRST. Dispatching on first-delimiter is what preserves shape —
+    // a wrapper OBJECT stays an object, so the contradiction verdict
+    // `{"indices":[..],"reason":".."}` cannot be unwrapped to its inner array
+    // (which would silently lose `reason`). This is also why `repair_to_array`
+    // could not be reused: it wraps a bare `{...}` into `[{...}]`.
+    //
+    // Found by the TD-187 real-LLM seam test — the cassette proved the model
+    // emitted two facts, `parse_facts` on that raw text returned two, and one
+    // reached the database. 1,800 deterministic tests were green throughout,
+    // because every one of them either hand-writes clean JSON or stubs this
+    // layer out. Only a real model emits these shapes.
+    let candidate = super::json_repair::strip_code_fences(trimmed);
+    if let Some(v) = extract_first_balanced_value(candidate) {
+        // Rule 19: this path RESCUES a parse that would otherwise have been
+        // silently truncated. A non-zero count is not an error — it is how many
+        // responses needed structural recovery, which is worth knowing per
+        // provider/model. `kind` distinguishes the array case (the data-loss
+        // one) from the object case (previously handled correctly).
+        let kind = if v.is_array() { "array" } else { "object" };
+        counter!("rql.extraction.structural_recovery", "kind" => kind).increment(1);
+        // Counter AND log. The counter alone was invisible in every text log, which
+        // is precisely why the real-world FREQUENCY of this path could not be
+        // established from a completed benchmark run — metrics die with the process,
+        // logs persist. Rule 19: a signal you cannot read after the fact is not
+        // observability.
+        tracing::warn!(
+            target: "kremory.extraction.structured",
+            kind,
+            arm = arm_name(arm),
+            "kremory.extraction.structural_recovery: response needed structural \
+             recovery — it was not directly parseable despite the arm's schema"
+        );
+        return Ok(v);
+    }
+
+
     // llm_json repair.
     if matches!(
         arm,
@@ -827,7 +892,7 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
         )
         .increment(1);
 
-        let repaired = llm_json::repair_json(trimmed, &llm_json::RepairOptions::default())
+        let repaired = jsonrepair::repair_json(trimmed, &jsonrepair::Options::default())
             .unwrap_or_else(|_| trimmed.to_owned());
         if let Ok(v) = serde_json::from_str::<Value>(&repaired) {
             return Ok(v);
@@ -835,6 +900,9 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
     }
 
     // Brace-extraction: find the first balanced JSON object.
+    //
+    // ⚠️ Lossy by construction for arrays — see above. Reached only when the
+    // payload is neither directly parseable nor fence-recoverable.
     if let Some(v) = extract_json_object(trimmed) {
         return Ok(v);
     }
@@ -855,8 +923,76 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
     }
 }
 
+/// Extract the first balanced top-level JSON value — object OR array — from
+/// `text`, dispatching on whichever delimiter appears FIRST.
+///
+/// TD-192. This exists because `jsonrepair::repair_json` flattens an array to its
+/// first element whenever it has to *recover* rather than parse cleanly (see the
+/// measured table at its call site in `parse_response_to_value`), and the older
+/// `extract_json_object` only ever looked for `{`. Between them, a multi-item
+/// array response lost everything after element zero, silently.
+///
+/// # Why first-delimiter dispatch, and not "prefer arrays"
+///
+/// Shape must be preserved exactly. Preferring `[` would find the INNER array of
+/// a wrapper object — turning the contradiction verdict
+/// `{"indices":[..],"reason":".."}` into a bare `[..]` and silently dropping
+/// `reason`, which `parse_index_list` needs. Whichever delimiter comes first IS
+/// the top-level value, so this is both correct and shape-preserving.
+///
+/// The scan is STRING-AWARE (mirroring `json_repair::extract_first_json_object`,
+/// which the sibling scanner in this file is not): a `{`, `}`, `[` or `]` inside
+/// a string literal must not move the depth counter, or a fact whose object is
+/// `"the [redacted] file"` would truncate the span mid-value.
+fn extract_first_balanced_value(text: &str) -> Option<Value> {
+    let obj_at = text.find('{');
+    let arr_at = text.find('[');
+    let (open, close) = match (obj_at, arr_at) {
+        (Some(o), Some(a)) if a < o => (b'[', b']'),
+        (Some(_), _) => (b'{', b'}'),
+        (None, Some(_)) => (b'[', b']'),
+        (None, None) => return None,
+    };
+
+    let bytes = text.as_bytes();
+    let start = bytes.iter().position(|&b| b == open)?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut i = start;
+    let mut end = None;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => i += 1, // skip the escaped char
+            b'"' => in_string = !in_string,
+            c if !in_string && c == open => depth += 1,
+            c if !in_string && c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let end = end?;
+    let slice = text.get(start..=end)?;
+    if let Ok(v) = serde_json::from_str::<Value>(slice) {
+        return Some(v);
+    }
+    // Only NOW is `llm_json` safe to consult: the span is already bounded to the
+    // single top-level value, so its flatten-to-first-value behaviour has nothing
+    // left to discard.
+    let repaired = jsonrepair::repair_json(slice, &jsonrepair::Options::default()).ok()?;
+    serde_json::from_str::<Value>(&repaired).ok()
+}
+
 /// Extract the first balanced `{...}` JSON object from a string, repairing
 /// if necessary.  Returns `None` if no object is found.
+///
+/// ⚠️ Object-only and NOT string-aware — superseded for the top-level-value case
+/// by [`extract_first_balanced_value`] (TD-192). Retained as the final fallback.
 fn extract_json_object(text: &str) -> Option<Value> {
     let start = text.find('{')?;
     // Find matching closing brace.
@@ -887,7 +1023,7 @@ fn extract_json_object(text: &str) -> Option<Value> {
         return Some(v);
     }
     // Repair.
-    let repaired = llm_json::repair_json(slice, &llm_json::RepairOptions::default()).ok()?;
+    let repaired = jsonrepair::repair_json(slice, &jsonrepair::Options::default()).ok()?;
     serde_json::from_str::<Value>(&repaired).ok()
 }
 
@@ -1039,6 +1175,137 @@ pub(crate) async fn warm_schema_caches<L: ?Sized + ChatProvider>(llm: &L, model:
 
 #[cfg(test)]
 mod tests {
+    /// TD-192: TRUNCATED arrays must keep every recoverable element.
+    ///
+    /// This is the shape `extract_first_balanced_value` CANNOT cover — it needs a
+    /// balanced span, and a truncated array has no closing `]`, so it returns
+    /// `None` and the payload falls through to the repair crate. Under the old
+    /// `llm_json` that meant silent loss: all three shapes below collapsed to a
+    /// ONE-element object and returned `Ok`. This test is the reason the crate
+    /// was swapped for `jsonrepair`, and it fails if anyone swaps back.
+    #[test]
+    fn truncated_arrays_keep_every_recoverable_element() {
+        let cases: [(&str, &str); 3] = [
+            ("mid-number",     "[{\"a\":1},{\"a\":2"),
+            ("missing-bracket","[{\"a\":1},{\"a\":2}"),
+            ("mid-string",     "[{\"a\":1},{\"a\":\"partial"),
+        ];
+        for (label, raw) in cases {
+            let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
+                .unwrap_or_else(|e| panic!("[{label}] truncated input must still parse: {e}"));
+            let arr = v
+                .as_array()
+                .unwrap_or_else(|| panic!("[{label}] must stay an ARRAY, not collapse to one object: {v}"));
+            assert_eq!(
+                arr.len(),
+                2,
+                "[{label}] both elements must survive truncation repair — the old crate \
+                 returned 1 here, silently, with Ok. Got: {v}"
+            );
+        }
+    }
+
+
+    /// TD-192 (Quinn M2): every shape that reaches the RECOVERY path must keep
+    /// all its elements. `jsonrepair::repair_json` flattens an array to its first
+    /// element for ALL of these — measured directly — so fence-stripping alone
+    /// was not enough; the first two below were still broken after the first cut.
+    #[test]
+    fn recovery_path_preserves_every_array_element_across_shapes() {
+        let cases: [(&str, &str); 5] = [
+            ("fenced",         "```json\n[{\"a\":1},{\"a\":2}]\n```"),
+            ("prose+fenced",   "Here is the result:\n```json\n[{\"a\":1},{\"a\":2}]\n```"),
+            ("tilde-fenced",   "~~~json\n[{\"a\":1},{\"a\":2}]\n~~~"),
+            ("trailing-prose", "[{\"a\":1},{\"a\":2}]\nNote: that is all."),
+            ("no-lang-fence",  "```\n[{\"a\":1},{\"a\":2}]\n```"),
+        ];
+        for (label, raw) in cases {
+            let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
+                .unwrap_or_else(|e| panic!("[{label}] must parse: {e}"));
+            let arr = v
+                .as_array()
+                .unwrap_or_else(|| panic!("[{label}] expected an array, got: {v}"));
+            assert_eq!(
+                arr.len(),
+                2,
+                "[{label}] every element must survive — collapsing to the first is \
+                 silent data loss. Got: {v}"
+            );
+        }
+    }
+
+    /// The wrapper-OBJECT shape must never be unwrapped to its inner array, or
+    /// `parse_index_list` loses `reason` and reports no contradictions.
+    /// First-delimiter dispatch is what guarantees this.
+    #[test]
+    fn wrapper_object_survives_every_shape() {
+        let cases: [(&str, &str); 3] = [
+            ("fenced",       "```json\n{\"indices\": [1, 2], \"reason\": \"role change\"}\n```"),
+            ("prose+fenced", "Sure:\n```json\n{\"indices\": [1, 2], \"reason\": \"role change\"}\n```"),
+            ("trailing",     "{\"indices\": [1, 2], \"reason\": \"role change\"}\nDone."),
+        ];
+        for (label, raw) in cases {
+            let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
+                .unwrap_or_else(|e| panic!("[{label}] must parse: {e}"));
+            assert!(v.is_object(), "[{label}] must stay an object, got: {v}");
+            assert_eq!(v["reason"], "role change", "[{label}] wrapper fields must survive");
+        }
+    }
+
+    /// The balanced scan must be STRING-AWARE: a bracket inside a string value
+    /// must not close the span early and truncate the payload mid-value.
+    #[test]
+    fn brackets_inside_string_values_do_not_truncate_the_span() {
+        let raw = "```json\n[{\"o\":\"the [redacted] } file\"},{\"o\":\"second\"}]\n```";
+        let v = parse_response_to_value(raw, FallbackArm::FormatSchema).expect("must parse");
+        let arr = v.as_array().unwrap_or_else(|| panic!("expected array, got: {v}"));
+        assert_eq!(arr.len(), 2, "string-internal brackets must not end the scan: {v}");
+        assert_eq!(arr[0]["o"], "the [redacted] } file");
+    }
+
+    // ─── TD-192: fenced multi-item ARRAY must not collapse to its first object ──
+
+    /// Regression: a markdown-fenced bare ARRAY of N items was silently reduced
+    /// to its FIRST item, discarding the rest.
+    ///
+    /// `parse_response_to_value` tries: direct parse (fails on the fences) →
+    /// `jsonrepair::repair_json` (also fails on the fences) → `extract_json_object`,
+    /// which scans for the first `{` and its matching `}`. For an ARRAY payload
+    /// that is element ZERO, and everything after it is dropped with no error, no
+    /// counter and no log. Every extraction whose response needed brace-extraction
+    /// therefore persisted exactly one fact regardless of how many the model found.
+    ///
+    /// Found by the TD-187 real-LLM seam test: the model emitted two facts, the
+    /// cassette proved it, `parse_facts` on the raw text returned two — and one
+    /// reached the database.
+    #[test]
+    fn fenced_multi_item_array_keeps_every_element() {
+        let raw = "```json\n[\n  {\"subject\": \"Caroline\", \"predicate\": \"Friendship\", \"object\": \"Mel\"},\n  {\"subject\": \"Caroline\", \"predicate\": \"Shared_Experience_At\", \"object\": \"Pride fest\"}\n]\n```";
+        let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
+            .expect("a fenced array must parse");
+        let arr = v.as_array().unwrap_or_else(|| {
+            panic!("expected a JSON array, got: {v}")
+        });
+        assert_eq!(
+            arr.len(),
+            2,
+            "every element must survive — collapsing to the first is silent data loss. Got: {v}"
+        );
+    }
+
+    /// The object path must be UNCHANGED. A fenced wrapper object whose value is
+    /// an array (the contradiction-verdict shape `{"indices":[..],"reason":".."}`)
+    /// must still come back as the OBJECT, not as the inner array — otherwise
+    /// `parse_index_list` loses `reason` and silently returns no contradictions.
+    #[test]
+    fn fenced_wrapper_object_is_not_unwrapped_to_its_inner_array() {
+        let raw = "```json\n{\"indices\": [1, 2], \"reason\": \"role change\"}\n```";
+        let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
+            .expect("a fenced wrapper object must parse");
+        assert!(v.is_object(), "must stay an object, got: {v}");
+        assert_eq!(v["reason"], "role change", "wrapper fields must survive");
+    }
+
     use super::*;
     use crate::core::extraction::schemas::{
         SCHEMA_ENTITY_LIST, SCHEMA_NUEXTRACT_RELATIONS_ONLY,

@@ -2201,7 +2201,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             predicate: &fact.predicate,
                             object_id: object_id.as_deref(),
                             object_value,
-                            valid_from: ref_time,
+                            // TD-187 round 2 — per-fact world time, episode time as fallback.
+                            // `None` reproduces the pre-TD-187 behaviour EXACTLY (every fact
+                            // from an episode shared `ref_time`), so this is strictly additive:
+                            // only facts whose source text stated a resolvable date change.
+                            // Measured on a 30-turn real-corpus sample, that is ~10% of facts.
+                            // `as_of()` filters on this column (ADR-068).
+                            valid_from: fact.valid_at.unwrap_or(ref_time),
                             confidence: fact.confidence,
                             source_episode_id: Some(episode_id),
                             embedding: None,

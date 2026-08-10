@@ -275,6 +275,7 @@ async fn episodic_edge_extracted_object_not_duplicated() {
             object: "Acme".to_string(),
             is_entity_ref: true,
             confidence: 0.95,
+            valid_at: None,
         }],
     };
     base.ingest_with(
@@ -320,6 +321,7 @@ async fn episodic_edge_stub_object_still_linked() {
             object: "Acme".to_string(),
             is_entity_ref: true,
             confidence: 0.95,
+            valid_at: None,
         }],
     };
     base.ingest_with(
@@ -610,6 +612,7 @@ async fn stub_entity_inserted_on_forward_reference_lib() {
             object: "Bob".into(),
             is_entity_ref: true, // Bob is a forward reference
             confidence: 0.9,
+            valid_at: None,
         }],
     };
 
@@ -693,6 +696,7 @@ async fn stub_entity_promoted_on_reingestion_lib() {
             object: "Bob".into(),
             is_entity_ref: true,
             confidence: 0.9,
+            valid_at: None,
         }],
     };
     let r1 = engine
@@ -830,6 +834,7 @@ async fn stub_promoted_under_active_blocking_lib() {
             object: "Bob".into(),
             is_entity_ref: true,
             confidence: 0.9,
+            valid_at: None,
         }],
     };
     engine

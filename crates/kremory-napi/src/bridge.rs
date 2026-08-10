@@ -237,6 +237,21 @@ impl kremory::core::intelligence::EntityExtractor for ExternalExtractorJs {
                     object: f.object,
                     is_entity_ref: false,
                     confidence: 1.0,
+                    // TD-187 round 2. `JsExtractedFact` is subject/predicate/object
+                    // ONLY — this bridge already hardcodes `is_entity_ref: false`
+                    // and `confidence: 1.0` because the JS surface never carried
+                    // them. `valid_at` is the THIRD field in that same pre-existing
+                    // gap, not a new one introduced here.
+                    //
+                    // Deliberately NOT closed piecemeal: adding a date to the JS
+                    // object while `is_entity_ref` and `confidence` stay hardcoded
+                    // would leave the surface inconsistent in a new way. The three
+                    // should be widened together as one JS-BYOE parity change.
+                    //
+                    // Consequence, stated rather than left to be discovered: a
+                    // JS-authored BYOE extractor CANNOT supply a per-fact date, so
+                    // its facts always fall back to the episode `ref_time`.
+                    valid_at: None,
                 })
                 .collect();
 
