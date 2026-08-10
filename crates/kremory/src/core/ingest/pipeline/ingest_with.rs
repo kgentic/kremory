@@ -2026,6 +2026,28 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 }
 
                 // Invalidate contradicted facts
+                //
+                // `invalid_at: ref_time` is CORRECT — do not "fix" it to the
+                // superseding fact's `valid_at`. That change was proposed during
+                // TD-187 round 2 (adversarial-review finding L4: "an as_of()-visible
+                // window overlap") and REFUTED on classification:
+                //
+                //   * `Fact.invalid_at` is the CONTRADICTION-RESOLVER'S invalidation
+                //     timestamp — "when did the resolver rule this out" — an
+                //     explicitly DISTINCT concept from `valid_to`, per the
+                //     `RetrievedFact` mapping at `memory/engine_handle.rs:831-837`
+                //     (ADR-074 review M4). The wire-facing world-clock `invalid_at`
+                //     the consumer sees IS `Fact.valid_to`, not this column.
+                //   * NOTHING filters on `invalid_at`. `as_of()` gates on
+                //     `valid_from`/`valid_to` (ADR-068), and every read path
+                //     (`facts_at`, `entity_facts_at`, `get_facts_by_subject_predicate`)
+                //     additionally requires `expired_at IS NULL` — which this same
+                //     call sets. A superseded fact is therefore excluded by
+                //     `expired_at`, so no overlap window can exist.
+                //
+                // The resolver ran during THIS ingest, whose reference time is
+                // `ref_time`; stamping it is coherent and stays correct now that a
+                // fact can carry its own earlier `valid_at`.
                 for fact_id in &contradiction_result.contradictions {
                     if let Err(e) = self
                         .graph
