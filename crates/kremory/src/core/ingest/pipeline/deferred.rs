@@ -327,6 +327,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     fired_invalidating = true;
                 }
 
+                // `invalid_at: ref_time` is CORRECT — see the full classification at
+                // the `ingest_with.rs` site. `Fact.invalid_at` is the resolver's
+                // invalidation timestamp, NOT world time, and nothing filters on it.
                 self.graph
                     .invalidate_fact_with_reason(InvalidateFactWithReasonParams {
                         fact_id: *fact_id,
