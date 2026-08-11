@@ -1749,9 +1749,27 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         Ok(v) => v,
                         Err(e) => break 'phases Err(e),
                     };
+                    // TD-206 / ADR-029d: SCOPED write. This previously used the
+                    // namespace-unscoped `set_entity_embedding`, whose SQL matches
+                    // `WHERE id = ?` alone — so ingesting an entity named X into
+                    // namespace A silently overwrote X's embedding in EVERY other
+                    // namespace holding that name. 90 entity names exist in more
+                    // than one namespace on the shipped LoCoMo corpus, and
+                    // `entities.embedding` is a live retrieval signal, so the
+                    // corruption was silent and cross-tenant.
+                    //
+                    // `group_id.unwrap_or("default")` mirrors the sibling
+                    // `insert_entity_with_group` call above exactly, so the write
+                    // lands on the row this ingest just created and on no other.
                     if let Err(e) = self
                         .graph
-                        .set_entity_embedding(&entity_id, &embedding)
+                        .set_entity_embedding_in_group(
+                            crate::core::graph::SetEntityEmbeddingParams {
+                                id: &entity_id,
+                                group_id: group_id.unwrap_or("default"),
+                                embedding: &embedding,
+                            },
+                        )
                         .await
                     {
                         break 'phases Err(e);
@@ -2418,7 +2436,21 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         self.config.search.embed_task_prefix_enabled,
                     );
                     match self.embedder.embed(&text).await {
-                        Ok(v) => match self.graph.set_entity_embedding(&stub_name, &v).await {
+                        // TD-206 / ADR-029d: scoped by `effective_gid` — the SAME
+                        // value the stub's own `insert_entity_with_group` used
+                        // above. The unscoped form wrote this vector into every
+                        // namespace holding an entity of the same name.
+                        Ok(v) => match self
+                            .graph
+                            .set_entity_embedding_in_group(
+                                crate::core::graph::SetEntityEmbeddingParams {
+                                    id: &stub_name,
+                                    group_id: effective_gid,
+                                    embedding: &v,
+                                },
+                            )
+                            .await
+                        {
                             Ok(()) => {
                                 metrics::counter!(
                                     "kremory.ingest.stub_embedded_total",
@@ -2613,7 +2645,17 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .await
         {
             Ok(embedding) => {
-                if let Err(e) = self.graph.set_entity_embedding(id, &embedding).await {
+                // TD-206 / ADR-029d: scoped by the pin's own `group_id`, matching
+                // the sibling `insert_entity_with_group` pin call site.
+                if let Err(e) = self
+                    .graph
+                    .set_entity_embedding_in_group(crate::core::graph::SetEntityEmbeddingParams {
+                        id,
+                        group_id: group_id.unwrap_or("default"),
+                        embedding: &embedding,
+                    })
+                    .await
+                {
                     metrics::counter!("kremory.with_facts.pinned_embedding_stamp_failed")
                         .increment(1);
                     tracing::warn!(

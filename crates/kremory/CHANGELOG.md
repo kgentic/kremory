@@ -31,10 +31,22 @@ under a second. Four defects, all now closed:
   to **100 rows** and took an arbitrary one. Harmless there only because same-named entities
   across namespaces happened to carry identical vectors; now scoped.
 
+### Fixed — ingest overwrote entity embeddings across ALL namespaces (TD-206)
+
+**Cross-namespace corruption of a live retrieval signal, on the default ingest path.**
+`ingest_with.rs` set every extracted entity's embedding via a helper whose SQL matched
+`WHERE id = ?` with **no `group_id`**, while the entity key is the composite `(id, group_id)`.
+Ingesting an entity named `X` into one namespace therefore overwrote `X`'s embedding in every
+other namespace holding that name — silently, and cross-tenant for a multi-tenant consumer.
+**90 entity names exist in more than one namespace on the benchmark corpus.**
+
+Now writes through a namespace-scoped `set_entity_embedding_in_group`; the unscoped helper is
+compiled out of production builds entirely, so the mistake is unrepresentable rather than
+discouraged by a doc comment.
+
 ### Added
-- `TemporalGraph::set_entity_embedding_in_group` — namespace-scoped embedding write
-  (TD-206). The existing `set_entity_embedding` matches on `id` alone and writes across every
-  namespace holding that name; it is now documented as test-fixture-only.
+- `TemporalGraph::set_entity_embedding_in_group` + `SetEntityEmbeddingParams` — the scoped
+  embedding write. `set_entity_embedding` is now `#[cfg(any(test, feature = "test-utils"))]`.
 
 ## [0.6.0] - 2026-08-11
 

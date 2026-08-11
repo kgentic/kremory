@@ -1670,7 +1670,20 @@ impl Memory {
         } = params;
         for row in batch {
             match self.embed_document_text(&row.embed_text).await {
-                Ok(embedding) => match tg.set_entity_embedding(&row.id, &embedding).await {
+                // TD-206 / ADR-029d: scoped by the row's OWN `group_id`.
+                // `EntityReembedRow` carries it precisely because `id` alone is
+                // not the entity key — `entities_after_id` documents the same
+                // composite-cursor reason. Unscoped, a full re-embed wrote each
+                // name's vector across every namespace, so the last row
+                // processed silently won for all of them.
+                Ok(embedding) => match tg
+                    .set_entity_embedding_in_group(crate::core::graph::SetEntityEmbeddingParams {
+                        id: &row.id,
+                        group_id: &row.group_id,
+                        embedding: &embedding,
+                    })
+                    .await
+                {
                     Ok(()) => stats.embedded += 1,
                     Err(e) => {
                         stats.failed += 1;

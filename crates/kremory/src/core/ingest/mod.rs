@@ -623,7 +623,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 self.config.search.embed_task_prefix_enabled,
             ))
             .await?;
-        self.graph.set_entity_embedding(source, &embedding).await?;
+        // TD-206 / ADR-029d: scoped write. `"default"` is correct HERE and is not
+        // a guess: this fn persists the document anchor via `insert_entity` (the
+        // NON-group variant, `:607`), which leaves `entities.group_id` at its
+        // schema default of `'default'`. The scoped write must therefore target
+        // that same row and no other. Unscoped, this wrote the document vector
+        // into every namespace holding an entity named `source`.
+        self.graph
+            .set_entity_embedding_in_group(crate::core::graph::SetEntityEmbeddingParams {
+                id: source,
+                group_id: "default",
+                embedding: &embedding,
+            })
+            .await?;
 
         // 3. Run the intelligence pipeline on the document content.
         let doc_text = format!("# {title}\n\n{text}");

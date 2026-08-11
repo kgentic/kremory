@@ -275,7 +275,13 @@ impl<'a> DreamRequest<'a> {
             }
             // Counter emitted inside the graph-present block so it reflects an
             // actual pass run (not the degenerate no-temporal-graph path).
-            metrics::counter!("kremory.dream.aliases_resolved_total")
+            //
+            // Quinn MNT-002: carries `sweep="pre"` so it shares a label KEY with
+            // the post-consolidation sweep's emission below. Emitting the same
+            // metric name with two different label SETS splits it into series a
+            // `sweep`-filtered query silently drops half of — an observability
+            // trap inside the fix for an observability trap.
+            metrics::counter!("kremory.dream.aliases_resolved_total", "sweep" => "pre")
                 .increment(aliases_resolved as u64);
         }
 

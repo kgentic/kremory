@@ -477,8 +477,17 @@ impl TemporalGraph {
     /// ⚠️ NAMESPACE-UNSCOPED — see [`TemporalGraph::set_entity_embedding_in_group`].
     ///
     /// Matches on `id` alone and therefore writes across ALL namespaces holding
-    /// that name (TD-206). Retained for single-namespace test fixtures, where
-    /// the distinction cannot arise. **Do not add production callers.**
+    /// that name (TD-206). Retained for single-namespace test fixtures, where the
+    /// distinction cannot arise.
+    ///
+    /// **Compiled out of production builds** (Quinn MNT-003). "Do not add
+    /// production callers" was the previous protection, and a doc comment is not
+    /// enforcement — the whole point of TD-206 is that this method is easy to
+    /// reach for by mistake. `cfg`-gating makes a production caller
+    /// UNREPRESENTABLE rather than discouraged, per
+    /// `load-bearing-invariants-at-emit-not-prompt`. If you need it on a real
+    /// path, you need [`TemporalGraph::set_entity_embedding_in_group`].
+    #[cfg(any(test, feature = "test-utils"))]
     pub async fn set_entity_embedding(&self, id: &str, embedding: &[f32]) -> Result<()> {
         let _db_start = Instant::now();
         // Convert f32 slice to JSON array string for the vector() SQL function

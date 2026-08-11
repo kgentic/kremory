@@ -320,10 +320,19 @@ async fn unmerge_txn(graph: &TemporalGraph, mutation_id: i64) -> Result<UnmergeO
     //      a `keeper pred keeper` row briefly live. (d) has just pointed one
     //      endpoint back at the loser, so the fact is meaningful again here.
     //
-    //      Guarded on `expired_at IS NOT NULL` so an unmerge cannot resurrect a
-    //      fact expired by some LATER, unrelated mechanism (supersession, an
-    //      explicit delete) that happens to share an id in this list — undo
-    //      restores what THIS merge did, never more.
+    //      ⚠️ The `expired_at IS NOT NULL` predicate does NOT discriminate by
+    //      WHICH mechanism expired the row — it clears the stamp on any expired
+    //      row in the list, and merely no-ops on one that is already live. An
+    //      earlier version of this comment claimed it protected against reviving
+    //      a fact expired by a later unrelated mechanism (Quinn MNT-001); it does
+    //      not, and saying so would be a guarantee the code has not got.
+    //
+    //      What ACTUALLY closes that window is two facts, both external to this
+    //      statement: `unmerge` short-circuits on `undone_at` (:179), so this
+    //      block runs at most ONCE per merge; and every other expiring mechanism
+    //      filters `expired_at IS NULL`, so it cannot re-expire a row this merge
+    //      already tombstoned. If either ever stops holding, this needs the
+    //      merge's expiry timestamp in `pre_state` and an equality check on it.
     let mut self_loops_revived = 0usize;
     for fact_id in &pre.self_loops_expired {
         let updated = conn
