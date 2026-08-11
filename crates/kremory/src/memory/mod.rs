@@ -361,7 +361,126 @@ pub fn context_block(results: &[RetrievedContext], template: ContextTemplate) ->
     }
 }
 
-fn render_entities(results: &[RetrievedContext]) -> String {
+/// Read-only accessor over one connected fact, for the generic renderers
+/// below (TD-198). Implemented by [`RetrievedFact`] here; kremory-mcp
+/// implements it for its own `RetrievedFactWire` DTO (already-formatted
+/// RFC-3339 strings rather than `chrono::DateTime<Utc>` — the shapes
+/// genuinely diverge, which is why this is a companion trait rather than a
+/// shared struct).
+///
+/// **Not intended for external implementation.** It exists so kremory's own
+/// renderers can serve both this crate's types and kremory-mcp's wire DTOs
+/// from ONE implementation. It is `pub` only because kremory-mcp is a separate
+/// crate. Methods may be added in a minor release; downstream implementors
+/// should expect breakage. (Quinn review LOW-2, 2026-08-11.)
+pub trait RenderableFact {
+    /// Natural-language rendering, e.g. `"Alice likes tea"`.
+    fn fact_text(&self) -> &str;
+    /// World clock: when the fact became true, RFC 3339.
+    fn valid_at_rfc3339(&self) -> String;
+    /// World clock: when the fact stopped being true, if ever, RFC 3339.
+    fn invalid_at_rfc3339(&self) -> Option<String>;
+}
+
+impl RenderableFact for RetrievedFact {
+    fn fact_text(&self) -> &str {
+        &self.fact
+    }
+    fn valid_at_rfc3339(&self) -> String {
+        self.valid_at.to_rfc3339()
+    }
+    fn invalid_at_rfc3339(&self) -> Option<String> {
+        self.invalid_at.map(|d| d.to_rfc3339())
+    }
+}
+
+/// Read-only accessor over one source reference, for the generic renderers
+/// below (TD-198). Implemented by [`SourceRef`] here; kremory-mcp implements
+/// it for its own `SourceRefWire` DTO.
+///
+/// **Not intended for external implementation** — see [`RenderableFact`].
+pub trait RenderableSourceRef {
+    /// Human-readable label for the source kind (e.g. `"chat"`, `"document"`).
+    fn kind_label(&self) -> &str;
+    /// The source's caller-supplied id.
+    fn ref_id(&self) -> &str;
+    /// When the source event occurred, RFC 3339.
+    fn occurred_at_rfc3339(&self) -> String;
+}
+
+impl RenderableSourceRef for SourceRef {
+    fn kind_label(&self) -> &str {
+        source_kind_label(self.kind)
+    }
+    fn ref_id(&self) -> &str {
+        &self.id
+    }
+    fn occurred_at_rfc3339(&self) -> String {
+        self.occurred_at.to_rfc3339()
+    }
+}
+
+/// Read-only accessor trait over the fields [`render_entities`],
+/// [`render_edge_summary`], and [`render_temporal_facts`] need to render a
+/// result — the single point where kremory's `RetrievedContext` and
+/// kremory-mcp's `RetrievedContextWire` DTO converge, so the renderer bodies
+/// below are written ONCE (TD-198; previously three functions independently
+/// hand-mirrored in `kremory-http.rs` — the exact
+/// two-implementations-must-agree shape that caused TD-173's silent `.max()`
+/// fusion regression, re-created for rendering by TD-196).
+///
+/// Implemented by [`RetrievedContext`] here; kremory-mcp implements it for
+/// its own `RetrievedContextWire` DTO (`crates/kremory-mcp/src/conversions.rs`)
+/// — never the reverse. This crate never references the wire type.
+///
+/// **Not intended for external implementation** — see [`RenderableFact`].
+pub trait RenderableContext {
+    /// The per-fact accessor type this context's [`facts`](Self::facts) yields.
+    type Fact: RenderableFact;
+    /// The per-source-ref accessor type this context's
+    /// [`source_refs`](Self::source_refs) yields.
+    type SourceRef: RenderableSourceRef;
+
+    fn entity_name(&self) -> &str;
+    fn summary(&self) -> &str;
+    /// `Some(group_id)` when this result carries namespace attribution
+    /// (ADR-029c Decision 7); `None` when absent. kremory-mcp's `/search`
+    /// takes exactly one `namespace` per request, so every item in one
+    /// response necessarily shares the same group_id — the multi-namespace
+    /// `[ns:...]` prefix below therefore never fires for it, without this
+    /// accessor needing to special-case that (see `render_prompt_block`'s
+    /// doc comment in `kremory-http.rs` for why that's correct, not a gap).
+    fn namespace_group_id(&self) -> Option<&str>;
+    fn facts(&self) -> &[Self::Fact];
+    fn source_refs(&self) -> &[Self::SourceRef];
+}
+
+impl RenderableContext for RetrievedContext {
+    type Fact = RetrievedFact;
+    type SourceRef = SourceRef;
+
+    fn entity_name(&self) -> &str {
+        &self.entity_name
+    }
+    fn summary(&self) -> &str {
+        &self.summary
+    }
+    fn namespace_group_id(&self) -> Option<&str> {
+        self.namespace.as_ref().map(|ns| ns.namespace.as_str())
+    }
+    fn facts(&self) -> &[RetrievedFact] {
+        &self.facts
+    }
+    fn source_refs(&self) -> &[SourceRef] {
+        &self.source_refs
+    }
+}
+
+/// Render one block per entity: name, summary, connected facts, source
+/// pointers. `pub` + generic over [`RenderableContext`] (TD-198) — so
+/// kremory-mcp's `format=text` HTTP rendering path can call this directly
+/// instead of maintaining its own hand-mirrored copy.
+pub fn render_entities<T: RenderableContext>(results: &[T]) -> String {
     // Detect multi-namespace context: emit [ns:{group_id}] prefix when results
     // span more than one distinct group_id (ADR-029c Decision 7).
     let multi_ns = is_multi_namespace(results);
@@ -371,53 +490,55 @@ fn render_entities(results: &[RetrievedContext]) -> String {
             out.push_str("\n\n");
         }
         if multi_ns {
-            if let Some(group_id) = namespace_group_id(r) {
+            if let Some(group_id) = r.namespace_group_id() {
                 out.push_str("[ns:");
-                out.push_str(&group_id);
+                out.push_str(group_id);
                 out.push_str("] ");
             }
         }
         out.push_str("## ");
-        out.push_str(&r.entity_name);
+        out.push_str(r.entity_name());
         out.push('\n');
-        out.push_str(&r.summary);
+        out.push_str(r.summary());
         // ADR-074 / TD-116: list the entity's connected facts (the knowledge)
         // under its heading, not just the type-label summary.
-        if !r.facts.is_empty() {
+        if !r.facts().is_empty() {
             out.push_str("\n\nFacts:");
-            for f in &r.facts {
+            for f in r.facts() {
                 out.push_str("\n- ");
-                out.push_str(&f.fact);
+                out.push_str(f.fact_text());
             }
         }
-        if !r.source_refs.is_empty() {
+        if !r.source_refs().is_empty() {
             out.push_str("\n\nSources: ");
-            for (j, sr) in r.source_refs.iter().enumerate() {
+            for (j, sr) in r.source_refs().iter().enumerate() {
                 if j > 0 {
                     out.push_str(", ");
                 }
-                out.push_str(source_kind_label(sr.kind));
+                out.push_str(sr.kind_label());
                 out.push(':');
-                out.push_str(&sr.id);
+                out.push_str(sr.ref_id());
             }
         }
     }
     out
 }
 
-fn render_edge_summary(results: &[RetrievedContext]) -> String {
+/// One line per entity-source-edge for compact context. `pub` + generic
+/// over [`RenderableContext`] (TD-198) — see [`render_entities`].
+pub fn render_edge_summary<T: RenderableContext>(results: &[T]) -> String {
     let mut out = String::new();
     for r in results {
-        for sr in &r.source_refs {
+        for sr in r.source_refs() {
             if !out.is_empty() {
                 out.push('\n');
             }
             out.push_str("- ");
-            out.push_str(&r.entity_name);
+            out.push_str(r.entity_name());
             out.push_str(" <- ");
-            out.push_str(source_kind_label(sr.kind));
+            out.push_str(sr.kind_label());
             out.push(':');
-            out.push_str(&sr.id);
+            out.push_str(sr.ref_id());
         }
     }
     out
@@ -426,17 +547,19 @@ fn render_edge_summary(results: &[RetrievedContext]) -> String {
 /// Emit the `[ns:{group_id}]` attribution marker when results span more than
 /// one namespace (ADR-029c Decision 7). Free fn (not a closure) to avoid a
 /// `&mut out` + `&r` borrow conflict in the render loops.
-fn push_ns_prefix(out: &mut String, r: &RetrievedContext, multi_ns: bool) {
+fn push_ns_prefix<T: RenderableContext>(out: &mut String, r: &T, multi_ns: bool) {
     if multi_ns {
-        if let Some(group_id) = namespace_group_id(r) {
+        if let Some(group_id) = r.namespace_group_id() {
             out.push_str("[ns:");
-            out.push_str(&group_id);
+            out.push_str(group_id);
             out.push_str("] ");
         }
     }
 }
 
-fn render_temporal_facts(results: &[RetrievedContext]) -> String {
+/// Flattens source_refs with `valid_at` annotations. `pub` + generic over
+/// [`RenderableContext`] (TD-198) — see [`render_entities`].
+pub fn render_temporal_facts<T: RenderableContext>(results: &[T]) -> String {
     // Detect multi-namespace context: emit [ns:{group_id}] prefix per result
     // when results span more than one distinct group_id (ADR-029c Decision 7).
     let multi_ns = is_multi_namespace(results);
@@ -445,30 +568,30 @@ fn render_temporal_facts(results: &[RetrievedContext]) -> String {
         if i > 0 {
             out.push('\n');
         }
-        if r.facts.is_empty() {
+        if r.facts().is_empty() {
             // No connected facts — fall back to the entity + source_ref line
             // (preserves pre-TD-116 rendering for fact-less entities).
-            for sr in &r.source_refs {
+            for sr in r.source_refs() {
                 push_ns_prefix(&mut out, r, multi_ns);
-                out.push_str(&r.entity_name);
+                out.push_str(r.entity_name());
                 out.push_str(" (valid_at=");
-                out.push_str(&sr.occurred_at.to_rfc3339());
+                out.push_str(&sr.occurred_at_rfc3339());
                 out.push_str(") — ");
-                out.push_str(&r.summary);
+                out.push_str(r.summary());
                 out.push('\n');
             }
         } else {
             // ADR-074 / TD-116: render the actual connected facts — the
             // LLM-consumable knowledge — each with its world-clock validity,
             // instead of the entity name + type-label summary.
-            for f in &r.facts {
+            for f in r.facts() {
                 push_ns_prefix(&mut out, r, multi_ns);
-                out.push_str(&f.fact);
+                out.push_str(f.fact_text());
                 out.push_str(" (valid_at=");
-                out.push_str(&f.valid_at.to_rfc3339());
-                if let Some(inv) = f.invalid_at {
+                out.push_str(&f.valid_at_rfc3339());
+                if let Some(inv) = f.invalid_at_rfc3339() {
                     out.push_str(", invalid_at=");
-                    out.push_str(&inv.to_rfc3339());
+                    out.push_str(&inv);
                 }
                 out.push(')');
                 out.push('\n');
@@ -485,11 +608,10 @@ fn render_temporal_facts(results: &[RetrievedContext]) -> String {
 /// Returns `true` only when at least two distinct, non-`None` group_ids appear
 /// in the result set. Single-namespace results and results without namespace
 /// attribution always return `false` (no prefix emitted).
-fn is_multi_namespace(results: &[RetrievedContext]) -> bool {
+fn is_multi_namespace<T: RenderableContext>(results: &[T]) -> bool {
     let mut seen: Option<&str> = None;
     for r in results {
-        if let Some(ns) = r.namespace.as_ref() {
-            let gid = ns.namespace.as_str();
+        if let Some(gid) = r.namespace_group_id() {
             match seen {
                 None => seen = Some(gid),
                 Some(prev) if prev != gid => return true,
@@ -498,13 +620,6 @@ fn is_multi_namespace(results: &[RetrievedContext]) -> bool {
         }
     }
     false
-}
-
-/// Extract the namespace group_id string from a result for use in the
-/// `[ns:{group_id}]` attribution marker. Returns `None` when `namespace` is
-/// unset (pre-v0.1.5 results / substrate bypass).
-fn namespace_group_id(r: &RetrievedContext) -> Option<String> {
-    r.namespace.as_ref().map(|ns| ns.namespace.clone())
 }
 
 fn source_kind_label(k: SourceKind) -> &'static str {

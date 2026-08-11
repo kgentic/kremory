@@ -729,16 +729,29 @@ async fn content_mode_results(
 ///
 /// Mirrors `kremory::core::search::content_passage_into_retrieved_context`
 /// (`crates/kremory/src/core/search.rs`, module-private — not reachable from
-/// this crate) field-for-field: `entity_id = episode_id.to_string()`,
-/// `entity_name = "Episode #{episode_id}"`, `summary = snippet`, empty
-/// `facts`, `entity_type_name = "ContentPassage"` (the SAME discriminator
-/// `retrieved_context_wire_to_search_result` already keys its `kind` mapping
-/// off of). This is a second, wire-DTO-shaped copy of that ~20-line
-/// conversion, not a second copy of the fusion algorithm itself
-/// ([`rrf_merge`] does that part, generically, for both wire shapes) —
-/// duplicated rather than exposed cross-crate because this task is scoped to
-/// the HTTP layer only and `core/search.rs` has a concurrent edit in flight
-/// (TD-197) that this change must not touch or conflict with.
+/// this crate) field-for-field, EXCEPT `score` (see below): `entity_id =
+/// episode_id.to_string()`, `entity_name = "Episode #{episode_id}"`,
+/// `summary = snippet`, empty `facts`, `entity_type_name = "ContentPassage"`
+/// (the SAME discriminator `retrieved_context_wire_to_search_result` already
+/// keys its `kind` mapping off of).
+///
+/// **TD-198 — deliberately NOT folded into the [`kremory::memory::RenderableContext`]
+/// trait that replaced `render_entities_wire`/`render_edge_summary_wire`/
+/// `render_temporal_facts_wire`.** That trait is READ-ONLY (accessors over an
+/// already-built value); this fn is a CONSTRUCTOR, a different shape of
+/// duplication the trait doesn't address. Two independent, structural reasons
+/// it can't be unified even so: (1) `content_passage_into_retrieved_context`
+/// is a private fn in `core::search` — this crate cannot call it regardless
+/// of any trait; (2) `score` is NOT copy-paste-identical — core's version
+/// hardcodes `score: 0.0` as a documented placeholder because its ONE call
+/// site is a step inside `rrf_fuse_with_content`'s fusion loop, which
+/// overwrites it with the real RRF-fused score immediately after
+/// construction; this fn's caller does no such fusion step, so it must bake
+/// in the real `passage.score` at construction time or the score would ship
+/// as a permanent `0.0`. Sharing one body would require threading that
+/// call-site difference through — out of scope here. Recorded as
+/// knowingly-remaining duplication in TD-198's register entry rather than
+/// silently left as-is.
 #[cfg(feature = "content-search")]
 fn content_passage_into_context_wire(
     passage: kremory::memory::ContentPassage,
@@ -1028,119 +1041,27 @@ fn rrf_merge<T: RrfItem>(a: Vec<T>, b: Vec<T>, rrf_k: usize) -> Vec<T> {
 /// re-derive `mode`, so there is no code path left where a rendering choice
 /// could silently substitute a different item set.
 ///
-/// Mirrors `kremory::memory::context_block`'s three per-template renderers
-/// (`render_entities` / `render_edge_summary` / `render_temporal_facts`,
-/// `crates/kremory/src/memory/mod.rs:353-479`) but operates on this crate's
-/// own [`RetrievedContextWire`] DTO rather than the core crate's
-/// `#[non_exhaustive]` `RetrievedContext` (which cannot be constructed
-/// outside `kremory` — a `mode=content` item has no real `RetrievedContext`
-/// to begin with; it is synthesized via
-/// [`content_passage_into_context_wire`]). Deliberately DROPS the core
-/// renderers' multi-namespace `[ns:{group_id}]` prefix logic: `/search`
-/// takes exactly one `namespace` per request (`RecallParams::namespace:
-/// String`), so results here can never span more than one namespace group —
-/// the prefix would never fire.
+/// Calls `kremory::memory::render_entities` / `render_edge_summary` /
+/// `render_temporal_facts` directly (TD-198) — these are generic over
+/// `kremory::memory::RenderableContext`, which [`RetrievedContextWire`]
+/// implements (`conversions.rs`), so this crate no longer needs its own
+/// hand-mirrored copies of the three renderer bodies. Only the multi-
+/// namespace `[ns:{group_id}]` prefix behaves differently here, and it does
+/// so as a DATA fact rather than a second code path: `/search` takes exactly
+/// one `namespace` per request (`RecallParams::namespace: String`), so
+/// `RetrievedContextWire::namespace_group_id` always returns the SAME value
+/// across one response's items (see that impl's doc comment) — the shared
+/// renderer's multi-namespace branch is live code that structurally cannot
+/// fire here, not a dropped feature.
 fn render_prompt_block(items: &[RetrievedContextWire], template: RecallTemplateWire) -> String {
     if items.is_empty() {
         return String::new();
     }
     match template {
-        RecallTemplateWire::Entities => render_entities_wire(items),
-        RecallTemplateWire::EdgeSummary => render_edge_summary_wire(items),
-        RecallTemplateWire::TemporalFacts => render_temporal_facts_wire(items),
+        RecallTemplateWire::Entities => kremory::memory::render_entities(items),
+        RecallTemplateWire::EdgeSummary => kremory::memory::render_edge_summary(items),
+        RecallTemplateWire::TemporalFacts => kremory::memory::render_temporal_facts(items),
     }
-}
-
-/// Mirrors `kremory::memory::render_entities` (`memory/mod.rs:364-406`)
-/// minus the multi-namespace prefix — see [`render_prompt_block`].
-fn render_entities_wire(items: &[RetrievedContextWire]) -> String {
-    let mut out = String::new();
-    for (i, r) in items.iter().enumerate() {
-        if i > 0 {
-            out.push_str("\n\n");
-        }
-        out.push_str("## ");
-        out.push_str(&r.entity_name);
-        out.push('\n');
-        out.push_str(&r.summary);
-        if !r.facts.is_empty() {
-            out.push_str("\n\nFacts:");
-            for f in &r.facts {
-                out.push_str("\n- ");
-                out.push_str(&f.fact);
-            }
-        }
-        if !r.source_refs.is_empty() {
-            out.push_str("\n\nSources: ");
-            for (j, sr) in r.source_refs.iter().enumerate() {
-                if j > 0 {
-                    out.push_str(", ");
-                }
-                out.push_str(&sr.kind);
-                out.push(':');
-                out.push_str(&sr.id);
-            }
-        }
-    }
-    out
-}
-
-/// Mirrors `kremory::memory::render_edge_summary` (`memory/mod.rs:408-424`).
-fn render_edge_summary_wire(items: &[RetrievedContextWire]) -> String {
-    let mut out = String::new();
-    for r in items {
-        for sr in &r.source_refs {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str("- ");
-            out.push_str(&r.entity_name);
-            out.push_str(" <- ");
-            out.push_str(&sr.kind);
-            out.push(':');
-            out.push_str(&sr.id);
-        }
-    }
-    out
-}
-
-/// Mirrors `kremory::memory::render_temporal_facts` (`memory/mod.rs:439-479`)
-/// minus the multi-namespace prefix — see [`render_prompt_block`].
-/// `RetrievedFactWire::valid_at`/`invalid_at` and `SourceRefWire::occurred_at`
-/// are already RFC-3339 strings (stamped at the `conversions.rs` boundary),
-/// so no `.to_rfc3339()` re-format is needed here.
-fn render_temporal_facts_wire(items: &[RetrievedContextWire]) -> String {
-    let mut out = String::new();
-    for (i, r) in items.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        if r.facts.is_empty() {
-            // No connected facts — fall back to the entity + source_ref
-            // line (preserves pre-TD-116 rendering for fact-less entities).
-            for sr in &r.source_refs {
-                out.push_str(&r.entity_name);
-                out.push_str(" (valid_at=");
-                out.push_str(&sr.occurred_at);
-                out.push_str(") — ");
-                out.push_str(&r.summary);
-                out.push('\n');
-            }
-        } else {
-            for f in &r.facts {
-                out.push_str(&f.fact);
-                out.push_str(" (valid_at=");
-                out.push_str(&f.valid_at);
-                if let Some(inv) = &f.invalid_at {
-                    out.push_str(", invalid_at=");
-                    out.push_str(inv);
-                }
-                out.push(')');
-                out.push('\n');
-            }
-        }
-    }
-    out.trim_end_matches('\n').to_string()
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1794,6 +1715,88 @@ mod tests {
         let ctx = context_wire("Grace Hopper", "a computer scientist", Vec::new());
         let content = flatten_result_content(&ctx);
         assert_eq!(content, "Grace Hopper: a computer scientist");
+    }
+
+    // ─── TD-198: HTTP-path render_prompt_block vs library-path context_block
+    // must be byte-identical for the same logical item — the guard the
+    // register recorded as "currently unguardable by test" before the
+    // `RenderableContext` trait made both paths call the SAME generic fn. ──
+
+    /// The item is built ONCE as a real `kremory::RetrievedContext` (using
+    /// the documented cross-crate constructor, `RetrievedContext::new()` +
+    /// `with_namespace` — the same path `conversions.rs:676` already uses in
+    /// production) and the wire twin is derived FROM it via the existing
+    /// `From<RetrievedContext> for RetrievedContextWire` impl — never
+    /// hand-built independently. This mirrors the real production shape
+    /// (kremory-mcp always converts FROM a facade `RetrievedContext`; it
+    /// never constructs a `RetrievedContextWire` from scratch) and sidesteps
+    /// a real, separate constraint verified while writing this test: unlike
+    /// `RetrievedContext`, `RetrievedFact` is ALSO `#[non_exhaustive]` with
+    /// NO public constructor anywhere in the crate (checked: no `impl
+    /// RetrievedFact` block exists), so an external crate cannot build a
+    /// facts-bearing `RetrievedContext` by hand at all — only by conversion
+    /// from one the library computed. `SourceRef` is NOT `#[non_exhaustive]`
+    /// (`memory/types.rs:311`), so this test's item genuinely exercises the
+    /// source_refs render path on both sides; it exercises the facts=empty
+    /// fallback branch, not the facts-populated branch (that branch is
+    /// covered by `flatten_result_content_*` above via wire-only fixtures,
+    /// and transitively by `kremory`'s own crate-internal tests where
+    /// `RetrievedFact` struct-literals are constructible).
+    #[test]
+    fn td198_http_render_and_library_render_are_byte_identical() {
+        use kremory::memory::ContextTemplate;
+        use kremory::{RetrievedContext, RetrievedContextNewParams, SourceKind, SourceRef};
+
+        let occurred_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00+00:00")
+            .expect("valid fixed RFC-3339 fixture timestamp")
+            .with_timezone(&chrono::Utc);
+
+        let core_ctx = RetrievedContext::new(RetrievedContextNewParams {
+            entity_id: "e1".to_string(),
+            entity_name: "Ada Lovelace".to_string(),
+            summary: "a mathematician".to_string(),
+            score: 0.9,
+            source_refs: vec![SourceRef {
+                kind: SourceKind::Chat,
+                id: "ep-1".to_string(),
+                occurred_at,
+                published_at: None,
+            }],
+        })
+        .with_namespace(kremory::Namespace::new("ns-a"));
+
+        // NON-VACUITY precondition — a test that could pass by rendering
+        // nothing proves nothing. Measured baseline (recorded so a future
+        // reader doesn't have to re-derive it): 1 item, 1 source_ref, 0 facts.
+        assert_eq!(core_ctx.source_refs.len(), 1, "fixture must carry a source_ref");
+        assert!(core_ctx.facts.is_empty(), "fixture intentionally carries no facts (see doc comment)");
+
+        let wire_ctx: RetrievedContextWire = core_ctx.clone().into();
+
+        let cases = [
+            (ContextTemplate::Entities, RecallTemplateWire::Entities),
+            (ContextTemplate::EdgeSummary, RecallTemplateWire::EdgeSummary),
+            (ContextTemplate::TemporalFacts, RecallTemplateWire::TemporalFacts),
+        ];
+        for (core_template, wire_template) in cases {
+            let library_out =
+                kremory::memory::context_block(std::slice::from_ref(&core_ctx), core_template);
+            let http_out = render_prompt_block(std::slice::from_ref(&wire_ctx), wire_template);
+
+            // NON-VACUITY postcondition on the render output itself, not just
+            // the input — both paths must actually have rendered something.
+            assert!(
+                !library_out.is_empty(),
+                "{core_template:?}: library path rendered nothing"
+            );
+            assert!(!http_out.is_empty(), "{core_template:?}: HTTP path rendered nothing");
+
+            assert_eq!(
+                library_out, http_out,
+                "{core_template:?}: HTTP-path render_prompt_block and library-path \
+                 context_block diverged for the same logical item — TD-198's guard failed"
+            );
+        }
     }
 
     // ─── SearchResultWire::kind / source_episode_id (TD-139 measurement
