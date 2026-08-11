@@ -432,3 +432,149 @@ async fn resolve_pending_aliases_reads_only_its_own_namespace() {
          predicate is reverted."
     );
 }
+
+// ── TD-203 D2 — the aliases pass must run AFTER the passes that create aliases ──
+
+/// Sum a counter's value for entries carrying a specific label pair.
+///
+/// `counter_total` above is label-BLIND, which is exactly what must not be used
+/// here: the pre- and post-consolidation sweeps emit the SAME metric name and are
+/// distinguishable only by `sweep`.
+// Test helper: clippy.toml Rule-5 exempt (test helpers may carry a documented
+// too_many_arguments allow; TD-042 args-as-object targets `src/` production fns).
+#[allow(clippy::too_many_arguments)]
+fn counter_total_labelled(
+    snapshot: &[(
+        metrics_util::CompositeKey,
+        Option<metrics::Unit>,
+        Option<metrics::SharedString>,
+        DebugValue,
+    )],
+    name: &str,
+    label_key: &str,
+    label_value: &str,
+) -> Option<u64> {
+    snapshot
+        .iter()
+        .filter(|(k, _, _, _)| k.key().name() == name)
+        .filter(|(k, _, _, _)| {
+            k.key()
+                .labels()
+                .any(|l| l.key() == label_key && l.value() == label_value)
+        })
+        .map(|(_, _, _, v)| match v {
+            DebugValue::Counter(c) => *c,
+            _ => 0,
+        })
+        .next()
+}
+
+/// TD-203 D2 — a completed `dream()` must leave NO resolvable pending alias.
+///
+/// **The defect this guards.** `resolve_pending_aliases` sat at pass 2, while
+/// `acronym_nickname_recall` (pass 3) CREATES `potential_alias` facts and
+/// `canonicalize` (pass 5) re-points existing ones onto a merge keeper. Anything
+/// those produced waited for a NEXT dream — and a caller that runs one dream per
+/// namespace never supplies one. Measured on the shipped corpus: 42 candidates,
+/// 0 resolved, across TEN completed dreams; `melanie -> mel` was created by pass 3
+/// eighty-four seconds AFTER pass 2 had already run.
+///
+/// **Asserts the INVARIANT, not the pass position** — deliberately. An assertion
+/// that "aliases runs at index N" rots the moment someone inserts a pass, which
+/// is precisely how the original defect arose. This asserts the property that
+/// must hold however the chain is ordered.
+///
+/// **HONEST LIMIT, stated rather than implied.** The planted alias here is
+/// resolvable by the FIRST sweep on its own, so assertion 1 alone does not prove
+/// the second sweep does any work. That is why assertion 2 checks the
+/// `sweep="post"` series exists: it proves the post-consolidation sweep is
+/// REACHED on every dream, which is the reachability the defect destroyed.
+/// Proving the second sweep resolves something the first could not needs an
+/// alias created mid-dream by the LLM-driven pass 3, which belongs in the
+/// real-LLM tier, not here.
+#[tokio::test]
+async fn dream_leaves_no_resolvable_pending_alias() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ns = Namespace::new("phase2-d2-invariant");
+    let mem = open_mem(dir.path(), &ns).await;
+    let gid = mem.group_id_for_test(&ns);
+    let graph = mem
+        .temporal_graph_for_test()
+        .expect("temporal_graph_for_test (test-utils)")
+        .clone();
+
+    plant_entity(&graph, "globex corporation", &gid, "Globex Corporation.").await;
+    plant_entity(&graph, "globex corp", &gid, "Globex Corp.").await;
+    insert_potential_alias_fact(InsertPotentialAliasFactParams {
+        graph: &graph,
+        new_entity_id: "globex corp",
+        existing_id: "globex corporation",
+        similarity: 0.99,
+        provenance: AliasProvenance {
+            source_episode_id: None,
+            group_id: Some(&gid),
+        },
+    })
+    .await
+    .expect("plant potential_alias fact");
+
+    // PRECONDITION — one live candidate exists before the dream. Without this a
+    // fixture that planted nothing would satisfy the invariant vacuously.
+    let pending_before = count_live_aliases(&graph, &gid).await;
+    assert_eq!(
+        pending_before, 1,
+        "PRECONDITION: exactly one live alias candidate must exist pre-dream, \
+         else the invariant below is vacuously true"
+    );
+
+    mem.dream().await.expect("dream must succeed");
+
+    // (1) THE INVARIANT.
+    let pending_after = count_live_aliases(&graph, &gid).await;
+    assert_eq!(
+        pending_after, 0,
+        "TD-203 D2: a completed dream must leave no RESOLVABLE pending alias. \
+         {pending_after} remained. On the shipped corpus this read 42 of 42 across \
+         ten dreams."
+    );
+
+    // (2) THE SECOND SWEEP WAS REACHED. This is the assertion that fails if the
+    //     post-consolidation sweep is removed or moved above the passes that
+    //     create aliases.
+    let snapshot = snapshotter.snapshot().into_vec();
+    let post = counter_total_labelled(
+        &snapshot,
+        "kremory.dream.aliases_resolved_total",
+        "sweep",
+        "post",
+    );
+    assert!(
+        post.is_some(),
+        "TD-203 D2: the post-consolidation aliases sweep must run on every dream — \
+         no `sweep=\"post\"` series was emitted, so the pass that consumes anything \
+         acronym-recall or canonicalize produced never executed"
+    );
+}
+
+/// Count live (non-expired) `potential_alias` facts in a namespace.
+async fn count_live_aliases(graph: &TemporalGraph, group_id: &str) -> i64 {
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT count(*) FROM facts WHERE predicate = 'potential_alias' \
+             AND group_id = ?1 AND expired_at IS NULL",
+            libsql::params![group_id],
+        )
+        .await
+        .expect("count live aliases");
+    rows.next()
+        .await
+        .expect("row")
+        .expect("count row")
+        .get::<i64>(0)
+        .expect("count col")
+}
