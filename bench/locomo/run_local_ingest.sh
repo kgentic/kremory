@@ -82,6 +82,17 @@ python3 harness.py --mode codemem --server-mode recall --scorer substring \
 echo "=== [$LABEL] ingest+score done"
 echo "=== [$LABEL] extraction counts (COUNT(*) is unreliable on the vector-indexed"
 echo "===          tables — count lines instead, per SYSTEM-PRIMER):"
-echo "    episodes: $(sqlite3 "$DB" 'SELECT id FROM episodes;' | wc -l | tr -d ' ')"
+# NB: count via `recorded_at`, NEVER `id`. On the vector-indexed tables a
+# `SELECT id` (like `COUNT(*)`) silently returns ZERO rows even when the table
+# is populated — measured on the COMPLETE run4 db, 2026-08-11:
+#     facts:    SELECT id=0   SELECT recorded_at=443   COUNT(*)=0
+#     episodes: SELECT id=0   SELECT recorded_at=111   COUNT(*)=0
+#     entities: SELECT id=146 SELECT recorded_at=146   COUNT(*)=0
+# Note `entities.id` reads correctly while `facts.id`/`episodes.id` do not —
+# which is exactly why this must be a blanket rule and not a per-table
+# judgement: the tables that look safe give no signal that the others aren't.
+# This block previously used `SELECT id` for facts and episodes and therefore
+# reported both as 0 on every successful run.
+echo "    episodes: $(sqlite3 "$DB" 'SELECT recorded_at FROM episodes;' | wc -l | tr -d ' ')"
 echo "    entities: $(sqlite3 "$DB" 'SELECT recorded_at FROM entities;' | wc -l | tr -d ' ')"
-echo "    facts:    $(sqlite3 "$DB" 'SELECT id FROM facts;' | wc -l | tr -d ' ')"
+echo "    facts:    $(sqlite3 "$DB" 'SELECT recorded_at FROM facts;' | wc -l | tr -d ' ')"
