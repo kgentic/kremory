@@ -97,35 +97,87 @@ pub const L4_REVOKE_THRESHOLD: f32 = 0.50;
 
 // ─── Reserved predicates ─────────────────────────────────────────────────────
 
-/// Predicate for the meta-edge that records a probable alias relationship.
+/// Declares one `pub const NAME: &str = "value";` per reserved meta-edge
+/// predicate, and in the SAME expansion folds every one into
+/// `RESERVED_PREDICATES` — the slice [`is_reserved_predicate`] actually
+/// consults. There is exactly one declaration site; a `RESERVED_PREDICATE_*`
+/// const that never reaches `RESERVED_PREDICATES` is not representable.
 ///
-/// Stored as a `facts` row (not an episodic edge) so it can be invalidated
-/// by the dream phase and participates in temporal validity.
+/// ## TD-201 — replaces a false claim, not just a band-aid
 ///
-/// ## Dream-phase awareness
+/// The doc comment this macro replaces said: *"Rust has no reflection, so
+/// this list cannot be derived from the `RESERVED_PREDICATE_*` consts above
+/// automatically — when you add a new `RESERVED_PREDICATE_*` const, add it
+/// here too."* **That claim was false.** Reflection was never required —
+/// only a single declaration site was, and this macro is that site. Adding a
+/// reserved predicate is now a one-line addition to the `reserved_predicates!`
+/// invocation below. See `.ai-docs/tech-debt/tech-debt-register.md` TD-201
+/// for the fuller history: it named exactly this macro as the correct
+/// structural fix and deliberately deferred building it, in favour of a
+/// runtime detector (`scripts/audit-reserved-predicates.py`) pending a second
+/// reserved predicate ever existing. This change builds the deferred macro
+/// instead of adding a third layer of drift-detection on top of a false
+/// premise.
 ///
-/// During L7 dream-phase reclassification, edges with this predicate are
-/// treated as meta-edges rather than domain facts:
-/// - `sim >= L4_MERGE_THRESHOLD` confirmed by re-embedding → promote to hard merge.
-/// - `sim < L4_REVOKE_THRESHOLD` → invalidate (fact `expired_at` set).
-/// - Otherwise → retain as unresolved alias candidate.
-pub const RESERVED_PREDICATE_POTENTIAL_ALIAS: &str = "potential_alias";
+/// ## 3p evaluation (CLAUDE.md Rule 33 — recorded, not skipped)
+///
+/// Checked against live crates.io download/maintenance data before
+/// hand-rolling (2026-08-11):
+/// - `strum` (~568M downloads, actively maintained) — `EnumIter` /
+///   `IntoStaticStr` would require converting these from free `&str` consts
+///   to enum variants. `is_reserved_predicate(predicate: &str)` is called
+///   from read paths holding owned/borrowed `String`s
+///   (`core::search::rrf_fuse_with_facts`, `memory::engine_handle`) and must
+///   keep that exact `&str` signature; strum's iteration is not
+///   `const`-evaluable, so `RESERVED_PREDICATES` would become a
+///   runtime-initialised `OnceLock` instead of a `const` — a worse fit, not a
+///   better one.
+/// - `inventory` (~113M downloads) / `linkme` (~28M downloads) — both solve
+///   DISTRIBUTED registration of items scattered across many compilation
+///   units via linker-section tricks. This is one declaration site in one
+///   module; wrong shape entirely.
+/// - `phf` (~471M downloads) — computes a perfect-hash map/set at compile
+///   time, but still requires declaring the individual named consts
+///   separately from the set. It reshapes the second declaration site; it
+///   does not remove it.
+///
+/// None of the four close the actual gap (one declaration site, `&str`-typed,
+/// `const`-evaluable, zero runtime cost). A `macro_rules!` is genuinely
+/// trivial (~15 lines) and stable — a closed, compile-time list of string
+/// literals has no edge-case tail to grow into — and needs zero new
+/// dependencies: justification (c) no-lib-fits-the-shape AND (d)
+/// genuinely-trivial-and-stable per the evaluate-3p-before-handrolling rule.
+macro_rules! reserved_predicates {
+    ($($(#[$meta:meta])* $konst:ident => $lit:literal),+ $(,)?) => {
+        $(
+            $(#[$meta])*
+            pub const $konst: &str = $lit;
+        )+
 
-/// Every reserved meta-edge predicate the crate recognises.
-///
-/// ## TD-197 review Finding 4 — this slice is the ONE place to update
-///
-/// [`is_reserved_predicate`] consults this slice, not a hand-matched arm. A
-/// bare `matches!` with a trailing "add other reserved predicates here if
-/// needed" comment was the entire growth mechanism until this fix — and
-/// TD-197 itself exists because a spec'd symbol went unwired for months with
-/// nothing forcing anyone to notice ([`is_reserved_predicate`]'s own doc
-/// comment tells that story). Rust has no reflection, so this list cannot be
-/// derived from the `RESERVED_PREDICATE_*` consts above automatically —
-/// **when you add a new `RESERVED_PREDICATE_*` const, add it here too.** The
-/// module's test suite pins this pairing explicitly
-/// (`reserved_predicates_slice_contains_every_reserved_predicate_const`).
-pub const RESERVED_PREDICATES: &[&str] = &[RESERVED_PREDICATE_POTENTIAL_ALIAS];
+        /// Every reserved meta-edge predicate the crate recognises.
+        ///
+        /// GENERATED by the `reserved_predicates!` macro invocation below —
+        /// this slice and each `RESERVED_PREDICATE_*` const above it come
+        /// from the same declaration and cannot drift apart (TD-201).
+        pub const RESERVED_PREDICATES: &[&str] = &[$($konst),+];
+    };
+}
+
+reserved_predicates! {
+    /// Predicate for the meta-edge that records a probable alias relationship.
+    ///
+    /// Stored as a `facts` row (not an episodic edge) so it can be invalidated
+    /// by the dream phase and participates in temporal validity.
+    ///
+    /// ## Dream-phase awareness
+    ///
+    /// During L7 dream-phase reclassification, edges with this predicate are
+    /// treated as meta-edges rather than domain facts:
+    /// - `sim >= L4_MERGE_THRESHOLD` confirmed by re-embedding → promote to hard merge.
+    /// - `sim < L4_REVOKE_THRESHOLD` → invalidate (fact `expired_at` set).
+    /// - Otherwise → retain as unresolved alias candidate.
+    RESERVED_PREDICATE_POTENTIAL_ALIAS => "potential_alias",
+}
 
 /// `true` when `predicate` is a reserved meta-edge predicate — internal
 /// disambiguation bookkeeping (e.g. [`RESERVED_PREDICATE_POTENTIAL_ALIAS`]),
@@ -149,8 +201,10 @@ pub const RESERVED_PREDICATES: &[&str] = &[RESERVED_PREDICATE_POTENTIAL_ALIAS];
 /// queries them directly via `TemporalGraph::get_alias_facts_in_group` and
 /// never goes through this filter.
 ///
-/// Backed by [`RESERVED_PREDICATES`] — see that const's doc comment for the
-/// growth discipline (TD-197 review Finding 4).
+/// Backed by [`RESERVED_PREDICATES`] — GENERATED by the
+/// `reserved_predicates!` macro above (TD-201), so there is no separate
+/// growth discipline to document here: adding a reserved predicate is a
+/// one-line addition to that macro invocation, full stop.
 pub fn is_reserved_predicate(predicate: &str) -> bool {
     RESERVED_PREDICATES.contains(&predicate)
 }
@@ -752,39 +806,37 @@ mod tests {
         assert!(!is_reserved_predicate("POTENTIAL_ALIAS"));
     }
 
-    /// TD-197 review Finding 4: `RESERVED_PREDICATES` (what
-    /// [`is_reserved_predicate`] actually consults) and the set of
-    /// `RESERVED_PREDICATE_*` consts declared above it are two independent
-    /// lists — Rust has no reflection to derive one from the other. This
-    /// test is a deliberate literal mirror, not a tautology: its entire
-    /// value is forcing whoever adds a new `RESERVED_PREDICATE_*` const to
-    /// ALSO update `all_reserved_predicate_consts` below AND
-    /// `RESERVED_PREDICATES` at the const's definition site — miss either
-    /// one and this test fails. This is the mechanism TD-197 review Finding
-    /// 4 asked for: a trailing "add other reserved predicates here if
-    /// needed" comment was the ONLY thing enforcing this pairing before,
-    /// and TD-197 itself happened because a spec'd symbol went unwired with
-    /// nothing to catch it.
-    ///
-    /// ⚠️ Adding a new `RESERVED_PREDICATE_*` const? You must update BOTH:
-    /// 1. `RESERVED_PREDICATES` (at its definition, above)
-    /// 2. `all_reserved_predicate_consts` (below, in this test)
-    #[test]
-    fn reserved_predicates_slice_contains_every_reserved_predicate_const() {
-        let all_reserved_predicate_consts = [RESERVED_PREDICATE_POTENTIAL_ALIAS];
-        for c in all_reserved_predicate_consts {
-            assert!(
-                RESERVED_PREDICATES.contains(&c),
-                "{c:?} is a RESERVED_PREDICATE_* const but missing from RESERVED_PREDICATES"
-            );
-        }
-        assert_eq!(
-            RESERVED_PREDICATES.len(),
-            all_reserved_predicate_consts.len(),
-            "RESERVED_PREDICATES must contain EXACTLY the RESERVED_PREDICATE_* consts declared \
-             in this module — no extras, no gaps"
-        );
-    }
+    // TD-201 (2026-08-11): `reserved_predicates_slice_contains_every_
+    // reserved_predicate_const` REMOVED here, deliberately, not silently.
+    //
+    // The test existed to catch drift between `RESERVED_PREDICATES` and a
+    // hand-typed `all_reserved_predicate_consts` mirror declared inside the
+    // test itself (TD-197 review Finding 4). Both lists were independently
+    // hand-maintained, so the test had real teeth: forgetting to update
+    // either one made it fail.
+    //
+    // Both `RESERVED_PREDICATE_POTENTIAL_ALIAS` and `RESERVED_PREDICATES`
+    // are now emitted by the SAME `reserved_predicates!` macro expansion
+    // (above, in this module) — there is no longer a second list for the
+    // test's `all_reserved_predicate_consts` to drift against. Keeping the
+    // test would mean hand-typing a THIRD copy of the predicate list inside
+    // the test body and asserting it matches the macro's output — testing
+    // "did I copy the literal correctly," a property the compiler already
+    // guarantees by construction (one macro invocation, two derived outputs,
+    // no path for them to disagree). That is the "tests what the code does"
+    // tautology this project's own testing/hardcoded-pattern rules warn
+    // against, not a regression guard.
+    //
+    // Removed rather than reworked because there is nothing left to give it
+    // teeth: any replacement assertion would either (a) re-hardcode the same
+    // list the macro already generates (still tautological), or (b) assert
+    // a property already enforced at compile time by the macro's expansion
+    // shape (not a runtime-testable behaviour). The runtime property that
+    // actually matters — a reserved predicate never reaches a consumer-
+    // facing recall surface — is still covered, at the crate boundary, by
+    // `td197_recall_never_surfaces_reserved_predicate`
+    // (`crates/kremory/tests/it/with_facts_integration.rs`), which iterates
+    // `RESERVED_PREDICATES` directly rather than a second hand-typed copy.
 
     // ── ADR-057: lexical-name compatibility gate ──────────────────────────────
     //
