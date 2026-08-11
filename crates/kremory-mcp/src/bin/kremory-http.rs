@@ -249,6 +249,47 @@ impl IntoResponse for ApiError {
 ///
 /// Additive: the response is still `200 OK`; the JSON body is new (the prior
 /// handler returned an empty 200), so no existing field is removed.
+/// TD-202 — identity of the running binary, read from its OWN executable.
+///
+/// Every field is observed at runtime, so a stale or mismatched value is not
+/// representable: `current_exe()` is the artefact actually executing, and its
+/// mtime + size pin it to a specific build. `crate_version` is compile-time and
+/// pins the source revision's declared version.
+///
+/// Deliberately NOT a git sha. A sha would have to be injected at build time and
+/// would then assert what the builder BELIEVED, whereas mtime+size are properties
+/// of the file that is running — the observe-over-declare split. The harness pairs
+/// this with its own `harness_git_sha` so a mismatch between the two is visible
+/// rather than silently collapsed into one number, which is exactly what TD-202
+/// was.
+///
+/// Every field is best-effort: a filesystem that refuses to stat the executable
+/// must degrade to an explicit `"unknown"`, never to a silently-absent key that a
+/// downstream stamp would render as "no problem".
+fn build_identity() -> serde_json::Value {
+    let exe = std::env::current_exe().ok();
+    let meta = exe.as_ref().and_then(|p| std::fs::metadata(p).ok());
+    let mtime_unix = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    serde_json::json!({
+        "crate_version": env!("CARGO_PKG_VERSION"),
+        "exe": exe.as_ref().map_or_else(
+            || "unknown".to_string(),
+            |p| p.display().to_string(),
+        ),
+        "exe_mtime_unix": mtime_unix,
+        "exe_size_bytes": meta.as_ref().map(std::fs::Metadata::len),
+        "features": {
+            "content_search": cfg!(feature = "content-search"),
+            "rerank": cfg!(feature = "rerank"),
+            "prometheus": cfg!(feature = "prometheus"),
+        },
+    })
+}
+
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let scoring = state.mem.search_config();
     (
@@ -277,6 +318,29 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
                 .ok()
                 .unwrap_or_else(|| "bge-base (default)".to_string()),
             "prometheus": cfg!(feature = "prometheus"),
+            // TD-202: the identity of THE BINARY THAT IS SERVING, observed by the
+            // process from its own executable file.
+            //
+            // The bench provenance stamp previously recorded only
+            // `git rev-parse HEAD` run in the HARNESS's working tree
+            // (`bench/locomo/provenance.py:218`), which says nothing about which
+            // binary answered the requests — the tree can have moved on, or back,
+            // or be a different checkout entirely. `.context/td186a-variance/`
+            // already records a run stamped with a commit authored TWELVE HOURS
+            // AFTER the binary was built.
+            //
+            // That mis-attribution is normally recoverable by re-running. The paid
+            // grader is NOT: it runs ONCE, at the end, by design (~$4.60/config),
+            // so its provenance is the one stamp that can never be corrected after
+            // the fact.
+            //
+            // OBSERVED, not declared (contract-first §"derive > observe > declare"):
+            // a binary reporting its own `current_exe` mtime+size cannot be wrong
+            // about which artefact is running, whereas any value passed in from the
+            // environment is an assertion by whoever launched it. This is the same
+            // reasoning as `rerank_model_requested` above refusing to claim
+            // "active".
+            "build": build_identity(),
             "scoring": {
                 "content_stream_weight": scoring.content_stream_weight,
                 "rrf_k": scoring.rrf_k,

@@ -232,6 +232,35 @@ def _git_sha() -> str:
         return f"unknown ({type(e).__name__})"
 
 
+def _binary_identity(health: Any) -> dict[str, Any]:
+    """TD-202 — the identity of the BINARY that served this run, as the server
+    itself reported it via ``/health.build``.
+
+    ``git_sha`` records ``git rev-parse HEAD`` in the HARNESS's working tree,
+    which says nothing about which binary answered the requests: the tree can
+    have moved on, moved back, or be an entirely different checkout.
+    ``.context/td186a-variance/`` already holds a run stamped with a commit
+    authored TWELVE HOURS AFTER its binary was built.
+
+    Normally that is recoverable by re-running. **The paid grader is not** — it
+    runs ONCE, at the end, by design, so its provenance is the single stamp that
+    can never be corrected afterwards. That is why this is worth a field.
+
+    Returns an explicit ``{"available": False, ...}`` when the server did not
+    report it (older binary, or unreachable) rather than omitting the key. A
+    silently-absent key renders downstream as "nothing to see"; an explicit
+    ``available: False`` renders as "we do not know", which is the true state.
+    """
+    build = health.get("build") if isinstance(health, dict) else None
+    if not isinstance(build, dict):
+        return {
+            "available": False,
+            "reason": "server /health reported no `build` block "
+            "(pre-TD-202 binary, or unreachable)",
+        }
+    return {"available": True, **build}
+
+
 def _env_truthy(name: str) -> bool:
     v = os.environ.get(name)
     if v is None:
@@ -328,7 +357,15 @@ def build_provenance(
 
     if isinstance(scoring, dict):
         return {
+            # TD-202: `git_sha` is the HARNESS's working tree, NOT the serving
+            # binary. Retained under its original name so existing readers keep
+            # working, and duplicated under an honestly-named key; `binary` below
+            # is the authoritative record of what actually ran. Do not collapse
+            # these into one field — a mismatch between them is exactly the
+            # signal TD-202 existed because nobody could see.
             "git_sha": _git_sha(),
+            "harness_git_sha": _git_sha(),
+            "binary": _binary_identity(health),
             "content_stream_weight": float(scoring.get("content_stream_weight", 1.0)),
             "rrf_k": int(scoring.get("rrf_k", 60)),
             "graph_degree_weight": scoring.get("graph_degree_weight"),
@@ -349,7 +386,13 @@ def build_provenance(
         )
 
     return {
+        # TD-202 — see the health path above. On this fallback the server was not
+        # reachable at all, so `binary` reports `available: False` honestly rather
+        # than guessing from the harness's `target/` directory (which may not be
+        # the binary that was launched).
         "git_sha": _git_sha(),
+        "harness_git_sha": _git_sha(),
+        "binary": _binary_identity(health),
         "content_stream_weight": _env_num("KREMORY_CONTENT_WEIGHT", 1.0, float),
         "rrf_k": _env_num("KREMORY_RRF_K", 60, int),
         "rerank_enabled": _env_truthy("KREMORY_RERANK")
