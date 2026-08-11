@@ -87,8 +87,8 @@ pub use memory::ChatProvider;
 pub use memory::{
     ContextTemplate, DreamPhaseResult, GraphAssertEntityTypeParams, GraphHandle, GraphSearchParams,
     IngestResult, MemoryError, MemoryType, Namespace, Result as MemoryResult, RetrievedContext,
-    RetrievedContextNewParams, RetrievedFact, SearchOpts, SourceKind, SourceRef, StructuredFact,
-    TelemetryConfig, TelemetryHandle, TelemetryInitError,
+    RetrievedContextNewParams, RetrievedFact, RetrievedFactNewParams, SearchOpts, SourceKind,
+    SourceRef, StructuredFact, TelemetryConfig, TelemetryHandle, TelemetryInitError,
 };
 // ADR-029a (v0.1.4): namespace policy primitives.
 pub use memory::types::{ImmutabilityLevel, InvalidPolicyError, NamespacePolicy};
