@@ -649,10 +649,25 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
 
     let now = Utc::now();
     let mut resolved = 0usize;
+    // TD-203 D3 — per-outcome tallies. Before these existed the pass returned
+    // ONLY `merged + revoked`, and the three skip branches plus `kept` logged at
+    // DEBUG, so a pass that examined N candidates and kept all N was
+    // bit-identical to a pass that found ZERO candidates: no INFO line, a
+    // counter increment of 0, a summary field of 0. That is exactly what
+    // happened on the shipped LoCoMo corpus — ten dreams, 42 candidates, zero
+    // observable output — and it is why the original failure can no longer be
+    // attributed to a branch. `candidates_examined` is the number that makes
+    // "ran and kept everything" distinguishable from "found nothing".
+    let candidates_examined = alias_facts.len();
+    let mut kept = 0usize;
+    let mut skipped_no_object = 0usize;
+    let mut skipped_null_distance = 0usize;
+    let mut skipped_no_row = 0usize;
 
     for fact in &alias_facts {
         // Alias fact must have an object_id pointing to the canonical entity.
         let Some(ref object_id) = fact.object_id else {
+            skipped_no_object += 1;
             tracing::debug!(
                 target: "kremory.l7",
                 fact_id = fact.id,
@@ -663,24 +678,71 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
 
         // Re-compute cosine similarity between subject and object embeddings via SQL.
         // `vector_distance_cos` returns NULL when either vector has zero magnitude.
+        //
+        // TD-203 D4 / ADR-029d — BOTH endpoints are scoped by `group_id`. The
+        // `facts` FK is `(subject_id, subject_group_id) -> entities(id, group_id)`,
+        // so `id` ALONE IS NOT THE KEY. The previous unscoped form
+        // (`WHERE a.id = ?1 AND b.id = ?2`) cross-joined every namespace holding
+        // that name and then took whichever row `rows.next()` returned first.
+        // Measured on the shipped LoCoMo corpus: `session 9 -> session 7` matched
+        // **100 rows**, `session 7 -> session 6` 90, `3 july 2023 -> 3 july 2023` 9.
+        //
+        // It happened to be HARMLESS there — entity ids are the raw name text and
+        // `nomic-embed-text` is deterministic, so same-named entities across
+        // namespaces carry identical vectors and all 42 pairs measured a 0.0000
+        // divergence between the scoped and unscoped forms. It is a LATENT bug, and
+        // TD-112 is its trigger: `re-embed keeper on merge` recomputes a keeper's
+        // embedding in ONE namespace, after which an unscoped read can silently
+        // score against a DIFFERENT namespace's stale vector.
+        //
+        // `group_id` is the pass's own namespace argument — the same value
+        // `get_alias_facts_in_group` filtered these facts on — rather than
+        // `fact.group_id`, which is `Option<String>` and would need a fallback.
         let mut rows = graph
             .conn
             .query(
                 "SELECT vector_distance_cos(a.embedding, b.embedding) \
                  FROM entities a, entities b \
-                 WHERE a.id = ?1 AND b.id = ?2",
-                libsql::params![fact.subject_id.clone(), object_id.clone()],
+                 WHERE a.id = ?1 AND a.group_id = ?3 \
+                   AND b.id = ?2 AND b.group_id = ?3",
+                libsql::params![fact.subject_id.clone(), object_id.clone(), group_id],
             )
             .await?;
 
         let Some(row) = rows.next().await? else {
-            // No row returned — at least one entity is missing.
+            // No row returned — at least one endpoint entity does not exist in
+            // this namespace.
+            //
+            // TD-203 D3: this branch used to `continue` in TOTAL SILENCE — no
+            // log at any level, no counter. It is the only outcome of the six
+            // that left no trace, which made it the prime suspect for the
+            // corpus failure and unfalsifiable at the same time.
+            //
+            // It is also NOT a benign skip: a `potential_alias` fact whose
+            // endpoint is absent is a dangling reference the composite FK
+            // `(subject_id, subject_group_id) -> entities(id, group_id)` is
+            // supposed to make impossible. WARN, unconditionally.
+            skipped_no_row += 1;
+            counter!("kremory.l7.resolve_aliases_total", "outcome" => "skip_dangling_endpoint")
+                .increment(1);
+            tracing::warn!(
+                target: "kremory.l7",
+                fact_id = fact.id,
+                subject_id = %fact.subject_id,
+                object_id = %object_id,
+                group_id,
+                "kremory.l7.resolve_aliases.skip_dangling_endpoint — alias fact references an \
+                 entity absent from its namespace (referential-integrity violation)"
+            );
             continue;
         };
 
         let distance_opt: Option<f64> = row.get(0)?;
         let Some(distance) = distance_opt else {
             // NULL from vector_distance_cos — zero-magnitude embedding, skip.
+            skipped_null_distance += 1;
+            counter!("kremory.l7.resolve_aliases_total", "outcome" => "skip_null_distance")
+                .increment(1);
             tracing::debug!(
                 target: "kremory.l7",
                 fact_id = fact.id,
@@ -734,6 +796,7 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
             resolved += 1;
         } else {
             // Mid-range similarity — keep for now.
+            kept += 1;
             counter!("kremory.l7.resolve_aliases_total", "outcome" => "kept").increment(1);
             tracing::debug!(
                 target: "kremory.l7",
@@ -742,6 +805,48 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
                 "kremory.l7.resolve_aliases.kept"
             );
         }
+    }
+
+    // TD-203 D3 — ONE always-on INFO line per pass, carrying the full outcome
+    // breakdown. `resolved` alone (the return value, and the only thing
+    // `DreamSummary.aliases_resolved` reports) cannot distinguish "examined 42
+    // and kept them all" from "found nothing at all", and the corpus failure was
+    // exactly the former reported as the latter.
+    //
+    // Emitted for a NON-EMPTY candidate set only — the empty case already
+    // early-returns above and a per-namespace "0 of 0" line on every dream would
+    // be noise (Rule 41: a signal that fires on ordinary work gets ignored).
+    tracing::info!(
+        target: "kremory.l7",
+        group_id,
+        candidates_examined,
+        merged_or_revoked = resolved,
+        kept,
+        skipped_no_object,
+        skipped_null_distance,
+        skipped_no_row,
+        "kremory.l7.resolve_aliases.pass_complete"
+    );
+    counter!("kremory.l7.resolve_aliases_examined_total").increment(candidates_examined as u64);
+
+    // Tripwire (Rule 19, "silent in != out at a stage boundary"): candidates went
+    // IN and every one of them fell through a skip branch — nothing was judged.
+    // Distinct from "all kept", which is a legitimate mid-band outcome. Always
+    // on, never DEBUG-gated: a DEBUG-gated alarm is invisible in exactly the
+    // configuration that produced this defect (the corpus server logged 159,700
+    // INFO lines and ZERO DEBUG).
+    if candidates_examined > 0 && resolved == 0 && kept == 0 {
+        counter!("kremory.l7.resolve_aliases_all_skipped_total").increment(1);
+        tracing::warn!(
+            target: "kremory.l7",
+            group_id,
+            candidates_examined,
+            skipped_no_object,
+            skipped_null_distance,
+            skipped_no_row,
+            "kremory.l7.resolve_aliases.all_candidates_skipped — {candidates_examined} alias \
+             candidate(s) examined and NONE was judged; the pass did no work"
+        );
     }
 
     Ok(resolved)

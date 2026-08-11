@@ -55,6 +55,20 @@ pub struct EntityReembedRow {
     pub embed_text: String,
 }
 
+/// Bundled parameters for [`TemporalGraph::set_entity_embedding_in_group`] —
+/// args-as-object per TD-042 (workspace clippy `too_many_arguments` threshold is
+/// 3 INCLUDING `&self`, and `#[allow(clippy::*)]` is banned in `src/`).
+pub struct SetEntityEmbeddingParams<'a> {
+    /// Entity id. NOT unique on its own — see `group_id`.
+    pub id: &'a str,
+    /// ADR-029d / TD-206 — the namespace half of the composite entity key
+    /// `(id, group_id)`. Omitting it writes across every namespace holding the
+    /// same name.
+    pub group_id: &'a str,
+    /// The replacement vector.
+    pub embedding: &'a [f32],
+}
+
 impl TemporalGraph {
     pub async fn insert_entity(&self, params: InsertEntityParams<'_>) -> Result<()> {
         let InsertEntityParams {
@@ -424,6 +438,47 @@ impl TemporalGraph {
 
     /// Set or update the embedding vector for an entity.
     /// `embedding` is a 384-dimensional f32 vector.
+    /// Namespace-SCOPED embedding write — TD-206 / ADR-029d.
+    ///
+    /// Prefer this over [`TemporalGraph::set_entity_embedding`] on every
+    /// production path. The unscoped sibling matches on `id` ALONE, but the
+    /// entity key is the COMPOSITE `(id, group_id)` (see the `facts` FK
+    /// `REFERENCES entities(id, group_id)`), so it rewrites the embedding of
+    /// EVERY namespace's entity sharing that name. On the shipped LoCoMo corpus
+    /// **90 entity names exist in more than one namespace**, so the blast radius
+    /// is real, not theoretical — and the affected column is a live retrieval
+    /// signal, which makes the corruption silent.
+    pub async fn set_entity_embedding_in_group(
+        &self,
+        params: SetEntityEmbeddingParams<'_>,
+    ) -> Result<()> {
+        let SetEntityEmbeddingParams {
+            id,
+            group_id,
+            embedding,
+        } = params;
+        let vec_str = format!(
+            "[{}]",
+            embedding
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        self.conn
+            .execute(
+                "UPDATE entities SET embedding = vector(?1) WHERE id = ?2 AND group_id = ?3",
+                libsql::params![vec_str, id, group_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// ⚠️ NAMESPACE-UNSCOPED — see [`TemporalGraph::set_entity_embedding_in_group`].
+    ///
+    /// Matches on `id` alone and therefore writes across ALL namespaces holding
+    /// that name (TD-206). Retained for single-namespace test fixtures, where
+    /// the distinction cannot arise. **Do not add production callers.**
     pub async fn set_entity_embedding(&self, id: &str, embedding: &[f32]) -> Result<()> {
         let _db_start = Instant::now();
         // Convert f32 slice to JSON array string for the vector() SQL function

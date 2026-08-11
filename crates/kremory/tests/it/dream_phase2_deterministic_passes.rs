@@ -22,7 +22,8 @@
 use std::sync::Arc;
 
 use kremory::core::disambiguation::{
-    insert_potential_alias_fact, AliasProvenance, InsertPotentialAliasFactParams,
+    insert_potential_alias_fact, resolve_pending_aliases, AliasProvenance,
+    InsertPotentialAliasFactParams,
 };
 use kremory::core::graph::InsertEntityWithGroupParams;
 use kremory::core::provider::{MockChatProvider, MockEmbeddingProvider};
@@ -297,4 +298,137 @@ async fn entity_embedding_distance(graph: &TemporalGraph, id: &str, probe: &[f32
     row.get::<Option<f64>>(0)
         .expect("distance column")
         .map(|d| d as f32)
+}
+
+// ── TD-203 D4 — the L7 re-similarity read must be namespace-scoped ───────────
+
+/// Plant an entity with an EXACT embedding (no embedder involved).
+// Test helper: clippy.toml Rule-5 exempt (test helpers may carry a documented
+// too_many_arguments allow, per feedback_no_clippy_allow_in_src_args_as_object;
+// TD-042 args-as-object targets `src/` production fns only). Same convention as
+// `plant_entity` above.
+#[allow(clippy::too_many_arguments)]
+async fn plant_entity_with_vec(graph: &TemporalGraph, id: &str, group: &str, vec: &[f32]) {
+    graph
+        .insert_entity_with_group(InsertEntityWithGroupParams {
+            id,
+            entity_type_id: 0u32,
+            properties: serde_json::json!({ "name": id }),
+            group_id: Some(group),
+        })
+        .await
+        .expect("insert entity");
+    graph
+        .set_entity_embedding_in_group(kremory::core::graph::SetEntityEmbeddingParams {
+            id,
+            group_id: group,
+            embedding: vec,
+        })
+        .await
+        .expect("set embedding");
+}
+
+/// TD-203 D4 — `resolve_pending_aliases` re-reads both endpoints' embeddings.
+/// The `facts` FK is `(subject_id, subject_group_id) -> entities(id, group_id)`,
+/// so `id` ALONE IS NOT THE KEY: the pre-fix query
+/// (`WHERE a.id = ?1 AND b.id = ?2`, no `group_id`) cross-joined EVERY namespace
+/// holding that name and took whichever row came back first.
+///
+/// Measured on the shipped LoCoMo corpus, that join matched **100 rows** for
+/// `session 9 -> session 7` and 90 for `session 7 -> session 6`. It was
+/// nonetheless HARMLESS there — entity ids are raw name text and
+/// `nomic-embed-text` is deterministic, so same-named entities across namespaces
+/// carried IDENTICAL vectors and all 42 pairs measured 0.0000 divergence. That
+/// is precisely why a corpus-derived test could not catch it, and why this
+/// fixture makes the two namespaces disagree ON PURPOSE.
+///
+/// **The discriminator is `expired_at`, and choosing it took care:** merge AND
+/// revoke both expire the fact, so "expired" cannot separate the two readings.
+/// So the CORRECT (namespace-scoped) similarity is placed in the mid-band KEPT
+/// range, and the WRONG (cross-namespace) one at 1.0:
+///
+/// | read | similarity | outcome | `expired_at` |
+/// |---|---|---|---|
+/// | scoped (correct) | ~0.70 — mid-band | KEPT | NULL |
+/// | unscoped (bug) | 1.0 from the OTHER namespace | merged/revoked | set |
+///
+/// Revert the `group_id` predicate in `disambiguation/mod.rs` and this test
+/// fails — the fact comes back expired.
+#[tokio::test]
+async fn resolve_pending_aliases_reads_only_its_own_namespace() {
+    const NS_DECOY: &str = "ns-decoy";
+    const NS_UNDER_TEST: &str = "ns-under-test";
+    const A: &str = "acme";
+    const B: &str = "acme corp";
+
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+
+    // Decoy namespace: the two names are embedding-IDENTICAL (cosine 1.0).
+    let mut e1 = vec![0.0_f32; DIM];
+    e1[0] = 1.0;
+    plant_entity_with_vec(&graph, A, NS_DECOY, &e1).await;
+    plant_entity_with_vec(&graph, B, NS_DECOY, &e1).await;
+
+    // Namespace under test: SAME NAMES, deliberately different vectors at
+    // cosine 0.70 — above L4_REVOKE_THRESHOLD (0.50), below L4_MERGE_THRESHOLD
+    // (0.95), i.e. squarely in the KEEP band.
+    let mut e2 = vec![0.0_f32; DIM];
+    e2[0] = 0.70;
+    e2[1] = (1.0_f32 - 0.70 * 0.70).sqrt();
+    plant_entity_with_vec(&graph, A, NS_UNDER_TEST, &e1).await;
+    plant_entity_with_vec(&graph, B, NS_UNDER_TEST, &e2).await;
+
+    // The alias candidate lives ONLY in the namespace under test.
+    let fact_id = insert_potential_alias_fact(InsertPotentialAliasFactParams {
+        graph: &graph,
+        new_entity_id: A,
+        existing_id: B,
+        similarity: 0.70,
+        provenance: AliasProvenance {
+            source_episode_id: None,
+            group_id: Some(NS_UNDER_TEST),
+        },
+    })
+    .await
+    .expect("insert alias fact")
+    .expect("a fresh alias fact is inserted, not deduped");
+
+    let resolved = resolve_pending_aliases(&graph, NS_UNDER_TEST)
+        .await
+        .expect("resolve");
+
+    // PRECONDITION — the pass must actually have examined this fact. Without
+    // this a fixture that silently returns zero candidates would pass every
+    // assertion below for the wrong reason.
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT expired_at IS NULL FROM facts WHERE id = ?1",
+            libsql::params![fact_id],
+        )
+        .await
+        .expect("read alias fact");
+    let live = rows
+        .next()
+        .await
+        .expect("row")
+        .expect("alias fact present")
+        .get::<i64>(0)
+        .expect("col")
+        == 1;
+
+    assert_eq!(
+        resolved, 0,
+        "the namespace under test scores 0.70 — mid-band — so the pass must KEEP \
+         it and resolve nothing. A non-zero count means the similarity was read \
+         from the decoy namespace (cosine 1.0)."
+    );
+    assert!(
+        live,
+        "TD-203 D4: the alias fact must remain LIVE. If it is expired, the \
+         re-similarity query read the DECOY namespace's identical vectors \
+         (cosine 1.0 -> merge/revoke, both of which expire) instead of its own \
+         namespace's 0.70. This is the assertion that fails when the `group_id` \
+         predicate is reverted."
+    );
 }

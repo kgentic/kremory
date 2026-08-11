@@ -247,6 +247,30 @@ pub(crate) struct EntityMergePreState {
     pub(crate) keeper_pre: KeeperPre,
     pub(crate) repointed_facts: Vec<RepointedFact>,
     pub(crate) episodic_edges: Vec<EpisodicEdgeSnapshot>,
+    /// TD-203 D1 — fact ids the merge EXPIRED because re-pointing would have
+    /// collapsed both endpoints onto the keeper (`X pred X`).
+    ///
+    /// A fact linking loser and keeper is meaningful only while they are
+    /// distinct; once merged it asserts nothing. Before this field existed the
+    /// re-point silently manufactured self-loops — 41 live ones on the shipped
+    /// LoCoMo corpus, 18 of them on the reserved `potential_alias` predicate,
+    /// which L4 cannot even emit (it compares a NEW entity to a DIFFERENT
+    /// existing one). Traced to `canonicalize` merges via `graph_mutation_log`
+    /// rows 2-3 (`12 july 2023` and `20 july 2023` → `3 july 2023`).
+    ///
+    /// Captured so `unmerge` can REVIVE them: undo un-points the endpoints back
+    /// to the loser, at which point the fact is meaningful again. Without this
+    /// the expiry would be one-way and `unmerge` would silently return a
+    /// strictly smaller graph than it was handed — breaking the ADR-073
+    /// reversibility guarantee.
+    ///
+    /// `#[serde(default)]` is REQUIRED for backward compatibility and is NOT a
+    /// silent-default anti-pattern (Rule 21 governs LLM-emitted output; this is
+    /// our own persisted state): `graph_mutation_log` rows written before this
+    /// field existed have no key, and an empty list is the CORRECT reading of
+    /// them — those merges expired nothing, because the code could not.
+    #[serde(default)]
+    pub(crate) self_loops_expired: Vec<i64>,
 }
 
 /// Which of the three merge-producing sites fired a merge — the `inputs.site`

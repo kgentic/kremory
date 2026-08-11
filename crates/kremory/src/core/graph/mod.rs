@@ -11,7 +11,8 @@ mod namespace;
 mod queries;
 
 pub use entities::{
-    InsertEntityParams, ReassignEntityGroupDangerousParams, UpdateEntityGroupParams,
+    InsertEntityParams, ReassignEntityGroupDangerousParams, SetEntityEmbeddingParams,
+    UpdateEntityGroupParams,
 };
 #[cfg(feature = "content-search")]
 pub use entities::{EntitiesAfterIdParams, EntityReembedRow};

@@ -313,6 +313,38 @@ async fn unmerge_txn(graph: &TemporalGraph, mutation_id: i64) -> Result<UnmergeO
         }
     }
 
+    // (d2) TD-203 D1 — REVIVE the facts the merge expired because re-pointing
+    //      collapsed both endpoints onto the keeper. Ordered immediately after
+    //      (d) and NOT before it: while the endpoints still both read `keeper`
+    //      the fact is a meaningless self-loop, so un-expiring first would make
+    //      a `keeper pred keeper` row briefly live. (d) has just pointed one
+    //      endpoint back at the loser, so the fact is meaningful again here.
+    //
+    //      Guarded on `expired_at IS NOT NULL` so an unmerge cannot resurrect a
+    //      fact expired by some LATER, unrelated mechanism (supersession, an
+    //      explicit delete) that happens to share an id in this list — undo
+    //      restores what THIS merge did, never more.
+    let mut self_loops_revived = 0usize;
+    for fact_id in &pre.self_loops_expired {
+        let updated = conn
+            .execute(
+                "UPDATE facts SET expired_at = NULL WHERE id = ?1 AND expired_at IS NOT NULL",
+                libsql::params![*fact_id],
+            )
+            .await?;
+        if updated > 0 {
+            self_loops_revived += 1;
+        }
+    }
+    if self_loops_revived > 0 {
+        tracing::info!(
+            target: "kremory.unmerge",
+            loser_id = %loser_id,
+            revived = self_loops_revived,
+            "kremory.unmerge.self_loop_facts_revived"
+        );
+    }
+
     // (e) Episodic edges (§4.2 step 4): collided → re-INSERT the dropped loser edge
     //     (keeper's untouched); non-collided → re-point the remapped row back to the
     //     loser (exactly one such row exists — non-collision means keeper had none).
