@@ -30,6 +30,8 @@ only the memory-formatting helper differs to fit string memories.
 """
 from __future__ import annotations
 
+import re
+
 # ---------------------------------------------------------------------------
 # Category mapping (mem0 uses int 1-5; kremory's harness uses these strings).
 # Only the open-domain preprocessing keys on category (gold before ';').
@@ -166,23 +168,92 @@ def preprocess_answer(category: str, answer: str) -> str:
     return answer
 
 
-def format_memories(memories: list[str]) -> str:
+_INLINE_DATE = re.compile(
+    r"\[[^\]]*?on\s+(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})\]"
+)
+_MONTHS = {
+    m.lower(): i
+    for i, m in enumerate(
+        [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December",
+        ],
+        1,
+    )
+}
+
+
+def _inline_date_key(mem: str) -> tuple[int, int, int] | None:
+    """Parse the `[... on 9 June, 2023]` stamp kremory renders inline.
+
+    Returns `None` when there is no stamp — entity profiles and extracted facts
+    carry none (measured: 16% of retrieved items on conv0).
+    """
+    g = _INLINE_DATE.search(str(mem))
+    if not g:
+        return None
+    month = _MONTHS.get(g.group(2).lower())
+    if month is None:
+        return None
+    return (int(g.group(3)), month, int(g.group(1)))
+
+
+def format_memories(memories: list[str], *, chronological: bool = False) -> str:
     """Format kremory's plain-string recalled memories into the {memories} slot.
 
-    mem0 shows dated dict-memories chronologically; kremory memories are dialogue
-    excerpts that already carry inline session dates, so we present them as an
-    explicitly-numbered, position-labelled block. The delimiter is immaterial to
-    the answerer's reasoning instructions (which reference "every memory below");
-    numbering matches the longmemeval answerer's proven multi-line format.
+    ## `chronological` — restores mem0's ordering (opt-in)
+
+    mem0's `get_answer_generation_prompt` takes dict memories `{memory,
+    created_at}` and **sorts them chronologically** before the answerer sees
+    them. Our adaptation fed them in RETRIEVAL-RANK order instead, justified on
+    the grounds that kremory's excerpts "already carry inline session dates" so
+    the answerer could order them itself.
+
+    **That justification is empirically false**, and our own paid smoke
+    (2026-08-11, 10 questions, $0.03) caught it: asked *"When did Caroline meet
+    up with her friends, family and mentors?"*, kremory retrieved the correct
+    evidence at **rank 1** (`[Session 3] [7:55 pm on 9 June, 2023]`) — and the
+    answerer replied "5-11 July 2023", having read the *third* memory
+    (`12 July, 2023`). Correct retrieval, wrong answer, purely from presentation
+    order.
+
+    Enabling this moves us TOWARD the reference implementation, so it increases
+    comparability rather than gaming it — the distinction that matters, since the
+    prompts themselves are ported verbatim precisely to keep the numbers
+    comparable.
+
+    **Opt-in, default OFF, deliberately.** Flipping the default would silently
+    re-base every historical qa-gen number on this page. Measure the delta, then
+    decide to re-base explicitly.
+
+    Undated items (entity profiles, extracted facts — no inline stamp) keep their
+    relevance order and lead, as orientation; dated dialogue excerpts follow in
+    time order. That matches both mem0's chronological principle for dialogue and
+    the `_SECTIONS` philosophy below of putting distilled output first.
     """
     if not memories:
         return "(No relevant memories found)"
-    parts = [
+
+    ordered = memories
+    if chronological:
+        undated = [m for m in memories if _inline_date_key(m) is None]
+        dated = [m for m in memories if _inline_date_key(m) is not None]
+        # `sorted` is stable, so equal-dated items keep relevance order.
+        dated.sort(key=lambda m: _inline_date_key(m))  # type: ignore[arg-type,return-value]
+        ordered = undated + dated
+
+    lead = (
         "The following memories were retrieved from past conversations "
-        "(each is a dialogue excerpt with inline dates). Read every one:",
-        "",
-    ]
-    for i, mem in enumerate(memories, 1):
+        "(each is a dialogue excerpt with inline dates). Read every one:"
+    )
+    if chronological:
+        lead = (
+            "The following memories were retrieved from past conversations. "
+            "The dated dialogue excerpts are in CHRONOLOGICAL ORDER (earliest "
+            "first); any undated profiles or facts appear first. Read every one:"
+        )
+    parts = [lead, ""]
+    for i, mem in enumerate(ordered, 1):
         parts.append(f"[Memory {i}]\n{mem}")
     return "\n\n".join(parts)
 
@@ -281,6 +352,7 @@ def build_answer_prompt(
     provenance: list[dict] | None = None,
     structured: bool = False,
     text_block: str | None = None,
+    chronological: bool = False,
 ) -> str:
     """Fill the ported ANSWER_GENERATION_PROMPT for kremory string memories.
 
@@ -301,7 +373,7 @@ def build_answer_prompt(
         rendered = (
             format_memories_structured(memories, provenance)
             if structured
-            else format_memories(memories)
+            else format_memories(memories, chronological=chronological)
         )
     return ANSWER_GENERATION_PROMPT.format(
         memories=rendered,

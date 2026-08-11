@@ -368,6 +368,28 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
                   "Re-run the harness with --capture-text-block first.",
                   file=sys.stderr)
             return 2
+    chronological = getattr(a, "chrono", False)
+    if chronological:
+        # SAME cache-key discipline as --structured / --text-block above. The
+        # ordering of memories IS the context format here: without the suffix a
+        # --chrono run replays the rank-ordered run's cached answers and the A/B
+        # reads a false null — the exact "measured nothing, recorded a result"
+        # failure the sibling suffixes exist to prevent.
+        n_dated = sum(
+            1 for b in batch
+            if any(prompts_qa._inline_date_key(m) is not None
+                   for m in (b.get("memories") or []))
+        )
+        for b in batch:
+            b["key"] = f"{b['key']}|chrono"
+        print(f"[answer-gen] CHRONOLOGICAL context: {n_dated}/{len(batch)} rows "
+              f"carry at least one inline-dated memory", flush=True)
+        if n_dated == 0:
+            print("[answer-gen] ABORT: --chrono requested but NO row carries an "
+                  "inline-dated memory — every prompt would be byte-identical to "
+                  "the rank-ordered format and the A/B would measure nothing.",
+                  file=sys.stderr)
+            return 2
     done = _load_done_keys(a.output) if a.resume else set()
     todo = [b for b in batch if b["key"] not in done]
     print(f"[answer-gen] {len(batch)} questions, {len(todo)} to do "
@@ -388,7 +410,8 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
             # per-category recall limit at capture time, not this offline
             # replay's `--k`. `None` when the flag is off, which routes
             # `build_answer_prompt` back to `structured`/flat unchanged.
-            text_block=(b.get("text_block") if text_block_flag else None))
+            text_block=(b.get("text_block") if text_block_flag else None),
+            chronological=chronological)
         content, ptok, ctok = _chat(key, a.model, "", prompt, max_tokens=a.max_tokens)
         return {"key": b["key"], "sample_id": b.get("sample_id", ""),
                 "question_id": b["question_id"], "category": b.get("category", ""),
@@ -631,6 +654,12 @@ def main() -> int:
                    help="group the answerer's context by wire `kind` (facts / "
                         "entities / conversation excerpts) instead of one flat "
                         "list; requires `recalled_memory_provenance` on the run")
+    g.add_argument("--chrono", action="store_true",
+                   help="order dated memories CHRONOLOGICALLY in the answerer "
+                        "context, as mem0's reference harness does (it sorts its "
+                        "dict-memories by created_at; our adaptation fed them in "
+                        "retrieval-rank order instead). Default OFF so historical "
+                        "qa-gen numbers are not silently re-based.")
     g.add_argument("--text-block", action="store_true",
                    help="use kremory's own server-rendered prompt-ready block "
                         "(`recalled_text_block` — format=text&template="
