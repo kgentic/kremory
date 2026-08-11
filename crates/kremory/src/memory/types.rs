@@ -466,6 +466,82 @@ pub struct RetrievedFact {
     pub score: f32,
 }
 
+/// Bundled parameters for [`RetrievedFact::new`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments; `RetrievedFact` has 12 fields, well
+/// past the threshold that motivated [`RetrievedContextNewParams`]).
+///
+/// The two closure fields (`invalid_at`, `expired_at`) are deliberately NOT
+/// here — they default to `None` (still valid / not superseded) via `new()`
+/// and are set via the `with_invalid_at` / `with_expired_at` fluent setters,
+/// mirroring `RetrievedContext`'s own required-fields-in-params,
+/// optional-fields-via-setters split.
+pub struct RetrievedFactNewParams {
+    pub fact: String,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub object_is_entity: bool,
+    pub valid_at: DateTime<Utc>,
+    pub recorded_at: DateTime<Utc>,
+    pub confidence: f64,
+    pub source_episode_ids: Vec<i64>,
+    pub score: f32,
+}
+
+impl RetrievedFact {
+    /// Construct a `RetrievedFact` with the required fields. `invalid_at` and
+    /// `expired_at` default to `None`; use [`Self::with_invalid_at`] /
+    /// [`Self::with_expired_at`] to override.
+    ///
+    /// Added TD-199: `contextualize` (this crate's own recall path) has
+    /// always built facts internally, but nothing public existed for a
+    /// cross-crate caller (test fixtures, `kremory-mcp`'s drift guard) to
+    /// build a faithful one — see the TD-199 register entry for the coverage
+    /// gap this was blocking.
+    pub fn new(params: RetrievedFactNewParams) -> Self {
+        let RetrievedFactNewParams {
+            fact,
+            subject,
+            predicate,
+            object,
+            object_is_entity,
+            valid_at,
+            recorded_at,
+            confidence,
+            source_episode_ids,
+            score,
+        } = params;
+        Self {
+            fact,
+            subject,
+            predicate,
+            object,
+            object_is_entity,
+            valid_at,
+            invalid_at: None,
+            recorded_at,
+            expired_at: None,
+            confidence,
+            source_episode_ids,
+            score,
+        }
+    }
+
+    /// Set the world-clock closure time (`Fact.valid_to` — when the fact
+    /// stopped being true). Default `None` (still valid).
+    pub fn with_invalid_at(mut self, invalid_at: DateTime<Utc>) -> Self {
+        self.invalid_at = Some(invalid_at);
+        self
+    }
+
+    /// Set the system-clock expiry time (when the fact row was
+    /// superseded/expired). Default `None` (not superseded).
+    pub fn with_expired_at(mut self, expired_at: DateTime<Utc>) -> Self {
+        self.expired_at = Some(expired_at);
+        self
+    }
+}
+
 /// A single retrieved result composed of an entity, the edges anchoring
 /// it, and the temporal facts that produced it.
 ///
@@ -643,6 +719,40 @@ impl RetrievedContext {
     /// (defaults to `None`). Added v0.1.5 (ADR-029c Decision 2).
     pub fn with_namespace(mut self, ns: Namespace) -> Self {
         self.namespace = Some(ns);
+        self
+    }
+
+    /// Set the connected facts anchored on this entity (ADR-074 / TD-116).
+    /// Default empty (`RetrievedContext::new()`'s starting value). The recall
+    /// path (`contextualize`) sets this field directly since it lives in the
+    /// same crate; this setter is for callers outside `kremory` — test
+    /// fixtures, hand-built results — that need to populate it faithfully.
+    ///
+    /// Added TD-199: before this setter existed, no cross-crate caller could
+    /// build a facts-populated `RetrievedContext`, which left the
+    /// facts-populated branch of `render_temporal_facts` unexercised by
+    /// `kremory-mcp`'s TD-198 drift guard (Quinn's LOW-1 on that review).
+    pub fn with_facts(mut self, facts: Vec<RetrievedFact>) -> Self {
+        self.facts = facts;
+        self
+    }
+
+    /// Set the entity-type attribution for this result — the integer id
+    /// (`entities.entity_type_id`) and its resolved display name together.
+    ///
+    /// One setter, not two: `entity_type_id` and `entity_type_name` are a
+    /// correlated pair (an id and the name it resolves to via `COALESCE
+    /// (entity_types.name, 'Entity')` — see the field docs above). Splitting
+    /// them into `with_entity_type_id` + `with_entity_type_name` would let a
+    /// caller set one without the other, producing an id/name pair the real
+    /// recall SQL path can never emit (e.g. `entity_type_id: 7,
+    /// entity_type_name: "Entity"`). Default `(0, "Entity")` — the same
+    /// sentinel `RetrievedContext::new()` already stamps.
+    ///
+    /// Added TD-199.
+    pub fn with_entity_type(mut self, entity_type_id: u32, entity_type_name: impl Into<String>) -> Self {
+        self.entity_type_id = entity_type_id;
+        self.entity_type_name = entity_type_name.into();
         self
     }
 }

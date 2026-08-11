@@ -46,8 +46,8 @@ pub use types::{
     AwaitOpts, BatchStatus, CancelOutcome, CancelledPhase, ContextTemplate, DreamHandle, DreamMode,
     DreamOpts, DreamPhaseResult, DreamStatus, EpisodeCommit, ImmutabilityLevel, IngestResult,
     InvalidPolicyError, MemoryError, MemoryType, Namespace, NamespacePolicy, Result,
-    RetrievedContext, RetrievedContextNewParams, RetrievedFact, SearchOpts, SourceKind, SourceRef,
-    StructuredFact, SubmitOpts,
+    RetrievedContext, RetrievedContextNewParams, RetrievedFact, RetrievedFactNewParams, SearchOpts,
+    SourceKind, SourceRef, StructuredFact, SubmitOpts,
 };
 // ADR-072 seq1: `.content()` recall projection. Feature-gated (mirrors the
 // type itself, `memory::types::ContentPassage`).

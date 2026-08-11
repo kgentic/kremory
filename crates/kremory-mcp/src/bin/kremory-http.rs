@@ -1724,32 +1724,63 @@ mod tests {
 
     /// The item is built ONCE as a real `kremory::RetrievedContext` (using
     /// the documented cross-crate constructor, `RetrievedContext::new()` +
-    /// `with_namespace` — the same path `conversions.rs:676` already uses in
-    /// production) and the wire twin is derived FROM it via the existing
-    /// `From<RetrievedContext> for RetrievedContextWire` impl — never
-    /// hand-built independently. This mirrors the real production shape
+    /// `with_namespace` + `with_facts` — the same path `conversions.rs:676`
+    /// already uses in production) and the wire twin is derived FROM it via
+    /// the existing `From<RetrievedContext> for RetrievedContextWire` impl —
+    /// never hand-built independently. This mirrors the real production shape
     /// (kremory-mcp always converts FROM a facade `RetrievedContext`; it
-    /// never constructs a `RetrievedContextWire` from scratch) and sidesteps
-    /// a real, separate constraint verified while writing this test: unlike
-    /// `RetrievedContext`, `RetrievedFact` is ALSO `#[non_exhaustive]` with
-    /// NO public constructor anywhere in the crate (checked: no `impl
-    /// RetrievedFact` block exists), so an external crate cannot build a
-    /// facts-bearing `RetrievedContext` by hand at all — only by conversion
-    /// from one the library computed. `SourceRef` is NOT `#[non_exhaustive]`
-    /// (`memory/types.rs:311`), so this test's item genuinely exercises the
-    /// source_refs render path on both sides; it exercises the facts=empty
-    /// fallback branch, not the facts-populated branch (that branch is
-    /// covered by `flatten_result_content_*` above via wire-only fixtures,
-    /// and transitively by `kremory`'s own crate-internal tests where
-    /// `RetrievedFact` struct-literals are constructible).
+    /// never constructs a `RetrievedContextWire` from scratch). `SourceRef` is
+    /// NOT `#[non_exhaustive]` (`memory/types.rs:311`), so this test's item
+    /// genuinely exercises the source_refs render path on both sides.
+    ///
+    /// SUPERSEDED (TD-199, 2026-08-11): this doc comment previously said
+    /// `RetrievedFact` had "NO public constructor anywhere in the crate" and
+    /// so this fixture "exercises the facts=empty fallback branch, not the
+    /// facts-populated branch". That claim was the root cause Quinn's LOW-1
+    /// named on the TD-198 review: the constructor gap was real, but the
+    /// fix was to ADD the constructor (`RetrievedFact::new` +
+    /// `RetrievedContext::with_facts`/`with_entity_type`), not to accept the
+    /// coverage gap as permanent. The fixture below now carries one fact and
+    /// drives `render_temporal_facts`'s facts-populated arm
+    /// (`memory/mod.rs`'s `valid_at`/`invalid_at` formatting branch) through
+    /// BOTH the library path and the HTTP path, side by side.
     #[test]
     fn td198_http_render_and_library_render_are_byte_identical() {
         use kremory::memory::ContextTemplate;
-        use kremory::{RetrievedContext, RetrievedContextNewParams, SourceKind, SourceRef};
+        use kremory::{
+            RetrievedContext, RetrievedContextNewParams, RetrievedFact, RetrievedFactNewParams,
+            SourceKind, SourceRef,
+        };
 
         let occurred_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00+00:00")
             .expect("valid fixed RFC-3339 fixture timestamp")
             .with_timezone(&chrono::Utc);
+        let valid_at = chrono::DateTime::parse_from_rfc3339("2025-06-15T00:00:00+00:00")
+            .expect("valid fixed RFC-3339 fixture timestamp")
+            .with_timezone(&chrono::Utc);
+        let invalid_at = chrono::DateTime::parse_from_rfc3339("2026-02-01T00:00:00+00:00")
+            .expect("valid fixed RFC-3339 fixture timestamp")
+            .with_timezone(&chrono::Utc);
+
+        // TD-199: built via the new public constructor + fluent setter — the
+        // fixture this test needed all along, and previously impossible from
+        // outside the `kremory` crate.
+        let fact = RetrievedFact::new(RetrievedFactNewParams {
+            fact: "Ada Lovelace invented the compiler".to_string(),
+            subject: "Ada Lovelace".to_string(),
+            predicate: "invented".to_string(),
+            object: "the compiler".to_string(),
+            object_is_entity: false,
+            valid_at,
+            recorded_at: valid_at,
+            confidence: 0.95,
+            source_episode_ids: vec![1],
+            score: 0.9,
+        })
+        // Sets `invalid_at` so the fixture also exercises
+        // `render_temporal_facts`'s `Some(inv) => ", invalid_at=..."` arm,
+        // not just the `None` arm.
+        .with_invalid_at(invalid_at);
 
         let core_ctx = RetrievedContext::new(RetrievedContextNewParams {
             entity_id: "e1".to_string(),
@@ -1763,13 +1794,16 @@ mod tests {
                 published_at: None,
             }],
         })
-        .with_namespace(kremory::Namespace::new("ns-a"));
+        .with_namespace(kremory::Namespace::new("ns-a"))
+        .with_facts(vec![fact]);
 
         // NON-VACUITY precondition — a test that could pass by rendering
         // nothing proves nothing. Measured baseline (recorded so a future
-        // reader doesn't have to re-derive it): 1 item, 1 source_ref, 0 facts.
+        // reader doesn't have to re-derive it): 1 item, 1 source_ref, 1 fact
+        // (with `invalid_at` set — TD-199 closes the facts=empty gap Quinn
+        // found on TD-198's original fixture).
         assert_eq!(core_ctx.source_refs.len(), 1, "fixture must carry a source_ref");
-        assert!(core_ctx.facts.is_empty(), "fixture intentionally carries no facts (see doc comment)");
+        assert_eq!(core_ctx.facts.len(), 1, "fixture must carry a fact — see TD-199");
 
         let wire_ctx: RetrievedContextWire = core_ctx.clone().into();
 
