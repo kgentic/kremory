@@ -1979,6 +1979,14 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
 /// single Increment's concern is out of scope. `score` is a placeholder
 /// (`0.0`); the caller overwrites it with the fused RRF score immediately
 /// after construction.
+///
+/// TD-198: `kremory-mcp` has its own wire-DTO-shaped twin of this fn
+/// (`content_passage_into_context_wire` in `kremory-http.rs`) that it
+/// cannot fold into the shared `RenderableContext` trait — this fn is
+/// private to this crate, and its `score: 0.0` placeholder is only valid at
+/// THIS call site (the caller here always overwrites it; the wire twin's
+/// caller does not, so it bakes in the real score at construction). See
+/// that fn's doc comment for the full reasoning.
 #[cfg(feature = "content-search")]
 fn content_passage_into_retrieved_context(
     passage: ContentPassage,

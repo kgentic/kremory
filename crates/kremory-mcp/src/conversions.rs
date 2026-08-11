@@ -323,6 +323,75 @@ impl From<SourceRef> for SourceRefWire {
     }
 }
 
+// ─── kremory::memory::Renderable{Context,Fact,SourceRef} (TD-198) ─────────
+//
+// Wire-side halves of the ONE prompt-block renderer implementation in
+// `kremory::memory` (`render_entities` / `render_edge_summary` /
+// `render_temporal_facts`). Previously `kremory-mcp/src/bin/kremory-http.rs`
+// hand-mirrored those three functions field-for-field against this crate's
+// own `RetrievedContextWire` DTO — the exact two-implementations-must-agree
+// shape that caused TD-173's silent `.max()` fusion regression, re-created
+// for rendering by TD-196. These impls let `kremory-http.rs` call the real
+// `kremory::memory::render_*` functions directly instead.
+
+impl kremory::memory::RenderableFact for RetrievedFactWire {
+    fn fact_text(&self) -> &str {
+        &self.fact
+    }
+    fn valid_at_rfc3339(&self) -> String {
+        // Already RFC-3339 on the wire type (stamped at the `From<RetrievedFact>`
+        // boundary above) — no re-format needed, just clone the owned String out.
+        self.valid_at.clone()
+    }
+    fn invalid_at_rfc3339(&self) -> Option<String> {
+        self.invalid_at.clone()
+    }
+}
+
+impl kremory::memory::RenderableSourceRef for SourceRefWire {
+    fn kind_label(&self) -> &str {
+        // Wire `kind` is already the human-readable label string (mapped by
+        // `source_kind_facade_to_wire` above), not an enum — no lookup needed.
+        &self.kind
+    }
+    fn ref_id(&self) -> &str {
+        &self.id
+    }
+    fn occurred_at_rfc3339(&self) -> String {
+        self.occurred_at.clone()
+    }
+}
+
+impl kremory::memory::RenderableContext for RetrievedContextWire {
+    type Fact = RetrievedFactWire;
+    type SourceRef = SourceRefWire;
+
+    fn entity_name(&self) -> &str {
+        &self.entity_name
+    }
+    fn summary(&self) -> &str {
+        &self.summary
+    }
+    fn namespace_group_id(&self) -> Option<&str> {
+        // `/search` takes exactly one `namespace` per request (`RecallParams::
+        // namespace: String`), so every item in one response necessarily
+        // carries the SAME value here (or `None` for a synthesized
+        // content-passage item — see `content_passage_into_context_wire` in
+        // `kremory-http.rs`). The core renderers' multi-namespace `[ns:...]`
+        // prefix therefore can never fire for this type: not because this
+        // accessor hardcodes it away, but because the underlying data can't
+        // vary within one response. Returning the real field (rather than a
+        // hardcoded `None`) keeps this impl honest about what it's reading.
+        self.namespace.as_deref()
+    }
+    fn facts(&self) -> &[RetrievedFactWire] {
+        &self.facts
+    }
+    fn source_refs(&self) -> &[SourceRefWire] {
+        &self.source_refs
+    }
+}
+
 // ─── kremory_dream ──────────────────────────────────────────────────────
 
 #[derive(Debug)]
