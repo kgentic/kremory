@@ -662,72 +662,115 @@ fn with_facts_rejects_time_inversion_and_does_not_persist_inverted_window() {
 }
 
 // ── TD-197: reserved meta-edge predicates must never reach recall() ────────
-
-/// TD-197: `potential_alias` (`crate::core::disambiguation::
-/// RESERVED_PREDICATE_POTENTIAL_ALIAS`) is internal disambiguation
-/// bookkeeping, not a domain fact — `is_reserved_predicate()` must exclude it
-/// from EVERY consumer-facing recall read path. Pins the reserved predicate
-/// directly via `with_facts` (bypassing the L4 disambiguation flow entirely)
-/// since the read-side filter matches on the predicate STRING alone,
-/// regardless of how the fact was inserted — mirrors the exact leaked line
-/// measured in production: `"adoption potential_alias adoption agencies
-/// (valid_at=...)"` (RECALL-LEDGER §4.19 / tech-debt-register TD-197).
+//
+// TD-197 shape-2 detector (see `scripts/audit-reserved-predicates.py`): the
+// ORIGINAL version of this test pinned exactly one literal predicate string
+// (`RESERVED_PREDICATE_POTENTIAL_ALIAS`). That is a single-instance
+// regression pin, not a class guard — a second `RESERVED_PREDICATE_*` const
+// could be added to `disambiguation::RESERVED_PREDICATES` tomorrow and this
+// test would keep passing while the new value leaked, because nothing in the
+// test itself was coupled to the reserved-value SET. This version iterates
+// `disambiguation::RESERVED_PREDICATES` — the exact slice
+// `is_reserved_predicate()` consults — so a future reserved predicate is
+// covered automatically, the moment it is added to that slice, with zero
+// test-file changes required.
+//
+// The Python detector (`scripts/audit-reserved-predicates.py`) proves the
+// SOURCE-LEVEL sync between `RESERVED_PREDICATE_*` consts and the
+// `RESERVED_PREDICATES` slice they must appear in. This test proves the
+// RUNTIME consequence: for every predicate that slice contains, ingest it as
+// a real fact and prove it never reaches either consumer-facing recall
+// surface. The two are complementary, not duplicative: the Python detector
+// would not catch a `RESERVED_PREDICATES` slice that is complete but whose
+// entries a *read path* fails to filter (i.e. `is_reserved_predicate()`
+// itself, or a call site, regresses) — only a real end-to-end recall proves
+// that.
 #[test]
 fn td197_recall_never_surfaces_reserved_predicate() {
+    // Non-vacuity (CLAUDE.md "Non-vacuity is mandatory" / TD-197 shape-2 spec):
+    // a loop over an empty set passes trivially and proves nothing. If this
+    // ever fires, `RESERVED_PREDICATES` itself is broken — see
+    // `disambiguation::mod.rs`'s
+    // `reserved_predicates_slice_contains_every_reserved_predicate_const`
+    // unit test, which pins the const-vs-slice pairing directly.
+    assert!(
+        !kremory::core::disambiguation::RESERVED_PREDICATES.is_empty(),
+        "RESERVED_PREDICATES must not be empty — a vacuous loop here would prove \
+         nothing about reserved-predicate leakage"
+    );
+
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("runtime builds");
 
-    rt.block_on(async {
-        let mem = open_with_ns("td197_reserved_predicate").await;
+    for &predicate in kremory::core::disambiguation::RESERVED_PREDICATES {
+        rt.block_on(assert_reserved_predicate_never_surfaces(predicate));
+    }
+}
 
-        mem.remember("Adoption is discussed by adoption agencies.")
-            .with_facts(vec![StructuredFact {
-                subject: "adoption".to_string(),
-                predicate: kremory::core::disambiguation::RESERVED_PREDICATE_POTENTIAL_ALIAS
-                    .to_string(),
-                object: "adoption agencies".to_string(),
-                valid_from: None,
-                valid_to: None,
-                memory_type: None,
-            }])
-            .from_document("td197-doc")
-            .skip_extraction()
-            .await
-            .expect("remember(skip_extraction) should succeed");
+/// Pins `predicate` directly via `with_facts` (bypassing the L4
+/// disambiguation flow entirely) since the read-side filter matches on the
+/// predicate STRING alone, regardless of how the fact was inserted — mirrors
+/// the exact leaked line measured in production: `"adoption potential_alias
+/// adoption agencies (valid_at=...)"` (RECALL-LEDGER §4.19 / tech-debt-
+/// register TD-197). Then proves `predicate` reaches neither consumer-facing
+/// recall surface: the structured `.facts` on `recall().raw()`, nor the
+/// rendered (LLM-facing) recall string.
+async fn assert_reserved_predicate_never_surfaces(predicate: &str) {
+    let mem = open_with_ns(&format!("td197_reserved_{predicate}")).await;
 
-        // Structured: the reserved-predicate fact must NOT be in `.facts`.
-        let raw = mem
-            .recall("adoption")
-            .raw()
-            .await
-            .expect("raw recall should succeed");
-        let hit = raw
+    mem.remember("Adoption is discussed by adoption agencies.")
+        .with_facts(vec![StructuredFact {
+            subject: "adoption".to_string(),
+            predicate: predicate.to_string(),
+            object: "adoption agencies".to_string(),
+            valid_from: None,
+            valid_to: None,
+            memory_type: None,
+        }])
+        .from_document("td197-doc")
+        .skip_extraction()
+        .await
+        .expect("remember(skip_extraction) should succeed");
+
+    // Structured: the reserved-predicate fact must NOT be in `.facts`.
+    let raw = mem
+        .recall("adoption")
+        .raw()
+        .await
+        .expect("raw recall should succeed");
+    // Non-vacuity: an empty result set would make "no reserved predicate
+    // found" trivially true for the wrong reason (nothing was checked).
+    assert!(
+        !raw.is_empty(),
+        "recall() must return results to prove absence means something \
+         (predicate={predicate:?}); got 0 hits"
+    );
+    let hit = raw
+        .iter()
+        .find(|r| r.entity_name == "adoption")
+        .unwrap_or_else(|| {
+            panic!("adoption entity must be in recall results (predicate={predicate:?})")
+        });
+    assert!(
+        hit.facts
             .iter()
-            .find(|r| r.entity_name == "adoption")
-            .expect("adoption entity must be in recall results");
-        assert!(
-            hit.facts
-                .iter()
-                .all(|f| !kremory::core::disambiguation::is_reserved_predicate(&f.predicate)),
-            "TD-197: reserved predicate 'potential_alias' must never reach \
-             recall() structured output; got facts: {:?}",
-            hit.facts
-        );
+            .all(|f| !kremory::core::disambiguation::is_reserved_predicate(&f.predicate)),
+        "TD-197 [shape-2]: reserved predicate {predicate:?} must never reach \
+         recall() structured output; got facts: {:?}",
+        hit.facts
+    );
 
-        // Rendered (default TemporalFacts template): must not leak the
-        // predicate text into the LLM-facing prompt string either.
-        let rendered = mem
-            .recall("adoption")
-            .await
-            .expect("rendered recall should succeed");
-        assert!(
-            !rendered.contains(
-                kremory::core::disambiguation::RESERVED_PREDICATE_POTENTIAL_ALIAS
-            ),
-            "TD-197: reserved predicate must never reach rendered recall() \
-             output, got: {rendered:?}"
-        );
-    });
+    // Rendered (default TemporalFacts template): must not leak the
+    // predicate text into the LLM-facing prompt string either.
+    let rendered = mem
+        .recall("adoption")
+        .await
+        .expect("rendered recall should succeed");
+    assert!(
+        !rendered.contains(predicate),
+        "TD-197 [shape-2]: reserved predicate {predicate:?} must never reach \
+         rendered recall() output, got: {rendered:?}"
+    );
 }
