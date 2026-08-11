@@ -74,6 +74,37 @@ fi
 echo "=== [$LABEL] money guard PASSED — local Ollama path confirmed:"
 grep -ai "kremory-http booting" "$LOG" | sed 's/^/    /'
 
+# ── TRAJECTORY SAMPLER (TD-186a) ─────────────────────────────────────────────
+# WHY: the end-of-run entity count is the product of TWO stochastic stages —
+# extraction, THEN dream-phase merging — and only the compounded result was ever
+# recorded. Measured on run5b (2026-08-11): entities peaked at 174 after ingest
+# and finished at 120, i.e. the dream phase merged 31%. Meanwhile facts (which
+# merging barely touches) span 398-443 across runs (~11%) while entities span
+# 120-215 (~44%). That points the variance at the MERGE stage, not extraction —
+# the opposite of where TD-186a has been looking.
+#
+# Sampling the counts over time separates the two: the PEAK is the extraction
+# result, the FINAL is post-merge, and peak-minus-final is the merge delta. This
+# is non-invasive — it only reads the DB, and touches neither kremory nor the
+# harness — per instrument-real-data-flow-before-hypothesizing (measure at the
+# stage boundary rather than inferring the layer from an end count).
+TRAJ="$OUT_DIR/${LABEL}.trajectory.csv"
+echo "ts,elapsed_s,episodes,entities,facts" > "$TRAJ"
+(
+  START=$(date +%s)
+  while true; do
+    # `recorded_at`, never `id` — see the note at the summary block below.
+    ep=$(sqlite3 "$DB" 'SELECT count(recorded_at) FROM episodes;' 2>/dev/null || echo -1)
+    en=$(sqlite3 "$DB" 'SELECT count(recorded_at) FROM entities;' 2>/dev/null || echo -1)
+    fa=$(sqlite3 "$DB" 'SELECT count(recorded_at) FROM facts;'    2>/dev/null || echo -1)
+    echo "$(date -u +%H:%M:%S),$(( $(date +%s) - START )),$ep,$en,$fa" >> "$TRAJ"
+    sleep 60
+  done
+) &
+SAMPLER_PID=$!
+# Re-arm the trap to reap the sampler too — the original only knew about the server.
+trap 'kill "$SAMPLER_PID" 2>/dev/null || true; kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
+
 cd "$HERE"
 python3 harness.py --mode codemem --server-mode recall --scorer substring \
   --conversations 0 --recall-limit 50 \
@@ -96,3 +127,24 @@ echo "===          tables — count lines instead, per SYSTEM-PRIMER):"
 echo "    episodes: $(sqlite3 "$DB" 'SELECT recorded_at FROM episodes;' | wc -l | tr -d ' ')"
 echo "    entities: $(sqlite3 "$DB" 'SELECT recorded_at FROM entities;' | wc -l | tr -d ' ')"
 echo "    facts:    $(sqlite3 "$DB" 'SELECT recorded_at FROM facts;' | wc -l | tr -d ' ')"
+
+# ── CONFOUND CONTROLS (TD-200 / TD-186a) ─────────────────────────────────────
+# Arm failures are NOT incidental. Each one means that episode's extraction
+# degraded to a WEAKER ladder arm — a different extraction mechanism, not another
+# sample from the same one. Measured: run4 had 5/130 requests (completed), run5
+# had 3/57 (ABORTED — two landed on one request and crossed the harness's 90s
+# client timeout). So the rate is not the story, the CLUSTERING is, and a run
+# completes or dies partly on luck. Recording this per run turns a hypothesis
+# into a column, so entity-count variance can be controlled for it instead of
+# being attributed wholesale to "LLM noise".
+echo "    arm_failures: $(grep -ac 'arm_failure' "$LOG" || echo 0)   <- TD-200 confound control"
+
+# Extraction peak vs post-merge final — see the TRAJECTORY SAMPLER note above.
+if [ -s "$TRAJ" ]; then
+  PEAK=$(awk -F, 'NR>1 && $4>m {m=$4} END{print m+0}' "$TRAJ")
+  FINAL=$(awk -F, 'END{print $4+0}' "$TRAJ")
+  echo "    entities peak (post-ingest): $PEAK"
+  echo "    entities final (post-dream): $FINAL"
+  echo "    dream merge delta:           $((PEAK - FINAL))  <- TD-186a: which stage owns the variance"
+  echo "    trajectory: $TRAJ"
+fi
