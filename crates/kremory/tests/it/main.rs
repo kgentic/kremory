@@ -16,6 +16,7 @@ mod support;
 
 // --- test modules ---
 mod acronym_nickname_recall_s2_spike;
+mod adr029d_namespace_scoping_lint;
 mod adr050_phase3_guards;
 mod adr050_phase4_budget;
 mod adr050_phase5_sink_wiring;
