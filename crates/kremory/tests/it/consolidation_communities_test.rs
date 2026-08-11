@@ -23,6 +23,10 @@
 //!   - `unchanged_rerun` → `communities_updated == 0` (idempotent, DoD-P4.5).
 //!   - `dense_episode_hairball` → RISK-004 quality case: MUST NOT crash + reports 1
 //!     community HONESTLY (do NOT assert >1 — documented collapse).
+//!   - `td183_fixed_idem` → TD-183 DoD (a) regression: fixed graph, `communities()`
+//!     run TWICE, persisted membership asserted BYTE-IDENTICAL. Isolates the
+//!     deterministic partition op from `dream()`'s LLM-driven upstream passes
+//!     (register `.ai-docs/tech-debt/tech-debt-register.md`, "TD-183 DIAGNOSED").
 
 #![cfg(feature = "test-utils")]
 // Test binary — CLAUDE.md rule 5 exempts test files from the strict-typing lints.
@@ -414,4 +418,77 @@ async fn communities_fixture_batch_metrics() {
             "dense-hairball fixture: counter == OpReport.count (DoD-P4.3)"
         );
     }
+}
+
+// ─── TD-183 regression: whole-graph idempotency at the DETERMINISTIC tier ────────
+//
+// TD-183 register entry "DIAGNOSED — the flake is INHERITED from dream()'s LLM
+// passes, not local to the communities pass" established that `communities()`
+// itself contains zero `llm`/`chat`/`model` references and is a pure function of
+// co-occurrence topology, but `dream()` chains it after non-deterministic LLM
+// passes (reclassify / consistency_check / aliases) that mutate the graph between
+// calls — so whole-`dream()` idempotency after ONE call is not a property that
+// CAN hold. DoD (a): assert idempotency where it CAN hold — a fixed graph, no
+// model, no network, `communities()` run twice, persisted membership asserted
+// BYTE-IDENTICAL (a `BTreeMap<String, i64>` structural `assert_eq!` — exact
+// key+value equality, the strongest available equality here; strictly stronger
+// than comparing `member_hash` digests or the `communities_updated` count alone,
+// either of which could theoretically hold under a same-shape-different-content
+// coincidence that this does not allow).
+//
+// This test isolates the deterministic partition op from `dream()`'s LLM-driven
+// upstream passes, which the real-LLM idempotency test
+// (`dream_full_consolidation_real_llm::idempotency`) structurally cannot do — that
+// test's assertion is DELIBERATELY left unchanged (register DoD note: "changing a
+// real-LLM test's assertion is a maintainer call, and the safe reading has not
+// been excluded — it has only been made unlikely"). If THIS test ever goes RED,
+// that is a genuine partition defect (this graph never touches a model), and
+// TD-183 reopens with teeth per DoD (c).
+#[tokio::test]
+async fn td183_communities_idempotent_membership_on_fixed_graph() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    let gid = "td183_fixed_idem";
+    plant_two_triangle_bridge(&graph, gid).await;
+
+    let first = communities(&graph, gid).await.expect("first run");
+    let m1 = persisted_membership(&graph, gid).await;
+    let c1 = community_count(&graph, gid).await;
+
+    // Non-vacuity precondition — checked BEFORE the cross-run comparison below. A
+    // test that could pass on an empty partition (e.g. a broken fixture yielding
+    // zero entities) proves nothing; per
+    // [[verify-metric-sensitivity-before-gating-decisions]] an unvalidated
+    // instrument is not evidence. Measured baseline for `two_triangle_bridge`: 6
+    // entities / 2 communities on the first run.
+    assert!(
+        !m1.is_empty(),
+        "TD-183 non-vacuity: fixture must yield a non-empty partition, got {} members",
+        m1.len()
+    );
+    assert!(
+        first.count >= 1,
+        "TD-183 non-vacuity: first run must report >=1 updated community, got {}",
+        first.count
+    );
+    eprintln!(
+        "[TD-183] fixed-graph baseline: fixture=two_triangle_bridge entities={} communities={} (first run)",
+        m1.len(),
+        c1
+    );
+
+    let second = communities(&graph, gid).await.expect("second run");
+    let m2 = persisted_membership(&graph, gid).await;
+
+    assert_eq!(
+        m1, m2,
+        "TD-183: communities() over a FIXED graph must be idempotent — persisted \
+         membership must be BYTE-IDENTICAL across two runs. This graph never \
+         touches a model, so a mismatch here is a real partition defect, not \
+         model variance (register 2026-08-11 \"TD-183 DIAGNOSED\" entry)."
+    );
+    assert_eq!(
+        second.count, 0,
+        "TD-183: second run over an unchanged fixed graph must report 0 updated \
+         (no membership changed)"
+    );
 }
