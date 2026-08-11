@@ -3,6 +3,39 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
+## [Unreleased]
+
+### Fixed — dream alias resolution was inert on real corpora (TD-203)
+
+On the shipped LoCoMo corpus, **42 of 42 alias candidates sat unresolved across ten
+completed dream runs.** Re-running the same unchanged pass on a copy resolved 28 of them in
+under a second. Four defects, all now closed:
+
+- **Entity merge manufactured self-loops.** Re-pointing a fact whose *other* endpoint was
+  the merge keeper produced `X pred X`, which asserts nothing — 41 live ones on that corpus,
+  18 on the reserved `potential_alias` predicate, a shape disambiguation cannot even emit.
+  Such facts are now expired by the merge, and **revived by `unmerge`** so the mutation stays
+  reversible (ADR-073).
+- **The dream pass that RESOLVES aliases ran before the two passes that CREATE them.**
+  Anything produced by acronym/nickname recall or by canonicalization's merges waited for a
+  *next* dream, which a one-dream-per-namespace caller never provides. A second deterministic
+  sweep now runs after consolidation. `DreamSummary.aliases_resolved` therefore now counts
+  both sweeps.
+- **The pass was indistinguishable from a no-op.** It reported only merges+revokes, with
+  every other outcome at `debug!`, so "examined 42 and kept them all" looked identical to
+  "found nothing". It now emits one always-on summary line with `candidates_examined` and a
+  per-outcome breakdown, warns on an alias referencing an absent entity, and trips a warning
+  if candidates go in and nothing is judged.
+- **The alias re-similarity read was namespace-unscoped** (`WHERE a.id = ? AND b.id = ?`)
+  while the entity key is the composite `(id, group_id)`. On that corpus the join matched up
+  to **100 rows** and took an arbitrary one. Harmless there only because same-named entities
+  across namespaces happened to carry identical vectors; now scoped.
+
+### Added
+- `TemporalGraph::set_entity_embedding_in_group` — namespace-scoped embedding write
+  (TD-206). The existing `set_entity_embedding` matches on `id` alone and writes across every
+  namespace holding that name; it is now documented as test-fixture-only.
+
 ## [0.6.0] - 2026-08-11
 
 **Minor (breaking): out-of-the-box recall quality goes from ~25.7% to ~86%+ because

@@ -579,6 +579,50 @@ impl<'a> DreamRequest<'a> {
             crate::core::dream::consolidation::ConsolidationSummary::default()
         };
 
+        // Dream Pass — aliases, SECOND SWEEP (TD-203 D2). Deterministic, no LLM.
+        //
+        // The first sweep runs at position 2, BEFORE `acronym_nickname_recall`
+        // (which CREATES `potential_alias` facts), `canonicalize` and
+        // `run_consolidation` (whose merges re-point existing alias facts onto
+        // the keeper). Everything those passes produce therefore missed the only
+        // consumer and waited for a NEXT dream — and a caller that runs one
+        // dream per namespace, as the LoCoMo harness does, never provides one.
+        //
+        // MEASURED on the shipped corpus: 42 alias facts, 0 resolved, across TEN
+        // completed dreams. `melanie -> mel` was created by pass 3 at 19:11:44,
+        // 84 seconds AFTER the pass that resolves aliases had already run
+        // (`.context/kremory-http.log`); `graph_mutation_log` rows 2-3 show
+        // canonicalize re-pointing alias facts at 19:12:00, likewise after.
+        // Re-running the pass on a copy resolved 28 of the 42 in under a second.
+        //
+        // A SECOND sweep rather than MOVING the first: the first sweep's
+        // position is load-bearing for its own stated reason (spec §D3 — an
+        // entity about to be merged away must not be reclassified first), so
+        // moving it would trade this defect for that one. The pass is
+        // idempotent (it only ever invalidates) and cheap (0.72-17 ms measured
+        // per namespace on a 1197-entity corpus), so running it twice is
+        // strictly safer than running it once in the wrong place.
+        if let Some(tg) = self.memory.temporal_graph.as_ref() {
+            let group_id = namespace_to_group_id(&ns);
+            match crate::core::disambiguation::resolve_pending_aliases(tg, &group_id).await {
+                Ok(n) => {
+                    aliases_resolved += n;
+                    metrics::counter!("kremory.dream.aliases_resolved_total", "sweep" => "post")
+                        .increment(n as u64);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "kremory::dream::aliases",
+                        error = %e,
+                        "Dream aliases second sweep failed — skipping; dream phase result unaffected"
+                    );
+                    result
+                        .dream_warnings
+                        .push(format!("Dream aliases second sweep failed: {e}"));
+                }
+            }
+        }
+
         // SCOPE-001 restructure gate (dream-phase-reconciliation-v2 Phase 1):
         // reaching this point proves control flowed PAST the reclassify pass
         // instead of early-returning inside its success arm. Passes wired in

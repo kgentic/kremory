@@ -668,7 +668,9 @@ pub(crate) async fn apply_merge_with_audit(
     // its facts' prior `corroboration_inert`, the keeper's pre-overwrite values,
     // and the episodic-edge collision flags only exist until the UPDATEs below
     // run (spec §2.3 / §2.4 DERIVATION deps).
-    let snapshot_group_id = match snapshot_merge_pre_state(
+    // TD-203 D1 — `doomed_self_loops` is the set of facts this merge will
+    // collapse to `keeper -> keeper`; expired after the endpoint re-points land.
+    let (snapshot_group_id, doomed_self_loops) = match snapshot_merge_pre_state(
         graph,
         MergeSnapshotParams {
             loser_id,
@@ -681,7 +683,7 @@ pub(crate) async fn apply_merge_with_audit(
     )
     .await
     {
-        Ok(group_id) => group_id,
+        Ok(pair) => pair,
         Err(e) => {
             let _ = guard.rollback().await;
             return Err(e);
@@ -763,11 +765,67 @@ pub(crate) async fn apply_merge_with_audit(
             r2
         };
 
+    // TD-203 D1 — expire the facts the re-points above just collapsed onto the
+    // keeper on BOTH endpoints. `A pred B` is meaningful only while A and B are
+    // distinct entities; once merged it reads `A pred A` and asserts nothing.
+    //
+    // Left unguarded this manufactured 41 live self-loops on the shipped LoCoMo
+    // corpus — 18 of them on the reserved `potential_alias` predicate, a shape
+    // L4 disambiguation CANNOT emit (it compares a NEW entity against a
+    // DIFFERENT existing one), which is how the corruption was first spotted.
+    // Attributed to `canonicalize` merges via `graph_mutation_log` rows 2-3.
+    //
+    // SOFT expiry, not DELETE: `expired_at` is the project's reversible
+    // tombstone, and `pre_state.self_loops_expired` carries these ids so
+    // `unmerge` (reversal.rs step (d2)) clears the stamp after un-pointing the
+    // endpoints — at which point the fact is meaningful again. A hard DELETE
+    // would make the merge irreversible in violation of ADR-073.
+    //
+    // Placed AFTER r2 (the endpoint re-points) because the ids were predicted
+    // pre-merge; running it earlier would expire facts that are still live and
+    // still meaningful.
+    let r3b = if r3.is_ok() && !doomed_self_loops.is_empty() {
+        // RFC3339, matching `TemporalGraph::invalidate_fact` (`graph/facts.rs:142`)
+        // so every `expired_at` in the table is written in one format.
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut last = Ok(0u64);
+        for fact_id in &doomed_self_loops {
+            last = graph
+                .conn
+                .execute(
+                    "UPDATE facts SET expired_at = ?1 WHERE id = ?2 AND expired_at IS NULL",
+                    libsql::params![now.clone(), *fact_id],
+                )
+                .await;
+            if last.is_err() {
+                break;
+            }
+        }
+        if last.is_ok() {
+            counter!(
+                "kremory.merge.self_loop_facts_expired_total",
+                "site" => site.as_str()
+            )
+            .increment(doomed_self_loops.len() as u64);
+            tracing::info!(
+                target: "kremory.merge",
+                loser_id,
+                keeper_id,
+                group_id,
+                expired = doomed_self_loops.len(),
+                "kremory.merge.self_loop_facts_expired"
+            );
+        }
+        last
+    } else {
+        r3
+    };
+
     // Accumulate access_count into keeper. ADR-029d: scoped by `group_id` — the
     // keeper lives in THIS namespace (it's the survivor of a merge this caller
     // scoped to `group_id`); an unscoped write would hit whichever namespace's
     // row libSQL matches first if the same id also exists elsewhere.
-    let r4 = if r3.is_ok() && loser_access_count > 0 {
+    let r4 = if r3b.is_ok() && loser_access_count > 0 {
         graph
             .conn
             .execute(
@@ -776,7 +834,7 @@ pub(crate) async fn apply_merge_with_audit(
             )
             .await
     } else {
-        r3
+        r3b
     };
 
     // Site #6 (ADR-063 §"six sites" #6 / SYNTHESIS §2): combine the loser's
@@ -1041,10 +1099,75 @@ struct MergeSnapshotParams<'a> {
     structural_signal: bool,
 }
 
+/// TD-203 D1 — the facts a merge of `loser` into `keeper` would collapse into a
+/// self-loop (`X pred X`), which asserts nothing.
+///
+/// Three shapes qualify, all scoped to the merge's namespace (ADR-029d) and all
+/// still live: `loser -> keeper`, `keeper -> loser`, and an already
+/// self-referential `loser -> loser`. After the endpoint re-points at
+/// `apply_merge_with_audit` every one of them reads `keeper -> keeper`.
+///
+/// Deliberately does NOT match a PRE-EXISTING `keeper -> keeper` row: this merge
+/// did not create it, so this merge must not expire it (and `unmerge` would then
+/// revive a fact it never killed).
+///
+/// Declared once and used by BOTH the snapshot and the expiry so the two cannot
+/// drift apart — the pair is a single logical predicate evaluated twice inside
+/// one transaction.
+const SELF_LOOP_FACT_IDS_SQL: &str = "SELECT id FROM facts \
+     WHERE expired_at IS NULL \
+       AND subject_group_id = ?3 AND object_group_id = ?3 \
+       AND ((subject_id = ?1 AND object_id = ?2) \
+         OR (subject_id = ?2 AND object_id = ?1) \
+         OR (subject_id = ?1 AND object_id = ?1))";
+
+/// Bundled parameters for [`self_loop_fact_ids`] — args-as-object per TD-042
+/// (workspace clippy `too_many_arguments` threshold is 3, and
+/// `#[allow(clippy::*)]` is banned in `src/`). `graph` stays a lead positional
+/// param (receiver-like dep, project convention).
+#[derive(Clone, Copy)]
+struct SelfLoopScanParams<'a> {
+    /// The entity being merged AWAY.
+    loser_id: &'a str,
+    /// The surviving entity both endpoints will point at.
+    keeper_id: &'a str,
+    /// ADR-029d — the namespace this merge is scoped to.
+    group_id: &'a str,
+}
+
+/// Collect the fact ids [`SELF_LOOP_FACT_IDS_SQL`] identifies.
+async fn self_loop_fact_ids(
+    graph: &TemporalGraph,
+    params: SelfLoopScanParams<'_>,
+) -> Result<Vec<i64>> {
+    let SelfLoopScanParams {
+        loser_id,
+        keeper_id,
+        group_id,
+    } = params;
+    let mut rows = graph
+        .conn
+        .query(
+            SELF_LOOP_FACT_IDS_SQL,
+            libsql::params![loser_id, keeper_id, group_id],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    while let Some(row) = rows.next().await? {
+        ids.push(row.get::<i64>(0)?);
+    }
+    Ok(ids)
+}
+
+/// Returns the snapshot's `group_id` and — TD-203 D1 — the fact ids this merge
+/// must expire because re-pointing collapses both their endpoints onto the
+/// keeper. The ids are returned rather than re-derived by the caller so the
+/// value written into `pre_state.self_loops_expired` and the value the caller
+/// expires are the SAME list by construction, not two queries that agree today.
 async fn snapshot_merge_pre_state(
     graph: &TemporalGraph,
     params: MergeSnapshotParams<'_>,
-) -> Result<String> {
+) -> Result<(String, Vec<i64>)> {
     let MergeSnapshotParams {
         loser_id,
         keeper_id,
@@ -1225,11 +1348,27 @@ async fn snapshot_merge_pre_state(
         });
     }
 
+    // (5) TD-203 D1 — facts this merge will collapse to `keeper -> keeper`.
+    //     Captured here, inside the same txn and BEFORE the destructive
+    //     re-points, for the same reason as (1)-(4): the mutation-log row is
+    //     written before the writes, so the pre-state must PREDICT the affected
+    //     set rather than observe it afterwards.
+    let self_loops_expired = self_loop_fact_ids(
+        graph,
+        SelfLoopScanParams {
+            loser_id,
+            keeper_id,
+            group_id: &captured_group_id,
+        },
+    )
+    .await?;
+
     let pre_state = EntityMergePreState {
         loser_entity_row,
         keeper_pre,
         repointed_facts,
         episodic_edges,
+        self_loops_expired: self_loops_expired.clone(),
     };
 
     // `inputs`: the SORTED unordered pair is the nogood key (spec §6.2 / §2.3) —
@@ -1293,7 +1432,7 @@ async fn snapshot_merge_pre_state(
 
     // Return the namespace this merge scoped, for the post-commit
     // `mutation_logged_total{group_id}` label (spec §8.2).
-    Ok(captured_group_id)
+    Ok((captured_group_id, self_loops_expired))
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

@@ -950,3 +950,113 @@ async fn unsupersede_clears_bound() {
         kremory::facade::UnsupersedeOutcome::NotSuperseded { .. }
     ));
 }
+
+// ── TD-203 D1 — merge must not manufacture self-loops, and undo must revive ──
+
+/// Read `(subject_id, object_id, expired_at IS NULL)` for one fact id.
+async fn read_fact(graph: &TemporalGraph, fact_id: i64) -> (String, String, bool) {
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT subject_id, object_id, expired_at IS NULL FROM facts WHERE id = ?1",
+            libsql::params![fact_id],
+        )
+        .await
+        .expect("read fact");
+    let row = rows.next().await.expect("row").expect("fact present");
+    (
+        row.get::<String>(0).expect("subject"),
+        row.get::<String>(1).expect("object"),
+        row.get::<i64>(2).expect("live") == 1,
+    )
+}
+
+/// TD-203 D1 — a fact linking loser and keeper is meaningful only while they are
+/// distinct entities. Re-pointing it onto the keeper yields `X pred X`, which
+/// asserts nothing; the merge must expire it, and `unmerge` must bring it back.
+///
+/// **Why this is a real defect and not a tidiness concern.** Unguarded, this
+/// manufactured 41 live self-loops on the shipped LoCoMo corpus — 18 of them on
+/// the reserved `potential_alias` predicate, a shape L4 disambiguation CANNOT
+/// emit (it compares a NEW entity against a DIFFERENT existing one). That
+/// impossible shape is what exposed the bug. Attribution is in
+/// `graph_mutation_log` rows 2-3 of `.context/full-corpus.db` (`canonicalize`
+/// merging `12 july 2023` and `20 july 2023` into `3 july 2023`).
+///
+/// **Sensitivity, both directions** (`verify-metric-sensitivity-before-gating-decisions`):
+/// the CONTROL fact proves the test is not vacuously green — it must survive the
+/// same merge, re-pointed and LIVE. Revert the guard in
+/// `canonicalization.rs::apply_merge_with_audit` and the self-loop assertion
+/// fails while the control still passes.
+#[tokio::test]
+async fn merge_expires_self_loop_fact_and_unmerge_revives_it() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    insert_embedded(&graph, KEEPER, "alice johnson, engineering lead, joined 2019").await;
+    insert_embedded(&graph, LOSER, "alice j").await;
+    insert_bare(&graph, "bob").await;
+
+    // The doomed fact: loser -> keeper. After the merge both endpoints are KEEPER.
+    let self_loop = plant_fact(&graph, LOSER, "same_team_as", KEEPER).await;
+    // CONTROL: an ordinary loser-side fact that MUST survive, re-pointed + live.
+    let control = plant_fact(&graph, LOSER, "reports_to", "bob").await;
+
+    let report = canonicalize_surface_forms(&graph, GROUP, L5_CANONICALIZATION_THRESHOLD)
+        .await
+        .expect("canonicalize");
+    assert!(
+        report.merges_applied > 0,
+        "PRECONDITION: the merge must actually fire, else this test is vacuous \
+         (a-record-of-work-is-not-the-work: assert the instrument fired)"
+    );
+
+    let (sl_subj, sl_obj, sl_live) = read_fact(&graph, self_loop).await;
+    assert_eq!(sl_subj, KEEPER, "self-loop subject re-pointed to keeper");
+    assert_eq!(sl_obj, KEEPER, "self-loop object re-pointed to keeper");
+    assert!(
+        !sl_live,
+        "TD-203 D1: a fact collapsed to `{KEEPER} same_team_as {KEEPER}` asserts \
+         nothing and MUST be expired by the merge — this is the assertion that \
+         fails when the guard is reverted"
+    );
+
+    let (c_subj, c_obj, c_live) = read_fact(&graph, control).await;
+    assert_eq!(c_subj, KEEPER, "control fact re-pointed onto keeper");
+    assert_eq!(c_obj, "bob", "control fact object untouched");
+    assert!(
+        c_live,
+        "SENSITIVITY: an ordinary re-pointed fact must stay LIVE — if this also \
+         failed, the guard would be expiring everything rather than self-loops"
+    );
+
+    // Reversibility (ADR-073): undo must return the graph to its prior state,
+    // which means the expired self-loop comes BACK — otherwise `unmerge` hands
+    // back a strictly smaller graph than it was given.
+    let mutation_id: i64 = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT id FROM graph_mutation_log WHERE kind = 'entity_merge' \
+                 ORDER BY id DESC LIMIT 1",
+                (),
+            )
+            .await
+            .expect("log query");
+        rows.next()
+            .await
+            .expect("row")
+            .expect("one entity_merge row")
+            .get::<i64>(0)
+            .expect("id")
+    };
+    unmerge(&graph, mutation_id).await.expect("unmerge");
+
+    let (sl_subj2, sl_obj2, sl_live2) = read_fact(&graph, self_loop).await;
+    assert_eq!(sl_subj2, LOSER, "undo re-points the subject back to the loser");
+    assert_eq!(sl_obj2, KEEPER, "object endpoint unchanged by undo");
+    assert!(
+        sl_live2,
+        "TD-203 D1 reversibility: once the endpoints are distinct again the fact \
+         is meaningful again, so `unmerge` MUST clear `expired_at`. Without this \
+         the merge is a one-way data loss disguised as a reversible mutation."
+    );
+}
