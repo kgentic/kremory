@@ -3,7 +3,7 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
-## [0.6.0] - 2026-08-05
+## [0.6.0] - 2026-08-11
 
 **Minor (breaking): out-of-the-box recall quality goes from ~25.7% to ~86%+ because
 `content-search` and the dense episode arm are now DEFAULT features.** Every prior
@@ -13,12 +13,26 @@ weakest possible build. If you pinned `default-features = false`, nothing change
 Also lands the v1 durability sweep: sink events and durable-write counters no longer
 describe rows a rollback erased, and two migration crash-resume defects are fixed.
 
+Folded in since this entry was first drafted: `recall()` no longer leaks kremory's own
+entity-disambiguation bookkeeping to consumers as invented facts (TD-197 — up to 142 of
+199 benchmark questions were affected before the fix), a bi-temporal anchoring bug where
+LLM-extracted facts ignored the caller's declared `published_at` (TD-181), and a fix for
+entities mentioned before being formally extracted, which were previously unreachable by
+both text and vector search. Also ships a breaking addition to `RawFact` for external
+`EntityExtractor` implementations, a fully-public construction surface for
+`RetrievedContext` / `RetrievedFact`, and two dependency security fixes.
+
 ### Changed (breaking)
 - **`content-search` is a DEFAULT feature (ADR-078).** Measured 25.7% -> 86.2% recall
   out of the box. This is the headline reason to upgrade.
 - **Dense episode arm ON by default.**
 - **Contradiction detection default flipped OFF then back ON** with a rewritten prompt
   after it was found to destroy set-valued facts (TD-167/TD-165).
+- **`RawFact` gains a new field, `valid_at: Option<String>` (TD-187/TD-192).** Breaking
+  for external `EntityExtractor` implementations that construct `RawFact` via struct
+  literal — it is `pub`, not `#[non_exhaustive]`. Default-identical for every built-in
+  extraction path: the field is optional/`#[serde(default)]`, and an absent value falls
+  back to the pre-existing `ref_time` behaviour.
 
 ### Added
 - **`RetrievedContext::is_content_passage()` + `CONTENT_PASSAGE_TYPE_NAME`.** Since
@@ -31,6 +45,22 @@ describe rows a rollback erased, and two migration crash-resume defects are fixe
   `isContentPassage` field.
 - **`IngestStatus::Skipped`** — a terminal status for `skip_extraction` ingests, which
   previously stayed `Pending` forever and surfaced to callers as `WaitTimeout`.
+- **`RetrievedContext::with_facts(...)` / `with_entity_type(id, name)`, plus
+  `RetrievedFact::new(RetrievedFactNewParams)` (+ `with_invalid_at` / `with_expired_at`)
+  (TD-199).** `RetrievedFact` previously had no public constructor at all, and
+  `RetrievedContext`'s fluent-setter surface had no way to set `facts` or the
+  entity-type pair — both `#[non_exhaustive]` types are now fully constructible outside
+  the crate.
+- **`kremory::memory::{RenderableContext, RenderableFact, RenderableSourceRef}` traits,
+  and `render_entities` / `render_edge_summary` / `render_temporal_facts` are now `pub`
+  (TD-198).** Lets a consumer render kremory's own Markdown context blocks over its own
+  result type, not only `RetrievedContext`.
+- **Extraction prompts are now temporally grounded, and facts can carry their own
+  `valid_at` (TD-187).** When a caller sets `.published_at(...)`, the extraction prompt
+  now includes that declared date, and an extracted fact's `valid_at` is used when the
+  model supplies one (falling back to the episode's reference time otherwise) —
+  previously every fact from one episode shared a single date regardless of what the
+  source text actually said ("yesterday", "last March", etc.).
 
 ### Fixed
 - **Sink events + durable-write counters fired INSIDE the ingest transaction**, so a
@@ -49,6 +79,34 @@ describe rows a rollback erased, and two migration crash-resume defects are fixe
 - **A single bad candidate pair no longer aborts the whole `acronym_nickname_recall`
   dream pass**, discarding every other adjudicated merge.
 - **`NuExtractEntitiesOnly` token cost was attributed to `operation="unclassified"`.**
+- **`recall()` no longer serves kremory's own entity-disambiguation bookkeeping to
+  consumers as a fact (TD-197).** The reserved `potential_alias` meta-edge predicate —
+  used internally to propose entity merges — was never filtered out of either the
+  connected-facts projection or the dense fact-search arm. Measured on a 199-question
+  benchmark: 142 questions were leaking it before the fix, 0 after.
+- **Facts produced by LLM extraction now honour the caller's declared `published_at`**
+  instead of always anchoring to ingest wall-clock (TD-181) — previously only
+  caller-supplied structured facts respected it, so the same document could be
+  bi-temporally anchored two different ways depending on which code path produced a
+  given fact.
+- **Entities first seen as a forward reference — mentioned inside a fact before being
+  formally extracted — are now findable.** They previously had neither a name (missed
+  by full-text search) nor an embedding (missed by vector search); both are now
+  backfilled after commit.
+- **A silent data-loss bug in the structured-output JSON repair path is fixed
+  (TD-192).** The prior JSON-repair dependency flattened any array it had to recover
+  rather than parse cleanly, silently dropping every element after the first while still
+  reporting success. Replaced with a dependency (`jsonrepair`) that fails loudly instead
+  of silently truncating; not observed to have fired on the benchmark corpus this was
+  found against.
+
+### Security
+- **2 RUSTSEC advisories fixed** via targeted dependency bumps: `crossbeam-epoch`
+  0.9.18 -> 0.9.20 (RUSTSEC-2026-0204), `quinn-proto` 0.11.14 -> 0.11.16
+  (RUSTSEC-2026-0185). 4 remaining advisories (all `rustls-webpki`, reached only through
+  a pinned `libsql = "=0.9.30"`) are documented as unreachable in kremory's usage — a
+  regression test fails the build if any remote-libsql API is ever referenced — pending
+  a non-prerelease upstream `libsql`.
 
 ### Known issues
 - **A dream pass can still fail intermittently (~1 run in 5)** when a merge candidate's
