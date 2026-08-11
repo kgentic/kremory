@@ -625,15 +625,37 @@ async fn namespace_isolation() {
     //   prompt containing "alpha-content" → entity ALPHA (Person)
     //   prompt containing "beta-content"  → entity BETA  (Person)
     //
-    // NuExtractExtractor matches on "# Template:" and expects {"entities": [...], "relationships": [...]}.
     // MockChatProvider::new matches on the last user message substring — the
     // full input text is embedded in the prompt, so these keys reliably select
     // the right response per ingest call.
+    //
+    // ⚠️ FIXTURE CORRECTED 2026-08-11 — this test had been failing silently.
+    //
+    // The canned payload was written for `NuExtractExtractor`, which no longer
+    // exists (`core/extraction/nuextract.rs` is now a tombstone comment recording
+    // its deletion). It emitted `{"name": ..., "label": "Person"}`. The live
+    // contract is `EntityListIntegerId` / `RawEntityIntegerId`
+    // (`core/extraction/models.rs:299`), i.e. `{"name": ..., "entity_type_id": N}`
+    // — an INTEGER id resolved against the namespace registry (TD-013 L1).
+    //
+    // The wrapper key `"entities"` was already correct; only the ITEM shape was
+    // stale. Verified against the parser's own unit test
+    // (`parsers.rs:979`: `{"entities":[{"name":"Alice","entity_type_id":0}]}`).
+    //
+    // It failed LOUDLY and correctly: TD-013 deliberately removed
+    // `#[serde(default)]` from `entity_type_id` so a missing field is a parse
+    // error rather than a silent `0` (`llm-output-parse-loudly`). The old payload
+    // therefore parsed to zero entities and the assertion below fired. The
+    // product was right; the fixture was obsolete.
+    //
+    // `entity_type_id: 0` is the "Entity" catch-all — always valid regardless of
+    // the namespace registry, which is what this test wants: it asserts NAMESPACE
+    // ISOLATION, not typing.
     let mut responses: HashMap<String, String> = HashMap::new();
     responses.insert(
         "alpha-content".to_string(),
         serde_json::json!({
-            "entities": [{"name": "ALPHA", "label": "Person"}],
+            "entities": [{"name": "ALPHA", "entity_type_id": 0}],
             "relationships": []
         })
         .to_string(),
@@ -641,7 +663,7 @@ async fn namespace_isolation() {
     responses.insert(
         "beta-content".to_string(),
         serde_json::json!({
-            "entities": [{"name": "BETA", "label": "Person"}],
+            "entities": [{"name": "BETA", "entity_type_id": 0}],
             "relationships": []
         })
         .to_string(),
