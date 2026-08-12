@@ -353,6 +353,13 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             deterministic_signal: DeterministicSignal::from_structural_prefilter(true),
             llm_verdict: verdict.clone(),
             min_confidence_floor: None,
+            // TD-212: the temporal veto. Measured on `graph_mutation_log`, this
+            // site merged a full timestamp INTO its bare time in 10 of 21 merges
+            // (`1037 am on 27 june 2023` -> `1037 am`) — irreversible data loss.
+            // Only the TEMPORAL arm of ADR-057's rule applies here: the full
+            // lexical gate would reject this site's acronym pairs, which share
+            // zero tokens by construction.
+            names: Some((&pair.a, &pair.b)),
         });
         record_write_gate_decision(decision);
 

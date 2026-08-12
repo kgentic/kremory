@@ -114,6 +114,37 @@ pub(crate) fn names_lexically_compatible(a: &str, b: &str) -> bool {
     union > 0 && (inter as f32 / union as f32) >= L4_LEXICAL_JACCARD_MIN
 }
 
+/// Do two names carry CONFLICTING temporal/numeric identity tokens?
+///
+/// The same rule [`names_lexically_compatible`] applies, exposed on its own for
+/// destructive-merge paths that must NOT run the token-Jaccard arm. Site #5
+/// (`acronym_nickname_recall`, ADR-063) is exactly that case: acronym and nickname
+/// pairs (`IBM` / `International Business Machines`) share **zero** tokens by
+/// construction, so Jaccard would reject precisely the merges that site exists for
+/// — but a timestamp collapsing onto its bare time (`1037 am on 27 june 2023` →
+/// `1037 am`) must still be blocked. TD-212.
+///
+/// Wired into the shared `identity_verdict::write_gate` as its row-0 veto, so it
+/// applies at Site #5 AND Site #3. **Both were evidence-checked before wiring, not
+/// enabled by analogy:**
+///
+/// | site | corpus | should-merge rows | blocked by the veto |
+/// |---|---|---|---|
+/// | #5 acronym/nickname | `site5_acronym_adversarial.jsonl` (140) | 101 non-`false` | **0** |
+/// | #3 type collapse | `site3_type_collapse_adversarial.jsonl` (119) | 57 | **0** |
+///
+/// Site #3 was initially left OUT on the theory that a trailing numeral is a
+/// legitimate type variant (`person_2` vs `person`). The corpus refuted it, and all
+/// 152 real `entity_types` names carry zero numerals or month words — so the veto is
+/// inert there today and earns its place as defence-in-depth for future type names
+/// that DO carry a date (`meeting_2023`). Both corpora keep their temporal tokens in
+/// description/context fields, never in the compared names.
+pub(crate) fn temporal_conflict(a: &str, b: &str) -> bool {
+    let na = crate::core::resolver::normalize_name(a);
+    let nb = crate::core::resolver::normalize_name(b);
+    temporal_discriminators(&na) != temporal_discriminators(&nb)
+}
+
 /// Month words. Identity-bearing in exactly the way numerals are: `23 october 2023`
 /// and `23 march 2023` share day AND year and differ only here, so a numerals-only
 /// rule lets that one pair through (measured: 1 of 79 — see below).
