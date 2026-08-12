@@ -78,7 +78,16 @@ pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
 /// `discover_types` via the else-branch — `check_proposal` is never
 /// called in degraded mode, so `GateOutcome` has no `Skipped` variant.
 /// The degraded-mode counter / warning are emitted by `emit_gate_skipped()`.
-// `Eq` dropped: `NeedsLlmVerify.desc_cosine` is `f32`, which is `PartialEq` only.
+///
+/// TD-210: every variant carries the best-match `existing_name` / `desc_cosine`
+/// it was decided against, so the caller can leave a full audit trail for EVERY
+/// decision — not just the ones that happened to reject. Both fields are
+/// `Option`-typed on `Pass` (and `desc_cosine` on `Redundant`) precisely because
+/// a comparison sometimes genuinely does not happen (the exact-name pre-filter
+/// fires before any cosine is computed; an empty registry has nothing to compare
+/// against) — `None` MUST mean "no comparison occurred", never "a comparison
+/// happened and its result was dropped".
+// `Eq` dropped: cosine fields are `f32`, which is `PartialEq` only.
 //
 // `pub` + `#[doc(hidden)]` (not `pub(crate)`) so the Site #2 metrics harness
 // (`tests/dream_metrics_harness_site2.rs`, an external integration-test binary)
@@ -88,9 +97,27 @@ pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
 #[derive(Debug, Clone, PartialEq)]
 pub enum GateOutcome {
     /// Proposal is distinct from all existing types — accepted by this gate.
-    Pass,
+    ///
+    /// `existing_name`/`desc_cosine` carry the BEST-match comparison the
+    /// proposal was accepted against, when one existed: `Some` when at least
+    /// one non-catch-all existing type was compared (even though it stayed
+    /// below `TYPE_NOVELTY_LOWER_BAND`); `None` only when
+    /// `existing_type_embeddings` was empty (no existing type to compare
+    /// against at all — the registry-empty early return).
+    Pass {
+        existing_name: Option<String>,
+        desc_cosine: Option<f32>,
+    },
     /// Proposal is too similar to an existing type (name or description exceeded threshold).
-    Redundant { existing_name: String },
+    ///
+    /// `desc_cosine` is `None` when the deterministic normalized-exact-name
+    /// pre-filter (TD-097 Step 1) fired — rejection happened before the
+    /// desc-cosine loop ever ran, so no cosine was computed for THIS decision.
+    /// `Some` when rejected via the description-cosine threshold instead (Step 2).
+    Redundant {
+        existing_name: String,
+        desc_cosine: Option<f32>,
+    },
     /// Proposal's best desc-cosine match against an existing type falls in the
     /// AMBIGUOUS band (ADR-063 spec §4.3 sibling table, Site #2): either
     /// `[0.70, 0.85)`, or `≥0.85` with zero name-lemma overlap (SYNTHESIS §2 row 1
@@ -231,8 +258,13 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
                 proposal_name = %proposal_name,
                 "anti-redundancy: proposal name normalizes-equal to an existing type — rejecting"
             );
+            // TD-210: no desc-cosine loop has run yet at this point — the
+            // exact-name pre-filter decided this outcome BEFORE any embedding
+            // comparison, so `desc_cosine: None` here means "genuinely no
+            // comparison happened", not "a comparison happened and was dropped".
             return GateOutcome::Redundant {
                 existing_name: spec.name.clone(),
+                desc_cosine: None,
             };
         }
     }
@@ -249,7 +281,13 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
     }
 
     let Some((best_spec, best_cosine)) = best else {
-        return GateOutcome::Pass; // no existing types to compare against
+        // TD-210: no existing (non-catch-all) type in this namespace at all —
+        // genuinely nothing to compare against, so both fields are `None`, not
+        // just omitted. See `GateOutcome::Pass` doc comment.
+        return GateOutcome::Pass {
+            existing_name: None,
+            desc_cosine: None,
+        };
     };
 
     if best_cosine >= DESC_COSINE_THRESHOLD {
@@ -271,6 +309,7 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
             );
             return GateOutcome::Redundant {
                 existing_name: best_spec.name.clone(),
+                desc_cosine: Some(best_cosine),
             };
         }
         // ≥0.85 but ZERO lemma overlap — ambiguous per EDC's over-generalization
@@ -300,7 +339,14 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
         };
     }
 
-    GateOutcome::Pass
+    // TD-210: a real comparison happened (an existing type was found and its
+    // cosine computed) — it just didn't clear the lower band. Carry the
+    // best-match evidence through even on accept, so the caller can persist
+    // WHY this proposal passed, not just THAT it passed.
+    GateOutcome::Pass {
+        existing_name: Some(best_spec.name.clone()),
+        desc_cosine: Some(best_cosine),
+    }
 }
 
 /// Emit the degraded-mode counter when no embedder is available.
@@ -362,6 +408,9 @@ mod tests {
     #[test]
     fn gate_passes_distinct_proposal() {
         // Distinct name (no normalized match) + orthogonal desc embedding → Pass.
+        // TD-210: one existing type WAS compared (best_cosine=0.0) — a real
+        // comparison happened even though the outcome is Pass — so the outcome
+        // must carry it (Some), not drop it.
         let existing = vec![(spec(1, "Person"), unit_vec(4, 0))]; // desc emb at dim 0
         let desc = unit_vec(4, 2);
         let outcome = check_proposal(CheckProposalParams {
@@ -371,7 +420,21 @@ mod tests {
             namespace: "test_ns",
             model: "test_model",
         });
-        assert_eq!(outcome, GateOutcome::Pass);
+        match outcome {
+            GateOutcome::Pass {
+                existing_name,
+                desc_cosine,
+            } => {
+                assert_eq!(
+                    existing_name,
+                    Some("Person".to_string()),
+                    "a comparison happened — the best-match name must be carried, not dropped"
+                );
+                let cosine = desc_cosine.expect("a comparison happened — cosine must be Some");
+                assert!(cosine.abs() < 1e-5, "orthogonal vectors → cosine ~0");
+            }
+            other => panic!("expected Pass, got {other:?}"),
+        }
     }
 
     #[test]
@@ -389,7 +452,15 @@ mod tests {
             model: "m",
         });
         match outcome {
-            GateOutcome::Redundant { existing_name } => assert_eq!(existing_name, "Organization"),
+            GateOutcome::Redundant {
+                existing_name,
+                desc_cosine,
+            } => {
+                assert_eq!(existing_name, "Organization");
+                let cosine = desc_cosine
+                    .expect("rejected via the desc-cosine gate — cosine must be Some (TD-210)");
+                assert!((cosine - 1.0).abs() < 1e-5);
+            }
             other => panic!("expected Redundant, got {other:?}"),
         }
     }
@@ -451,7 +522,8 @@ mod tests {
 
     #[test]
     fn gate_passes_below_lower_band() {
-        // Best desc-cosine below 0.70 → Pass (step 5).
+        // Best desc-cosine below 0.70 → Pass (step 5). TD-210: a real comparison
+        // happened (an existing type WAS found and compared) — must be carried.
         let existing = vec![(spec(1, "Vehicle"), unit_vec(4, 0))];
         let proposal_desc = unit_vec(4, 1);
         let outcome = check_proposal(CheckProposalParams {
@@ -461,7 +533,17 @@ mod tests {
             namespace: "ns",
             model: "m",
         });
-        assert_eq!(outcome, GateOutcome::Pass);
+        match outcome {
+            GateOutcome::Pass {
+                existing_name,
+                desc_cosine,
+            } => {
+                assert_eq!(existing_name, Some("Vehicle".to_string()));
+                let cosine = desc_cosine.expect("a comparison happened — cosine must be Some");
+                assert!(cosine.abs() < 1e-5, "orthogonal vectors → cosine ~0");
+            }
+            other => panic!("expected Pass, got {other:?}"),
+        }
     }
 
     #[test]
@@ -470,6 +552,11 @@ mod tests {
         // case/whitespace variant of an existing type name → Redundant, with NO name
         // embedding. Orthogonal description embedding proves the rejection came from
         // the name pre-filter, not the description gate.
+        //
+        // TD-210: `desc_cosine` must be `None` here — the exact-name pre-filter
+        // fires BEFORE the desc-cosine loop ever runs, so no comparison happened
+        // for this decision. A `Some` value here would mean the field was
+        // populated even when nothing was actually computed.
         let existing = vec![(spec(1, "Organisation"), unit_vec(4, 3))];
         let outcome = check_proposal(CheckProposalParams {
             proposal_name: "  organisation ", // normalizes-equal to "Organisation"
@@ -479,7 +566,16 @@ mod tests {
             model: "m",
         });
         match outcome {
-            GateOutcome::Redundant { existing_name } => assert_eq!(existing_name, "Organisation"),
+            GateOutcome::Redundant {
+                existing_name,
+                desc_cosine,
+            } => {
+                assert_eq!(existing_name, "Organisation");
+                assert_eq!(
+                    desc_cosine, None,
+                    "exact-name pre-filter fired before any cosine was computed (TD-210)"
+                );
+            }
             other => panic!("expected Redundant (exact name match), got {other:?}"),
         }
     }
@@ -498,15 +594,24 @@ mod tests {
             namespace: "ns",
             model: "m",
         });
-        assert_eq!(
-            outcome,
-            GateOutcome::Pass,
-            "unrelated short names must not be falsely rejected (TD-097)"
-        );
+        match outcome {
+            GateOutcome::Pass {
+                existing_name,
+                desc_cosine,
+            } => {
+                assert_eq!(existing_name, Some("Person".to_string()));
+                assert!(desc_cosine.expect("comparison happened").abs() < 1e-5);
+            }
+            other => panic!(
+                "unrelated short names must not be falsely rejected (TD-097), got {other:?}"
+            ),
+        }
     }
 
     #[test]
     fn gate_passes_with_empty_existing_types() {
+        // TD-210: the registry-empty early return — genuinely NO comparison
+        // happened, so both fields must be `None` (not merely omitted).
         let desc = unit_vec(4, 0);
         let outcome = check_proposal(CheckProposalParams {
             proposal_name: "Person",
@@ -515,6 +620,12 @@ mod tests {
             namespace: "ns",
             model: "m",
         });
-        assert_eq!(outcome, GateOutcome::Pass);
+        assert_eq!(
+            outcome,
+            GateOutcome::Pass {
+                existing_name: None,
+                desc_cosine: None,
+            }
+        );
     }
 }
