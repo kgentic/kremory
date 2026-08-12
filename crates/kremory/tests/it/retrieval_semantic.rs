@@ -7,6 +7,12 @@
 /// ALL tests are `#[ignore]` — they require the model to be downloaded
 /// from HuggingFace Hub on first run (~90 MB, cached in ~/.cache/huggingface).
 ///
+/// TD-158 (`.ai-docs/tech-debt/tech-debt-register.md`): the "hybrid" measures
+/// below drive `Engine::contextualize` — the same function `Memory::recall()`
+/// calls in production — rather than `TemporalGraph::hybrid_search_entities`,
+/// which has zero production callers. See `retrieval_benchmark.rs`'s module
+/// doc comment for the full rationale (same repoint, real embedder here).
+///
 /// Run with:
 ///   cargo test --test it retrieval_semantic:: --features embeddings -- --nocapture --ignored
 #[cfg(feature = "embeddings")]
@@ -75,23 +81,22 @@ mod semantic_tests {
         a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
     }
 
+    /// Return true when an entity's id/properties contain the expected name.
+    fn entity_matches(entity: &Entity, expected_name: &str) -> bool {
+        let expected_id = entity_id(expected_name);
+        let needle = expected_name.to_lowercase();
+        let id_lc = entity.id.to_lowercase();
+        let props = entity.properties.to_string().to_lowercase();
+        id_lc == expected_id
+            || id_lc.contains(&needle)
+            || needle.contains(&id_lc)
+            || props.contains(&needle)
+    }
+
     /// Return true when an entity with the expected id (or whose id/properties
     /// contain the expected name) appears anywhere in the hit list.
     fn entity_in_hits(hits: &[SearchHit<Entity>], expected_name: &str) -> bool {
-        let expected_id = entity_id(expected_name);
-        let needle = expected_name.to_lowercase();
-        for hit in hits {
-            let id_lc = hit.item.id.to_lowercase();
-            let props = hit.item.properties.to_string().to_lowercase();
-            if id_lc == expected_id
-                || id_lc.contains(&needle)
-                || needle.contains(&id_lc)
-                || props.contains(&needle)
-            {
-                return true;
-            }
-        }
-        false
+        hits.iter().any(|hit| entity_matches(&hit.item, expected_name))
     }
 
     // ─── Test 1: self-retrieval with real embeddings ──────────────────────────
@@ -295,13 +300,24 @@ mod semantic_tests {
         );
     }
 
-    // ─── Test 3: hybrid vs pure vector ───────────────────────────────────────
+    // ─── Test 3: hybrid vs pure vector (NON-PRODUCTION primitive) ─────────────
 
-    /// Demonstrates that hybrid search (vector + FTS RRF) adds value over pure
-    /// vector search alone when tech term names match exactly in both modalities.
+    /// NON-PRODUCTION PATH (TD-158): this drives `TemporalGraph::
+    /// hybrid_search_entities` directly, NOT `Memory::recall()`'s production
+    /// composition (`Engine::contextualize`, see `retrieval_benchmark.rs`'s
+    /// module doc + Test 3/7 there for the repoint most other hybrid measures
+    /// in this crate received). It is kept UNREPOINTED here deliberately: this
+    /// test exploits a capability `hybrid_search_entities`'s params expose that
+    /// `contextualize` structurally does not — a DECOUPLED FTS query text
+    /// (`fts_text`, e.g. "database") from the vector query embedding (embedded
+    /// from the fuller `semantic_query`, e.g. "database system").
+    /// `contextualize` takes a single `query: &str` fed to both arms, so it
+    /// cannot reproduce this case. These numbers describe the low-level
+    /// `TemporalGraph::hybrid_search_entities` primitive's own behaviour, not
+    /// what `recall()` returns for a consumer.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
-    async fn test_hybrid_beats_pure_vector() {
+    async fn test_hybrid_search_entities_primitive_decoupled_query() {
         let embedder = tokio::task::block_in_place(|| OnnxEmbeddingProvider::new())
             .expect("OnnxEmbeddingProvider::new() failed");
 
@@ -557,12 +573,24 @@ mod semantic_tests {
     /// vector recall@1 and hybrid recall@1 for self-retrieval.
     ///
     /// With a real 384-dim encoder, self-retrieval should be near-perfect.
+    ///
+    /// TD-158 repoint: "hybrid recall@1" now drives `Engine::contextualize`
+    /// (production's composition), NOT `TemporalGraph::hybrid_search_entities`.
+    /// Unlike Test 3 above, this measure always feeds the SAME text (the
+    /// entity's own name) to both the FTS and vector arms, so it has no
+    /// decoupled-query dependency on the dead primitive and repoints cleanly.
+    /// `contextualize` returns entities in seed+1-hop-neighbour order, not
+    /// score order, so "recall@1" here means: sort by `ContextResult::scores`
+    /// (the same score `Memory::recall()` sorts by before rendering, per
+    /// `facade/recall.rs`'s `sort_by_score_desc`) and take the top entity.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn test_real_embedding_benchmark_summary() {
         // Load the embedding model ONCE — model loading takes ~2 s.
-        let embedder = tokio::task::block_in_place(|| OnnxEmbeddingProvider::new())
-            .expect("OnnxEmbeddingProvider::new() failed");
+        let embedder = Arc::new(
+            tokio::task::block_in_place(|| OnnxEmbeddingProvider::new())
+                .expect("OnnxEmbeddingProvider::new() failed"),
+        );
 
         let ground_truth = load_ground_truth();
         let mut domain_keys: Vec<String> = ground_truth.keys().cloned().collect();
@@ -582,9 +610,11 @@ mod semantic_tests {
                 .get(domain_key)
                 .expect("domain in ground truth");
 
-            let graph = TemporalGraph::open_in_memory()
-                .await
-                .expect("failed to open in-memory graph");
+            let graph = Arc::new(
+                TemporalGraph::open_in_memory()
+                    .await
+                    .expect("failed to open in-memory graph"),
+            );
 
             // Insert all entities with real embeddings
             for entity in &domain.entities {
@@ -608,6 +638,18 @@ mod semantic_tests {
                     .await
                     .unwrap_or_else(|e| panic!("set_entity_embedding({id}) failed: {e}"));
             }
+
+            let config = PipelineConfig::builder()
+                .build()
+                .expect("PipelineConfig::build");
+            let rql: Engine<MockChatProvider, OnnxEmbeddingProvider> =
+                Engine::new(kremory::core::ingest::EngineNewParams {
+                    graph: Arc::clone(&graph),
+                    llm: Arc::new(MockChatProvider::null()),
+                    embedder: Arc::clone(&embedder),
+                    config,
+                    model: None,
+                });
 
             let mut vec_recall1 = 0usize;
             let mut hybrid_recall1 = 0usize;
@@ -635,21 +677,29 @@ mod semantic_tests {
                     vec_recall1 += 1;
                 }
 
-                // Hybrid recall@1 — use the entity name for both FTS and vector
-                // Wrap in quotes for FTS5 safety with special characters
-                let fts_query = format!("\"{}\"", entity.name.replace('"', "\"\""));
-                let hybrid_hits = graph
-                    .hybrid_search_entities(HybridSearchEntitiesParams {
-                        query_text: &fts_query,
-                        query_embedding: &emb,
-                        limit: 1,
-                        filters: &SearchFilters::new(),
+                // Hybrid recall@1 — via the production contextualize()
+                // composition (TD-158). Same text (the entity's own name)
+                // drives both the FTS and vector arms internally.
+                let ctx: ContextResult = rql
+                    .contextualize(ContextualizeParams {
+                        query: &entity.name,
+                        group_id: None,
+                        limit: Some(1),
+                        as_of: None,
                     })
                     .await
-                    .unwrap_or_else(|e| {
-                        panic!("hybrid_search_entities({}) failed: {e}", entity.name)
-                    });
-                if hybrid_hits.first().map(|h| h.item.id.as_str()) == Some(&expected_id) {
+                    .unwrap_or_else(|e| panic!("contextualize({}) failed: {e}", entity.name));
+                let mut scored: Vec<(&str, f32)> = ctx
+                    .entities
+                    .iter()
+                    .map(|e| (e.id.as_str(), *ctx.scores.get(&e.id).unwrap_or(&0.0)))
+                    .collect();
+                scored.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.0.cmp(b.0))
+                });
+                if scored.first().map(|(id, _)| *id) == Some(expected_id.as_str()) {
                     hybrid_recall1 += 1;
                 }
             }

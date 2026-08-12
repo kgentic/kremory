@@ -2607,9 +2607,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     }
 
     /// TD-113: make a caller-pinned entity recall-findable AND attributable
-    /// WITHOUT a second LLM. Recall seeds on entities (`hybrid_search_entities`)
-    /// then renders via the DEFAULT `TemporalFacts` template — so a pin must
-    /// satisfy THREE channels to actually surface, all mirroring mode-(a):
+    /// WITHOUT a second LLM. Recall seeds on entities (`Engine::contextualize`
+    /// — TD-158: NOT `hybrid_search_entities`, which has zero production
+    /// callers) then renders via the DEFAULT `TemporalFacts` template — so a
+    /// pin must satisfy THREE channels to actually surface, all mirroring
+    /// mode-(a):
     ///
     /// 1. **FTS** — the literal name is stamped into `properties["name"]` at the
     ///    pin call site (`insert_entity_with_group`); the FTS seed arm indexes
