@@ -359,9 +359,26 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             // Only the TEMPORAL arm of ADR-057's rule applies here: the full
             // lexical gate would reject this site's acronym pairs, which share
             // zero tokens by construction.
+            // NOTE for the next reviewer: `pair.a`/`pair.b` are entity IDs, and in
+            // this schema the entity ID IS the normalized name (there is no separate
+            // name column — see `entities`). `temporal_conflict` normalizes again and
+            // is idempotent, so nothing is lost by passing IDs here.
             names: Some((&pair.a, &pair.b)),
         });
         record_write_gate_decision(decision);
+        // Quinn MED-3: `write_gate` is documented pure/counter-free, so the veto
+        // cannot count itself. Without this, a veto-driven Reject is indistinguishable
+        // from every other Reject in production telemetry — the gate would be working
+        // and invisible. Counted HERE, at the caller, where counting is allowed.
+        if decision == WriteDecision::Reject
+            && crate::core::disambiguation::temporal_conflict(&pair.a, &pair.b)
+        {
+            counter!(
+                "kremory.identity.write_gate_temporal_veto_total",
+                "site" => "site5_acronym_nickname"
+            )
+            .increment(1);
+        }
 
         match decision {
             WriteDecision::Merge => {
