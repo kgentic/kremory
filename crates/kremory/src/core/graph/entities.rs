@@ -565,20 +565,34 @@ impl TemporalGraph {
     /// normalized name-slug; `group_id` is NOT NULL post-migration-004, and
     /// COALESCEd to `'default'` here to also tolerate a pre-migration NULL).
     ///
-    /// ⚠️ Known limitation (documented, not silently swept under the
-    /// composite-cursor fix above): the maintenance loop's write-back,
-    /// [`TemporalGraph::set_entity_embedding`], updates `WHERE id = ?` with
-    /// **no** `group_id` predicate — identical to its ingest-time call site.
-    /// For the common single-namespace corpus this is exactly right. For a
-    /// corpus with a genuine cross-namespace id collision (rare — an explicit
-    /// opt-in per ADR-029d) it means re-embedding row A momentarily also
-    /// overwrites row B's stored vector, and vice versa when B's turn comes —
-    /// the FINAL state is still correct once the whole page walk completes
-    /// (every row is visited and written with its own resolved text), it just
-    /// doesn't converge on the first partial page. Scoping the write to
-    /// `(id, group_id)` would need a new `set_entity_embedding` overload
-    /// threaded through its ingest call site too — out of TD-112's scope;
-    /// follow-up if ADR-029d cross-namespace reuse becomes common.
+    /// ✅ **RESOLVED 2026-08-12 by TD-206 — the "known limitation" that stood
+    /// here is GONE, and it is worth saying why rather than deleting it.**
+    ///
+    /// This block used to warn that the maintenance loop's write-back updated
+    /// `WHERE id = ?` with no `group_id` predicate, "identical to its
+    /// ingest-time call site", and concluded that scoping it "would need a new
+    /// overload threaded through its ingest call site too — out of TD-112's
+    /// scope". Both halves are now false:
+    ///
+    /// - The write-back is [`TemporalGraph::set_entity_embedding_in_group`]
+    ///   (`facade/mod.rs:1698`), scoped on the composite `(id, group_id)` key.
+    /// - The unscoped [`TemporalGraph::set_entity_embedding`] is
+    ///   `#[cfg(any(test, feature = "test-utils"))]`, so it is not merely
+    ///   unused on production paths — it does not EXIST in a production build.
+    ///
+    /// The comment is rewritten rather than removed because of what TD-206
+    /// found: the deferral above described the cross-namespace overwrite as a
+    /// tolerable transient ("the FINAL state is still correct once the whole
+    /// page walk completes"). It was not transient. This loop rewrites EVERY
+    /// entity, so a single full re-embed collapsed each name's vector across
+    /// all namespaces to whichever row happened to run last — and 90 entity
+    /// names exist in more than one namespace on the shipped LoCoMo corpus.
+    /// A doc comment that reasons an active defect into a non-issue is the
+    /// most expensive kind of stale: it is why nobody looked again.
+    ///
+    /// The composite-PK cursor described above is what made the fix complete —
+    /// scoping the write is only correct because the walk visits `(id,
+    /// group_id)` pairs, not bare ids.
     ///
     /// Feature-gated behind `content-search` (mirrors the episode/fact
     /// siblings — all three bulk re-embed paths ship together). Args-as-object

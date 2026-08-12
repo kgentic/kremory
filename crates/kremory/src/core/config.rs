@@ -502,7 +502,7 @@ impl Default for SearchConfig {
 /// (defeating the seam's purpose). The sparse `Option<T>`-per-field overlay
 /// is the shape that actually satisfies (a) and (d) together.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct SearchConfigOverrides {
+pub(crate) struct PipelineConfigOverrides {
     /// Explicit override for [`SearchConfig::content_stream_weight`].
     pub content_stream_weight: Option<f32>,
     /// Explicit override for [`SearchConfig::rrf_k`].
@@ -531,16 +531,35 @@ pub(crate) struct SearchConfigOverrides {
     /// Explicit override for [`SearchConfig::rerank_candidate_max_chars`]
     /// (reranker latency lever 1).
     pub rerank_candidate_max_chars: Option<usize>,
+    /// Explicit override for [`PipelineConfig::contradiction_detection_enabled`]
+    /// (TD-172 / TD-167 / ADR-079 rev.2).
+    ///
+    /// The first NON-`SearchConfig` member of this overlay, and the reason the
+    /// type is named for `PipelineConfig` rather than `SearchConfig`: the
+    /// overlay's job is "sparse programmatic overrides applied onto a
+    /// [`PipelineConfigBuilder`] AFTER the env layer", which was always wider
+    /// than search. Adding a second parallel overrides mechanism for one field
+    /// would have been the redundancy that `contract-first-before-new-public-
+    /// surface` forbids.
+    ///
+    /// Why it needed a seam at all: since ADR-079 rev.2 this knob defaults to
+    /// **ON**, and it gates a DESTRUCTIVE path (supersession soft-deletes
+    /// prior facts). Before TD-172 the only way to opt out was the process-wide
+    /// `KREMORY_CONTRADICTION_DETECTION` env var — which cannot express two
+    /// `Memory` instances with different settings, and which a library consumer
+    /// should not have to reach for. Its nine sibling knobs all have builder
+    /// methods for exactly that reason; this one was simply missed.
+    pub contradiction_detection_enabled: Option<bool>,
 }
 
-impl SearchConfigOverrides {
+impl PipelineConfigOverrides {
     /// Apply only the `Some` fields onto `builder`, each WINNING over
     /// whatever env override (`facade::providers::search_env_overrides`) was
     /// already applied earlier in the same chain — TD-141 precedence:
     /// explicit programmatic config > env override > default. Fields left
     /// `None` here pass `builder` through unchanged, so an env override for a
     /// knob the consumer never touched programmatically still applies. An
-    /// all-`None` (default-constructed) `SearchConfigOverrides` is a strict
+    /// all-`None` (default-constructed) `PipelineConfigOverrides` is a strict
     /// no-op, so unset-by-default callers get byte-identical behaviour to
     /// pre-TD-141 (env-only / default).
     pub(crate) fn apply(&self, mut builder: PipelineConfigBuilder) -> PipelineConfigBuilder {
@@ -567,6 +586,9 @@ impl SearchConfigOverrides {
         }
         if let Some(v) = self.rerank_candidate_max_chars {
             builder = builder.rerank_candidate_max_chars(v);
+        }
+        if let Some(v) = self.contradiction_detection_enabled {
+            builder = builder.contradiction_detection_enabled(v);
         }
         builder
     }
@@ -736,6 +758,17 @@ pub struct PipelineConfig {
     pub contradiction_detection_enabled: bool,
 }
 
+/// The compiled-in default for [`PipelineConfig::contradiction_detection_enabled`]
+/// (ADR-079 rev.2), as a `const` so it has exactly ONE definition.
+///
+/// TD-172 needed this value in a second place — the [`GraphHandle`](crate::memory::graph::GraphHandle)
+/// trait default, so stub/test handles that carry no `Engine` report what a real
+/// one would. Restating `true` there would have created a second source of truth
+/// for a flag whose default **has already moved twice in one day** (OFF for ~4h
+/// on 2026-07-29, then back ON), and the copy that drifts is the one reporting a
+/// DESTRUCTIVE setting as disabled.
+pub(crate) const DEFAULT_CONTRADICTION_DETECTION_ENABLED: bool = true;
+
 impl PipelineConfig {
     /// Returns a new [`PipelineConfigBuilder`] populated with all defaults.
     pub fn builder() -> PipelineConfigBuilder {
@@ -766,7 +799,7 @@ impl PipelineConfig {
                 // (78 of 500 questions) TESTS this mechanism — shipping the
                 // benchmark with it disabled would publish a number with the
                 // relevant feature switched off.
-                contradiction_detection_enabled: true,
+                contradiction_detection_enabled: DEFAULT_CONTRADICTION_DETECTION_ENABLED,
             },
         }
     }

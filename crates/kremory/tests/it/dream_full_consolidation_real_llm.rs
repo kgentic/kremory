@@ -166,7 +166,7 @@ fn ollama_chat_model() -> String {
     // Project's benchmarked deferred-quality chat model with reasoning disabled
     // (facade default + metrics harness). Same model as the P1-P4 L3 siblings +
     // dream_e2e_real_llm.
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string())
+    crate::helpers::chat_model::chat_model_or("gemma4:e4b")
 }
 
 fn real_ollama_chat() -> Arc<dyn ChatProvider> {

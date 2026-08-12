@@ -215,7 +215,7 @@ fn ollama_chat_model() -> String {
     // harness): `gemma4:e4b` with reasoning disabled. NOT golden_path's
     // `gemma4-e2b:latest` (that small model is "UNUSABLE — 0 ents" for real
     // extraction, llm_integration.rs model table).
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string())
+    crate::helpers::chat_model::chat_model_or("gemma4:e4b")
 }
 
 fn real_ollama_chat() -> Arc<dyn ChatProvider> {

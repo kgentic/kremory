@@ -50,7 +50,7 @@ fn ollama_base_url() -> String {
 
 fn ollama_chat_model() -> String {
     // Default to qwen2.5:14b — better structured-output compliance than llama3.2:3b.
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "qwen2.5:14b".to_string())
+    crate::helpers::chat_model::chat_model_or("qwen2.5:14b")
 }
 
 async fn build_engine(

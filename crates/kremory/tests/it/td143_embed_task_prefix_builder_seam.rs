@@ -99,7 +99,7 @@ async fn explicit_embed_task_prefix_enabled_wins_over_env_override() {
     clear_embed_prefix_env();
 }
 
-/// The sparse-overlay design (see `SearchConfigOverrides` rustdoc in
+/// The sparse-overlay design (see `PipelineConfigOverrides` rustdoc in
 /// `core/config.rs`): leaving `embed_task_prefix_enabled` UNSET while setting
 /// a SIBLING knob programmatically must not clobber its own env override.
 #[tokio::test]

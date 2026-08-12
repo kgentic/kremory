@@ -101,7 +101,7 @@ fn ollama_base_url() -> String {
 /// `capability_of()` routes to the FormatSchema arm. Bare names without
 /// `:tag` fall through to PromptOnly and produce empty / null output.
 fn ollama_chat_model() -> String {
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string())
+    crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest")
 }
 
 /// Build a `Memory` instance with real Ollama providers wired to the given tempdir.

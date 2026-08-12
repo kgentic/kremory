@@ -176,7 +176,7 @@ fn ollama_base_url() -> String {
 fn ollama_chat_model() -> String {
     // Project's benchmarked deferred-quality chat model with reasoning disabled
     // (facade default + metrics harness). Same model as whole_project_e2e.
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string())
+    crate::helpers::chat_model::chat_model_or("gemma4:e4b")
 }
 
 fn real_ollama_chat() -> Arc<dyn ChatProvider> {

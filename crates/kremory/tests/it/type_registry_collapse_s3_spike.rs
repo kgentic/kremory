@@ -349,7 +349,7 @@ async fn build_providers(
     // collapse is a dream-phase pass, so it belongs on this tier, not the
     // lighter interactive gemma4-e2b tier.
     let chat_model =
-        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
+        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     let chat_cassette = chat_cassette_path(cassette_tag);
     let provider: Arc<RecordReplayChatProvider> = match mode {

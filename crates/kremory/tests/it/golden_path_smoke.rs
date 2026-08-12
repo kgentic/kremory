@@ -148,7 +148,7 @@ fn ollama_base_url() -> String {
 /// llm_integration.rs:1-53). The `:latest` tag is REQUIRED so `capability_of()`
 /// routes to the `FormatSchema` arm (provider.rs:156 colon-routing footgun).
 fn ollama_chat_model() -> String {
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string())
+    crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest")
 }
 
 /// Build the real Ollama chat provider (LIVE/record only). `.keep_alive("1h")`

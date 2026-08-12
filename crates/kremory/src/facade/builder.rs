@@ -12,7 +12,7 @@ use super::*;
 
 use crate::core::background::{BackgroundIngestor, IngestorConfig};
 use crate::core::chat_tracking::TokenTrackingChatProvider;
-use crate::core::config::SearchConfigOverrides;
+use crate::core::config::PipelineConfigOverrides;
 use crate::core::error::Error as CoreError;
 use crate::core::provider::DynEmbeddingProvider;
 use crate::memory::{
@@ -79,7 +79,7 @@ pub struct MemoryBuilder<L, E> {
     /// default — env-only behaviour is unchanged for consumers who never call
     /// these setters. Threaded unchanged across every type-state transition;
     /// does NOT change type-state.
-    search_overrides: SearchConfigOverrides,
+    config_overrides: PipelineConfigOverrides,
     /// Seed instruction for the DEFAULT namespace's entity-type registry,
     /// applied at `.await` (build time) via the same catch-all + apply path as
     /// `Memory::register_namespace_with_seed` (spec §5.2.3). Default
@@ -307,7 +307,7 @@ impl<L, E> MemoryBuilder<L, E> {
     //
     // Precedence (TD-141 design decision (a)): explicit programmatic config
     // set here ALWAYS wins over the matching env override, which wins over
-    // the `SearchConfig` default. See `SearchConfigOverrides::apply` for the
+    // the `SearchConfig` default. See `PipelineConfigOverrides::apply` for the
     // mechanism and `facade::providers::search_env_overrides` for the env
     // layer these compose on top of. Verify the live, in-effect value via
     // `Memory::search_config()`.
@@ -320,7 +320,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::content_stream_weight`](crate::core::config::PipelineConfigBuilder::content_stream_weight).
     pub fn with_content_stream_weight(mut self, v: f32) -> Self {
-        self.search_overrides.content_stream_weight = Some(v);
+        self.config_overrides.content_stream_weight = Some(v);
         self
     }
 
@@ -331,7 +331,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::rrf_k`](crate::core::config::PipelineConfigBuilder::rrf_k).
     pub fn with_rrf_k(mut self, v: usize) -> Self {
-        self.search_overrides.rrf_k = Some(v);
+        self.config_overrides.rrf_k = Some(v);
         self
     }
 
@@ -346,7 +346,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::episode_dense_enabled`](crate::core::config::PipelineConfigBuilder::episode_dense_enabled).
     pub fn with_episode_dense_enabled(mut self, v: bool) -> Self {
-        self.search_overrides.episode_dense_enabled = Some(v);
+        self.config_overrides.episode_dense_enabled = Some(v);
         self
     }
 
@@ -362,7 +362,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::fact_dense_enabled`](crate::core::config::PipelineConfigBuilder::fact_dense_enabled).
     pub fn with_fact_dense_enabled(mut self, v: bool) -> Self {
-        self.search_overrides.fact_dense_enabled = Some(v);
+        self.config_overrides.fact_dense_enabled = Some(v);
         self
     }
 
@@ -382,7 +382,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::embed_task_prefix_enabled`](crate::core::config::PipelineConfigBuilder::embed_task_prefix_enabled).
     pub fn with_embed_task_prefix_enabled(mut self, v: bool) -> Self {
-        self.search_overrides.embed_task_prefix_enabled = Some(v);
+        self.config_overrides.embed_task_prefix_enabled = Some(v);
         self
     }
 
@@ -397,7 +397,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::proximity_weight`](crate::core::config::PipelineConfigBuilder::proximity_weight).
     pub fn with_proximity_weight(mut self, v: f32) -> Self {
-        self.search_overrides.proximity_weight = Some(v);
+        self.config_overrides.proximity_weight = Some(v);
         self
     }
 
@@ -414,7 +414,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::temporal_weight`](crate::core::config::PipelineConfigBuilder::temporal_weight).
     pub fn with_temporal_weight(mut self, v: f32) -> Self {
-        self.search_overrides.temporal_weight = Some(v);
+        self.config_overrides.temporal_weight = Some(v);
         self
     }
 
@@ -428,7 +428,41 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Mirrors [`PipelineConfigBuilder::rerank_candidate_max_chars`](crate::core::config::PipelineConfigBuilder::rerank_candidate_max_chars).
     pub fn with_rerank_candidate_max_chars(mut self, v: usize) -> Self {
-        self.search_overrides.rerank_candidate_max_chars = Some(v);
+        self.config_overrides.rerank_candidate_max_chars = Some(v);
+        self
+    }
+
+    /// Explicitly enable/disable ingest-time contradiction detection
+    /// (`PipelineConfig::contradiction_detection_enabled`, TD-167 /
+    /// ADR-079 rev.2). Default (unset): **`true`** unless overridden by
+    /// `KREMORY_CONTRADICTION_DETECTION` at construction time. Calling this
+    /// setter wins over BOTH the default and any env override, for this
+    /// `Memory` only.
+    ///
+    /// ⚠️ **This is the only knob on this builder that gates a DESTRUCTIVE
+    /// path.** When ON, ingesting a fact that the detector judges to
+    /// contradict a stored one SUPERSEDES the stored fact — a soft delete
+    /// (`valid_to` closed, reversible via `reversal::unsupersede`), but it
+    /// removes the prior fact from live recall. That is correct for a genuine
+    /// update (`works_at Acme` → `works_at Globex`) and wrong for a
+    /// SET-VALUED predicate, where every member but the last is destroyed
+    /// (TD-167 measured 7/8 destroyed pre-fix, 0/8 post-fix; corpus
+    /// contradiction rate 38.8% → 11.3%). Two of six real updates are still
+    /// missed, so TD-167 remains open.
+    ///
+    /// Turn it **off** when your corpus is list-heavy (tags, attendees,
+    /// preferences, playlist members) and append-only is the safer default;
+    /// leave it **on** for profile-shaped data where later statements should
+    /// replace earlier ones.
+    ///
+    /// Added by TD-172: this knob mirrors eight sibling `with_*` setters and
+    /// was the only one missing, so opting OUT of a default-ON destructive
+    /// path was reachable only through a process-wide env var — which cannot
+    /// express two `Memory` instances with different settings.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::contradiction_detection_enabled`](crate::core::config::PipelineConfigBuilder::contradiction_detection_enabled).
+    pub fn with_contradiction_detection_enabled(mut self, v: bool) -> Self {
+        self.config_overrides.contradiction_detection_enabled = Some(v);
         self
     }
 
@@ -684,7 +718,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: false,
             allowed_entity_types: vec![],
-            search_overrides: SearchConfigOverrides::default(),
+            config_overrides: PipelineConfigOverrides::default(),
             seed_registry: crate::core::entity_types::NamespaceSeed::Default,
             dream_schedule: crate::memory::scheduler::DreamSchedule::Off,
             await_extraction: false,
@@ -717,7 +751,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
-            search_overrides: self.search_overrides,
+            config_overrides: self.config_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -795,7 +829,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
-            search_overrides: self.search_overrides,
+            config_overrides: self.config_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -828,7 +862,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
-            search_overrides: self.search_overrides,
+            config_overrides: self.config_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -866,7 +900,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
             #[cfg(feature = "ner")]
             use_gliner: self.use_gliner,
             allowed_entity_types: self.allowed_entity_types,
-            search_overrides: self.search_overrides,
+            config_overrides: self.config_overrides,
             seed_registry: self.seed_registry,
             dream_schedule: self.dream_schedule,
             await_extraction: self.await_extraction,
@@ -997,7 +1031,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
             // below (the compat-matrix open_graph* branch, then — when
             // `.with_sink()` is configured — the two `open_engine_handle`
             // calls for the `BackgroundIngestorGraphHandle` path).
-            let search_overrides = self.search_overrides.clone();
+            let config_overrides = self.config_overrides.clone();
 
             // ── Compat matrix (ADR-039, 7-row table) ────────────────────────
             // Row 6: .with_extractor conflicts with .with_gliner → Err
@@ -1045,7 +1079,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: self.allowed_entity_types,
                         model: model_id.clone(),
-                        search: search_overrides.clone(),
+                        overrides: config_overrides.clone(),
                     },
                     llm.clone(),
                     crate::core::extraction::factory::ExtractorKind::Custom(custom),
@@ -1071,7 +1105,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
-                            search: search_overrides.clone(),
+                            overrides: config_overrides.clone(),
                         },
                         llm.clone(),
                         crate::core::extraction::factory::ExtractorKind::GlinerLlm(Box::new(
@@ -1089,7 +1123,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
-                            search: search_overrides.clone(),
+                            overrides: config_overrides.clone(),
                         },
                     )
                     .await?
@@ -1105,7 +1139,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                             embedding_dim: self.embedding_dim,
                             allowed_entity_types: self.allowed_entity_types,
                             model: model_id.clone(),
-                            search: search_overrides.clone(),
+                            overrides: config_overrides.clone(),
                         },
                     )
                     .await?
@@ -1171,7 +1205,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg.clone(),
                         model: model_id.clone(),
-                        search: search_overrides.clone(),
+                        overrides: config_overrides.clone(),
                     },
                 )
                 .await?;
@@ -1192,7 +1226,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
                         embedding_dim: self.embedding_dim,
                         allowed_entity_types: allowed_entity_types_for_bg,
                         model: model_id.clone(),
-                        search: search_overrides,
+                        overrides: config_overrides,
                     },
                 )
                 .await?;
@@ -1346,7 +1380,7 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
                     embedding_dim: self.embedding_dim,
                     allowed_entity_types: self.allowed_entity_types,
                     model: self.model_id.clone(),
-                    search: self.search_overrides,
+                    overrides: self.config_overrides,
                 },
                 custom,
             )

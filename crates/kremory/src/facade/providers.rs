@@ -22,7 +22,7 @@ use autoagents_llm::{
 
 use crate::core::chat_tracking::TokenTrackingChatProvider;
 use crate::core::config::{
-    PipelineConfig, PipelineConfigBuilder, ResolutionStrategy, SearchConfigOverrides,
+    PipelineConfig, PipelineConfigBuilder, PipelineConfigOverrides, ResolutionStrategy,
 };
 use crate::core::ingest::{
     Engine, EngineNewParams, EngineWithCustomExtractorNoLlmParams, EngineWithExtractorParams,
@@ -57,7 +57,7 @@ pub(crate) struct GraphOpenParams {
     /// `with_rrf_k` / `with_episode_dense_enabled`. Applied AFTER
     /// `search_env_overrides` at every construction site — explicit
     /// programmatic config wins over env, which wins over default.
-    pub search: SearchConfigOverrides,
+    pub overrides: PipelineConfigOverrides,
 }
 
 /// Bundled non-generic parameters for [`open_graph`] — args-as-object per
@@ -72,7 +72,7 @@ pub(crate) struct OpenGraphParams {
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
     /// TD-141: see [`GraphOpenParams::search`] doc — same precedence contract.
-    pub search: SearchConfigOverrides,
+    pub overrides: PipelineConfigOverrides,
 }
 
 /// Bundled non-generic parameters for [`open_engine_handle`] — args-as-object
@@ -87,7 +87,7 @@ pub(crate) struct OpenEngineHandleParams {
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
     /// TD-141: see [`GraphOpenParams::search`] doc — same precedence contract.
-    pub search: SearchConfigOverrides,
+    pub overrides: PipelineConfigOverrides,
 }
 
 /// Bundled non-generic parameters for [`build_memory_with_model`] —
@@ -124,7 +124,7 @@ pub(crate) async fn open_graph(
         embedding_dim,
         allowed_entity_types,
         model,
-        search,
+        overrides,
     } = params;
     let path_str = path
         .as_ref()
@@ -143,7 +143,7 @@ pub(crate) async fn open_graph(
     // LAST, after the env overrides, so `.with_content_stream_weight(...)`
     // etc. win over `KREMORY_CONTENT_WEIGHT` etc. Unset (default) overrides
     // are a no-op — env-only behaviour is unchanged.
-    let mut config_builder = search.apply(search_env_overrides(resolution_env_overrides(
+    let mut config_builder = overrides.apply(search_env_overrides(resolution_env_overrides(
         PipelineConfig::builder().embedding_dim(resolved_dim),
     )));
     if !allowed_entity_types.is_empty() {
@@ -189,11 +189,12 @@ pub(crate) async fn open_graph_with_extractor(
 
     // TD-141 precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
-    let mut config_builder = params
-        .search
-        .apply(search_env_overrides(resolution_env_overrides(
-            PipelineConfig::builder().embedding_dim(resolved_dim),
-        )));
+    let mut config_builder =
+        params
+            .overrides
+            .apply(search_env_overrides(resolution_env_overrides(
+                PipelineConfig::builder().embedding_dim(resolved_dim),
+            )));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -240,11 +241,12 @@ pub(crate) async fn open_graph_no_llm(
 
     // TD-141 precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
-    let mut config_builder = params
-        .search
-        .apply(search_env_overrides(resolution_env_overrides(
-            PipelineConfig::builder().embedding_dim(resolved_dim),
-        )));
+    let mut config_builder =
+        params
+            .overrides
+            .apply(search_env_overrides(resolution_env_overrides(
+                PipelineConfig::builder().embedding_dim(resolved_dim),
+            )));
     if !params.allowed_entity_types.is_empty() {
         config_builder = config_builder.allowed_entity_types(params.allowed_entity_types);
     }
@@ -288,7 +290,7 @@ pub(crate) async fn open_engine_handle(
         embedding_dim,
         allowed_entity_types,
         model,
-        search,
+        overrides,
     } = params;
     let path_str = path
         .as_ref()
@@ -305,7 +307,7 @@ pub(crate) async fn open_engine_handle(
 
     // TD-141 precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
-    let mut config_builder = search.apply(search_env_overrides(resolution_env_overrides(
+    let mut config_builder = overrides.apply(search_env_overrides(resolution_env_overrides(
         PipelineConfig::builder().embedding_dim(resolved_dim),
     )));
     if !allowed_entity_types.is_empty() {
@@ -1040,7 +1042,7 @@ async fn build_memory_with_model(
             // thread — env (`KREMORY_CONTENT_WEIGHT` etc.) remains the only
             // tuning path for these convenience constructors, unchanged by
             // TD-141.
-            search: SearchConfigOverrides::default(),
+            overrides: PipelineConfigOverrides::default(),
         },
     )
     .await?;
