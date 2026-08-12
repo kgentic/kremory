@@ -1049,12 +1049,30 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// TD-167: enable LLM contradiction detection during ingest. Default OFF.
+    /// TD-167: enable LLM contradiction detection during ingest. **Default ON**
+    /// (`DEFAULT_CONTRADICTION_DETECTION_ENABLED`, ADR-079 **rev.2**, accepted).
     ///
-    /// OFF because it currently treats every predicate as functional and so
-    /// SUPERSEDES SET-VALUED FACTS — a festival's second performer supersedes
-    /// the first. Enable only if you have verified your predicates are
-    /// single-valued, or once TD-167 lands derived cardinality.
+    /// ⚠️ This doc said **"Default OFF"** until 2026-08-12 and was WRONG — it
+    /// described ADR-079 rev.1, which rev.2 superseded THE SAME DAY. It is a
+    /// public builder method, so a consumer reading it would have left a
+    /// destructive feature enabled believing it disabled. Correcting rather than
+    /// deleting, because the reason it was off is still the reason to be careful.
+    ///
+    /// **rev.1 (superseded):** OFF, because it treated every predicate as
+    /// functional and so SUPERSEDED SET-VALUED FACTS — a festival's second
+    /// performer superseded the first. Measured: 81 of 1,021 facts invalidated
+    /// over 8 LongMemEval sessions, ≥31% provably set-valued.
+    ///
+    /// **rev.2 (current):** ON, because the prompt was rewritten to ask *"can
+    /// both facts be true at the same time?"* — 7-of-8 destroyed → **0-of-8**,
+    /// and a corpus run cut the contradiction rate **3.4×** (38.8% → 11.3%) with
+    /// no obviously set-valued predicate destroyed. Scope moved MVP → v1 because
+    /// LongMemEval's `knowledge-update` category (78 of 500 questions) tests
+    /// exactly this mechanism — benchmarking v1 with it off would measure the
+    /// wrong build.
+    ///
+    /// Pass `false` to restore append-only ingest: nothing is invalidated behind
+    /// your back and `valid_to` is stamped only by supersession you asked for.
     pub fn contradiction_detection_enabled(mut self, on: bool) -> Self {
         self.inner.contradiction_detection_enabled = on;
         self

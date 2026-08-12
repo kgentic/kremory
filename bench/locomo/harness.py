@@ -843,7 +843,22 @@ def run_benchmark(config: Config) -> dict:
                 # context into labelled blocks instead of one anonymous list.
                 "recalled_memory_provenance": (
                     [
-                        {"kind": r.get("kind"), "source_episode_id": r.get("source_episode_id")}
+                        # TD-216: `id` was DROPPED here, and it is the ONLY link
+                        # from an episode-kind result back to a gold evidence turn
+                        # — `source_episode_id` is populated ONLY for `kind=fact`
+                        # by contract (for an episode item the `id` IS the episode
+                        # id; see `SearchResultWire::source_episode_id`). Without
+                        # it, 0 of 9950 provenance entries in the 2026-08-11 full
+                        # run carried ANY usable linkage, so no rank-aware metric
+                        # (nDCG/MRR/mean-gold-rank) was computable by anyone, from
+                        # any run — which is why every retrieval lever has been
+                        # judged on a substring scorer proven blind to ordering
+                        # (0 of 1986 verdicts changed by shuffling the top-10).
+                        {
+                            "kind": r.get("kind"),
+                            "id": r.get("id"),
+                            "source_episode_id": r.get("source_episode_id"),
+                        }
                         for r in client.last_results
                         if r.get("content")
                     ]
