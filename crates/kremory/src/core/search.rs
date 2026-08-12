@@ -5296,6 +5296,167 @@ mod tests {
         );
     }
 
+    /// TD-211 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-211) entity
+    /// sibling of `episodes_missing_embedding_tracks_backfill_progress` —
+    /// `entities_missing_embeddings` must report exactly the NULL-embedding
+    /// rows, and a row must drop out of that set once backfilled (proven via
+    /// `backfill_entity_embedding`, TD-211's new namespace-scoped setter —
+    /// NOT the unscoped `set_entity_embedding` used only to SEED the
+    /// pre-existing embedding below, mirroring how the episode test uses
+    /// `set_episode_embedding` for the same seeding role).
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn entities_missing_embeddings_tracks_backfill_progress() {
+        use crate::core::graph::InsertEntityWithGroupParams;
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alpha",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": "Alpha" }),
+            group_id: None,
+        })
+        .await
+        .unwrap();
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "beta",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": "Beta" }),
+            group_id: None,
+        })
+        .await
+        .unwrap();
+
+        // Both start NULL-embedding.
+        let missing = g.entities_missing_embeddings(100).await.unwrap();
+        assert_eq!(missing.len(), 2, "both fresh entities lack an embedding");
+
+        // Seed "alpha" as already-embedded (simulates a prior successful
+        // ingest-time embed) — must NOT be touched by the backfill setter.
+        g.set_entity_embedding("alpha", &make_embedding(1.0))
+            .await
+            .unwrap();
+        let missing = g.entities_missing_embeddings(100).await.unwrap();
+        assert_eq!(missing.len(), 1, "one embedded → one still missing");
+        assert_eq!(
+            missing[0].id, "beta",
+            "the remaining missing row is the un-embedded one"
+        );
+
+        // Backfill the gap via TD-211's new namespace-scoped setter.
+        g.backfill_entity_embedding(crate::core::graph::SetEntityEmbeddingParams {
+            id: "beta",
+            group_id: "default",
+            embedding: &make_embedding(2.0),
+        })
+        .await
+        .unwrap();
+        let missing = g.entities_missing_embeddings(100).await.unwrap();
+        assert!(
+            missing.is_empty(),
+            "backfill_entity_embedding must clear the missing-embedding list"
+        );
+
+        // "alpha"'s pre-existing embedding must be untouched — a NULL-only
+        // backfill must never overwrite a row that already carries a vector.
+        let hits = g
+            .vector_search_entities(crate::core::search::VectorSearchEntitiesParams {
+                query_embedding: &make_embedding(1.0),
+                limit: 10,
+                filters: &SearchFilters::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            hits.len(),
+            2,
+            "both entities are now dense-searchable — alpha from the seed, \
+             beta from the backfill"
+        );
+        let alpha_hit = hits
+            .iter()
+            .find(|h| h.item.id == "alpha")
+            .expect("alpha must still be searchable");
+        let beta_hit = hits
+            .iter()
+            .find(|h| h.item.id == "beta")
+            .expect("beta must still be searchable");
+        // score = -cosine_distance (search.rs:958) — 0 is an exact match,
+        // more negative is further away.
+        assert!(
+            alpha_hit.score > -0.001,
+            "alpha's stored embedding must be UNCHANGED by the backfill run — \
+             querying with the EXACT seed-1.0 vector it was seeded with must \
+             score it as an exact match (score ~ 0, score = -distance), got \
+             score={}",
+            alpha_hit.score
+        );
+        assert!(
+            alpha_hit.score > beta_hit.score,
+            "alpha (exact seed-1.0 match) must score strictly closer than \
+             beta (embedded at seed 2.0 via the backfill) against a seed-1.0 \
+             query (alpha={}, beta={})",
+            alpha_hit.score,
+            beta_hit.score
+        );
+    }
+
+    /// TD-211: `backfill_entity_embedding` is namespace-scoped (TD-206) — it
+    /// must write ONLY the `(id, group_id)` row it was called with, never the
+    /// same-named entity in a different namespace. Idempotent: a second call
+    /// with the same arguments must not error.
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn backfill_entity_embedding_is_namespace_scoped_and_idempotent() {
+        use crate::core::graph::InsertEntityWithGroupParams;
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+
+        // Same surface name ("alice") in two namespaces — a legitimate
+        // cross-namespace id collision per ADR-029d.
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": "Alice A" }),
+            group_id: Some("namespace-a"),
+        })
+        .await
+        .unwrap();
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({ "name": "Alice B" }),
+            group_id: Some("namespace-b"),
+        })
+        .await
+        .unwrap();
+
+        // Backfill ONLY namespace-a's row.
+        g.backfill_entity_embedding(crate::core::graph::SetEntityEmbeddingParams {
+            id: "alice",
+            group_id: "namespace-a",
+            embedding: &make_embedding(1.0),
+        })
+        .await
+        .unwrap();
+        // Idempotent: re-run with the same arguments must not error.
+        g.backfill_entity_embedding(crate::core::graph::SetEntityEmbeddingParams {
+            id: "alice",
+            group_id: "namespace-a",
+            embedding: &make_embedding(1.0),
+        })
+        .await
+        .unwrap();
+
+        let missing = g.entities_missing_embeddings(100).await.unwrap();
+        assert_eq!(
+            missing.len(),
+            1,
+            "only namespace-b's row must still be missing an embedding — \
+             the write must not have crossed namespaces"
+        );
+        assert_eq!(missing[0].group_id, "namespace-b");
+    }
+
     /// TD-112 fact sibling of
     /// `episodes_after_id_pages_every_row_including_already_embedded` —
     /// `facts_after_id` must return EVERY fact row (including ones that

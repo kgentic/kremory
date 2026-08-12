@@ -1812,6 +1812,249 @@ impl Memory {
         }
     }
 
+    /// TD-211 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-211): fill the
+    /// entity embedding gap — the entity sibling of
+    /// [`backfill_episode_embeddings`](Self::backfill_episode_embeddings),
+    /// same shape exactly: same constructed-via-builder guard, same `op:`
+    /// naming convention on WARN logs, same [`EpisodeEmbeddingBackfill`]
+    /// return/tally shape, same namespace-scoping discipline (via
+    /// [`TemporalGraph::backfill_entity_embedding`]'s composite `(id,
+    /// group_id)` key, TD-206).
+    ///
+    /// Pages via [`TemporalGraph::entities_missing_embeddings`]'s `WHERE
+    /// embedding IS NULL` predicate — unlike
+    /// [`reembed_all_entity_embeddings`](Self::reembed_all_entity_embeddings),
+    /// this can ONLY fill a gap; it never touches a row that already carries
+    /// an embedding (re-run to retry the earlier tally's `failed` rows).
+    ///
+    /// Feature-gated behind `content-search` (the column only exists there).
+    #[cfg(feature = "content-search")]
+    pub async fn backfill_entity_embeddings(
+        &self,
+        batch_size: usize,
+    ) -> Result<EpisodeEmbeddingBackfill> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::backfill_entity_embeddings requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        // Guard against a zero page size (an infinite no-progress loop).
+        let batch_size = batch_size.max(1);
+
+        let mut stats = EpisodeEmbeddingBackfill::default();
+        loop {
+            let batch = tg
+                .entities_missing_embeddings(batch_size)
+                .await
+                .map_err(MemoryError::Core)?;
+            if batch.is_empty() {
+                break;
+            }
+            self.backfill_and_store_entity_page(EmbedEntityPageParams {
+                tg,
+                batch,
+                stats: &mut stats,
+                op: "backfill_entity_embeddings",
+            })
+            .await;
+            // Mirrors `backfill_episode_embeddings`'s early-abort: if a whole
+            // page was all-failures we would loop forever on the same NULL
+            // rows (the `WHERE embedding IS NULL` predicate never drops a
+            // failed row out of the next page) — bail once we've made no
+            // forward progress on a full page.
+            if stats.embedded == 0 && stats.failed > 0 {
+                tracing::warn!(
+                    failed = stats.failed,
+                    "backfill_entity_embeddings: first page all-failed — aborting (check the embedder)"
+                );
+                break;
+            }
+        }
+        tracing::info!(
+            embedded = stats.embedded,
+            failed = stats.failed,
+            "kremory.backfill_entity_embeddings complete"
+        );
+        Ok(stats)
+    }
+
+    /// Shared per-page embed+store body for
+    /// [`backfill_entity_embeddings`](Self::backfill_entity_embeddings) —
+    /// mirrors [`embed_and_store_entity_page`](Self::embed_and_store_entity_page)
+    /// exactly (including the TD-206 namespace-scoped write), except the
+    /// write-back calls [`TemporalGraph::backfill_entity_embedding`] (TD-211's
+    /// new NULL-only setter) rather than
+    /// [`TemporalGraph::set_entity_embedding_in_group`] — mirrors the
+    /// `set_fact_embedding` / `backfill_fact_embedding` split already present
+    /// at the fact layer. Reuses [`EmbedEntityPageParams`] since the two
+    /// bodies differ only in which setter they call, not in their data shape.
+    #[cfg(feature = "content-search")]
+    async fn backfill_and_store_entity_page(&self, params: EmbedEntityPageParams<'_>) {
+        let EmbedEntityPageParams {
+            tg,
+            batch,
+            stats,
+            op,
+        } = params;
+        for row in batch {
+            match self.embed_document_text(&row.embed_text).await {
+                Ok(embedding) => match tg
+                    .backfill_entity_embedding(crate::core::graph::SetEntityEmbeddingParams {
+                        id: &row.id,
+                        group_id: &row.group_id,
+                        embedding: &embedding,
+                    })
+                    .await
+                {
+                    Ok(()) => stats.embedded += 1,
+                    Err(e) => {
+                        stats.failed += 1;
+                        tracing::warn!(
+                            error = %e,
+                            entity_id = %row.id,
+                            op,
+                            "backfill_entity_embedding failed"
+                        );
+                    }
+                },
+                Err(e) => {
+                    stats.failed += 1;
+                    tracing::warn!(error = %e, entity_id = %row.id, op, "embedder failed");
+                }
+            }
+        }
+    }
+
+    /// TD-211: fill the fact embedding gap by driving the pre-existing Story
+    /// #214 crash-recovery primitives
+    /// ([`TemporalGraph::facts_missing_embeddings`],
+    /// [`TemporalGraph::backfill_fact_embedding`]) for the first time from a
+    /// production code path — both were previously reachable only from their
+    /// own definitions and from `graph/tests.rs` (register §TD-211).
+    ///
+    /// `facts_missing_embeddings` has no `LIMIT`/cursor of its own (it
+    /// already returns every missing-embedding fact in one query), so
+    /// `batch_size` here controls how many rows this loop hands to
+    /// [`backfill_and_store_fact_page`](Self::backfill_and_store_fact_page)
+    /// per iteration — the same early-abort intent as the episode/entity
+    /// siblings (a broken embedder is caught after the first `batch_size`
+    /// failures, not after every row), applied client-side since the query
+    /// itself can't be paged.
+    ///
+    /// Feature-gated behind `content-search` (mirrors the episode/entity
+    /// siblings — all bulk re-embed/backfill paths ship together).
+    #[cfg(feature = "content-search")]
+    pub async fn backfill_fact_embeddings(
+        &self,
+        batch_size: usize,
+    ) -> Result<EpisodeEmbeddingBackfill> {
+        let tg = self.temporal_graph.as_ref().ok_or_else(|| {
+            MemoryError::Other(
+                "Memory::backfill_fact_embeddings requires a Memory constructed via the \
+                 builder/providers path (no Arc<TemporalGraph> attached)"
+                    .into(),
+            )
+        })?;
+        let batch_size = batch_size.max(1);
+
+        let mut stats = EpisodeEmbeddingBackfill::default();
+        // `facts_missing_embeddings` has no `LIMIT`/cursor of its own — it
+        // already returns every missing-embedding fact in one query (see its
+        // own doc comment). `batch_size` chunks the in-memory result for the
+        // per-page helper below, purely to bound how many rows are embedded
+        // before the early-abort check runs (see the loop body).
+        let missing = tg
+            .facts_missing_embeddings()
+            .await
+            .map_err(MemoryError::Core)?;
+        for chunk in missing.chunks(batch_size) {
+            let batch: Vec<(i64, String)> = chunk
+                .iter()
+                .map(|(fact_id, subject_id, predicate, object_value, object_id)| {
+                    // TD-211: text built from the raw subject_id/object_id
+                    // (entity slugs), NOT a properties.name lookup — unlike
+                    // `facts_after_id`'s reconstruction (used by
+                    // `reembed_all_fact_embeddings`), `facts_missing_embeddings`
+                    // does not JOIN `entities` for display names, and this
+                    // method must not rewrite that primitive. The unscoped
+                    // `TemporalGraph::get_entity` could supply a display
+                    // name, but it matches on `id` alone (no `group_id`) —
+                    // exactly the TD-206 cross-namespace bug this codebase
+                    // already fixed elsewhere. Falling back to the raw
+                    // id/slug is safe (it IS `entity_display_name`'s own
+                    // fallback value) at the cost of missing a
+                    // `properties.name` override — proven by
+                    // `backfill_fact_embeddings_builds_text_from_raw_entity_ids`.
+                    let object_text = object_id
+                        .clone()
+                        .or_else(|| object_value.clone())
+                        .unwrap_or_default();
+                    (*fact_id, format!("{subject_id} {predicate} {object_text}"))
+                })
+                .collect();
+            self.backfill_and_store_fact_page(EmbedFactPageParams {
+                tg,
+                batch,
+                stats: &mut stats,
+                op: "backfill_fact_embeddings",
+            })
+            .await;
+            // Mirrors the episode/entity siblings' early-abort: bail once a
+            // full chunk made no forward progress (broken embedder), rather
+            // than burning through every remaining chunk on guaranteed
+            // failures.
+            if stats.embedded == 0 && stats.failed > 0 {
+                tracing::warn!(
+                    failed = stats.failed,
+                    "backfill_fact_embeddings: first page all-failed — aborting (check the embedder)"
+                );
+                break;
+            }
+        }
+        tracing::info!(
+            embedded = stats.embedded,
+            failed = stats.failed,
+            "kremory.backfill_fact_embeddings complete"
+        );
+        Ok(stats)
+    }
+
+    /// Shared per-page embed+store body for
+    /// [`backfill_fact_embeddings`](Self::backfill_fact_embeddings) — mirrors
+    /// [`embed_and_store_fact_page`](Self::embed_and_store_fact_page) exactly,
+    /// except the write-back calls [`TemporalGraph::backfill_fact_embedding`]
+    /// (Story #214's crash-recovery setter) rather than
+    /// [`TemporalGraph::set_fact_embedding`] — TD-211 is what gives that
+    /// primitive its first production caller. Reuses [`EmbedFactPageParams`]
+    /// since the two bodies differ only in which setter they call, not in
+    /// their data shape.
+    #[cfg(feature = "content-search")]
+    async fn backfill_and_store_fact_page(&self, params: EmbedFactPageParams<'_>) {
+        let EmbedFactPageParams {
+            tg,
+            batch,
+            stats,
+            op,
+        } = params;
+        for (fact_id, fact_text) in batch {
+            match self.embed_document_text(&fact_text).await {
+                Ok(embedding) => match tg.backfill_fact_embedding(fact_id, &embedding).await {
+                    Ok(()) => stats.embedded += 1,
+                    Err(e) => {
+                        stats.failed += 1;
+                        tracing::warn!(error = %e, fact_id, op, "backfill_fact_embedding failed");
+                    }
+                },
+                Err(e) => {
+                    stats.failed += 1;
+                    tracing::warn!(error = %e, fact_id, op, "embedder failed");
+                }
+            }
+        }
+    }
+
     /// Block until the dream phase handle reaches a terminal status.
     pub async fn await_dream(
         &self,

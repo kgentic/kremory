@@ -1175,6 +1175,42 @@ pub fn restore_archived_outcome_to_js(
     }
 }
 
+/// Result of `JsMemory.backfillEntityEmbeddings` / `.backfillFactEmbeddings` —
+/// mirrors `kremory::facade::EpisodeEmbeddingBackfill` (TD-211,
+/// `.ai-docs/tech-debt/tech-debt-register.md` §TD-211). Not crate-root
+/// re-exported by the substrate (only reachable as
+/// `kremory::facade::EpisodeEmbeddingBackfill`), and not one of the
+/// mechanical parity test's tracked struct types (`tracked_struct_types()`,
+/// `tests/api_parity.rs`) — only `DreamSummary` is field-tracked there — so
+/// this napi-side name does not need to match the substrate struct's name,
+/// only its shape.
+///
+/// `embedded`/`failed` are `u64` on the substrate; cast to `f64` here per the
+/// existing `usize`/`u64` → `f64` convention (`JsDreamSummary`'s doc comment
+/// above) — safe up to 2^53, far beyond any realistic corpus size.
+#[cfg(feature = "content-search")]
+#[napi(object, js_name = "EmbeddingBackfillResult")]
+pub struct JsEmbeddingBackfill {
+    /// Items whose text was embedded + stored this run.
+    pub embedded: f64,
+    /// Items skipped due to a per-item embed/store failure (WARN-logged in
+    /// the substrate log; re-run to retry them).
+    pub failed: f64,
+}
+
+/// Convert a substrate `kremory::facade::EpisodeEmbeddingBackfill` to
+/// `JsEmbeddingBackfill`. Feature-gated behind `content-search` — the
+/// substrate type only exists there.
+#[cfg(feature = "content-search")]
+pub fn embedding_backfill_to_js(
+    o: kremory::facade::EpisodeEmbeddingBackfill,
+) -> JsEmbeddingBackfill {
+    JsEmbeddingBackfill {
+        embedded: o.embedded as f64,
+        failed: o.failed as f64,
+    }
+}
+
 /// Outcome of `JsMemory.unsupersede` — mirrors `kremory::UnsupersedeOutcome`.
 ///
 /// `outcome` is `"cleared"` (a bound was cleared, fact re-opened as

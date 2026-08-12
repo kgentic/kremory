@@ -166,6 +166,8 @@ mod td143_reembed_all_episode_embeddings;
 mod td187_per_fact_valid_from;
 mod td187_published_at_wiring;
 mod td187_valid_at_llm_seam;
+mod td211_backfill_entity_embeddings;
+mod td211_backfill_fact_embeddings;
 mod td_012_canary;
 mod td_028_pull_shape;
 mod type_registry_collapse_lemma_false_merge_safety;

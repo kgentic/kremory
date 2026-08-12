@@ -633,4 +633,94 @@ impl TemporalGraph {
         }
         Ok(out)
     }
+
+    /// TD-211 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-211): select up
+    /// to `limit` entities whose `embedding` is still NULL, for the
+    /// `Memory::backfill_entity_embeddings` maintenance loop — the entity
+    /// sibling of [`TemporalGraph::episodes_missing_embedding`]. Returns one
+    /// [`EntityReembedRow`] per entity, `embed_text` resolved the SAME way
+    /// [`entities_after_id`](Self::entities_after_id) resolves it (via
+    /// [`super::entity_display_name`]).
+    ///
+    /// No liveness predicate: unlike `facts` (`expired_at`) or `episodes`,
+    /// the `entities` table (`schema.rs`, `CREATE TABLE IF NOT EXISTS
+    /// entities`) carries no expiry/liveness column — every row is live by
+    /// construction, which is also why `entities_after_id` above selects
+    /// unconditionally (no `WHERE` beyond the cursor).
+    ///
+    /// `WHERE embedding IS NULL` is self-consuming (same convergence
+    /// argument as [`TemporalGraph::episodes_missing_embedding`]'s
+    /// doc): once a row's embedding is backfilled it drops out of the next
+    /// page, so — unlike `entities_after_id` — this needs no cursor, only a
+    /// `LIMIT`. Ordered by the composite `(id, group_id)` per ADR-029d /
+    /// TD-206 (matches `entities_after_id`'s tie-break, even though no
+    /// cursor is threaded through it here).
+    #[cfg(feature = "content-search")]
+    pub async fn entities_missing_embeddings(&self, limit: usize) -> Result<Vec<EntityReembedRow>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, COALESCE(group_id, 'default') AS gid, properties \
+                 FROM entities \
+                 WHERE embedding IS NULL \
+                 ORDER BY id ASC, gid ASC \
+                 LIMIT ?1",
+                libsql::params![limit as i64],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id: String = row.get::<String>(0)?;
+            let group_id: String = row.get::<String>(1)?;
+            let properties: Option<String> = row.get::<Option<String>>(2)?;
+            let embed_text = super::entity_display_name(properties.as_deref(), &id);
+            out.push(EntityReembedRow {
+                id,
+                group_id,
+                embed_text,
+            });
+        }
+        Ok(out)
+    }
+
+    /// TD-211: namespace-scoped backfill setter for the entity NULL-only
+    /// gap-fill path — mirrors [`TemporalGraph::backfill_fact_embedding`]
+    /// (Story #214, `graph/facts.rs`) exactly in shape, including its
+    /// defensive `CASE WHEN ?1 IS NULL` guard, giving the "backfill" method
+    /// family (episode / fact / entity) a self-consistent name across all
+    /// three tables.
+    ///
+    /// Scoped by the composite `(id, group_id)` key like
+    /// [`TemporalGraph::set_entity_embedding_in_group`] (TD-206) — NOT the
+    /// unscoped, `#[cfg(any(test, feature = "test-utils"))]`-only
+    /// `set_entity_embedding`, whose doc comment explains why an unscoped
+    /// write on this table is a production hazard. Idempotent: safe to
+    /// re-run (a plain `UPDATE ... WHERE id = ? AND group_id = ?`).
+    #[cfg(feature = "content-search")]
+    pub async fn backfill_entity_embedding(
+        &self,
+        params: SetEntityEmbeddingParams<'_>,
+    ) -> Result<()> {
+        let SetEntityEmbeddingParams {
+            id,
+            group_id,
+            embedding,
+        } = params;
+        let vec_str = format!(
+            "[{}]",
+            embedding
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        self.conn
+            .execute(
+                "UPDATE entities SET embedding = CASE WHEN ?1 IS NULL THEN NULL ELSE vector(?1) END \
+                 WHERE id = ?2 AND group_id = ?3",
+                libsql::params![vec_str, id, group_id],
+            )
+            .await?;
+        Ok(())
+    }
 }

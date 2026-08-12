@@ -111,6 +111,11 @@ reembed_all_entity_embeddings  = { deferred = "operator maintenance: full-corpus
 reembed_all_fact_embeddings    = { deferred = "operator maintenance: full-corpus re-embed" }
 reembed_all_episode_embeddings = { deferred = "operator maintenance: full-corpus re-embed" }
 backfill_episode_embeddings    = { deferred = "operator maintenance: migration-time backfill" }
+# TD-211 (.ai-docs/tech-debt/tech-debt-register.md §TD-211): entity/fact
+# siblings of backfill_episode_embeddings above — same NULL-only gap-fill
+# shape, same operator-maintenance rationale, one table over.
+backfill_entity_embeddings     = { deferred = "operator maintenance: migration-time backfill" }
+backfill_fact_embeddings       = { deferred = "operator maintenance: migration-time backfill" }
 
 # ── DIAGNOSTIC / INTERNAL ────────────────────────────────────────────────────
 ghost_episodes     = { deferred = "diagnostic query for operators debugging ingest" }
