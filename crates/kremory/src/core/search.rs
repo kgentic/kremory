@@ -208,15 +208,6 @@ struct VectorSearchEpisodesBruteForceParams<'a> {
     filters: &'a SearchFilters,
 }
 
-/// Bundled parameters for [`TemporalGraph::hybrid_search_facts`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
-pub struct HybridSearchFactsParams<'a> {
-    pub query_text: &'a str,
-    pub query_embedding: &'a [f32],
-    pub limit: usize,
-    pub filters: &'a SearchFilters,
-}
-
 /// TD-114: over-fetch plan for a filtered-ANN (`vector_top_k`) query.
 ///
 /// `vector_top_k` exposes no predicate argument, so `group_id`/namespace
@@ -1494,54 +1485,6 @@ impl TemporalGraph {
         }
         Ok(passages)
     }
-
-    /// Hybrid search: combines vector similarity + FTS5 BM25 for facts using Reciprocal Rank Fusion.
-    /// `query_text` is used for FTS5, `query_embedding` is used for vector search.
-    /// Returns facts ranked by combined RRF score (higher = more relevant).
-    /// Scoped by `filters.group_ids`.
-    pub async fn hybrid_search_facts(
-        &self,
-        params: HybridSearchFactsParams<'_>,
-    ) -> Result<Vec<SearchHit<Fact>>> {
-        let HybridSearchFactsParams {
-            query_text,
-            query_embedding,
-            limit,
-            filters,
-        } = params;
-        let _search_start = Instant::now();
-        // Fetch more candidates from each source than the final limit
-        // to give fusion enough data to work with
-        let fetch_limit = limit * 3;
-
-        // Run both searches with the same filters
-        let vector_hits = self
-            .vector_search_facts(VectorSearchFactsParams {
-                query_embedding,
-                limit: fetch_limit,
-                filters,
-            })
-            .await?;
-        let fts_hits = self
-            .fts_search_facts(FtsSearchFactsParams {
-                query: query_text,
-                limit: fetch_limit,
-                filters,
-            })
-            .await?;
-
-        // Fuse with RRF
-        let fused = rrf_fuse_facts(vector_hits, fts_hits, 60.0);
-
-        // Return top `limit` results
-        let results: Vec<SearchHit<Fact>> = fused.into_iter().take(limit).collect();
-        let result_count = results.len();
-        let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
-        histogram!("rql.search.hybrid_facts_hits").record(result_count as f64);
-        histogram!("rql.search.hybrid_facts_ms").record(_ms);
-        tracing::info!(hits = result_count, _ms, "kremory.search.hybrid_facts");
-        Ok(results)
-    }
 }
 
 /// Filters for search queries — group scoping and temporal bounds.
@@ -1698,6 +1641,20 @@ fn rrf_fuse_entities(
 ///
 /// `group_id: None` = legacy unkeyed facts. Same None-bucket semantics as
 /// `rrf_fuse_entities`.
+///
+/// **`cfg`-gated since TD-158 (2026-08-12).** Its production caller was
+/// `hybrid_search_facts`, deleted by TD-158 as dead in production. The ONLY
+/// remaining caller is `rrf_fuse_facts_for_test` (below), which is
+/// `#[cfg(any(test, feature = "test-utils"))]` — so in a build without
+/// `test-utils` (e.g. `kremory-napi`) this became dead code and `deny(dead_code)`
+/// made it a HARD COMPILE ERROR, failing the napi tier.
+///
+/// Gated rather than DELETED on purpose: `tests/it/properties_029bc.rs:177`
+/// property-tests it for the invariant *"never output more rows than the union of
+/// its inputs"*. Deleting it would have silently destroyed that property test —
+/// the failure this gate exists to prevent. Gated rather than `#[allow(dead_code)]`
+/// because an allow would suppress the signal for every FUTURE orphan too.
+#[cfg(any(test, feature = "test-utils"))]
 fn rrf_fuse_facts(
     vector_hits: Vec<SearchHit<Fact>>,
     fts_hits: Vec<SearchHit<Fact>>,

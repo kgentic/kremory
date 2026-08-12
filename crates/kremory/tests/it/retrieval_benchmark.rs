@@ -2,9 +2,19 @@
 /// Retrieval quality benchmark for the rql-core crate.
 ///
 /// Validates that data inserted into the graph can be correctly retrieved
-/// via FTS, vector, and hybrid search modes.  No external models required —
-/// all tests use MockEmbeddingProvider (deterministic FNV-1a) and
-/// NullLlmClient, so they always run without any opt-in env vars.
+/// via FTS, vector, and (TD-158) the production hybrid-retrieval path.  No
+/// external models required — all tests use MockEmbeddingProvider
+/// (deterministic FNV-1a) and NullLlmClient, so they always run without any
+/// opt-in env vars.
+///
+/// TD-158 (`.ai-docs/tech-debt/tech-debt-register.md`): the "hybrid" measure
+/// below drives `Engine::contextualize` — the SAME function
+/// `Memory::recall()` calls in production (`memory/mod.rs::search` →
+/// `GraphHandle::graph_search` → `contextualize`) — rather than
+/// `TemporalGraph::hybrid_search_entities`, which has zero production
+/// callers (confirmed by a workspace-wide call-site audit) and previously
+/// gave false confidence about "hybrid search quality" that did not
+/// describe what `recall()` actually runs.
 ///
 /// Run with:
 ///   cargo test --test it retrieval_benchmark:: -- --nocapture
@@ -18,9 +28,8 @@ use kremory::core::ingest::Engine;
 use kremory::core::provider::{EmbeddingProvider, MockChatProvider, MockEmbeddingProvider};
 use kremory::core::schema::{Entity, TemporalGraph};
 use kremory::core::search::{
-    FtsSearchEntitiesParams, FtsSearchFactsParams, HybridSearchEntitiesParams,
-    HybridSearchFactsParams, SearchFilters, SearchHit, VectorSearchEntitiesParams,
-    VectorSearchFactsParams,
+    FtsSearchEntitiesParams, FtsSearchFactsParams, SearchFilters, SearchHit,
+    VectorSearchEntitiesParams, VectorSearchFactsParams,
 };
 use metrics_util::debugging::DebuggingRecorder;
 use serde::Deserialize;
@@ -82,22 +91,28 @@ fn fts_quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// Return true when a search hit's label or properties contain the expected name
+/// Return true when an entity's id or properties contain the expected name
 /// (case-insensitive substring match, same fuzzy logic as extraction benchmarks).
-fn entity_in_hits(hits: &[SearchHit<Entity>], expected_name: &str) -> bool {
+fn entity_matches(entity: &Entity, expected_name: &str) -> bool {
     let needle = expected_name.to_lowercase();
-    for hit in hits {
-        let id_lc = hit.item.id.to_lowercase();
-        let props = hit.item.properties.to_string().to_lowercase();
-        if id_lc == entity_id(expected_name)
-            || id_lc.contains(&needle)
-            || needle.contains(&id_lc)
-            || props.contains(&needle)
-        {
-            return true;
-        }
-    }
-    false
+    let id_lc = entity.id.to_lowercase();
+    let props = entity.properties.to_string().to_lowercase();
+    id_lc == entity_id(expected_name)
+        || id_lc.contains(&needle)
+        || needle.contains(&id_lc)
+        || props.contains(&needle)
+}
+
+/// Return true when a search hit's label or properties contain the expected name.
+fn entity_in_hits(hits: &[SearchHit<Entity>], expected_name: &str) -> bool {
+    hits.iter().any(|hit| entity_matches(&hit.item, expected_name))
+}
+
+/// Return true when `entities` (e.g. [`ContextResult::entities`]) contains a
+/// match for `expected_name` — the [`Engine::contextualize`] analogue of
+/// [`entity_in_hits`], TD-158's production-path repoint.
+fn entity_present(entities: &[Entity], expected_name: &str) -> bool {
+    entities.iter().any(|e| entity_matches(e, expected_name))
 }
 
 // ─── Test 1: FTS entity recall across all 14 domains ─────────────────────────
@@ -319,20 +334,30 @@ async fn test_vector_self_retrieval() {
     );
 }
 
-// ─── Test 3: Hybrid search finds entities ────────────────────────────────────
+// ─── Test 3: Hybrid search finds entities (TD-158: via production contextualize) ──
 
+/// TD-158 repoint: this used to drive `TemporalGraph::hybrid_search_entities`
+/// directly, a fusion composition (`fts_search_entities` + `vector_search_entities`
+/// + a hardcoded `rrf_k=60.0`) that NOTHING in production calls — see the module
+/// doc comment. It now drives `Engine::contextualize`, the exact function
+/// `Memory::recall()` reaches in production (`memory::search` →
+/// `GraphHandle::graph_search` → `contextualize`), which fuses
+/// `fts_search_entities_no_count` + `vector_search_entities_no_count` with the
+/// CONFIGURED `rrf_k`/`bm25_weight`/`vector_weight`.
 #[tokio::test]
 async fn test_hybrid_search_finds_entities() {
     let ground_truth = load_ground_truth();
-    let embedder = MockEmbeddingProvider::new(384);
+    let embedder = Arc::new(MockEmbeddingProvider::new(384));
 
     let domain = ground_truth
         .get("mock_interview")
         .expect("mock_interview not in ground truth");
 
-    let graph = TemporalGraph::open_in_memory()
-        .await
-        .expect("failed to open in-memory graph");
+    let graph = Arc::new(
+        TemporalGraph::open_in_memory()
+            .await
+            .expect("failed to open in-memory graph"),
+    );
 
     for entity in &domain.entities {
         let id = entity_id(&entity.name);
@@ -356,36 +381,35 @@ async fn test_hybrid_search_finds_entities() {
             .unwrap_or_else(|e| panic!("set_entity_embedding({id}) failed: {e}"));
     }
 
+    let config = PipelineConfig::builder()
+        .build()
+        .expect("PipelineConfig::build");
+    let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
+        Engine::new(kremory::core::ingest::EngineNewParams {
+            graph,
+            llm: Arc::new(MockChatProvider::null()),
+            embedder,
+            config,
+            model: None,
+        });
+
     let mut found_count = 0usize;
 
     for entity in &domain.entities {
-        let embedding = embedder
-            .embed(&entity.name)
-            .await
-            .unwrap_or_else(|e| panic!("embed({}) failed: {e}", entity.name));
-
-        let hybrid_text = fts_quote(&entity.name);
-        let hits = graph
-            .hybrid_search_entities(HybridSearchEntitiesParams {
-                query_text: &hybrid_text,
-                query_embedding: &embedding,
-                limit: 10,
-                filters: &SearchFilters::new(),
+        // `contextualize` sanitises/tokenises the FTS query and computes its
+        // own vector-search query embedding internally — no need to pre-quote
+        // or pre-embed like the old `hybrid_search_entities` call site did.
+        let ctx: ContextResult = rql
+            .contextualize(ContextualizeParams {
+                query: &entity.name,
+                group_id: None,
+                limit: Some(10),
+                as_of: None,
             })
             .await
-            .unwrap_or_else(|e| panic!("hybrid_search_entities({}) failed: {e}", entity.name));
+            .unwrap_or_else(|e| panic!("contextualize({}) failed: {e}", entity.name));
 
-        // All RRF scores must be positive
-        for hit in &hits {
-            assert!(
-                hit.score > 0.0,
-                "RRF score for entity '{}' should be positive, got {}",
-                hit.item.id,
-                hit.score,
-            );
-        }
-
-        if entity_in_hits(&hits, &entity.name) {
+        if entity_present(&ctx.entities, &entity.name) {
             found_count += 1;
         }
     }
@@ -397,7 +421,7 @@ async fn test_hybrid_search_finds_entities() {
     };
 
     eprintln!(
-        "\n  Hybrid search mock_interview recall = {:.1}%  ({}/{})\n",
+        "\n  contextualize() mock_interview recall = {:.1}%  ({}/{})\n",
         recall * 100.0,
         found_count,
         domain.entities.len(),
@@ -405,7 +429,7 @@ async fn test_hybrid_search_finds_entities() {
 
     assert!(
         recall >= 0.80,
-        "hybrid search recall {:.1}% is below 80% ({}/{} found)",
+        "contextualize() recall {:.1}% is below 80% ({}/{} found)",
         recall * 100.0,
         found_count,
         domain.entities.len(),
@@ -648,6 +672,19 @@ async fn test_contextualize_one_hop_expansion() {
 
 // ─── Test 6: Fact retrieval benchmark across all 14 domains ──────────────────
 
+/// TD-158: this test previously had a third "hybrid" column driving
+/// `TemporalGraph::hybrid_search_facts` (FTS-facts + vector-facts RRF fusion).
+/// That column was DELETED, along with `hybrid_search_facts` itself — see the
+/// module doc comment and the TD-158 register entry. Unlike entity search,
+/// production has no reachable equivalent to repoint to: the real fact-fusion
+/// path (`facade/recall.rs` → `rrf_fuse_with_facts`) fuses `vector_search_facts`
+/// hits directly against the already-fused entity+content stream, is
+/// `pub(crate)` (unreachable from this external test crate without adding a
+/// new public surface), and does not use FTS-facts at all. The FTS and vector
+/// columns below remain — both drive primitives production genuinely uses:
+/// `vector_search_facts` is called directly from `facade/recall.rs`'s dense
+/// fact-fusion arm; `fts_search_facts` is called from the ingest pipeline's
+/// dedup probes (`core/ingest/pipeline/ingest_with.rs`, `.../deferred.rs`).
 #[tokio::test]
 async fn test_fact_retrieval_benchmark() {
     let recorder = DebuggingRecorder::new();
@@ -665,7 +702,6 @@ async fn test_fact_retrieval_benchmark() {
         fact_count: usize,
         fts_found: usize,
         vec_found: usize,
-        hybrid_found: usize,
     }
 
     let mut results: Vec<DomainFactResult> = Vec::new();
@@ -731,7 +767,6 @@ async fn test_fact_retrieval_benchmark() {
         let fact_count = fact_pairs.len();
         let mut fts_found = 0usize;
         let mut vec_found = 0usize;
-        let mut hybrid_found = 0usize;
 
         for (fact_text, fact_emb) in &fact_pairs {
             // FTS: search by predicate — every fact uses "related_to" so all should match
@@ -762,20 +797,6 @@ async fn test_fact_retrieval_benchmark() {
             if vec_hits.iter().any(|h| h.item.predicate == "related_to") {
                 vec_found += 1;
             }
-
-            // Hybrid: combines FTS predicate text with vector embedding
-            let hybrid_hits = graph
-                .hybrid_search_facts(HybridSearchFactsParams {
-                    query_text: "related_to",
-                    query_embedding: fact_emb,
-                    limit: 10,
-                    filters: &SearchFilters::new(),
-                })
-                .await
-                .unwrap_or_else(|e| panic!("hybrid_search_facts({fact_text}) failed: {e}"));
-            if hybrid_hits.iter().any(|h| h.item.predicate == "related_to") {
-                hybrid_found += 1;
-            }
         }
 
         results.push(DomainFactResult {
@@ -783,7 +804,6 @@ async fn test_fact_retrieval_benchmark() {
             fact_count,
             fts_found,
             vec_found,
-            hybrid_found,
         });
     }
 
@@ -793,18 +813,14 @@ async fn test_fact_retrieval_benchmark() {
     eprintln!("  FACT RETRIEVAL BENCHMARK SUMMARY");
     eprintln!("{:-<80}", "");
     eprintln!(
-        "  {:<24} | {:>6} | {:>11} | {:>17} | {:>14}",
-        "Domain", "Facts", "FTS Recall", "Vector Recall@10", "Hybrid Recall"
+        "  {:<24} | {:>6} | {:>11} | {:>17}",
+        "Domain", "Facts", "FTS Recall", "Vector Recall@10"
     );
-    eprintln!(
-        "  {:-<24}-+-{:-<6}-+-{:-<11}-+-{:-<17}-+-{:-<14}",
-        "", "", "", "", ""
-    );
+    eprintln!("  {:-<24}-+-{:-<6}-+-{:-<11}-+-{:-<17}", "", "", "", "");
 
     let mut total_facts = 0usize;
     let mut total_fts = 0usize;
     let mut total_vec = 0usize;
-    let mut total_hybrid = 0usize;
 
     for r in &results {
         let n = r.fact_count;
@@ -818,21 +834,15 @@ async fn test_fact_retrieval_benchmark() {
         } else {
             r.vec_found as f64 / n as f64 * 100.0
         };
-        let hyb_pct = if n == 0 {
-            100.0
-        } else {
-            r.hybrid_found as f64 / n as f64 * 100.0
-        };
 
         eprintln!(
-            "  {:<24} | {:>6} | {:>10.1}% | {:>16.1}% | {:>13.1}%",
-            r.key, n, fts_pct, vec_pct, hyb_pct,
+            "  {:<24} | {:>6} | {:>10.1}% | {:>16.1}%",
+            r.key, n, fts_pct, vec_pct,
         );
 
         total_facts += n;
         total_fts += r.fts_found;
         total_vec += r.vec_found;
-        total_hybrid += r.hybrid_found;
     }
 
     let overall_fts = if total_facts == 0 {
@@ -845,23 +855,14 @@ async fn test_fact_retrieval_benchmark() {
     } else {
         total_vec as f64 / total_facts as f64
     };
-    let overall_hyb = if total_facts == 0 {
-        1.0
-    } else {
-        total_hybrid as f64 / total_facts as f64
-    };
 
+    eprintln!("  {:-<24}-+-{:-<6}-+-{:-<11}-+-{:-<17}", "", "", "", "");
     eprintln!(
-        "  {:-<24}-+-{:-<6}-+-{:-<11}-+-{:-<17}-+-{:-<14}",
-        "", "", "", "", ""
-    );
-    eprintln!(
-        "  {:<24} | {:>6} | {:>10.1}% | {:>16.1}% | {:>13.1}%",
+        "  {:<24} | {:>6} | {:>10.1}% | {:>16.1}%",
         "OVERALL",
         total_facts,
         overall_fts * 100.0,
         overall_vec * 100.0,
-        overall_hyb * 100.0,
     );
     eprintln!("{:-<80}\n", "");
 
@@ -889,14 +890,6 @@ async fn test_fact_retrieval_benchmark() {
         total_facts,
     );
 
-    assert!(
-        overall_hyb >= 0.75,
-        "overall fact hybrid recall {:.1}% is below 75% threshold ({}/{} found)",
-        overall_hyb * 100.0,
-        total_hybrid,
-        total_facts,
-    );
-
     // Export metrics snapshot
     let exporter = crate::common::MetricsExporter::new("logs");
     let path = exporter
@@ -907,6 +900,10 @@ async fn test_fact_retrieval_benchmark() {
 
 // ─── Test 7: Full retrieval benchmark summary ─────────────────────────────────
 
+/// TD-158 repoint: the "hybrid" column below now drives `Engine::contextualize`
+/// (the production `Memory::recall()` path) instead of
+/// `TemporalGraph::hybrid_search_entities` — see the module doc comment and
+/// Test 3 above for the full rationale.
 #[tokio::test]
 async fn test_retrieval_benchmark_summary() {
     let recorder = DebuggingRecorder::new();
@@ -914,7 +911,7 @@ async fn test_retrieval_benchmark_summary() {
     let _recorder_guard = metrics::set_default_local_recorder(&recorder);
 
     let ground_truth = load_ground_truth();
-    let embedder = MockEmbeddingProvider::new(384);
+    let embedder = Arc::new(MockEmbeddingProvider::new(384));
 
     let mut domain_keys: Vec<String> = ground_truth.keys().cloned().collect();
     domain_keys.sort();
@@ -934,9 +931,11 @@ async fn test_retrieval_benchmark_summary() {
             .get(domain_key)
             .expect("domain in ground truth");
 
-        let graph = TemporalGraph::open_in_memory()
-            .await
-            .expect("failed to open in-memory graph");
+        let graph = Arc::new(
+            TemporalGraph::open_in_memory()
+                .await
+                .expect("failed to open in-memory graph"),
+        );
 
         let now = Utc::now();
 
@@ -975,6 +974,21 @@ async fn test_retrieval_benchmark_summary() {
                 });
         }
 
+        // One Engine per domain graph, reused across every entity query below —
+        // `contextualize` is production's actual hybrid-retrieval composition
+        // (TD-158).
+        let config = PipelineConfig::builder()
+            .build()
+            .expect("PipelineConfig::build");
+        let rql: Engine<MockChatProvider, MockEmbeddingProvider> =
+            Engine::new(kremory::core::ingest::EngineNewParams {
+                graph: Arc::clone(&graph),
+                llm: Arc::new(MockChatProvider::null()),
+                embedder: Arc::clone(&embedder),
+                config,
+                model: None,
+            });
+
         let mut fts_found = 0usize;
         let mut vec_found = 0usize;
         let mut hybrid_found = 0usize;
@@ -1012,18 +1026,19 @@ async fn test_retrieval_benchmark_summary() {
                 vec_found += 1;
             }
 
-            // Hybrid recall (quote text for FTS5 safety)
-            let hybrid_query = fts_quote(&entity.name);
-            let hybrid_hits = graph
-                .hybrid_search_entities(HybridSearchEntitiesParams {
-                    query_text: &hybrid_query,
-                    query_embedding: &emb,
-                    limit: 10,
-                    filters: &SearchFilters::new(),
+            // Hybrid recall — via the production contextualize() composition
+            // (TD-158). `contextualize` sanitises the FTS query and computes
+            // its own vector-search query embedding internally.
+            let ctx: ContextResult = rql
+                .contextualize(ContextualizeParams {
+                    query: &entity.name,
+                    group_id: None,
+                    limit: Some(10),
+                    as_of: None,
                 })
                 .await
-                .unwrap_or_else(|e| panic!("hybrid_search_entities({}) failed: {e}", entity.name));
-            if entity_in_hits(&hybrid_hits, &entity.name) {
+                .unwrap_or_else(|e| panic!("contextualize({}) failed: {e}", entity.name));
+            if entity_present(&ctx.entities, &entity.name) {
                 hybrid_found += 1;
             }
         }
