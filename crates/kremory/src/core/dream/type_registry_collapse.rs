@@ -329,6 +329,20 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             )),
         });
         record_write_gate_decision(decision);
+        // Quinn MED-3 — see the Site #5 caller. `write_gate` is counter-free by
+        // contract, so the veto is counted here or not at all.
+        if decision == WriteDecision::Reject
+            && crate::core::disambiguation::temporal_conflict(
+                slots[*i].spec.name.as_str(),
+                slots[*j].spec.name.as_str(),
+            )
+        {
+            counter!(
+                "kremory.identity.write_gate_temporal_veto_total",
+                "site" => "site3_type_registry_collapse"
+            )
+            .increment(1);
+        }
         if decision == WriteDecision::Merge {
             let (keeper_i, loser_i) = resolve_keeper_pair(&slots, *i, *j);
             queue_merge(QueueMergeParams {
@@ -360,6 +374,18 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             )),
         });
         record_write_gate_decision(decision);
+        if decision == WriteDecision::Reject
+            && crate::core::disambiguation::temporal_conflict(
+                slots[pair.a_idx].spec.name.as_str(),
+                slots[pair.b_idx].spec.name.as_str(),
+            )
+        {
+            counter!(
+                "kremory.identity.write_gate_temporal_veto_total",
+                "site" => "site3_type_registry_collapse"
+            )
+            .increment(1);
+        }
 
         match decision {
             WriteDecision::Merge => {

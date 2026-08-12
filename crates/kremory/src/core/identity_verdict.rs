@@ -285,6 +285,19 @@ pub fn write_gate(inputs: WriteGateInputs<'_>) -> WriteDecision {
     // path — `1037 am on 27 june 2023` into `1037 am` is irreversible data loss,
     // and no amount of cosine or LLM agreement makes it not so. Reuses ADR-057's
     // deterministic rule; `None` composes as a no-op.
+    //
+    // ⚠️ DELIBERATE, and it is a wider effect than "block a Merge" (Quinn MED-1 on
+    // `8b9cf855` — it was undocumented and untested until now). Being FIRST, this
+    // also converts what would have been a NON-destructive `PotentialAlias` into a
+    // hard `Reject`, reachable at two live paths: Site #5's low-confidence verdict
+    // (row 4) and Site #3's no-deterministic-corroboration case (row 6).
+    //
+    // That is correct, not collateral damage. `PotentialAlias` asserts "these may be
+    // the same entity, keep a soft link for review". Two different points in time are
+    // not the same entity and never will be, so a soft link would record a claim that
+    // is false rather than uncertain — and alias facts are read back by L7 and by
+    // recall. A temporal conflict is a HARD disqualifier, not a maybe. Pinned by
+    // `temporal_veto_overrides_potential_alias_deliberately`.
     if let Some((name_a, name_b)) = names {
         if crate::core::disambiguation::temporal_conflict(name_a, name_b) {
             // NO counter here: this module's header documents `write_gate` as
@@ -845,6 +858,18 @@ mod tests {
         ("318 pm on 4 may 2023", "318 pm"),
         ("519 pm on 5 august 2023", "519 pm"),
         ("1058 am on 9 october 2022", "1058 am"),
+        // The OTHER 7 blocked rows (Quinn MED-2): a session LABEL resolving onto a
+        // date or a time. I originally measured only the 10 above and called these a
+        // separate "nonsense class" without analysing whether blocking them is right.
+        // It is: a session label is not a date, so every one of these was ALSO a
+        // wrong merge. The true figure is 17 of 21 site5 merges corrupting, not 10.
+        ("session 12", "27 may 2023"),
+        ("session 2", "27 january 2023"),
+        ("session 19", "646 pm"),
+        ("session 1", "347 pm"),
+        ("session 14", "507 pm"),
+        ("session 21", "918 pm"),
+        ("session 6", "412 pm"),
     ];
 
     /// Builds the exact input shape Site #5 passes: no cosine signal, structural
@@ -900,5 +925,44 @@ mod tests {
     #[test]
     fn temporal_veto_is_inert_when_names_absent() {
         assert_eq!(site5_merge_authorizing(None), WriteDecision::Merge);
+    }
+
+    /// Pins the wider-than-stated effect of putting the veto at row 0 (Quinn MED-1):
+    /// a temporally-conflicting pair that would otherwise reach `PotentialAlias`
+    /// (here via row 4, confidence below the floor) is REJECTED outright.
+    ///
+    /// Deliberate. A soft alias asserts "maybe the same entity"; two different points
+    /// in time are not, so the link would record a falsehood rather than uncertainty.
+    /// The control case below proves the downgrade path is otherwise intact — without
+    /// it this test would pass even if the veto rejected everything.
+    #[test]
+    fn temporal_veto_overrides_potential_alias_deliberately() {
+        let low_conf = |names| {
+            write_gate(WriteGateInputs {
+                cosine: 0.0,
+                merge_threshold: 1.0,
+                deterministic_signal: DeterministicSignal::from_structural_prefilter(true),
+                llm_verdict: Some(IdentityVerdictItem {
+                    pair_id: 0,
+                    is_same_entity: true,
+                    confidence: 0.1, // below LLM_VERIFY_CONFIDENCE_FLOOR -> row 4
+                    reasoning: "unsure".to_string(),
+                }),
+                min_confidence_floor: None,
+                names,
+            })
+        };
+        // Control: without a temporal conflict, row 4 still downgrades to PotentialAlias.
+        assert_eq!(
+            low_conf(Some(("Tony Marchetti", "Anthony Marchetti"))),
+            WriteDecision::PotentialAlias,
+            "the row-4 downgrade path must remain reachable"
+        );
+        // With a conflict, the veto wins and rejects outright.
+        assert_eq!(
+            low_conf(Some(("session 12", "27 may 2023"))),
+            WriteDecision::Reject,
+            "a temporal conflict is a hard disqualifier, not a soft-alias candidate"
+        );
     }
 }
