@@ -324,6 +324,12 @@ pub(crate) async fn discover_types<L: ChatProvider>(
 
     // ── Step 7: Per-proposal: shape validate → anti-redundancy → persist ──────
 
+    // TD-210: one run_id per `discover_types` invocation, shared by every
+    // `identity_verdict_audit` row this call writes — mirrors
+    // `type_registry_collapse.rs`'s `run_id` (generated once per call, not
+    // once per row) so audit rows from the same Pass-0 pass are correlatable.
+    let run_id = uuid::Uuid::new_v4().to_string();
+
     for raw_proposal in batch.proposals {
         let proposal = TypeProposal {
             name: raw_proposal.name.clone(),
@@ -392,12 +398,40 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                 namespace: group_id,
                 model: &model_str,
             }) {
-                GateOutcome::Redundant { existing_name } => {
+                GateOutcome::Redundant {
+                    existing_name,
+                    desc_cosine,
+                } => {
                     let reason = format!("redundant_with:{existing_name}");
+                    // TD-210: leave evidence for this rejection regardless of
+                    // `llm_verify_band` — `desc_cosine` is `None` when the
+                    // exact-name pre-filter fired (no cosine was ever computed
+                    // for this decision) and `Some` when the desc-cosine
+                    // threshold decided it; both are honest, not dropped.
+                    record_gate_decision(RecordGateDecisionParams {
+                        conn,
+                        group_id,
+                        run_id: &run_id,
+                        proposal_name: &proposal.name,
+                        existing_name: Some(existing_name.as_str()),
+                        desc_cosine,
+                        verdict: None,
+                        decision: "reject",
+                        outcome_kind: if desc_cosine.is_some() {
+                            "redundant_desc_cosine"
+                        } else {
+                            "redundant_exact_name"
+                        },
+                        model: &model_str,
+                    })
+                    .await?;
                     result.types_rejected.push((proposal, reason));
                     continue;
                 }
-                GateOutcome::Pass => {
+                GateOutcome::Pass {
+                    existing_name,
+                    desc_cosine,
+                } => {
                     accept_proposal(AcceptProposalParams {
                         conn,
                         group_id,
@@ -407,6 +441,31 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         desc_emb_and_embedder: Some((&desc_emb, emb)),
                         evidence_retype_by_similarity,
                         result: &mut result,
+                    })
+                    .await?;
+                    // TD-210: this is the branch that previously left NO trace
+                    // at all — an accept via `Pass` never called
+                    // `record_type_novelty_decision` (that fn is only reached
+                    // from the LLM-verify sub-path below) and never wrote to
+                    // `identity_verdict_audit`. `existing_name`/`desc_cosine`
+                    // are `Some` when a real (if below-lower-band) comparison
+                    // happened, `None` only when the registry had no existing
+                    // type to compare against at all.
+                    record_gate_decision(RecordGateDecisionParams {
+                        conn,
+                        group_id,
+                        run_id: &run_id,
+                        proposal_name: &proposal.name,
+                        existing_name: existing_name.as_deref(),
+                        desc_cosine,
+                        verdict: None,
+                        decision: "accept",
+                        outcome_kind: if existing_name.is_some() {
+                            "pass_below_lower_band"
+                        } else {
+                            "pass_no_existing_types"
+                        },
+                        model: &model_str,
                     })
                     .await?;
                 }
@@ -421,6 +480,19 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         // "candidate" concept before Site #2 existed).
                         if desc_cosine >= anti_redundancy::DESC_COSINE_THRESHOLD {
                             let reason = format!("redundant_with:{existing_name}");
+                            record_gate_decision(RecordGateDecisionParams {
+                                conn,
+                                group_id,
+                                run_id: &run_id,
+                                proposal_name: &proposal.name,
+                                existing_name: Some(existing_name.as_str()),
+                                desc_cosine: Some(desc_cosine),
+                                verdict: None,
+                                decision: "reject",
+                                outcome_kind: "ambiguous_band_reject_flag_off",
+                                model: &model_str,
+                            })
+                            .await?;
                             result.types_rejected.push((proposal, reason));
                         } else {
                             accept_proposal(AcceptProposalParams {
@@ -432,6 +504,19 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                                 desc_emb_and_embedder: Some((&desc_emb, emb)),
                                 evidence_retype_by_similarity,
                                 result: &mut result,
+                            })
+                            .await?;
+                            record_gate_decision(RecordGateDecisionParams {
+                                conn,
+                                group_id,
+                                run_id: &run_id,
+                                proposal_name: &proposal.name,
+                                existing_name: Some(existing_name.as_str()),
+                                desc_cosine: Some(desc_cosine),
+                                verdict: None,
+                                decision: "accept",
+                                outcome_kind: "ambiguous_band_accept_flag_off",
+                                model: &model_str,
                             })
                             .await?;
                         }
@@ -469,6 +554,19 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         // Confident `is_same_entity == true` → the proposal IS the
                         // same concept as the existing type → redundant → reject.
                         let reason = format!("redundant_with:{existing_name}");
+                        record_gate_decision(RecordGateDecisionParams {
+                            conn,
+                            group_id,
+                            run_id: &run_id,
+                            proposal_name: &proposal.name,
+                            existing_name: Some(existing_name.as_str()),
+                            desc_cosine: Some(desc_cosine),
+                            verdict: verdict.as_ref(),
+                            decision: "reject",
+                            outcome_kind: "llm_verify_reject",
+                            model: &model_str,
+                        })
+                        .await?;
                         result.types_rejected.push((proposal, reason));
                     } else {
                         // Novel (`is_same_entity == false`), OR low-confidence / no
@@ -499,6 +597,19 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                             desc_emb_and_embedder: Some((&desc_emb, emb)),
                             evidence_retype_by_similarity,
                             result: &mut result,
+                        })
+                        .await?;
+                        record_gate_decision(RecordGateDecisionParams {
+                            conn,
+                            group_id,
+                            run_id: &run_id,
+                            proposal_name: &proposal.name,
+                            existing_name: Some(existing_name.as_str()),
+                            desc_cosine: Some(desc_cosine),
+                            verdict: verdict.as_ref(),
+                            decision: "accept",
+                            outcome_kind: "llm_verify_accept",
+                            model: &model_str,
                         })
                         .await?;
                     }
@@ -1246,6 +1357,135 @@ fn record_type_novelty_decision(redundant: bool, verdict: &Option<IdentityVerdic
         "decision" => decision
     )
     .increment(1);
+}
+
+/// Bundled parameters for [`record_gate_decision`] — args-as-object per TD-042
+/// (rust-conventions §too_many_arguments).
+struct RecordGateDecisionParams<'a> {
+    conn: &'a libsql::Connection,
+    group_id: &'a str,
+    /// Shared across every row this `discover_types` invocation writes —
+    /// generated once per call (see the call site), not once per row.
+    run_id: &'a str,
+    proposal_name: &'a str,
+    /// `None` ONLY when no existing (non-catch-all) type existed to compare
+    /// against at all (the `check_proposal` registry-empty early return) —
+    /// never because a comparison happened and its result was discarded.
+    existing_name: Option<&'a str>,
+    /// `None` ONLY when no cosine was ever computed for this decision (the
+    /// TD-097 exact-name pre-filter fires before the desc-cosine loop runs).
+    desc_cosine: Option<f32>,
+    /// `Some` only on the flag-on LLM-verify sub-path; `None` for every
+    /// deterministic decision (Pass, Redundant, and the flag-off
+    /// `NeedsLlmVerify` fallback, which makes no LLM call).
+    verdict: Option<&'a IdentityVerdictItem>,
+    /// `"accept"` | `"reject"` — the FINAL decision (did the proposal end up
+    /// persisted into `entity_types`).
+    decision: &'a str,
+    /// Fine-grained provenance for the metric label — which branch of the
+    /// gate decided this, e.g. `"pass_no_existing_types"`,
+    /// `"redundant_exact_name"`, `"llm_verify_accept"`. See call sites.
+    outcome_kind: &'a str,
+    model: &'a str,
+}
+
+/// TD-210: leave a durable, always-on trace of EVERY Pass-0 anti-redundancy
+/// gate decision — Pass, Redundant, and both `NeedsLlmVerify` sub-paths (flag
+/// off AND flag on) — independent of `DreamOpts::include_type_novelty_llm_verify`.
+///
+/// Before this, only the flag-on LLM-verify sub-path left ANY trace at all,
+/// and even that was metric-only (`record_type_novelty_decision`, above) —
+/// no persisted row. A default run's `Pass` accepts (the overwhelming
+/// majority of decisions) left ZERO evidence: `identity_verdict_audit` never
+/// received a Site #2 row, so an accepted proposal's `desc_cosine` could not
+/// be reconstructed from stored state after the fact (see tech-debt register
+/// TD-210, "the flag-on counterfactual CANNOT be read from stored state").
+///
+/// Emits BOTH:
+/// 1. An always-on counter (`kremory.dream.type_novelty_gate_decision_total`)
+///    labelled by `outcome` (fine-grained branch) + `decision` (accept/reject),
+///    following this module's existing `kremory.dream.*_total{model,namespace}`
+///    label convention (see `types_proposed_total` / `types_accepted_total` /
+///    `types_rejected_total` above).
+/// 2. A persisted `identity_verdict_audit` row (Migration 018,
+///    `identity_verdict_prereqs`) — the SAME table Site #3
+///    (`type_registry_collapse.rs::write_audit_row`) and Site #5
+///    (`acronym_nickname_recall.rs`) already write to, reusing its
+///    `site`/`cosine`/`structural_signal`/`llm_*`/`decision`/`run_id` shape.
+///    `structural_signal` mirrors what those sites mean by it (a corroborating
+///    deterministic/lexical signal) — for Site #2 that is
+///    `names_share_lemma_or_exact(proposal_name, existing_name)`, computed
+///    fresh here since none of the `Pass`/flag-off/flag-on branches already
+///    carry it forward.
+///
+/// `candidate_b` (`identity_verdict_audit.candidate_b`) is `NOT NULL TEXT` —
+/// unlike Site #3/#5, which always compare two NAMED things, Site #2's `Pass`
+/// outcome can legitimately have NO existing type to name (an empty registry).
+/// That case persists `candidate_b = ""` (an empty string can never collide
+/// with a real type name — the shape validator requires 3-50 characters), so
+/// the ABSENCE of a comparison is still visible in the row rather than adding
+/// a schema migration for one nullable column on a table three sites share.
+///
+/// Runs OUTSIDE any DB transaction (this function is not wrapped in
+/// `BEGIN`/`COMMIT` anywhere in `discover_types`, unlike Site #3's
+/// merge-transaction audit rows) — so there is no "emit inside a transaction
+/// that might roll back" hazard here; this call always reflects a decision
+/// that has already been finalised (the `accept_proposal` INSERT, when this
+/// is an accept, has already been awaited and returned `Ok` before this runs).
+async fn record_gate_decision(params: RecordGateDecisionParams<'_>) -> Result<()> {
+    let RecordGateDecisionParams {
+        conn,
+        group_id,
+        run_id,
+        proposal_name,
+        existing_name,
+        desc_cosine,
+        verdict,
+        decision,
+        outcome_kind,
+        model,
+    } = params;
+
+    counter!(
+        "kremory.dream.type_novelty_gate_decision_total",
+        "outcome" => outcome_kind.to_string(),
+        "decision" => decision.to_string(),
+        "model" => model.to_string(),
+        "namespace" => group_id.to_string()
+    )
+    .increment(1);
+
+    let structural_signal = existing_name
+        .map(|n| anti_redundancy::names_share_lemma_or_exact(proposal_name, n))
+        .unwrap_or(false);
+
+    conn.execute(
+        "INSERT INTO identity_verdict_audit \
+         (site, group_id, candidate_a, candidate_b, cosine, structural_signal, \
+          llm_is_same, llm_confidence, llm_reasoning, decision, run_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        libsql::params![
+            SITE_LABEL,
+            group_id,
+            proposal_name,
+            existing_name.unwrap_or(""),
+            desc_cosine.map(f64::from),
+            structural_signal,
+            verdict.map(|v| v.is_same_entity),
+            verdict.map(|v| f64::from(v.confidence)),
+            verdict.map(|v| v.reasoning.clone()),
+            decision,
+            run_id,
+        ],
+    )
+    .await
+    .map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!(
+            "discover_types: identity_verdict_audit insert failed for '{proposal_name}': {e}"
+        ))
+    })?;
+
+    Ok(())
 }
 
 // ─── ADR-065 type_novelty_is_redundant unit tests ────────────────────────────
@@ -2106,6 +2346,117 @@ mod site2_type_novelty_tests {
             result.types_rejected
         );
         assert_eq!(result.types_accepted[0].name, "LegalPrecedent");
+    }
+
+    /// TD-210 — the flag-OFF, no-LLM-call, ACCEPT-via-`Pass` path is exactly
+    /// the branch the tech-debt register flags as leaving ZERO evidence: prior
+    /// to this fix, `discover_types` never wrote to `identity_verdict_audit`
+    /// at all on `GateOutcome::Pass`, so an accepted proposal's `desc_cosine`
+    /// (the value that decided it was novel enough to accept) could not be
+    /// reconstructed from stored state after the fact — only re-embedding the
+    /// stored descriptions live could recover it (register TD-210, "the
+    /// flag-on counterfactual CANNOT be read from stored state").
+    ///
+    /// One existing type is seeded so a REAL comparison happens (best_cosine
+    /// is computed, not skipped) — and the proposal's description embeds
+    /// ORTHOGONALLY to it, so cosine ~0.0, well below `TYPE_NOVELTY_LOWER_BAND`
+    /// (0.70) → `GateOutcome::Pass` with `existing_name = Some`, `desc_cosine
+    /// = Some(0.0)`. The assertion is specifically that the persisted cosine
+    /// is NON-NULL — proving the audit row records a REAL comparison, not the
+    /// registry-empty `None` case (that's covered by
+    /// `check_proposal`'s own `gate_passes_with_empty_existing_types` unit
+    /// test in `anti_redundancy.rs`).
+    #[tokio::test]
+    async fn accepted_proposal_with_existing_type_leaves_audit_row_with_cosine() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        seed_existing_type(
+            &conn,
+            "g_audit",
+            "WeatherEvent",
+            "A meteorological occurrence such as a storm or heatwave.",
+        )
+        .await;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO entities (id, entity_type_id, recorded_at, group_id) VALUES (?1, 0, ?2, ?3)",
+            libsql::params!["some catch-all evidence", now, "g_audit"],
+        )
+        .await
+        .expect("insert catch-all entity");
+
+        // Orthogonal vectors: existing type at dim0, proposal at dim1 → cosine
+        // 0.0, well below TYPE_NOVELTY_LOWER_BAND (0.70) → GateOutcome::Pass
+        // with existing_name=Some + desc_cosine=Some(0.0) — a REAL comparison.
+        let mut vectors = std::collections::HashMap::new();
+        vectors.insert(
+            "A meteorological occurrence such as a storm or heatwave.".to_string(),
+            vec![1.0f32, 0.0, 0.0, 0.0],
+        );
+        vectors.insert(
+            "A legal instrument transferring ownership of real property.".to_string(),
+            vec![0.0f32, 1.0, 0.0, 0.0],
+        );
+        let embedder = MockEmbeddingProvider { vectors };
+
+        let llm = ScriptedSequenceProvider::new(vec![
+            r#"{"proposals":[{"name":"PropertyDeed","description":"A legal instrument transferring ownership of real property.","justification":"catch-all evidence"}]}"#,
+        ]);
+
+        let result = discover_types(
+            &llm,
+            DiscoverTypesParams {
+                conn: &conn,
+                group_id: "g_audit",
+                embedder: Some(&embedder),
+                max_proposals: 3,
+                model_id: "test-model",
+                llm_verify_band: false,
+                evidence_retype_by_similarity: false,
+            },
+        )
+        .await
+        .expect("discover_types must succeed");
+
+        assert_eq!(
+            result.types_accepted.len(),
+            1,
+            "orthogonal, distinct proposal must be accepted, rejected={:?}",
+            result.types_rejected
+        );
+
+        let mut rows = conn
+            .query(
+                "SELECT cosine, decision, structural_signal FROM identity_verdict_audit \
+                 WHERE site = 'site2_type_novelty' AND group_id = 'g_audit' \
+                 AND candidate_a = 'PropertyDeed'",
+                (),
+            )
+            .await
+            .expect("query identity_verdict_audit");
+        let row = rows
+            .next()
+            .await
+            .expect("row read")
+            .expect(
+                "an accepted Pass-0 proposal must leave an identity_verdict_audit row (TD-210) \
+                 — this is the RED assertion: pre-fix, discover_types never wrote to this table \
+                 on the Pass path at all, so this query returns zero rows",
+            );
+        let cosine: Option<f64> = row.get(0).expect("cosine column");
+        let decision: String = row.get(1).expect("decision column");
+        let structural_signal: bool = row.get(2).expect("structural_signal column");
+        assert!(
+            cosine.is_some(),
+            "an accepted proposal compared against a real existing type must persist a \
+             NON-NULL cosine — the evidence for WHY it was accepted (TD-210)"
+        );
+        assert_eq!(decision, "accept");
+        assert!(
+            !structural_signal,
+            "\"PropertyDeed\"/\"WeatherEvent\" share no lemma or exact-name overlap"
+        );
     }
 }
 

@@ -403,7 +403,7 @@ async fn run_one_row(row: &Row, mode: VcrMode) -> Result<RowOutcome, String> {
         model: &chat_model,
     }) {
         GateOutcome::Redundant { .. } => (GateDecision::Reject, "check_proposal:redundant", false),
-        GateOutcome::Pass => (GateDecision::Accept, "check_proposal:pass", false),
+        GateOutcome::Pass { .. } => (GateDecision::Accept, "check_proposal:pass", false),
         GateOutcome::NeedsLlmVerify {
             existing_name,
             desc_cosine: _,
