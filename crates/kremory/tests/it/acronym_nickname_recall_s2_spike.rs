@@ -113,7 +113,7 @@ async fn build_provider(
     // project_kremory_validated_model_findings_2026-06-24). acronym_
     // nickname_recall is a dream-phase pass, so it belongs on this tier.
     let chat_model =
-        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
+        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     let chat_cassette = chat_cassette_path(cassette_tag);
     let provider: Arc<RecordReplayChatProvider> = match mode {

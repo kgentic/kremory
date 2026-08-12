@@ -2234,7 +2234,7 @@ pub(crate) struct RrfFuseWithFactsParams<'a> {
 /// `ContentPassage` (whose `episode_id` field IS that fusion's dedup key).
 /// Each fact instead becomes its own `RetrievedContext` entry keyed by
 /// `"fact:{id}"`. Same documented-deviation precedent as
-/// `SearchConfigOverrides` (`core/config.rs`) departing from TD-141's
+/// `PipelineConfigOverrides` (`core/config.rs`) departing from TD-141's
 /// literal design-decision sketch.
 ///
 /// Same rank-position RRF (`1/(k+rank+1)`) and `(id, group_id)` composite-key

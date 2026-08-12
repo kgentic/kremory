@@ -869,7 +869,7 @@ async fn c10_real_llm_schema_parses_100_percent() {
         std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
     // Per substrate SoT (tests/llm_integration.rs:1-25): gemma4-e2b:latest
     let chat_model =
-        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string());
+        crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest");
 
     let llm: std::sync::Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)

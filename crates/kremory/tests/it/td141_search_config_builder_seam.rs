@@ -315,7 +315,7 @@ async fn explicit_config_wins_over_env_override() {
     clear_search_env();
 }
 
-/// The sparse-overlay design decision (see `SearchConfigOverrides` rustdoc in
+/// The sparse-overlay design decision (see `PipelineConfigOverrides` rustdoc in
 /// `core/config.rs`): setting ONE knob programmatically must NOT clobber env
 /// overrides for the OTHER two knobs. This is the behaviour a monolithic
 /// `Option<SearchConfig>` could not express (TD-141's literal design decision
@@ -396,6 +396,120 @@ async fn with_content_stream_weight_reaches_live_search_config_on_sink_path() {
         "with_content_stream_weight must reach the live SearchConfig through the \
          BackgroundIngestorGraphHandle path (Memory::search_config delegates to the \
          EngineGraphHandle delegate opened via the first of two open_engine_handle calls)"
+    );
+
+    drop(mem);
+}
+
+// ── 6. TD-172 — `contradiction_detection_enabled`, the ninth and last knob ────
+//
+// This one is NOT a `SearchConfig` field: it lives directly on `PipelineConfig`
+// and gates the pipeline's only DESTRUCTIVE default-ON path (ADR-079 rev.2
+// supersession). It is the reason the overlay type is named
+// `PipelineConfigOverrides` rather than `SearchConfigOverrides` — the overlay's
+// job was always "sparse programmatic overrides applied onto a
+// PipelineConfigBuilder AFTER the env layer", which is wider than search.
+//
+// Observed through the REAL public accessor `Memory::contradiction_detection_
+// enabled()` (which delegates to the live `Engine`'s config), driven through the
+// REAL builder construction path — not a hand-shaped `PipelineConfigOverrides`
+// fed to `apply()`. That distinction is load-bearing: `apply()` working in
+// isolation would NOT prove the builder field is threaded into `apply()` at all
+// of the `GraphOpenParams` / `OpenGraphParams` / `OpenEngineHandleParams`
+// construction sites, which is exactly the wrong-layer wiring failure TD-140
+// documents.
+
+/// Non-vacuity guard for the three tests below.
+///
+/// Every one of them asserts `contradiction_detection_enabled() == false` after
+/// asking for `false`. If the accessor were hardwired to `false` — or if the
+/// default ever flipped to OFF — all three would pass while proving nothing,
+/// which is the vacuous-instrument failure (`verify-metric-sensitivity-before-
+/// gating-decisions`). This pins the baseline they are a departure FROM, so a
+/// silent default flip fails loudly here instead of hollowing them out.
+#[tokio::test]
+async fn contradiction_detection_defaults_on_baseline_for_the_optout_tests() {
+    clear_search_env();
+    std::env::remove_var("KREMORY_CONTRADICTION_DETECTION");
+    let mem = Memory::open(unique_db("contradiction_default"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .await
+        .expect("build with no contradiction override");
+
+    assert!(
+        mem.contradiction_detection_enabled(),
+        "BASELINE: contradiction detection must default to ON (ADR-079 rev.2). If this \
+         fails the default has moved, and the opt-out tests below became vacuous — they \
+         would be asserting the default, not the override."
+    );
+}
+
+#[tokio::test]
+async fn with_contradiction_detection_enabled_reaches_live_pipeline_config() {
+    clear_search_env();
+    std::env::remove_var("KREMORY_CONTRADICTION_DETECTION");
+    let mem = Memory::open(unique_db("contradiction_off"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_contradiction_detection_enabled(false)
+        .await
+        .expect("build with with_contradiction_detection_enabled(false)");
+
+    assert!(
+        !mem.contradiction_detection_enabled(),
+        "programmatic with_contradiction_detection_enabled(false) must reach the live \
+         PipelineConfig — before TD-172 there was no builder route at all and the only \
+         way to opt out of a DESTRUCTIVE default-ON path was a process-wide env var"
+    );
+}
+
+/// TD-141 precedence, applied to the new knob: explicit programmatic config
+/// beats env, which beats default. Asserted in the direction that actually
+/// matters — env says ON (the destructive setting), the consumer says OFF, and
+/// the consumer must win. The reverse direction would be satisfied by a broken
+/// implementation that simply ignored the builder.
+#[tokio::test]
+async fn with_contradiction_detection_enabled_wins_over_env() {
+    clear_search_env();
+    std::env::set_var("KREMORY_CONTRADICTION_DETECTION", "1");
+    let mem = Memory::open(unique_db("contradiction_precedence"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_contradiction_detection_enabled(false)
+        .await
+        .expect("build with env=1 and builder=false");
+
+    assert!(
+        !mem.contradiction_detection_enabled(),
+        "TD-141 precedence: explicit .with_contradiction_detection_enabled(false) must \
+         WIN over KREMORY_CONTRADICTION_DETECTION=1 (explicit > env > default)"
+    );
+    std::env::remove_var("KREMORY_CONTRADICTION_DETECTION");
+}
+
+/// The knob must survive the `.with_sink()` `BackgroundIngestorGraphHandle`
+/// path too. This is the test that would have caught a missing pass-through
+/// on that handle: the trait default returns `true`, so a handle that forgot to
+/// delegate reports the OPPOSITE of the truth for a consumer who opted out —
+/// silently, and precisely on the destructive setting.
+#[tokio::test]
+async fn with_contradiction_detection_enabled_reaches_config_on_sink_path() {
+    clear_search_env();
+    std::env::remove_var("KREMORY_CONTRADICTION_DETECTION");
+    let mem = Memory::open(unique_db("contradiction_sink"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_event_sink(Arc::new(NullSink))
+        .with_contradiction_detection_enabled(false)
+        .await
+        .expect("build on the .with_sink() BackgroundIngestorGraphHandle path");
+
+    assert!(
+        !mem.contradiction_detection_enabled(),
+        "with_contradiction_detection_enabled(false) must reach the live PipelineConfig \
+         through the BackgroundIngestorGraphHandle path — a missing delegate there \
+         falls back to the trait default (true) and misreports the destructive setting"
     );
 
     drop(mem);

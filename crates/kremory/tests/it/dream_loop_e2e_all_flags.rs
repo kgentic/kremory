@@ -173,7 +173,7 @@ async fn build_chat_provider(
     // project_kremory_validated_model_findings_2026-06-24). Matches every
     // sibling dream VCR fixture in this crate.
     let chat_model =
-        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
+        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     let cassette = chat_cassette_path(cassette_tag);
     let provider: Arc<RecordReplayChatProvider> = match mode {

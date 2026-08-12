@@ -116,7 +116,7 @@ fn ollama_base_url() -> Option<String> {
 }
 
 fn ollama_chat_model() -> String {
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "qwen2.5:14b".to_string())
+    crate::helpers::chat_model::chat_model_or("qwen2.5:14b")
 }
 
 // ── L4.1 — label_precision >= 0.75 on mock_interview fixture ─────────────────
@@ -720,7 +720,7 @@ async fn label_precision_gte_0_75_on_mock_interview() {
         matched,
         total,
         placeholder_count,
-        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "qwen2.5:14b".to_string()),
+        crate::helpers::chat_model::chat_model_or("qwen2.5:14b"),
     );
 }
 

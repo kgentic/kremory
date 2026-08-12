@@ -174,6 +174,26 @@ pub trait GraphHandle: Send + Sync {
         crate::core::config::SearchConfig::default()
     }
 
+    /// Whether ingest-time contradiction detection is live on this handle
+    /// (TD-172; `PipelineConfig::contradiction_detection_enabled`).
+    ///
+    /// Sibling of [`GraphHandle::search_config`] and exposed for the same
+    /// TD-135 reason: a consumer must be able to read the config the pipeline
+    /// ACTUALLY uses rather than re-reading env, which drifts. This one matters
+    /// more than its sibling, because it gates the only DESTRUCTIVE default-ON
+    /// path in the pipeline (ADR-079 rev.2 supersession) — an unreportable
+    /// destructive default is invisible config.
+    ///
+    /// Default `true` mirrors `PipelineConfig`'s own default, so stub/test
+    /// handles that carry no `Engine` report the same value a real one would.
+    /// Sync + cheap (a `bool` copy — no I/O), hence not `async`.
+    fn contradiction_detection_enabled(&self) -> bool {
+        // The `const` is the single definition, shared with the builder default
+        // (`core/config.rs`). Restating `true` here would create a second source
+        // of truth for a flag whose default has already moved twice.
+        crate::core::config::DEFAULT_CONTRADICTION_DETECTION_ENABLED
+    }
+
     // ── Legacy consolidation (from D.0a — retained for backwards compat) ─────
     //
     // New code should use `graph_submit_dream`. This method runs dream

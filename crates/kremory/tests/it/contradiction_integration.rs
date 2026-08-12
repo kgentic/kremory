@@ -61,7 +61,7 @@ use kremory::core::schema::TemporalGraph;
 /// precision (the model ladder is entity-F1) but extracts ~0 relationships on short
 /// prose, so it cannot exercise the fact-level contradiction resolver.
 fn ollama_chat_model() -> String {
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "qwen2.5:14b".to_string())
+    crate::helpers::chat_model::chat_model_or("qwen2.5:14b")
 }
 
 /// base_url from `OLLAMA_BASE_URL`, default localhost.

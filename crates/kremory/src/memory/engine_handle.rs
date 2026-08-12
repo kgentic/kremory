@@ -170,6 +170,14 @@ impl GraphHandle for EngineGraphHandle {
         self.engine.config.search.clone()
     }
 
+    // TD-172: expose the Engine's LIVE contradiction-detection flag, so a
+    // consumer reads what the ingest path actually does rather than re-deriving
+    // it from `KREMORY_CONTRADICTION_DETECTION` (which the builder seam can now
+    // legitimately override, making env an unreliable proxy).
+    fn contradiction_detection_enabled(&self) -> bool {
+        self.engine.config.contradiction_detection_enabled
+    }
+
     // ── 1. graph_ingest_episode ──────────────────────────────────────────────
 
     async fn graph_ingest_episode(
@@ -707,10 +715,8 @@ impl GraphHandle for EngineGraphHandle {
         let result_entity_ids: std::collections::HashSet<&str> =
             context.entities.iter().map(|e| e.id.as_str()).collect();
         let facts_candidates = context.facts.len();
-        let (facts_attached, facts_dropped_reserved, facts_dropped_ownership) = context
-            .facts
-            .iter()
-            .fold(
+        let (facts_attached, facts_dropped_reserved, facts_dropped_ownership) =
+            context.facts.iter().fold(
                 (0usize, 0usize, 0usize),
                 |(attached, dropped_reserved, dropped_ownership), f| {
                     if crate::core::disambiguation::is_reserved_predicate(&f.predicate) {
@@ -1335,8 +1341,7 @@ mod tests {
             .engine
             .graph
             .insert_fact(
-                FactInsert::new("alice", RESERVED_PREDICATE_POTENTIAL_ALIAS, now)
-                    .object_id("acme"),
+                FactInsert::new("alice", RESERVED_PREDICATE_POTENTIAL_ALIAS, now).object_id("acme"),
             )
             .await
             .expect("insert reserved-predicate fact");

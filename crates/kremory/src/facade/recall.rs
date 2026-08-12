@@ -636,8 +636,11 @@ async fn apply_rerank_with(params: ApplyRerankWithParams<'_>) -> Result<Vec<Retr
     let candidates: Vec<(String, String)> = head
         .iter()
         .map(|ctx| {
-            let text =
-                build_rerank_candidate_text(&ctx.entity_name, &ctx.summary, rerank_candidate_max_chars);
+            let text = build_rerank_candidate_text(
+                &ctx.entity_name,
+                &ctx.summary,
+                rerank_candidate_max_chars,
+            );
             metrics::histogram!("kremory.rerank.candidate_char_len")
                 .record(text.chars().count() as f64);
             (ctx.entity_id.clone(), text)

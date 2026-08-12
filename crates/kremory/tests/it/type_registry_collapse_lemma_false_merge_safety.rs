@@ -197,7 +197,7 @@ async fn build_providers(
     // pair routing to the LLM-verify band instead of auto-merge) doesn't
     // crash on a missing provider.
     let chat_model =
-        std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
+        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     let chat_cassette = chat_cassette_path();
     let provider: Arc<RecordReplayChatProvider> = match mode {

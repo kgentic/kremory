@@ -651,6 +651,24 @@ impl Memory {
         self.graph.search_config()
     }
 
+    /// Whether ingest-time contradiction detection is live on this `Memory`
+    /// (TD-172 / TD-167 / ADR-079 rev.2) — reflecting the compiled-in default,
+    /// any `KREMORY_CONTRADICTION_DETECTION` boot override, and any
+    /// [`MemoryBuilder::with_contradiction_detection_enabled`](crate::facade::builder::MemoryBuilder::with_contradiction_detection_enabled)
+    /// call, resolved by that same precedence. Read-only; cheap (a `bool` copy
+    /// — no I/O, hence not `async`).
+    ///
+    /// Exposed for the same reason as its sibling [`Memory::search_config`]
+    /// (TD-135): a consumer or transport must be able to report the config the
+    /// pipeline ACTUALLY runs, rather than re-reading env — and since the
+    /// builder seam can now override env, env is no longer a reliable proxy
+    /// for this flag at all. It matters more than the sibling because it gates
+    /// the pipeline's only DESTRUCTIVE default-ON path: when `true`, an
+    /// ingested fact judged to contradict a stored one supersedes it.
+    pub fn contradiction_detection_enabled(&self) -> bool {
+        self.graph.contradiction_detection_enabled()
+    }
+
     // ── Test utilities ────────────────────────────────────────────────────────
 
     /// Access the underlying `TemporalGraph` for integration tests that need

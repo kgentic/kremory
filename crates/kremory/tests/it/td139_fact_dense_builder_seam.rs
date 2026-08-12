@@ -98,7 +98,7 @@ async fn explicit_fact_dense_enabled_wins_over_env_override() {
     clear_fact_dense_env();
 }
 
-/// The sparse-overlay design (see `SearchConfigOverrides` rustdoc in
+/// The sparse-overlay design (see `PipelineConfigOverrides` rustdoc in
 /// `core/config.rs`): leaving `fact_dense_enabled` UNSET while setting a
 /// SIBLING knob programmatically must not clobber `fact_dense_enabled`'s own
 /// env override.

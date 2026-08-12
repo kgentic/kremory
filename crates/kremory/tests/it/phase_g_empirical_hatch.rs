@@ -125,7 +125,7 @@ fn ollama_base_url() -> Option<String> {
 fn ollama_chat_model() -> String {
     // SoT: llm_integration.rs:1-25 — gemma4-e2b:latest is the interactive default.
     // MUST be set explicitly; do not fall back to llama3.2:3b default.
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4-e2b:latest".to_string())
+    crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest")
 }
 
 // ── PRE/POST dream measurement helper ─────────────────────────────────────────

@@ -432,7 +432,7 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 86 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 88 (sanity cap — over-finding guard).
     // ⚠️ This lead line read "83" until 2026-08-06 while the assertion below said 86 —
     // it was not updated by the two raises recorded at the end of this comment block.
     // A cap documented as one number and enforced as another is how "we are at the
@@ -472,10 +472,17 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // the 7 files holding tracked types and skipping every `#[cfg(...)]` method, so this
     // is the first time either symbol was ever examined. Measured before the fix and
     // confirmed after: 2 new entries, not the ~59 initially estimated.
+    // Raised 86 → 88 (TD-172, 2026-08-12) for exactly TWO entries —
+    // `MemoryBuilder::with_contradiction_detection_enabled` — the NINTH and last
+    // missing per-knob override setter, deferred for the identical ADR-030 Form B
+    // reason as its eight already-skipped siblings. The register was sitting exactly
+    // at the prior cap (86) before this addition, so this is register growth, not
+    // walker over-finding — and it is raised on the record rather than by pruning a
+    // legitimate entry to make room, which is how a ratchet quietly becomes decoration.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 86,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 86. \
+        skip_count <= 88,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 88. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."

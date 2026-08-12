@@ -50,7 +50,7 @@ fn base_url() -> String {
     std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string())
 }
 fn chat_model() -> String {
-    std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "qwen2.5:14b".to_string())
+    crate::helpers::chat_model::chat_model_or("qwen2.5:14b")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

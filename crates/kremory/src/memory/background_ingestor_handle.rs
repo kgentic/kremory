@@ -170,6 +170,15 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
         self.engine_handle.search_config()
     }
 
+    // TD-172: pass-through, so the background-routed handle reports the same
+    // LIVE contradiction-detection flag as the inline one. Omitting this would
+    // silently fall back to the trait default (`true`) and report the OPPOSITE
+    // of the truth for a consumer who opted out — exactly the config-drift
+    // failure the sibling accessor exists to prevent.
+    fn contradiction_detection_enabled(&self) -> bool {
+        self.engine_handle.contradiction_detection_enabled()
+    }
+
     // ── 1. graph_ingest_episode ──────────────────────────────────────────────
     //
     // ROUTING: run_in_background=true → BackgroundIngestor (sink fires via OS-thread path).

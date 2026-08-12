@@ -50,6 +50,17 @@ with_anthropic  = { deferred = "server-owned construction" }
 close           = { deferred = "server-owned lifecycle — an agent closing the shared handle would break every other client" }
 cancel          = { deferred = "server-owned lifecycle" }
 search_config   = { deferred = "server-owned tuning; per-call knobs belong on kremory_recall's params if ever needed" }
+# TD-172. Sibling of search_config, and deferred for the same server-owned reason
+# — but it deserved more thought than a copy of that line, because unlike scoring
+# config this flag gates a DESTRUCTIVE write path (ADR-079 rev.2 supersession), so
+# "will my write invalidate existing facts?" is a fair question for a writing agent.
+# Deferred anyway, on two grounds: (1) the flag is fixed at Memory construction, so
+# an agent can read it but cannot act on it except by declining to write — that is
+# information without agency; (2) if an agent genuinely needs this, the right shape
+# is an OBSERVED outcome on kremory_remember's RESULT ("this write superseded N
+# prior facts"), not a DECLARED config read — derive/observe over declare. Revisit
+# together with search_config if either is ever exposed.
+contradiction_detection_enabled = { deferred = "server-owned ingest policy, fixed at construction; an agent could read it but not act on it. If needed, expose the superseded-fact count on kremory_remember's result instead — an observed outcome, not a config read." }
 
 # ── NAMESPACE ADMIN — operator concern, not an agent concern ─────────────────
 # The namespace is a TENANCY boundary. An agent that can create or re-policy

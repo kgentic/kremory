@@ -402,6 +402,16 @@ symbol = "MemoryBuilder::with_rerank_candidate_max_chars"
 reason = "Reranker latency lever 1 (cross-encoder candidate-text truncation spike, 2026-07-28): new per-knob SearchConfig override setter. Same rationale as with_proximity_weight — Tier-2 builder wiring deferred per ADR-030 Form B."
 revisit = "v0.2.0"
 
+[[skip]]
+symbol = "Memory::contradiction_detection_enabled"
+reason = "TD-172 (2026-08-12): read-only introspection accessor, exact sibling of the already-skipped Memory::search_config (TD-135) and deferred for the same reason — the JS binding has no /health-style transport that needs to report live config. Should be mirrored TOGETHER with search_config when one is."
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "MemoryBuilder::with_contradiction_detection_enabled"
+reason = "TD-172 (2026-08-12): the ninth per-knob PipelineConfig override setter, and the only sibling that was missing. Deferred per ADR-030 Form B for the SAME reason as its eight siblings (with_content_stream_weight / with_rrf_k / with_episode_dense_enabled / with_fact_dense_enabled / with_embed_task_prefix_enabled / with_proximity_weight / with_temporal_weight / with_rerank_candidate_max_chars): the whole Tier-2 builder surface goes to JS together, since Memory.open is the single JS construction entry point. NB this knob gates a DESTRUCTIVE path (ADR-079 rev.2 default-ON supersession), so when the builder surface IS mirrored, this one is the priority of the nine — a JS consumer currently has no way to opt out except a process-wide env var."
+revisit = "v0.2.0"
+
 # ── B9 substrate gaps ─────────────────────────────────────────────────────────
 #
 # JsRecallOptions.sourceIdIn / sourceIdPrefix are specified in the B9 spec but
