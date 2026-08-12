@@ -186,7 +186,7 @@ impl DeterministicSignal {
 /// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` for
 /// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`).
 #[doc(hidden)]
-pub struct WriteGateInputs {
+pub struct WriteGateInputs<'a> {
     /// Pre-computed similarity. `0.0` when N/A (Site #5 acronym pairs, where cosine
     /// was never an identity signal per ADR-063).
     pub cosine: f32,
@@ -208,6 +208,21 @@ pub struct WriteGateInputs {
     /// [`LLM_VERIFY_CONFIDENCE_FLOOR`] provisionally until S4 calibrates a
     /// Site-#6-specific floor.
     pub min_confidence_floor: Option<f32>,
+    /// The two candidate names, for the temporal-conflict veto (row 0). `None`
+    /// composes as a no-op, exactly like [`Self::min_confidence_floor`] above.
+    ///
+    /// **TD-212/TD-213.** A destructive merge must never collapse two different
+    /// points in time. Measured on `graph_mutation_log`: `site5_acronym_nickname`
+    /// merged `1037 am on 27 june 2023` into `1037 am` in **10 of 21** merges —
+    /// irreversible data loss, since the bare time cannot be recovered.
+    ///
+    /// This carries NAMES rather than a caller-computed `bool` deliberately: a
+    /// pre-computed flag is a fact the caller ASSERTS and can forget or get wrong,
+    /// whereas names let the gate DERIVE the verdict itself. Site #5 cannot use
+    /// the full lexical gate (its acronym pairs share zero tokens by construction,
+    /// so the Jaccard arm would reject exactly what that site is for), which is why
+    /// only the temporal arm is applied here.
+    pub names: Option<(&'a str, &'a str)>,
 }
 
 /// The write-gate's decision for one candidate pair.
@@ -254,15 +269,30 @@ pub enum WriteDecision {
 /// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`) can
 /// replicate the discover_types Site #2 decision flow exactly.
 #[doc(hidden)]
-pub fn write_gate(inputs: WriteGateInputs) -> WriteDecision {
+pub fn write_gate(inputs: WriteGateInputs<'_>) -> WriteDecision {
     let WriteGateInputs {
         cosine,
         merge_threshold,
         deterministic_signal,
         llm_verdict,
         min_confidence_floor,
+        names,
     } = inputs;
     let deterministic = deterministic_signal.fired();
+
+    // Row 0 (TD-212/TD-213): a destructive merge may never collapse two different
+    // points in time. Checked FIRST so it also vetoes row 1, the no-LLM clear-merge
+    // path — `1037 am on 27 june 2023` into `1037 am` is irreversible data loss,
+    // and no amount of cosine or LLM agreement makes it not so. Reuses ADR-057's
+    // deterministic rule; `None` composes as a no-op.
+    if let Some((name_a, name_b)) = names {
+        if crate::core::disambiguation::temporal_conflict(name_a, name_b) {
+            // NO counter here: this module's header documents `write_gate` as
+            // "pure, deterministic, I/O-free, counter-free". The caller's existing
+            // `record_write_gate_decision` already counts the resulting Reject.
+            return WriteDecision::Reject;
+        }
+    }
 
     let Some(verdict) = llm_verdict else {
         // Rows 1-2: no LLM verdict.
@@ -408,6 +438,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: None,
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::Merge);
     }
@@ -422,6 +453,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(false),
             llm_verdict: None,
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::Reject);
     }
@@ -434,6 +466,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: None,
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::Reject);
     }
@@ -447,6 +480,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: None,
             min_confidence_floor: None,
+            names: None,
         });
         // ...but the intent is Site #5 uses a positive threshold; with the default
         // spec framing cosine=0.0 + no LLM is not a merge. Assert the safe outcome
@@ -457,6 +491,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: None,
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d_positive, WriteDecision::Reject);
         // Degenerate 0.0 >= 0.0 edge documented: sites MUST pass a positive
@@ -472,6 +507,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: Some(verdict(0, false, 0.99)), // high confidence but "not same"
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::Reject);
     }
@@ -484,6 +520,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: Some(verdict(0, true, LLM_VERIFY_CONFIDENCE_FLOOR - 0.01)),
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::PotentialAlias);
     }
@@ -498,6 +535,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(false),
             llm_verdict: Some(verdict(0, true, 0.99)),
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::PotentialAlias);
     }
@@ -511,6 +549,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: Some(verdict(0, true, 0.95)),
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::Merge);
     }
@@ -524,6 +563,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: Some(verdict(0, true, LLM_VERIFY_CONFIDENCE_FLOOR)),
             min_confidence_floor: None,
+            names: None,
         });
         assert_eq!(d, WriteDecision::Merge);
     }
@@ -537,6 +577,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: Some(verdict(0, true, 0.99)),
             min_confidence_floor: Some(LLM_VERIFY_CONFIDENCE_FLOOR - 0.1),
+            names: None,
         });
         assert_eq!(d, WriteDecision::PotentialAlias);
     }
@@ -549,6 +590,7 @@ mod tests {
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: Some(verdict(0, true, 0.99)),
             min_confidence_floor: Some(0.99),
+            names: None,
         });
         assert_eq!(d, WriteDecision::Merge);
     }
@@ -789,5 +831,74 @@ mod tests {
             15,
             "merged map must contain exactly chunk0(10) + chunk1(0) + chunk2(5) verdicts"
         );
+    }
+
+    /// The 10 REAL timestamp-collapsing merges from `site5_acronym_nickname`,
+    /// extracted from `graph_mutation_log` on `.context/full-corpus.db`. TD-212.
+    ///
+    /// Every one is irreversible data loss: the loser is strictly more specific
+    /// than the keeper, and `1037 am` cannot be recovered to `1037 am on 27 june
+    /// 2023`. Before the row-0 veto, all 10 reached `WriteDecision::Merge`.
+    const SITE5_TIMESTAMP_COLLAPSES: &[(&str, &str)] = &[
+        ("1037 am on 27 june 2023", "1037 am"),
+        ("124 pm on 25 may 2023", "124 pm"),
+        ("318 pm on 4 may 2023", "318 pm"),
+        ("519 pm on 5 august 2023", "519 pm"),
+        ("1058 am on 9 october 2022", "1058 am"),
+    ];
+
+    /// Builds the exact input shape Site #5 passes: no cosine signal, structural
+    /// pre-filter fired, and an LLM verdict that WOULD authorize a merge. Without
+    /// the veto this returns `Merge` for every pair above.
+    fn site5_merge_authorizing(names: Option<(&str, &str)>) -> WriteDecision {
+        write_gate(WriteGateInputs {
+            cosine: 0.0,
+            merge_threshold: 1.0,
+            deterministic_signal: DeterministicSignal::from_structural_prefilter(true),
+            llm_verdict: Some(IdentityVerdictItem {
+                pair_id: 0,
+                is_same_entity: true,
+                confidence: 0.99,
+                reasoning: "same entity".to_string(),
+            }),
+            min_confidence_floor: None,
+            names,
+        })
+    }
+
+    #[test]
+    fn temporal_veto_blocks_site5_timestamp_collapse() {
+        for (loser, keeper) in SITE5_TIMESTAMP_COLLAPSES {
+            assert_eq!(
+                site5_merge_authorizing(Some((loser, keeper))),
+                WriteDecision::Reject,
+                "{loser:?} -> {keeper:?} destroys a date and must be vetoed"
+            );
+        }
+    }
+
+    /// The veto must not reject what Site #5 EXISTS for. Acronym and nickname
+    /// pairs share zero tokens by construction, so only the temporal arm applies —
+    /// verified over the real 140-row adversarial corpus (0 conflicts).
+    #[test]
+    fn temporal_veto_leaves_genuine_acronym_and_nickname_merges_alone() {
+        for (a, b) in [
+            ("IBM", "International Business Machines"),
+            ("MADD", "Mothers Against Drunk Driving"),
+            ("Tony Marchetti", "Anthony Marchetti"),
+            ("José Marchetti", "Jose Marchetti"),
+        ] {
+            assert_eq!(
+                site5_merge_authorizing(Some((a, b))),
+                WriteDecision::Merge,
+                "{a:?} / {b:?} is a legitimate Site #5 merge and must not be vetoed"
+            );
+        }
+    }
+
+    /// `None` must compose as a no-op, exactly like `min_confidence_floor`.
+    #[test]
+    fn temporal_veto_is_inert_when_names_absent() {
+        assert_eq!(site5_merge_authorizing(None), WriteDecision::Merge);
     }
 }

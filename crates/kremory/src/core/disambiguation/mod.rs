@@ -57,7 +57,7 @@
 //! the vast majority of real deployments exactly.
 
 pub(crate) mod lexical;
-pub(crate) use lexical::names_lexically_compatible;
+pub(crate) use lexical::{names_lexically_compatible, temporal_conflict};
 
 use chrono::Utc;
 use metrics::counter;

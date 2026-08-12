@@ -315,6 +315,18 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: None,
             min_confidence_floor: None,
+            // TD-212 temporal veto. Enabled here after an explicit false-positive
+            // check, NOT by analogy with Site #5: the worry was that a trailing
+            // numeral is a legitimate type variant (`person_2` vs `person`). The
+            // corpus refutes it — `site3_type_collapse_adversarial.jsonl` has 57
+            // should-collapse rows and **0** would be blocked; and all 152 real
+            // `entity_types` names carry zero numerals or month words, so the veto
+            // is inert on today's data. It earns its place as defence-in-depth for
+            // future type names that DO carry a date (`meeting_2023`).
+            names: Some((
+                slots[*i].spec.name.as_str(),
+                slots[*j].spec.name.as_str(),
+            )),
         });
         record_write_gate_decision(decision);
         if decision == WriteDecision::Merge {
@@ -339,6 +351,13 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             deterministic_signal: DeterministicSignal::from_lexical(pair.lexical_compatible),
             llm_verdict: verdict.clone(),
             min_confidence_floor: None,
+            // TD-212 temporal veto — same evidence as the auto-merge loop above
+            // (57 should-collapse corpus rows, 0 blocked; 152 real type names, 0
+            // carrying temporal tokens).
+            names: Some((
+                slots[pair.a_idx].spec.name.as_str(),
+                slots[pair.b_idx].spec.name.as_str(),
+            )),
         });
         record_write_gate_decision(decision);
 
