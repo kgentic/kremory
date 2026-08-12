@@ -27,7 +27,12 @@ pub(crate) const L4_LEXICAL_JACCARD_MIN: f32 = 0.5;
 /// 2. **Token-Jaccard ≥ [`L4_LEXICAL_JACCARD_MIN`]** over *significant* tokens
 ///    (length ≥ 2 after [`normalize_name`] — drops single-initial noise like "j").
 ///
-/// ## Measured precision/recall (Phase A corpus, 67 adversarial pairs)
+/// ## Measured precision/recall (Phase A corpus, ~~67~~ **68** adversarial pairs)
+///
+/// Count corrected 2026-08-12 (Quinn LOW-2): `kremory-eval/fixtures/entity_pairs.jsonl`
+/// holds **68** rows, verified by `wc -l` and a JSON parse. The metrics below are
+/// asserted live by `tests::corpus_precision_recall`, so they are current; only the
+/// row count was stale, and it had been repeated forward into new docs unchecked.
 ///
 /// See `tests::corpus_precision_recall` for the live assertion.
 ///
@@ -157,12 +162,30 @@ const MONTH_WORDS: [&str; 12] = [
 ///
 /// ## Scope, stated so it is not over-credited
 ///
-/// This closes the `canonicalize`/L5 path only. `site5_acronym_nickname` (12 further
-/// corrupting merges, e.g. `1037 am on 27 june 2023` → `1037 am`) does **not** call
-/// [`names_lexically_compatible`] and is untouched here — see ADR-063 and the
-/// separate register item. Nor does this address the documented `Amazon`/`Amazon
-/// River` homonym FP, which carries no temporal tokens and is routed to LLM
-/// adjudication by design.
+/// ⚠️ **Corrected after adversarial review of `af7eb720`.** That commit, and this
+/// comment, originally claimed the rule "closes the `canonicalize`/L5 path only".
+/// **That was FALSE** — inherited from a planning doc and repeated without running
+/// the grep. [`names_lexically_compatible`] has **four** production call sites, and
+/// the rule is live and identical at all of them:
+///
+/// | path | call site |
+/// |---|---|
+/// | L4 merge | `disambiguation/mod.rs:488` |
+/// | L4 potential-alias | `disambiguation/mod.rs:503` |
+/// | L7 alias-confirmation | `disambiguation/mod.rs:764` |
+/// | L5 canonicalize | `canonicalization.rs:185` |
+///
+/// That is the intended design (see this module's header: one rule, every
+/// destructive path, "so the two paths cannot diverge"), and it makes the fix
+/// BROADER than claimed — but the claim was still wrong, and a wrong architectural
+/// fact in a register is what stops the next reader checking.
+///
+/// What is genuinely NOT covered: `site5_acronym_nickname` (10 of 21 merges collapse
+/// a timestamp onto its bare time) reaches `apply_merge` via ADR-063's structural
+/// pre-filter and the shared `identity_verdict::write_gate`, and never calls this
+/// function — TD-212. Nor does this address the documented `Amazon`/`Amazon River`
+/// homonym FP, which carries no temporal tokens and is routed to LLM adjudication
+/// by design.
 ///
 /// False-positive safety was verified in BOTH directions before shipping: 0 of 79
 /// corrupting pairs survive, and 0 of the module's documented-compatible pairs are
@@ -170,22 +193,38 @@ const MONTH_WORDS: [&str; 12] = [
 /// `iPhone 12 Pro`, `May Department Stores` — the last confirming a month word used
 /// as an ordinary name is unaffected, because both sides carry it equally).
 fn temporal_discriminators(s: &str) -> BTreeSet<String> {
+    /// Leading zeros are FORMATTING, not identity: `3 july 2023` and
+    /// `03 july 2023` are the same day. Without this, the rule blocks a merge
+    /// that previously succeeded — an over-blocking regression, which this
+    /// codebase treats as a correctness failure in a safety control, not a
+    /// tolerable conservatism (Quinn review of `af7eb720`, finding MED-2).
+    fn canonical_number(digits: &str) -> String {
+        let trimmed = digits.trim_start_matches('0');
+        if trimmed.is_empty() {
+            "0".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
     let mut out: BTreeSet<String> = BTreeSet::new();
     let mut digits = String::new();
     for ch in s.chars() {
         if ch.is_ascii_digit() {
             digits.push(ch);
         } else if !digits.is_empty() {
-            out.insert(std::mem::take(&mut digits));
+            out.insert(canonical_number(&std::mem::take(&mut digits)));
         }
     }
     if !digits.is_empty() {
-        out.insert(digits);
+        out.insert(canonical_number(&digits));
     }
+    // `eq_ignore_ascii_case` rather than `to_lowercase()`: the input is already
+    // normalized, so the allocation was dead on every token (Quinn LOW-1). The
+    // canonical lowercase form is inserted so the set is spelling-independent.
     for token in s.split_whitespace() {
-        let lower = token.to_lowercase();
-        if MONTH_WORDS.contains(&lower.as_str()) {
-            out.insert(lower);
+        if let Some(month) = MONTH_WORDS.iter().find(|m| token.eq_ignore_ascii_case(m)) {
+            out.insert((*month).to_string());
         }
     }
     out
@@ -313,6 +352,25 @@ mod tests {
         assert!(names_lexically_compatible("3 July 2023", "3 july 2023"));
         // Identical numerals must not be treated as a conflict.
         assert!(names_lexically_compatible("iPhone 12 Pro", "iphone 12 pro"));
+    }
+
+    /// Regression guard for the over-blocking defect found by adversarial review of
+    /// `af7eb720` (Quinn MED-2). The first cut of the temporal rule treated `3` and
+    /// `03` as different identity tokens, so two spellings of the SAME date stopped
+    /// merging — a merge that succeeded before the fix. It was in neither validation
+    /// corpus, which is why it survived RED/GREEN and the full gate.
+    ///
+    /// Failure direction was safe (a missed consolidation, not corrupted data), but
+    /// an over-block in a safety control is a correctness failure here, not
+    /// acceptable conservatism: leading zeros are formatting, not identity.
+    #[test]
+    fn zero_padded_dates_are_the_same_date() {
+        assert!(names_lexically_compatible("3 july 2023", "03 july 2023"));
+        assert!(names_lexically_compatible("3 july 2023", "003 july 2023"));
+        assert!(names_lexically_compatible("1037 am on 09 october 2022", "1037 am on 9 october 2022"));
+        // ...and the fix must not have made DIFFERENT days equal again.
+        assert!(!names_lexically_compatible("03 july 2023", "30 july 2023"));
+        assert!(!names_lexically_compatible("12 july 2023", "3 july 2023"));
     }
 
     /// Pin the documented behaviour this fix must NOT change, so the change stays scoped.
