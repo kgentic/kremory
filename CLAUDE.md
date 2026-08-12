@@ -22,7 +22,7 @@ two disagree, THIS wins.**
 | tree version | `Cargo.toml` says **0.6.0 — but 0.6.0 IS ALREADY PUBLISHED** (below), so this version number is spent. Any future release MUST bump (0.6.1 / 0.7.0). Six commits touch `crates/` since the publish, incl. two real fixes (TD-206 cross-namespace entity embeddings, TD-203 inert dream alias resolution) — i.e. **the tree is ahead of the registry, and cannot be published as-is.** |
 | **crates.io** | ✅ **0.6.0, live since 2026-08-11T11:59:52Z, `default = ["content-search"]`.** `cargo add kremory` gets the CORRECT default. ~~**0.5.0**, `default = []` — every user gets search OFF (~25.7% vs ~86.2%)~~ **← WRONG-VERIFIED, corrected 2026-08-12.** That claim was false for >24h and was inherited by the 2026-08-12 session note and the consolidation plan, whose flagship "Phase 0 — publish the fix" proposed re-doing work already done. Verified two independent ways: `curl https://index.crates.io/kr/em/kremory` (sparse index shows `"default":["content-search"]` on 0.6.0) and `curl https://crates.io/api/v1/crates/kremory` (`max_version: 0.6.0`). **Re-check the registry, not the doc, before ever asserting what users receive.** |
 | `default` features | `["content-search"]` in **all three** crates (`kremory`, `kremory-mcp`, `kremory-napi`) — verified 2026-08-06 |
-| workspace nextest | **STATE THE SCOPE — two different numbers, both correct.** `-p kremory -p kremory-mcp` (`content-search,test-utils`) → **1690 passed / 1690 run, 6 skipped**, measured 2026-08-12, `NEXTEST_EXIT=0` off the binary. Workspace-wide → **1782/1782, 6 skipped** (2026-08-06). The 2026-08-12 run grew 1682 → 1690 by exactly the 8 tests added that day (4 lexical date-merge, 1 zero-padding regression, 3 write-gate temporal veto). ⚠️ An earlier session read the 1682-vs-1782 gap as a REGRESSION and nearly halted on it; it is a scope difference. Never write a test count here without its package scope AND feature flags. |
+| workspace nextest | **STATE THE SCOPE — two different numbers, both correct.** `-p kremory -p kremory-mcp` (`content-search,test-utils`) → **1699 passed / 1699 run, 6 skipped**, measured 2026-08-12 (end of day), `NEXTEST_EXIT=0` off the binary. Workspace-wide → **1782/1782, 6 skipped** (2026-08-06). The 2026-08-12 run grew **1682 → 1699** by exactly the 17 tests added that day: 4 lexical date-merge, 1 zero-padding regression, 4 write-gate temporal veto, 8 NULL-embedding gap-fill. ⚠️ An earlier session read the 1682-vs-1782 gap as a REGRESSION and nearly halted on it; it is a scope difference. Never write a test count here without its package scope AND feature flags. |
 | doctests | `-p kremory` → **25 passed, 5 ignored**; `--workspace` → **25 passed, 6 ignored** (re-measured 2026-08-06, `content-search,test-utils`). ⚠️ nextest does NOT run these — separate tier. **State the scope or the number is meaningless**: the 6th ignored is `kremory-eval/src/layer_b/graph_integrity.rs:19`; `kremory-mcp`/`kremory-napi` have 0 and `kremory-admin` has no lib target at all. A prior "CLAUDE.md says 5, measured 6" drift note was NOT a drift — both numbers were right at different scopes. |
 | clippy | `--workspace --all-targets --all-features` → **exit 0** |
 | consumer E2E | **5 passed / 0 failed of 5** (real Ollama). Extended 2026-08-06 with `.content()` / `.as_of()` / `supersede`-reachability — all three ran in **all 5** runs, and `as_of(−10y) → 0 facts` vs `as_of(+1d) → 10–15` held **every** run |
@@ -31,6 +31,20 @@ two disagree, THIS wins.**
 **🛑 Standing HITL gates — no autonomous action on any of these:** `cargo publish` · `git push` ·
 release tags · **any paid benchmark run, which INCLUDES re-ingesting the bench corpora** (that
 path uses the paid Groq extraction model, not local Ollama).
+
+**⚠️ THE TOOL SHELL IS `zsh`, NOT fish — corrected 2026-08-12.** Every doc in this repo (and
+three reviewer prompts written today) says *"the shell is fish"*. Your LOGIN shell is fish, but
+**agent tool-calls execute under `/bin/zsh` 5.9** (`ZSH_VERSION=5.9`, `BASH_VERSION` and
+`FISH_VERSION` both unset). Consequences, all measured:
+- **The pipe hazard is REAL here too:** `false | tail -1; echo $?` → **0**. Keep capturing exit
+  codes off the binary (`cmd > file 2>&1; echo $?`), never through a pipe.
+- **`echo $status` DOES work** — zsh defines `status` as a synonym for `?`. The documented
+  remedy is fine; it works for a different reason than the docs claim. (This was nearly written
+  up as "the documented fix is broken" — it isn't. Tested first.)
+- **An unmatched glob ABORTS THE WHOLE COMMAND.** `(eval):1: no matches found: <pat>` is zsh's
+  `nomatch`, not fish. This bit three times today: `grep -rn X crates/ --include=*.rs` died
+  before running because `*.rs` matched nothing in the CWD, so a "no matches" conclusion was
+  really "the command never ran". **QUOTE the pattern**: `'--include=*.rs'`.
 
 **⚠️ macOS Gatekeeper tax on a cold full relink — LARGELY RESOLVED 2026-08-06.** After a fresh
 `--all-features` build, nextest appears to hang before printing `Starting N tests`. It is not
