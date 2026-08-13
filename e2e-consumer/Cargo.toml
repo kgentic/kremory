@@ -16,10 +16,24 @@ publish = false
 [workspace]
 
 [dependencies]
-# kremory via PATH, as an external consumer with no crates.io release available.
-# Default features are empty (per crate Cargo.toml) — a real consumer opts into
-# nothing extra here: with_ollama needs no feature flag (autoagents-llm is a
-# REQUIRED, non-optional dep with ollama/openai/anthropic backends always on).
+# kremory via PATH, so this exercises the LOCAL TREE, not a published release.
+# (Verified 2026-08-13: `Cargo.lock`'s `kremory` entry carries no `source =`
+# line, which is what distinguishes a path dep from a registry one. Worth
+# re-checking whenever this tier's result is quoted — the original tell that
+# nobody was running it was a lockfile still pinned at 0.4.0.)
+#
+# ⚠️ CORRECTED 2026-08-13. This said "Default features are empty (per crate
+# Cargo.toml)". That has been FALSE since ADR-078: `crates/kremory/Cargo.toml`
+# now says the default is "no longer EMPTY" and ships `content-search`. Taking
+# no features here is still exactly right — it is what a crates.io consumer
+# gets — but for the opposite reason to the one stated, and the old comment
+# would have led a reader to think this tier ran with search OFF, which is the
+# precise misconception that let 0.5.0 ship with search off and ~32 points
+# unmeasured.
+#
+# A real consumer opts into nothing extra: with_ollama needs no feature flag
+# (autoagents-llm is a REQUIRED, non-optional dep with ollama/openai/anthropic
+# backends always on).
 kremory = { path = "../crates/kremory" }
 
 tokio = { version = "1", features = ["full"] }
