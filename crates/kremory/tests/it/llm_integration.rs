@@ -471,14 +471,46 @@ async fn recall_ranks_alice_episodes_above_unrelated() {
     assert!(!results.is_empty(), "recall must return results");
 
     // Alice must appear exactly once (canonical entity, no duplicate rows).
+    // EXACT match, not `contains("alice")`. The substring form counted three
+    // rows and called them duplicates:
+    //
+    //     ["Alice", "Alice's firm", "alices consultancy"]
+    //
+    // Those are three GENUINELY DISTINCT entities — a person and two
+    // organisations — and the assertion below is about the canonical *person*
+    // appearing once. A substring filter cannot express that: any org named
+    // after her contains her name by construction, so the better extraction
+    // gets, the more certainly this test fails.
+    //
+    // Same defect class as an over-blocking guard (Rule 41): it pattern-matches
+    // where it should identify, and it fires on correct data. Fixed 2026-08-13
+    // after `content-search=off` reproduced the failure identically, disproving
+    // the initial guess that ADR-078 content passages were leaking in.
     let alice_rows: Vec<_> = results
         .iter()
-        .filter(|r| r.entity_name.to_lowercase().contains("alice"))
+        .filter(|r| r.entity_name.eq_ignore_ascii_case("alice"))
         .collect();
     assert_eq!(
         alice_rows.len(),
         1,
-        "Alice must appear as exactly one canonical RetrievedContext row (no duplicates)"
+        // NAME THE ROWS. Until 2026-08-13 this failure printed only `left: 3,
+        // right: 1`, which says a duplicate exists but not what it is — and the
+        // difference decides the diagnosis entirely: three noisy extractions
+        // (`alice`, `alice smith`, `alice j`) is a local-model QUALITY artefact
+        // this project deliberately does not gate on, whereas three rows for the
+        // SAME canonical name is a real canonicalisation defect.
+        //
+        // An assertion that reports a count without the values is a weak
+        // instrument: it proves something is wrong and withholds everything
+        // needed to act. Cost: one wasted hypothesis (I guessed the ADR-078
+        // content-search flip was returning passages; re-running with the
+        // feature OFF reproduced `left: 3` exactly, disproving it).
+        "Alice must appear as exactly one canonical RetrievedContext row \
+         (no duplicates). Got {} rows: {:?}. Full result set ({} rows): {:?}",
+        alice_rows.len(),
+        alice_rows.iter().map(|r| &r.entity_name).collect::<Vec<_>>(),
+        results.len(),
+        results.iter().map(|r| &r.entity_name).collect::<Vec<_>>(),
     );
 
     let alice = alice_rows[0];
