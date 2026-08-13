@@ -79,10 +79,25 @@ async fn build_engine(
     let emb = OllamaEmbedderAdapter(raw_emb);
 
     let db_path = dir.path().join("l3.db");
+    // ⚠️ `open_with_dim(…, 768)`, NOT `open(…)`. `TemporalGraph::open` defaults to
+    // 384 dims (`schema.rs:442`, unchanged since v0.1.0 on 2026-05-27), and the
+    // embedder above is `nomic-embed-text`, which emits 768. Mismatched, every
+    // ingest here died on:
+    //
+    //     vector index(insert): dimensions are different: 768 != 384
+    //
+    // This is a TEST bug, not a product one — and the product already gets it
+    // right: `facade/providers.rs:785` wires nomic-embed-text with an explicit
+    // `embedding_dim: Some(768)`, which is why the consumer E2E passes 3/3 on
+    // the same embedder. This test hand-builds the low-level graph and so has
+    // to declare the width itself.
+    //
+    // Found 2026-08-13 by running T6 with `--run-ignored all`; these two tests
+    // are `#[ignore]`d and need a live Ollama, so nothing had exercised them.
     let graph = Arc::new(
-        TemporalGraph::open(db_path.to_str().expect("valid UTF-8"))
+        TemporalGraph::open_with_dim(db_path.to_str().expect("valid UTF-8"), 768)
             .await
-            .expect("TemporalGraph::open"),
+            .expect("TemporalGraph::open_with_dim(768) for nomic-embed-text"),
     );
 
     let config = PipelineConfig::builder()
