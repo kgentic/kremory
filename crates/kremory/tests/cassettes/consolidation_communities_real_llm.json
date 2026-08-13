@@ -6,55 +6,55 @@
     "0829109cf96d1b95eef38af6e9a14954eba6b1c506775cba24e11e5f3fb5269c": [
       {
         "call_index": 0,
-        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Acme Corporation\",\n      \"entity_type_id\": 2\n    },\n    {\n      \"name\": \"Jane Smith\",\n      \"entity_type_id\": 1\n    },\n    {\n      \"name\": \"Ohio\",\n      \"entity_type_id\": 3\n    }\n  ]\n}\n```"
+        "response_text": "```json\n{\"entities\": [{\"name\": \"Acme Corporation\", \"entity_type_id\": 2}, {\"name\": \"Jane Smith\", \"entity_type_id\": 1}, {\"name\": \"Ohio\", \"entity_type_id\": 3}]\n```"
       }
     ],
-    "0c83b38309663100bd53ef86a0a4f04b357c3a7174889cca2e6b195aeb40d33b": [
+    "0b96007a35d9db2d882b03d756fb54406cc1d4ddd77e0684bcb3003a8a4fdaa0": [
       {
         "call_index": 0,
-        "response_text": "{\"indices\": [], \"reason\": \"Marie Curie could have won multiple prizes in different fields, so this is considered an addition.\"}"
+        "response_text": "[\n  \"flows_through\",\n  \"empties_into\"\n]"
       }
     ],
     "0f91d7d6ce757d4d77e29110065662debdeb1a0caa35a4154e9e3edebd5f0f94": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"entities\": [\n    {\n      \"name\": \"Amazon River\",\n      \"entity_type_id\": 0\n    },\n    {\n      \"name\": \"Brazil\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Peru\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Atlantic Ocean\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"six thousand kilometres\",\n      \"entity_type_id\": 7\n    }\n  ]\n}"
+        "response_text": "{\"entities\": [{\"name\": \"Amazon River\", \"entity_type_id\": 0}, {\"name\": \"six thousand kilometres\", \"entity_type_id\": 7}, {\"name\": \"Brazil\", \"entity_type_id\": 3}, {\"name\": \"Peru\", \"entity_type_id\": 3}, {\"name\": \"Atlantic Ocean\", \"entity_type_id\": 3}]}"
       }
     ],
-    "1bf44fbf7c68a17168421617dfafc94a058c6d3a69f6cc3fdb8edff1bea40578": [
+    "242d91d944587bdd7444232dc48383d1f06d3726e27308132ac8aa1607f7a9e6": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"flour\",\n    \"predicate\": \"ingredient_quantity\",\n    \"object\": \"two cups\",\n    \"is_entity_ref\": false,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"baking soda\",\n    \"predicate\": \"ingredient_quantity\",\n    \"object\": \"a teaspoon\",\n    \"is_entity_ref\": false,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"three ripe bananas\",\n    \"predicate\": \"ingredient_quantity\",\n    \"object\": \"mashed into the batter\",\n    \"is_entity_ref\": false,\n    \"confidence\": 1.0\n  }\n]\n```"
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties_into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
       }
     ],
     "28011c19251002a0d47755841aaeb48072865705d195d83bfd2d9a3e2ecc003e": [
       {
         "call_index": 0,
-        "response_text": "{\"id\": 0, \"name\": \"Amazon River\", \"duplicate_candidate_id\": -1}\n{\"id\": 1, \"name\": \"Atlantic Ocean\", \"duplicate_candidate_id\": -1}\n{\"id\": 2, \"name\": \"Brazil\", \"duplicate_candidate_id\": -1}\n{\"id\": 3, \"name\": \"Peru\", \"duplicate_candidate_id\": -1}\n{\"id\": 4, \"name\": \"six thousand kilometres\", \"duplicate_candidate_id\": -1}"
+        "response_text": "{\"0\": {\"id\": 0, \"name\": \"Amazon River\", \"duplicate_candidate_id\": -1}, \"1\": {\"id\": 1, \"name\": \"Atlantic Ocean\", \"duplicate_candidate_id\": -1}, \"2\": {\"id\": 2, \"name\": \"Brazil\", \"duplicate_candidate_id\": -1}, \"3\": {\"id\": 3, \"name\": \"Peru\", \"duplicate_candidate_id\": -1}, \"4\": {\"id\": 4, \"name\": \"six thousand kilometres\", \"duplicate_candidate_id\": -1}}"
       }
     ],
-    "37d9d205210a91ee03812796ea9411068e519cdc5b46fde5d2502a8fe3c8c850": [
+    "4014143ef202ba7ac8d33a832109cae2002b06c5e0eb23a2a436d10e84c93584": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"born_in\",\n    \"object\": \"Warsaw\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_prize_in\",\n    \"object\": \"Nobel Prizes\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_prize_in\",\n    \"object\": \"Physics\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_prize_in\",\n    \"object\": \"Chemistry\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  }\n]\n```"
+        "response_text": "{\"indices\": [], \"reason\": \"The Amazon River can flow through multiple countries (e.g., Brazil and Peru); therefore, this is an addition of a value for the 'flows_through' relationship.\"}"
       }
     ],
-    "5678843b151abeeefa600def0131db6a28560779134a8cd30a4d5c2fe512fc75": [
+    "4333745f891e218a00785f50e05987c8e7a885ffbf44116a31bf86906fa5a832": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  \"ingredient_quantity\"\n]\n```"
+        "response_text": "{\"indices\": [], \"reason\": \"A recipe ingredient list can contain multiple ingredients; the new fact adds another ingredient to the existing list.\"}"
       }
     ],
     "611c9167370c4f8deed542403e4456b8864b7df440ab0c4d81d8b45fe5a7c01a": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"entities\": [\n    {\n      \"name\": \"Marie Curie\",\n      \"entity_type_id\": 1\n    },\n    {\n      \"name\": \"Warsaw\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Nobel Prizes\",\n      \"entity_type_id\": 8\n    },\n    {\n      \"name\": \"Physics\",\n      \"entity_type_id\": 9\n    },\n    {\n      \"name\": \"Chemistry\",\n      \"entity_type_id\": 9\n    }\n  ]\n}"
+        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Marie Curie\",\n      \"entity_type_id\": 1\n    },\n    {\n      \"name\": \"Warsaw\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Nobel Prizes\",\n      \"entity_type_id\": 8\n    },\n    {\n      \"name\": \"Physics\",\n      \"entity_type_id\": 9\n    },\n    {\n      \"name\": \"Chemistry\",\n      \"entity_type_id\": 9\n    }\n  ]\n}\n```"
       }
     ],
-    "6aa0e15cd7cc8f228fe8ceb62be72e92b158a0004e007a7f7720f191a0aca224": [
+    "69f266ceb66696fe1be1487226100017039c2911080617f951f62531e77621d7": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties_into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"has_length\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.9\n  }\n]\n```"
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founder\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"located_in\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  }\n]\n```"
       }
     ],
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
@@ -64,19 +64,19 @@
       },
       {
         "call_index": 1,
-        "response_text": "Hello! How can I help you today? Whether you're looking to generate text, answer questions, brainstorm ideas, or something else, feel free to let me know! 😊"
-      },
-      {
-        "call_index": 2,
-        "response_text": "How can I help you today? Whether you need information, creative writing, help with a task, or just want to chat, feel free to let me know! 😊"
-      },
-      {
-        "call_index": 3,
         "response_text": "How can I help you today? 😊"
       },
       {
+        "call_index": 2,
+        "response_text": "How can I help you today? Whether you have a question, need help with a task, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
+      },
+      {
+        "call_index": 3,
+        "response_text": "How can I help you today? Whether you have a question, need some writing done, want to brainstorm some ideas, or just want to chat, feel free to let me know! 😊"
+      },
+      {
         "call_index": 4,
-        "response_text": "What can I help you with today? Whether you have a question, need some creative writing, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
+        "response_text": "How can I help you today?"
       },
       {
         "call_index": 5,
@@ -84,53 +84,35 @@
       },
       {
         "call_index": 6,
-        "response_text": "Hello! How can I help you today? 😊"
+        "response_text": "What can I help you with today? 😊"
       },
       {
         "call_index": 7,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 8,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 9,
-        "response_text": "How can I help you today? Whether you have a question, need creative writing, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
+        "response_text": "How can I help you today?"
       },
       {
         "call_index": 10,
-        "response_text": "How can I help you today? 😊"
+        "response_text": "How can I help you today?"
       }
     ],
     "7809db93f48287dd308d68ef8b5674fc9132dde7d6ebfddf250278a6769634c7": [
       {
         "call_index": 0,
-        "response_text": "[\n  \"born_in\",\n  \"awarded_prize_in\"\n]"
-      }
-    ],
-    "80ff146ee4ce2173fbc27e1933d7b0c5940efad80b2e4c5c98a3998192f3efaa": [
-      {
-        "call_index": 0,
-        "response_text": "```json\n[\n  \"flows_through\",\n  \"empties_into\"\n]\n```"
-      }
-    ],
-    "8140857f3081498fb9f1b6c6d4e54e791c5561874d88367e3de1bb47512c9611": [
-      {
-        "call_index": 0,
-        "response_text": "{\"indices\": [], \"reason\": \"The subject (Marie Curie) has awarded multiple prizes, so listing another prize type is an addition, not a replacement.\"}"
+        "response_text": "```json\n[\n  \"born_in\",\n  \"awarded_prize_for\",\n  \"research_field_is\"\n]\n```"
       }
     ],
     "85bda0bef1b824ce78401ee039a98f41f643d8be1918f167913115f00e91d3e6": [
       {
         "call_index": 0,
-        "response_text": "{\"entities\": [{\"name\": \"two cups\", \"entity_type_id\": 7}, {\"name\": \"teaspoon\", \"entity_type_id\": 7}, {\"name\": \"three ripe bananas\", \"entity_type_id\": 7}]}"
-      }
-    ],
-    "863049f238dc2c4599673d18ad857c285acd9faffa22b70298b5a0ca6fd47f82": [
-      {
-        "call_index": 0,
-        "response_text": "{\"indices\": [], \"reason\": \"The Amazon River can flow through multiple countries (e.g., Brazil and Peru). Since the relationship 'flows_through' can hold multiple values, the new fact is considered an addition.\"}"
+        "response_text": "{\"entities\": [{\"name\": \"two cups of flour\", \"entity_type_id\": 7}, {\"name\": \"a teaspoon of baking soda\", \"entity_type_id\": 7}, {\"name\": \"three ripe bananas\", \"entity_type_id\": 7}]}"
       }
     ],
     "86b127fe83e1401f0a53e593457c0109e820db64404dcf0657eea65b66a9bb6d": [
@@ -142,19 +124,49 @@
     "87db7435bcb9877ece21e609edd032fde597f33a4e5d874032c291c2a2843025": [
       {
         "call_index": 0,
-        "response_text": "[\n  \"founded_by\",\n  \"located_in\"\n]"
+        "response_text": "```json\n[\n  \"founder\",\n  \"located_in\"\n]\n```"
       }
     ],
-    "a9715471b6bb558d155f684d1331c2a4f4fdc416790458c4226e672f4ee26c26": [
+    "99df87b1ddf40c5236e64bf5ae3e2b92e784cc9df7e604b59657c8dcf332a692": [
       {
         "call_index": 0,
-        "response_text": "{\"0\": {\"id\": 0, \"name\": \"teaspoon\", \"duplicate_candidate_id\": -1}, \"1\": {\"id\": 1, \"name\": \"three ripe bananas\", \"duplicate_candidate_id\": -1}, \"2\": {\"id\": 2, \"name\": \"two cups\", \"duplicate_candidate_id\": -1}}"
+        "response_text": "{\"indices\": [], \"reason\": \"The existing fact states Marie Curie was awarded for 'nobel prizes', which is a category. The new fact specifies 'Physics', which is a specific prize within that category. They can both be true simultaneously, suggesting an addition or refinement rather than a replacement.\"}"
       }
     ],
-    "c3105fdda83fba3d14d69831fbc9399ae971931c7635819a20678d30df598dcc": [
+    "a28693fae1c4d57a77abc3836980c6a596de3ebe33de9f6d8df919e95cfc93e5": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founded_by\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"located_in\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
+        "response_text": "{\"indices\": [], \"reason\": \"A recipe's ingredient list can contain multiple ingredients, so adding 'three ripe bananas' is an addition to the existing list, not a replacement for the flour or baking soda.\"}"
+      }
+    ],
+    "a2e59cf54380c35646d7ea0d88b3879fe70ae983624052513fb8d8138236156a": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"banana bread recipe\",\n    \"predicate\": \"ingredient_list\",\n    \"object\": \"two cups of flour\",\n    \"is_entity_ref\": false,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"banana bread recipe\",\n    \"predicate\": \"ingredient_list\",\n    \"object\": \"a teaspoon of baking soda\",\n    \"is_entity_ref\": false,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"banana bread recipe\",\n    \"predicate\": \"ingredient_list\",\n    \"object\": \"three ripe bananas\",\n    \"is_entity_ref\": false,\n    \"confidence\": 1.0\n  }\n]\n```"
+      }
+    ],
+    "a709a2b0982c3595e0d205f8e9732bd120c464ba21283c1fb28ea206b58ae3ce": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"born_in\",\n    \"object\": \"Warsaw\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"research_field_is\",\n    \"object\": \"Physics\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_prize_for\",\n    \"object\": \"Nobel Prizes\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_prize_for\",\n    \"object\": \"Physics\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_prize_for\",\n    \"object\": \"Chemistry\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  }\n]\n```"
+      }
+    ],
+    "ac4675117ec3330b7529977e951569c94bc5b3b6a49581df5955e63a9f51e4b8": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  \"ingredient_list\"\n]\n```"
+      }
+    ],
+    "e8464ce3cd29769eb59338aa2a7a764cc4c71520182da952d1de120bf4f4a1d9": [
+      {
+        "call_index": 0,
+        "response_text": "{\"indices\": [], \"reason\": \"A person can be awarded prizes in multiple distinct fields (e.g., Physics and Chemistry). The new fact represents another field, so it can coexist with the existing facts.\"}"
+      }
+    ],
+    "fd57f12a1494848034ac63b52730f104f423b5209ce19615c76f76a969aaeb5f": [
+      {
+        "call_index": 0,
+        "response_text": "{\"0\": {\"id\": 0, \"name\": \"a teaspoon of baking soda\", \"duplicate_candidate_id\": -1}, \"1\": {\"id\": 1, \"name\": \"three ripe bananas\", \"duplicate_candidate_id\": -1}, \"2\": {\"id\": 2, \"name\": \"two cups of flour\", \"duplicate_candidate_id\": -1}}"
       }
     ]
   }
