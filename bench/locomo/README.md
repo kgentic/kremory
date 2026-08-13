@@ -121,6 +121,62 @@ Without `content-search`, BM25 + dense content recall are compiled out entirely
 (ADR-078). Benchmarking that build measures a product no consumer receives — this is
 exactly how 0.5.0 shipped to crates.io with search off and ~32 points unmeasured.
 
+## 🛡️ Run-integrity guards (added 2026-08-13)
+
+Five guards make a *bad paid run* structurally hard rather than merely unlikely. Full
+rationale + the residual risks nothing removes:
+`.ai-docs/plans/paid-bench-run-integrity-build-2026-08-13.md`.
+
+**Before believing any recall number — this is a gate, not a nicety:**
+
+```bash
+python3 evidence_eval.py <run.json> --self-test    # exits NON-ZERO if the metric is order-blind
+```
+
+It shuffles each retrieved list and re-scores; a rank-aware metric MUST move. Until
+2026-08-13 it printed `FAIL … order-BLIND` and **exited 0**, so wiring it into a script
+gave a false green. It is now safe to use in a `&&` chain.
+
+**Smoke before you batch** (smoke-one-before-batch — the guard the plan prescribed and
+nothing implemented):
+
+```bash
+python3 qa_eval.py answer-gen results.json -o answers.jsonl --sample-n 10
+python3 qa_eval.py answer-judge answers.jsonl -o verdicts.jsonl
+python3 qa_eval.py answer-tally results.json --verdicts verdicts.jsonl --allow-sampled
+```
+
+The sample marker travels gen → judge → tally. **The tally fails closed on it**: without
+`--allow-sampled` it refuses, and with it the output is branded `NOT QUOTABLE` and the
+summary JSON carries `locomo_qa_gen_accuracy_SAMPLE`, not the real metric name. Same
+`--sample-n`/`--sample-seed` picks the same questions, so a re-run replays from cache for $0.
+
+**Pin the sweep point** when grading two arms in one session — crossing their result files
+is silent, plausible, and otherwise undetectable:
+
+```bash
+python3 qa_eval.py answer-tally results.json --verdicts v.jsonl --expect rrf_k=60 --expect content_stream_weight=1.0
+```
+
+**Never run a paid ingest by hand.** Use the script, which asserts five preconditions and
+aborts *before* spending — including that the active model is priced in
+`provider-rates.toml`, because an unpriced model emits **no cost metric at all** and would
+leave the spend guard reading `$0.00` forever:
+
+```bash
+KREMORY_BENCH_COST_CEILING_USD=25.00 ./run_paid_ingest.sh <label>
+```
+
+It arms `scripts/bench-spend-guard.sh`, which polls the server's own
+`kremory_core_cost_usd_total` and kills the run at the ceiling, and writes
+`<db>.provenance.json` recording which binary and model built the corpus — because the DB
+carries no such column and **its mtime is not its ingest time** (a read is a write,
+RECALL-LEDGER §4.20).
+
+Every guard has a RED-proof: `test_spend_guard.sh`, `test_paid_ingest_preconditions.sh`,
+and the `test_*.py` files. Run them with `python3 -m pytest` plus
+`bash test_spend_guard.sh && bash test_paid_ingest_preconditions.sh`.
+
 ## Question Categories
 
 | Category | Count | Description |

@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -41,7 +42,8 @@ from pathlib import Path
 # same-dir imports (script dir is on sys.path[0] when run directly)
 import prompts_qa
 from judge_rescore import ABSTENTION_CATEGORIES, cache_key, load_results
-from provenance import ShippedDefaultsMismatch, assert_shipped_defaults
+from provenance import (ProvenanceMismatch, ShippedDefaultsMismatch,
+                        assert_provenance, assert_shipped_defaults)
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -264,11 +266,67 @@ def gate_shipped_defaults(path: Path, *, allow_unverified: bool) -> None:
           file=sys.stderr)
 
 
-def load_batch(path: Path, *, allow_unverified: bool = False) -> list[dict]:
+def parse_expect(pairs: list[str] | None) -> dict[str, object]:
+    """`["rrf_k=60", "content_stream_weight=1.5"]` -> typed dict.
+
+    Mirrors `provenance.py`'s own `_main` typing: int, then float, then str.
+    """
+    out: dict[str, object] = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            raise SystemExit(f"[W0.3] bad --expect {pair!r}, want key=value")
+        k, v = pair.split("=", 1)
+        for cast in (int, float):
+            try:
+                out[k] = cast(v)
+                break
+            except ValueError:
+                continue
+        else:
+            out[k] = {"true": True, "false": False}.get(v.lower(), v)
+    return out
+
+
+def gate_recall_provenance(path: Path, expect: dict[str, object]) -> None:
+    """W0.3 — refuse to score a recall file whose provenance stamp is not the
+    SWEEP POINT the caller intended.
+
+    `provenance.assert_provenance` has existed since the recall-improvement
+    e2e spec (§S0-infra G1) and, until 2026-08-13, **had zero callers outside
+    its own test and `__main__`.** It was written to stop exactly the
+    13.9%-class stale-file defect and had never once run on a path that spends
+    money.
+
+    Deliberately INERT without `--expect`, per `over-blocking-is-a-security-
+    failure`: an always-on sweep-point assertion would reject every legitimate
+    historical results file (they were measured at other sweep points, which is
+    the point of a sweep). Stamp PRESENCE and the shipped-default build check
+    are already enforced unconditionally by `gate_shipped_defaults` above — this
+    adds the *which configuration* half, and only when the caller states one.
+
+    It earns its keep the moment two arms are graded in one session (e.g.
+    library vs HTTP-shim fusion): crossing their result files is a silent,
+    plausible, and completely undetectable error without it.
+    """
+    if not expect:
+        return
+    if path.suffix == ".jsonl":
+        print("[W0.3] input is a prepared batch (.jsonl) and carries no "
+              "provenance stamp — --expect cannot be checked here. Gate the "
+              "upstream results .json instead.", file=sys.stderr)
+        return
+    stamp = assert_provenance(path, expect)   # raises ProvenanceMismatch
+    print(f"[W0.3] sweep point verified: "
+          f"{ {k: stamp.get(k) for k in expect} }", file=sys.stderr)
+
+
+def load_batch(path: Path, *, allow_unverified: bool = False,
+               expect: dict[str, object] | None = None) -> list[dict]:
     """Return answerable {key, sample_id, question_id, category, question, gold,
     memories} records. .jsonl = already-prepared batch (judge_rescore prepare
     shape); .json = raw harness results -> filter answerable + build keys."""
     gate_shipped_defaults(path, allow_unverified=allow_unverified)
+    gate_recall_provenance(path, expect or {})
     if path.suffix == ".jsonl":
         return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
     # harness results JSON -> mirror judge_rescore.cmd_prepare filtering
@@ -307,6 +365,67 @@ def load_batch(path: Path, *, allow_unverified: bool = False) -> list[dict]:
     return batch
 
 
+# ---------------------------------------------------------------------------
+# G1 — deterministic sampling, and a sampled number that CANNOT be quoted.
+#
+# The readiness plan prescribes "smoke ~10 questions ($0.03), inspect, THEN the
+# full run" (smoke-one-before-batch). Until 2026-08-13 there was NO FLAG that
+# did it: the prescribed guard was an intention, not a command, and the only way
+# to obey it was to hand-slice a batch file.
+#
+# Two halves, and the second is the load-bearing one:
+#   1. `--sample-n` makes the smoke a command.
+#   2. The sample marker travels answer-gen -> judge -> tally, and the tally
+#      REFUSES to print a headline from sampled verdicts without `--allow-sampled`,
+#      then brands the output NOT QUOTABLE. A 10-question number that reads like
+#      a 1531-question number is worse than no smoke at all.
+# ---------------------------------------------------------------------------
+
+SAMPLE_KEY = "_sample"
+
+
+def apply_sample(batch: list[dict], n: int | None, seed: int) -> list[dict]:
+    """Deterministically take `n` rows and stamp each with a sample marker.
+
+    Determinism matters because the smoke must be REPEATABLE: re-running the
+    same (n, seed) has to hit the same questions, or the cache never replays and
+    a "free" re-run silently costs money again. Rows are sorted by `key` first
+    so the selection does not depend on the input file's row order.
+
+    `n` None or >= len(batch) returns the batch untouched and UNMARKED — a
+    "sample" that is the whole population is not a sample, and marking it would
+    brand a full run NOT QUOTABLE.
+    """
+    total = len(batch)
+    if n is None or n >= total:
+        if n is not None and n >= total:
+            print(f"[sample] --sample-n {n} >= {total} available rows — running "
+                  f"the FULL set, not marking it as sampled.", file=sys.stderr)
+        return batch
+    if n <= 0:
+        raise SystemExit(f"[sample] --sample-n must be > 0, got {n}")
+    ordered = sorted(batch, key=lambda b: b["key"])
+    picked = random.Random(seed).sample(ordered, n)
+    marker = {"n": n, "seed": seed, "of_total": total}
+    for b in picked:
+        b[SAMPLE_KEY] = marker
+    print(f"[sample] SMOKE RUN — {n} of {total} questions (seed={seed}). "
+          f"Any number from this run is a DIAGNOSTIC, not a result.",
+          file=sys.stderr)
+    return picked
+
+
+def sample_marker_of(rows: list[dict]) -> dict | None:
+    """The sample marker carried by `rows`, or None. Used by the tally to detect
+    sampling from the VERDICTS side — the tally's own batch comes from the full
+    results JSON and therefore never carries one."""
+    for r in rows:
+        m = r.get(SAMPLE_KEY)
+        if m:
+            return m
+    return None
+
+
 def _load_done_keys(path: Path) -> set[str]:
     if not path.exists():
         return set()
@@ -325,7 +444,15 @@ def _extract_answer(text: str) -> str:
 
 def cmd_answer_gen(a: argparse.Namespace) -> int:
     key = _load_api_key()
-    batch = load_batch(a.input, allow_unverified=getattr(a, 'allow_unverified_build', False))
+    batch = load_batch(a.input,
+                       allow_unverified=getattr(a, 'allow_unverified_build', False),
+                       expect=parse_expect(getattr(a, 'expect', None)))
+    # Sample BEFORE the context-format flags suffix `key` below, so the same
+    # (n, seed) selects the same QUESTIONS whichever format is under test —
+    # otherwise a --structured smoke and a flat smoke would compare different
+    # questions and the A/B would measure the sample, not the format.
+    batch = apply_sample(batch, getattr(a, "sample_n", None),
+                         getattr(a, "sample_seed", 1234))
     structured = getattr(a, "structured", False)
     text_block_flag = getattr(a, "text_block", False)
     if structured and text_block_flag:
@@ -419,6 +546,11 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
                 "generated_answer": _extract_answer(content),
                 "raw": content if a.keep_raw else None,
                 "k": a.k, "answerer_model": a.model,
+                # G1: the sample marker must SURVIVE into the answers file, or
+                # the judge and the tally have no way to know this run was a
+                # smoke — and an unmarked 10-question number is indistinguishable
+                # from a full-corpus one.
+                **({SAMPLE_KEY: b[SAMPLE_KEY]} if b.get(SAMPLE_KEY) else {}),
                 "_ptok": ptok, "_ctok": ctok}
 
     a.output.parent.mkdir(parents=True, exist_ok=True)
@@ -494,10 +626,17 @@ def cmd_answer_judge(a: argparse.Namespace) -> int:
         return {"key": r["key"], "question_id": r["question_id"],
                 "category": r.get("category", ""),
                 "correct": correct, "reason": reason,
-                "judge_model": a.model, "_ptok": ptok, "_ctok": ctok}
+                "judge_model": a.model,
+                # G1: propagate, do not re-sample. The judge deliberately has NO
+                # `--sample-n`: its input is already whatever answer-gen produced,
+                # so a second sampling stage could only compound into a subset
+                # nobody chose. To smoke the JUDGE alone, slice its input file
+                # (`head -n 10 answers.jsonl`) — that is honest and visible.
+                **({SAMPLE_KEY: r[SAMPLE_KEY]} if r.get(SAMPLE_KEY) else {}),
+                "_ptok": ptok, "_ctok": ctok}
 
     a.output.parent.mkdir(parents=True, exist_ok=True)
-    t0, done_n, unparsed = time.time(), 0, 0
+    t0, done_n, unparsed, fails = time.time(), 0, 0, 0
     pt = ct = 0
     mode = "a" if (a.resume and a.output.exists()) else "w"
     with open(a.output, mode) as f, ThreadPoolExecutor(max_workers=a.concurrency) as ex:
@@ -506,6 +645,7 @@ def cmd_answer_judge(a: argparse.Namespace) -> int:
             try:
                 rec = fut.result()
             except Exception as e:  # noqa: BLE001
+                fails += 1
                 print(f"[answer-judge] FAIL {futs[fut]['key']}: {e}", file=sys.stderr)
                 continue
             pt += rec.pop("_ptok"); ct += rec.pop("_ctok")
@@ -519,17 +659,35 @@ def cmd_answer_judge(a: argparse.Namespace) -> int:
                 print(f"[answer-judge] {done_n}/{len(todo)}  {time.time()-t0:.0f}s  "
                       f"~${_cost(a.model, pt, ct):.3f}", flush=True)
     print(f"[answer-judge] wrote {done_n} verdicts to {a.output} "
-          f"({unparsed} unparsed) in {time.time()-t0:.0f}s  "
+          f"({unparsed} unparsed, {fails} failed) in {time.time()-t0:.0f}s  "
           f"tokens in/out={pt}/{ct}  est ${_cost(a.model, pt, ct):.3f}  "
           f"cache hit/miss={_CACHE_STATS['hit']}/{_CACHE_STATS['miss']}", flush=True)
-    return 0
+    # ⚠️ This was `return 0` unconditionally, and call failures were not even
+    # counted — so a judge pass in which EVERY call 401'd/429'd/timed out wrote
+    # zero verdicts and reported SUCCESS. Found 2026-08-13 while proving the
+    # smoke flow end to end.
+    #
+    # It is RECALL-LEDGER §8 method rule 13, which this repo earned the hard way:
+    # "A probe that can print a number when it measured NOTHING is a defect, not
+    # an instrument ... a total outage must never be reportable as a null
+    # result." The doc2query probe reported a clean 0.0% after every LLM call
+    # 403'd. Same shape here.
+    #
+    # `cmd_answer_gen` already got this right (`return 1 if fails else 0`); the
+    # judge was the asymmetric half. Downstream, `answer-tally`'s >50%-unjudged
+    # abort would eventually catch the empty case — but "a later stage happens to
+    # notice" is not the same as this stage telling the truth about its own run,
+    # and an operator watching a `&&` chain sees only the exit code.
+    return 1 if fails else 0
 
 
 # ---------------------------------------------------------------------------
 # answer-tally
 # ---------------------------------------------------------------------------
 def cmd_answer_tally(a: argparse.Namespace) -> int:
-    batch = load_batch(a.input, allow_unverified=getattr(a, 'allow_unverified_build', False))
+    batch = load_batch(a.input,
+                       allow_unverified=getattr(a, 'allow_unverified_build', False),
+                       expect=parse_expect(getattr(a, 'expect', None)))
     verdicts: dict[str, dict] = {}
     for l in a.verdicts.read_text().splitlines():
         if l.strip():
@@ -550,6 +708,34 @@ def cmd_answer_tally(a: argparse.Namespace) -> int:
             for b in batch:
                 b["key"] = f"{b['key']}|textblock"
             print("[answer-tally] matched TEXT-BLOCK verdict keys", file=sys.stderr)
+
+    # ---- G1: sampled runs are DIAGNOSTICS, never headlines ------------------
+    # The tally's `batch` comes from the FULL results JSON, so it never carries a
+    # sample marker; the verdicts do (answer-gen -> judge propagation). Detect
+    # from that side, restrict the batch to the sampled keys, and fail CLOSED.
+    #
+    # Without the restriction the existing >50%-unjudged abort at the bottom of
+    # this function fires on every smoke (10 verdicts vs 1531 rows) — correct,
+    # but it means a smoke has no reporting step at all, which is why the
+    # prescribed "inspect, THEN the full run" step had nowhere to land.
+    sample = sample_marker_of(list(verdicts.values()))
+    if sample:
+        if not getattr(a, "allow_sampled", False):
+            print(
+                f"\nABORT: these verdicts come from a SAMPLED run "
+                f"({sample['n']} of {sample['of_total']} questions, "
+                f"seed={sample['seed']}).\n"
+                f"       A sampled accuracy is a DIAGNOSTIC and must never be "
+                f"quoted as a corpus number.\n"
+                f"       Pass --allow-sampled to print it, branded NOT QUOTABLE.",
+                file=sys.stderr)
+            return 2
+        judged_keys = set(verdicts)
+        batch = [b for b in batch if b["key"] in judged_keys]
+        if not batch:
+            print("\nABORT: sampled verdicts matched NO row in the batch — the "
+                  "verdicts belong to a different run.", file=sys.stderr)
+            return 2
 
     cats: dict[str, list[int]] = {}     # category -> [correct, total]
     unjudged, unparsed = [], 0
@@ -581,7 +767,13 @@ def cmd_answer_tally(a: argparse.Namespace) -> int:
         return 2
 
     print("=" * 66)
-    print(f"LoCoMo QA-GEN accuracy [HEADLINE] (answerer={a.answerer_label}, "
+    if sample:
+        print("⚠️  SAMPLED RUN — NOT QUOTABLE ⚠️")
+        print(f"    {sample['n']} of {sample['of_total']} questions "
+              f"(seed={sample['seed']}). This is a smoke DIAGNOSTIC.")
+        print("=" * 66)
+    print(f"LoCoMo QA-GEN accuracy [{'SAMPLE' if sample else 'HEADLINE'}] "
+          f"(answerer={a.answerer_label}, "
           f"judge={a.judge_label}, k={a.k_label})")
     print("NB: the harness inline SUBSTRING scorer is a separate, much stricter "
           "floor\n    (~2x under-credits, esp. open-domain) — do NOT confuse it "
@@ -612,7 +804,13 @@ def cmd_answer_tally(a: argparse.Namespace) -> int:
     # number is a durable metric artifact, not a printed table (per the "the
     # judged number must emit metrics/o11y" gap). ----
     summary = {
-        "metric": "locomo_qa_gen_accuracy",
+        # G1: a SAMPLED run gets a DIFFERENT metric name, so a downstream
+        # consumer cannot mistake a smoke for the corpus number by reading the
+        # JSON alone. Same discipline as branding the printed table.
+        "metric": ("locomo_qa_gen_accuracy_SAMPLE" if sample
+                   else "locomo_qa_gen_accuracy"),
+        "quotable": not sample,
+        **({"sample": sample} if sample else {}),
         "scorer": "qa-gen (answerer+judge)",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "config": {"answerer": a.answerer_label, "judge": a.judge_label,
@@ -668,6 +866,16 @@ def main() -> int:
                         "one harness-side; requires the harness to have been "
                         "run with --capture-text-block. Mutually exclusive "
                         "with --structured.")
+    g.add_argument("--expect", action="append", metavar="KEY=VALUE",
+                   help="W0.3: assert the recall file's provenance stamp matches "
+                        "this sweep point (repeatable, e.g. --expect rrf_k=60). "
+                        "Refuses to score on mismatch.")
+    g.add_argument("--sample-n", type=int, default=None,
+                   help="SMOKE: answer only N questions, chosen deterministically. "
+                        "Marks the output so the tally refuses to headline it.")
+    g.add_argument("--sample-seed", type=int, default=1234,
+                   help="seed for --sample-n; same (n, seed) picks the same "
+                        "questions, so a re-run replays from cache for $0")
     g.add_argument("--no-resume", dest="resume", action="store_false")
     g.add_argument("--cache-dir", default="results/qa/.cache",
                    help="content-addressed response cache (VCR); replays identical calls for $0")
@@ -692,6 +900,14 @@ def main() -> int:
                         "does not match the declared defaults. Prints a banner; the "
                         "number is not quotable (ROADMAP W0.2).")
     t.add_argument("--verdicts", type=Path, required=True)
+    t.add_argument("--expect", action="append", metavar="KEY=VALUE",
+                   help="W0.3: assert the recall file's provenance stamp matches "
+                        "this sweep point (repeatable). Refuses to tally on "
+                        "mismatch — the guard against crossing two arms' files.")
+    t.add_argument("--allow-sampled", action="store_true",
+                   help="permit tallying verdicts from a --sample-n smoke run. "
+                        "The output is branded NOT QUOTABLE and the summary JSON "
+                        "carries a different metric name.")
     t.add_argument("--answerer-label", default="gpt-4o-mini")
     t.add_argument("--judge-label", default="gpt-4o")
     t.add_argument("--k-label", default="10")
@@ -703,7 +919,16 @@ def main() -> int:
     global _CACHE_DIR
     if getattr(args, "cache", False) and getattr(args, "cache_dir", None):
         _CACHE_DIR = Path(args.cache_dir)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except ProvenanceMismatch as e:
+        # W0.3: a refusal, not a crash. A traceback reads as "the tool broke"
+        # and invites a retry with the gate disabled; a clean non-zero exit with
+        # the mismatch spelled out reads as "you are about to score the wrong
+        # file", which is what actually happened.
+        print(f"\n[W0.3] REFUSING TO SCORE — provenance mismatch:\n{e}",
+              file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

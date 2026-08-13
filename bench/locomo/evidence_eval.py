@@ -84,6 +84,7 @@ import math
 import random
 import re
 import sqlite3
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -406,7 +407,24 @@ def self_test_fact_resolution() -> bool:
     return ok
 
 
-def main() -> None:
+def main() -> int:
+    """Returns a PROCESS EXIT CODE. 0 = ok, 1 = a self-test FAILED.
+
+    ⚠️ This was `-> None` until 2026-08-13, and the file contained no `sys.exit`
+    and no non-zero return anywhere. So `--self-test` printed
+    `FAIL — ... this instrument is order-BLIND` and **exited 0**, and
+    `self_test_fact_resolution()`'s boolean was discarded at its call site.
+
+    The consequence is the reason this is a gate and not a nicety: the standing
+    project rule is "ALWAYS run `--self-test` before believing any recall
+    number", and that rule was enforceable only by a HUMAN READING THE OUTPUT.
+    Any script wiring it in as a precondition received a false green — a script
+    reporting success having detected failure
+    (`a-record-of-work-is-not-the-work`, Face 2).
+
+    Keep this returning an int. A caller that gates on this exit code is the
+    whole point; `main() -> None` silently disarms every one of them.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("runs", nargs="+", type=Path)
     ap.add_argument("--dataset", type=Path, default=Path(__file__).parent / "data" / "locomo10.json")
@@ -418,8 +436,13 @@ def main() -> None:
 
     turns = load_turns(args.dataset)
 
+    # Accumulates every self-test verdict; drives the exit code below. A `False`
+    # here MUST reach the caller — the previous code called this and threw the
+    # boolean away.
+    self_tests_ok = True
+
     if args.self_test:
-        self_test_fact_resolution()
+        self_tests_ok &= self_test_fact_resolution()
 
     # TD-139: `--validate-db` doubles as the source of per-episode content
     # for fact -> source-episode resolution (see `resolve_haystack`). `None`
@@ -441,11 +464,29 @@ def main() -> None:
             d_recall = (mean(sh_overall["recall"]) - mean(overall["recall"])) * 100
             print(f"  [self-test] shuffled: nDCG {mean(sh_overall['ndcg']) * 100:.1f}% "
                   f"({d_ndcg:+.1f}), recall {mean(sh_overall['recall']) * 100:.1f}% ({d_recall:+.1f})")
+            order_sensitive = abs(d_ndcg) > 0.05
+            self_tests_ok &= order_sensitive
+            # ⚠️ The parenthetical used to read "(recall correctly does not)" and
+            # that is FALSE whenever the pool is deeper than k: the pinned conv0
+            # tripwire prints `recall 21.7% (-55.5)` two lines above it, because
+            # shuffling a 50-item pool changes WHICH 10 items land in the top-10.
+            # Recall@k is permutation-invariant only over a FIXED set; it is not
+            # invariant under a reshuffle that re-selects the set. The gate itself
+            # was always correct (it keys on nDCG alone); only the explanation was
+            # wrong — and a verification tool printing a claim its own output
+            # contradicts is exactly what erodes trust in the verdict.
             print("  [self-test] " + (
-                "PASS — nDCG responds to reordering (recall correctly does not)."
-                if abs(d_ndcg) > 0.05 else
+                "PASS — nDCG responds to reordering."
+                if order_sensitive else
                 "FAIL — nDCG did not move under shuffle; this instrument is order-BLIND."))
+
+    if args.self_test and not self_tests_ok:
+        print("[self-test] OVERALL: FAIL — at least one self-test failed above. "
+              "Any number produced by this instrument is NOT trustworthy.",
+              file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
