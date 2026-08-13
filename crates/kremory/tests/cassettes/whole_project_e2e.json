@@ -6,101 +6,113 @@
     "0829109cf96d1b95eef38af6e9a14954eba6b1c506775cba24e11e5f3fb5269c": [
       {
         "call_index": 0,
-        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Acme Corporation\",\n      \"entity_type_id\": 2\n    },\n    {\n      \"name\": \"Jane Smith\",\n      \"entity_type_id\": 1\n    },\n    {\n      \"name\": \"Ohio\",\n      \"entity_type_id\": 3\n    }\n  ]\n}\n```"
+        "response_text": "{\"entities\": [{\"name\": \"Acme Corporation\", \"entity_type_id\": 2}, {\"name\": \"Jane Smith\", \"entity_type_id\": 1}, {\"name\": \"Ohio\", \"entity_type_id\": 3}]}"
+      }
+    ],
+    "0a5d6573076658240437bd53a9cf6fe2d6c5ce8548c77d57347c085e65711dc6": [
+      {
+        "call_index": 0,
+        "response_text": "{\"indices\": [], \"reason\": \"A river can flow through multiple countries; this is an addition.\"}"
       }
     ],
     "0b96007a35d9db2d882b03d756fb54406cc1d4ddd77e0684bcb3003a8a4fdaa0": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  \"flows_through\",\n  \"flows_through\",\n  \"empties_into\"\n]\n```"
+        "response_text": "```json\n[\n  \"flows through\",\n  \"empties into\"\n]\n```"
       }
     ],
     "0f91d7d6ce757d4d77e29110065662debdeb1a0caa35a4154e9e3edebd5f0f94": [
       {
         "call_index": 0,
-        "response_text": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Amazon River\",\n      \"entity_type_id\": 0\n    },\n    {\n      \"name\": \"six thousand kilometres\",\n      \"entity_type_id\": 7\n    },\n    {\n      \"name\": \"Brazil\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Peru\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Atlantic Ocean\",\n      \"entity_type_id\": 3\n    }\n  ]\n}\n```"
-      }
-    ],
-    "137976f699c477caa7292f9130e325e98fe0e8140370fffba8c7e846c49ef483": [
-      {
-        "call_index": 0,
-        "response_text": "```json\n{\n  \"proposals\": [\n    {\n      \"name\": \"Geographic River System\",\n      \"description\": \"Major, named bodies of flowing water that define physical geography.\",\n      \"justification\": \"This covers 'amazon river' as a specific type of large river entity that needs categorization separate from generic locations.\"\n    },\n    {\n      \"name\": \"Culinary Ingredient\",\n      \"description\": \"Raw, consumable foodstuffs used primarily in cooking, baking, or food preparation.\",\n      \"justification\": \"This specifically targets 'flour' as a common foodstuff category, distinct from general 'FoodItem' if that type is too broad.\"\n    }\n  ]\n}\n```"
-      }
-    ],
-    "1b28ae66dc1ae6b7eeaedb0cd68e767761ab6883bbedb1b8bf037ed6ecae3700": [
-      {
-        "call_index": 0,
-        "response_text": "{\"id\": 0, \"name\": \"teaspoon\", \"duplicate_candidate_id\": -1}\n{\"id\": 1, \"name\": \"three ripe bananas\", \"duplicate_candidate_id\": -1}\n{\"id\": 2, \"name\": \"two cups\", \"duplicate_candidate_id\": -1}"
-      }
-    ],
-    "2714f9284f288477370545bd1b3f0acc6bd8acb3ed85591768f1845ddc2d69b3": [
-      {
-        "call_index": 0,
-        "response_text": "```json\n{\n  \"decisions\": [\n    {\n      \"entity_id\": \"amazon river\",\n      \"entity_type_id\": 10,\n      \"confidence\": 0.95\n    },\n    {\n      \"entity_id\": \"flour\",\n      \"entity_type_id\": 11,\n      \"confidence\": 0.95\n    }\n  ]\n}\n```"
+        "response_text": "{\"entities\": [{\"name\": \"Amazon River\", \"entity_type_id\": 0}, {\"name\": \"six thousand kilometres\", \"entity_type_id\": 7}, {\"name\": \"Brazil\", \"entity_type_id\": 3}, {\"name\": \"Peru\", \"entity_type_id\": 3}, {\"name\": \"Atlantic Ocean\", \"entity_type_id\": 3}]}"
       }
     ],
     "28011c19251002a0d47755841aaeb48072865705d195d83bfd2d9a3e2ecc003e": [
       {
         "call_index": 0,
-        "response_text": "{\"id\": 0, \"name\": \"Amazon River\", \"duplicate_candidate_id\": -1}\n{\"id\": 1, \"name\": \"Atlantic Ocean\", \"duplicate_candidate_id\": -1}\n{\"id\": 2, \"name\": \"Brazil\", \"duplicate_candidate_id\": -1}\n{\"id\": 3, \"name\": \"Peru\", \"duplicate_candidate_id\": -1}\n{\"id\": 4, \"name\": \"six thousand kilometres\", \"duplicate_candidate_id\": -1}"
+        "response_text": "{\"0\": {\"id\": 0, \"name\": \"Amazon River\", \"duplicate_candidate_id\": -1}, \"1\": {\"id\": 1, \"name\": \"Atlantic Ocean\", \"duplicate_candidate_id\": -1}, \"2\": {\"id\": 2, \"name\": \"Brazil\", \"duplicate_candidate_id\": -1}, \"3\": {\"id\": 3, \"name\": \"Peru\", \"duplicate_candidate_id\": -1}, \"4\": {\"id\": 4, \"name\": \"six thousand kilometres\", \"duplicate_candidate_id\": -1}}"
       }
     ],
-    "2fdcd747dd9467fe41ba95b0c1544e862fe93e13da1f58ce0a606ebed8aff1da": [
+    "3ee36ad2185689f55ef806d58cbfbc4e8e75b4c896db6c332ed43b373e4a356b": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  \"born_in\",\n  \"awarded_prize_in\",\n  \"relates_to\",\n  \"is_a_field_of\",\n  \"research_topic\"\n]\n```"
+        "response_text": "```json\n{\n  \"verdicts\": [\n    {\n      \"pair_id\": 0,\n      \"is_same_entity\": false,\n      \"confidence\": 0.9,\n      \"reasoning\": \"The existing type 'Location' is very broad (any named place, city, country, or feature). The proposed type 'Natural Geographic Feature' is a specific subset of physical features, whereas 'Location' is a category that includes administrative locations (cities, countries) as well.\"\n    }\n  ]\n}\n```"
       }
     ],
-    "30454b04897d0aa575c21a24ed3ba1c970530e0f7ea9d38ad5150eb329826b6d": [
+    "466a8852d6717935a8867d71c399887fa6e81ea8da3a51b0e46cbddf08f3ae6e": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"flour\",\n    \"predicate\": \"ingredient_component\",\n    \"object\": \"two cups\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"baking soda\",\n    \"predicate\": \"ingredient_component\",\n    \"object\": \"teaspoon\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"three ripe bananas\",\n    \"predicate\": \"ingredient_component\",\n    \"object\": \"mashed into the batter\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
+        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person refers to individuals, while Organisation refers to corporate or institutional bodies.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person refers to individuals, while Location refers to geographic places.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person refers to individuals, while Event refers to occurrences in time.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person refers to specific individuals, while Concept refers to abstract ideas or methodologies.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person refers to individuals, while Chemical Compound refers to substances.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Organisation refers to formal groups/institutions, while Location refers to geographic places.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Organisation refers to formal groups/institutions, while Event refers to specific occurrences.\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Organisation refers to formal groups/institutions, while Concept refers to abstract ideas or methodologies.\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Organisation refers to formal groups/institutions, while Chemical Compound refers to substances.\"\n  },\n  {\n    \"pair_id\": 9,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Location refers to geographic places, while Event refers to occurrences in time.\"\n  }\n]\n```"
       }
     ],
-    "3f84a9239055eda8feea6c44a031b2be24197122a48d0eb2c9dc99eff667a325": [
+    "54fcbdd6e482fb373dcb9b7fe14f3735e3265fe02974e15ae9c6e055d68df318": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 0.95,\n    \"reasoning\": \"Date refers to calendar points, while Time refers to points or durations, which are distinct semantic types.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"Date is a specific temporal measurement, whereas Event describes a named occurrence which has a date but is not synonymous with the date type itself.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 0.95,\n    \"reasoning\": \"Time relates to duration or clock time, while Quantity is a measurement that requires a numerical value and units.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"Event is a specific named occurrence, whereas Concept is a more abstract, definitional idea or methodology.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Concept is an abstract idea or methodology, which is fundamentally different from a physical feature like a Geographic River System.\"\n  }\n]\n```"
+        "response_text": "{\"0\": {\"id\": 0, \"name\": \"Chemistry\", \"duplicate_candidate_id\": -1}, \"1\": {\"id\": 1, \"name\": \"Marie Curie\", \"duplicate_candidate_id\": -1}, \"2\": {\"id\": 2, \"name\": \"Nobel Prizes\", \"duplicate_candidate_id\": -1}, \"3\": {\"id\": 3, \"name\": \"Physics\", \"duplicate_candidate_id\": -1}, \"4\": {\"id\": 4, \"name\": \"Warsaw\", \"duplicate_candidate_id\": -1}}"
+      }
+    ],
+    "56282d7e3a5a4d0378d737f55858c5bac4e30c78d301492e4669f50bcc3651c1": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"verdicts\": [\n    {\n      \"pair_id\": 0,\n      \"is_same_entity\": false,\n      \"confidence\": 0.9,\n      \"reasoning\": \"Academic Discipline refers to established fields of study (e.g., 'Biology', 'History'), which are more structured than a general 'Concept'. While a discipline is composed of concepts, 'Concept' is too broad (covering theories, methodologies, and abstract ideas) to be synonymous with a specific field of academic study.\"\n    }\n  ]\n}\n```"
       }
     ],
     "5678843b151abeeefa600def0131db6a28560779134a8cd30a4d5c2fe512fc75": [
       {
         "call_index": 0,
-        "response_text": "[\"ingredient_component\"]"
+        "response_text": "```json\n[\n  \"ingredient_amount\",\n  \"ingredient_amount\",\n  \"ingredient_amount\"\n]\n```"
       }
     ],
-    "5752d3575c904a3420da0c4268f16242e8fae113fc1a91c8b98e0198a3c99fee": [
+    "5ba3d5a23ee00a52ee14c15533a46e7829c1bee6d3e513fb9c93130e080437fe": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"One is a corporation and the other is a person; they are different types of entities.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"One is a corporation and the other is a US state; they are different types of entities.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"The Amazon River flows into the Atlantic Ocean, but they are not the same body of water.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"The Amazon River is located within Brazil, but they are not the same entity.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"The Amazon River flows through and is associated with Peru, but they are not the same entity.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"The river name is distinct from a measurement of distance.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"An ocean is not the same as a country.\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"An ocean is not the same as a country.\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"An ocean is not the same as a measurement of distance.\"\n  },\n  {\n    \"pair_id\": 9,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Brazil and Peru are two different, distinct countries.\"\n  }\n]\n```"
-      }
-    ],
-    "5d9f03bcb07c938d54ffd3446b703055f35001b1c7858315307d6fa630b69103": [
-      {
-        "call_index": 0,
-        "response_text": "```json\n{\n  \"verdicts\": [\n    {\n      \"pair_id\": 0,\n      \"is_same_entity\": false,\n      \"confidence\": 0.95,\n      \"reasoning\": \"The Proposed type is specific to major flowing rivers (a type of physical feature). The Existing type is a very broad category encompassing all named locations, including rivers, but also cities, countries, etc. They are not semantically equivalent.\"\n    }\n  ]\n}\n```"
+        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Nobel Prizes is an award, and Warsaw is a city. They are different concepts.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Peru is a country, and six thousand kilometres is a distance measurement. They are distinct.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Physics is a scientific field, and Warsaw is a city. They are unrelated.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Teaspoon is a unit of measurement, while 'three' is a quantity/number. They are not the same entity.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Teaspoon is a unit of measurement, and 'three ripe bananas' is a descriptive quantity. They represent different things.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Teaspoon is a unit of measure, and 'two cups' is also a unit of measure, but they are different specific units.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"'Three' is a number, and 'three ripe bananas' is a count of an item. They are conceptually different, even if they share a number.\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"'Three' is a number, and 'two cups' is a quantity of a volume unit. They are different numerical/measurement concepts.\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"'Three ripe bananas' is a specific count of fruit, while 'two cups' is a specific volume measurement. They are incomparable.\"\n  }\n]\n```"
       }
     ],
     "611c9167370c4f8deed542403e4456b8864b7df440ab0c4d81d8b45fe5a7c01a": [
       {
         "call_index": 0,
-        "response_text": "{\n  \"entities\": [\n    {\n      \"name\": \"Marie Curie\",\n      \"entity_type_id\": 1\n    },\n    {\n      \"name\": \"Warsaw\",\n      \"entity_type_id\": 3\n    },\n    {\n      \"name\": \"Nobel Prizes\",\n      \"entity_type_id\": 8\n    },\n    {\n      \"name\": \"Physics\",\n      \"entity_type_id\": 9\n    },\n    {\n      \"name\": \"Chemistry\",\n      \"entity_type_id\": 9\n    },\n    {\n      \"name\": \"radioactivity\",\n      \"entity_type_id\": 9\n    }\n  ]\n}"
+        "response_text": "```json\n{\"entities\": [{\"name\": \"Marie Curie\", \"entity_type_id\": 1}, {\"name\": \"Warsaw\", \"entity_type_id\": 3}, {\"name\": \"Nobel Prizes\", \"entity_type_id\": 8}, {\"name\": \"Physics\", \"entity_type_id\": 0}, {\"name\": \"Chemistry\", \"entity_type_id\": 0}]}\n```"
       }
     ],
-    "6719421dff6b1e0a40abfd1d3317cfd12095e929131beaa59e5c4de1c9beb0ab": [
+    "65d6e8725081eb6e6297f1804b3a2bf37e8f2a61e8eec62fcbbe60259f9cc058": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Brazil is a country, while six thousand kilometres is a unit of distance.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Chemistry is a field of science, and Marie Curie is a person; they are distinct entities.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Chemistry is a field of science, and Nobel Prizes are an award; they are distinct concepts.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Chemistry and physics are two different scientific disciplines.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Chemistry is a field of science, while radioactivity is a process/phenomenon within science.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Chemistry is a field of science, and Warsaw is a city; they are different types of entities.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Jane Smith is a person's name, and Ohio is a US state; they are unrelated.\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Marie Curie is a person, and Nobel Prizes are an award; they are distinct entities.\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 0.8,\n    \"reasoning\": \"Marie Curie is associated with physics (and chemistry), but the names themselves refer to different types of entities (person vs. field of study).\"\n  },\n  {\n    \"pair_id\": 9,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"Marie Curie is the discoverer/researcher related to radioactivity, but they are not the same entity (person vs. process).\"\n  }\n]\n```"
+        "response_text": "```json\n[\n  \"born_in\",\n  \"award_for\",\n  \"award_type\"\n]\n```"
+      }
+    ],
+    "65def6b771552028b6581b0eb2e3e619640496626f77e422409813c63b40a3e1": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founded by\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"located in\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
+      }
+    ],
+    "6b8a0a62efc42fd99fa87a1170574b5b808f45a66243618972cb9ae42df6a76c": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"pair_id\": \"Pair 0\",\n    \"is_same_entity\": false,\n    \"confidence\": 0.95,\n    \"reasoning\": \"Location refers to physical places, while Concept refers to abstract ideas or theories.\"\n  },\n  {\n    \"pair_id\": \"Pair 1\",\n    \"is_same_entity\": true,\n    \"confidence\": 0.90,\n    \"reasoning\": \"Natural Geographic Feature is a specific subset of physical locations, aligning closely with the general concept of 'Location'.\"\n  },\n  {\n    \"pair_id\": \"Pair 2\",\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Location is about place names, whereas Chemical Compound refers to chemical substances.\"\n  },\n  {\n    \"pair_id\": \"Pair 3\",\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Location is about geographical places, while Academic Discipline refers to fields of study.\"\n  },\n  {\n    \"pair_id\": \"Pair 4\",\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Date specifies a day/period, while Time specifies a point or duration of time.\"\n  },\n  {\n    \"pair_id\": \"Pair 5\",\n    \"is_same_entity\": false,\n    \"confidence\": 0.95,\n    \"reasoning\": \"Date is a specific point in time (calendar), while Event is a named occurrence that happens at a time.\"\n  },\n  {\n    \"pair_id\": \"Pair 6\",\n    \"is_same_entity\": false,\n    \"confidence\": 0.95,\n    \"reasoning\": \"Time refers to when something happens, while Quantity refers to measured amounts or counts.\"\n  },\n  {\n    \"pair_id\": \"Pair 7\",\n    \"is_same_entity\": false,\n    \"confidence\": 0.95,\n    \"reasoning\": \"Event is a specific occurrence, while Concept is an abstract theory or idea.\"\n  },\n  {\n    \"pair_id\": \"Pair 8\",\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Event is a time-bound occurrence, whereas Chemical Compound refers to specific substances.\"\n  },\n  {\n    \"pair_id\": \"Pair 9\",\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Concept is an abstract idea, while Chemical Compound is a specific material substance.\"\n  }\n]\n```"
+      }
+    ],
+    "6bb52ac45866d5fe59ccc709448f85bdbf83067d0864262e925678b63b59825a": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"An organization name and a person's name are distinct entities.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"A company name and a US state are distinct entities.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"The Amazon River flows into, but is not the same as, the Atlantic Ocean.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"The Amazon River is a feature located within, but is not the same as, the country of Brazil.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 0.8,\n    \"reasoning\": \"Peru is a country, and while the Amazon River passes through it, they are different geographical entities.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"A river name and a measurement of distance are different types of entities.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"An ocean and a country are distinct geographical entities.\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"An ocean and a country are distinct geographical entities.\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"An ocean and a measurement of distance are different types of entities.\"\n  },\n  {\n    \"pair_id\": 9,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Two different countries are distinct entities.\"\n  }\n]\n```"
+      }
+    ],
+    "6dc6e28ab64d922042876ce3612ee90a99570b595eeb0d78c6c5c245640e6204": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"born_in\",\n    \"object\": \"Warsaw\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"award_for\",\n    \"object\": \"Physics\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"award_for\",\n    \"object\": \"Chemistry\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"award_type\",\n    \"object\": \"Nobel Prizes\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
       }
     ],
     "7434077ae3d8ac29cc3a600a3a72990fafaf78080bfdc5d1f3e2ff364fbc2cd4": [
       {
         "call_index": 0,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 1,
-        "response_text": "How can I help you today?"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 2,
@@ -108,11 +120,11 @@
       },
       {
         "call_index": 3,
-        "response_text": "Hello! How can I help you today? 😊"
+        "response_text": "How can I help you today? 😊"
       },
       {
         "call_index": 4,
-        "response_text": "How can I help you today? 😊"
+        "response_text": "How can I help you today? Whether you have a question, need help with a task, want to brainstorm ideas, or just want to chat, feel free to let me know! 😊"
       },
       {
         "call_index": 5,
@@ -120,7 +132,7 @@
       },
       {
         "call_index": 6,
-        "response_text": "I'm ready when you are. What can I help you with today? 😊"
+        "response_text": "What can I help you with today? 😊"
       },
       {
         "call_index": 7,
@@ -128,7 +140,7 @@
       },
       {
         "call_index": 8,
-        "response_text": "What's on your mind? 😊"
+        "response_text": "How can I help you today?"
       },
       {
         "call_index": 9,
@@ -139,64 +151,76 @@
         "response_text": "How can I help you today?"
       }
     ],
-    "8220158eaae5253d3248f0327fa13bb1213a14e1d2d39bf61b431b47c69b52a9": [
+    "7447257343efd0eb3ed86f1885baf2ebf45c7134baa66ed50aa17486f8d1c477": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"These are two distinct, unrelated quantities of different items.\"\n  }\n]\n```"
+        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"One is a country, the other is a distance measurement.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"One is a field of science, the other is a person.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"One is a field of science, the other is an award/concept.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"These are two distinct, though related, scientific disciplines.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"One is a field of science, the other is a city name.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"One is a person's name, the other is a US state.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"Marie Curie is famous for winning Nobel Prizes, but the names refer to different things (a person vs. an award).\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"Marie Curie worked in Physics, but they are not the same entity (a person vs. a field of study).\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Marie Curie is a person; Warsaw is a city. They are distinct entities.\"\n  },\n  {\n    \"pair_id\": 9,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"Nobel Prizes are awarded across fields like Physics, but they are not the same entity (an award vs. a field of study).\"\n  }\n]\n```"
       }
     ],
     "85bda0bef1b824ce78401ee039a98f41f643d8be1918f167913115f00e91d3e6": [
       {
         "call_index": 0,
-        "response_text": "{\n\"entities\": [\n{\n\"name\": \"two cups\",\n\"entity_type_id\": 7\n},\n{\n\"name\": \"teaspoon\",\n\"entity_type_id\": 7\n},\n{\n\"name\": \"three ripe bananas\",\n\"entity_type_id\": 7\n}\n]\n}\n"
+        "response_text": "{\"entities\": [{\"name\": \"two cups\", \"entity_type_id\": 7}, {\"name\": \"teaspoon\", \"entity_type_id\": 7}, {\"name\": \"three ripe bananas\", \"entity_type_id\": 7}]}"
       }
     ],
     "87db7435bcb9877ece21e609edd032fde597f33a4e5d874032c291c2a2843025": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  \"founder\",\n  \"location_of_incorporation\"\n]\n```"
+        "response_text": "[\n  \"founded by\",\n  \"located in\"\n]"
       }
     ],
-    "94e914324b0986ed910b1b9ef448cc83f783e52eb013dfc0c7acd0609b90f41f": [
+    "92e8aa5aad74d017baeeb3b56f14cd27255974cdbb50a48efa4baccc450ca6b6": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person refers to an individual, while Organisation refers to a group or company.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person is an individual, and Location is a place (city, country).\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person is an individual, and Event is a specific occurrence in time.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Person is an individual, and Concept is an abstract idea or methodology.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Organisation is a formal group, and Location is a physical place.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Organisation is a formal group, and Event is a temporal occurrence.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Organisation is a formal group, and Concept is an abstract idea or methodology.\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Location is a place, and Event is a specific occurrence in time.\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Location is a place, and Concept is an abstract idea or methodology.\"\n  },\n  {\n    \"pair_id\": 9,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"Location is a general place, while Geographic River System is a very specific subset of location (a body of water).\"\n  }\n]\n```"
+        "response_text": "{\"indices\": [], \"reason\": \"Marie Curie received awards for multiple fields (e.g., Physics and Chemistry); these are additive facts.\"}"
       }
     ],
-    "9976fb094cf7d74eaf05e8f67f5cb8040edc75abbdbea691a28c529553020d53": [
+    "9d61798093c6520f809b3fe7fefc71a74f47a7eda46a7de3575bf7db1eaa0319": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows_through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties_into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.98\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"has_length\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.90\n  }\n]\n```"
+        "response_text": "```json\n{\n  \"verdicts\": [\n    {\n      \"pair_id\": 0,\n      \"is_same_entity\": false,\n      \"confidence\": 1.0,\n      \"reasoning\": \"The proposed type describes inanimate substances (chemicals), while the existing type describes human beings (people).\"\n    }\n  ]\n}\n```"
       }
     ],
-    "b4ab6c4f8f5f954a6c954cf5303d7a2549f32f8a61e5593e24e7a694003b32fb": [
+    "a08f8cb56d8c2af8903052b49793ba649d47fb8bc10796f660f7e4b354671760": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"born_in\",\n    \"object\": \"Warsaw\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"relates_to\",\n    \"object\": \"Physics\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"relates_to\",\n    \"object\": \"Chemistry\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Marie Curie\",\n    \"predicate\": \"awarded_prize_in\",\n    \"object\": \"Nobel Prizes\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"research\",\n    \"predicate\": \"research_topic\",\n    \"object\": \"radioactivity\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.9\n  },\n  {\n    \"subject\": \"Physics\",\n    \"predicate\": \"is_a_field_of\",\n    \"object\": \"science\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.0\n  },\n  {\n    \"subject\": \"Chemistry\",\n    \"predicate\": \"is_a_field_of\",\n    \"object\": \"science\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.0\n  }\n]\n```"
+        "response_text": "```json\n[\n  {\n    \"subject\": \"flour\",\n    \"predicate\": \"ingredient_amount\",\n    \"object\": \"two cups\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"baking soda\",\n    \"predicate\": \"ingredient_amount\",\n    \"object\": \"teaspoon\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"ripe bananas\",\n    \"predicate\": \"ingredient_amount\",\n    \"object\": \"three\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  }\n]\n```"
       }
     ],
-    "cc814a436c5d4424679ac30903671dc8cde20b653e7ec9ccffa1c6aeca595a7e": [
+    "a122550d6edcaed0201470bedd7cffd37f5ba504245ba014655c7e2f8dea8cc8": [
       {
         "call_index": 0,
-        "response_text": "```json\n{\n  \"decisions\": [\n    {\n      \"entity_id\": 10,\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    },\n    {\n      \"entity_id\": 11,\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    },\n    {\n      \"entity_id\": 17,\n      \"action\": \"correct\",\n      \"new_type_id\": 11,\n      \"confidence\": 0.8\n    }\n  ]\n}\n```"
+        "response_text": "```json\n{\n  \"proposals\": [\n    {\n      \"name\": \"Natural Geographic Feature\",\n      \"description\": \"Large, naturally occurring physical features like rivers, mountains, or bodies of water.\",\n      \"justification\": \"Covers 'amazon river' as a specific example of a major natural waterway.\"\n    },\n    {\n      \"name\": \"Chemical Compound\",\n      \"description\": \"Substances identified by their chemical formula or common name, often used in reactions or cooking.\",\n      \"justification\": \"Covers 'baking soda' and 'flour', grouping them as specific, tangible chemical/mixture entities.\"\n    },\n    {\n      \"name\": \"Academic Discipline\",\n      \"description\": \"Broad fields of study or systematic areas of knowledge within academia.\",\n      \"justification\": \"Covers 'chemistry' and 'physics' as recognized fields of study.\"\n    }\n  ]\n}\n```"
       }
     ],
-    "d6c576a83578918755c23f9ff5002310fe21dd6bf562ab1cfaa3c939790750e5": [
+    "a4330d2a8180a3b780c4b8dae2d771fd8469f76df7e2e8810064db8c95e0a682": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"pair_id\": 0,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Marie Curie is a person; Warsaw is a city. They are different entities.\"\n  },\n  {\n    \"pair_id\": 1,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Nobel Prizes is an award; Physics is a field of science. They are not the same entity.\"\n  },\n  {\n    \"pair_id\": 2,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Nobel Prizes is an award; Radioactivity is a scientific concept/field. They are different entities.\"\n  },\n  {\n    \"pair_id\": 3,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Nobel Prizes is an award; Warsaw is a city. They are different entities.\"\n  },\n  {\n    \"pair_id\": 4,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Peru is a country; six thousand kilometres is a unit of distance/measurement. They are unrelated concepts.\"\n  },\n  {\n    \"pair_id\": 5,\n    \"is_same_entity\": false,\n    \"confidence\": 0.9,\n    \"reasoning\": \"While radioactivity was studied in physics, the concepts themselves ('physics' and 'radioactivity') are distinct entities/fields.\"\n  },\n  {\n    \"pair_id\": 6,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Physics is a field of science; Warsaw is a city. They are different entities.\"\n  },\n  {\n    \"pair_id\": 7,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Radioactivity is a physical concept; Warsaw is a city. They are different entities.\"\n  },\n  {\n    \"pair_id\": 8,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Teaspoon is a unit of volume; three ripe bananas is a quantity of fruit. They are incomparable units/items.\"\n  },\n  {\n    \"pair_id\": 9,\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Teaspoon is a unit of volume; two cups is a different unit of volume. While both measure volume, they are distinct named units.\"\n  }\n]\n```"
+        "response_text": "{\"0\": {\"id\": 0, \"name\": \"teaspoon\", \"duplicate_candidate_id\": -1}, \"1\": {\"id\": 1, \"name\": \"three ripe bananas\", \"duplicate_candidate_id\": -1}, \"2\": {\"id\": 2, \"name\": \"two cups\", \"duplicate_candidate_id\": -1}}"
       }
     ],
-    "e29bb45a5e228b235da437bffef53d6339e4e3e175299f4fe69ae24bab247554": [
+    "ac516e469d4baf7b16f1fee85693f7267d74c3a3559038c97c1027b6de818aa6": [
       {
         "call_index": 0,
-        "response_text": "{\"0\": {\"id\": 0, \"name\": \"Chemistry\", \"duplicate_candidate_id\": -1}, \"1\": {\"id\": 1, \"name\": \"Marie Curie\", \"duplicate_candidate_id\": -1}, \"2\": {\"id\": 2, \"name\": \"Nobel Prizes\", \"duplicate_candidate_id\": -1}, \"3\": {\"id\": 3, \"name\": \"Physics\", \"duplicate_candidate_id\": -1}, \"4\": {\"id\": 4, \"name\": \"radioactivity\", \"duplicate_candidate_id\": -1}, \"5\": {\"id\": 5, \"name\": \"Warsaw\", \"duplicate_candidate_id\": -1}}"
+        "response_text": "```json\n{\n  \"decisions\": [\n    {\n      \"entity_id\": 4,\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    },\n    {\n      \"entity_id\": 10,\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    },\n    {\n      \"entity_id\": 11,\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    },\n    {\n      \"entity_id\": 16,\n      \"action\": \"uncertain\",\n      \"confidence\": 0.7\n    },\n    {\n      \"entity_id\": 19,\n      \"action\": \"confirm\",\n      \"confidence\": 1.0\n    }\n  ]\n}\n```"
       }
     ],
-    "e8d3eb0547e8c094e1de6a53a1ffd4b4a49e8bc623b512cf3a0982bc8ff216e8": [
+    "cc9b71841de6b5970a609f0ab324b8e15f261fa2f3b6cd378a228555d61082de": [
       {
         "call_index": 0,
-        "response_text": "```json\n[\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"founder\",\n    \"object\": \"Jane Smith\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.95\n  },\n  {\n    \"subject\": \"Acme Corporation\",\n    \"predicate\": \"location_of_incorporation\",\n    \"object\": \"Ohio\",\n    \"is_entity_ref\": true,\n    \"confidence\": 0.90\n  }\n]\n```"
+        "response_text": "```json\n[\n  {\n    \"pair_id\": \"Pair 0\",\n    \"is_same_entity\": false,\n    \"confidence\": 0.95,\n    \"reasoning\": \"Concept is general abstract ideas/theories, while Academic Discipline is a specific field of study within academia.\"\n  },\n  {\n    \"pair_id\": \"Pair 1\",\n    \"is_same_entity\": false,\n    \"confidence\": 1.0,\n    \"reasoning\": \"Natural Geographic Feature describes physical landmarks, while Academic Discipline describes fields of study, which are completely different semantic categories.\"\n  }\n]\n```"
+      }
+    ],
+    "e1af5c4673016865f8a27e643a7c59c3d1d0bc41bc8c2c6a95ba6ec045c29bd2": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n[\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Brazil\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"flows through\",\n    \"object\": \"Peru\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"empties into\",\n    \"object\": \"Atlantic Ocean\",\n    \"is_entity_ref\": true,\n    \"confidence\": 1.0\n  },\n  {\n    \"subject\": \"Amazon River\",\n    \"predicate\": \"has length\",\n    \"object\": \"six thousand kilometres\",\n    \"is_entity_ref\": false,\n    \"confidence\": 0.9\n  }\n]\n```"
+      }
+    ],
+    "ff0291dedaf73b89c9f6673ab8239be4f48e238410a40245b38396d99f9e2317": [
+      {
+        "call_index": 0,
+        "response_text": "```json\n{\n  \"decisions\": [\n    {\n      \"entity_id\": \"amazon river\",\n      \"entity_type_id\": 10,\n      \"confidence\": 0.95\n    },\n    {\n      \"entity_id\": \"baking soda\",\n      \"entity_type_id\": 11,\n      \"confidence\": 0.90\n    },\n    {\n      \"entity_id\": \"chemistry\",\n      \"entity_type_id\": 12,\n      \"confidence\": 0.90\n    },\n    {\n      \"entity_id\": \"flour\",\n      \"entity_type_id\": 11,\n      \"confidence\": 0.85\n    },\n    {\n      \"entity_id\": \"physics\",\n      \"entity_type_id\": 12,\n      \"confidence\": 0.90\n    },\n    {\n      \"entity_id\": \"ripe bananas\",\n      \"entity_type_id\": 11,\n      \"confidence\": 0.80\n    },\n    {\n      \"entity_id\": \"three\",\n      \"entity_type_id\": 0,\n      \"confidence\": 0.0\n    }\n  ]\n}\n```"
       }
     ]
   }
