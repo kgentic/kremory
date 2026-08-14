@@ -379,7 +379,16 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                         .increment(1);
                         tracing::info!(
                             "gen_ai.system" = "unknown",
-                            "gen_ai.operation.name" = "extraction",
+                            // TD-218: DERIVED, not hardcoded. This field read
+                            // `"extraction"` for every structured call in the
+                            // crate — including dream's — while the token
+                            // metric emitted from this same function labelled
+                            // the identical call `operation="dream"` via
+                            // `operation_for_schema`. A log line that
+                            // contradicts the metric beside it is worse than a
+                            // missing one: it answers the question wrongly and
+                            // stops you asking again. Single-sourced now.
+                            "gen_ai.operation.name" = operation_for_schema(schema_name),
                             "gen_ai.request.model" = %model_str,
                             "gen_ai.usage.input_tokens" = usage_in,
                             "gen_ai.usage.output_tokens" = usage_out,
@@ -403,7 +412,16 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                             .increment(1);
                             tracing::info!(
                                 "gen_ai.system" = "unknown",
-                                "gen_ai.operation.name" = "extraction",
+                                // TD-218: DERIVED, not hardcoded. This field read
+                            // `"extraction"` for every structured call in the
+                            // crate — including dream's — while the token
+                            // metric emitted from this same function labelled
+                            // the identical call `operation="dream"` via
+                            // `operation_for_schema`. A log line that
+                            // contradicts the metric beside it is worse than a
+                            // missing one: it answers the question wrongly and
+                            // stops you asking again. Single-sourced now.
+                            "gen_ai.operation.name" = operation_for_schema(schema_name),
                                 "gen_ai.request.model" = %model_str,
                                 "gen_ai.usage.input_tokens" = usage_in,
                                 "gen_ai.usage.output_tokens" = usage_out,
@@ -467,7 +485,16 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                         .increment(1);
                                         tracing::info!(
                                             "gen_ai.system" = "unknown",
-                                            "gen_ai.operation.name" = "extraction",
+                                            // TD-218: DERIVED, not hardcoded. This field read
+                            // `"extraction"` for every structured call in the
+                            // crate — including dream's — while the token
+                            // metric emitted from this same function labelled
+                            // the identical call `operation="dream"` via
+                            // `operation_for_schema`. A log line that
+                            // contradicts the metric beside it is worse than a
+                            // missing one: it answers the question wrongly and
+                            // stops you asking again. Single-sourced now.
+                            "gen_ai.operation.name" = operation_for_schema(schema_name),
                                             "gen_ai.request.model" = %model_str,
                                             "gen_ai.usage.input_tokens" = retry_in,
                                             "gen_ai.usage.output_tokens" = retry_out,
