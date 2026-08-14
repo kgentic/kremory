@@ -53,6 +53,20 @@ pub(crate) struct StructuredCallBuilder<'a, L: ?Sized + ChatProvider> {
     /// support upstream and is not yet implemented.
     #[allow(dead_code)]
     ttft_budget_ms: Option<u64>,
+    /// TD-200 (a): TOTAL wall-clock budget for the whole ladder, not per arm.
+    ///
+    /// The per-arm budget above does NOT bound a request: each arm gets a FRESH
+    /// budget, so a stalled request walks every arm and costs
+    /// `arm_budget × ladder_len`. With the 30s default that is 150s; call-sites
+    /// on slow local models set 300_000, i.e. **25 minutes for one request**.
+    ///
+    /// That is not hypothetical — it aborted a 2-hour benchmark run
+    /// (`ingest_aborted: POST /memories timed out after 90s`) because the ladder
+    /// crossed the client's deadline while still stepping down. See TD-200.
+    ///
+    /// Bounding the total makes a stalled request fail FAST rather than
+    /// exhausting the ladder past whatever deadline the caller is holding.
+    ladder_budget_ms: Option<u64>,
     force_arm: Option<FallbackArm>,
 }
 
@@ -82,6 +96,18 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
             // PipelineConfig::extraction_arm_budget_ms via ExtractionContext.
             // Slow local LLMs (qwen2.5:14b ~80-130s) set 300_000 on the builder.
             ttft_budget_ms: Some(30_000),
+            // TD-200 (a). Expressed as a MULTIPLE of the per-arm budget rather
+            // than an absolute, so the call-sites that raise the arm budget for
+            // slow local models (300_000) scale with it instead of silently
+            // hitting a fixed ceiling meant for the 30s default.
+            //
+            // 2× = "at most one stalled arm, then one fallback attempt". Enough
+            // for the ladder to do its real job (degrade schema complexity when
+            // a model cannot satisfy a schema) while refusing to spend
+            // `arm_budget × 5` discovering that a request is simply too slow —
+            // which stepping down cannot fix, because a TIMEOUT is not a
+            // schema-capability failure.
+            ladder_budget_ms: Some(60_000),
             force_arm: None,
         }
     }
@@ -120,8 +146,21 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
     #[allow(dead_code)]
     pub(crate) fn ttft_budget_ms(mut self, ms: u64) -> Self {
         self.ttft_budget_ms = Some(ms);
+        // TD-200 (a): keep the ladder bound proportional to the arm bound.
+        // A call-site raising the arm budget to 300_000 for a slow local model
+        // means "arms are slow here" — not "spend 25 minutes on one request".
+        // Raising one without the other is how the cumulative bound silently
+        // stops matching the thing it bounds.
+        self.ladder_budget_ms = Some(ms.saturating_mul(2));
         self
     }
+
+    // NOTE: there is deliberately NO `ladder_budget_ms()` setter. It would have
+    // no production call-site today, so it would need an `allow(dead_code)` —
+    // and `#[allow(...)]` in `src/` is banned by this project's conventions. The
+    // one place that needs to vary it is the RED-proof test in this module,
+    // which sets the private field directly. Add a setter when a real call-site
+    // wants one, not to make a test compile.
 
     /// Override the fallback arm selection (bypass capability detection).
     ///
@@ -173,6 +212,13 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
         // Track last provider error for FallbackExhausted raw_response field.
         let mut last_err_str = String::new();
         let arm_budget = self.ttft_budget_ms.map(std::time::Duration::from_millis);
+        // TD-200 (a): bound the WHOLE ladder, not just each arm.
+        let ladder_budget = self.ladder_budget_ms.map(std::time::Duration::from_millis);
+        // `tokio::time::Instant`, NOT `std::time::Instant`: it tracks the runtime
+        // clock, so this bound is observable under `#[tokio::test(start_paused)]`
+        // instead of only under real wall-clock. Identical behaviour in
+        // production; the difference is that the guard becomes TESTABLE.
+        let ladder_start = tokio::time::Instant::now();
 
         // TD-019 Gap 4: cache env-var check once before the ladder loop so each
         // arm attempt doesn't pay a syscall-ish env::var read (Vera Finding 3).
@@ -193,6 +239,44 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
             // TD-019 Gap 5: per-call timing — distinguishes "1 entity per call
             // × 3 chunks" from "10 entities in 1 chunk". Wraps the arm invocation
             // (incl. timeout cap so timed-out arms still record their cost).
+            // TD-200 (a): stop BEFORE attempting an arm we cannot afford, and
+            // cap this arm so it cannot overshoot the total. Without the cap the
+            // last arm would still run a full `arm_budget` past the deadline,
+            // which is the same defect one arm smaller.
+            let arm_budget = match ladder_budget {
+                Some(total) => {
+                    let remaining = total.saturating_sub(ladder_start.elapsed());
+                    if remaining.is_zero() {
+                        counter!(
+                            "rql.extraction.ladder_budget_exhausted",
+                            "schema" => schema_name,
+                            "arm" => arm_name(arm),
+                            "model" => model_str.clone(),
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            target: "kremory.extraction.ladder_budget_exhausted",
+                            schema = schema_name,
+                            stopped_before_arm = arm_name(arm),
+                            arms_tried = arm_idx,
+                            total_budget_ms = total.as_millis() as u64,
+                            "structured-call ladder exhausted its TOTAL budget — failing fast \
+                             rather than stepping down past the caller's deadline (TD-200)"
+                        );
+                        last_err_str = format!(
+                            "ladder exceeded {}ms total budget after {arm_idx} arm(s); \
+                             stopped before {}",
+                            total.as_millis(),
+                            arm_name(arm)
+                        );
+                        break;
+                    }
+                    // Whichever is tighter: this arm's own cap, or what is left.
+                    Some(arm_budget.map_or(remaining, |a| a.min(remaining)))
+                }
+                None => arm_budget,
+            };
+
             let call_start = std::time::Instant::now();
             let result = match arm_budget {
                 Some(d) => {
@@ -1450,6 +1534,117 @@ mod tests {
         assert_eq!(builder.schema_name, "EntityList");
         assert_eq!(builder.max_retries, 2);
         assert_eq!(builder.ttft_budget_ms, Some(500));
+    }
+
+    // ── TD-200 (a): the ladder's TOTAL wall-clock bound ───────────────────────
+
+    /// A provider that never answers — the shape of the real TD-200 failure,
+    /// where the model is simply too slow for the request. Every observed arm
+    /// failure on 2026-08-13 was `exceeded 30000ms budget`, not a bad response.
+    #[derive(Debug)]
+    struct StallingChatProvider {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for StallingChatProvider {
+        async fn chat_with_tools(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[autoagents_llm::chat::Tool]>,
+            _json_schema: Option<autoagents_llm::chat::StructuredOutputFormat>,
+        ) -> std::result::Result<
+            Box<dyn autoagents_llm::chat::ChatResponse>,
+            autoagents_llm::error::LLMError,
+        > {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_secs(3_600)).await;
+            Err(autoagents_llm::error::LLMError::ProviderError(
+                "stall was not cut by a timeout — the bound under test is absent".to_string(),
+            ))
+        }
+    }
+
+    /// A stalled request must fail at the TOTAL budget, not `arm_budget × arms`.
+    ///
+    /// TD-200: a `POST /memories` whose ladder walks three ~30s arms is a >90s
+    /// request, and it aborted a 2-hour benchmark run outright
+    /// (`ingest_aborted: timed out after 90s`). Stepping down cannot help,
+    /// because a TIMEOUT is not a schema-capability failure — it retries the
+    /// same too-slow request with a weaker arm.
+    ///
+    /// `start_paused` auto-advances the runtime clock, so this asserts the
+    /// bound deterministically instead of racing real wall-clock.
+    #[tokio::test(start_paused = true)]
+    async fn stalled_ladder_fails_at_the_total_budget_not_arm_budget_times_arms() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let llm = StallingChatProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
+        let ladder_len = build_ladder(capability_of("qwen2.5:14b")).len();
+        assert!(
+            ladder_len >= 3,
+            "test is vacuous unless the ladder has several arms; got {ladder_len}"
+        );
+
+        let started = tokio::time::Instant::now();
+        let err = StructuredCallBuilder::new(&llm, &SCHEMA_ENTITY_LIST, "EntityList")
+            .model("qwen2.5:14b")
+            .messages(vec![crate::core::provider::chat_msg_user("extract")])
+            .ttft_budget_ms(1_000) // ⇒ ladder budget 2_000ms
+            .call()
+            .await
+            .expect_err("a provider that never answers must fail the call");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed <= std::time::Duration::from_millis(2_200),
+            "ladder must stop at its 2000ms TOTAL budget; took {elapsed:?} \
+             (unbounded would be ~{}ms). err={err}",
+            1_000 * ladder_len as u64
+        );
+    }
+
+    /// RED-proof for the test above: with the bound REMOVED, the same stub
+    /// walks the ladder and blows past the total.
+    ///
+    /// Without this, the assertion above could pass for the wrong reason (e.g.
+    /// the ladder happening to be one arm long) and would be measuring nothing.
+    #[tokio::test(start_paused = true)]
+    async fn without_the_total_bound_a_stalled_ladder_walks_every_arm() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let llm = StallingChatProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
+        let ladder_len = build_ladder(capability_of("qwen2.5:14b")).len();
+
+        let mut builder = StructuredCallBuilder::new(&llm, &SCHEMA_ENTITY_LIST, "EntityList")
+            .model("qwen2.5:14b")
+            .messages(vec![crate::core::provider::chat_msg_user("extract")])
+            .ttft_budget_ms(1_000);
+        // Reach into the private field to restore pre-TD-200 behaviour. There is
+        // no setter on purpose (see the note at the builder) — this is the only
+        // caller that needs an unbounded ladder, and it needs it to PROVE the
+        // bound does something.
+        builder.ladder_budget_ms = None;
+
+        let started = tokio::time::Instant::now();
+        let _err = builder
+            .call()
+            .await
+            .expect_err("a provider that never answers must fail the call");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed > std::time::Duration::from_millis(2_200),
+            "UNBOUNDED ladder should exceed the bounded budget — if it does not, \
+             the bounded test above proves nothing; took {elapsed:?}"
+        );
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) >= ladder_len,
+            "unbounded ladder should attempt every arm"
+        );
     }
 
     // ── NativeSchema arm for Anthropic model ──────────────────────────────────
