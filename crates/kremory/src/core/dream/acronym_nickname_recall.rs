@@ -534,11 +534,52 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 // ordinary L7 `resolve_pending_aliases` flow on a later
                 // dream cycle, exactly like any other potential-alias edge.
                 let confidence = verdict.as_ref().map(|v| v.confidence).unwrap_or(0.0);
+
+                // TD-220 — resolve BOTH endpoints through this loop's merge chain
+                // before writing, exactly as the `Merge` arm above does (E2E-1).
+                //
+                // This arm used `pair.a` / `pair.b` RAW. When an earlier iteration
+                // merged one of them away, the entity row was gone by the time this
+                // insert ran, and `facts`' composite FK to `entities(id)`
+                // (`core/schema.rs:505-506`) rejected it. Measured on the 2026-08-13
+                // full-scale run: **71 `FOREIGN KEY constraint failed` warnings**, all
+                // at `21:04:23`, interleaved with the `entity_merge` rows for `mel` and
+                // `melanie` in `graph_mutation_log`.
+                //
+                // That is not cosmetic. `potential_alias` facts are the INPUT to
+                // `resolve_pending_aliases`, so 71 failed inserts are 71 alias
+                // candidates that never reached their consumer — and TD-203 already
+                // established that unresolved aliases cost recall. The pass reported
+                // success throughout; the only signal was a WARN with no counter.
+                let alias_keeper = resolve_survivor(&merged_into, &pair.a);
+                let alias_new = resolve_survivor(&merged_into, &pair.b);
+
+                if alias_keeper == alias_new {
+                    // Both sides are now the SAME entity via a transitive merge, so
+                    // the alias this pair asked for is already true by identity.
+                    // Writing a self-referential `potential_alias` would be a no-op
+                    // at best and a self-loop for a later pass to retire at worst.
+                    // Counted separately so it can never be read as a rejection.
+                    counter!(
+                        "kremory.identity.alias_already_transitive_total",
+                        "site" => "site5",
+                    )
+                    .increment(1);
+                    tracing::debug!(
+                        target: "kremory::dream::acronym_recall",
+                        candidate_a = %pair.a,
+                        candidate_b = %pair.b,
+                        survivor = %alias_keeper,
+                        "site5 potential_alias pair already merged transitively — skipping"
+                    );
+                    continue;
+                }
+
                 let inserted = crate::core::disambiguation::insert_potential_alias_fact(
                     crate::core::disambiguation::InsertPotentialAliasFactParams {
                         graph,
-                        new_entity_id: &pair.b,
-                        existing_id: &pair.a,
+                        new_entity_id: &alias_new,
+                        existing_id: &alias_keeper,
                         similarity: confidence,
                         provenance: crate::core::disambiguation::AliasProvenance {
                             source_episode_id: None,
@@ -548,10 +589,24 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 )
                 .await;
                 if let Err(e) = inserted {
+                    // TD-220: a dropped alias candidate is a dropped INPUT to a later
+                    // pass, so it needs a counter, not just prose. A bare WARN is
+                    // invisible to every dashboard — which is why 71 of these went
+                    // unnoticed for a day and were found by grepping for something
+                    // else.
+                    counter!(
+                        "kremory.identity.alias_insert_failed_total",
+                        "site" => "site5",
+                    )
+                    .increment(1);
                     tracing::warn!(
                         target: "kremory::dream::acronym_recall",
                         error = %e,
                         group_id = %group_id,
+                        candidate_a = %pair.a,
+                        candidate_b = %pair.b,
+                        resolved_existing = %alias_keeper,
+                        resolved_new = %alias_new,
                         "acronym_nickname_recall: potential_alias fact insert failed"
                     );
                 }
@@ -2449,6 +2504,133 @@ mod tests {
             .get(0)
             .expect("count col");
         assert_eq!(count, 1, "one potential_alias fact must be written");
+    }
+
+    /// TD-220 — a PotentialAlias pair whose endpoint an EARLIER pair merged
+    /// away must resolve to the survivor, not FK-fail against a deleted row.
+    ///
+    /// # The bug this pins
+    /// The `Merge` arm resolved both endpoints through `merged_into`
+    /// (`resolve_survivor`, E2E-1); the `PotentialAlias` arm used `pair.a` /
+    /// `pair.b` RAW. So when an earlier iteration consumed one of them, the
+    /// insert referenced an entity row that no longer existed and `facts`'
+    /// composite FK to `entities(id)` rejected it. Measured on the 2026-08-13
+    /// full-scale run: **71 `FOREIGN KEY constraint failed` warnings**, all at
+    /// `21:04:23`, interleaved with the `entity_merge` rows for `mel` and
+    /// `melanie`. Those are 71 alias candidates that never reached
+    /// `resolve_pending_aliases`, and TD-203 established unresolved aliases
+    /// cost recall — while the pass reported success throughout.
+    ///
+    /// # Why the fixture is shaped this way (every character is load-bearing)
+    /// Pairs are enumerated upper-triangle over entity ids in sort order, and
+    /// Site #5 keeps `pair.a` / remaps `pair.b`. To put a DEAD id into a LATER
+    /// pair, the entity that dies must sort in the MIDDLE — so the acronym is
+    /// the middle element.
+    ///
+    /// ⚠️ **Entity ids preserve the case they were inserted with**, and the
+    /// sort is plain ASCII, where every uppercase letter precedes every
+    /// lowercase one. A first draft of this fixture assumed ids were
+    /// lowercased and used `"Fair Banking Institute"`; `"FBI"` then sorted
+    /// FIRST (`'B'` 66 < `'a'` 97), both later pairs had live endpoints, and
+    /// the test exercised the benign path while looking plausible. It was the
+    /// RUN that said so, not review — hence `FAIR` in caps below, which puts
+    /// `'A'` (65) ahead of `'B'` (66) and restores the intended order:
+    ///
+    /// * `FAIR Banking Institute`       — FIRST (`FA` < `FB`), initials F/B/I
+    /// * `FBI`                          — MIDDLE, and the one merged away
+    /// * `Federal Bureau Investigation` — LAST (`Fe` > `FB`), initials F/B/I
+    ///
+    /// Both long forms are initialism-compatible with `FBI`; they are NOT
+    /// compatible with EACH OTHER (`is_initialism_of` needs
+    /// `tokens(longer) >= chars(shorter)`, and 3 < 20), so exactly two pairs
+    /// nominate: `(FAIR…, FBI)` then `(FBI, Federal…)`.
+    ///
+    /// Verdict 0 (conf 0.95) merges `fbi` INTO `fair banking institute`.
+    /// Verdict 1 (conf 0.5, below the 0.7 floor) routes to PotentialAlias with
+    /// `pair.a = fbi` — already deleted.
+    ///
+    /// **RED-proof**: revert the `resolve_survivor` calls in the
+    /// `PotentialAlias` arm and this fails on the fact-count assertion (the
+    /// insert FK-fails and is swallowed by the `warn!`), and
+    /// `alias_insert_failed_total` fires.
+    #[tokio::test]
+    async fn potential_alias_endpoint_merged_earlier_resolves_to_survivor() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        insert_entity(&graph, "FAIR Banking Institute", "g20", "A banking body.").await;
+        insert_entity(&graph, "FBI", "g20", "A three-letter agency.").await;
+        insert_entity(
+            &graph,
+            "Federal Bureau Investigation",
+            "g20",
+            "A federal investigative agency.",
+        )
+        .await;
+
+        let llm = ScriptedVerdictProvider {
+            json: r#"{"verdicts":[
+                {"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"same body"},
+                {"pair_id":1,"is_same_entity":true,"confidence":0.5,"reasoning":"plausible but unsure"}
+            ]}"#
+            .to_string(),
+        };
+
+        let report = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g20",
+                model_id: "test-model",
+                embedder: None,
+            },
+        )
+        .await
+        .expect("acronym_nickname_recall must succeed");
+
+        assert_eq!(
+            report.candidates_nominated, 2,
+            "fixture must nominate exactly the two initialism pairs (the two long \
+             forms are not initialisms of each other)"
+        );
+        assert_eq!(report.merges_applied, 1, "verdict 0 (conf 0.95) must merge");
+        assert_eq!(
+            report.potential_aliases, 1,
+            "verdict 1 (conf 0.5) must route to PotentialAlias, not merge"
+        );
+
+        // THE ASSERTION THIS TEST EXISTS FOR: the alias fact was actually
+        // WRITTEN. Pre-fix it was not — the insert FK-failed and the error was
+        // swallowed by a `warn!`, so every counter above still read correctly
+        // while the durable state silently lost the candidate.
+        let mut rows = conn
+            .query(
+                "SELECT subject_id, object_id FROM facts \
+                 WHERE predicate = 'potential_alias' AND group_id = 'g20'",
+                (),
+            )
+            .await
+            .expect("facts query");
+        let mut aliases: Vec<(String, Option<String>)> = Vec::new();
+        while let Some(row) = rows.next().await.expect("row iteration") {
+            aliases.push((row.get(0).expect("subject_id"), row.get(1).expect("object_id")));
+        }
+        assert_eq!(
+            aliases.len(),
+            1,
+            "the potential_alias fact must be written against the SURVIVOR — got {aliases:?}"
+        );
+
+        // And it must NOT reference the id that was merged away.
+        let (subject, object) = &aliases[0];
+        let endpoints = [subject.as_str(), object.as_deref().unwrap_or("")];
+        assert!(
+            !endpoints.contains(&"fbi"),
+            "the alias must not reference the merged-away id `fbi` — got {endpoints:?}"
+        );
+        assert!(
+            endpoints.contains(&"FAIR Banking Institute"),
+            "the alias must reference the SURVIVOR `FAIR Banking Institute` — got {endpoints:?}"
+        );
     }
 
     // ── S1 spike: initialism_candidate precision/recall (spec §8, ADR-063) ───
