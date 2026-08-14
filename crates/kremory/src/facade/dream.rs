@@ -1,5 +1,81 @@
 use super::*;
 
+// ── Per-pass progress signal (TD-218) ─────────────────────────────────────────
+
+/// Wrap ONE dream pass so a long run is attributable FROM THE LOG ALONE.
+///
+/// # Why this exists
+/// On the 2026-08-13 full-scale run consolidation took **83 minutes** and the
+/// only output for ~82 of them was a stream of `kremory.extraction.
+/// structured_call_success`. From outside, *"working through pass 3 of 5"* and
+/// *"wedged retrying one item"* produced the identical signal, so an operator's
+/// judgement about whether to wait or kill the run was a guess — exactly what
+/// Rule 19 exists to prevent for multi-stage work.
+///
+/// # What the register got wrong, and what it got right
+/// TD-218 recorded those calls as *"byte-indistinguishable from ingest-time
+/// extraction"*. **That is false** — verified against the run's own server log
+/// on 2026-08-14: every line already carries `schema="…"`, and the ingest-path
+/// calls additionally sit inside a `kremory.ingest{kremory.operation="ingest"}`
+/// span (581 of 903 calls in that run; the other 322 were dream). Attributing
+/// the 83 minutes was in fact a one-liner over the existing log: **309
+/// `IdentityVerdictBatch` calls, 19:43:34 → 21:06:57 — a SINGLE pass, ~16 s
+/// each.** Everything else in dream finished in seconds.
+///
+/// The complaint's substance survives that correction: knowing *which* pass is
+/// running is not the same as knowing *how far through* it is. A pass that is
+/// 309 LLM calls long looks identical, call by call, whether it is advancing or
+/// retrying one item forever. So this wrapper supplies the framing
+/// (START/DONE plus elapsed), and `acronym_nickname_recall`'s adjudication loop
+/// supplies the intra-pass `completed/total` counter.
+///
+/// # Shape
+/// Mirrors the span already used by ingest and `contextualize`
+/// (`kremory.operation = "…"`, see `core/context.rs:72`) rather than minting a
+/// new convention — so the same log filter separates all three. The span is
+/// applied with [`tracing::Instrument`] and NOT an `Entered` guard, because
+/// every pass is `.await`ed and a guard held across an await point attributes
+/// the span to whatever else the executor runs in the gap.
+async fn dream_pass<F: std::future::Future>(
+    pass: &'static str,
+    group_id: &str,
+    fut: F,
+) -> F::Output {
+    use tracing::Instrument as _;
+
+    metrics::counter!("kremory.dream.pass_started_total", "pass" => pass).increment(1);
+    tracing::info!(
+        target: "kremory::dream",
+        pass,
+        group_id = %group_id,
+        "kremory.dream.pass START"
+    );
+
+    let start = std::time::Instant::now();
+    let out = fut
+        .instrument(tracing::info_span!(
+            "kremory.dream",
+            kremory.operation = "dream",
+            pass = pass,
+        ))
+        .await;
+    // `as_secs_f64` rather than `as_millis() as u64` — the house pattern
+    // (`extraction/structured.rs:339`), and it needs no lossy cast, which the
+    // project's no-`#[allow]` rule would otherwise make awkward.
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    metrics::histogram!("kremory.dream.pass_ms", "pass" => pass).record(elapsed_ms);
+    metrics::counter!("kremory.dream.pass_completed_total", "pass" => pass).increment(1);
+    tracing::info!(
+        target: "kremory::dream",
+        pass,
+        group_id = %group_id,
+        elapsed_ms,
+        "kremory.dream.pass DONE"
+    );
+    out
+}
+
 // ── DreamRequest ──────────────────────────────────────────────────────────────
 
 /// Dream phase (batch consolidation) request builder. Obtain via `mem.dream()`.
@@ -213,9 +289,12 @@ impl<'a> DreamRequest<'a> {
                         }
                     })
                     .unwrap_or(crate::core::dream::discover_types::MAX_PROPOSALS);
-                match crate::core::dream::discover_types::discover_types(
-                    &arc_llm,
-                    crate::core::dream::discover_types::DiscoverTypesParams {
+                match dream_pass(
+                    "discover_types",
+                    &group_id,
+                    crate::core::dream::discover_types::discover_types(
+                        &arc_llm,
+                        crate::core::dream::discover_types::DiscoverTypesParams {
                         conn: &tg.conn,
                         group_id: &group_id,
                         embedder: embedder_ref,
@@ -231,7 +310,8 @@ impl<'a> DreamRequest<'a> {
                         // degeneracy risk). Threaded from `DreamOpts::include_
                         // evidence_retype_by_similarity`.
                         evidence_retype_by_similarity: opts.include_evidence_retype_by_similarity,
-                    },
+                        },
+                    ),
                 )
                 .await
                 {
@@ -260,7 +340,13 @@ impl<'a> DreamRequest<'a> {
         // is not reclassified first. Non-fatal: failure warns + continues.
         if let Some(tg) = self.memory.temporal_graph.as_ref() {
             let group_id = namespace_to_group_id(&ns);
-            match crate::core::disambiguation::resolve_pending_aliases(tg, &group_id).await {
+            match dream_pass(
+                "aliases",
+                &group_id,
+                crate::core::disambiguation::resolve_pending_aliases(tg, &group_id),
+            )
+            .await
+            {
                 Ok(n) => aliases_resolved = n,
                 Err(e) => {
                     tracing::warn!(
@@ -303,18 +389,22 @@ impl<'a> DreamRequest<'a> {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
                 let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
-                match crate::core::dream::acronym_nickname_recall::acronym_nickname_recall(
-                    &arc_llm,
-                    crate::core::dream::acronym_nickname_recall::AcronymNicknameRecallParams {
-                        graph: tg,
-                        group_id: &group_id,
-                        // TD-094-style threading: reuse the resolved dream model id.
-                        model_id: dream_model_id,
-                        // TD-112: Site #5 merges live (no dry-run gate, ON by
-                        // default) — thread the embedder so the surviving keeper's
-                        // stored embedding is refreshed post-merge (Quinn M1).
-                        embedder: Some(self.memory.embedder.as_ref()),
-                    },
+                match dream_pass(
+                    "acronym_recall",
+                    &group_id,
+                    crate::core::dream::acronym_nickname_recall::acronym_nickname_recall(
+                        &arc_llm,
+                        crate::core::dream::acronym_nickname_recall::AcronymNicknameRecallParams {
+                            graph: tg,
+                            group_id: &group_id,
+                            // TD-094-style threading: reuse the resolved dream model id.
+                            model_id: dream_model_id,
+                            // TD-112: Site #5 merges live (no dry-run gate, ON by
+                            // default) — thread the embedder so the surviving keeper's
+                            // stored embedding is refreshed post-merge (Quinn M1).
+                            embedder: Some(self.memory.embedder.as_ref()),
+                        },
+                    ),
                 )
                 .await
                 {
@@ -377,15 +467,19 @@ impl<'a> DreamRequest<'a> {
                 // DreamOpts does not yet carry per-pass thresholds — use canonical defaults.
                 // Full per-pass tuning via DreamPassOpts is available on the Engine path;
                 // the DreamRequest path uses sensible defaults until DreamOpts is extended.
-                match crate::core::dream::reclassify::reclassify(
-                    &arc_llm,
-                    crate::core::dream::reclassify::ReclassifyParams {
-                        conn: &tg.conn,
-                        group_id: &group_id,
-                        opts: pass2_opts,
-                        // TD-094: thread the resolved dream model id for capability detection.
-                        model_id: dream_model_id,
-                    },
+                match dream_pass(
+                    "reclassify",
+                    &group_id,
+                    crate::core::dream::reclassify::reclassify(
+                        &arc_llm,
+                        crate::core::dream::reclassify::ReclassifyParams {
+                            conn: &tg.conn,
+                            group_id: &group_id,
+                            opts: pass2_opts,
+                            // TD-094: thread the resolved dream model id for capability detection.
+                            model_id: dream_model_id,
+                        },
+                    ),
                 )
                 .await
                 {
@@ -424,20 +518,27 @@ impl<'a> DreamRequest<'a> {
         // canonicalize (merges benefit from corrected types). Non-fatal.
         if opts.include_consistency_check {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
-                match crate::core::dream::consistency_check::run_consistency_check(
-                    &tg.conn,
-                    crate::core::dream::consistency_check::RunConsistencyCheckParams {
-                        embedder: self.memory.embedder.as_ref(),
-                        llm: llm.as_ref(),
-                        opts: crate::core::dream::consistency_check::ConsistencyCheckOpts {
-                            // TD-094: thread the resolved dream model id as the
-                            // verify model. `None` when unknown → verify.rs
-                            // degrades to PromptOnly (unchanged from before).
-                            verify_model_override: (!dream_model_id.is_empty())
-                                .then(|| dream_model_id.to_string()),
-                            ..Default::default()
+                // TD-218: bound here only so the pass wrapper can label its
+                // START/DONE lines; this pass itself scopes by connection.
+                let group_id = namespace_to_group_id(&ns);
+                match dream_pass(
+                    "consistency_check",
+                    &group_id,
+                    crate::core::dream::consistency_check::run_consistency_check(
+                        &tg.conn,
+                        crate::core::dream::consistency_check::RunConsistencyCheckParams {
+                            embedder: self.memory.embedder.as_ref(),
+                            llm: llm.as_ref(),
+                            opts: crate::core::dream::consistency_check::ConsistencyCheckOpts {
+                                // TD-094: thread the resolved dream model id as the
+                                // verify model. `None` when unknown → verify.rs
+                                // degrades to PromptOnly (unchanged from before).
+                                verify_model_override: (!dream_model_id.is_empty())
+                                    .then(|| dream_model_id.to_string()),
+                                ..Default::default()
+                            },
                         },
-                    },
+                    ),
                 )
                 .await
                 {
@@ -469,13 +570,17 @@ impl<'a> DreamRequest<'a> {
             // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): thread the
             // embedder so the keeper's stored embedding is recomputed + persisted
             // after each merge instead of going stale.
-            match crate::core::canonicalization::canonicalize_surface_forms_with_embedder(
-                tg,
-                crate::core::canonicalization::CanonicalizeSurfaceFormsParams {
-                    group_id: &group_id,
-                    threshold: crate::core::canonicalization::L5_CANONICALIZATION_THRESHOLD,
-                    embedder: Some(self.memory.embedder.as_ref()),
-                },
+            match dream_pass(
+                "canonicalize",
+                &group_id,
+                crate::core::canonicalization::canonicalize_surface_forms_with_embedder(
+                    tg,
+                    crate::core::canonicalization::CanonicalizeSurfaceFormsParams {
+                        group_id: &group_id,
+                        threshold: crate::core::canonicalization::L5_CANONICALIZATION_THRESHOLD,
+                        embedder: Some(self.memory.embedder.as_ref()),
+                    },
+                ),
             )
             .await
             {
@@ -513,15 +618,19 @@ impl<'a> DreamRequest<'a> {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
                 let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
-                match crate::core::dream::type_registry_collapse::type_registry_collapse(
-                    &arc_llm,
-                    crate::core::dream::type_registry_collapse::TypeRegistryCollapseParams {
-                        conn: &tg.conn,
-                        group_id: &group_id,
-                        embedder: Some(self.memory.embedder.as_ref()),
-                        // TD-094-style threading: reuse the resolved dream model id.
-                        model_id: dream_model_id,
-                    },
+                match dream_pass(
+                    "type_registry_collapse",
+                    &group_id,
+                    crate::core::dream::type_registry_collapse::type_registry_collapse(
+                        &arc_llm,
+                        crate::core::dream::type_registry_collapse::TypeRegistryCollapseParams {
+                            conn: &tg.conn,
+                            group_id: &group_id,
+                            embedder: Some(self.memory.embedder.as_ref()),
+                            // TD-094-style threading: reuse the resolved dream model id.
+                            model_id: dream_model_id,
+                        },
+                    ),
                 )
                 .await
                 {
@@ -565,16 +674,20 @@ impl<'a> DreamRequest<'a> {
         let consolidation = if opts.any_consolidation_enabled() {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
-                crate::core::dream::consolidation::run_consolidation(
-                    crate::core::dream::consolidation::RunConsolidationParams {
-                        graph: tg,
-                        group_id: &group_id,
-                        opts: &opts,
-                        model_id: dream_model_id,
-                        // ADR-070 Fork 5: the orchestrator fires on_merge_proposed from
-                        // this sink for each cross_episode merge decision.
-                        sink: sink.as_ref(),
-                    },
+                dream_pass(
+                    "consolidation",
+                    &group_id,
+                    crate::core::dream::consolidation::run_consolidation(
+                        crate::core::dream::consolidation::RunConsolidationParams {
+                            graph: tg,
+                            group_id: &group_id,
+                            opts: &opts,
+                            model_id: dream_model_id,
+                            // ADR-070 Fork 5: the orchestrator fires on_merge_proposed from
+                            // this sink for each cross_episode merge decision.
+                            sink: sink.as_ref(),
+                        },
+                    ),
                 )
                 .await
                 .unwrap_or_default()
@@ -610,7 +723,13 @@ impl<'a> DreamRequest<'a> {
         // strictly safer than running it once in the wrong place.
         if let Some(tg) = self.memory.temporal_graph.as_ref() {
             let group_id = namespace_to_group_id(&ns);
-            match crate::core::disambiguation::resolve_pending_aliases(tg, &group_id).await {
+            match dream_pass(
+                "aliases_post",
+                &group_id,
+                crate::core::disambiguation::resolve_pending_aliases(tg, &group_id),
+            )
+            .await
+            {
                 Ok(n) => {
                     aliases_resolved += n;
                     metrics::counter!("kremory.dream.aliases_resolved_total", "sweep" => "post")

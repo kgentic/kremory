@@ -1054,9 +1054,47 @@ async fn adjudicate_batch<L: ChatProvider>(
         .collect();
 
     use futures::stream::StreamExt as _;
+
+    // TD-218 — INTRA-pass progress. This loop is where a full-scale run spends
+    // its time: on 2026-08-13 it made **309 `IdentityVerdictBatch` calls over 83
+    // minutes** (19:43:34 → 21:06:57), and emitted nothing between them. The
+    // per-pass START/DONE framing in `facade/dream.rs` tells you WHICH pass is
+    // running; only a completed/total counter distinguishes "advancing through
+    // 309 chunks" from "wedged retrying one" — which was the actual operator
+    // question during that run, and it was unanswerable.
+    //
+    // Deliberately unconditional (not `KREMORY_DEBUG`-gated): a progress signal
+    // that is off by default is absent exactly when it is needed, mid-run, with
+    // no chance to re-run. Volume is bounded by `PROGRESS_EVERY` — 309 chunks
+    // yields ~32 lines, not 309.
+    const PROGRESS_EVERY: usize = 10;
+    let total_chunks = call_futures.len();
+    tracing::info!(
+        target: "kremory::dream::acronym_recall",
+        pairs = nominated.len(),
+        chunks = total_chunks,
+        concurrency = adjudication_llm_concurrency(),
+        group_id = %group_id,
+        "acronym_nickname_recall: identity adjudication START"
+    );
+
     let results: Vec<(std::ops::Range<usize>, HashMap<usize, IdentityVerdictItem>)> =
         futures::stream::iter(call_futures)
             .buffer_unordered(adjudication_llm_concurrency())
+            .enumerate()
+            .map(|(index, item)| {
+                let completed = index + 1;
+                if completed == 1 || completed % PROGRESS_EVERY == 0 || completed == total_chunks {
+                    tracing::info!(
+                        target: "kremory::dream::acronym_recall",
+                        completed,
+                        total = total_chunks,
+                        group_id = %group_id,
+                        "acronym_nickname_recall: identity adjudication progress"
+                    );
+                }
+                item
+            })
             .collect()
             .await;
 

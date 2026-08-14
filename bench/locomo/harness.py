@@ -321,6 +321,30 @@ def check_answer_in_memories(
     return False, score, f"best word overlap {score:.2f} below threshold {threshold}"
 
 
+def build_headline(scored_correct: int, scored_total: int,
+                   unscored_stats: dict[str, int]) -> str:
+    """The single quotable line for a run — the percentage AND its denominator.
+
+    TD-217(b). A run's headline is the thing that gets pasted into a doc, a
+    commit message, or a comparison table, and by the time it lands there the
+    `unscored_stats` JSON key is nowhere near it. `98.0%` next to a competitor's
+    number computed over ALL questions is a category error that nobody can see.
+
+    So the qualifier is built into the string rather than printed beside it:
+    a caller cannot quote the number without quoting what it excludes.
+    Pure + module-level so it is directly testable (see test_locomo_scorer.py).
+    """
+    pct = scored_correct / scored_total * 100 if scored_total else 0.0
+    base = f"{scored_correct}/{scored_total} = {pct:.1f}%"
+    if not unscored_stats:
+        return base
+    n_unscored = sum(unscored_stats.values())
+    parts = ", ".join(f"{n} {cat}" for cat, n in sorted(unscored_stats.items()))
+    return (f"{base} ({parts} NOT SCORED for correctness; "
+            f"{scored_total + n_unscored} questions asked — their RETRIEVAL is "
+            f"scored by evidence_eval.py)")
+
+
 # ---------------------------------------------------------------------------
 # Dataset loading
 # ---------------------------------------------------------------------------
@@ -734,6 +758,19 @@ def run_benchmark(config: Config) -> dict:
             time.sleep(0.5)
 
             ingest_attempted += 1
+            # Streamed, not summarised at the end: a multi-hour paid run that
+            # dies at conversation 6 of 10 must leave a readable trail of what
+            # already succeeded, and an end-of-run summary is written exactly
+            # never in that case. The per-QUESTION stream below already had
+            # this; the ingest half only ever emitted a record when it FAILED,
+            # so a partial run's completed conversations were invisible.
+            ingest_started_at = time.time()
+            jsonl_f.write(json.dumps({
+                "event": "ingest_start", "conv_idx": conv_idx,
+                "sample_id": sample_id, "namespace": namespace,
+                "sessions": len(sessions), "questions": len(questions),
+            }) + "\n")
+            jsonl_f.flush()
             try:
                 mem_count = ingest_conversation(client, namespace, sessions, sample_id)
             except KremoryStalled as e:
@@ -762,7 +799,15 @@ def run_benchmark(config: Config) -> dict:
                 }) + "\n")
                 jsonl_f.flush()
                 continue
-            print(f"  Stored {mem_count} memories")
+            ingest_elapsed_s = round(time.time() - ingest_started_at, 1)
+            print(f"  Stored {mem_count} memories in {ingest_elapsed_s}s")
+            jsonl_f.write(json.dumps({
+                "event": "ingest_done", "conv_idx": conv_idx,
+                "sample_id": sample_id, "namespace": namespace,
+                "memories": mem_count, "elapsed_s": ingest_elapsed_s,
+                "http_errors": client.total_http_errors,
+            }) + "\n")
+            jsonl_f.flush()
             # Brief pause for enrichment
             time.sleep(1.0)
         elif config.skip_ingest:
@@ -969,16 +1014,29 @@ def run_benchmark(config: Config) -> dict:
     for cat in sorted(unscored_stats.keys()):
         print(f"{cat:<25} {'—':>8} {unscored_stats[cat]:>8} {'NOT SCORED':>10}")
     print(f"{'-'*25} {'-'*8} {'-'*8} {'-'*10}")
-    print(f"{'OVERALL':<25} {total_correct:>8} {total_questions:>8} {overall:>9.1f}%")
+    print(f"{'OVERALL (scored only)':<25} {total_correct:>8} {total_questions:>8} "
+          f"{overall:>9.1f}%")
+    # TD-217(b): the ONE line anyone copies out of a run must carry its own
+    # denominator caveat. A bare "98.0%" is one line of JSON away from looking
+    # like it covered all 199 questions; built here so the qualifier travels
+    # with the number instead of relying on a reader scrolling to the prose.
+    headline = build_headline(total_correct, total_questions, unscored_stats)
+    print(f"\nHEADLINE: {headline}")
     if unscored_stats:
         n_unscored = sum(unscored_stats.values())
         print(f"\n  {n_unscored} question(s) EXCLUDED from the denominator above "
-              f"({', '.join(sorted(unscored_stats))}).")
-        print(f"  Abstention is an answerer property and is invisible to this")
-        print(f"  retrieval-presence scorer, so no number is emitted for it in")
-        print(f"  either direction. `recalled_memories` is still persisted, so an")
-        print(f"  abstention judge can score these offline. Denominator now")
-        print(f"  matches `qa_eval.py`, which already excluded the same set.")
+              f"({', '.join(sorted(unscored_stats))}) — "
+              f"{total_questions}/{total_questions + n_unscored} questions scored.")
+        print(f"  These are NOT unmeasured (TD-217, corrected 2026-08-14). Every")
+        print(f"  category-5 question carries REAL evidence turns — they are")
+        print(f"  speaker-attribution false premises, not questions about things")
+        print(f"  never discussed — so their RETRIEVAL is scored by")
+        print(f"  `evidence_eval.py` (recall@k / nDCG@k against the gold turn ids)")
+        print(f"  and reported as its own category row there. What this scorer")
+        print(f"  cannot see is the ANSWERER's refusal of the false premise, which")
+        print(f"  is not a retrieval property. `recalled_memories` is persisted, so")
+        print(f"  an abstention judge can score that offline. Denominator matches")
+        print(f"  `qa_eval.py`, which already excluded the same set.")
     # Baselines — protocol-matched ONLY. Canonical SoT:
     #   .ai-docs/specs/locomo-benchmark-protocol-2026-07-27.md
     #   .ai-docs/research/locomo-competitor-baselines-protocol-audit-2026-07-27.md
@@ -1069,6 +1127,13 @@ def run_benchmark(config: Config) -> dict:
         "o11y": o11y,
         "category_stats": category_stats,
         "unscored_stats": unscored_stats,
+        # TD-217(b): the denominator, stated. `total_questions` counts every
+        # question ASKED; `category_stats` sums only the ones SCORED, and the
+        # two differ by `unscored_stats`. A consumer computing an accuracy from
+        # this file previously had to notice that on its own.
+        "scored_questions": sum(v["total"] for v in category_stats.values()),
+        "unscored_questions": sum(unscored_stats.values()),
+        "headline": headline,
         "results": all_results,
         # TD-128 (B6): conversations excluded from this matrix due to ingest abort.
         "ingest_aborted": ingest_aborted,
