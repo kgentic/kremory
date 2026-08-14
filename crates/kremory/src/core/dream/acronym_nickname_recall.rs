@@ -129,6 +129,17 @@ pub struct AcronymNicknameRecallReport {
 struct NominatedPair {
     a: String,
     b: String,
+    /// WHY this pair was nominated — `true` for the initialism arm, `false` for
+    /// the co-occurrence arm (TD-222).
+    ///
+    /// Load-bearing, not bookkeeping. This site waives ADR-057's lexical gate,
+    /// and the waiver is only justified for INITIALISM pairs, which "share zero
+    /// tokens by construction". Co-occurrence pairs share no lexical relation
+    /// EITHER, and for them the waiver removes the last check standing between
+    /// an LLM `true` and a destructive merge — see the veto at the `write_gate`
+    /// call site. Discarding this flag at nomination time is what made the
+    /// exemption site-wide instead of arm-wide.
+    by_initialism: bool,
 }
 
 // ─── Public entry-point ───────────────────────────────────────────────────
@@ -264,7 +275,11 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             report.pairs_examined += 1;
             let a = &ids[i];
             let b = &ids[j];
-            let is_nominated = initialism_candidate(a, b)
+            // TD-222: keep the two arms DISTINGUISHABLE. `||` collapsed them into
+            // one boolean and the reason was lost, which is how ADR-057's lexical
+            // waiver became site-wide rather than initialism-only.
+            let by_initialism = initialism_candidate(a, b);
+            let is_nominated = by_initialism
                 || cooccur_pairs.contains(
                     &crate::core::dream::provenance::reversal::sorted_pair(a, b),
                 );
@@ -272,6 +287,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 nominated.push(NominatedPair {
                     a: a.clone(),
                     b: b.clone(),
+                    by_initialism,
                 });
             }
         }
@@ -365,6 +381,53 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             // is idempotent, so nothing is lost by passing IDs here.
             names: Some((&pair.a, &pair.b)),
         });
+
+        // ⚠️ TD-222 — A KNOWN, PROVEN DEFECT LIVES HERE. It is NOT fixed, and the
+        // obvious fix was tried, measured, and REVERTED. Read this before
+        // "improving" the gate above.
+        //
+        // THE DEFECT. This site nominates on `initialism_candidate(a,b) OR
+        // cooccurs_in_graph(a,b)`. For a CO-OCCURRENCE pair, `cosine` is pinned
+        // to 0.0 (`:346`), `deterministic_signal` is hardcoded `true` (`:353` —
+        // the nomination itself IS the signal), and only ADR-057's TEMPORAL arm
+        // is passed in `names`. So `write_gate` row 6 is satisfied by nothing
+        // more than "these two appear near each other in the graph", and a
+        // SINGLE LLM `true` at >= the confidence floor authorises an
+        // IRREVERSIBLE merge with no independent corroboration anywhere.
+        //
+        // MEASURED (6 live runs of `dream_full_consolidation_real_llm::happy_path`,
+        // 2026-08-14; 2 runs merged wrongly, `graph_mutation_log` named each —
+        // every one `structural_signal:true`, `cosine:null`):
+        //   peru -> amazon river · radioactivity -> chemistry
+        //   physics -> marie curie · chemistry -> marie curie
+        // A country into a river; two fields and a phenomenon into a person.
+        //
+        // WHY THE OBVIOUS FIX IS WRONG. Restoring ADR-057's LEXICAL gate for
+        // co-occurrence-nominated pairs blocks the merges above — and also
+        // `Bob`/`Robert`, which is THIS SITE'S ENTIRE PURPOSE. Nickname pairs are
+        // lexically incompatible BY DEFINITION, so a lexical gate here cannot
+        // discriminate. Measured on that fix before reverting it:
+        // `dream_loop_e2e_all_flags::all_sites_fire_together_zero_false_merge`
+        // FAILED on Bob/Robert, and `dream_metrics_harness::full_corpus_site5_metrics`
+        // fell to **recall 0.50 vs a 0.90 gate (0.9878 baseline), tp=41 fn_=41** —
+        // the guard halved the site's true positives. That is over-blocking
+        // severe enough to destroy the feature, so it was reverted.
+        //
+        // WHAT WOULD ACTUALLY WORK (none built, none measured — TD-222 DoD):
+        //   * ENTITY-TYPE compatibility — `peru`(Country)/`amazon river`(River)
+        //     differ; `Bob`/`Robert` share Person. Deterministic and cheap, and
+        //     it is a REAL corroboration signal rather than mere adjacency.
+        //     Needs both endpoints typed (`entity_type_id != 0`) to bite.
+        //   * A SECOND independent signal for co-occurrence pairs (a second
+        //     verdict, or an embedding check) — honouring row 6's own principle
+        //     that one LLM call never authorises a destructive write alone.
+        //   * A raised confidence floor for the co-occurrence arm ONLY — weakest
+        //     of the three; the observed bad merges cleared 0.7 comfortably.
+        //
+        // `pair.by_initialism` is populated and carried for whichever of these
+        // lands; it is what makes the arm distinguishable at this point at all.
+        let _ = pair.by_initialism;
+
         record_write_gate_decision(decision);
         // Quinn MED-3: `write_gate` is documented pure/counter-free, so the veto
         // cannot count itself. Without this, a veto-driven Reject is indistinguishable
@@ -1660,6 +1723,35 @@ mod tests {
             .expect("insert entity");
     }
 
+    /// Plant ONE relational fact so two entities become graph neighbours —
+    /// which is what `cooccurs_in_graph` nominates on (TD-222). Both endpoint
+    /// entities must already exist: `facts` carries the composite FK
+    /// `(subject_id, subject_group_id) -> entities(id, group_id)`
+    /// (`core/schema.rs:505-506`).
+    ///
+    /// Takes the triple as ONE argument to stay at the project's arity-3 lint
+    /// threshold without an `#[allow]` (TD-042 args-as-object, applied in its
+    /// lightest form — a tuple reads fine for a subject/predicate/object).
+    async fn insert_fact(
+        graph: &TemporalGraph,
+        group_id: &str,
+        triple: (&str, &str, &str),
+    ) {
+        let (subject, predicate, object) = triple;
+        let now = chrono::Utc::now().to_rfc3339();
+        let _rows_affected: u64 = graph
+            .conn
+            .execute(
+                "INSERT INTO facts \
+                 (subject_id, predicate, object_id, valid_from, recorded_at, \
+                  group_id, subject_group_id, object_group_id, confidence) \
+                 VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?5, ?5, 1.0)",
+                libsql::params![subject, predicate, object, now, group_id],
+            )
+            .await
+            .expect("insert fact");
+    }
+
     async fn count_entities(conn: &libsql::Connection, group_id: &str) -> i64 {
         let mut rows = conn
             .query(
@@ -2331,6 +2423,9 @@ mod tests {
             .map(|i| NominatedPair {
                 a: format!("entity-a-{i}"),
                 b: format!("entity-b-{i}"),
+                // Irrelevant here — this test isolates the chunk/remap logic and
+                // never reaches `write_gate`, where `by_initialism` is read.
+                by_initialism: true,
             })
             .collect();
 
@@ -2504,6 +2599,119 @@ mod tests {
             .get(0)
             .expect("count col");
         assert_eq!(count, 1, "one potential_alias fact must be written");
+    }
+
+    /// TD-222 — two entities that merely CO-OCCUR must never merge destructively
+    /// on an LLM `true` alone, however confident.
+    ///
+    /// # The bug this pins
+    /// Site #5 nominates on `initialism_candidate(a,b) OR cooccurs_in_graph(a,b)`
+    /// and waives ADR-057's lexical gate site-wide, on the argument that "this
+    /// site's acronym pairs share zero tokens by construction". That argument
+    /// covers the INITIALISM arm only. For a co-occurrence pair there is no
+    /// lexical relation AND no initialism relation, `cosine` is pinned to 0.0
+    /// and `deterministic_signal` is hardcoded `true` — so `write_gate` row 6 is
+    /// satisfied by "these appear near each other in the graph", and one LLM
+    /// `true` at >= the confidence floor authorised an irreversible merge.
+    ///
+    /// # Why THIS fixture
+    /// Not invented — replayed from production output. Six live runs of
+    /// `dream_full_consolidation_real_llm::happy_path` on 2026-08-14 merged
+    /// wrongly in 2, and `graph_mutation_log` named every one:
+    /// `peru -> amazon river`, `radioactivity -> chemistry`,
+    /// `physics -> marie curie`, `chemistry -> marie curie`. This test uses the
+    /// first, because a country and the river running through it is the clearest
+    /// statement of the confusion: co-occurrence is ADJACENCY, not IDENTITY.
+    ///
+    /// Deterministic and LLM-free by construction (`ScriptedVerdictProvider`
+    /// returns the maximally-confident WRONG answer), so it belongs at the fast
+    /// tier — the live suite caught this only 1 run in 3.
+    ///
+    /// 🔴 **THIS TEST ASSERTS A DEFECT, DELIBERATELY. Read before touching it.**
+    ///
+    /// It is a CHARACTERISATION test for open defect **TD-222**: it pins the
+    /// WRONG behaviour that ships today, so the defect exists in executable form
+    /// rather than only in prose. **It is designed to FAIL the moment TD-222 is
+    /// fixed** — at which point invert the assertions (`merges_applied` 1 → 0,
+    /// entity count 2 → 3), drop this banner, and rename it to
+    /// `cooccurring_but_lexically_incompatible_pair_must_not_merge`.
+    ///
+    /// Why not `#[ignore]` + assert the CORRECT behaviour: this crate's
+    /// recorded-LLM tier runs with `--run-ignored all`, so an intentionally-red
+    /// test there is indistinguishable from a real regression in the gate
+    /// output. A green characterisation test that flips red on the fix is the
+    /// honest shape for a defect that cannot be fixed today.
+    ///
+    /// A lexical veto WAS implemented and made the correct-behaviour version
+    /// pass — then reverted, because it also blocked `Bob`/`Robert` (this
+    /// site's entire purpose) and dropped full-corpus site-5 recall to **0.50
+    /// against a 0.90 gate** (tp=41 fn_=41). See the TD-222 block at the
+    /// `write_gate` call site for the three candidate remedies; entity-type
+    /// compatibility is the most promising and would need this fixture's
+    /// entities TYPED (`entity_type_id != 0`) to bite.
+    #[tokio::test]
+    async fn td222_defect_cooccurring_incompatible_pair_still_merges_today() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        insert_entity(&graph, "amazon river", "g22", "A river in South America.").await;
+        insert_entity(&graph, "peru", "g22", "A country in South America.").await;
+        insert_entity(&graph, "south america", "g22", "A continent.").await;
+        // The structure that nominates them. ⚠️ `cooccurs_in_graph` needs a
+        // SHARED THIRD NEIGHBOUR (or a shared episode) — NOT a direct link
+        // between the two. A first draft wired `amazon river --flows_through-->
+        // peru` and the pair was never nominated, so the test passed with the
+        // veto DISABLED: vacuous, and indistinguishable from working. Hence the
+        // `candidates_nominated` precondition below.
+        insert_fact(&graph, "g22", ("amazon river", "located_in", "south america")).await;
+        insert_fact(&graph, "g22", ("peru", "located_in", "south america")).await;
+
+        // The LLM says "same entity" with maximum confidence — i.e. the gate may
+        // NOT lean on the model being right. It was not.
+        let llm = ScriptedVerdictProvider {
+            json: r#"{"verdicts":[{"pair_id":0,"is_same_entity":true,"confidence":1.0,"reasoning":"both South American"}]}"#
+                .to_string(),
+        };
+
+        let report = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g22",
+                model_id: "test-model",
+                embedder: None,
+            },
+        )
+        .await
+        .expect("acronym_nickname_recall must succeed");
+
+        // NON-VACUITY PRECONDITION — assert the pair actually reached the gate.
+        // Without this the test passes when the pair is never NOMINATED, which
+        // is exactly what happened on the first draft: green, and testing
+        // nothing. `merges_applied == 0` is satisfied just as well by "the code
+        // is correct" as by "the code never ran".
+        assert_eq!(
+            report.candidates_nominated, 1,
+            "fixture must nominate the (amazon river, peru) pair via their SHARED NEIGHBOUR \
+             `south america` — if this is 0 the assertions below are vacuous"
+        );
+        // 🔴 THE DEFECT, PINNED. Correct behaviour is `merges_applied == 0` and
+        // 3 surviving entities. What ships today is a merge of a COUNTRY into a
+        // RIVER on one LLM verdict, because co-occurrence is treated as full
+        // deterministic corroboration. When TD-222 is fixed these become 0 and
+        // 3, and the test is renamed — see the banner above.
+        assert_eq!(
+            report.merges_applied, 1,
+            "TD-222 characterisation: today a co-occurring, lexically-incompatible pair DOES \
+             merge on one LLM verdict. If this is now 0 the defect is FIXED — invert this \
+             assertion to 0, the next to 3, and rename the test."
+        );
+        assert_eq!(
+            count_entities(&conn, "g22").await,
+            2,
+            "TD-222 characterisation: `peru` is destroyed, leaving `amazon river` + \
+             `south america`. Correct is 3 — merging a country into a river is TD-167 \
+             set-valued destruction reached through the merge path."
+        );
     }
 
     /// TD-220 — a PotentialAlias pair whose endpoint an EARLIER pair merged
