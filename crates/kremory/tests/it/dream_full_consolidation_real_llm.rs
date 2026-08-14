@@ -365,18 +365,27 @@ async fn mutation_log(graph: &TemporalGraph, group_id: &str) -> Vec<String> {
 /// entity a consolidation pass consumed, and "one fewer entity" is the
 /// difference between a correct merge of two surface forms and a destroyed
 /// distinct entity. Same lesson as TD-219's archive assertion: name it.
+/// Renders as `id(type_id)` — TD-222 needs the TYPE, not just the name. The
+/// type veto only fires when two entities are POSITIVELY KNOWN to be different
+/// kinds of thing, so "did it fire?" is unanswerable without seeing what types
+/// the extractor actually assigned. Printing the id alone sent one debugging
+/// round-trip to the logs and back for information the assertion already had in
+/// hand.
 async fn typed_entity_ids(graph: &TemporalGraph, group_id: &str) -> Vec<String> {
     let mut rows = graph
         .conn
         .query(
-            "SELECT id FROM entities WHERE group_id = ?1 AND entity_type_id != 0 ORDER BY id",
+            "SELECT id, entity_type_id FROM entities \
+             WHERE group_id = ?1 AND entity_type_id != 0 ORDER BY id",
             libsql::params![group_id],
         )
         .await
         .expect("typed entity id query");
     let mut out = Vec::new();
     while let Some(row) = rows.next().await.expect("typed entity row iteration") {
-        out.push(row.get(0).expect("id"));
+        let id: String = row.get(0).expect("id");
+        let type_id: u32 = row.get(1).expect("entity_type_id");
+        out.push(format!("{id}({type_id})"));
     }
     out
 }

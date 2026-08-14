@@ -269,6 +269,10 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
     // evaluated changed (bulk-precomputed set membership vs per-pair DB
     // round-trip), never WHAT it evaluates.
     let cooccur_pairs = build_cooccurrence_prefilter_set(conn, group_id).await?;
+    // TD-222: one namespace-wide read, consumed by the type veto at the
+    // `write_gate` call site. Loaded here beside the other prefilter data so it
+    // stays OUT of the O(N²) pair loop.
+    let entity_types = load_entity_types(conn, group_id).await?;
     let mut nominated: Vec<NominatedPair> = Vec::new();
     for i in 0..ids.len() {
         for j in (i + 1)..ids.len() {
@@ -382,11 +386,9 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             names: Some((&pair.a, &pair.b)),
         });
 
-        // ⚠️ TD-222 — A KNOWN, PROVEN DEFECT LIVES HERE. It is NOT fixed, and the
-        // obvious fix was tried, measured, and REVERTED. Read this before
-        // "improving" the gate above.
+        // ── TD-222 — DIFFERENT KINDS OF THING ARE NEVER THE SAME ENTITY ──────
         //
-        // THE DEFECT. This site nominates on `initialism_candidate(a,b) OR
+        // THE DEFECT THIS CLOSES. This site nominates on `initialism_candidate(a,b) OR
         // cooccurs_in_graph(a,b)`. For a CO-OCCURRENCE pair, `cosine` is pinned
         // to 0.0 (`:346`), `deterministic_signal` is hardcoded `true` (`:353` —
         // the nomination itself IS the signal), and only ADR-057's TEMPORAL arm
@@ -402,31 +404,56 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
         //   physics -> marie curie · chemistry -> marie curie
         // A country into a river; two fields and a phenomenon into a person.
         //
-        // WHY THE OBVIOUS FIX IS WRONG. Restoring ADR-057's LEXICAL gate for
-        // co-occurrence-nominated pairs blocks the merges above — and also
-        // `Bob`/`Robert`, which is THIS SITE'S ENTIRE PURPOSE. Nickname pairs are
-        // lexically incompatible BY DEFINITION, so a lexical gate here cannot
-        // discriminate. Measured on that fix before reverting it:
+        // ⚠️ WHY NOT A LEXICAL GATE — the obvious fix, BUILT AND REVERTED, so
+        // that nobody re-derives it. Restoring ADR-057's LEXICAL gate for
+        // co-occurrence pairs blocks the merges above AND `Bob`/`Robert`, which
+        // is THIS SITE'S ENTIRE PURPOSE: nickname pairs are lexically
+        // incompatible BY DEFINITION, exactly like acronym pairs, so a lexical
+        // rule cannot discriminate here. Measured before reverting:
         // `dream_loop_e2e_all_flags::all_sites_fire_together_zero_false_merge`
         // FAILED on Bob/Robert, and `dream_metrics_harness::full_corpus_site5_metrics`
-        // fell to **recall 0.50 vs a 0.90 gate (0.9878 baseline), tp=41 fn_=41** —
-        // the guard halved the site's true positives. That is over-blocking
-        // severe enough to destroy the feature, so it was reverted.
+        // fell to recall 0.50 against a 0.90 gate (0.9878 baseline), tp=41
+        // fn_=41 — the guard HALVED the site's true positives.
         //
-        // WHAT WOULD ACTUALLY WORK (none built, none measured — TD-222 DoD):
-        //   * ENTITY-TYPE compatibility — `peru`(Country)/`amazon river`(River)
-        //     differ; `Bob`/`Robert` share Person. Deterministic and cheap, and
-        //     it is a REAL corroboration signal rather than mere adjacency.
-        //     Needs both endpoints typed (`entity_type_id != 0`) to bite.
-        //   * A SECOND independent signal for co-occurrence pairs (a second
-        //     verdict, or an embedding check) — honouring row 6's own principle
-        //     that one LLM call never authorises a destructive write alone.
-        //   * A raised confidence floor for the co-occurrence arm ONLY — weakest
-        //     of the three; the observed bad merges cleared 0.7 comfortably.
+        // THE GATE THAT DOES DISCRIMINATE. A country and a river are different
+        // KINDS of thing and can never be the same entity, however adjacent;
+        // `Bob` and `Robert` are both people. So veto a destructive merge when
+        // the graph POSITIVELY KNOWS the two are different types.
         //
-        // `pair.by_initialism` is populated and carried for whichever of these
-        // lands; it is what makes the arm distinguishable at this point at all.
-        let _ = pair.by_initialism;
+        // Scoped to the CO-OCCURRENCE arm (`!by_initialism`) — an acronym and
+        // its expansion can legitimately carry different types while the
+        // registry is still settling, and that arm was never the one at fault.
+        //
+        // Fires on EVIDENCE OF DIFFERENCE ONLY, never on absence: an untyped
+        // endpoint (`entity_type_id == 0`) or one missing from the map yields
+        // `false` and the pair proceeds exactly as before. That asymmetry is
+        // what keeps this from repeating the lexical gate's over-blocking on
+        // corpora where types are sparse ([[over-blocking-is-a-security-failure]]).
+        //
+        // Applied BEFORE `record_write_gate_decision` so telemetry shows the
+        // decision that was actually enacted.
+        let decision = if decision == WriteDecision::Merge
+            && !pair.by_initialism
+            && types_are_known_to_differ(&entity_types, &pair.a, &pair.b)
+        {
+            counter!(
+                "kremory.identity.write_gate_type_veto_total",
+                "site" => "site5_acronym_nickname",
+            )
+            .increment(1);
+            tracing::info!(
+                target: "kremory.l5",
+                candidate_a = %pair.a,
+                candidate_b = %pair.b,
+                type_a = entity_types.get(&pair.a).copied().unwrap_or(0),
+                type_b = entity_types.get(&pair.b).copied().unwrap_or(0),
+                "site5 TYPE veto — co-occurring pair with DIFFERENT entity types may not merge \
+                 destructively (TD-222). Co-occurrence is adjacency, not identity."
+            );
+            WriteDecision::Reject
+        } else {
+            decision
+        };
 
         record_write_gate_decision(decision);
         // Quinn MED-3: `write_gate` is documented pure/counter-free, so the veto
@@ -1451,6 +1478,76 @@ async fn load_entity_ids(conn: &libsql::Connection, group_id: &str) -> Result<Ve
     Ok(ids)
 }
 
+/// Load `id -> entity_type_id` for every entity in `group_id` (TD-222).
+///
+/// ONE query for the whole namespace rather than two per pair: this site is
+/// O(N²) in pairs already (`pairs_examined` reached 28 on a 3-episode fixture
+/// and is far larger on a corpus), and a per-pair type lookup would put two
+/// more DB round-trips inside that loop — the same mistake `cooccurs_in_graph`
+/// was restructured to avoid (TD-133 B3, see `:249-257`).
+///
+/// `entity_type_id = 0` is the "Entity" CATCH-ALL sentinel, i.e. UNTYPED
+/// (`core/schema.rs:120`), and it is returned as-is. Callers must treat 0 as
+/// "no information", never as a type that can differ from another — see
+/// [`types_are_known_to_differ`].
+async fn load_entity_types(
+    conn: &libsql::Connection,
+    group_id: &str,
+) -> Result<HashMap<String, u32>> {
+    let mut rows = conn
+        .query(
+            "SELECT id, entity_type_id FROM entities WHERE group_id = ?1",
+            libsql::params![group_id],
+        )
+        .await
+        .map_err(|e| {
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: load entity types failed for group_id={group_id}: {e}"
+            ))
+        })?;
+    let mut out = HashMap::new();
+    while let Some(row) = rows.next().await.map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "acronym_nickname_recall: entity type row read failed: {e}"
+        ))
+    })? {
+        let id: String = row.get(0).map_err(|e| {
+            Error::Other(anyhow::anyhow!("acronym_nickname_recall: type id read: {e}"))
+        })?;
+        let type_id: u32 = row.get(1).map_err(|e| {
+            Error::Other(anyhow::anyhow!("acronym_nickname_recall: type read: {e}"))
+        })?;
+        out.insert(id, type_id);
+    }
+    Ok(out)
+}
+
+/// Do we POSITIVELY KNOW these two entities are different kinds of thing?
+/// (TD-222.)
+///
+/// `true` ONLY when both endpoints carry a real type and those types differ.
+/// Any absence — either side missing from the map, either side untyped
+/// (`entity_type_id == 0`, the "Entity" catch-all) — returns `false`.
+///
+/// **The asymmetry is the whole design.** This gates a DESTRUCTIVE merge at a
+/// site whose legitimate work is merging names that share no tokens
+/// (`FBI`/`Federal Bureau of Investigation`, `Bob`/`Robert`). A gate that fired
+/// on MISSING data would block every pair on an untyped corpus — which is
+/// exactly how the previous attempt at this fix (a lexical gate) halved
+/// full-corpus site-5 recall to 0.50 against a 0.90 threshold before being
+/// reverted. So this fires only on POSITIVE evidence of difference and is a
+/// no-op whenever the graph cannot answer
+/// ([[over-blocking-is-a-security-failure]]).
+///
+/// A country and a river are different kinds of thing and can never be the same
+/// entity. Two people with different names can be.
+fn types_are_known_to_differ(types: &HashMap<String, u32>, a: &str, b: &str) -> bool {
+    match (types.get(a), types.get(b)) {
+        (Some(&ta), Some(&tb)) => ta != 0 && tb != 0 && ta != tb,
+        _ => false,
+    }
+}
+
 /// Load an entity's `properties.description` field, if present.
 async fn load_entity_description(
     conn: &libsql::Connection,
@@ -1721,6 +1818,30 @@ mod tests {
             })
             .await
             .expect("insert entity");
+    }
+
+    /// Insert an entity carrying a REAL entity type (TD-222).
+    ///
+    /// `insert_entity` above hardcodes `entity_type_id: 0`, the "Entity"
+    /// catch-all — which the type veto deliberately reads as "no information".
+    /// A fixture built with it therefore cannot exercise the veto at all, so
+    /// the type is a parameter here.
+    async fn insert_typed_entity(
+        graph: &TemporalGraph,
+        group_id: &str,
+        id_and_type: (&str, u32),
+    ) {
+        let (id, entity_type_id) = id_and_type;
+        let props = serde_json::json!({ "name": id, "description": "fixture entity" });
+        graph
+            .insert_entity_with_group(InsertEntityWithGroupParams {
+                id,
+                entity_type_id,
+                properties: props,
+                group_id: Some(group_id),
+            })
+            .await
+            .expect("insert typed entity");
     }
 
     /// Plant ONE relational fact so two entities become graph neighbours —
@@ -2627,35 +2748,39 @@ mod tests {
     /// returns the maximally-confident WRONG answer), so it belongs at the fast
     /// tier — the live suite caught this only 1 run in 3.
     ///
-    /// 🔴 **THIS TEST ASSERTS A DEFECT, DELIBERATELY. Read before touching it.**
+    /// TD-222 — a co-occurring pair of DIFFERENT ENTITY TYPES must not merge,
+    /// however confident the model is.
     ///
-    /// It is a CHARACTERISATION test for open defect **TD-222**: it pins the
-    /// WRONG behaviour that ships today, so the defect exists in executable form
-    /// rather than only in prose. **It is designed to FAIL the moment TD-222 is
-    /// fixed** — at which point invert the assertions (`merges_applied` 1 → 0,
-    /// entity count 2 → 3), drop this banner, and rename it to
-    /// `cooccurring_but_lexically_incompatible_pair_must_not_merge`.
+    /// # The bug this pins
+    /// Site #5 nominates on `initialism_candidate(a,b) OR cooccurs_in_graph(a,b)`.
+    /// For a co-occurrence pair, `cosine` is 0.0 and `deterministic_signal` is
+    /// hardcoded `true`, so `write_gate` row 6 was satisfied by "these appear
+    /// near each other in the graph" and ONE LLM `true` authorised an
+    /// irreversible merge.
     ///
-    /// Why not `#[ignore]` + assert the CORRECT behaviour: this crate's
-    /// recorded-LLM tier runs with `--run-ignored all`, so an intentionally-red
-    /// test there is indistinguishable from a real regression in the gate
-    /// output. A green characterisation test that flips red on the fix is the
-    /// honest shape for a defect that cannot be fixed today.
+    /// # Why THIS fixture
+    /// Replayed from production, not invented: 6 live runs of
+    /// `dream_full_consolidation_real_llm::happy_path` on 2026-08-14 merged
+    /// wrongly in 2, and `graph_mutation_log` named each — `peru -> amazon
+    /// river`, `radioactivity -> chemistry`, `physics -> marie curie`,
+    /// `chemistry -> marie curie`. A country into a river is the clearest
+    /// statement of the confusion: **co-occurrence is ADJACENCY, not IDENTITY.**
     ///
-    /// A lexical veto WAS implemented and made the correct-behaviour version
-    /// pass — then reverted, because it also blocked `Bob`/`Robert` (this
-    /// site's entire purpose) and dropped full-corpus site-5 recall to **0.50
-    /// against a 0.90 gate** (tp=41 fn_=41). See the TD-222 block at the
-    /// `write_gate` call site for the three candidate remedies; entity-type
-    /// compatibility is the most promising and would need this fixture's
-    /// entities TYPED (`entity_type_id != 0`) to bite.
+    /// The scripted verdict is `is_same_entity: true, confidence: 1.0` — the
+    /// gate may NOT lean on the model being right, because it was not.
+    ///
+    /// **RED-proof**: neutralise the type veto at the `write_gate` call site and
+    /// this fails — `merges_applied` becomes 1 and `peru` is destroyed.
     #[tokio::test]
-    async fn td222_defect_cooccurring_incompatible_pair_still_merges_today() {
+    async fn cooccurring_pair_of_different_types_must_not_merge() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         let conn = graph.conn.clone();
-        insert_entity(&graph, "amazon river", "g22", "A river in South America.").await;
-        insert_entity(&graph, "peru", "g22", "A country in South America.").await;
-        insert_entity(&graph, "south america", "g22", "A continent.").await;
+        // TYPED — the veto reads type 0 as "no information", so an untyped
+        // fixture cannot exercise it. 7 = River, 8 = Country, 9 = Continent
+        // (arbitrary but DISTINCT ids; only inequality matters).
+        insert_typed_entity(&graph, "g22", ("amazon river", 7)).await;
+        insert_typed_entity(&graph, "g22", ("peru", 8)).await;
+        insert_typed_entity(&graph, "g22", ("south america", 9)).await;
         // The structure that nominates them. ⚠️ `cooccurs_in_graph` needs a
         // SHARED THIRD NEIGHBOUR (or a shared episode) — NOT a direct link
         // between the two. A first draft wired `amazon river --flows_through-->
@@ -2694,23 +2819,75 @@ mod tests {
             "fixture must nominate the (amazon river, peru) pair via their SHARED NEIGHBOUR \
              `south america` — if this is 0 the assertions below are vacuous"
         );
-        // 🔴 THE DEFECT, PINNED. Correct behaviour is `merges_applied == 0` and
-        // 3 surviving entities. What ships today is a merge of a COUNTRY into a
-        // RIVER on one LLM verdict, because co-occurrence is treated as full
-        // deterministic corroboration. When TD-222 is fixed these become 0 and
-        // 3, and the test is renamed — see the banner above.
         assert_eq!(
-            report.merges_applied, 1,
-            "TD-222 characterisation: today a co-occurring, lexically-incompatible pair DOES \
-             merge on one LLM verdict. If this is now 0 the defect is FIXED — invert this \
-             assertion to 0, the next to 3, and rename the test."
+            report.merges_applied, 0,
+            "a co-occurring pair of DIFFERENT entity types must NOT merge, even on a \
+             maximally-confident LLM `true` — co-occurrence is adjacency, not identity (TD-222)"
         );
         assert_eq!(
             count_entities(&conn, "g22").await,
+            3,
+            "`amazon river`, `peru` and `south america` must all survive; merging a country \
+             into a river is TD-167 set-valued destruction reached through the merge path"
+        );
+    }
+
+    /// TD-222 — the type veto must NOT fire when the graph has no type
+    /// information. The over-blocking guard, and it is not optional.
+    ///
+    /// The previous attempt at this fix (a lexical gate) passed its own targeted
+    /// test, survived 6 live runs, and **halved full-corpus site-5 recall to
+    /// 0.50 against a 0.90 gate** — because it fired on pairs it had no business
+    /// judging. A gate that triggers on ABSENT data does that by construction:
+    /// on a corpus where `discover_types` has not run, or has not typed these
+    /// entities, EVERY pair looks "different" if you read type 0 as a type.
+    ///
+    /// Identical fixture to the sibling test above, with the ONLY difference
+    /// being that the entities are untyped — so a failure here is unambiguously
+    /// the veto over-reaching rather than anything else in the pass.
+    #[tokio::test]
+    async fn type_veto_does_not_fire_on_untyped_entities() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let conn = graph.conn.clone();
+        // `insert_entity` plants `entity_type_id: 0` — the catch-all.
+        insert_entity(&graph, "amazon river", "g23", "A river in South America.").await;
+        insert_entity(&graph, "peru", "g23", "A country in South America.").await;
+        insert_entity(&graph, "south america", "g23", "A continent.").await;
+        insert_fact(&graph, "g23", ("amazon river", "located_in", "south america")).await;
+        insert_fact(&graph, "g23", ("peru", "located_in", "south america")).await;
+
+        let llm = ScriptedVerdictProvider {
+            json: r#"{"verdicts":[{"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"same"}]}"#
+                .to_string(),
+        };
+
+        let report = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g23",
+                model_id: "test-model",
+                embedder: None,
+            },
+        )
+        .await
+        .expect("acronym_nickname_recall must succeed");
+
+        assert_eq!(
+            report.candidates_nominated, 1,
+            "non-vacuity: the pair must reach the gate, else this proves nothing"
+        );
+        assert_eq!(
+            report.merges_applied, 1,
+            "UNTYPED entities carry no type evidence, so the TD-222 veto must be a NO-OP and \
+             the merge must proceed exactly as before the veto existed. If this is 0 the gate \
+             is firing on absence of data — the exact over-blocking that forced the previous \
+             fix to be reverted (full-corpus recall 0.50 vs a 0.90 gate)."
+        );
+        assert_eq!(
+            count_entities(&conn, "g23").await,
             2,
-            "TD-222 characterisation: `peru` is destroyed, leaving `amazon river` + \
-             `south america`. Correct is 3 — merging a country into a river is TD-167 \
-             set-valued destruction reached through the merge path."
+            "the merge applied, so one endpoint is consumed — unchanged pre-TD-222 behaviour"
         );
     }
 
