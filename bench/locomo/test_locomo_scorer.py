@@ -111,6 +111,43 @@ def test_adversarial_gold_comes_from_the_adversarial_answer_field() -> None:
             harness.check_answer_in_memories(q["answer"], ["some text"], q["category"])
 
 
+# ── TD-217: the headline must carry its own denominator ──────────────────────
+
+
+def test_headline_names_the_unscored_categories_and_counts() -> None:
+    """A run's quotable line must state what it excludes, in the line itself.
+
+    The failure this guards is not a missing field — `unscored_stats` was
+    always in the JSON. It is that the ONE string a human copies out ("98.0%")
+    travelled without it, so it could sit in a comparison table beside a
+    competitor number computed over ALL questions and look like a peer.
+    """
+    got = harness.build_headline(149, 152, {"adversarial": 47})
+    assert "149/152" in got
+    assert "98.0%" in got
+    assert "47 adversarial" in got
+    assert "NOT SCORED" in got
+    # The total asked must appear, so the reader can see 152 != 199.
+    assert "199" in got
+
+
+def test_headline_is_plain_when_nothing_is_excluded() -> None:
+    """No unscored categories → no caveat clause to mislead the reader either way."""
+    got = harness.build_headline(10, 10, {})
+    assert got == "10/10 = 100.0%"
+
+
+def test_headline_never_emits_a_bare_percentage_when_questions_were_dropped() -> None:
+    """Structural form of TD-217(b): for ANY non-empty exclusion the caveat is
+    present. Asserting the property, not one sample — a future category added
+    to ABSTENTION_CATEGORIES must not silently produce a bare number."""
+    for cats in ({"adversarial": 1}, {"adversarial": 47, "made-up": 3}):
+        got = harness.build_headline(1, 2, cats)
+        assert "NOT SCORED" in got, got
+        for cat, n in cats.items():
+            assert f"{n} {cat}" in got, got
+
+
 def test_shared_client_identity_is_not_shadowed() -> None:
     """Both harnesses must use the SAME classes from bench/common.
 

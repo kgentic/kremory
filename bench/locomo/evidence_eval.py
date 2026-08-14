@@ -53,7 +53,31 @@ METRICS (all @k, over the retrieved list as ordered by the server)
   MRR        1 / rank of the first item carrying any evidence turn
   first_rank mean rank of the first evidence-bearing item (retrieval "depth to hit")
 
-Adversarial questions are excluded: they are abstention checks, not retrieval tasks.
+ADVERSARIAL (category 5) — SCORED HERE, and excluded only from the `overall`
+aggregate (TD-217, 2026-08-14). This file used to `continue` past them silently
+on the stated grounds that they "are abstention checks, not retrieval tasks".
+That premise is FALSE and the dataset says so: all 446 adversarial questions
+carry a real `evidence` list (verified against `data/locomo10.json`; conv0 has
+48 evidence ids over 47 questions, 0 unresolvable). They are SPEAKER-ATTRIBUTION
+FALSE PREMISES — "What did Caroline realize after her charity race?" resolves to
+`D2:3`, which is MELANIE saying it. The evidence turn is real and a good
+retriever SHOULD surface it; refusing the false premise is an ANSWERER judgement
+made over retrieved text.
+
+So the retrieval half of this category is perfectly measurable by exactly the
+qrels machinery below, and skipping it left 24% of every run unmeasured by BOTH
+scorers at once (`harness.py`'s presence scorer refuses it — correctly, since
+its gold is the DISTRACTOR under `adversarial_answer` — and this one skipped it).
+It is now scored and reported as its own per-category row.
+
+`overall` still EXCLUDES it, deliberately: every recall/nDCG number in
+RECALL-LEDGER was computed on that denominator, and silently widening it would
+make new runs non-comparable with recorded ones. The exclusion is now stated in
+the report output rather than being an unexplained `continue`.
+
+What remains genuinely unmeasured is the ANSWERER's false-premise refusal. That
+is not a retrieval property and this harness cannot see it — an honest, bounded
+gap, unlike "24% unscored".
 
 USAGE
   python3 bench/locomo/evidence_eval.py <run.json> [run2.json ...] \
@@ -87,6 +111,12 @@ import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+# Single-sourced from `judge_rescore` — the same set `harness.py` and `qa_eval.py`
+# gate on. Defining a second literal `"adversarial"` here is how the two scorers
+# drifted into skipping the SAME category for two different stated reasons.
+sys.path.insert(0, str(Path(__file__).parent))
+from judge_rescore import ABSTENTION_CATEGORIES  # noqa: E402
 
 # Turn texts shorter than this are matched ONLY in "Speaker: text" form — a bare
 # "Yes." or "Haha" would otherwise match almost any episode and fabricate hits.
@@ -233,8 +263,6 @@ def evaluate(rows: list[dict], turns_by_sample: dict[str, dict[str, str]], k: in
     per_cat: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for row in rows:
         cat = row.get("category", "?")
-        if cat == "adversarial":
-            continue
         turns = turns_by_sample.get(row.get("sample_id"), {})
         if shuffle:
             row = dict(row)
@@ -260,13 +288,21 @@ def evaluate(rows: list[dict], turns_by_sample: dict[str, dict[str, str]], k: in
         s = score_row(row, turns, k, episode_content=episode_content)
         if s is None:
             continue
+        # TD-217: abstention categories are SCORED into `per_cat` (their evidence
+        # turns are real — see the module docstring) but held OUT of `overall`,
+        # so every recorded RECALL-LEDGER number stays computed on the same
+        # denominator. The exclusion is reported, not silent.
+        in_overall = cat not in ABSTENTION_CATEGORIES
         for m in ("recall", "ndcg", "rr"):
-            overall[m].append(s[m])
+            if in_overall:
+                overall[m].append(s[m])
             per_cat[cat][m].append(s[m])
         if s["first_rank"]:
-            overall["first_rank"].append(s["first_rank"])
+            if in_overall:
+                overall["first_rank"].append(s["first_rank"])
             per_cat[cat]["first_rank"].append(s["first_rank"])
-        overall["hit"].append(1.0 if s["first_rank"] else 0.0)
+        if in_overall:
+            overall["hit"].append(1.0 if s["first_rank"] else 0.0)
         per_cat[cat]["hit"].append(1.0 if s["first_rank"] else 0.0)
     return overall, per_cat
 
@@ -287,11 +323,22 @@ def report(label: str, overall: dict, per_cat: dict, k: int) -> None:
           f"(>=1 evidence turn anywhere in top-{k})")
     print(f"  mean first-hit rank {mean(overall['first_rank']):.2f} "
           f"(over the {len(overall['first_rank'])} questions with a hit)")
-    print(f"  {'category':<13} {'recall':>8} {'nDCG':>8} {'MRR':>8} {'hit':>8}")
+    print(f"  {'category':<13} {'n':>5} {'recall':>8} {'nDCG':>8} {'MRR':>8} {'hit':>8}")
     for cat in sorted(per_cat):
         c = per_cat[cat]
-        print(f"  {cat:<13} {mean(c['recall']) * 100:>7.1f}% {mean(c['ndcg']) * 100:>7.1f}% "
-              f"{mean(c['rr']) * 100:>7.1f}% {mean(c['hit']) * 100:>7.1f}%")
+        # TD-217: mark the rows that are scored but NOT in the `overall` above,
+        # so nobody reads the aggregate as covering them.
+        mark = " *" if cat in ABSTENTION_CATEGORIES else ""
+        print(f"  {cat:<13} {len(c['recall']):>5} {mean(c['recall']) * 100:>7.1f}% "
+              f"{mean(c['ndcg']) * 100:>7.1f}% {mean(c['rr']) * 100:>7.1f}% "
+              f"{mean(c['hit']) * 100:>7.1f}%{mark}")
+    excluded = sorted(c for c in per_cat if c in ABSTENTION_CATEGORIES)
+    if excluded:
+        n_ex = sum(len(per_cat[c]["recall"]) for c in excluded)
+        print(f"  * {', '.join(excluded)} ({n_ex} q) scored above but HELD OUT of the "
+              f"overall aggregate (TD-217): its retrieval is measurable — the evidence "
+              f"turns are real — but the denominator is pinned for comparability with "
+              f"recorded runs. Its ANSWERER-side false-premise refusal remains unmeasured.")
 
 
 def validate_corpus(db: str, turns_by_sample: dict[str, dict[str, str]],
@@ -309,8 +356,9 @@ def validate_corpus(db: str, turns_by_sample: dict[str, dict[str, str]],
 
     wanted: dict[str, set[str]] = defaultdict(set)
     for row in rows:
-        if row.get("category") == "adversarial":
-            continue
+        # TD-217: adversarial turns are no longer skipped. Coverage must span
+        # every turn we SCORE, or the validation reports 100% for a set that
+        # excludes a quarter of the questions.
         sid = row.get("sample_id")
         for e in evidence_ids(row):
             t = turns_by_sample.get(sid, {}).get(e)

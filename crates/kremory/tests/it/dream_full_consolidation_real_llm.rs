@@ -340,6 +340,51 @@ async fn persisted_community_count(graph: &TemporalGraph, group_id: &str) -> i64
 
 // ── Plant helpers (real graph API, mirrors consolidation_cross_episode_real_llm) ──
 
+/// Every row currently in `facts_archive` for `group_id`, rendered as readable
+/// `id: subject --predicate--> object` triples (TD-219).
+///
+/// Exists so a failing archive assertion NAMES what was retired. The previous
+/// `facts_archived == 0` assertion could only ever report a number, which meant
+/// answering "was that legitimate?" required reproducing a stochastic real-LLM
+/// run and hoping it archived the same things — and it did not (2 on one run,
+/// 0 on the next).
+///
+/// Projects `archived_at` rather than `COUNT(*)`: `facts_archive` mirrors the
+/// vector-indexed `facts` table, where a bare `COUNT(*)` returns 0 under this
+/// driver even when rows exist (the libsql vector-index trap, SYSTEM-PRIMER
+/// gotcha #1).
+async fn archived_fact_triples(graph: &TemporalGraph, group_id: &str) -> Vec<String> {
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT id, subject_id, predicate, object_id, object_value, expired_at, archived_at \
+             FROM facts_archive WHERE group_id = ?1 ORDER BY id",
+            libsql::params![group_id],
+        )
+        .await
+        .expect("facts_archive query must succeed");
+
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.expect("facts_archive row iteration") {
+        let id: i64 = row.get(0).expect("id");
+        let subject: String = row.get(1).expect("subject_id");
+        let predicate: String = row.get(2).expect("predicate");
+        let object_id: Option<String> = row.get(3).expect("object_id");
+        let object_value: Option<String> = row.get(4).expect("object_value");
+        let expired_at: Option<String> = row.get(5).expect("expired_at");
+        let archived_at: Option<String> = row.get(6).expect("archived_at");
+        let object = object_id
+            .or(object_value)
+            .unwrap_or_else(|| "<none>".to_string());
+        out.push(format!(
+            "  fact {id}: {subject} --{predicate}--> {object}  (expired_at={}, archived_at={})",
+            expired_at.unwrap_or_else(|| "<null>".to_string()),
+            archived_at.unwrap_or_else(|| "<null>".to_string()),
+        ));
+    }
+    out
+}
+
 async fn plant_entity(graph: &TemporalGraph, group_id: &str, id: &str) {
     graph
         .insert_entity_with_group(InsertEntityWithGroupParams {
@@ -607,11 +652,49 @@ async fn happy_path() {
          open-ended facts, valid_to = None); got {}",
         summary.supersessions_recorded
     );
+    // TD-219 — IDENTITY, not a count. This assertion was `facts_archived == 0`
+    // and it reported **2** earlier on 2026-08-13, then **0** during the
+    // re-record — so the behaviour VARIES and the cassette froze the passing
+    // sample. A count assertion has a second defect on top of that: `== 2`
+    // would pass when the WRONG two facts are archived, which is precisely the
+    // TD-167 set-valued destruction this tripwire exists to catch (this fixture
+    // contains *"flows over six thousand kilometres through Brazil and Peru"* —
+    // two facts that are true SIMULTANEOUSLY).
+    //
+    // So assert on the archive TABLE and name the offenders when it fires.
+    // Whoever hits this next gets the (subject, predicate, object) triples in
+    // the failure message instead of a number and a reproduction problem.
+    //
+    // ⚠️ Mechanism, so the next reader does not re-derive it: archive NEVER
+    // decides what to expire — it only relocates rows that are ALREADY
+    // `expired_at IS NOT NULL AND expired_at < now - grace_days`
+    // (`consolidation/archive.rs:93`). `all_consolidation_on()` sets
+    // `archive_grace_days = Some(0)` (production default is 90), so anything
+    // expired during THIS run is instantly eligible. With
+    // `supersessions_recorded == 0` asserted above, an expiry here can only
+    // have come from the cross-episode merge or from ingest — a merge that
+    // collapses two entities turns `a --rel--> b` into a self-loop, and those
+    // get retired. That is legitimate; destroying one half of a set-valued pair
+    // is not. The triples below are how you tell which happened.
+    let archived_rows = archived_fact_triples(&tg, &group_id).await;
+    assert!(
+        archived_rows.is_empty(),
+        "happy_path: NOTHING should be archived on a fresh real-model-ingested graph, but \
+         {} fact(s) were retired. Check each against TD-167 (set-valued facts that are true \
+         SIMULTANEOUSLY must NOT retire one another) before accepting this as legitimate:\n{}",
+        archived_rows.len(),
+        archived_rows.join("\n"),
+    );
+    // Cross-check the reported count against the table it claims to describe —
+    // a summary field that disagrees with the durable state is its own bug, and
+    // asserting only one of them cannot see it.
     assert_eq!(
-        summary.facts_archived, 0,
-        "happy_path: facts_archived must be the HONEST ZERO (no fact is expired on a fresh \
-         real-model-ingested graph); got {}",
-        summary.facts_archived
+        summary.facts_archived,
+        archived_rows.len(),
+        "happy_path: DreamSummary.facts_archived ({}) disagrees with the facts_archive table \
+         ({} rows) — the counter is lying about a persisted mutation",
+        summary.facts_archived,
+        archived_rows.len(),
     );
 
     // No entity was spuriously dropped.

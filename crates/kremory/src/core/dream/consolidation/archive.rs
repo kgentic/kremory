@@ -34,13 +34,42 @@ use super::substrate::{
     emit_decision, ConsolidationOpKind, DecisionMode, DecisionRecord, OpReport,
 };
 
-/// A fact eligible for archival: id + both endpoints (for the ref-count guard).
+/// A fact eligible for archival: id + both endpoints (for the ref-count guard)
+/// + the predicate/object text needed to NAME it in the log (TD-219).
 #[derive(Debug, Clone)]
 struct ArchiveCandidate {
     fact_id: i64,
     subject_id: String,
     /// `None` for literal-object facts (`object_id IS NULL`).
     object_id: Option<String>,
+    /// TD-219: carried for identity logging only — the ref-count guard never
+    /// reads it. Archival is a DESTRUCTIVE persisted mutation and emitted only
+    /// an aggregate count, so "2 facts were archived" could not be turned into
+    /// "WHICH 2" without re-running a stochastic pipeline and hoping it
+    /// reproduced. Rule 19: a persisted mutation records WHAT it wrote.
+    predicate: String,
+    /// `None` for relational facts (`object_value IS NULL`); the display side
+    /// of `object_id`.
+    object_value: Option<String>,
+}
+
+/// How many archived facts are named INDIVIDUALLY in the log before the rest
+/// are summarised. A first sweep over a long-lived graph can archive thousands;
+/// naming every one would bury the run. The overflow is stated explicitly
+/// rather than silently truncated — a log that drops rows without saying so is
+/// the same defect class this field exists to fix.
+const ARCHIVE_IDENTITY_LOG_CAP: usize = 50;
+
+impl ArchiveCandidate {
+    /// The object side as text: the entity id for a relational fact, else the
+    /// literal value, else `"<none>"` (a fact with neither is malformed, and
+    /// saying so beats printing an empty string).
+    fn object_display(&self) -> &str {
+        self.object_id
+            .as_deref()
+            .or(self.object_value.as_deref())
+            .unwrap_or("<none>")
+    }
 }
 
 /// The 19 columns of `facts_archive` in order (migration 019, `defs_h.rs:560-569`).
@@ -90,7 +119,10 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
     let mut rows = graph
         .conn
         .query(
-            "SELECT id, subject_id, object_id FROM facts \
+            // TD-219: `predicate` + `object_value` are selected for IDENTITY
+            // LOGGING only — neither participates in candidacy or the guard, so
+            // the candidate SET is unchanged from before this column list grew.
+            "SELECT id, subject_id, object_id, predicate, object_value FROM facts \
              WHERE expired_at IS NOT NULL \
                AND expired_at < ?1 \
                AND group_id = ?2",
@@ -103,10 +135,14 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
         let fact_id: i64 = row.get(0)?;
         let subject_id: String = row.get(1)?;
         let object_id: Option<String> = row.get(2)?;
+        let predicate: String = row.get(3)?;
+        let object_value: Option<String> = row.get(4)?;
         candidates.push(ArchiveCandidate {
             fact_id,
             subject_id,
             object_id,
+            predicate,
+            object_value,
         });
     }
     drop(rows);
@@ -145,6 +181,31 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
         let moved = move_fact(graph, cand.fact_id, group_id).await?;
         if moved {
             archived += 1;
+            // TD-219 — name the fact, unconditionally. `emit_decision` below
+            // carries the ENDPOINTS but not the predicate, so a decision record
+            // could say "something between caroline and melanie was retired"
+            // and never which relation. Deliberately not `KREMORY_DEBUG`-gated:
+            // this row is now GONE from `facts`, and a flag that was off during
+            // the run cannot be turned on retroactively.
+            if archived <= ARCHIVE_IDENTITY_LOG_CAP {
+                tracing::info!(
+                    target: "kremory.dream.consolidation.archive",
+                    group_id,
+                    fact_id = cand.fact_id,
+                    subject = %cand.subject_id,
+                    predicate = %cand.predicate,
+                    object = %cand.object_display(),
+                    "fact archived — moved to facts_archive"
+                );
+            } else if archived == ARCHIVE_IDENTITY_LOG_CAP + 1 {
+                tracing::info!(
+                    target: "kremory.dream.consolidation.archive",
+                    group_id,
+                    cap = ARCHIVE_IDENTITY_LOG_CAP,
+                    "further archived facts will NOT be named individually — see \
+                     facts_archive for the full set (identity log cap reached)"
+                );
+            }
             emit_decision(DecisionRecord {
                 op: ConsolidationOpKind::Archive,
                 mode: DecisionMode::Applied,
