@@ -98,7 +98,16 @@ where
 #[derive(Debug)]
 enum LayerCmd {
     LayerA(LayerACmd),
-    LayerB { determinism: bool },
+    LayerB {
+        determinism: bool,
+        /// Path to a real on-disk graph for the 6.3 integrity invariants.
+        ///
+        /// `None` makes the integrity section report **SKIPPED**, never
+        /// "passed". Before TD-224 this ran against an empty in-memory graph and
+        /// every invariant passed vacuously — a green result that could not
+        /// distinguish a healthy graph from a destroyed one.
+        graph_db: Option<String>,
+    },
 }
 
 /// Layer A sub-commands.
@@ -136,7 +145,18 @@ fn parse_args_from(raw: &[String]) -> Result<LayerCmd, String> {
     match raw[0].as_str() {
         "layer-b" => {
             let determinism = raw.contains(&"--determinism".to_string());
-            Ok(LayerCmd::LayerB { determinism })
+            // `--graph-db <path>`, else `KREMORY_EVAL_GRAPH_DB`, else None (→ the
+            // integrity section reports SKIPPED rather than a vacuous pass).
+            let graph_db = raw
+                .windows(2)
+                .find(|w| w[0] == "--graph-db")
+                .map(|w| w[1].clone())
+                .or_else(|| std::env::var("KREMORY_EVAL_GRAPH_DB").ok())
+                .filter(|p| !p.is_empty());
+            Ok(LayerCmd::LayerB {
+                determinism,
+                graph_db,
+            })
         }
         "layer-a" => {
             if raw.len() < 2 {
@@ -205,16 +225,21 @@ fn write_report(
 // Layer B runner — synchronous entry point (wraps tokio runtime)
 // ---------------------------------------------------------------------------
 
-fn run_layer_b(manifest_dir: &str, determinism: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn run_layer_b(
+    manifest_dir: &str,
+    determinism: bool,
+    graph_db: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(run_layer_b_async(manifest_dir, determinism))
+    rt.block_on(run_layer_b_async(manifest_dir, determinism, graph_db))
 }
 
 async fn run_layer_b_async(
     manifest_dir: &str,
     determinism: bool,
+    graph_db: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let use_live_llm = std::env::var("KREMORY_EVAL_LIVE_LLM").as_deref() == Ok("1");
     if use_live_llm {
@@ -327,32 +352,80 @@ async fn run_layer_b_async(
         ragas_mean_hallucination
     );
 
-    // --- 6.3 Graph Integrity (in-memory empty graph — structural invariant check) ---
-    eprintln!("\n[eval] === Layer B 6.3: Graph Integrity (in-memory, empty graph) ===");
-    let graph = kremory::core::schema::TemporalGraph::open_in_memory()
-        .await
-        .map_err(|e| format!("failed to open in-memory graph: {}", e))?;
-
-    let config = IntegrityConfig {
-        expected_entity_count: None, // skip FTS count invariant on empty graph
-        expected_namespaces: vec![],
-        allow_isolated_entity_count: 0,
-    };
-    let integrity_report = run_invariants(&graph, &config).await?;
-    eprintln!(
-        "[eval] Graph integrity: {} invariants checked, passed={}",
-        integrity_report.invariants.len(),
-        integrity_report.all_passed(),
-    );
-    if !integrity_report.all_passed() {
-        for f in integrity_report.failures() {
+    // --- 6.3 Graph Integrity (TD-224) ---
+    //
+    // This section used to open `TemporalGraph::open_in_memory()` and run the
+    // invariants against an EMPTY graph. Every invariant passed unconditionally,
+    // because there was nothing there to violate them — a green result that could
+    // not distinguish a healthy graph from one whose entities had been merged out
+    // of existence. That is the same defect as TD-223 one layer up: a check that
+    // exists, reports success, and can never fire.
+    //
+    // A vacuous pass is now UNREPRESENTABLE. Without a real graph the section
+    // reports SKIPPED and says why; it never claims `all_passed`.
+    let integrity_json = match graph_db.as_deref() {
+        None => {
+            eprintln!("\n[eval] === Layer B 6.3: Graph Integrity — SKIPPED ===");
             eprintln!(
-                "[eval]   FAIL: {} — expected={} actual={} details={}",
-                f.name, f.expected, f.actual, f.details
+                "[eval] No graph supplied. Pass --graph-db <path> (or set \
+                 KREMORY_EVAL_GRAPH_DB) to check a real graph."
             );
+            eprintln!(
+                "[eval] NOT reported as passing: an empty graph satisfies every \
+                 invariant vacuously (TD-224)."
+            );
+            json!({
+                "status": "skipped",
+                "reason": "no --graph-db supplied; an empty graph satisfies every invariant vacuously",
+                "invariants_checked": 0,
+            })
         }
-        return Err("Graph integrity invariants FAILED".into());
-    }
+        Some(path) => {
+            eprintln!("\n[eval] === Layer B 6.3: Graph Integrity ({}) ===", path);
+            // Benchmark graphs are written at 768; `TemporalGraph::open` defaults
+            // to 384 and rejects any other width outright.
+            let dim: usize = std::env::var("KREMORY_EVAL_GRAPH_DIM")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(768);
+            let graph = kremory::core::schema::TemporalGraph::open_with_dim(path, dim)
+                .await
+                .map_err(|e| format!("failed to open graph at {} (dim {}): {}", path, dim, e))?;
+
+            let config = IntegrityConfig {
+                // Left None: this binary does not know the expected entity count
+                // for an arbitrary supplied graph.
+                expected_entity_count: None,
+                expected_namespaces: vec![],
+                allow_isolated_entity_count: 0,
+                ..Default::default()
+            };
+            let integrity_report = run_invariants(&graph, &config).await?;
+            eprintln!(
+                "[eval] Graph integrity: {} invariants checked, passed={}",
+                integrity_report.invariants.len(),
+                integrity_report.all_passed(),
+            );
+            for inv in &integrity_report.invariants {
+                eprintln!("[eval]   {} — {}", inv.name, inv.actual);
+            }
+            if !integrity_report.all_passed() {
+                for f in integrity_report.failures() {
+                    eprintln!(
+                        "[eval]   FAIL: {} — expected={} actual={} details={}",
+                        f.name, f.expected, f.actual, f.details
+                    );
+                }
+                return Err("Graph integrity invariants FAILED".into());
+            }
+            json!({
+                "status": "checked",
+                "graph_db": path,
+                "invariants_checked": integrity_report.invariants.len(),
+                "all_passed": integrity_report.all_passed(),
+            })
+        }
+    };
 
     // --- Determinism check ---
     let mut determinism_variances: Vec<(String, f64)> = Vec::new();
@@ -441,10 +514,7 @@ async fn run_layer_b_async(
             "context_entities_recall": ragas_mean_context_entities,
             "hallucination": ragas_mean_hallucination,
         },
-        "graph_integrity": {
-            "invariants_checked": integrity_report.invariants.len(),
-            "all_passed": integrity_report.all_passed(),
-        },
+        "graph_integrity": integrity_json,
         "determinism": if determinism {
             let max_var = determinism_variances.iter().map(|(_, v)| *v).fold(0.0_f64, f64::max);
             json!({
@@ -956,8 +1026,11 @@ fn main() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
 
     match cmd {
-        LayerCmd::LayerB { determinism } => {
-            if let Err(e) = run_layer_b(manifest_dir, determinism) {
+        LayerCmd::LayerB {
+            determinism,
+            graph_db,
+        } => {
+            if let Err(e) = run_layer_b(manifest_dir, determinism, graph_db) {
                 eprintln!("[eval] FATAL: {}", e);
                 std::process::exit(1);
             }
@@ -1000,7 +1073,7 @@ mod tests {
     fn parse_args_layer_b_default_no_determinism() {
         let cmd = parse_args_from(&s(&["layer-b"])).unwrap();
         match cmd {
-            LayerCmd::LayerB { determinism } => assert!(!determinism),
+            LayerCmd::LayerB { determinism, .. } => assert!(!determinism),
             other => panic!("expected LayerB, got {:?}", other),
         }
     }
@@ -1009,7 +1082,35 @@ mod tests {
     fn parse_args_layer_b_determinism_flag() {
         let cmd = parse_args_from(&s(&["layer-b", "--determinism"])).unwrap();
         match cmd {
-            LayerCmd::LayerB { determinism } => assert!(determinism),
+            LayerCmd::LayerB { determinism, .. } => assert!(determinism),
+            other => panic!("expected LayerB, got {:?}", other),
+        }
+    }
+
+    /// TD-224. Without a graph the integrity section must SKIP, so `graph_db`
+    /// must arrive as `None` — the binary can then refuse to report a pass it did
+    /// not earn, instead of checking an empty graph and calling that green.
+    #[test]
+    fn parse_args_layer_b_graph_db_absent_by_default() {
+        // Guard against a stray env var in the runner making this vacuous — the
+        // parser falls back to KREMORY_EVAL_GRAPH_DB when the flag is absent.
+        if std::env::var("KREMORY_EVAL_GRAPH_DB").is_ok() {
+            return;
+        }
+        let cmd = parse_args_from(&s(&["layer-b"])).unwrap();
+        match cmd {
+            LayerCmd::LayerB { graph_db, .. } => assert!(graph_db.is_none()),
+            other => panic!("expected LayerB, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_args_layer_b_graph_db_flag() {
+        let cmd = parse_args_from(&s(&["layer-b", "--graph-db", "/tmp/bench.db"])).unwrap();
+        match cmd {
+            LayerCmd::LayerB { graph_db, .. } => {
+                assert_eq!(graph_db.as_deref(), Some("/tmp/bench.db"))
+            }
             other => panic!("expected LayerB, got {:?}", other),
         }
     }
