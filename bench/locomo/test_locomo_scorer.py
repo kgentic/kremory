@@ -225,3 +225,102 @@ def test_parse_session_datetime_covers_the_whole_real_corpus() -> None:
 
     assert total > 0, "corpus yielded no sessions — extract_sessions broke"
     assert parsed == total, f"only {parsed} of {total} session headers parsed"
+
+
+# ---------------------------------------------------------------------------
+# Graph integrity — TD-223 / TD-224
+# ---------------------------------------------------------------------------
+#
+# Same defect class as the rest of this file: an ABSENCE read as a MEASUREMENT.
+# A benchmark scored 149/152 = 98.0% on a graph in which both speakers of the
+# dialogue had been merged out of existence, identically to the graph where they
+# survived. Nothing detected it. These guard the detector that now does — and,
+# just as importantly, guard that it reports SKIPPED rather than a pass when it
+# has nothing to look at.
+
+import sqlite3 as _sqlite3
+
+
+def _graph_db(tmp_path, merges, *, undone_index=None, bad_row=False):
+    """Build a minimal graph_mutation_log. `merges` is a list of (keeper, loser).
+
+    The `inputs` shape is copied from a real corrupted benchmark database rather
+    than invented here — a fixture built from the author's mental model of the
+    contract is the same model that would produce a wrong reader.
+    """
+    db = tmp_path / "graph.db"
+    conn = _sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE graph_mutation_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "kind TEXT NOT NULL, group_id TEXT NOT NULL, created_at TEXT NOT NULL, "
+        "undone_at TEXT, pre_state TEXT NOT NULL, inputs TEXT NOT NULL)"
+    )
+    for i, (keeper, loser) in enumerate(merges):
+        lo, hi = sorted([keeper, loser])
+        payload = {"pair_lo": lo, "pair_hi": hi, "keeper": keeper, "loser": loser,
+                   "site": "site5_acronym_nickname", "cosine": None,
+                   "structural_signal": True}
+        if bad_row:
+            payload = {"survivor": keeper, "absorbed": loser}
+        conn.execute(
+            "INSERT INTO graph_mutation_log (kind, group_id, created_at, undone_at, "
+            "pre_state, inputs) VALUES ('entity_merge', 'default', "
+            "'2026-08-17T09:45:39+00:00', ?, '{}', ?)",
+            (("2026-08-17T10:00:00+00:00" if i == undone_index else None),
+             json.dumps(payload)),
+        )
+    conn.commit()
+    conn.close()
+    return str(db)
+
+
+def test_star_merges_are_not_a_chain(tmp_path):
+    """THE FALSE-POSITIVE TEST. Two variants merged into one survivor is ordinary
+    canonicalisation. Without this, a check that simply fired on "any merge
+    happened" would look perfectly healthy against the chain test below."""
+    db = _graph_db(tmp_path, [("pottery project", "pottery class"),
+                              ("pottery project", "pottery")])
+    r = harness.check_graph_integrity(db)
+    assert r["status"] == "checked"
+    assert r["clean"] is True, r
+    assert r["chained_entities"] == 0
+    assert r["live_merges"] == 2
+
+
+def test_transitive_chain_is_detected_and_named(tmp_path):
+    """The real corruption shape: a speaker absorbed into another entity, which
+    is then itself absorbed."""
+    db = _graph_db(tmp_path, [("caroline", "melanie"), ("loved ones", "caroline")])
+    r = harness.check_graph_integrity(db)
+    assert r["clean"] is False
+    assert r["chained_entities"] == 1
+    assert any("'caroline' absorbed [melanie] then was absorbed by 'loved ones'" in c
+               for c in r["chains"]), r["chains"]
+
+
+def test_undone_merge_is_not_live_damage(tmp_path):
+    """A merge already reversed via unmerge no longer holds the graph in a
+    chained state."""
+    db = _graph_db(tmp_path, [("caroline", "melanie"), ("loved ones", "caroline")],
+                   undone_index=1)
+    r = harness.check_graph_integrity(db)
+    assert r["clean"] is True, r
+    assert r["live_merges"] == 1
+
+
+@pytest.mark.parametrize("path", [None, "", "/tmp/definitely-not-a-graph.db"])
+def test_absent_graph_reports_skipped_never_a_pass(path):
+    """TD-224. The defect being guarded is a check that reports success while
+    looking at nothing — so "no graph" must never surface as clean."""
+    r = harness.check_graph_integrity(path)
+    assert r["status"] == "skipped"
+    assert "clean" not in r
+
+
+def test_producer_shape_drift_errors_rather_than_reporting_zero(tmp_path):
+    """A silently skipped merge row makes a corrupted graph look clean, which is
+    exactly the failure this check exists to catch."""
+    db = _graph_db(tmp_path, [("caroline", "melanie")], bad_row=True)
+    r = harness.check_graph_integrity(db)
+    assert r["status"] == "error"
+    assert "keeper/loser" in r["reason"]

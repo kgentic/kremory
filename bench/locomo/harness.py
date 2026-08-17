@@ -71,6 +71,11 @@ class Config:
     conversations: list[int] = field(default_factory=list)
     skip_ingest: bool = False
     output: Path | None = None
+    # TD-223/TD-224. Path to the SQLite graph this run wrote, so the report can
+    # state whether consolidation merged entities out of existence. Defaults to
+    # KREMORY_MCP_DB_PATH (what the server was started with). When unknown the
+    # check reports "skipped" — never a pass.
+    graph_db: str | None = None
     # kremory-http's GET /search accepts an optional ?mode=recall|content|hybrid
     # (R-lane, commit d6ccd56) selecting which retrieval path the server uses.
     # DISTINCT from `mode` above (baseline/rag/codemem/codemem-graph — the
@@ -343,6 +348,99 @@ def build_headline(scored_correct: int, scored_total: int,
     return (f"{base} ({parts} NOT SCORED for correctness; "
             f"{scored_total + n_unscored} questions asked — their RETRIEVAL is "
             f"scored by evidence_eval.py)")
+
+
+# ---------------------------------------------------------------------------
+# Graph integrity (TD-223 / TD-224)
+# ---------------------------------------------------------------------------
+
+def check_graph_integrity(db_path: str | None) -> dict:
+    """Did this run's consolidation merge entities out of existence?
+
+    TD-223. A run once scored 149/152 = 98.0% on a graph in which BOTH speakers
+    of the dialogue had been merged away (``melanie`` -> ``caroline`` ->
+    ``loved ones`` -> ``luna and oliver``), identically to the graph where all
+    three survived — and the rank-aware metric slightly FAVOURED the destroyed
+    one. No scorer at any tier could see it; it was found by reading
+    ``graph_mutation_log`` by hand.
+
+    The signal is a TRANSITIVE MERGE CHAIN: an entity that is the SURVIVOR of one
+    live merge and the VICTIM of another. ``A -> B`` then ``B -> C`` moved A's
+    identity two hops while **nobody ever adjudicated A against C**.
+
+    Measured on the two retained databases (one healthy, one destroyed): 6 chained
+    entities vs 0. This mirrors invariant 6 in
+    ``crates/kremory-eval/src/layer_b/graph_integrity.rs``, which is the reference
+    implementation; both read the same contract, that an ``entity_merge`` row's
+    ``inputs`` carries ``keeper`` and ``loser``.
+
+    Known false-positive class: a legitimate three-variant canonicalisation forms
+    a chain too (``pottery class`` -> ``pottery`` -> ``pottery project``). On the
+    destroyed database 5 of 6 flags were real damage and 1 was benign. Reported,
+    never used to fail the run.
+
+    Returns ``status="skipped"`` when no database is known — NEVER a pass. An
+    absent check that reports success is the defect this exists to prevent.
+    """
+    if not db_path:
+        return {
+            "status": "skipped",
+            "reason": "no --graph-db and no KREMORY_MCP_DB_PATH; "
+                      "cannot verify the graph survived consolidation",
+        }
+    if not Path(db_path).exists():
+        return {"status": "skipped", "reason": f"graph db not found: {db_path}"}
+
+    import sqlite3
+    # Read-only URI: the server may hold this file open, and a benchmark report
+    # must never mutate the artefact it is describing.
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT id, inputs FROM graph_mutation_log "
+            "WHERE kind = 'entity_merge' AND undone_at IS NULL ORDER BY id"
+        ).fetchall()
+    except sqlite3.Error as e:
+        return {"status": "error", "reason": f"reading graph_mutation_log: {e}"}
+    finally:
+        conn.close()
+
+    survivors: set[str] = set()
+    victims: set[str] = set()
+    absorbed: dict[str, list[str]] = {}
+    absorbed_by: dict[str, str] = {}
+
+    for row_id, inputs in rows:
+        try:
+            d = json.loads(inputs)
+            keeper, loser = d["keeper"], d["loser"]
+        except (ValueError, KeyError, TypeError) as e:
+            # PARSE LOUDLY. A silently skipped row makes a corrupted graph look
+            # clean, which is exactly the failure mode this check exists for.
+            return {
+                "status": "error",
+                "reason": f"graph_mutation_log row {row_id}: entity_merge inputs "
+                          f"carry no keeper/loser — producer shape drift, "
+                          f"integrity cannot be evaluated ({e})",
+            }
+        survivors.add(keeper)
+        victims.add(loser)
+        absorbed.setdefault(keeper, []).append(loser)
+        absorbed_by[loser] = keeper
+
+    chained = sorted(survivors & victims)
+    return {
+        "status": "checked",
+        "graph_db": db_path,
+        "live_merges": len(rows),
+        "chained_entities": len(chained),
+        "clean": not chained,
+        "chains": [
+            f"'{e}' absorbed [{', '.join(absorbed.get(e, []))}] "
+            f"then was absorbed by '{absorbed_by.get(e, '<unknown>')}'"
+            for e in chained
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1022,6 +1120,27 @@ def run_benchmark(config: Config) -> dict:
     # with the number instead of relying on a reader scrolling to the prose.
     headline = build_headline(total_correct, total_questions, unscored_stats)
     print(f"\nHEADLINE: {headline}")
+
+    # TD-223/TD-224 — printed right beside the headline on purpose. The score and
+    # the graph's survival are independent claims; quoting the first without the
+    # second is what let a 98.0% be reported on a graph with both speakers gone.
+    graph_integrity = check_graph_integrity(
+        config.graph_db or _os.environ.get("KREMORY_MCP_DB_PATH")
+    )
+    if graph_integrity["status"] == "checked":
+        if graph_integrity["clean"]:
+            print(f"GRAPH INTEGRITY: clean — 0 chained entities across "
+                  f"{graph_integrity['live_merges']} live merges")
+        else:
+            print(f"GRAPH INTEGRITY: ⚠️  {graph_integrity['chained_entities']} "
+                  f"CHAINED ENTITIES across {graph_integrity['live_merges']} live "
+                  f"merges — entities were merged through intermediates, so this "
+                  f"score was measured on a graph that may have lost referents:")
+            for chain in graph_integrity["chains"]:
+                print(f"  {chain}")
+    else:
+        print(f"GRAPH INTEGRITY: {graph_integrity['status'].upper()} — "
+              f"{graph_integrity['reason']}")
     if unscored_stats:
         n_unscored = sum(unscored_stats.values())
         print(f"\n  {n_unscored} question(s) EXCLUDED from the denominator above "
@@ -1134,6 +1253,10 @@ def run_benchmark(config: Config) -> dict:
         "scored_questions": sum(v["total"] for v in category_stats.values()),
         "unscored_questions": sum(unscored_stats.values()),
         "headline": headline,
+        # TD-223/TD-224: a recall score says nothing about whether the graph it
+        # was measured on survived consolidation. Those are independent claims,
+        # and until now only the first was ever measured.
+        "graph_integrity": graph_integrity,
         "results": all_results,
         # TD-128 (B6): conversations excluded from this matrix due to ingest abort.
         "ingest_aborted": ingest_aborted,
@@ -1205,6 +1328,12 @@ def main():
                              "the run captures recalled_memories for an OFFLINE "
                              "cross-family LLM judge (see judge_rescore.py); "
                              "substring still runs inline so both are reported.")
+    parser.add_argument("--graph-db", default=None,
+                        help="TD-223/TD-224. Path to the SQLite graph this run "
+                             "writes, so the report can state whether "
+                             "consolidation merged entities out of existence. "
+                             "Defaults to $KREMORY_MCP_DB_PATH. When unknown the "
+                             "check reports 'skipped' — never a pass.")
     parser.add_argument("--capture-text-block", action="store_true",
                         help="OPT-IN, default OFF (RECALL-LEDGER §4.19 / "
                              "TD-155). Also issue a SECOND GET /search per "
@@ -1245,6 +1374,7 @@ def main():
         output=args.output,
         server_mode=args.server_mode,
         scorer=args.scorer,
+        graph_db=args.graph_db,
         capture_text_block=args.capture_text_block,
     )
     run_benchmark(config)
