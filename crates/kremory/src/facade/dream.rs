@@ -385,7 +385,36 @@ impl<'a> DreamRequest<'a> {
         // state as one of its co-occurrence signals without racing a
         // concurrent alias mutation. Non-fatal: failure warns + continues.
         let mut acronym_recall_merges: usize = 0;
-        if opts.include_acronym_nickname_recall {
+        // TD-222 MEASUREMENT LEVER — `KREMORY_DREAM_DISABLE_ACRONYM_RECALL=1`.
+        //
+        // NOT a product feature and NOT a new config surface: `DreamOpts::
+        // include_acronym_nickname_recall` is the real, library-level knob and
+        // is unchanged. This exists because the HTTP server (`kremory-http.rs`
+        // `run_consolidation`) constructs `DreamParams` with NO opts, so a
+        // benchmark run cannot reach that knob at all — and the question "what
+        // is this pass actually WORTH in recall?" has never been answered
+        // (RECALL-LEDGER, the canonical record of every recall lever ever tried,
+        // does not mention this pass once).
+        //
+        // An env var rather than two builds, deliberately: it lets both arms of
+        // the A/B run the SAME BINARY, which removes "did I run the right
+        // build?" as a failure mode. Today has already produced two conclusions
+        // from unvalidated instruments; this one states its own configuration in
+        // the run's log.
+        //
+        // Remove once TD-222 is resolved and the answer is recorded in
+        // RECALL-LEDGER.
+        let disable_acronym_recall =
+            std::env::var("KREMORY_DREAM_DISABLE_ACRONYM_RECALL").is_ok_and(|v| v == "1");
+        if disable_acronym_recall {
+            tracing::warn!(
+                target: "kremory::dream",
+                "KREMORY_DREAM_DISABLE_ACRONYM_RECALL=1 — acronym/nickname recall pass SKIPPED \
+                 (TD-222 measurement arm). This is a benchmark lever, not a supported config."
+            );
+            metrics::counter!("kremory.dream.acronym_recall.disabled_by_env_total").increment(1);
+        }
+        if opts.include_acronym_nickname_recall && !disable_acronym_recall {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
                 let arc_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
