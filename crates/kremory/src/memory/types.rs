@@ -1023,15 +1023,55 @@ pub struct DreamOpts {
     /// closing the acronym/nickname gap `names_lexically_compatible`
     /// documents as inherent (`disambiguation/lexical.rs`).
     ///
-    /// DEFAULT `true` — VALIDATED (2026-07-03). S1/S2/S6 spikes + the fair
-    /// adversarial metrics harness (`crates/kremory/tests/corpora/site5_metrics.json`,
-    /// n=140) cleared the spec §4.2 enablement gate: precision 1.00, Wilson-95%
-    /// lower bound 0.955 ≥ 0.85 (strict lower-CI bar met), recall 0.988, ZERO
-    /// false merges — zero false positives on the coincidental-collision and
-    /// distinct-people-same-nickname safety categories, with context-aware merge
-    /// proven (merges typo-variants of the same person, keeps distinct siblings
-    /// separate). Set to `false` to skip this LLM-cost recall pass on a given
-    /// dream cycle.
+    /// 🔴 **DEFAULT FLIPPED `true` → `false` on 2026-08-17 (TD-222).** Measured
+    /// on the real LoCoMo corpus, this pass DISSOLVES the conversation's own
+    /// participants and buys nothing. Opt in only if you have measured it on
+    /// YOUR corpus.
+    ///
+    /// **The A/B that flipped it** (conv0, local Ollama, identical binary, one
+    /// env var apart — `.context/td186a-variance/td222-arm-{a,b}*`):
+    ///
+    /// | | pass ON | pass OFF |
+    /// |---|---|---|
+    /// | substring score | **149/152 = 98.0%** | **149/152 = 98.0%** |
+    /// | recall@10 / nDCG@10 | 77.6 / 63.8 | 77.2 / 63.1 |
+    /// | entities merged away | 22 | 10 |
+    /// | wall-clock | ~84 min for THIS pass | pass skipped |
+    ///
+    /// Identical headline; the rank-aware gap is smaller than the ingest
+    /// variance between the two runs (202 vs 197 entities extracted), so it is
+    /// NOT a measured benefit.
+    ///
+    /// **What it did to the graph.** 19 merges via this pass, of which ~3 are
+    /// defensible. `graph_mutation_log`, arm A:
+    /// `melanie -> caroline`, then `caroline -> loved ones`, then
+    /// `loved ones -> luna and oliver`; also `pride month -> lgbtq`,
+    /// `tranquility -> bach`, `rainbow sidewalk -> adoption advice group`.
+    /// **Melanie and Caroline are the two speakers of the conversation** — with
+    /// this pass ON, `melanie`, `mel` and `caroline` are ALL GONE from the final
+    /// graph, absorbed into the family's pets. With it OFF, all three survive
+    /// and the only merges are benign surface-form tidying.
+    ///
+    /// **Why the original enablement gate passed it** (kept below for
+    /// provenance, and it is not a lie — it is a narrow truth): its 140-pair
+    /// fixture contains acronyms, nicknames and coincidental name collisions.
+    /// It contains NO pairs of the shape "two unrelated things that co-occur",
+    /// which is the dominant class a real graph produces. The gate measured the
+    /// input class its author thought of.
+    ///
+    /// Re-enabling is a real option once TD-222 is fixed — the prime suspect is
+    /// the adjudication prompt (`build_adjudication_messages`), which tells the
+    /// model co-occurrence suggests identity, illustrates that class with
+    /// `Bob`/`Robert` (a NICKNAME example, not a co-occurrence one), and gives
+    /// no negative instruction or any hint that the merge is irreversible.
+    ///
+    /// --- ORIGINAL JUSTIFICATION (2026-07-03), retained; its scope is the
+    /// narrowness described above ---
+    /// S1/S2/S6 spikes + the fair adversarial metrics harness
+    /// (`crates/kremory/tests/corpora/site5_metrics.json`, n=140) cleared the
+    /// spec §4.2 enablement gate: precision 1.00, Wilson-95% lower bound 0.955
+    /// ≥ 0.85, recall 0.988, ZERO false merges on the coincidental-collision and
+    /// distinct-people-same-nickname safety categories.
     pub include_acronym_nickname_recall: bool,
     /// Run Site #2 type-novelty DESCRIPTION-gate LLM-verify band (ADR-063
     /// "The six sites" #2; impl spec §4.3 sibling table) — extends Pass 0's
@@ -1274,7 +1314,11 @@ impl Default for DreamOpts {
             // adversarial corpora (gemma4:e4b + real nomic), spec §4.2 gate PASS,
             // ZERO false merges. See site3_metrics.json / site5_metrics.json.
             include_type_registry_collapse: true,
-            include_acronym_nickname_recall: true,
+            // TD-222 (2026-08-17): was `true`. Measured A/B on conv0 — zero
+            // benefit on either scorer, ~84 min of runtime, and it dissolved
+            // both speakers of the conversation into the family pets. See the
+            // field's doc comment for the numbers and the mutation log.
+            include_acronym_nickname_recall: false,
             // ENABLED 2026-07-03 (ADR-065) — Site #2 now trusts the LLM as
             // terminal arbiter (`type_novelty_is_redundant`) instead of the
             // over-generalized shared `write_gate` Row 6. Re-validated on the
