@@ -118,6 +118,14 @@ pub struct AcronymNicknameRecallReport {
     /// Number of nominated pairs rejected (LLM said not-same, or verdict
     /// missing/parse-failed).
     pub rejected: usize,
+    /// TD-222 defect 2. Number of pairs whose merge was REFUSED because
+    /// `resolve_survivor` had retargeted an endpoint, so the merge that would
+    /// have executed was between a pair **nobody adjudicated**.
+    ///
+    /// Deliberately NOT folded into `rejected`: the model did not say no, and
+    /// conflating the two is what let an 8-of-19 divergence stay invisible on the
+    /// run that dissolved both speakers of a conversation.
+    pub retargeted_unadjudicated: usize,
 }
 
 // ─── Internal types ───────────────────────────────────────────────────────
@@ -524,6 +532,63 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                         candidate_b = %pair.b,
                         survivor = %keeper_id,
                         "site5 pair already merged transitively — skipping"
+                    );
+                    continue;
+                }
+
+                // TD-222 defect 2 — REFUSE a merge nobody adjudicated.
+                //
+                // `resolve_survivor` above follows the chain of merges this loop has
+                // already applied. When it CHANGES an endpoint, the merge about to
+                // execute is between a DIFFERENT pair than the one the model was
+                // asked about — and the union-find's justification ("A≡B and B≡C
+                // means all three are the SAME entity") holds only if the verdicts
+                // are transitively true. Measured on the real run: they are not.
+                //
+                // From `identity_verdict_audit` vs `graph_mutation_log` on the run
+                // that dissolved conv0's speakers: 19 pairs adjudicated, 19 merges
+                // executed, only 11 the same pair. **8 merges were between pairs
+                // never put to the model**, including `caroline`/`loved ones` and
+                // `loved ones`/`luna and oliver`. The model was asked
+                // `loved ones`/MELANIE and `luna and oliver`/MELANIE; by execution
+                // time `melanie` had been consumed into `caroline`, so both were
+                // retargeted. Three approvals ABOUT MELANIE destroyed `caroline` and
+                // `loved ones`.
+                //
+                // Refusing (rather than dropping the resolution) still avoids the
+                // deleted-row problem `resolve_survivor` was added for — the pair is
+                // skipped, never merged against a row that no longer exists. The
+                // resolved pair is free to be nominated and adjudicated on its own
+                // merits on a later pass.
+                //
+                // NOT a lexical or type judgement: this adds no new signal, so it
+                // cannot over-block a legitimately adjudicated pair. `Bob`/`Robert`
+                // is adjudicated directly and is unaffected — the distinction that
+                // killed the reverted lexical veto (TD-222) and left the entity-type
+                // veto inert.
+                //
+                // Spec basis: ADR-063 impl-spec §4's transitive-chain provision is
+                // scoped to Site #3's TYPE ids and self-describes as "an
+                // implementation-time call, non-load-bearing to this spec"
+                // (`.ai-docs/specs/adr-063-embedding-identity-impl-spec-2026-07-02.md:752`).
+                // It does NOT sanction retargeting Site #5 entity merges.
+                if keeper_id != pair.a || loser_id != pair.b {
+                    report.retargeted_unadjudicated += 1;
+                    counter!(
+                        "kremory.identity.merge_retargeted_unadjudicated_total",
+                        "site" => "site5",
+                    )
+                    .increment(1);
+                    // ALWAYS-ON warn, not debug-gated: this is the exact divergence
+                    // that stayed invisible for an entire corrupted run.
+                    tracing::warn!(
+                        target: "kremory.l5",
+                        adjudicated_a = %pair.a,
+                        adjudicated_b = %pair.b,
+                        would_merge_keeper = %keeper_id,
+                        would_merge_loser = %loser_id,
+                        "site5 REFUSED merge: an endpoint was retargeted by an earlier \
+                         merge, so this pair was never adjudicated (TD-222)"
                     );
                     continue;
                 }
@@ -1732,6 +1797,189 @@ mod tests {
         merged.insert("c".to_owned(), "a".to_owned()); // (A,C): C -> A
 
         assert_eq!(resolve_survivor(&merged, "c"), "a");
+    }
+
+    /// Make every listed entity pairwise CO-OCCURRING by mentioning them all in
+    /// one shared episode.
+    ///
+    /// The pre-filter nominates on `initialism_candidate OR cooccurs_in_graph`
+    /// (module doc, spec §3.1). Entities with no shared episode and no shared
+    /// graph neighbour are nominated by NEITHER arm, so a fixture without this
+    /// runs the pass over zero pairs and every assertion about merge behaviour
+    /// passes or fails for the wrong reason. Co-occurrence is also the arm the
+    /// TD-222 false merges actually came through.
+    async fn cooccur_all(graph: &TemporalGraph, group_id: &str, ids: &[&str]) {
+        let ep = graph
+            .insert_episode(InsertEpisodeParams {
+                content: "shared mention episode",
+                timestamp: chrono::Utc::now(),
+                source_type: Some("transcript"),
+                metadata: None,
+            })
+            .await
+            .expect("insert episode");
+        for id in ids {
+            graph
+                .insert_episodic_edge(InsertEpisodicEdgeParams {
+                    episode_id: ep,
+                    entity_id: id,
+                    entity_group_id: Some(group_id),
+                    role: "mention",
+                })
+                .await
+                .expect("insert episodic edge");
+        }
+    }
+
+    // ── TD-222 defect 2 — refuse merges nobody adjudicated ───────────────────
+    //
+    // Resolution (above) is CORRECT and must stay: it stops the pass merging
+    // against a row an earlier merge deleted. What was wrong is what happened
+    // NEXT — the retargeted pair was merged anyway, so the merge executed was
+    // between two entities the model was never asked about.
+    //
+    // Measured on the run that dissolved conv0's speakers, comparing
+    // `identity_verdict_audit` (what was ASKED) against `graph_mutation_log`
+    // (what was DONE): 19 adjudicated, 19 executed, only 11 the same pair.
+
+    /// THE FALSE-POSITIVE TEST, and the one that matters most here. Two of the
+    /// three remedies tried for TD-222 died by over-blocking — a lexical veto that
+    /// halved site-5 recall, and a type veto too coarse to fire. A pair adjudicated
+    /// DIRECTLY, with no retargeting, must still merge exactly as before.
+    #[tokio::test]
+    async fn directly_adjudicated_pair_still_merges() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        insert_entity(&graph, "IBM", "g_td222_fp", "A technology company.").await;
+        insert_entity(
+            &graph,
+            "International Business Machines",
+            "g_td222_fp",
+            "A technology company.",
+        )
+        .await;
+
+        let llm = ScriptedVerdictProvider {
+            json: r#"{"verdicts":[{"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"acronym"}]}"#
+                .to_string(),
+        };
+        let r = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g_td222_fp",
+                model_id: "test-model",
+                embedder: None,
+            },
+        )
+        .await
+        .expect("pass");
+
+        assert_eq!(r.merges_applied, 1, "the adjudicated pair must still merge");
+        assert_eq!(
+            r.retargeted_unadjudicated, 0,
+            "no endpoint was retargeted — the guard must not fire on a direct merge"
+        );
+    }
+
+    /// The defect itself. Three entities enumerate as (a,b), (a,c), (b,c). The
+    /// model approves (a,b) and (b,c) but REJECTS (a,c). After (a,b) merges
+    /// `b` into `a`, pair (b,c)'s keeper resolves `b` -> `a`, so the merge that
+    /// would execute is `a` + `c` — a pair the model explicitly said NO to.
+    ///
+    /// This is the exact shape of `loved ones`/`melanie` being asked and
+    /// `caroline`/`loved ones` being merged.
+    #[tokio::test]
+    async fn retargeted_pair_is_refused_not_merged() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        // The pre-filter nominates on `initialism_candidate OR cooccurs_in_graph`.
+        // A shared episode mention makes all three pairwise co-occurring — the
+        // arm TD-222's false merges actually came through.
+        for id in ["aa_alpha", "bb_beta", "cc_gamma"] {
+            insert_entity(&graph, id, "g_td222", "An entity.").await;
+        }
+        cooccur_all(&graph, "g_td222", &["aa_alpha", "bb_beta", "cc_gamma"]).await;
+
+        // pair0 (aa,bb) YES · pair1 (aa,cc) NO · pair2 (bb,cc) YES
+        let llm = ScriptedVerdictProvider {
+            json: r#"{"verdicts":[
+                {"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"same"},
+                {"pair_id":1,"is_same_entity":false,"confidence":0.95,"reasoning":"different"},
+                {"pair_id":2,"is_same_entity":true,"confidence":0.95,"reasoning":"same"}
+            ]}"#
+            .to_string(),
+        };
+        let r = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g_td222",
+                model_id: "test-model",
+                embedder: None,
+            },
+        )
+        .await
+        .expect("pass");
+
+        assert_eq!(
+            r.retargeted_unadjudicated, 1,
+            "pair (bb,cc) had its keeper retargeted to `aa` — a pair the model \
+             REJECTED — and must be refused, not merged"
+        );
+        assert_eq!(
+            r.merges_applied, 1,
+            "only the directly-adjudicated (aa,bb) merge may apply"
+        );
+        assert_eq!(
+            count_entities(&graph.conn, "g_td222").await,
+            2,
+            "`cc_gamma` must SURVIVE: nothing the model approved says it is `aa_alpha`"
+        );
+    }
+
+    /// A genuine chain, where EVERY pair was adjudicated, must still collapse —
+    /// the guard must not break real transitivity. (a,b) yes, (a,c) yes, (b,c) yes:
+    /// the third pair resolves both endpoints to the same survivor and is handled
+    /// by the pre-existing already-transitive branch, NOT by the new guard.
+    #[tokio::test]
+    async fn fully_adjudicated_chain_still_collapses() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        // The pre-filter nominates on `initialism_candidate OR cooccurs_in_graph`.
+        // A shared episode mention makes all three pairwise co-occurring — the
+        // arm TD-222's false merges actually came through.
+        for id in ["aa_alpha", "bb_beta", "cc_gamma"] {
+            insert_entity(&graph, id, "g_td222_ch", "An entity.").await;
+        }
+        cooccur_all(&graph, "g_td222_ch", &["aa_alpha", "bb_beta", "cc_gamma"]).await;
+
+        let llm = ScriptedVerdictProvider {
+            json: r#"{"verdicts":[
+                {"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"same"},
+                {"pair_id":1,"is_same_entity":true,"confidence":0.95,"reasoning":"same"},
+                {"pair_id":2,"is_same_entity":true,"confidence":0.95,"reasoning":"same"}
+            ]}"#
+            .to_string(),
+        };
+        let r = acronym_nickname_recall(
+            &llm,
+            AcronymNicknameRecallParams {
+                graph: &graph,
+                group_id: "g_td222_ch",
+                model_id: "test-model",
+                embedder: None,
+            },
+        )
+        .await
+        .expect("pass");
+
+        assert_eq!(
+            r.retargeted_unadjudicated, 0,
+            "every pair was adjudicated — the guard must not fire on a real chain"
+        );
+        assert_eq!(
+            count_entities(&graph.conn, "g_td222_ch").await,
+            1,
+            "a fully-adjudicated chain must still collapse to one entity"
+        );
     }
 
     /// TRANSITIVE chain — why this is a resolve and not a `continue`.
