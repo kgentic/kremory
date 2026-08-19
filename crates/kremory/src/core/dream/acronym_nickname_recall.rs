@@ -1,4 +1,11 @@
-//! Dream pass — instance acronym/nickname recall (ADR-063 spec §3, "Site #5").
+//! Dream pass — instance acronym/nickname recall (Site #5).
+//!
+//! Governing document: `.ai-docs/specs/adr-063-embedding-identity-impl-spec-2026-07-02.md`
+//! (cited throughout as "spec §N"). NOT `.ai-docs/adrs/adr-063-unified-embedding-identity-signal-architecture-2026-07-02.md`,
+//! which this header previously pointed at — that file is 113 lines and contains
+//! ZERO occurrences of `write_gate`, so every "ADR-063 spec §N" reference below
+//! was unresolvable against it. `:573` already cited the impl-spec correctly, so
+//! the file contradicted itself.
 //!
 //! Periodic dream-phase pass that closes the acronym/nickname gap
 //! `names_lexically_compatible` (`disambiguation/lexical.rs`) documents as an
@@ -54,8 +61,22 @@
 //! and S6 (co-occurrence query cost) have all PASSED. The fair adversarial
 //! metrics harness (`crates/kremory/tests/corpora/site5_metrics.json`, n=140)
 //! cleared the spec §4.2 gate: precision 1.00, Wilson-lower 0.955 ≥ 0.85, recall
-//! 0.988, ZERO false merges. This pass therefore ships behind
-//! `DreamOpts::include_acronym_nickname_recall`, DEFAULT `true`.
+//! 0.988, ZERO false merges. This pass ships behind
+//! `DreamOpts::include_acronym_nickname_recall`.
+//!
+//! ## ⚠️ DEFAULT IS `false` (TD-222, 2026-08-17) — the spike gate above is STALE
+//!
+//! The enablement gate passed on a 140-row curated harness and the pass shipped
+//! default-ON. On the real corpus it dissolved BOTH speakers of conv0 into the
+//! family pets (`melanie` → `caroline` → `loved ones` → `luna and oliver`) for
+//! zero measured recall benefit on either scorer. It is now `false` at
+//! `memory/types.rs:1321`.
+//!
+//! Four doc sites — this one, `:182`, `dream/mod.rs:10`, `facade/dream.rs:379` —
+//! still claimed `true` for a day after the flip, i.e. they asserted that a
+//! destructive pass was live when it had been deliberately disabled for
+//! destroying entities. Corrected 2026-08-19. `:193` said `false` throughout, so
+//! this module was self-contradictory in the meantime.
 //!
 //! ## Observability (spec §6)
 //!
@@ -118,9 +139,18 @@ pub struct AcronymNicknameRecallReport {
     /// Number of nominated pairs rejected (LLM said not-same, or verdict
     /// missing/parse-failed).
     pub rejected: usize,
-    /// TD-222 defect 2. Number of pairs whose merge was REFUSED because
-    /// `resolve_survivor` had retargeted an endpoint, so the merge that would
-    /// have executed was between a pair **nobody adjudicated**.
+    /// TD-222 defect 2. Number of pairs whose WRITE was REFUSED because
+    /// `resolve_survivor` had retargeted an endpoint, so the write that would
+    /// have executed concerned a pair **nobody adjudicated**.
+    ///
+    /// Covers BOTH write arms (2026-08-19): the destructive `Merge` arm and the
+    /// non-destructive `PotentialAlias` arm. The two are distinguishable in
+    /// metrics — `kremory.identity.merge_retargeted_unadjudicated_total` vs
+    /// `kremory.identity.alias_retargeted_unadjudicated_total` — deliberately
+    /// kept as separate counters rather than one aggregate, so a regression in
+    /// either arm is attributable. One report FIELD, because to a consumer the
+    /// question is the same: how many pairs did this pass decline to act on
+    /// because the pair in front of it was not the pair that was adjudicated.
     ///
     /// Deliberately NOT folded into `rejected`: the model did not say no, and
     /// conflating the two is what let an 8-of-19 divergence stay invisible on the
@@ -178,9 +208,9 @@ pub struct AcronymNicknameRecallParams<'a> {
     /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
     /// a merge this pass applies recomputes + persists the keeper's name
     /// embedding so the surviving entity's stored embedding reflects its
-    /// post-merge identity. Site #5 has NO dry-run gate and is ON by default
-    /// (`DreamOpts::include_acronym_nickname_recall` = true, VALIDATED
-    /// 2026-07-03), so it merges LIVE in every `mem.dream()` — leaving the
+    /// post-merge identity. Site #5 has NO dry-run gate, so whenever it IS
+    /// enabled (`DreamOpts::include_acronym_nickname_recall` — DEFAULT `false`
+    /// since TD-222, `memory/types.rs:1321`) it merges LIVE — leaving the
     /// keeper's embedding stale is the exact TD-112 bug. `None` preserves the
     /// pre-TD-112 no-re-embed behavior (used by unit tests that don't assert
     /// on embeddings).
@@ -726,6 +756,56 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                         candidate_b = %pair.b,
                         survivor = %alias_keeper,
                         "site5 potential_alias pair already merged transitively — skipping"
+                    );
+                    continue;
+                }
+
+                // TD-222 (2026-08-19) — the alias arm's half of the defect-2 fix.
+                //
+                // The `Merge` arm above REFUSES when `resolve_survivor` retargets an
+                // endpoint (`:575`). This arm did not: it wrote the RESOLVED pair
+                // (`alias_keeper`/`alias_new`) while its audit row below recorded the
+                // ADJUDICATED pair (`pair.a`/`pair.b`), and nothing reconciled them.
+                // `identity_verdict_audit` therefore recorded a pair that was never
+                // written — the same "the record is not the work" divergence that hid
+                // the original cascade, in non-destructive form.
+                //
+                // Severity IS lower, and for a reason worth stating rather than
+                // assuming: a Site #5 alias fact cannot be promoted into a merge by
+                // L7. `resolve_pending_aliases` gates confirmation on
+                // `names_lexically_compatible` AND cosine >= `L4_MERGE_THRESHOLD`
+                // (`disambiguation/mod.rs:764-765`), and Site #5's pairs share zero
+                // name tokens BY CONSTRUCTION — that zero-overlap surface is the
+                // entire reason this site exists. So these facts are inert at L7 and
+                // there is no laundering path from here to a destructive write. (I
+                // asserted there WAS one before reading `:764`; there is not.)
+                //
+                // Refused anyway, symmetric with the merge arm: a `potential_alias`
+                // asserts "these may be the same entity" about a pair nobody
+                // adjudicated, and alias facts are read back by recall. This adds NO
+                // new signal — it compares the resolved endpoints against the
+                // adjudicated ones and nothing else — so it cannot over-block a
+                // directly-adjudicated pair. `Bob`/`Robert` is adjudicated directly
+                // and is unaffected, the same property that let the merge-arm fix pass
+                // both gates which killed the lexical and type vetoes.
+                if alias_keeper != pair.a || alias_new != pair.b {
+                    report.retargeted_unadjudicated += 1;
+                    counter!(
+                        "kremory.identity.alias_retargeted_unadjudicated_total",
+                        "site" => "site5",
+                    )
+                    .increment(1);
+                    // ALWAYS-ON warn, matching the merge arm: a silent divergence
+                    // between what was adjudicated and what was written is precisely
+                    // what stayed invisible for a whole corrupted run.
+                    tracing::warn!(
+                        target: "kremory.l5",
+                        adjudicated_a = %pair.a,
+                        adjudicated_b = %pair.b,
+                        would_write_existing = %alias_keeper,
+                        would_write_new = %alias_new,
+                        "site5 REFUSED potential_alias: an endpoint was retargeted by an \
+                         earlier merge, so this pair was never adjudicated (TD-222)"
                     );
                     continue;
                 }
@@ -3182,12 +3262,34 @@ mod tests {
     /// Verdict 1 (conf 0.5, below the 0.7 floor) routes to PotentialAlias with
     /// `pair.a = fbi` — already deleted.
     ///
-    /// **RED-proof**: revert the `resolve_survivor` calls in the
-    /// `PotentialAlias` arm and this fails on the fact-count assertion (the
-    /// insert FK-fails and is swallowed by the `warn!`), and
-    /// `alias_insert_failed_total` fires.
+    /// ## ⚠️ CONTRACT CHANGED 2026-08-19 (TD-222) — this test pinned a defect
+    ///
+    /// It previously asserted that the `PotentialAlias` arm RESOLVES the dead
+    /// endpoint and writes the alias against the survivor (TD-220, whose real
+    /// problem was 71 silently-swallowed FK failures). Read what this fixture
+    /// actually produces under that contract:
+    ///
+    /// * verdict 0 merges `fbi` into **`FAIR Banking Institute`** — a banking
+    ///   body — at confidence 0.95. The fixture is built so this merge is WRONG.
+    /// * verdict 1 concerns `(fbi, Federal Bureau Investigation)` at 0.5.
+    /// * resolving then writes an alias asserting **a banking body is a federal
+    ///   investigative agency** — derived from a verdict about a pair that no
+    ///   longer exists.
+    ///
+    /// That is the TD-222 cascade in soft form: a claim propagated through an
+    /// endpoint nobody adjudicated against. The arm now REFUSES instead, matching
+    /// the `Merge` arm at `:575`.
+    ///
+    /// TD-220's actual protection is retained and is unaffected: the swallowed FK
+    /// error still has its `alias_insert_failed_total` counter and always-on WARN,
+    /// and no durable row can reference the merged-away id. A refused write cannot
+    /// FK-fail either, so the original symptom is closed by a strictly wider fix.
+    ///
+    /// **RED-proof (2026-08-19)**: delete the retarget check in the
+    /// `PotentialAlias` arm and this fails on both `potential_aliases == 0` and
+    /// `retargeted_unadjudicated == 1`.
     #[tokio::test]
-    async fn potential_alias_endpoint_merged_earlier_resolves_to_survivor() {
+    async fn potential_alias_endpoint_retargeted_by_earlier_merge_is_refused() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         let conn = graph.conn.clone();
         insert_entity(&graph, "FAIR Banking Institute", "g20", "A banking body.").await;
@@ -3227,14 +3329,21 @@ mod tests {
         );
         assert_eq!(report.merges_applied, 1, "verdict 0 (conf 0.95) must merge");
         assert_eq!(
-            report.potential_aliases, 1,
-            "verdict 1 (conf 0.5) must route to PotentialAlias, not merge"
+            report.potential_aliases, 0,
+            "verdict 1's pair was RETARGETED by verdict 0's merge, so it must be \
+             refused rather than written — see the contract note above"
+        );
+        assert_eq!(
+            report.retargeted_unadjudicated, 1,
+            "the refusal must be COUNTED, not silent — a dropped candidate with no \
+             number attached is what let the 8-of-19 divergence hide"
         );
 
-        // THE ASSERTION THIS TEST EXISTS FOR: the alias fact was actually
-        // WRITTEN. Pre-fix it was not — the insert FK-failed and the error was
-        // swallowed by a `warn!`, so every counter above still read correctly
-        // while the durable state silently lost the candidate.
+        // THE ASSERTION THIS TEST NOW EXISTS FOR: NO alias fact was written.
+        //
+        // It previously asserted the opposite (exactly one alias, written against
+        // the survivor). That assertion was pinning a defect — see the contract
+        // note on this test.
         let mut rows = conn
             .query(
                 "SELECT subject_id, object_id FROM facts \
@@ -3247,23 +3356,23 @@ mod tests {
         while let Some(row) = rows.next().await.expect("row iteration") {
             aliases.push((row.get(0).expect("subject_id"), row.get(1).expect("object_id")));
         }
-        assert_eq!(
-            aliases.len(),
-            1,
-            "the potential_alias fact must be written against the SURVIVOR — got {aliases:?}"
+        assert!(
+            aliases.is_empty(),
+            "a retargeted pair must write NO potential_alias fact — got {aliases:?}"
         );
 
-        // And it must NOT reference the id that was merged away.
-        let (subject, object) = &aliases[0];
-        let endpoints = [subject.as_str(), object.as_deref().unwrap_or("")];
-        assert!(
-            !endpoints.contains(&"fbi"),
-            "the alias must not reference the merged-away id `fbi` — got {endpoints:?}"
-        );
-        assert!(
-            endpoints.contains(&"FAIR Banking Institute"),
-            "the alias must reference the SURVIVOR `FAIR Banking Institute` — got {endpoints:?}"
-        );
+        // TD-220's REAL protection, retained: whatever happens, the merged-away
+        // id must never appear in durable state. Previously this held because the
+        // endpoints were resolved; now it holds because nothing is written. The
+        // assertion is unchanged on purpose — it is the invariant, and it must
+        // survive a change of mechanism.
+        for (subject, object) in &aliases {
+            let endpoints = [subject.as_str(), object.as_deref().unwrap_or("")];
+            assert!(
+                !endpoints.contains(&"fbi"),
+                "no durable row may reference the merged-away id `fbi` — got {endpoints:?}"
+            );
+        }
     }
 
     // ── S1 spike: initialism_candidate precision/recall (spec §8, ADR-063) ───

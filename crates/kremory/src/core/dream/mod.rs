@@ -6,9 +6,12 @@
 //! Pass 4: consistency_check — hybrid embed-prefilter + LLM-verify for
 //!         high-confidence wrong-type detection (ADR-047).
 
-/// Site #5 (ADR-063 spec §3) — instance acronym/nickname recall. Gated behind
-/// `DreamOpts::include_acronym_nickname_recall`, default `true` (VALIDATED
-/// 2026-07-03: site5_metrics.json precision 1.00, Wilson-lower 0.955, 0 false merges).
+/// Site #5 (ADR-063 impl-spec §3) — instance acronym/nickname recall. Gated
+/// behind `DreamOpts::include_acronym_nickname_recall`, **default `false`**
+/// since TD-222 (`memory/types.rs:1321`): the 2026-07-03 enablement gate
+/// (site5_metrics.json precision 1.00, Wilson-lower 0.955, 0 false merges)
+/// passed on a curated 140-row harness, then the pass dissolved both conv0
+/// speakers on the real corpus for zero recall benefit.
 pub(crate) mod acronym_nickname_recall;
 pub(crate) mod anti_redundancy;
 pub mod consistency_check;

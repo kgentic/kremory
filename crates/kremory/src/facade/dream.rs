@@ -376,8 +376,9 @@ impl<'a> DreamRequest<'a> {
         // pre-filter (initialism test OR graph co-occurrence, spec §3.1) and
         // adjudicate nominated pairs via batched LLM verdicts + the shared
         // write_gate (spec §3.2/§3.3). Gated by
-        // `include_acronym_nickname_recall` (default `true` — VALIDATED
-        // 2026-07-03, `memory/types.rs`). Ordered
+        // `include_acronym_nickname_recall` (**default `false`** since TD-222 —
+        // `memory/types.rs:1321`; the 2026-07-03 validation was on a curated
+        // harness and did not survive the real corpus). Ordered
         // immediately AFTER aliases (`resolve_pending_aliases`, above) and
         // BEFORE reclassify (spec §3.0): merges land before type-correctness
         // is re-verified, avoiding a wasted reclassify pass on an entity
