@@ -71,6 +71,16 @@ class Config:
     conversations: list[int] = field(default_factory=list)
     skip_ingest: bool = False
     output: Path | None = None
+    # DREAM KEEP-OR-CUT (2026-08-19). When True, `client.consolidate(...)` is NOT
+    # called after ingest, so the dream phase never runs. This is the ONLY
+    # difference between the two arms of the pre-registered A/B
+    # (`.ai-docs/decisions/dream-keep-or-cut-prereg-2026-08-19.md`).
+    #
+    # Deliberately a HARNESS flag, not a new library knob: the switch already
+    # existed as "do not call the endpoint", so per contract-first there is
+    # nothing to add to kremory's public surface. It also means the measured
+    # dream-on arm is byte-for-byte the shipped behaviour, not a special build.
+    no_dream: bool = False
     # TD-223/TD-224. Path to the SQLite graph this run wrote, so the report can
     # state whether consolidation merged entities out of existence. Defaults to
     # KREMORY_MCP_DB_PATH (what the server was started with). When unknown the
@@ -602,6 +612,7 @@ def ingest_conversation(
     namespace: str,
     sessions: list[dict],
     sample_id: str,
+    no_dream: bool = False,
 ) -> int:
     """Store conversation into codemem at turn-group granularity.
 
@@ -690,8 +701,17 @@ def ingest_conversation(
     if session_id:
         client.end_session(session_id, summary=f"Ingested {count} turn chunks for {sample_id}")
 
-    # Run creative consolidation to build SHARES_THEME edges between memories
-    client.consolidate("creative", namespace)
+    # Run creative consolidation to build SHARES_THEME edges between memories.
+    #
+    # DREAM KEEP-OR-CUT (2026-08-19): this single call IS the dream phase from the
+    # harness's point of view. `--no-dream` skips it. Logged either way — a silent
+    # skip would make the two arms indistinguishable in the run log, which is
+    # precisely the confound the pre-registration's validity gate exists to catch.
+    if no_dream:
+        print(f"[{sample_id}] --no-dream: SKIPPING consolidation (dream-off arm)", flush=True)
+    else:
+        print(f"[{sample_id}] running consolidation (dream-on arm)", flush=True)
+        client.consolidate("creative", namespace)
 
     return count
 
@@ -870,7 +890,9 @@ def run_benchmark(config: Config) -> dict:
             }) + "\n")
             jsonl_f.flush()
             try:
-                mem_count = ingest_conversation(client, namespace, sessions, sample_id)
+                mem_count = ingest_conversation(
+                    client, namespace, sessions, sample_id, no_dream=config.no_dream
+                )
             except KremoryStalled as e:
                 # TD-128 (B6): ISOLATE — record + skip this conversation's
                 # questions (its namespace is only partially ingested; scoring it
@@ -1334,6 +1356,11 @@ def main():
                              "consolidation merged entities out of existence. "
                              "Defaults to $KREMORY_MCP_DB_PATH. When unknown the "
                              "check reports 'skipped' — never a pass.")
+    parser.add_argument("--no-dream", action="store_true",
+                        help="Skip the post-ingest consolidation call, so the dream "
+                             "phase never runs. The dream-off arm of the pre-registered "
+                             "keep-or-cut A/B (.ai-docs/decisions/"
+                             "dream-keep-or-cut-prereg-2026-08-19.md).")
     parser.add_argument("--capture-text-block", action="store_true",
                         help="OPT-IN, default OFF (RECALL-LEDGER §4.19 / "
                              "TD-155). Also issue a SECOND GET /search per "
@@ -1375,6 +1402,7 @@ def main():
         server_mode=args.server_mode,
         scorer=args.scorer,
         graph_db=args.graph_db,
+        no_dream=args.no_dream,
         capture_text_block=args.capture_text_block,
     )
     run_benchmark(config)
