@@ -607,6 +607,115 @@ pub(crate) struct ApplyMergeWithAuditParams<'a> {
     pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
 }
 
+/// Does merging `pair.0` (loser) into `pair.1` (keeper) EXTEND an existing live
+/// merge chain in `group_id`?
+///
+/// Returns `Some((prior_counterpart, kind))` when it does, where `kind` is one of:
+///
+/// - `"loser_is_prior_survivor"` — the loser previously ABSORBED something. Merging
+///   it away now moves whatever it absorbed a SECOND hop, to a destination that was
+///   never adjudicated against the original. This is the cascade signature measured
+///   on the corrupted conv0 database (`melanie` → `caroline`, then `caroline` →
+///   `loved ones`: melanie's identity travelled two hops on approvals about melanie).
+/// - `"keeper_is_prior_victim"` — the keeper was itself absorbed earlier, so this
+///   merge targets a row that has already ceased to be a distinct identity.
+///
+/// Reads the DURABLE `graph_mutation_log` (reversible-graph-mutations spec §2.1),
+/// which is what makes it see chains a caller's per-invocation resolution map
+/// cannot: across dream cycles, and across sites.
+///
+/// **Never fails the merge.** A detector that can abort a write it does not
+/// understand is worse than no detector; every error path returns `None` after
+/// warning, so a schema drift or a malformed row degrades to "not detected"
+/// LOUDLY rather than to a spurious rollback. Scoped by `group_id` per ADR-029d —
+/// under per-namespace-open the same `id` legitimately exists in two namespaces
+/// and an unscoped read would manufacture cross-namespace chains that do not exist.
+///
+/// Takes the pair as a tuple rather than two params: `clippy.toml` sets
+/// `too-many-arguments-threshold = 3` and `#[allow]` is banned in `src`
+/// (TD-042 / rust-conventions).
+async fn detect_merge_chain_extension(
+    graph: &TemporalGraph,
+    group_id: &str,
+    pair: (&str, &str),
+) -> Option<(String, &'static str)> {
+    let (loser_id, keeper_id) = pair;
+
+    // RED-proven in both directions 2026-08-19, levers removed after:
+    //   - forced `return None`      -> both `chain_detector_fires_*` FAIL (it can see)
+    //   - `group_id` filter dropped -> `chain_detector_is_namespace_scoped` FAILS
+    //     (the scoping is load-bearing, not decorative)
+    let mut rows = match graph
+        .conn
+        .query(
+            "SELECT id, inputs FROM graph_mutation_log \
+             WHERE kind = 'entity_merge' AND group_id = ?1 AND undone_at IS NULL \
+             ORDER BY id",
+            libsql::params![group_id],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                target: "kremory.l5",
+                group_id,
+                error = %e,
+                "merge-chain detector: could not read graph_mutation_log — chain \
+                 detection is DEGRADED for this merge, not clean"
+            );
+            return None;
+        }
+    };
+
+    loop {
+        let row = match rows.next().await {
+            Ok(Some(row)) => row,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(
+                    target: "kremory.l5",
+                    group_id,
+                    error = %e,
+                    "merge-chain detector: graph_mutation_log row read failed — \
+                     chain detection is DEGRADED for this merge, not clean"
+                );
+                return None;
+            }
+        };
+
+        let Ok(inputs_json) = row.get::<String>(1) else {
+            continue;
+        };
+        let Ok(prior) = serde_json::from_str::<MergeInputs>(&inputs_json) else {
+            // Producer-shape drift. Warn rather than skip silently: a detector
+            // that cannot parse its own producer's rows reports "no chains" for
+            // exactly the same reason a broken one does.
+            tracing::warn!(
+                target: "kremory.l5",
+                group_id,
+                mutation_id = row.get::<i64>(0).unwrap_or(-1),
+                "merge-chain detector: entity_merge row carries unparseable inputs \
+                 — this prior merge is INVISIBLE to chain detection"
+            );
+            continue;
+        };
+
+        // The loser previously absorbed something → this merge moves that
+        // absorbed identity a second, unadjudicated hop.
+        if prior.keeper == loser_id {
+            return Some((prior.loser, "loser_is_prior_survivor"));
+        }
+        // The keeper was previously absorbed → we are merging into a row that
+        // already lost its distinct identity.
+        if prior.loser == keeper_id {
+            return Some((prior.keeper, "keeper_is_prior_victim"));
+        }
+    }
+
+    None
+}
+
 /// [`apply_merge`] extended with an OPTIONAL `identity_verdict_audit` INSERT
 /// (ADR-063 spec §3.3/§5.1) inside the SAME `BEGIN IMMEDIATE` transaction as
 /// the destructive remap. `audit = None` preserves `apply_merge`'s exact
@@ -656,6 +765,72 @@ pub(crate) async fn apply_merge_with_audit(
         },
         Err(_) => (0, None),
     };
+
+    // ─── TD-223 write-time merge-chain DETECTOR (2026-08-19) ────────────────
+    //
+    // Runs BEFORE `snapshot_merge_pre_state` so the log holds only PRIOR merges
+    // — this merge's own row does not exist yet and cannot self-trigger.
+    //
+    // ⚠️ THIS OBSERVES. IT DOES NOT BLOCK, AND THAT IS DELIBERATE.
+    //
+    // The obvious design — "make invariant 6 a write-time gate so no pass can
+    // cascade" — has no correct trigger AT THIS LAYER, and the repo already said
+    // so before this was written. Invariant 6's own header
+    // (`kremory-eval/src/layer_b/graph_integrity.rs:16`) records that on the only
+    // evidence that exists (n = 2 databases) roughly 4 of 6 flags were
+    // catastrophic and roughly 2 were BENIGN, and states: "acceptable for a
+    // REPORTED metric and needs more evidence before it BLOCKS anything". A
+    // legitimate three-variant canonicalisation forms the same chain shape
+    // (`pottery class` -> `pottery` -> `pottery project`: two defensible merges,
+    // one flagged entity).
+    //
+    // The deeper reason is structural, not just evidential. By the time control
+    // reaches this executor EVERY caller has already justified the pair:
+    //   - Site #5   — an LLM verdict on this exact pair (`audit: Some`)
+    //   - L5        — its own per-pair cosine + lexical-variant rule
+    //   - cross-episode — the structural corroboration gate
+    // The fact that made the cascade wrong — "this pair is a RETARGET of a
+    // different adjudicated pair" — lives only in the CALLER's resolution loop
+    // and is unrecoverable here. Refusing chains at this layer would therefore
+    // block correct work while not being the check that catches the real defect.
+    // That refusal belongs where the retarget happens, and it is already there
+    // (`dream/acronym_nickname_recall.rs:575` merge arm, and the alias arm as of
+    // 2026-08-19).
+    //
+    // What this DOES close is the blind spot neither of those can see: Site #5's
+    // `merged_into` map is per-INVOCATION, so a chain formed across two dream
+    // cycles, or across two different sites, is invisible to it. This reads the
+    // DURABLE log, so it sees both — at zero false-positive cost, because it
+    // changes no behaviour. It is also what generates the per-site evidence base
+    // invariant 6 says is missing, so a future decision to BLOCK can rest on
+    // measured chain rates rather than on n = 2.
+    if let Some((prior_counterpart, kind)) =
+        detect_merge_chain_extension(graph, group_id, (loser_id, keeper_id)).await
+    {
+        counter!(
+            "kremory.identity.merge_chain_extension_total",
+            "site" => site.as_str(),
+            "kind" => kind,
+            "adjudicated" => if audit.is_some() { "true" } else { "false" },
+        )
+        .increment(1);
+        // ALWAYS-ON warn. A cascade that stayed silent for an entire corrupted
+        // run is the reason this exists; a debug-gated signal would reproduce
+        // exactly that failure.
+        tracing::warn!(
+            target: "kremory.l5",
+            group_id,
+            keeper_id,
+            loser_id,
+            prior_counterpart = %prior_counterpart,
+            chain_kind = kind,
+            site = site.as_str(),
+            adjudicated = audit.is_some(),
+            "merge EXTENDS a live merge chain — an identity is moving a second hop. \
+             Not blocked (see the detector's comment for why blocking here is wrong); \
+             this is the signal to inspect `graph_mutation_log`."
+        );
+    }
 
     // ─── Reversible-graph-mutations snapshot (sub-phase 1b, spec §4) ─────────
     // Capture the COMPLETE pre-state and INSERT the `graph_mutation_log` row
@@ -1526,6 +1701,116 @@ mod tests {
         row.get::<Option<f64>>(0)
             .expect("distance column")
             .map(|d| d as f32)
+    }
+
+    // ── TD-223 write-time merge-chain detector ────────────────────────────────
+    //
+    // Proven in BOTH directions, per the discipline that killed the two previous
+    // TD-222 remedies: a guard tested only on the cases it should catch is
+    // untested. `chain_detector_silent_on_independent_merges` and
+    // `chain_detector_is_namespace_scoped` are the over-block half — revert the
+    // detector to an unscoped or unconditional form and they fail.
+
+    /// Apply a real merge so `graph_mutation_log` gets a genuine producer-written
+    /// row. Deliberately NOT a hand-inserted log row: hand-shaped fixtures test a
+    /// model of the producer, and this detector's whole job is to read what the
+    /// producer actually writes.
+    /// Pair is a tuple `(loser, keeper)` to stay at 3 params — `clippy.toml` sets
+    /// `too-many-arguments-threshold = 3` and this crate bans `#[allow]` in `src`,
+    /// which includes `#[cfg(test)]` modules living in `src` files.
+    async fn merge(graph: &TemporalGraph, group_id: &str, pair: (&str, &str)) {
+        apply_entity_merge(
+            graph,
+            EntityMergeParams {
+                loser_id: pair.0,
+                keeper_id: pair.1,
+                group_id,
+                site: MergeSite::Canonicalize,
+                structural_signal: false,
+                embedder: None,
+            },
+        )
+        .await
+        .expect("apply merge");
+    }
+
+    #[tokio::test]
+    async fn chain_detector_fires_when_loser_previously_absorbed() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        for id in ["melanie", "caroline", "loved ones"] {
+            insert_entity_with_embedding(&graph, id, "g_chain", id, &unit_vec(384)).await;
+        }
+
+        // The measured cascade's first hop: melanie -> caroline.
+        merge(&graph, "g_chain", ("melanie", "caroline")).await;
+
+        // The second hop is what the detector must see: caroline is now a
+        // SURVIVOR, so absorbing it moves melanie's identity a second time to a
+        // destination nobody adjudicated against melanie.
+        let hit = detect_merge_chain_extension(&graph, "g_chain", ("caroline", "loved ones")).await;
+
+        let (prior, kind) = hit.expect("chain extension must be detected");
+        assert_eq!(kind, "loser_is_prior_survivor");
+        assert_eq!(prior, "melanie", "must name the identity being moved twice");
+    }
+
+    #[tokio::test]
+    async fn chain_detector_fires_when_keeper_was_previously_absorbed() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        for id in ["a", "b", "c"] {
+            insert_entity_with_embedding(&graph, id, "g_victim", id, &unit_vec(384)).await;
+        }
+        merge(&graph, "g_victim", ("a", "b")).await;
+
+        // `a` has ceased to be a distinct identity; merging INTO it is the other
+        // half of the chain shape.
+        let hit = detect_merge_chain_extension(&graph, "g_victim", ("c", "a")).await;
+
+        let (prior, kind) = hit.expect("keeper-is-prior-victim must be detected");
+        assert_eq!(kind, "keeper_is_prior_victim");
+        assert_eq!(prior, "b");
+    }
+
+    #[tokio::test]
+    async fn chain_detector_silent_on_independent_merges() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        for id in ["a", "b", "c", "d"] {
+            insert_entity_with_embedding(&graph, id, "g_indep", id, &unit_vec(384)).await;
+        }
+        merge(&graph, "g_indep", ("a", "b")).await;
+
+        // Two disjoint merges are not a chain. If this fires, the detector is
+        // flagging ordinary canonicalisation and would be pure noise on any
+        // corpus with more than one merge.
+        assert!(
+            detect_merge_chain_extension(&graph, "g_indep", ("c", "d"))
+                .await
+                .is_none(),
+            "independent merge must NOT be reported as a chain extension"
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_detector_is_namespace_scoped() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        insert_entity_with_embedding(&graph, "a", "ns_one", "a", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "b", "ns_one", "b", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "b", "ns_two", "b", &unit_vec(384)).await;
+        insert_entity_with_embedding(&graph, "c", "ns_two", "c", &unit_vec(384)).await;
+
+        merge(&graph, "ns_one", ("a", "b")).await;
+
+        // ADR-029d: the same `id` legitimately exists in two namespaces. An
+        // unscoped read would see ns_one's `b -> keeper` row and manufacture a
+        // chain in ns_two that does not exist — a false positive that grows with
+        // every namespace, which is exactly how an unscoped alias query
+        // previously matched 100 rows (`disambiguation/mod.rs:687`).
+        assert!(
+            detect_merge_chain_extension(&graph, "ns_two", ("b", "c"))
+                .await
+                .is_none(),
+            "a merge in ANOTHER namespace must not count as a chain here"
+        );
     }
 
     // ── T1: Empty group ───────────────────────────────────────────────────────
