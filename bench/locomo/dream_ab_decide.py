@@ -51,17 +51,26 @@ def merge_rows(db: Path) -> int:
 
 def per_question(results: Path) -> dict[str, bool]:
     """question-id -> correct?, from a harness results.json (substring scorer)."""
+    # Field is `is_correct` — VERIFIED against a real results.json, not guessed.
+    # The first draft looked for `correct`/`answer_in_memories`, neither of which
+    # exists; it would have returned {} and reported "NO SHARED QUESTIONS", which
+    # reads like a finding rather than a broken parser.
+    #
+    # 47 of the 199 questions are adversarial and deliberately UNSCORED for
+    # correctness (`is_correct` absent/None). They are excluded here rather than
+    # counted as wrong — scoring them would put the same constant in both arms and
+    # dilute the very difference this comparison is measuring.
     d = json.loads(results.read_text())
-    rows = d.get("results") or d.get("questions") or []
+    rows = d.get("results") or []
     out = {}
     for r in rows:
-        qid = str(r.get("question_id") or r.get("qid") or r.get("question"))
-        val = r.get("correct")
-        if val is None:
-            val = r.get("answer_in_memories")
+        qid = r.get("question_id")
+        if qid is None:
+            continue
+        val = r.get("is_correct")
         if val is None:
             continue
-        out[qid] = bool(val)
+        out[str(qid)] = bool(val)
     return out
 
 
