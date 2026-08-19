@@ -148,11 +148,41 @@ echo "    facts:    $(sqlite3 "$DB" 'SELECT recorded_at FROM facts;' | wc -l | t
 echo "    arm_failures: $(grep -ac 'arm_failure' "$LOG" || echo 0)   <- TD-200 confound control"
 
 # Extraction peak vs post-merge final — see the TRAJECTORY SAMPLER note above.
+#
+# ⚠️ FIXED 2026-08-19. FINAL was read from the trajectory's LAST ROW, and the
+# trajectory samples every 60s while dream's merges land in the closing seconds of
+# the harness run. So the last sample routinely PREDATES the merges. Measured on
+# the 2026-08-19 dream-on arm: this block printed
+#     entities final (post-dream): 189 / dream merge delta: 0
+# while the DB held 179 entities and `graph_mutation_log` held 10 canonicalize
+# merges. Anyone reading that log concludes dream merged NOTHING, on the very run
+# whose merges cost 9.9 nDCG.
+#
+# FINAL now comes from the DB, which is authoritative and is what the block 15
+# lines above was already reading correctly. PEAK still comes from the trajectory
+# because a maximum over time is the one thing the DB cannot answer after the fact
+# — with the caveat, stated rather than assumed, that a 60s sampler can MISS a
+# true peak between samples, so the delta is a LOWER BOUND on merges.
 if [ -s "$TRAJ" ]; then
   PEAK=$(awk -F, 'NR>1 && $4>m {m=$4} END{print m+0}' "$TRAJ")
-  FINAL=$(awk -F, 'END{print $4+0}' "$TRAJ")
-  echo "    entities peak (post-ingest): $PEAK"
-  echo "    entities final (post-dream): $FINAL"
-  echo "    dream merge delta:           $((PEAK - FINAL))  <- TD-186a: which stage owns the variance"
+  # `recorded_at`, never `id`/COUNT(*) — same vector-index trap documented above.
+  FINAL=$(sqlite3 "$DB" 'SELECT recorded_at FROM entities;' | wc -l | tr -d ' ')
+  LAST_SAMPLE=$(awk -F, 'END{print $4+0}' "$TRAJ")
+  echo "    entities peak (post-ingest): $PEAK   <- trajectory max, lower bound (60s sampling)"
+  echo "    entities final (post-dream): $FINAL   <- read from the DB, authoritative"
+  echo "    (last trajectory sample:     $LAST_SAMPLE   <- stale by design; NOT the final count)"
+  if [ "$PEAK" -ge "$FINAL" ]; then
+    echo "    dream merge delta:           $((PEAK - FINAL))  <- TD-186a: which stage owns the variance"
+  else
+    # Not an error: entities can be created after the peak sample, so the
+    # difference is not a merge count. Say so rather than printing a negative.
+    echo "    dream merge delta:           n/a (peak $PEAK < final $FINAL — the sampler missed the true peak)"
+  fi
+  # The authoritative merge count, independent of any sampling. The trajectory
+  # delta is a proxy; this is the ledger.
+  CANON_MERGES=$(sqlite3 "$DB" \
+    "SELECT count(*) FROM graph_mutation_log WHERE json_extract(inputs,'\$.site') = 'canonicalize';" \
+    2>/dev/null || echo "?")
+  echo "    canonicalize merges (log):   $CANON_MERGES  <- graph_mutation_log, not sampled"
   echo "    trajectory: $TRAJ"
 fi
