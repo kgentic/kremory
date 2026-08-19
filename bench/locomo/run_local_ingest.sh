@@ -106,9 +106,17 @@ SAMPLER_PID=$!
 trap 'kill "$SAMPLER_PID" 2>/dev/null || true; kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
 
 cd "$HERE"
+# `"${@:2}"` forwards any extra args after <label> straight to the harness — added
+# 2026-08-19 for the dream keep-or-cut A/B, whose dream-off arm is exactly
+# `--no-dream`. Nothing else about the invocation changes between the two arms,
+# which is what makes the comparison paired.
+#
+# The inline scorer stays `substring` for continuity with every prior run. The
+# PRIMARY metric for the keep-or-cut decision is qa-gen, scored OFFLINE from the
+# persisted `recalled_memories` by `qa_eval.py`, so it needs no flag here.
 python3 harness.py --mode codemem --server-mode recall --scorer substring \
   --conversations 0 --recall-limit 50 \
-  --base-url "$BASE" --output "$RESULT"
+  --base-url "$BASE" --output "$RESULT" "${@:2}"
 
 echo "=== [$LABEL] ingest+score done"
 echo "=== [$LABEL] extraction counts (COUNT(*) is unreliable on the vector-indexed"
