@@ -34,8 +34,13 @@ use crate::core::dream::provenance::{
     LoserEntityRow, MergeInputs, MergeSite, RepointedFact,
 };
 use crate::core::error::{Error, Result};
+use crate::core::identity_verdict::WriteDecision;
 use crate::core::provider::DynEmbeddingProvider;
 use crate::core::schema::TemporalGraph;
+
+mod adjudicate;
+
+pub use adjudicate::L5Adjudicator;
 
 // ─── Threshold constant ───────────────────────────────────────────────────────
 
@@ -65,9 +70,15 @@ pub struct CanonicalizationReport {
 // ─── Internal type ────────────────────────────────────────────────────────────
 
 /// Minimal entity representation loaded by [`canonicalize_surface_forms`].
-/// Only the fields needed for the similarity check + keeper selection.
+/// The fields needed for the similarity check, keeper selection, and — on the
+/// adjudicated path — the LLM's context.
 struct EntitySlot {
     id: String,
+    /// The entity's `properties.description`, empty when absent. Carried so the
+    /// adjudicator can separate a CATEGORY from an IDENTITY (`pottery class` vs
+    /// `pottery`) — a discrimination the bare names provably cannot support,
+    /// since both sides of the failure sit at token-Jaccard 0.500.
+    description: String,
     description_len: usize,
 }
 
@@ -113,6 +124,7 @@ pub async fn canonicalize_surface_forms(
             group_id,
             threshold,
             embedder: None,
+            adjudicator: None,
         },
     )
     .await
@@ -125,6 +137,20 @@ pub async fn canonicalize_surface_forms(
 pub struct CanonicalizeSurfaceFormsParams<'a> {
     pub group_id: &'a str,
     pub threshold: f32,
+    /// When `Some`, every candidate merge is ADJUDICATED before it is applied:
+    /// `names_lexically_compatible` is demoted from decider to NOMINATOR and the
+    /// shared ADR-063 `write_gate` makes the call (see [`adjudicate`]).
+    ///
+    /// `None` preserves the pre-adjudication behavior EXACTLY — the deterministic
+    /// cosine + lexical path, which is `write_gate` row 1's "clear case" by
+    /// another name. That is deliberate rather than a stub: a consumer running
+    /// `dream()` without a chat provider must not lose L5 entirely, and it makes
+    /// the ~8 existing abbreviation tests across 5 files an untouched regression
+    /// guard on this change.
+    ///
+    /// The live facade path always supplies `Some` — `dream()` already resolves a
+    /// chat provider and a model id.
+    pub adjudicator: Option<L5Adjudicator<'a>>,
     /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
     /// every merge this pass applies recomputes + persists the keeper's name
     /// embedding post-commit (see [`EntityMergeParams::embedder`]). `None`
@@ -148,6 +174,7 @@ pub async fn canonicalize_surface_forms_with_embedder(
         group_id,
         threshold,
         embedder,
+        adjudicator,
     } = params;
     // ── Step 1: load entity slots with embeddings ─────────────────────────────
     let slots = load_entity_slots(graph, group_id).await?;
@@ -178,9 +205,17 @@ pub async fn canonicalize_surface_forms_with_embedder(
     // name-compatibility gate as L4: a cosine-high pair whose names are lexically
     // incompatible is anisotropy, not identity — drop it. Entity ids ARE normalized
     // names, so they are the correct lexical comparand.
-    let pairs_to_merge: Vec<(String, String)> = raw_pairs
+    //
+    // ⚠️ This gate is a NOMINATOR, not a decider, whenever `adjudicator` is `Some`.
+    // Passing it earns a pair an LLM adjudication, NOT a merge. It stays at
+    // `L4_LEXICAL_JACCARD_MIN` = 0.5 on purpose: raising it to 0.6 was measured
+    // (it did recover the -9.9 nDCG) and REVERTED, because `alice j`/`alice
+    // johnson` is Jaccard 0.500 exactly like `pottery class`/`pottery`. No
+    // threshold separates a hypernym collapse from an abbreviated person name;
+    // the distinction is semantic. See `adjudicate`'s module header.
+    let pairs_to_merge: Vec<(String, String, f32)> = raw_pairs
         .into_iter()
-        .filter(|(loser_id, keeper_id)| {
+        .filter(|(loser_id, keeper_id, _cosine)| {
             let compatible =
                 crate::core::disambiguation::names_lexically_compatible(loser_id, keeper_id);
             if !compatible {
@@ -234,7 +269,16 @@ pub async fn canonicalize_surface_forms_with_embedder(
     let mut loser_to_keeper: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
-    for (loser_id, keeper_id) in &pairs_to_merge {
+    // Cosine of each nominated pair, keyed by (loser, keeper), for audit fidelity
+    // on the adjudicated path. Chain resolution below can produce a
+    // `(loser, effective_keeper)` pair absent from this map — that is a genuine
+    // `None`, recorded as such rather than back-filled with a neighbour's value.
+    let pair_cosine: std::collections::HashMap<(String, String), f32> = pairs_to_merge
+        .iter()
+        .map(|(loser_id, keeper_id, cosine)| ((loser_id.clone(), keeper_id.clone()), *cosine))
+        .collect();
+
+    for (loser_id, keeper_id, _cosine) in &pairs_to_merge {
         loser_to_keeper
             .entry(loser_id.clone())
             .and_modify(|existing_keeper| {
@@ -279,8 +323,10 @@ pub async fn canonicalize_surface_forms_with_embedder(
     let nogoods =
         crate::core::dream::provenance::reversal::load_merge_nogoods(graph, group_id).await?;
 
-    let mut merges_applied = 0usize;
-
+    // Resolve every loser to its effective keeper and apply the two cheap,
+    // deterministic filters (self-merge, nogood) BEFORE any LLM call — a banned or
+    // degenerate pair must never cost an adjudication.
+    let mut resolved: Vec<(String, String)> = Vec::new();
     for (loser_id, raw_keeper_id) in &loser_to_keeper {
         let effective_keeper = resolve_keeper(loser_id, raw_keeper_id, &loser_to_keeper);
 
@@ -302,26 +348,59 @@ pub async fn canonicalize_surface_forms_with_embedder(
             continue;
         }
 
-        tracing::info!(
-            target: "kremory.l5",
-            group_id,
-            loser_id = %loser_id,
-            keeper_id = %effective_keeper,
-            "kremory.l5.merge"
-        );
-
-        apply_merge(
-            graph,
-            ApplyMergeParams {
-                loser_id,
-                keeper_id: &effective_keeper,
-                group_id,
-                embedder,
-            },
-        )
-        .await?;
-        merges_applied += 1;
+        resolved.push((loser_id.clone(), effective_keeper));
     }
+
+    let merges_applied = match adjudicator {
+        // ── Adjudicated path (ADR-063) ────────────────────────────────────────
+        Some(adjudicator) => {
+            apply_adjudicated_merges(
+                graph,
+                AdjudicatedMergesParams {
+                    adjudicator: &adjudicator,
+                    resolved: &resolved,
+                    slots: &slots,
+                    pair_cosine: &pair_cosine,
+                    group_id,
+                    embedder,
+                },
+            )
+            .await?
+        }
+        // ── Deterministic path — pre-adjudication behavior, byte-for-byte ─────
+        //
+        // This is `write_gate` row 1's "clear case" (cosine above threshold AND a
+        // deterministic signal fired, no LLM consulted) expressed directly rather
+        // than routed through the gate. It is NOT routed through it on purpose:
+        // chain resolution can produce a `(loser, effective_keeper)` pair with no
+        // cosine of its own, and feeding the gate a fabricated `0.0` there would
+        // flip these merges to `Reject` — a behavior change for consumers with no
+        // chat provider, and a lie in any audit row it wrote.
+        None => {
+            let mut applied = 0usize;
+            for (loser_id, effective_keeper) in &resolved {
+                tracing::info!(
+                    target: "kremory.l5",
+                    group_id,
+                    loser_id = %loser_id,
+                    keeper_id = %effective_keeper,
+                    "kremory.l5.merge"
+                );
+                apply_merge(
+                    graph,
+                    ApplyMergeParams {
+                        loser_id,
+                        keeper_id: effective_keeper,
+                        group_id,
+                        embedder,
+                    },
+                )
+                .await?;
+                applied += 1;
+            }
+            applied
+        }
+    };
 
     counter!("kremory.l5.merges_applied_total").increment(merges_applied as u64);
     counter!("kremory.l5.canonicalization_runs_total").increment(1);
@@ -345,6 +424,166 @@ pub async fn canonicalize_surface_forms_with_embedder(
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
+/// Bundled params for [`apply_adjudicated_merges`] — args-as-object per TD-042
+/// (`clippy.toml` `too-many-arguments-threshold = 3`). `graph` stays a lead
+/// positional param (receiver-like dep, project convention).
+struct AdjudicatedMergesParams<'a> {
+    adjudicator: &'a L5Adjudicator<'a>,
+    /// `(loser_id, effective_keeper_id)` pairs surviving the self-merge and
+    /// nogood filters.
+    resolved: &'a [(String, String)],
+    slots: &'a [EntitySlot],
+    pair_cosine: &'a std::collections::HashMap<(String, String), f32>,
+    group_id: &'a str,
+    embedder: Option<&'a dyn DynEmbeddingProvider>,
+}
+
+/// Adjudicate every resolved candidate and apply only those the shared
+/// [`crate::core::identity_verdict::write_gate`] authorizes. Returns the number
+/// of merges actually applied.
+///
+/// Decision handling (ADR-063 spec §2.2, §5.1):
+/// - `Merge` — destructive remap, with its `identity_verdict_audit` row written
+///   INSIDE the same `BEGIN IMMEDIATE` (RISK-003: the audit row and the remap are
+///   one logical event, so a rollback must undo both).
+/// - `PotentialAlias` — audit row ONLY. Deliberately no `potential_alias` fact:
+///   Site #5's alias facts are inert at L7 because its pairs share zero tokens by
+///   construction, but L5's pairs are token-Jaccard ≥ 0.5 BY CONSTRUCTION, so they
+///   would pass `resolve_pending_aliases`' own lexical gate and re-merge on a later
+///   cycle — a back door to the very collapse this adjudicator exists to stop.
+/// - `Reject` — audit row when a verdict exists (see the module header of
+///   [`adjudicate`]: a rejected hypernym collapse IS the fix working, and its
+///   `reasoning` is the diagnostic surface), nothing otherwise.
+async fn apply_adjudicated_merges(
+    graph: &TemporalGraph,
+    params: AdjudicatedMergesParams<'_>,
+) -> Result<usize> {
+    let AdjudicatedMergesParams {
+        adjudicator,
+        resolved,
+        slots,
+        pair_cosine,
+        group_id,
+        embedder,
+    } = params;
+
+    if resolved.is_empty() {
+        return Ok(0);
+    }
+
+    let descriptions: std::collections::HashMap<&str, &str> = slots
+        .iter()
+        .map(|s| (s.id.as_str(), s.description.as_str()))
+        .collect();
+
+    let candidates: Vec<adjudicate::Candidate<'_>> = resolved
+        .iter()
+        .map(|(loser_id, keeper_id)| adjudicate::Candidate {
+            loser_id,
+            keeper_id,
+            cosine: pair_cosine
+                .get(&(loser_id.clone(), keeper_id.clone()))
+                .copied(),
+            loser_description: descriptions.get(loser_id.as_str()).copied().unwrap_or(""),
+            keeper_description: descriptions.get(keeper_id.as_str()).copied().unwrap_or(""),
+        })
+        .collect();
+
+    let decisions = adjudicate::adjudicate(
+        adjudicator,
+        adjudicate::AdjudicateParams {
+            candidates: &candidates,
+            group_id,
+        },
+    )
+    .await?;
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let mut merges_applied = 0usize;
+
+    for (candidate, adjudicated) in candidates.iter().zip(decisions.iter()) {
+        let cosine = candidate.cosine;
+        // The write_gate's own DeterministicSignal input, RE-DERIVED rather than
+        // carried over from the nominator — same discipline as `adjudicate::decide`,
+        // and it is what the audit column is defined to record. NOT the same field
+        // as `ApplyMergeWithAuditParams::structural_signal` below, which records
+        // STRUCTURAL corroboration and is correctly `false` for L5's pairwise
+        // cosine (`graph_mutation_log.inputs.structural_signal`).
+        let deterministic_signal = crate::core::disambiguation::names_lexically_compatible(
+            candidate.loser_id,
+            candidate.keeper_id,
+        );
+
+        let decision_label = match adjudicated.decision {
+            WriteDecision::Merge => "merge",
+            WriteDecision::PotentialAlias => "potential_alias",
+            WriteDecision::Reject => "reject",
+        };
+
+        // `candidate_a` = keeper, `candidate_b` = loser (the direction the merge
+        // would take), stated here because the column names do not say it.
+        let audit = IdentityVerdictAuditRow {
+            site: adjudicate::SITE_LABEL,
+            group_id,
+            candidate_a: candidate.keeper_id,
+            candidate_b: candidate.loser_id,
+            cosine,
+            structural_signal: deterministic_signal,
+            verdict: adjudicated.verdict.as_ref(),
+            decision: decision_label,
+            run_id: &run_id,
+        };
+
+        match adjudicated.decision {
+            WriteDecision::Merge => {
+                tracing::info!(
+                    target: "kremory.l5",
+                    group_id,
+                    loser_id = %candidate.loser_id,
+                    keeper_id = %candidate.keeper_id,
+                    adjudicated = true,
+                    "kremory.l5.merge"
+                );
+                apply_merge_with_audit(
+                    graph,
+                    ApplyMergeWithAuditParams {
+                        loser_id: candidate.loser_id,
+                        keeper_id: candidate.keeper_id,
+                        group_id,
+                        audit: Some(audit),
+                        site: MergeSite::Canonicalize,
+                        // L5 has no STRUCTURAL corroboration signal — its
+                        // deterministic signal is lexical. Unchanged from the
+                        // pre-adjudication path on purpose (Quinn L3 honesty).
+                        structural_signal: false,
+                        embedder,
+                    },
+                )
+                .await?;
+                merges_applied += 1;
+            }
+            WriteDecision::PotentialAlias | WriteDecision::Reject => {
+                // Nothing is written to the graph. Record WHY, but only when a
+                // verdict exists — a row with every `llm_*` column NULL says
+                // nothing the `write_gate_decision_total` counter has not said.
+                if adjudicated.verdict.is_some() {
+                    adjudicate::write_non_merge_audit_row(&graph.conn, audit).await?;
+                }
+                tracing::info!(
+                    target: "kremory.l5",
+                    group_id,
+                    loser_id = %candidate.loser_id,
+                    keeper_id = %candidate.keeper_id,
+                    decision = decision_label,
+                    "kremory.l5.merge_not_applied"
+                );
+            }
+        }
+    }
+
+    Ok(merges_applied)
+}
+
 /// Fetch all entity IDs and their description lengths from `group_id`.
 /// Only entities with a non-NULL embedding are returned (no embedding = can't
 /// compute cosine similarity).
@@ -363,13 +602,21 @@ async fn load_entity_slots(graph: &TemporalGraph, group_id: &str) -> Result<Vec<
     while let Some(row) = rows.next().await? {
         let id: String = row.get(0)?;
         let props_text: Option<String> = row.get(1)?;
-        let description_len = props_text
+        let description = props_text
             .as_deref()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .and_then(|v| v.get("description").and_then(|d| d.as_str()).map(str::len))
-            .unwrap_or(0);
+            .and_then(|v| {
+                v.get("description")
+                    .and_then(|d| d.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        // Derived, never separately parsed — the keeper heuristic and the
+        // adjudicator's context must not be able to disagree about the same field.
+        let description_len = description.len();
         slots.push(EntitySlot {
             id,
+            description,
             description_len,
         });
     }
@@ -377,15 +624,21 @@ async fn load_entity_slots(graph: &TemporalGraph, group_id: &str) -> Result<Vec<
 }
 
 /// For every (i, j) pair with i < j, compute cosine similarity via SQL.
-/// Returns `(loser_id, keeper_id)` pairs where similarity > threshold.
+/// Returns `(loser_id, keeper_id, similarity)` triples where similarity >
+/// threshold.
+///
+/// The similarity is carried out (rather than discarded once the comparison is
+/// made) so the adjudicated path can record the REAL cosine in each
+/// `identity_verdict_audit` row. It is audit fidelity, not a gate input — see
+/// `adjudicate`'s divergence 1.
 ///
 /// Keeper selection: longer description wins (LightRAG heuristic).
 async fn find_merge_pairs(
     graph: &TemporalGraph,
     slots: &[EntitySlot],
     threshold: f32,
-) -> Result<Vec<(String, String)>> {
-    let mut merge_pairs: Vec<(String, String)> = Vec::new();
+) -> Result<Vec<(String, String, f32)>> {
+    let mut merge_pairs: Vec<(String, String, f32)> = Vec::new();
 
     for i in 0..slots.len() {
         for j in (i + 1)..slots.len() {
@@ -425,7 +678,11 @@ async fn find_merge_pairs(
                     } else {
                         (j, i)
                     };
-                merge_pairs.push((slots[loser_idx].id.clone(), slots[keeper_idx].id.clone()));
+                merge_pairs.push((
+                    slots[loser_idx].id.clone(),
+                    slots[keeper_idx].id.clone(),
+                    similarity,
+                ));
             }
         }
     }

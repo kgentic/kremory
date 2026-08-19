@@ -18,6 +18,14 @@
 //! Deterministic (no real LLM): identical unit-vector embeddings force cosine
 //! ≈ 1.0, above both `L4_MERGE_THRESHOLD` (0.95, alias confirm) and
 //! `L5_CANONICALIZATION_THRESHOLD` (0.8, near-dup merge).
+//!
+//! ⚠️ "No real LLM" still holds; "no LLM call" does NOT, as of 2026-08-19. The
+//! `canonicalize` pass now ADJUDICATES every candidate merge through the shared
+//! ADR-063 write-gate (`core/canonicalization/adjudicate.rs`), which is
+//! fail-closed: no verdict ⇒ no merge. `dream_merges_near_duplicate_entities`
+//! therefore scripts a `MockChatProvider` verdict rather than using the null
+//! mock. Cosine and the lexical gate still decide which pairs are NOMINATED — the
+//! deterministic part of the claim above is unchanged.
 
 use std::sync::Arc;
 
@@ -67,7 +75,22 @@ async fn plant_entity(graph: &TemporalGraph, id: &str, group_id: &str, descripti
 }
 
 async fn open_mem(dir: &std::path::Path, ns: &Namespace) -> Memory {
-    let llm: Arc<dyn ChatProvider> = Arc::new(MockChatProvider::null());
+    open_mem_with_llm(dir, ns, Arc::new(MockChatProvider::null())).await
+}
+
+/// `open_mem` with a caller-supplied chat provider.
+///
+/// Needed since 2026-08-19: the L5 `canonicalize` pass is no longer purely
+/// deterministic. Every candidate merge is now ADJUDICATED through the shared
+/// ADR-063 `write_gate` (`core/canonicalization/adjudicate.rs`), and that gate is
+/// deliberately FAIL-CLOSED — a candidate with no LLM verdict is `Reject`ed, not
+/// merged. A `MockChatProvider::null()` therefore (correctly) produces zero
+/// canonicalize merges, so a test asserting a merge must script the verdict.
+async fn open_mem_with_llm(
+    dir: &std::path::Path,
+    ns: &Namespace,
+    llm: Arc<dyn ChatProvider>,
+) -> Memory {
     let emb: Arc<dyn DynEmbeddingProvider> = Arc::new(MockEmbeddingProvider::new(DIM));
     Memory::open(dir.join("phase2.db"))
         .with_llm(llm)
@@ -188,7 +211,21 @@ async fn dream_merges_near_duplicate_entities() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     let ns = Namespace::new("phase2-canon");
-    let mem = open_mem(dir.path(), &ns).await;
+    // Script the L5 adjudication verdict. `alice j` / `alice johnson` is the
+    // ABBREVIATED-PERSON-NAME case: token-Jaccard exactly 0.500, which is the same
+    // value as the hypernym collapses (`pottery class` / `pottery`) that cost
+    // -9.9 nDCG. No threshold separates the two, so the adjudicator is what keeps
+    // this merge while rejecting those — this test is the "still merges" half of
+    // that pair, and `adjudicate::tests` holds the "now rejected" half.
+    //
+    // The key matches the adjudication prompt's own wording, so only THAT call is
+    // answered; every other dream pass still sees the null mock's `""`.
+    let adjudication_verdict = r#"{"verdicts":[{"pair_id":0,"is_same_entity":true,"confidence":0.95,"reasoning":"alice j is an abbreviated form of the same person"}]}"#;
+    let llm: Arc<dyn ChatProvider> = Arc::new(MockChatProvider::with_response(
+        "Adjudicate the following entity pairs",
+        adjudication_verdict,
+    ));
+    let mem = open_mem_with_llm(dir.path(), &ns, llm).await;
     let gid = mem.group_id_for_test(&ns);
     let graph = mem
         .temporal_graph_for_test()
