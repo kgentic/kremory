@@ -43,8 +43,27 @@ if [[ -z "$resolved_start" ]]; then
   exit 1
 fi
 
+# ⚠️ The Resolved section's MEMBERS are themselves `## ` headings.
+#
+# This was `NR>s && /^## /` — "the section ends at the next level-2 heading". The
+# very next level-2 heading is `## TD-216`, TWO LINES below `## Resolved`, so the
+# exemption window was 2 lines wide and every closure record below it was reported
+# as a duplicate declaration. That is how this guard came to fail on NINE ids, all
+# of them legitimate: five closure records (TD-001/002/003/006/011) and four
+# follow-up rows (TD-184/186/187/195). A permanently-red guard is a disabled one.
+#
+# The register nests resolved entries at the SAME heading level as the section
+# that contains them, so containment is not encoded in the markup. The structural
+# rule that does work: the section ends at the next level-2 heading that is not
+# itself a TD entry (in practice, the next `## Session …`).
+#
+# `[0-9][0-9][0-9]` rather than `[0-9]{3}` — BSD awk does not enable ERE intervals
+# by default, and a silently-non-matching pattern here would restore the exact
+# 2-line window this comment exists to explain.
 resolved_end="$(
-  awk -v s="$resolved_start" 'NR>s && /^## / {print NR; exit}' "$REGISTER"
+  awk -v s="$resolved_start" '
+    NR > s && /^## / && $0 !~ /^## (~~)?TD-[0-9][0-9][0-9]/ { print NR; exit }
+  ' "$REGISTER"
 )"
 resolved_end="${resolved_end:-$(wc -l < "$REGISTER")}"
 
@@ -172,7 +191,12 @@ fi
 misfiled="$(
   awk -v s="$resolved_start" -v e="$resolved_end" '
     NR > s && NR < e {
-      if ($0 ~ /^### TD-[0-9]{3}/) { hdr = $0; hdrline = NR; reported = 0 }
+      # `#{2,3}` — resolved entries appear at BOTH heading levels. This matched
+      # `###` only, so every `## TD-nnn` entry was invisible to check 2. Combined
+      # with the 2-line window above, check 2 could not fire AT ALL: it was
+      # reporting clean while `## TD-216` sat one line inside `## Resolved`
+      # marked OPEN — the precise defect it was written to catch.
+      if ($0 ~ /^#[#]#? (~~)?TD-[0-9][0-9][0-9]/) { hdr = $0; hdrline = NR; reported = 0 }
       if (!reported && hdr != "" && $0 ~ /^\*\*Status\*\*:.*(OPEN|STILL OPEN|PARTIAL)/) {
         printf "      line %s: %s\n", hdrline, substr(hdr, 1, 110)
         reported = 1
