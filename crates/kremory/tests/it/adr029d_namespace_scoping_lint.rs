@@ -72,18 +72,23 @@ const ALLOWLIST: &[(&str, &str, &str)] = &[
          and this file contains exactly one `UPDATE entities`.)",
     ),
     // ── Test fixtures ───────────────────────────────────────────────────────
+    // Path updated 2026-08-19: `core/canonicalization.rs` became
+    // `core/canonicalization/mod.rs` (split-before-adding, to give the L5
+    // adjudicator its own file). Same three fixtures, unmoved within the file —
+    // the ratchet fired on BOTH sides of the rename (3 stale entries + 3 "new"
+    // unscoped writes), which is exactly the behaviour wanted from it.
     (
-        "core/canonicalization.rs",
+        "core/canonicalization/mod.rs",
         "UPDATE entities SET ner_confidence = 0.6 WHERE id =",
-        "OK: #[cfg(test)] fixture (mod tests begins ~:1417), single namespace",
+        "OK: #[cfg(test)] fixture (mod tests begins ~:1873), single namespace",
     ),
     (
-        "core/canonicalization.rs",
+        "core/canonicalization/mod.rs",
         "UPDATE entities SET ner_confidence = 0.8 WHERE id =",
         "OK: #[cfg(test)] fixture, single namespace",
     ),
     (
-        "core/canonicalization.rs",
+        "core/canonicalization/mod.rs",
         "UPDATE entities SET access_count = 7 WHERE id =",
         "OK: #[cfg(test)] fixture, single namespace",
     ),

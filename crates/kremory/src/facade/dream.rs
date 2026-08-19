@@ -593,10 +593,18 @@ impl<'a> DreamRequest<'a> {
 
         // Dream Pass — canonicalize (dream-phase-reconciliation-v2 §D3): merge
         // near-duplicate surface forms by embedding similarity above
-        // L5_CANONICALIZATION_THRESHOLD. Deterministic (no LLM). Ordered LAST so
-        // merges benefit from the corrected type distribution. Non-fatal.
+        // L5_CANONICALIZATION_THRESHOLD. Ordered LAST so merges benefit from the
+        // corrected type distribution. Non-fatal.
+        //
+        // NO LONGER DETERMINISTIC-ONLY: every candidate is now ADJUDICATED through
+        // the shared ADR-063 write_gate before it is applied. Measured 2026-08-19
+        // on LoCoMo conv0 (n=149, k=10): the unadjudicated pass cost -9.9 nDCG@10,
+        // all 10 of its merges being hypernym collapses that deleted the
+        // distinguishing token (`pottery class` -> `pottery`). See
+        // `core/canonicalization/adjudicate.rs`'s module header.
         if let Some(tg) = self.memory.temporal_graph.as_ref() {
             let group_id = namespace_to_group_id(&ns);
+            let canonicalize_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
             // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): thread the
             // embedder so the keeper's stored embedding is recomputed + persisted
             // after each merge instead of going stale.
@@ -609,6 +617,13 @@ impl<'a> DreamRequest<'a> {
                         group_id: &group_id,
                         threshold: crate::core::canonicalization::L5_CANONICALIZATION_THRESHOLD,
                         embedder: Some(self.memory.embedder.as_ref()),
+                        adjudicator: Some(crate::core::canonicalization::L5Adjudicator {
+                            llm: &canonicalize_llm,
+                            // TD-094-style threading: reuse the resolved dream
+                            // model id. Passing no model is the bug that ran
+                            // dream's LLM passes empty.
+                            model_id: dream_model_id,
+                        }),
                     },
                 ),
             )
