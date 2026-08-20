@@ -253,6 +253,7 @@ async fn sink_none_does_not_panic() {
     let request = DeferredRequest {
         text: "three distinct speakers attended the meeting".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -394,6 +395,7 @@ async fn sink_entity_extracted_fires_per_entity() {
     let request = DeferredRequest {
         text: "three colleagues participated in the discussion".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -476,6 +478,7 @@ async fn sink_edge_added_fires_per_episodic_link() {
     let request = DeferredRequest {
         text: "two participants reviewed the findings".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -545,6 +548,7 @@ async fn sink_ingestion_error_fires_on_verify_fail() {
     let request = DeferredRequest {
         text: "this will fail during extraction".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -626,6 +630,7 @@ async fn sink_entities_ready_fires_before_complete() {
     let request = DeferredRequest {
         text: "two team members discussed scope".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -737,6 +742,7 @@ async fn sink_entity_extracted_emits_counter() {
     let request = DeferredRequest {
         text: "two people met at the summit".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -818,6 +824,7 @@ async fn sink_stage_transition_emits_counter() {
     let request = DeferredRequest {
         text: "the workshop started with introductions".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -893,6 +900,7 @@ async fn sink_callback_duration_emits_histogram() {
     let request = DeferredRequest {
         text: "the session covered key outcomes".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -965,6 +973,7 @@ async fn sink_community_updated_does_not_fire_in_v023() {
     let request = DeferredRequest {
         text: "this episode tests the community updated sentinel".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -1024,6 +1033,7 @@ async fn sink_extract_fail_does_not_fire_entities_ready() {
     let request = DeferredRequest {
         text: "the extraction will fail before any entities write".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -1095,6 +1105,7 @@ async fn sink_verify_stage_does_not_fire_pending() {
     let request = DeferredRequest {
         text: "only phase two events should fire here".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,

@@ -44,6 +44,16 @@ pub use ingestor::{BackgroundIngestor, IngestGuard, SendParams};
 pub(crate) struct IngestRequest {
     pub text: String,
     pub reference_time: Option<DateTime<Utc>>,
+    /// TD-187 Gap 1 (2026-08-20): the caller-DECLARED document anchor
+    /// (`SourceRef::published_at`) ONLY — never `reference_time` /
+    /// `occurred_at` / wall-clock. See
+    /// [`crate::core::intelligence::ExtractionContext::reference_time`] for
+    /// why this must stay a distinct channel from `reference_time` above.
+    /// Threaded through to [`super::deferred_pipeline`]'s Phase 1 → Phase 2
+    /// handoff, then to `IngestDeferredParams::declared_reference_time` at
+    /// Phase 2's `ingest_deferred` call — mirrors the foreground path's
+    /// `IngestParams::declared_reference_time` (`core/ingest/mod.rs`).
+    pub declared_reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
     pub content_type: Option<ContentType>,
     /// Caller-set batch identifier.  `None` when the caller is not tracking a
@@ -71,6 +81,14 @@ pub(crate) struct IngestRequest {
 pub struct DeferredRequest {
     pub text: String,
     pub reference_time: Option<DateTime<Utc>>,
+    /// TD-187 Gap 1 (2026-08-20): propagated from [`IngestRequest::declared_reference_time`]
+    /// at the Phase 1 → Phase 2 handoff (`deferred_pipeline.rs`'s `process_item`),
+    /// then read at the `ingest_deferred` call site
+    /// (`deferred_pipeline.rs`'s `process_deferred`) and passed as
+    /// `IngestDeferredParams::declared_reference_time`. See
+    /// [`IngestRequest::declared_reference_time`] for why this must stay a
+    /// distinct channel from `reference_time` above.
+    pub declared_reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
     pub content_type: Option<ContentType>,
     /// The episode ID produced by Phase 1, so deferred facts link to the same episode.

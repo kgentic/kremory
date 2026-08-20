@@ -247,6 +247,7 @@ async fn run_verify_stage_path_alpha_writes_entities_and_transitions_status_to_v
     let request = DeferredRequest {
         text: "Alice met Bob at the Acme conference.".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -327,6 +328,7 @@ async fn run_verify_stage_path_beta_writes_entities_and_transitions_status_to_ve
     let request = DeferredRequest {
         text: "Carol joined Globex as head of engineering.".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,
@@ -398,6 +400,7 @@ async fn run_verify_stage_failure_transitions_status_to_failed() {
     let request = DeferredRequest {
         text: "Dan presented the quarterly results.".to_string(),
         reference_time: None,
+        declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
         group_id: None,
         content_type: None,
         episode_id,

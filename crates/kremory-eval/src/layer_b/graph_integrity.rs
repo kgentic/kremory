@@ -1,6 +1,6 @@
 //! Graph integrity invariants for kremory's SQLite storage layer.
 //!
-//! Six programmatic invariants — no LLM judge, sub-millisecond execution.
+//! Seven programmatic invariants — no LLM judge, sub-millisecond execution.
 //! Any invariant violation = FAIL (correctness invariant, no score threshold).
 //!
 //! # Invariants
@@ -15,6 +15,8 @@
 //! | 5 | `episode_edge_presence` | Every entity has ≥1 `episodic_edge` row                          |
 //! | 6 | `no_transitive_merge_chain` | No entity is the SURVIVOR of one live merge and the VICTIM   |
 //! |   |                         | of another (see "Why invariant 6 is different" below)            |
+//! | 7 | `world_time_grounding`  | `valid_from` shows real episode-anchored date resolution, not    |
+//! |   |                         | ingest wall-clock (TD-187/TD-229; see below — breaks convention) |
 //!
 //! # Why invariant 6 is different — it reads HISTORY, not state (TD-223)
 //!
@@ -52,6 +54,43 @@
 //!
 //! Evidence base is n = 2 databases: enough to reject invariants 1–5 as blind,
 //! NOT enough to establish a false-positive rate.
+//!
+//! # Why invariant 7 deliberately breaks `empty_graph_all_pass` (TD-187 / TD-229)
+//!
+//! `world_time_grounding`'s G-POP guard fails any run with fewer than 200
+//! episode-linked facts — INCLUDING an empty graph. Every other invariant in
+//! this file passes vacuously on an empty graph (nothing to violate). This one
+//! doesn't, on purpose: TD-224 already proved that a graph too small/empty to
+//! say anything is exactly the shape that makes a metric report a perfect
+//! score while measuring nothing. `empty_graph_all_pass` (the test) now
+//! expects exactly one failure, `world_time_grounding`, and asserts the other
+//! six still pass — don't "fix" that test by loosening G-POP.
+//!
+//! # Why `world_time_grounding` measures `valid_from`, not `valid_to`
+//!
+//! TD-187's fix (commits `4e4eaa3e`, `f6df1d25`) threads the episode's own
+//! declared date into extraction and persists the resolved date into
+//! `valid_from` — when a fact STARTS being true in world time. It does not
+//! touch `valid_to` — when a fact STOPS being true in world time — which
+//! remains NULL on every fact measured so far (TD-229, post-split). A metric
+//! that reasoned about `valid_to` would report a perfect score on every
+//! database forever, by construction (TD-224's vacuity pattern, recreated).
+//! Do not extend this invariant to score supersession/archive in world time
+//! until `valid_to` extraction exists — there is nothing to measure yet.
+//!
+//! # The inverted-vacuity trap — same-day agreement is BANNED from the pass condition
+//!
+//! Measured directly (2026-08-20), same-day `date(valid_from) == date(episode
+//! timestamp)` agreement scores **HIGHER on the BROKEN corpus (100%, all
+//! 5,106 facts in `.context/full-corpus.db`) than on the FIXED one (95.2%,
+//! 359/377 facts in `.context/td186a-variance/dream-on-adj.db`)** — because
+//! the pre-fix bug stamps every fact's `valid_from` from ingest wall-clock,
+//! which trivially always equals the episode's own (also wall-clock, pre-fix)
+//! timestamp. If same-day agreement ever appears in this invariant's pass
+//! condition, a regression back to the pre-fix bug would make the score go
+//! UP, not down. The four guards below (G-POP, G-DAYS, G-BACKREF, G-FWD) were
+//! chosen specifically because none of them can be satisfied by the
+//! same-day-collapse shape.
 //!
 //! # Usage
 //!
@@ -580,11 +619,166 @@ async fn check_no_transitive_merge_chain(
     ))
 }
 
+/// Check invariant 7: `valid_from` shows real episode-anchored world-time
+/// resolution, not ingest wall-clock (TD-187 / TD-229).
+///
+/// Joins every live-or-superseded fact to its source episode
+/// (`f.source_episode_id = e.id`) and compares `date(f.valid_from)` against
+/// `date(e.timestamp)` — the episode's OWN declared date, not
+/// `e.recorded_at` (ingest wall-clock in every database measured, pre- and
+/// post-fix; see the correction recorded against TD-187 in the tech-debt
+/// register, 2026-08-20, before trusting `recorded_at` as an anchor).
+/// `predicate = 'potential_alias'` facts are excluded — a dream-generated
+/// system assertion, correctly ingest-dated, not a grounding claim.
+///
+/// Deliberately queries the RAW `facts` table via `graph.conn` rather than
+/// `facts_at(now)` (used by invariants 1–5): this invariant is about whether
+/// the EXTRACTOR grounded `valid_from` correctly at insertion time, which
+/// holds or doesn't for every fact ever produced — including ones since
+/// superseded. Restricting to only-currently-live facts via `facts_at(now)`
+/// would arbitrarily undercount and could mask a grounding failure specific
+/// to the superseded population.
+///
+/// Four non-vacuity guards, all of which must be satisfied. See the module
+/// doc "The inverted-vacuity trap" section for why same-day agreement can
+/// never appear here:
+///
+/// - **G-POP**: `n_linked >= 200` — the TD-224 defence; an empty/tiny graph
+///   must NOT pass. Deliberately breaks `empty_graph_all_pass` (see module
+///   doc).
+/// - **G-DAYS**: `distinct_days >= 10` — measured: broken corpus 1, fixed
+///   corpus 31.
+/// - **G-BACKREF** (load-bearing): `back >= 8` AND `back_pct >= 2.0` — a
+///   pipeline with no date anchor CANNOT date a fact before its own episode.
+///   Measured: broken corpus 0, fixed corpus 18 (4.8%).
+/// - **G-FWD**: `fwd_pct <= 3.0` — hallucinated-future ceiling. Measured:
+///   both corpora 0.0% (see the register's TD-187 entry for why this is
+///   reported as "untested by this corpus", not "confirmed working").
+async fn check_world_time_grounding(graph: &TemporalGraph) -> EvalError<InvariantResult> {
+    const NAME: &str = "world_time_grounding";
+    const MIN_LINKED: i64 = 200;
+    const MIN_DISTINCT_DAYS: i64 = 10;
+    const MIN_BACK: i64 = 8;
+    const MIN_BACK_PCT: f64 = 2.0;
+    const MAX_FWD_PCT: f64 = 3.0;
+
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT
+                COUNT(1) AS n_linked,
+                COUNT(DISTINCT date(f.valid_from)) AS distinct_days,
+                SUM(CASE WHEN date(f.valid_from) < date(e.timestamp) THEN 1 ELSE 0 END) AS back,
+                SUM(CASE WHEN date(f.valid_from) = date(e.timestamp) THEN 1 ELSE 0 END) AS same_day,
+                SUM(CASE WHEN date(f.valid_from) > date(e.timestamp) THEN 1 ELSE 0 END) AS fwd
+             FROM facts f
+             JOIN episodes e ON f.source_episode_id = e.id
+             WHERE f.predicate != 'potential_alias'",
+            (),
+        )
+        .await
+        .map_err(|e| EvalErr::Other(format!("world_time_grounding query failed: {}", e)))?;
+
+    let row = rows
+        .next()
+        .await
+        .map_err(|e| EvalErr::Other(format!("world_time_grounding row read failed: {}", e)))?
+        .ok_or_else(|| {
+            EvalErr::Other("world_time_grounding query returned no row (should be impossible — it's an unconditional aggregate)".into())
+        })?;
+
+    let n_linked = row
+        .get::<i64>(0)
+        .map_err(|e| EvalErr::Other(format!("world_time_grounding n_linked read failed: {}", e)))?;
+    let distinct_days = row.get::<i64>(1).map_err(|e| {
+        EvalErr::Other(format!("world_time_grounding distinct_days read failed: {}", e))
+    })?;
+    let back = row
+        .get::<Option<i64>>(2)
+        .map_err(|e| EvalErr::Other(format!("world_time_grounding back read failed: {}", e)))?
+        .unwrap_or(0);
+    let same_day = row
+        .get::<Option<i64>>(3)
+        .map_err(|e| EvalErr::Other(format!("world_time_grounding same_day read failed: {}", e)))?
+        .unwrap_or(0);
+    let fwd = row
+        .get::<Option<i64>>(4)
+        .map_err(|e| EvalErr::Other(format!("world_time_grounding fwd read failed: {}", e)))?
+        .unwrap_or(0);
+
+    let back_pct = if n_linked > 0 {
+        100.0 * back as f64 / n_linked as f64
+    } else {
+        0.0
+    };
+    let fwd_pct = if n_linked > 0 {
+        100.0 * fwd as f64 / n_linked as f64
+    } else {
+        0.0
+    };
+
+    let mut violations: Vec<String> = Vec::new();
+    if n_linked < MIN_LINKED {
+        violations.push(format!(
+            "G-POP: n_linked={} < {} (population too small/absent to say anything — TD-224 defence)",
+            n_linked, MIN_LINKED
+        ));
+    }
+    if distinct_days < MIN_DISTINCT_DAYS {
+        violations.push(format!(
+            "G-DAYS: distinct_days={} < {} (broken corpus measured 1; fixed corpus measured 31)",
+            distinct_days, MIN_DISTINCT_DAYS
+        ));
+    }
+    if back < MIN_BACK || back_pct < MIN_BACK_PCT {
+        violations.push(format!(
+            "G-BACKREF: back={} ({:.2}%) — needs back>={} AND back_pct>={:.1}% (a pipeline with no date anchor cannot date a fact before its own episode)",
+            back, back_pct, MIN_BACK, MIN_BACK_PCT
+        ));
+    }
+    if fwd_pct > MAX_FWD_PCT {
+        violations.push(format!(
+            "G-FWD: fwd_pct={:.2}% > {:.1}% (hallucinated-future ceiling)",
+            fwd_pct, MAX_FWD_PCT
+        ));
+    }
+
+    let actual = format!(
+        "n_linked={} distinct_days={} back={} ({:.2}%) same_day={} ({:.2}%) fwd={} ({:.2}%)",
+        n_linked,
+        distinct_days,
+        back,
+        back_pct,
+        same_day,
+        if n_linked > 0 {
+            100.0 * same_day as f64 / n_linked as f64
+        } else {
+            0.0
+        },
+        fwd,
+        fwd_pct,
+    );
+
+    if violations.is_empty() {
+        Ok(InvariantResult::pass(NAME, actual))
+    } else {
+        Ok(InvariantResult::fail(
+            NAME,
+            format!(
+                "n_linked>={} AND distinct_days>={} AND (back>={} AND back_pct>={:.1}%) AND fwd_pct<={:.1}%",
+                MIN_LINKED, MIN_DISTINCT_DAYS, MIN_BACK, MIN_BACK_PCT, MAX_FWD_PCT
+            ),
+            actual,
+            violations.join("; "),
+        ))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // run_invariants — public entry point
 // ---------------------------------------------------------------------------
 
-/// Run all 6 graph integrity invariants and return a consolidated report.
+/// Run all 7 graph integrity invariants and return a consolidated report.
 ///
 /// Gate: any invariant failure = report `passed = false`.
 /// Sub-millisecond execution (no LLM judge).
@@ -592,7 +786,7 @@ pub async fn run_invariants(
     graph: &TemporalGraph,
     config: &IntegrityConfig,
 ) -> EvalError<IntegrityReport> {
-    let mut results = Vec::with_capacity(6);
+    let mut results = Vec::with_capacity(7);
 
     results.push(check_no_orphan_nodes(graph, config.allow_isolated_entity_count).await?);
     results.push(check_no_duplicate_edges(graph).await?);
@@ -600,6 +794,7 @@ pub async fn run_invariants(
     results.push(check_all_namespaces_present(graph, &config.expected_namespaces).await?);
     results.push(check_episode_edge_presence(graph).await?);
     results.push(check_no_transitive_merge_chain(graph, config.allow_merge_chain_count).await?);
+    results.push(check_world_time_grounding(graph).await?);
 
     Ok(IntegrityReport::new(results))
 }
@@ -620,12 +815,28 @@ mod tests {
             .expect("open_in_memory")
     }
 
+    /// NOT `all_passed()` any more — invariant 7 (`world_time_grounding`)
+    /// deliberately fails on an empty graph (G-POP, TD-224 defence; see the
+    /// module doc "Why invariant 7 deliberately breaks `empty_graph_all_pass`").
+    /// This test now proves the OTHER SIX still pass vacuously on nothing,
+    /// while the new one correctly refuses to.
     #[tokio::test]
-    async fn empty_graph_all_pass() {
+    async fn empty_graph_all_pass_except_world_time_grounding() {
         let graph = empty_graph().await;
         let config = IntegrityConfig::default();
         let report = run_invariants(&graph, &config).await.unwrap();
-        assert!(report.all_passed(), "failures: {:?}", report.failures());
+        assert!(
+            !report.all_passed(),
+            "world_time_grounding should fail on an empty graph, but everything passed"
+        );
+        let failures = report.failures();
+        assert_eq!(
+            failures.len(),
+            1,
+            "expected exactly one failure (world_time_grounding), got: {:?}",
+            failures
+        );
+        assert_eq!(failures[0].name, "world_time_grounding");
     }
 
     #[tokio::test]
@@ -671,7 +882,19 @@ mod tests {
             ..Default::default()
         };
         let report = run_invariants(&graph, &config).await.unwrap();
-        assert!(report.all_passed(), "failures: {:?}", report.failures());
+        // world_time_grounding fails here too (1 fact, nowhere near G-POP's
+        // 200 floor) — this test is specifically about the orphan check, so
+        // assert THAT one directly rather than `all_passed()`.
+        let orphan_result = report
+            .invariants
+            .iter()
+            .find(|r| r.name == "no_orphan_nodes")
+            .unwrap();
+        assert!(
+            orphan_result.passed,
+            "orphan check should pass: {:?}",
+            orphan_result
+        );
     }
 
     #[tokio::test]
@@ -1082,5 +1305,278 @@ mod tests {
             .failures()
             .iter()
             .any(|f| f.name == "no_transitive_merge_chain"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Invariant 7 — world_time_grounding (TD-187 / TD-229)
+    // -----------------------------------------------------------------------
+
+    /// G-POP directly: an empty graph has 0 episode-linked facts, nowhere
+    /// near the 200 floor. This is the TD-224 defence — an empty/tiny graph
+    /// must NOT pass a metric that's supposed to say something meaningful.
+    #[tokio::test]
+    async fn world_time_check_fails_on_empty_graph() {
+        let graph = empty_graph().await;
+        let result = check_world_time_grounding(&graph).await.unwrap();
+        assert!(!result.passed, "empty graph should fail G-POP: {:?}", result);
+        assert!(
+            result.details.contains("G-POP"),
+            "failure should name G-POP: {:?}",
+            result
+        );
+    }
+
+    /// Plants a one-timestamp graph — every fact dated the same single day as
+    /// its episode, same shape as the pre-fix bug (ingest wall-clock stamping
+    /// both `valid_from` and the episode's own `timestamp` identically). Small
+    /// population too, so this trips both G-POP and G-DAYS. The point isn't
+    /// which guard fires — it's proving `run_invariants` actually surfaces
+    /// `world_time_grounding` in `failures()`, catching "exists but never
+    /// pushed into the results vec".
+    #[tokio::test]
+    async fn world_time_check_is_wired_into_run_invariants() {
+        let graph = empty_graph().await;
+        graph
+            .insert_entity(InsertEntityParams {
+                id: "e1",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        let anchor = Utc::now();
+        let episode_id = graph
+            .insert_episode(InsertEpisodeParams {
+                content: "single conversation",
+                timestamp: anchor,
+                source_type: None,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+        for i in 0..5 {
+            let obj = format!("thing-{}", i);
+            graph
+                .insert_fact(
+                    FactInsert::new("e1", "mentions", anchor)
+                        .object_value(&obj)
+                        .source_episode_id(episode_id),
+                )
+                .await
+                .unwrap();
+        }
+
+        let report = run_invariants(&graph, &IntegrityConfig::default())
+            .await
+            .unwrap();
+        assert!(
+            report
+                .failures()
+                .iter()
+                .any(|f| f.name == "world_time_grounding"),
+            "world_time_grounding not surfaced in failures(): {:?}",
+            report.failures()
+        );
+    }
+
+    /// Back-dated facts across many distinct days, well over every threshold.
+    /// One fixed-timestamp episode ("2024-06-15") anchors 25 distinct days of
+    /// facts (10 per day): day offset 0 is same-day (10 facts), offsets 1–24
+    /// are all BACK-references (240 facts, 96%) — exactly the shape only
+    /// possible when the extractor resolved relative dates against the
+    /// episode anchor rather than stamping ingest wall-clock. Catches an
+    /// invariant that fails on everything (a check that's accidentally
+    /// inverted, or whose SQL never matches a real row).
+    #[tokio::test]
+    async fn world_time_check_passes_on_grounded_fixture() {
+        let graph = empty_graph().await;
+        graph
+            .insert_entity(InsertEntityParams {
+                id: "e1",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        let anchor: chrono::DateTime<Utc> = "2024-06-15T12:00:00Z".parse().unwrap();
+        let episode_id = graph
+            .insert_episode(InsertEpisodeParams {
+                content: "a long conversation covering many past events",
+                timestamp: anchor,
+                source_type: None,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+
+        for day_offset in 0..25i64 {
+            let valid_from = anchor - chrono::Duration::days(day_offset);
+            for i in 0..10 {
+                let obj = format!("event-{}-{}", day_offset, i);
+                graph
+                    .insert_fact(
+                        FactInsert::new("e1", "recalls", valid_from)
+                            .object_value(&obj)
+                            .source_episode_id(episode_id),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let result = check_world_time_grounding(&graph).await.unwrap();
+        assert!(result.passed, "grounded fixture should pass: {:?}", result);
+        assert!(
+            result.actual.contains("n_linked=250"),
+            "expected 250 linked facts: {:?}",
+            result
+        );
+    }
+
+    /// G-FWD directly, isolated from the other three guards. Per S-9 ("a
+    /// non-vacuity guard cannot be made to fail on demand — it is
+    /// decorative"): every OTHER test in this module that exercises a
+    /// failure (`world_time_check_fails_on_empty_graph`, the real-database
+    /// broken-corpus control) trips G-POP and/or G-DAYS/G-BACKREF — none of
+    /// them, nor either real corpus measured this session, ever produced a
+    /// `fwd_pct` above 0.0%. Without this test, G-FWD's `> 3.0` branch has
+    /// literally never been exercised RED, which is exactly what S-9 forbids
+    /// trusting.
+    ///
+    /// Fixture: population 300 across 30 distinct days — 200 back-dated
+    /// (offsets 1–20, satisfies G-BACKREF comfortably), 10 same-day, and 90
+    /// FORWARD-dated (offsets −1..−9, 30% of the population — comfortably
+    /// over the 3.0% ceiling). G-POP (300≥200) and G-DAYS (30≥10) also pass,
+    /// so G-FWD is the ONLY guard expected to fire — isolating it, not just
+    /// proving "some guard can fail".
+    #[tokio::test]
+    async fn world_time_check_fails_when_forward_dates_exceed_ceiling() {
+        let graph = empty_graph().await;
+        graph
+            .insert_entity(InsertEntityParams {
+                id: "e1",
+                entity_type_id: 0,
+                properties: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        let anchor: chrono::DateTime<Utc> = "2024-06-15T12:00:00Z".parse().unwrap();
+        let episode_id = graph
+            .insert_episode(InsertEpisodeParams {
+                content: "a conversation with an implausible amount of future-planning",
+                timestamp: anchor,
+                source_type: None,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+
+        // Same-day: 10 facts at offset 0.
+        for i in 0..10 {
+            let obj = format!("same-{}", i);
+            graph
+                .insert_fact(
+                    FactInsert::new("e1", "recalls", anchor)
+                        .object_value(&obj)
+                        .source_episode_id(episode_id),
+                )
+                .await
+                .unwrap();
+        }
+        // Back-dated: offsets 1..=20, 10 facts/day = 200 facts.
+        for day_offset in 1..=20i64 {
+            let valid_from = anchor - chrono::Duration::days(day_offset);
+            for i in 0..10 {
+                let obj = format!("back-{}-{}", day_offset, i);
+                graph
+                    .insert_fact(
+                        FactInsert::new("e1", "recalls", valid_from)
+                            .object_value(&obj)
+                            .source_episode_id(episode_id),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        // Forward-dated: offsets 1..=9 INTO THE FUTURE, 10 facts/day = 90 facts.
+        for day_offset in 1..=9i64 {
+            let valid_from = anchor + chrono::Duration::days(day_offset);
+            for i in 0..10 {
+                let obj = format!("fwd-{}-{}", day_offset, i);
+                graph
+                    .insert_fact(
+                        FactInsert::new("e1", "plans", valid_from)
+                            .object_value(&obj)
+                            .source_episode_id(episode_id),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let result = check_world_time_grounding(&graph).await.unwrap();
+        assert!(
+            !result.passed,
+            "fixture with 30% forward-dated facts should fail G-FWD: {:?}",
+            result
+        );
+        assert!(
+            result.details.contains("G-FWD"),
+            "failure should name G-FWD specifically: {:?}",
+            result
+        );
+        assert!(
+            !result.details.contains("G-POP")
+                && !result.details.contains("G-DAYS")
+                && !result.details.contains("G-BACKREF"),
+            "G-FWD should be the ONLY guard failing on this fixture (n_linked=300, \
+             distinct_days=30, back=200 all comfortably clear their thresholds) — \
+             a co-failure here would mean the fixture doesn't actually isolate \
+             G-FWD: {:?}",
+            result
+        );
+    }
+
+    /// Drive invariant 7 against a REAL on-disk graph, on the SAME two
+    /// artefacts cited in the tech-debt register's TD-187 correction (2026-08-20)
+    /// — this is the G-CONTROL guard: proof the instrument can actually detect
+    /// both the broken and fixed state, not just pass by construction.
+    ///
+    /// Unlike `chain_check_against_real_database` (print-only), this test
+    /// ASSERTS the verdict, so a `cargo test` run's own exit code is the
+    /// observable signal:
+    ///
+    /// ```text
+    /// cp .context/full-corpus.db /tmp/ctl-broken.db
+    /// cp .context/td186a-variance/dream-on-adj.db /tmp/ctl-ok.db
+    /// KREMORY_GI_DIM=768 KREMORY_GI_DB=/tmp/ctl-broken.db cargo test -p kremory-eval --lib \
+    ///     world_time_check_against_real_database -- --ignored   # MUST FAIL (red)
+    /// KREMORY_GI_DIM=768 KREMORY_GI_DB=/tmp/ctl-ok.db     cargo test -p kremory-eval --lib \
+    ///     world_time_check_against_real_database -- --ignored   # MUST PASS (green)
+    /// ```
+    ///
+    /// Copy the database first — `TemporalGraph::open` may run migrations and
+    /// so can mutate the file.
+    #[tokio::test]
+    #[ignore = "requires KREMORY_GI_DB pointing at a real on-disk graph"]
+    async fn world_time_check_against_real_database() {
+        let path = std::env::var("KREMORY_GI_DB").expect("KREMORY_GI_DB not set");
+        let dim: usize = std::env::var("KREMORY_GI_DIM")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(768);
+        let graph = TemporalGraph::open_with_dim(&path, dim)
+            .await
+            .expect("open graph");
+        let result = check_world_time_grounding(&graph).await.expect("check_world_time_grounding");
+        println!(
+            "KREMORY_GI_DB={} passed={} actual={} details={}",
+            path, result.passed, result.actual, result.details
+        );
+        assert!(
+            result.passed,
+            "world_time_grounding verdict against KREMORY_GI_DB={}: expected={} actual={} details={}",
+            path, result.expected, result.actual, result.details
+        );
     }
 }
