@@ -190,6 +190,7 @@ async fn spike_c_background_ingestor_plus_engine_handle_concurrent() {
             format!("Spike C background episode {i}: concurrent with EngineGraphHandle"),
             SendParams {
                 reference_time: None,
+                declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
                 group_id: Some("spike-c-group".to_string()),
                 content_type: Some(ContentType::Text),
             },

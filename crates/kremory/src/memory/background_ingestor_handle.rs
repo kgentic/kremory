@@ -223,6 +223,12 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                     .enqueue_req(IngestRequest {
                         text,
                         reference_time: None,
+                        // TD-187 Gap 1 (2026-08-20): mirrors the foreground
+                        // path's `declared_reference_time = source_ref.published_at`
+                        // (`engine_handle.rs:282`) — a consumer calling
+                        // `.with_sink()` did not previously get grounded
+                        // extraction on this path.
+                        declared_reference_time: source_ref.published_at,
                         group_id,
                         content_type: None,
                         batch_id: Some(bid),
@@ -235,6 +241,9 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                         text,
                         SendParams {
                             group_id,
+                            // TD-187 Gap 1 (2026-08-20): see the comment on
+                            // the batched branch above.
+                            declared_reference_time: source_ref.published_at,
                             ..SendParams::default()
                         },
                     )

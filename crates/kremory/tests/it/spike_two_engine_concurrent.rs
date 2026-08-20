@@ -143,6 +143,7 @@ async fn spike_b_two_engine_concurrent_wal_safety() {
             format!("Episode A{i}: concurrent writes to libSQL WAL from two Engine instances"),
             SendParams {
                 reference_time: None,
+                declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
                 group_id: Some("spike-b-group".to_string()),
                 content_type: Some(ContentType::Text),
             },
@@ -158,6 +159,7 @@ async fn spike_b_two_engine_concurrent_wal_safety() {
             format!("Episode B{i}: libSQL WAL concurrency under two separate Engine instances"),
             SendParams {
                 reference_time: None,
+                declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
                 group_id: Some("spike-b-group".to_string()),
                 content_type: Some(ContentType::Text),
             },

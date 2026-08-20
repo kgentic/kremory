@@ -122,6 +122,10 @@ pub(super) async fn process_item<L: ChatProvider + 'static, Emb: EmbeddingProvid
                 Some(DeferredRequest {
                     text: req.text,
                     reference_time: req.reference_time,
+                    // TD-187 Gap 1 (2026-08-20): propagate the caller-declared
+                    // anchor across the Phase 1 → Phase 2 handoff so it
+                    // reaches `ingest_deferred` below, not just Phase 1.
+                    declared_reference_time: req.declared_reference_time,
                     group_id: req.group_id,
                     content_type: req.content_type,
                     episode_id: phase1_result.episode_id,
@@ -474,10 +478,15 @@ pub(super) async fn process_deferred<L: ChatProvider + 'static, Emb: EmbeddingPr
         .ingest_deferred(IngestDeferredParams {
             text: &req.text,
             reference_time: req.reference_time,
-            // TD-187: `DeferredRequest` (background/mod.rs) does not carry a
-            // caller-declared publish time distinct from `reference_time` —
-            // see the doc comment on `IngestDeferredParams::declared_reference_time`.
-            declared_reference_time: None,
+            // TD-187 Gap 1+2 FIXED (2026-08-20): `DeferredRequest` now carries
+            // `declared_reference_time`, propagated from `IngestRequest` at
+            // the Phase 1 → Phase 2 handoff above. This used to be
+            // hardcoded `None` — a real public-API defect (Gap 2): any
+            // consumer calling `.with_sink()` got ungrounded extraction on
+            // this path even after supplying `SourceRef::published_at`. See
+            // the doc comment on `IngestDeferredParams::declared_reference_time`
+            // for why this must stay a distinct channel from `reference_time`.
+            declared_reference_time: req.declared_reference_time,
             group_id: req.group_id.as_deref(),
             content_type: req.content_type,
             episode_id: req.episode_id,

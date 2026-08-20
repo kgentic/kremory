@@ -90,6 +90,11 @@ pub(super) struct Inner {
 #[derive(Debug, Clone, Default)]
 pub struct SendParams {
     pub reference_time: Option<DateTime<Utc>>,
+    /// TD-187 Gap 1 (2026-08-20): the caller-DECLARED document anchor —
+    /// mirrors [`super::IngestRequest::declared_reference_time`]. Distinct
+    /// from `reference_time` above; see that field's doc comment for why the
+    /// two must never be collapsed.
+    pub declared_reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
     pub content_type: Option<ContentType>,
 }
@@ -195,12 +200,14 @@ impl BackgroundIngestor {
     pub fn send(&self, text: impl Into<String>, params: SendParams) -> Result<(), IngestSendError> {
         let SendParams {
             reference_time,
+            declared_reference_time,
             group_id,
             content_type,
         } = params;
         self.enqueue_req(IngestRequest {
             text: text.into(),
             reference_time,
+            declared_reference_time,
             group_id,
             content_type,
             batch_id: None,
@@ -246,6 +253,11 @@ impl BackgroundIngestor {
         self.enqueue_req(IngestRequest {
             text: text.into(),
             reference_time: None,
+            // Genuinely None, not a gap: this method takes only `text` +
+            // `batch_id`, so there is no caller-supplied value to thread.
+            // Full-control batched callers needing this should use
+            // `enqueue_req` directly (see this method's own doc comment).
+            declared_reference_time: None,
             group_id: None,
             content_type: None,
             batch_id: Some(batch_id),

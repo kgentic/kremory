@@ -205,6 +205,7 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
         request: &DeferredRequest {
             text: "Alice works at Acme Corp.".to_string(),
             reference_time: None,
+            declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
             group_id: None,
             content_type: None,
             episode_id,
@@ -250,6 +251,7 @@ async fn sink_skipped_idempotent_fires_on_second_run() {
         request: &DeferredRequest {
             text: "Alice works at Acme Corp.".to_string(),
             reference_time: None,
+            declared_reference_time: None, // TD-187 Gap 1 (2026-08-20): pre-existing fixture, unaffected by the fix
             group_id: None,
             content_type: None,
             episode_id: episode_id_2,
