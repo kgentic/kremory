@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "model": "gemma4:e4b",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "entries": {
+    "2979ab95ec4dbb93a16397e7d7533f27b56b280f2572aa73fbf1d5ae3e2ae0ad": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 0.95, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"B is a specific, qualified subset of the general category mentioned in A.\"}]}"
+      }
+    ],
+    "a2e08e1526e999039fcba436a5b3a1f61106768dee6e11d6a82f05e06c25094a": [
+      {
+        "call_index": 0,
+        "response_text": "{\"verdicts\": [{\"confidence\": 1.0, \"is_same_entity\": false, \"pair_id\": 0, \"reasoning\": \"One is the subject matter while the other is an activity or class related to that subject.\"}]}"
+      }
+    ],
+    "c258d36a430ac6d56cc8d7a3b03e752dee4be5f62e419c4fa776c4b7f85567ff": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 1.0,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"B is a clear abbreviation of the full name given in A.\"\n    }\n  ]\n}"
+      }
+    ],
+    "d5ee74aa46f96f7bfb7b225846e7363c60d10bc7052cf91da926a968d58b36e3": [
+      {
+        "call_index": 0,
+        "response_text": "{\n  \"verdicts\": [\n    {\n      \"confidence\": 0.95,\n      \"is_same_entity\": true,\n      \"pair_id\": 0,\n      \"reasoning\": \"B is a partial name/nickname of A.\"\n    }\n  ]\n}"
+      }
+    ]
+  }
+}

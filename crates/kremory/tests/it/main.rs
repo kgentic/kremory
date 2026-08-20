@@ -82,6 +82,7 @@ mod idempotency_cas;
 mod ingest_phase_boundary;
 mod ingest_sink_rollback_atomicity;
 mod l4_l5_real_embedding;
+mod l5_adjudicator_jaccard_ambiguity_vcr;
 mod label_canonical_assertion;
 mod label_precision_benchmark;
 mod legacy_wrappers;
