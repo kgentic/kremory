@@ -338,8 +338,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         };
         let filters = SearchFilters {
             group_ids: group_id.map(|g| vec![g.to_string()]).unwrap_or_default(),
-            valid_after: None,
-            valid_before: None,
+            // TD-234: this `false` currently has no effect — entity search never
+            // reads `exclude_expired`. Kept (not deleted) as the documented
+            // expression of real intent (include expired-entity merge
+            // candidates during resolution) for whoever fixes TD-234 to honour.
             exclude_expired: false,
         };
         // `_no_count` variant: avoid the access_count bump the public search applies.

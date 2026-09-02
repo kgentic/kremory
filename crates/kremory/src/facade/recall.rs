@@ -225,6 +225,10 @@ struct FuseContentStreamParams<'a> {
     query: &'a str,
     limit: Option<usize>,
     entity_results: Vec<RetrievedContext>,
+    /// ADR-068 extension — see `core::search::build_as_of_clause`. Scopes the
+    /// content/episode streams to the same point-in-time as the fact stream
+    /// already respects.
+    as_of: Option<DateTime<Utc>>,
 }
 
 /// RRF-fuses `entity_results` (the entity/fact recall stream, already
@@ -243,6 +247,7 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
         query,
         limit,
         entity_results,
+        as_of,
     } = params;
 
     let Some(tg) = memory.temporal_graph.as_ref() else {
@@ -265,6 +270,7 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
             query,
             limit: content_limit,
             filters: &filters,
+            as_of,
         })
         .await
         .map_err(MemoryError::Core)?;
@@ -301,6 +307,7 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
                         query_embedding: &query_embedding,
                         limit: content_limit,
                         filters: &filters,
+                        as_of,
                     })
                     .await
                 {
@@ -1076,6 +1083,7 @@ impl<'a> RecallRequest<'a> {
             query: &self.query,
             limit: self.k,
             entity_results: results,
+            as_of: self.as_of,
         })
         .await?;
         #[cfg(not(feature = "content-search"))]
@@ -1352,6 +1360,7 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
                 query: &inner.query,
                 limit: inner.k,
                 entity_results: filtered,
+                as_of: inner.as_of,
             })
             .await?;
             #[cfg(not(feature = "content-search"))]
@@ -1443,6 +1452,7 @@ impl<'a> IntoFuture for RecallContentRequest<'a> {
                 query: &inner.query,
                 limit,
                 filters: &filters,
+                as_of: inner.as_of,
             })
             .await
             .map_err(MemoryError::Core)
@@ -2018,6 +2028,7 @@ mod fuse_content_stream_tests {
             query: "anything",
             limit: None,
             entity_results: seed.clone(),
+            as_of: None,
         })
         .await
         .expect("must degrade to Ok, not Err, when temporal_graph is None");

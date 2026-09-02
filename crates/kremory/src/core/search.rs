@@ -98,6 +98,10 @@ pub(crate) struct ContentSearchParams<'a> {
     pub query: &'a str,
     pub limit: usize,
     pub filters: &'a SearchFilters,
+    /// Point-in-time (valid-time) filter (ADR-068 semantics, extended to episode
+    /// content — see the fix note on `build_as_of_clause`). `None` returns
+    /// present-day results, unaffected.
+    pub as_of: Option<DateTime<Utc>>,
 }
 
 /// Bundled parameters for [`TemporalGraph::run_content_match_query`] —
@@ -121,6 +125,9 @@ pub(crate) struct VectorSearchEpisodesParams<'a> {
     pub query_embedding: &'a [f32],
     pub limit: usize,
     pub filters: &'a SearchFilters,
+    /// See [`ContentSearchParams::as_of`] — same ADR-068 semantics, same episode
+    /// timestamp column, applied to the dense arm instead of the lexical one.
+    pub as_of: Option<DateTime<Utc>>,
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_entities`] —
@@ -196,6 +203,7 @@ struct VectorSearchEpisodesWithIndexParams<'a> {
     vec_str: &'a str,
     limit: usize,
     filters: &'a SearchFilters,
+    as_of: Option<DateTime<Utc>>,
 }
 
 /// Bundled parameters for `TemporalGraph::vector_search_episodes_brute_force`
@@ -206,6 +214,7 @@ struct VectorSearchEpisodesBruteForceParams<'a> {
     vec_str: &'a str,
     limit: usize,
     filters: &'a SearchFilters,
+    as_of: Option<DateTime<Utc>>,
 }
 
 /// TD-114: over-fetch plan for a filtered-ANN (`vector_top_k`) query.
@@ -669,6 +678,7 @@ impl TemporalGraph {
             query,
             limit,
             filters,
+            as_of,
         } = params;
         let _search_start = Instant::now();
 
@@ -691,6 +701,12 @@ impl TemporalGraph {
 
         // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
+        // ADR-068 extension (see `build_as_of_clause`) — as_of params start
+        // right after the group params.
+        let (as_of_clause, as_of_params) =
+            build_as_of_clause(as_of, "e", 3 + filters.group_ids.len());
+        let mut extra_params = group_params;
+        extra_params.extend(as_of_params);
 
         // Return the FULL episode text (`e.content`), not an FTS5 `snippet()`
         // excerpt. The 32-token snippet window (FTS5 caps `snippet()` at 64
@@ -709,7 +725,7 @@ impl TemporalGraph {
                     episodes_fts.rank \
              FROM episodes_fts \
              JOIN episodes AS e ON e.id = episodes_fts.rowid \
-             WHERE episodes_fts MATCH ?1{group_clause} \
+             WHERE episodes_fts MATCH ?1{group_clause}{as_of_clause} \
              ORDER BY episodes_fts.rank, e.id \
              LIMIT ?2",
         );
@@ -720,7 +736,7 @@ impl TemporalGraph {
                 sql: &sql,
                 match_query: &and_query,
                 limit,
-                group_params: &group_params,
+                group_params: &extra_params,
             })
             .await?;
         let mut arm = "and";
@@ -732,7 +748,7 @@ impl TemporalGraph {
                     sql: &sql,
                     match_query: &or_query,
                     limit,
-                    group_params: &group_params,
+                    group_params: &extra_params,
                 })
                 .await?;
             arm = if passages.is_empty() {
@@ -1281,6 +1297,7 @@ impl TemporalGraph {
             query_embedding,
             limit,
             filters,
+            as_of,
         } = params;
         let _search_start = Instant::now();
         let vec_str = format!(
@@ -1298,6 +1315,7 @@ impl TemporalGraph {
                 vec_str: &vec_str,
                 limit,
                 filters,
+                as_of,
             })
             .await;
 
@@ -1321,6 +1339,7 @@ impl TemporalGraph {
                         vec_str: &vec_str,
                         limit,
                         filters,
+                        as_of,
                     })
                     .await
                 {
@@ -1365,9 +1384,14 @@ impl TemporalGraph {
             vec_str,
             limit,
             filters,
+            as_of,
         } = params;
         // TD-114: `vector_top_k` post-filters group_id (no predicate arg), so
         // over-fetch by estimated namespace selectivity + cap with a real LIMIT.
+        // NOTE: `plan_index_fetch`'s over-fetch estimate does not (yet) account
+        // for `as_of` selectivity — a heavily-scoped as_of can legitimately
+        // return fewer than `limit` results. That shortfall is honestly
+        // reported below via `emit_index_shortfall`, not silently absorbed.
         let base = effective_k(limit, usize::MAX);
         let plan = self
             .plan_index_fetch(IndexFetchQuery {
@@ -1378,8 +1402,12 @@ impl TemporalGraph {
             .await;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=fetch_k).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
-        // Final LIMIT param sits after the variable-count group params.
-        let limit_param = 3 + filters.group_ids.len();
+        // ADR-068 extension (see `build_as_of_clause`) — as_of params start
+        // right after the group params.
+        let (as_of_clause, as_of_params) =
+            build_as_of_clause(as_of, "e", 3 + filters.group_ids.len());
+        // Final LIMIT param sits after both variable-count param groups.
+        let limit_param = 3 + filters.group_ids.len() + as_of_params.len();
 
         // `episodes.id` IS the rowid (INTEGER PRIMARY KEY AUTOINCREMENT), so
         // `e.rowid = v.id` joins the DiskANN hit back to the episode row.
@@ -1388,7 +1416,7 @@ impl TemporalGraph {
                     vector_distance_cos(e.embedding, vector(?1)) as distance \
              FROM vector_top_k('episodes_vec_idx', vector(?1), ?2) AS v \
              JOIN episodes AS e ON e.rowid = v.id \
-             WHERE 1=1{group_clause} \
+             WHERE 1=1{group_clause}{as_of_clause} \
              ORDER BY distance ASC, e.id ASC \
              LIMIT ?{limit_param}"
         );
@@ -1398,6 +1426,7 @@ impl TemporalGraph {
             libsql::Value::from(plan.fetch_k as i64),
         ];
         sql_params.extend(group_params);
+        sql_params.extend(as_of_params);
         sql_params.push(libsql::Value::from(base as i64));
 
         let passages = self.rows_to_episode_passages(&sql, sql_params).await?;
@@ -1419,15 +1448,19 @@ impl TemporalGraph {
             vec_str,
             limit,
             filters,
+            as_of,
         } = params;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
+        // ADR-068 extension (see `build_as_of_clause`).
+        let (as_of_clause, as_of_params) =
+            build_as_of_clause(as_of, "e", 3 + filters.group_ids.len());
 
         let sql = format!(
             "SELECT e.id, e.timestamp, e.content, \
                     vector_distance_cos(e.embedding, vector(?1)) as distance \
              FROM episodes e \
-             WHERE e.embedding IS NOT NULL{group_clause} \
+             WHERE e.embedding IS NOT NULL{group_clause}{as_of_clause} \
              ORDER BY distance ASC, e.id ASC \
              LIMIT ?2"
         );
@@ -1437,6 +1470,7 @@ impl TemporalGraph {
             libsql::Value::from(limit as i64),
         ];
         sql_params.extend(group_params);
+        sql_params.extend(as_of_params);
 
         self.rows_to_episode_passages(&sql, sql_params).await
     }
@@ -1493,11 +1527,11 @@ pub struct SearchFilters {
     /// Restrict results to specific groups (tenant / session scopes).
     /// Empty vec means no group filtering (all groups returned).
     pub group_ids: Vec<String>,
-    /// Only return facts valid after this timestamp (inclusive).
-    pub valid_after: Option<DateTime<Utc>>,
-    /// Only return facts valid before this timestamp (exclusive).
-    pub valid_before: Option<DateTime<Utc>>,
-    /// When true (the default), expired facts are excluded from results.
+    /// Currently inert for fact search (the exclusion is hardcoded unconditionally
+    /// at every fact-search call site, `expired_at IS NULL`) and unread by entity
+    /// search entirely — see TD-234. Kept (not removed) because one caller
+    /// (`ingest_with.rs`) sets it to `false` expressing real intent that a future
+    /// fix should honour, not erase.
     pub exclude_expired: bool,
 }
 
@@ -1507,7 +1541,6 @@ impl SearchFilters {
         Self {
             group_ids: vec![],
             exclude_expired: true,
-            ..Default::default()
         }
     }
 
@@ -1516,7 +1549,6 @@ impl SearchFilters {
         Self {
             group_ids: vec![group_id.into()],
             exclude_expired: true,
-            ..Default::default()
         }
     }
 
@@ -1525,7 +1557,6 @@ impl SearchFilters {
         Self {
             group_ids,
             exclude_expired: true,
-            ..Default::default()
         }
     }
 }
@@ -1555,6 +1586,32 @@ fn build_group_id_clause(
         .map(|id| libsql::Value::from(id.clone()))
         .collect();
     (clause, params)
+}
+
+/// Point-in-time (valid-time) filter for episode-anchored queries — extends
+/// ADR-068's `as_of` semantics from facts to episode content search.
+///
+/// ADR-068 scoped `as_of` to the fact 1-hop expansion only, reasoning that
+/// entity search has no temporal column to filter on. That reasoning does not
+/// apply to episodes: `episodes.timestamp` already carries resolved world-time
+/// (TD-187) and is already selected by both `content_search` and
+/// `vector_search_episodes`'s queries — it was simply never filtered on,
+/// because content search was a minor arm when ADR-068 was written and became
+/// the default-on primary arm three weeks later (ADR-078), a gap nobody
+/// revisited. Same "≤" (inclusive) semantics as the fact-side predicate:
+/// world-time state as of `ts`, not strictly-before.
+fn build_as_of_clause(
+    as_of: Option<DateTime<Utc>>,
+    column_prefix: &str,
+    param_offset: usize,
+) -> (String, Vec<libsql::Value>) {
+    match as_of {
+        None => (String::new(), vec![]),
+        Some(ts) => (
+            format!(" AND {column_prefix}.timestamp <= ?{param_offset}"),
+            vec![libsql::Value::from(ts.to_rfc3339())],
+        ),
+    }
 }
 
 /// Reciprocal Rank Fusion: merge two ranked entity lists into one.
@@ -2796,8 +2853,6 @@ mod tests {
         let f = SearchFilters::new();
         assert!(f.exclude_expired, "exclude_expired should default to true");
         assert!(f.group_ids.is_empty());
-        assert!(f.valid_after.is_none());
-        assert!(f.valid_before.is_none());
     }
 
     #[test]
@@ -2811,6 +2866,219 @@ mod tests {
     fn test_search_filters_for_groups() {
         let f = SearchFilters::for_groups(vec!["a".into(), "b".into()]);
         assert_eq!(f.group_ids, vec!["a", "b"]);
+    }
+
+    // ── ADR-068 extension — `build_as_of_clause` + content-search as_of ────
+    //
+    // Pure-function coverage of the new helper, plus direct calls to
+    // `content_search` and BOTH `vector_search_episodes_with_index` /
+    // `vector_search_episodes_brute_force` (not the `vector_search_episodes`
+    // dispatcher, which tries the index arm first and only falls back on a
+    // real SQL error) — so both SQL paths are proven independently rather
+    // than hoping a real DB happens to exercise the fallback. The full
+    // consumer-facing surface (`recall().as_of().content()`/`.raw()`) is
+    // covered separately in `tests/it/adr068_as_of_content_scoping.rs`; this
+    // suite pins the SQL-generation layer those tests exercise indirectly.
+
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn build_as_of_clause_none_is_empty() {
+        let (clause, params) = build_as_of_clause(None, "e", 3);
+        assert_eq!(clause, "", "None must produce no SQL fragment");
+        assert!(params.is_empty(), "None must bind no parameters");
+    }
+
+    #[cfg(feature = "content-search")]
+    #[test]
+    fn build_as_of_clause_some_binds_inclusive_le_at_the_given_offset() {
+        let ts = Utc::now();
+        let (clause, params) = build_as_of_clause(Some(ts), "e", 5);
+        assert_eq!(
+            clause, " AND e.timestamp <= ?5",
+            "must use the caller's column prefix + param offset, and inclusive <="
+        );
+        assert_eq!(params.len(), 1, "Some must bind exactly one parameter");
+        assert_eq!(
+            params[0],
+            libsql::Value::from(ts.to_rfc3339()),
+            "bound value must be the RFC3339 string of the given timestamp"
+        );
+    }
+
+    #[cfg(feature = "content-search")]
+    async fn setup_episodes_for_as_of() -> (TemporalGraph, i64, i64, DateTime<Utc>) {
+        let g = TemporalGraph::open_in_memory().await.unwrap();
+        let base = Utc::now();
+        let early_ts = base - Duration::hours(2);
+        let late_ts = base;
+
+        let early_id = g
+            .insert_episode(crate::core::graph::InsertEpisodeParams {
+                content: "Xenobia explored the ancient ruins in Peru.",
+                timestamp: early_ts,
+                source_type: None,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+        let late_id = g
+            .insert_episode(crate::core::graph::InsertEpisodeParams {
+                content: "Xenobia mapped new ruins in Peru last week.",
+                timestamp: late_ts,
+                source_type: None,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+
+        // Identical non-zero embedding on both episodes — cosine distance is
+        // 0 for either against any query embedding, so the dense arm's
+        // as_of behaviour is isolated from ranking/similarity, matching the
+        // established `RecordingEmbeddingProvider` pattern
+        // (`tests/it/td143_reembed_all_episode_embeddings.rs`).
+        g.set_episode_embedding(early_id, &[1.0_f32; 384])
+            .await
+            .unwrap();
+        g.set_episode_embedding(late_id, &[1.0_f32; 384])
+            .await
+            .unwrap();
+
+        (g, early_id, late_id, early_ts)
+    }
+
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn content_search_as_of_excludes_episode_after_the_boundary() {
+        let (g, early_id, late_id, early_ts) = setup_episodes_for_as_of().await;
+        let filters = SearchFilters::new();
+
+        // as_of BETWEEN early and late — only the early episode has
+        // timestamp <= as_of.
+        let as_of = early_ts + Duration::hours(1);
+        let hits = g
+            .content_search(ContentSearchParams {
+                query: "Xenobia ruins",
+                limit: 10,
+                filters: &filters,
+                as_of: Some(as_of),
+            })
+            .await
+            .unwrap();
+        let ids: Vec<i64> = hits.iter().map(|p| p.episode_id).collect();
+        assert!(
+            ids.contains(&early_id),
+            "episode at/before as_of must be included; got {ids:?}"
+        );
+        assert!(
+            !ids.contains(&late_id),
+            "episode after as_of must be excluded; got {ids:?}"
+        );
+    }
+
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn content_search_as_of_is_inclusive_at_the_boundary() {
+        let (g, early_id, _late_id, early_ts) = setup_episodes_for_as_of().await;
+        let filters = SearchFilters::new();
+
+        // as_of EXACTLY equal to the early episode's own timestamp — the
+        // documented "≤" (inclusive) semantics must include it, not exclude
+        // it (contrast with the fact-side `valid_to > ?` boundary, which is
+        // exclusive at the equal point — see `facade_as_of_warn.rs`'s
+        // `as_of_at_or_after_valid_to_excludes_fact`).
+        let hits = g
+            .content_search(ContentSearchParams {
+                query: "Xenobia ruins",
+                limit: 10,
+                filters: &filters,
+                as_of: Some(early_ts),
+            })
+            .await
+            .unwrap();
+        let ids: Vec<i64> = hits.iter().map(|p| p.episode_id).collect();
+        assert!(
+            ids.contains(&early_id),
+            "as_of exactly at the episode's own timestamp must include it \
+             (inclusive boundary); got {ids:?}"
+        );
+    }
+
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn content_search_as_of_none_is_unaffected_regression_pin() {
+        let (g, early_id, late_id, _early_ts) = setup_episodes_for_as_of().await;
+        let filters = SearchFilters::new();
+
+        let hits = g
+            .content_search(ContentSearchParams {
+                query: "Xenobia ruins",
+                limit: 10,
+                filters: &filters,
+                as_of: None,
+            })
+            .await
+            .unwrap();
+        let ids: Vec<i64> = hits.iter().map(|p| p.episode_id).collect();
+        assert!(
+            ids.contains(&early_id) && ids.contains(&late_id),
+            "as_of=None must return both episodes, unaffected; got {ids:?}"
+        );
+    }
+
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn vector_search_episodes_with_index_respects_as_of() {
+        let (g, early_id, late_id, early_ts) = setup_episodes_for_as_of().await;
+        let filters = SearchFilters::new();
+        let vec_str = format!("[{}]", vec!["1"; 384].join(","));
+
+        let as_of = early_ts + Duration::hours(1);
+        let hits = g
+            .vector_search_episodes_with_index(VectorSearchEpisodesWithIndexParams {
+                vec_str: &vec_str,
+                limit: 10,
+                filters: &filters,
+                as_of: Some(as_of),
+            })
+            .await
+            .unwrap();
+        let ids: Vec<i64> = hits.iter().map(|p| p.episode_id).collect();
+        assert!(
+            ids.contains(&early_id),
+            "DiskANN-index arm: episode at/before as_of must be included; got {ids:?}"
+        );
+        assert!(
+            !ids.contains(&late_id),
+            "DiskANN-index arm: episode after as_of must be excluded; got {ids:?}"
+        );
+    }
+
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn vector_search_episodes_brute_force_respects_as_of() {
+        let (g, early_id, late_id, early_ts) = setup_episodes_for_as_of().await;
+        let filters = SearchFilters::new();
+        let vec_str = format!("[{}]", vec!["1"; 384].join(","));
+
+        let as_of = early_ts + Duration::hours(1);
+        let hits = g
+            .vector_search_episodes_brute_force(VectorSearchEpisodesBruteForceParams {
+                vec_str: &vec_str,
+                limit: 10,
+                filters: &filters,
+                as_of: Some(as_of),
+            })
+            .await
+            .unwrap();
+        let ids: Vec<i64> = hits.iter().map(|p| p.episode_id).collect();
+        assert!(
+            ids.contains(&early_id),
+            "brute-force arm: episode at/before as_of must be included; got {ids:?}"
+        );
+        assert!(
+            !ids.contains(&late_id),
+            "brute-force arm: episode after as_of must be excluded; got {ids:?}"
+        );
     }
 
     async fn setup_graph_with_data() -> TemporalGraph {
@@ -4940,6 +5208,7 @@ mod tests {
                 query_embedding: &query,
                 limit: 10,
                 filters: &no_filter,
+                as_of: None,
             })
             .await
             .unwrap();
@@ -4992,6 +5261,7 @@ mod tests {
                 query_embedding: &make_embedding(1.0),
                 limit: 10,
                 filters: &no_filter,
+                as_of: None,
             })
             .await
             .unwrap();
@@ -5015,6 +5285,7 @@ mod tests {
                 query_embedding: &make_embedding(1.0),
                 limit: 10,
                 filters: &no_filter,
+                as_of: None,
             })
             .await
             .unwrap();
