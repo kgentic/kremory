@@ -1155,6 +1155,7 @@ impl JsMemory {
             episode_entity_id: String::new(),
             committed_at: chrono::Utc::now(),
             stub_entities_inserted: 0,
+            dense_embedded: None,
         };
 
         let status = self
@@ -1187,6 +1188,7 @@ impl JsMemory {
             episode_entity_id: String::new(),
             committed_at: chrono::Utc::now(),
             stub_entities_inserted: 0,
+            dense_embedded: None,
         };
 
         let timeout = std::time::Duration::from_millis(timeout_ms as u64);
@@ -1272,6 +1274,7 @@ impl JsMemory {
             episode_entity_id: String::new(),
             committed_at: chrono::Utc::now(),
             stub_entities_inserted: 0,
+            dense_embedded: None,
         };
 
         let outcome = self

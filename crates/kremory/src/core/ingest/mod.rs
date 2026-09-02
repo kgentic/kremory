@@ -209,6 +209,17 @@ pub struct IngestionResult {
     /// Forward references in the fact list that had no corresponding extracted entity
     /// and were inserted as UNKNOWN stub entities so facts can resolve correctly.
     pub stub_entities_inserted: usize,
+    /// TD-232: `true` unless the dense (content-search) arm was enabled AND
+    /// attempted AND failed. See `maybe_embed_episode`'s doc comment for the
+    /// exact semantics; this is that call's return value, captured on the
+    /// inline `ingest_with` path. `true` when the `content-search` feature is
+    /// not compiled in (the call site is `#[cfg]`-gated and never runs).
+    /// Threaded into `EpisodeCommit::dense_embedded` at the facade boundary
+    /// (`memory/engine_handle.rs`) — see that field's doc comment for the
+    /// full contract, including the `None` case this internal type has no
+    /// need to represent (every construction site of `IngestionResult` is on
+    /// a path where the answer IS synchronously known).
+    pub dense_embedded: bool,
 }
 
 // ── Dream pass types (Phase C DoD C1/C2) ──────────────────────────────────────
@@ -533,10 +544,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// swallowed — an episode-embedding failure must never abort an ingest that
     /// otherwise succeeded (the episode is still BM25-searchable; the dense arm
     /// simply misses it until a re-embed/backfill).
+    /// Returns `true` unless the dense arm was ENABLED and ATTEMPTED and
+    /// FAILED — i.e. `false` is exactly the TD-232 silent-degrade case the
+    /// caller needs to know about. `episode_dense_enabled: false` (a
+    /// deliberate config choice, not a failure) returns `true` — "nothing
+    /// went wrong" is true either way; only the caller already knows WHY
+    /// when they turned it off themselves. Threaded up into
+    /// `EpisodeCommit::dense_embedded` on the inline ingest path — see that
+    /// field's doc comment for the full `None`/`Some(true)`/`Some(false)`
+    /// contract.
     #[cfg(feature = "content-search")]
-    pub(crate) async fn maybe_embed_episode(&self, episode_id: i64, content: &str) {
+    pub(crate) async fn maybe_embed_episode(&self, episode_id: i64, content: &str) -> bool {
         if !self.config.search.episode_dense_enabled {
-            return;
+            return true;
         }
         // TD-143: WRITE into `episodes.embedding` — document-prefix it.
         let prefixed_content =
@@ -559,8 +579,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "kremory.ingest.maybe_embed_episode: set_episode_embedding failed \
                          (episode stays BM25-only until backfill)"
                     );
+                    false
                 } else {
                     metrics::counter!("kremory.ingest.episode_embedded_total").increment(1);
+                    true
                 }
             }
             Err(e) => {
@@ -575,6 +597,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     "kremory.ingest.maybe_embed_episode: embedder failed \
                      (episode stays BM25-only until backfill)"
                 );
+                false
             }
         }
     }

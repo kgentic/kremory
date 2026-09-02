@@ -432,16 +432,13 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 88 (sanity cap — over-finding guard).
-    // ⚠️ THIS NOTE HAS NOW ROTTED TWICE — corrected again 2026-08-12.
-    //   - It read "83" until 2026-08-06 while the assertion said 86.
-    //   - It was then rewritten to say "matches the `skip_count <= 86` assert" —
-    //     but the assert was later raised to 88 (line ~484) and this line was not,
-    //     so the comment written to FIX a doc-rot instance became one itself.
-    // The enforced value is the assert, and only the assert: `skip_count <= 88`.
-    // The lead line above and this note are now both 88. If you raise the assert
-    // again, grep this file for the OLD number before you finish — twice now the
-    // raise was made and the prose left behind.
+    // Enforce: skip-list count must not exceed 89 (sanity cap — over-finding guard).
+    // ⚠️ THIS NOTE ROTTED TWICE before 2026-08-12 (see the history below for the
+    // exact sequence). Kept in sync again on 2026-09-02 (88 → 89, TD-231).
+    // The enforced value is the assert, and only the assert: `skip_count <= 89`.
+    // The lead line above and this note are now both 89. If you raise the assert
+    // again, grep this file for the OLD number before you finish — this note has
+    // already rotted twice from someone skipping that step.
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
     // aggressive or the skip list is being used as an escape hatch.
     // Lowered 100 → 90 by TD-053 (2026-06-25) after pruning 13 doc-rot entries, then
@@ -484,10 +481,17 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // at the prior cap (86) before this addition, so this is register growth, not
     // walker over-finding — and it is raised on the record rather than by pruning a
     // legitimate entry to make room, which is how a ratchet quietly becomes decoration.
+    // Raised 88 → 89 (TD-231, 2026-09-02) for exactly ONE entry —
+    // `MemoryBuilder::extraction_arm_budget_ms` — the TENTH per-knob override
+    // setter (a new Rust-side builder method added the same day, closing a
+    // gap where local-model consumers had no reachable path to raise this
+    // timeout at all). Same ADR-030 Form B deferral as its nine siblings.
+    // The register was sitting exactly at the prior cap (88) before this
+    // addition, so this is register growth, not walker over-finding.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 88,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 88. \
+        skip_count <= 89,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 89. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."

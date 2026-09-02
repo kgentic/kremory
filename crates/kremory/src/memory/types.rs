@@ -851,6 +851,35 @@ pub struct EpisodeCommit {
     /// still deserialises correctly (defaults to `0`).
     #[serde(default)]
     pub stub_entities_inserted: usize,
+    /// Did this episode's DENSE (content-search) arm get indexed, or did it
+    /// silently fail? TD-232: `maybe_embed_episode` (`core/ingest/mod.rs`)
+    /// swallows an over-context-window or store failure into a `tracing::warn!`
+    /// plus a metrics counter and returns `Ok` regardless, by design (a
+    /// genuine embed failure must never abort an otherwise-successful
+    /// ingest; BM25 stays valid). Before this field, that swallow was also
+    /// undetectable: nothing on the return value said it happened.
+    ///
+    /// - `None` — no synchronous signal available: the background / deferred
+    ///   ingest paths, where the embed attempt (if any) hasn't resolved yet
+    ///   when this commit is returned.
+    /// - `Some(true)` — the inline path, and nothing is wrong: either the
+    ///   embed succeeded, or the dense arm was never applicable (feature not
+    ///   compiled in, or `episode_dense_enabled: false` — a deliberate
+    ///   config choice, not a failure). Both cases mean "no silent-degrade
+    ///   risk here", which is the only thing this field promises.
+    /// - `Some(false)` — attempted on the inline path and FAILED (the exact
+    ///   silent-degrade TD-232 exists to surface: over the embedder's context
+    ///   window, or the embedder unreachable). A caller ingesting long
+    ///   documents should treat this as "re-chunk this content before
+    ///   ingesting it again if you need it recall-reachable via content
+    ///   search" — kremory's substrate does not chunk for retrieval itself
+    ///   (`core/extraction_window.rs` — locked, kind-2-only per ADR
+    ///   phase-d0:88; caller-side retrieval chunking is an App-layer concern).
+    ///
+    /// `#[serde(default)]` for the same v0.1.0-JSON-compat reason as
+    /// `stub_entities_inserted` above.
+    #[serde(default)]
+    pub dense_embedded: Option<bool>,
 }
 
 /// Status of a Phase 3 (dream-phase batch consolidation) run.

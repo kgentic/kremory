@@ -38,6 +38,7 @@ fn inline_commit() -> EpisodeCommit {
         episode_entity_id: "entity-abc".into(),
         committed_at: Utc::now(),
         stub_entities_inserted: 0,
+        dense_embedded: None,
     }
 }
 
@@ -47,6 +48,7 @@ fn background_commit() -> EpisodeCommit {
         episode_entity_id: "entity-xyz".into(),
         committed_at: Utc::now(),
         stub_entities_inserted: 0,
+        dense_embedded: None,
     }
 }
 

@@ -434,8 +434,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         // TD-136: dense episode arm — embed + store the episode's embedding when
         // the dense arm is enabled (no-op / byte-identical when off).
+        // TD-232: capture the outcome — see `IngestionResult::dense_embedded`.
         #[cfg(feature = "content-search")]
-        self.maybe_embed_episode(episode_id, text).await;
+        let dense_embedded = self.maybe_embed_episode(episode_id, text).await;
+        #[cfg(not(feature = "content-search"))]
+        let dense_embedded = true;
 
         // 1b. ADR-035 §5 Option A — Pin caller-pre-extracted facts BEFORE Phase 2 LLM.
         //
@@ -749,6 +752,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 merged_entities: Vec::new(),
                 token_usage,
                 stub_entities_inserted: 0,
+                dense_embedded,
             });
         }
 
@@ -2555,6 +2559,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             merged_entities,
             token_usage,
             stub_entities_inserted,
+            dense_embedded,
         })
         }
         .await;

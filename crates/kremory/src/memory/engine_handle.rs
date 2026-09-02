@@ -359,6 +359,10 @@ impl GraphHandle for EngineGraphHandle {
                 episode_entity_id: run_id.to_string(),
                 committed_at: Utc::now(),
                 stub_entities_inserted: 0,
+                // Background-spawn path: returns before the task (and any
+                // embed attempt inside it) resolves — see
+                // `EpisodeCommit::dense_embedded`.
+                dense_embedded: None,
             });
         }
 
@@ -513,6 +517,9 @@ impl GraphHandle for EngineGraphHandle {
             episode_entity_id: ingest_result.episode_id.to_string(),
             committed_at: Utc::now(),
             stub_entities_inserted: ingest_result.stub_entities_inserted,
+            // TD-232: the inline path — the one place this IS known
+            // synchronously. See `EpisodeCommit::dense_embedded`.
+            dense_embedded: Some(ingest_result.dense_embedded),
         })
     }
 

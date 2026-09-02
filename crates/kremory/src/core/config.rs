@@ -531,6 +531,18 @@ pub(crate) struct PipelineConfigOverrides {
     /// Explicit override for [`SearchConfig::rerank_candidate_max_chars`]
     /// (reranker latency lever 1).
     pub rerank_candidate_max_chars: Option<usize>,
+    /// Explicit override for [`PipelineConfig::extraction_arm_budget_ms`].
+    ///
+    /// Added per the aidocs-trial fit check (2026-08-24/09-02): the config
+    /// field's own doc comment says to raise this to 180_000-300_000 for slow
+    /// local LLMs "via `.extraction_arm_budget_ms(value)` on the builder" —
+    /// but that referred to the *internal* `PipelineConfigBuilder`, which no
+    /// public constructor accepted. `Memory::with_ollama()` and
+    /// `MemoryBuilder` had no reachable path to this knob at all, so a local
+    /// Ollama model (qwen2.5:14b-class, ~43-52s per extraction arm) failed
+    /// the ladder outright on ordinary documents under the 30s default. This
+    /// field closes that gap the same way `rerank_candidate_max_chars` does.
+    pub extraction_arm_budget_ms: Option<u64>,
     /// Explicit override for [`PipelineConfig::contradiction_detection_enabled`]
     /// (TD-172 / TD-167 / ADR-079 rev.2).
     ///
@@ -589,6 +601,9 @@ impl PipelineConfigOverrides {
         }
         if let Some(v) = self.contradiction_detection_enabled {
             builder = builder.contradiction_detection_enabled(v);
+        }
+        if let Some(v) = self.extraction_arm_budget_ms {
+            builder = builder.extraction_arm_budget_ms(v);
         }
         builder
     }
