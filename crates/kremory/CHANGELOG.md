@@ -7,6 +7,30 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [0.7.0] - 2026-09-02
 
+### Fixed — `recall().as_of()` did not scope episode/content search (ADR-068 extension)
+
+ADR-068's point-in-time (`as_of`) filter only ever scoped the fact 1-hop expansion, reasoning
+"entities carry no temporal columns" — true for entities, never true for episodes. Since
+ADR-078 made `content-search` the default primary retrieval arm, most of a typical `recall()`
+was unscoped by any requested point-in-time: `as_of(t)` correctly hid facts from after `t`
+while still returning episode content and dense-arm hits from after `t`, unfiltered. Both
+`content_search` (BM25) and `vector_search_episodes` (dense, both the DiskANN-index and
+brute-force paths) now apply the same `episodes.timestamp <= as_of` predicate the fact-side
+filter already used (inclusive boundary, matching the fact-side's own documented semantics
+sans the exclusive `valid_to` case, which does not apply here). No public API change —
+`RecallRequest::as_of()` already existed; this closes a gap in what it actually scoped.
+
+### Removed — dead `SearchFilters.valid_after`/`valid_before` fields
+
+Declared since kremory v0.1.0, flagged dead by an adversarial review in the original May 2026
+amendment spec, never wired to any query — `SearchOpts.as_of` was always meant to populate
+these and ADR-068 built a separate mechanism for facts instead. Confirmed zero non-test,
+non-declaration usages before removal. A sibling defect on the same struct
+(`SearchFilters.exclude_expired` — one real caller sets it to `false` expecting a behaviour
+change that never fires) was found during the same audit and is recorded, not fixed, as
+TD-234 — it needs a design decision (wire it or delete it + fix the caller), not a mechanical
+removal.
+
 ### Added — `extraction_arm_budget_ms` builder method (TD-231)
 
 `PipelineConfigOverrides::extraction_arm_budget_ms` existed on the internal config type but had

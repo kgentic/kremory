@@ -21,6 +21,7 @@ mod adr050_phase3_guards;
 mod adr050_phase4_budget;
 mod adr050_phase5_sink_wiring;
 mod adr051_gliner_to_background;
+mod adr068_as_of_content_scoping;
 mod adr071_item2_p2_p4_enablement;
 mod adr071_p3_corpus_calibration;
 mod adr072_seq1_content_search;

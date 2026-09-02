@@ -3214,6 +3214,7 @@ mod reembed_all_episode_embeddings_tests {
                 query_embedding: &seeded_embedding(1.0),
                 limit: 10,
                 filters: &no_filter,
+                as_of: None,
             })
             .await
             .expect("vector search must succeed");
@@ -3246,6 +3247,7 @@ mod reembed_all_episode_embeddings_tests {
                 query_embedding: &seeded_embedding(1.0),
                 limit: 10,
                 filters: &no_filter,
+                as_of: None,
             })
             .await
             .expect("vector search must succeed");
@@ -3266,6 +3268,7 @@ mod reembed_all_episode_embeddings_tests {
                 query_embedding: &seeded_embedding(5.0),
                 limit: 10,
                 filters: &no_filter,
+                as_of: None,
             })
             .await
             .expect("vector search must succeed");
