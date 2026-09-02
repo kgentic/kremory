@@ -339,7 +339,17 @@ See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for 
 
 ## Reversible dream — see, trust, undo
 
-`dream()` consolidates the graph by default: community detection, the supersession sweep, and
+> ⚠️ **Optional, not required — and measured neutral for retrieval quality (2026-09-02).**
+> `dream()` is a background graph-tidying pass (merging duplicate entities, resolving aliases,
+> archiving stale facts). It is **not needed for normal recall/ingest usage** and nothing calls
+> it automatically. A pre-registered benchmark (paired qa-gen, n=152, real LLM judge) measured
+> dream ON vs OFF at **80.3% vs 81.6% answer accuracy — a −1.3pp difference, statistically
+> indistinguishable from zero** (McNemar p=0.79), for ~24 minutes of runtime. Call it if you want
+> a tidier graph for browsing/debugging, or if you're building on the mutation/undo system below
+> — not because it improves what `recall()` returns. Full write-up:
+> `.ai-docs/decisions/dream-keep-or-cut-prereg-2026-08-19.md`.
+
+`dream()` consolidates the graph when called: community detection, the supersession sweep, and
 fact archival are **ON and commit**. Cross-episode entity merges are the one exception — they
 default to **Shadow mode** (they compute and *report* merge decisions but fuse nothing), so you
 opt into actual fusion explicitly with `.cross_episode(CrossEpisodeMode::Apply)`. Watch the split
@@ -352,7 +362,7 @@ use kremory::{Memory, Namespace};
 
 let ns = Namespace::new("agent");
 
-// dream() consolidates by default — all ops ON, all reversible.
+// dream() is opt-in; when called, all ops run and every mutation is reversible.
 let summary = mem.dream().await?;
 println!("communities updated: {}", summary.communities_updated);
 
