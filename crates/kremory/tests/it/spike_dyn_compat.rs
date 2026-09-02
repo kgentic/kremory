@@ -202,6 +202,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                 episode_entity_id: batch_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 committed_at: chrono::Utc::now(),
                 stub_entities_inserted: 0,
+                dense_embedded: None,
             })
         } else {
             // Delegate to EngineGraphHandle for inline path

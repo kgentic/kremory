@@ -412,6 +412,11 @@ symbol = "MemoryBuilder::with_contradiction_detection_enabled"
 reason = "TD-172 (2026-08-12): the ninth per-knob PipelineConfig override setter, and the only sibling that was missing. Deferred per ADR-030 Form B for the SAME reason as its eight siblings (with_content_stream_weight / with_rrf_k / with_episode_dense_enabled / with_fact_dense_enabled / with_embed_task_prefix_enabled / with_proximity_weight / with_temporal_weight / with_rerank_candidate_max_chars): the whole Tier-2 builder surface goes to JS together, since Memory.open is the single JS construction entry point. NB this knob gates a DESTRUCTIVE path (ADR-079 rev.2 default-ON supersession), so when the builder surface IS mirrored, this one is the priority of the nine — a JS consumer currently has no way to opt out except a process-wide env var."
 revisit = "v0.2.0"
 
+[[skip]]
+symbol = "MemoryBuilder::extraction_arm_budget_ms"
+reason = "TD-231 (2026-09-02, aidocs-trial fit check): the TENTH per-knob PipelineConfig override setter. Deferred per ADR-030 Form B for the SAME reason as its nine siblings — the whole Tier-2 builder surface goes to JS together, since Memory.open is the single JS construction entry point. Not a destructive-path knob (unlike with_contradiction_detection_enabled) — raising it only widens a timeout, so it carries no priority-when-mirrored note. Added because a local-model consumer (Ollama-class, ~40-130s/call) has NO reachable path to this knob at all without it — the same gap the Rust-side setter (also added 2026-09-02) exists to close."
+revisit = "v0.2.0"
+
 # ── B9 substrate gaps ─────────────────────────────────────────────────────────
 #
 # JsRecallOptions.sourceIdIn / sourceIdPrefix are specified in the B9 spec but

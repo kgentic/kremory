@@ -53,6 +53,7 @@ impl GraphHandle for StubHandle {
             episode_entity_id: format!("stub:{}", source_ref.id),
             committed_at: Utc::now(),
             stub_entities_inserted: 0,
+            dense_embedded: None,
         })
     }
 

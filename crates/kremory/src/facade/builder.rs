@@ -466,6 +466,26 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Per-arm time budget (ms) for a single structured-output extraction
+    /// call in the ladder (`PipelineConfig::extraction_arm_budget_ms`).
+    /// Default (unset): `30_000` — a production fail-fast tuned for hosted
+    /// providers. Slow local models (qwen2.5:14b-class on Apple silicon,
+    /// ~43-130s per call at 32k context) need this raised to 180_000-300_000
+    /// or every extraction on an ordinary document exhausts the ladder before
+    /// it can even try the cheaper fallback arms.
+    ///
+    /// Added because `Memory::with_ollama()` and this builder previously had
+    /// NO reachable path to this knob at all (found via the aidocs-trial fit
+    /// check, 2026-08-24/09-02) — despite the field's own doc comment
+    /// pointing at "the builder" as if one already existed. This setter
+    /// mirrors that doc comment's promise.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::extraction_arm_budget_ms`](crate::core::config::PipelineConfigBuilder::extraction_arm_budget_ms).
+    pub fn extraction_arm_budget_ms(mut self, ms: u64) -> Self {
+        self.config_overrides.extraction_arm_budget_ms = Some(ms);
+        self
+    }
+
     /// Configure automatic dream-pass scheduling.
     ///
     /// Default: [`DreamSchedule::Off`] — no background task is spawned.
