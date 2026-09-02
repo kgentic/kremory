@@ -5,6 +5,36 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-02
+
+### Added — `extraction_arm_budget_ms` builder method (TD-231)
+
+`PipelineConfigOverrides::extraction_arm_budget_ms` existed on the internal config type but had
+no `MemoryBuilder` setter, so consumers had no way to reach a documented knob. Added
+`.extraction_arm_budget_ms(ms: u64)` mirroring the sibling `with_*` config-override setters.
+
+### Fixed — silent dense-embedding failure on oversized documents (TD-232)
+
+Ingesting a document too large for the embedder (context-window rejection) previously reported
+success while silently degrading that episode to lexical-only search, with no signal to the
+caller. `IngestionResult` and `EpisodeCommit` now carry `dense_embedded: bool` /
+`Option<bool>` so a consumer can detect and react to the gap. Chunking the embedder input was
+considered and rejected — it would cross kremory's kind-2-only chunking boundary (extraction
+windows only, never embedding-level splitting) — so surfacing the failure is the fix, not a
+workaround.
+
+### Docs — `dream()` is no longer recommended as routine usage
+
+The pre-registered primary benchmark for the dream/consolidation pass finally ran: paired
+qa-gen (n=152, real LLM judge), dream ON 80.3% vs dream OFF 81.6% answer accuracy — a −1.3pp
+difference, statistically indistinguishable from zero (McNemar p=0.79), for ~24 minutes of
+runtime. The dream-destructive-merge defect from `[0.6.0]`-era work is still fixed and still
+holds; no new benefit was ever demonstrated once it was. The README's "Reversible dream"
+section previously told every new user to call `dream()` as a normal step ("consolidates by
+default... all ops ON") — corrected to describe it as optional. Nothing auto-triggers `dream()`
+in either version; the automatic scheduler defaults to `DreamSchedule::Off` and always has.
+Reversibility (see/undo any dream mutation) is unaffected and remains real.
+
 ### Fixed — dream alias resolution was inert on real corpora (TD-203)
 
 On the shipped LoCoMo corpus, **42 of 42 alias candidates sat unresolved across ten
