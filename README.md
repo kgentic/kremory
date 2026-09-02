@@ -284,6 +284,15 @@ The transaction-time axis is **returned but not queryable** — you filter `reco
 yourself on the results. See [the audit-query section](docs/api.md#audit-query) for the worked
 example and its limits.
 
+> **Known limitation — `valid_to` is not extracted automatically.** Automatic extraction fills
+> `valid_from` when the source text states a resolvable date (measured on real conversation
+> data: ~39% of facts do — most casual statements carry no date at all). It does not currently
+> infer `valid_to`: extraction has no mechanism for detecting that an earlier fact was
+> superseded by a later, contradicting one ("I moved to Berlin" retiring "I live in London"),
+> so `valid_to` stays `NULL` unless you set it explicitly via `with_facts()`. `.as_of(t)` still
+> works correctly on whatever `valid_to` values you do supply — the gap is in automatic
+> inference, not in the filter itself.
+
 See [ADR-003](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-003-bitemporal-audit-compliance-2026-05-22.md).
 
 ---
