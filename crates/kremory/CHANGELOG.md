@@ -7,6 +7,17 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [0.7.0] - 2026-09-02
 
+### Added — `split_for_embedding` (TD-232 / TD-234)
+
+A long document handed to `remember()` whole silently loses its dense/embedding search arm
+once it exceeds the embedder's own context window (TD-232) — kremory doesn't chunk content on
+your behalf (a deliberate architectural boundary, unchanged by this release), and until now
+there was no supported way to chunk it yourself either. `kremory::split_for_embedding(text,
+max_chars)` fills that gap: unicode-aware sentence/paragraph-boundary splitting (via the
+`text-splitter` crate), called by you before looping `remember()` once per chunk. Kremory never
+calls it automatically — see the `core::chunking` module doc comment for why a DEFAULT,
+automatic version of this was considered and deliberately not built this release.
+
 ### Fixed — `recall().as_of()` did not scope episode/content search (ADR-068 extension)
 
 ADR-068's point-in-time (`as_of`) filter only ever scoped the fact 1-hop expansion, reasoning

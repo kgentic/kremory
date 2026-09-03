@@ -171,7 +171,7 @@ impl<'a> RememberRequest<'a> {
                 tracing::warn!(
                     episode_chars = chars,
                     threshold = threshold,
-                    "episode content exceeds soft threshold — extraction quality may degrade AND the embedder's own (separate, provider-specific) context window may silently drop the dense-arm; consider pre-chunking, and check EpisodeCommit::dense_embedded"
+                    "episode content exceeds soft threshold — extraction quality may degrade AND the embedder's own (separate, provider-specific) context window may silently drop the dense-arm; pre-chunk with kremory::split_for_embedding before remember() if this matters, and check EpisodeCommit::dense_embedded"
                 );
                 metrics::counter!("kremory_episode_oversize_total").increment(1);
             }

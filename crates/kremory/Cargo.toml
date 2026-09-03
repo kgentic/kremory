@@ -170,6 +170,16 @@ thiserror = "2"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 petgraph = "0.7"
+# TD-232/TD-234: caller-facing pre-chunking helper (kremory::split_for_embedding).
+# Kremory does not chunk content on the caller's behalf for storage/retrieval
+# (a locked architectural boundary — see the module doc comment); this is the
+# tool for callers who want to respect that boundary without hand-rolling
+# unicode-aware sentence-boundary splitting themselves. Evaluated before
+# adopting (Rule 33): 2M+ all-time / 619K 90-day downloads, MIT, actively
+# maintained (published 2026-06-16, not yanked). Base feature only — no
+# tokenizer/markdown/tree-sitter extras, character-count sizing to match
+# `episode_content_warn_threshold`'s own convention.
+text-splitter = "0.32"
 # libSQL: native vectors (F32_BLOB + DiskANN) + FTS5 + SQL. Replaces rusqlite + sqlite-vec.
 # PIN per Vera cycle-2 RISK-002 (2026-05-29): 0.10.0-pre.2 shipped 2026-05-27;
 # Turso migrating effort to from-scratch `tursodatabase/turso` crate; libsql-server

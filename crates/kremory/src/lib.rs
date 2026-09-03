@@ -111,6 +111,11 @@ pub use core::config::Config as CoreConfig;
 // Embedding observability wrapper (ADR D10)
 pub use core::embedding::TokenTrackingEmbedder;
 
+// Caller-facing pre-chunking helper (TD-232 / TD-234) — see the module doc
+// comment on `core::chunking` for why this exists and what it deliberately
+// does NOT do (kremory never calls it automatically).
+pub use core::chunking::split_for_embedding;
+
 /// Observability primitives (v0.1.2): token tracking wrappers, provider rates, init.
 ///
 /// Use these types to wire custom ChatProvider / EmbeddingProvider instances

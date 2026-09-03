@@ -171,6 +171,7 @@ mod td187_valid_at_llm_seam;
 mod td211_backfill_entity_embeddings;
 mod td211_backfill_fact_embeddings;
 mod td232_dense_embed_failure_surfaced;
+mod td234_split_for_embedding_closes_the_loop;
 mod td_012_canary;
 mod td_028_pull_shape;
 mod type_registry_collapse_lemma_false_merge_safety;
