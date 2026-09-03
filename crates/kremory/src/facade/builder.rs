@@ -239,9 +239,9 @@ impl<L, E> MemoryBuilder<L, E> {
     /// content for the embedder (a deliberate, separately-decided
     /// architectural boundary — see TD-232 in the tech-debt register for
     /// why). Detect it via `EpisodeCommit::dense_embedded` /
-    /// `IngestionResult::dense_embedded` (`Some(false)` = this happened) and
-    /// pre-chunk the caller's own content before calling `remember()` if it
-    /// matters for your corpus.
+    /// `IngestionResult::dense_embedded` (`Some(false)` = this happened), and
+    /// pre-chunk with [`crate::split_for_embedding`] before calling
+    /// `remember()` (once per chunk) if it matters for your corpus.
     pub fn episode_content_warn_threshold(mut self, threshold: Option<usize>) -> Self {
         self.episode_content_warn_threshold = threshold;
         self

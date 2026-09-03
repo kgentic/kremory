@@ -127,6 +127,7 @@ pub mod arena;
 pub mod background;
 pub mod canonicalization;
 pub mod chat_tracking;
+pub mod chunking;
 /// Confidence-aware merge helpers — noisy-OR combination (ADR-063 Site #6, the
 /// deterministic half; the reject-floor gate is S4-blocked, see the module docs).
 pub(crate) mod confidence;
