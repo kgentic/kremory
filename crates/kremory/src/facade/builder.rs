@@ -229,6 +229,19 @@ impl<L, E> MemoryBuilder<L, E> {
     /// warning entirely. Never enforced as a hard limit; the threshold only
     /// drives `tracing::warn!` + a `kremory_episode_oversize_total` counter
     /// at ingest time so callers can spot extraction-quality risk early.
+    ///
+    /// **This threshold does NOT protect the dense/embedding search arm**
+    /// (TD-234's sibling, TD-232). Extraction sub-chunks internally
+    /// (`ExtractionWindowSplitter`); embedding does not — a single episode
+    /// over the embedder's own context window (commonly ~2048 tokens, ≈8-10k
+    /// chars for `nomic-embed-text`) silently loses dense-arm coverage on
+    /// that episode, staying BM25-only. Kremory does not currently chunk
+    /// content for the embedder (a deliberate, separately-decided
+    /// architectural boundary — see TD-232 in the tech-debt register for
+    /// why). Detect it via `EpisodeCommit::dense_embedded` /
+    /// `IngestionResult::dense_embedded` (`Some(false)` = this happened) and
+    /// pre-chunk the caller's own content before calling `remember()` if it
+    /// matters for your corpus.
     pub fn episode_content_warn_threshold(mut self, threshold: Option<usize>) -> Self {
         self.episode_content_warn_threshold = threshold;
         self

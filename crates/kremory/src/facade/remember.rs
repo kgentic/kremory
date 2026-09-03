@@ -160,13 +160,18 @@ impl<'a> RememberRequest<'a> {
         let sink = self.memory.resolve_sink(self.sink);
 
         // G4: soft warn at content threshold. Never enforced; observability only.
+        // TD-232: this threshold does not protect the dense/embedding arm — see
+        // `MemoryBuilder::episode_content_warn_threshold`'s doc comment. Content
+        // past the embedder's own (smaller, provider-specific) context window
+        // silently loses dense-arm coverage; check
+        // `EpisodeCommit::dense_embedded` to detect it, not this warning.
         if let Some(threshold) = self.memory.episode_content_warn_threshold {
             let chars = self.content.chars().count();
             if chars > threshold {
                 tracing::warn!(
                     episode_chars = chars,
                     threshold = threshold,
-                    "episode content exceeds soft threshold — extraction quality may degrade; consider pre-chunking"
+                    "episode content exceeds soft threshold — extraction quality may degrade AND the embedder's own (separate, provider-specific) context window may silently drop the dense-arm; consider pre-chunking, and check EpisodeCommit::dense_embedded"
                 );
                 metrics::counter!("kremory_episode_oversize_total").increment(1);
             }
