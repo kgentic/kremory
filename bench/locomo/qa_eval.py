@@ -54,6 +54,8 @@ _RATES = {
     "gpt-4o-2024-08-06": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4o-mini-2024-07-18": (0.15, 0.60),
+    # verified live 2026-09-04 (OpenAI's own pricing page drifts — re-check before quoting)
+    "gpt-5": (0.625, 5.00),
 }
 
 # ---------------------------------------------------------------------------
@@ -131,6 +133,22 @@ def _chat(key: str, model: str, system: str, user: str, *,
     # answers, which is what happened on the first attempt.
     if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
         payload["max_completion_tokens"] = max_tokens
+        if model.startswith("gpt-5"):
+            # Reasoning-token exhaustion: gpt-5 bills hidden reasoning against the
+            # SAME max_completion_tokens budget as the visible answer, and on a
+            # non-trivial fraction of questions it can spend the whole budget
+            # reasoning and return a valid response with EMPTY content — not an
+            # error, just nothing to parse. Measured 2026-09-04 on a 15-question
+            # smoke (a 15-question diagnostic, since discarded/re-run): 9/15 (60%) empty
+            # answers, 2/15 unparsed judge verdicts (both raw-content == "" when
+            # traced through the response cache). `reasoning_effort=minimal` is
+            # OpenAI-documented as supported specifically for gpt-5/-mini/-nano
+            # on Chat Completions to skip extensive reasoning for a task this
+            # simple (a short factual answer / a CORRECT-WRONG label) — verified
+            # against developers.openai.com/api/docs/guides/reasoning, not
+            # assumed. See RECALL-LEDGER.md and locomo-benchmark-protocol
+            # §4bis for the full writeup.
+            payload["reasoning_effort"] = "minimal"
     else:
         payload["temperature"] = 0
         payload["max_tokens"] = max_tokens
@@ -620,8 +638,13 @@ def cmd_answer_judge(a: argparse.Namespace) -> int:
         prompt = prompts_qa.build_judge_prompt(
             r["question"], r.get("gold", ""), r.get("generated_answer", ""),
             r.get("category", ""))
+        # 300 is enough headroom for gpt-4o-*'s short {"label", "reasoning"} JSON.
+        # gpt-5 gets more even with reasoning_effort=minimal (set in _chat) as a
+        # defense-in-depth margin against the same exhaustion bug — see _chat's
+        # comment on the 2026-09-04 smoke finding.
+        judge_max_tokens = 600 if a.model.startswith("gpt-5") else 300
         content, ptok, ctok = _chat(key, a.model, prompts_qa.JUDGE_SYSTEM_PROMPT,
-                                    prompt, json_mode=True, max_tokens=300)
+                                    prompt, json_mode=True, max_tokens=judge_max_tokens)
         correct, reason = _parse_label(content)
         return {"key": r["key"], "question_id": r["question_id"],
                 "category": r.get("category", ""),
