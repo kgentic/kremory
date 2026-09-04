@@ -26,7 +26,7 @@ Supporting capabilities: **bi-temporal** facts (ask "what was true at time t" vi
 
 ```toml
 [dependencies]
-kremory = "0.6"
+kremory = "0.7"
 
 # kremory's API is async and returns errors, so a runtime and an error type are
 # needed to run the Quickstart below.
@@ -474,11 +474,42 @@ A structural summary (not a benchmark) — how kremory differs in *shape*, not j
 
 The two rows nobody else fills: **reversible graph mutations** (see [Reversible dream](#reversible-dream--see-trust-undo)) and **full bi-temporal** history (see [Two-Clock Temporal Model](#two-clock-temporal-model)). "—" means *not a headline capability of that tool*, not necessarily impossible.
 
+### LoCoMo benchmark — a real number, with the caveat that makes it honest
+
+[LoCoMo](https://github.com/mem0ai/memory-benchmarks) is the standard long-conversation memory
+benchmark competitors report against. Measured 2026-09-04, full 1,540-question corpus (not a
+sample), build-verified against the exact feature set this crate ships by default:
+
+| | score | config |
+|---|---|---|
+| Mem0 Platform (hosted, paid) | 92.5% | `gpt-5` answerer + judge, top-200 memories |
+| **kremory (this crate, OSS, self-hosted)** | **92.1%** | `gpt-5` answerer + judge, top-200 memories — Mem0's own exact protocol reproduced |
+| kremory (cheaper model) | 92.1% | `gpt-4o-mini` answerer + judge, top-200 memories |
+
+kremory comes within **0.4 points of a funded, hosted competitor**, reproduced under their own
+exact evaluation method, using a materially cheaper AI model. Full methodology, per-category
+breakdown, and every number's provenance: [`.ai-docs/RECALL-LEDGER.md`](.ai-docs/RECALL-LEDGER.md).
+
+**The honest caveat — this is not what you get with zero configuration.** `.recall()` defaults
+to `k=10` memories; the benchmark number above used `.recall(query).k(200)`. Out-of-the-box
+accuracy is closer to **89%** (measured at `k=20`, the closest setting actually benchmarked to
+the true default). If you want the number above, request more context explicitly:
+
+```rust
+let memories = mem.recall("What did we discuss about pricing?").k(200).await?;
+```
+
+The one real known weak spot: **multi-hop questions** (connecting two separate facts to answer)
+score noticeably lower — 74% vs 90-95%+ on every other question type. Investigated; the cause is
+mostly genuinely hard inference and ambiguous questions, not a retrieval gap (kremory's own
+retrieval was confirmed correct for 96% of the failures checked) — see RECALL-LEDGER §4.24 for
+the full writeup, including what was tried and ruled out.
+
 ---
 
 ## Status & maturity
 
-**Pre-1.0 (`0.6.x`), used in earnest but still evolving.** Correctness coverage is strong —
+**Pre-1.0 (`0.7.x`), used in earnest but still evolving.** Correctness coverage is strong —
 the full suite runs under every feature combination (default / `ner` / `content-search` /
 all-features) plus real-Ollama end-to-end journeys (`remember → dream → recall → unmerge/edit/
 delete/undo`). Crash-resume and transaction-rollback paths carry regression tests that have each
@@ -486,7 +517,7 @@ been observed to FAIL against the un-fixed code, not merely to pass. What 1.0 st
 freeze, a cross-provider model matrix, and **load/concurrency** testing.
 
 **API stability:** on the pre-1.0 lane, minor releases (e.g. `0.5 → 0.6`) may contain breaking
-changes — pin a minor (`kremory = "0.6"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
+changes — pin a minor (`kremory = "0.7"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
 
 ## Node.js / MCP — not yet published
 

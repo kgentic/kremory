@@ -28,6 +28,14 @@ refs:
 # kremory vs Alternatives — Feature Comparison
 
 > Data current as of 2026-05-22. All competitor cells verified against primary sources (GitHub repos, crates.io, npm, PyPI, official docs). kremory cells reflect the locked ADR chain (v3 licensing ADR + ADR-001 through ADR-005 + architecture spec). Sources cited per cell.
+>
+> ⚠️ **PARTIALLY STALE (flagged 2026-09-04, not corrected wholesale).** This doc predates kremory's
+> first public release by ~3.5 months. The **kremory-only cells below marked ✏️ have been updated**
+> against this repo's current state, which is directly verifiable with no external research. The
+> **competitor cells (stars, tool counts, integration counts for codemem / codebase-memory-mcp /
+> Mem0 / Letta / Zep) have NOT been re-verified** — no live source access was available at update
+> time, and per this project's own verify-before-stating discipline, an unverified guess is worse
+> than an honest staleness flag. Treat every non-✏️ cell as a claim from 2026-05-22, not today.
 
 ---
 
@@ -44,12 +52,12 @@ refs:
 | **crates.io publishable** | Yes — engine crate is ~1MB (BYOM, no model) [ADR-002] | Yes — `codemem` publishes on crates.io | N/A (not a Rust crate) | N/A (Python) | N/A (Python) | N/A (Python) |
 | **Time model** | Two-axis: `recorded_at` (TX time, immutable) + `valid_from`/`valid_to` (valid time, mutable) [ADR-003] | One axis: `valid_from`/`valid_to` on nodes/edges via migrations 003+015; no `recorded_at` [codemem §3.6] | None — no temporal model in storage layer [README, store.c verified] | None — vector recency only [licensing-revisit §3] | None [licensing-revisit §3] | Partial — entity/fact timestamps, one clock [licensing-revisit §3] |
 | **Contradiction resolution** | Active engine: `ContradictionResolution` enum (Superseded / Merged / Forked / Ignored); `valid_to` set on invalidated facts [ADR-003] | Labels only: `Contradicts`/`InvalidatedBy`/`Supersedes` edge types in `RelationshipType` enum; no resolver algorithm found in source [codemem §3.7] | None [README, store.c] | None [licensing-revisit §3] | None [licensing-revisit §3] | Partial: supersession edges; no active resolver [licensing-revisit §3] |
-| **MCP tool count** | Deferred to kremory-mcp v0.2.0 [ADR-004] | 32 tools via JSON-RPC stdio or HTTP [codemem §3.9] | 14 tools [README: "14 MCP tools"] | Yes — Python SDK + cloud API | Yes — Python SDK + REST | Yes — Graphiti Python SDK |
+| **MCP tool count** | ✏️ 5 tools (remember / recall / dream / list_mutations / undo) — shipped in this repo (`crates/kremory-mcp`), not yet published as an installable package [see README "Node.js / MCP"] | 32 tools via JSON-RPC stdio or HTTP [codemem §3.9, unverified since 2026-05-22] | 14 tools [README: "14 MCP tools", unverified since 2026-05-22] | Yes — Python SDK + cloud API | Yes — Python SDK + REST | Yes — Graphiti Python SDK |
 | **Tree-sitter grammar support** | None (not a code-analysis tool) | No tree-sitter (code understanding via LLM extraction) | 155 vendored tree-sitter grammars [README: "155 tree-sitter grammars"] | None | None | None |
 | **Embedded (no server process)** | Yes — libSQL file, no server process required [ADR-001, ADR-002] | Yes — rusqlite file, no server process | Yes — pure C binary, no server | No — requires Postgres/cloud | No — requires external services | No — requires Postgres/Neo4j |
-| **Agent integrations** | Via kremory-mcp (v0.2.0) | ~10 integrations (Claude Code, Cursor, Windsurf, Copilot, Zed, others) [codemem README] | 11 agent integrations [README: "11 agent integrations"] | Many — official integrations page | Many — official integrations page | Many via Graphiti SDK |
-| **GitHub stars** | 0 (pre-launch, 2026-05-22) | 11 [GitHub API, 2026-05-22] | 2,502 [GitHub API, 2026-05-22] | ~20K+ | ~10K+ | ~5K+ (Graphiti) |
-| **Active development** | Active (2026-05-22) | Active — v0.18.0, weekly releases [codemem §4] | Active [README arXiv 2603.27277] | Active, Series A funded | Active, seed funded | Active, YC funded |
+| **Agent integrations** | ✏️ Via kremory-mcp (5 tools shipped, package not yet published — see above) | ~10 integrations (Claude Code, Cursor, Windsurf, Copilot, Zed, others) [codemem README, unverified since 2026-05-22] | 11 agent integrations [README: "11 agent integrations", unverified since 2026-05-22] | Many — official integrations page | Many — official integrations page | Many via Graphiti SDK |
+| **GitHub stars** | ✏️ Not re-verified 2026-09-04 (no live GitHub access at update time — do not quote the "0, pre-launch" figure, it predates the public release) | 11 [GitHub API, 2026-05-22, unverified since] | 2,502 [GitHub API, 2026-05-22, unverified since] | ~20K+ | ~10K+ | ~5K+ (Graphiti) |
+| **Active development** | ✏️ Active — 0.7.0 released 2026-09-04, LoCoMo benchmark added (see README) | Active — v0.18.0, weekly releases [codemem §4, unverified since 2026-05-22] | Active [README arXiv 2603.27277, unverified since 2026-05-22] | Active, Series A funded | Active, seed funded | Active, YC funded |
 
 ---
 
