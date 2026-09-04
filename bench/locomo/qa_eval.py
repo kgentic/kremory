@@ -102,6 +102,7 @@ def _load_api_key() -> str:
 
 def _chat(key: str, model: str, system: str, user: str, *,
           json_mode: bool = False, max_tokens: int = 1024,
+          reasoning_effort: str | None = None,
           max_retry: int = 5) -> tuple[str, int, int]:
     """One chat.completions call via urllib. Returns (content, prompt_tok, completion_tok).
 
@@ -148,7 +149,7 @@ def _chat(key: str, model: str, system: str, user: str, *,
             # against developers.openai.com/api/docs/guides/reasoning, not
             # assumed. See RECALL-LEDGER.md and locomo-benchmark-protocol
             # §4bis for the full writeup.
-            payload["reasoning_effort"] = "minimal"
+            payload["reasoning_effort"] = reasoning_effort or "minimal"
     else:
         payload["temperature"] = 0
         payload["max_tokens"] = max_tokens
@@ -557,7 +558,8 @@ def cmd_answer_gen(a: argparse.Namespace) -> int:
             # `build_answer_prompt` back to `structured`/flat unchanged.
             text_block=(b.get("text_block") if text_block_flag else None),
             chronological=chronological)
-        content, ptok, ctok = _chat(key, a.model, "", prompt, max_tokens=a.max_tokens)
+        content, ptok, ctok = _chat(key, a.model, "", prompt, max_tokens=a.max_tokens,
+                                     reasoning_effort=getattr(a, "reasoning_effort", None))
         return {"key": b["key"], "sample_id": b.get("sample_id", ""),
                 "question_id": b["question_id"], "category": b.get("category", ""),
                 "question": b["question"], "gold": b.get("gold", ""),
@@ -865,6 +867,13 @@ def main() -> int:
     g.add_argument("--k", type=int, default=10, help="top-k memories to feed")
     g.add_argument("--reference-date", default="2023")
     g.add_argument("--max-tokens", type=int, default=1024)
+    g.add_argument("--reasoning-effort", default=None,
+                    help="gpt-5-family only: none/minimal/low/medium/high. Unset -> "
+                         "'minimal' (the shipped default, see _chat). NOT part of the "
+                         "response-cache key (model|system|user|json_mode only) -- pass "
+                         "--no-cache when varying this on prompts already cached under "
+                         "a different value, or the cache will silently replay the OLD "
+                         "effort's answer.")
     g.add_argument("--concurrency", type=int, default=8)
     g.add_argument("--keep-raw", action="store_true", help="store full CoT text")
     g.add_argument("--allow-unverified-build", action="store_true",
