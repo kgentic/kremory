@@ -2,6 +2,11 @@
 name = "kremory-admin"
 version = "0.1.5"
 edition = "2021"
+# NOT a crates.io product — internal ops/admin binary, no lib target, no
+# external consumer. Verified 2026-09-05 the registry has never held it.
+# Guarded so a `--workspace` publish cannot make an accidental first-ever
+# publish permanent (crates.io names/versions cannot be deleted, only yanked).
+publish = false
 license = "Apache-2.0"
 description = "Migration + admin tooling for kremory databases"
 repository = "https://github.com/kgentic/kremory"

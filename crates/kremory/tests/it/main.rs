@@ -111,6 +111,7 @@ mod ner_benchmark;
 mod ner_extraction;
 mod no_remote_libsql_surface;
 mod no_workspace_terminology_in_lib;
+mod public_surface_hygiene;
 mod oob_anthropic_smoke;
 mod otel_integration;
 mod phase_c_dream_api;

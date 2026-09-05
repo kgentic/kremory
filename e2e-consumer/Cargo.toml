@@ -4,7 +4,7 @@
 #
 # Standalone workspace (empty [workspace] table) so this crate is NOT pulled into
 # the kremory workspace as a member. Build with:
-#   CARGO_TARGET_DIR=~/kremory-adr073-cascade/target \
+#   CARGO_TARGET_DIR=/path/to/shared/target \
 #     cargo run --manifest-path e2e-consumer/Cargo.toml
 [package]
 name = "kremory-e2e-consumer"

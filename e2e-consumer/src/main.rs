@@ -5,7 +5,7 @@
 //! BOTH behaviour AND observability.
 //!
 //! Run:
-//!   CARGO_TARGET_DIR=~/kremory-adr073-cascade/target \
+//!   CARGO_TARGET_DIR=/path/to/shared/target \
 //!     KREMORY_DEBUG=1 cargo run --manifest-path e2e-consumer/Cargo.toml
 //!
 //! Ollama must be running at localhost:11434.

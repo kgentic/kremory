@@ -1,12 +1,15 @@
 [package]
 name = "kremory"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 rust-version = "1.86"
 license = "Apache-2.0"
 description = "Bi-temporal knowledge graph engine + agent memory orchestration in pure Rust"
 repository = "https://github.com/kgentic/kremory"
-homepage = "https://kremory.dev"
+# kremory.dev has NO DNS record (verified 2026-09-05: does not resolve, while a
+# control host resolved fine). A dead `homepage` puts a broken link on the
+# crates.io page, so this points at the repository until DNS exists.
+homepage = "https://github.com/kgentic/kremory"
 readme = "README.md"
 keywords = ["agent", "memory", "knowledge-graph", "bi-temporal", "embedding"]
 categories = ["database", "data-structures"]
@@ -20,6 +23,12 @@ include = [
     "README.md",
     "CHANGELOG.md",
     "Cargo.toml",
+    # Apache-2.0 s4(a) requires the License accompany any redistribution.
+    # Both are symlinks to the workspace root; `cargo package` resolves
+    # symlinks (proven: the README symlink shipped its target in 0.7.0).
+    # Omitting these shipped 0.7.0 without a licence file.
+    "LICENSE",
+    "NOTICE",
 ]
 
 # docs.rs builds the public API surface with all stable features + the docsrs cfg
@@ -45,8 +54,8 @@ ner = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]
 # BYOM invariant: kremory consumes the trait crate (autoagents-llm) ONLY —
 # never the concrete `autoagents-llamacpp` impl, neither in [dependencies] nor
 # [dev-dependencies]. `cargo tree -p kremory | grep autoagents-llamacpp` MUST
-# print empty. The concrete impl lives in rust-pipeline / tauri-app where the
-# the host application binary co-locates LlamaCppClient + synthesis::autoagents.
+# print empty. The concrete impl lives in the downstream host application that
+# co-locates its LLM client with its synthesis layer.
 # autoagents-llm is a REQUIRED dep (not optional) because kremory::memory's
 # GraphHandle trait surface always needs ChatProvider.
 embeddings = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:hf-hub"]

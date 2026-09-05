@@ -5,6 +5,47 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-05
+
+Packaging and public-surface hygiene only. No behaviour, API, or schema change.
+
+### Fixed — the published package carried no licence file
+
+`0.7.0` and every release before it shipped without `LICENSE` or `NOTICE`: the
+crate's `include` allowlist named neither, so the files sat at the workspace root
+and never entered the `.crate`. Apache-2.0 §4(a) requires the licence accompany
+any redistribution, so the published artifact was non-compliant despite declaring
+`license = "Apache-2.0"`. Both are now symlinks into the crate directory and
+listed in `include`; verified with `cargo package --list` (152 → 154 files).
+
+### Fixed — `homepage` pointed at a host that does not resolve
+
+`https://kremory.dev` has no DNS record (checked 2026-09-05 against a control
+host that resolved normally), so the crates.io page advertised a dead link.
+`homepage` now points at the repository. Restore the custom domain once it
+resolves.
+
+### Fixed — a private product codename shipped inside the package
+
+The downstream host application's internal codename appeared in a `Cargo.toml`
+comment and in a graph test fixture string, both inside the `include` allowlist
+and therefore both public on crates.io since the crate was first published. Both
+sites now use neutral wording; the test's assertion was on `group_id` and is
+unaffected. A new guard (`public_surface_hygiene`) fails the build if any
+operator-local absolute path or private term reaches the published surface
+again — it scans the tracked file set derived from `git ls-files`, and is proven
+to go red on an injected leak rather than merely observed to be green.
+
+### Fixed — dead and internal-only links in the published README and docs
+
+The `0.7.0` README shipped four links into a private `.ai-docs/` tree that the
+public cannot read; the scrub that repointed them landed after the publish, so
+they are live on docs.rs today. A relocated public ADR additionally described a
+two-crate split that no longer exists, in prose mangled by an old bulk rename
+("kremory wraps kremory"); it now carries a historical banner naming the original
+crates and pointing at `docs/observability.md` for the current picture.
+
+
 ## [0.7.0] - 2026-09-02
 
 ### Added — `split_for_embedding` (TD-232 / TD-234)

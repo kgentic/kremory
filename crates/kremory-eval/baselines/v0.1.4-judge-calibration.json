@@ -7,7 +7,7 @@
       "agreement_rate": 0.95,
       "avg_inference_ms": 5683.5658229499995,
       "model_load_ms": 594.650208,
-      "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
+      "model_path": "gemma-4-E2B-it-Q4_K_M.gguf",
       "pair_count": 20,
       "pairs": [
         {
@@ -240,7 +240,7 @@
       "agreement_rate": 0.95,
       "avg_inference_ms": 5924.283122899999,
       "model_load_ms": 589.569416,
-      "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
+      "model_path": "gemma-4-E2B-it-Q4_K_M.gguf",
       "pair_count": 20,
       "pairs": [
         {
@@ -473,7 +473,7 @@
       "agreement_rate": 0.95,
       "avg_inference_ms": 5807.6518125,
       "model_load_ms": 617.731125,
-      "model_path": "~/.cache/huggingface/hub/gemma-4-E2B-it-Q4_K_M.gguf",
+      "model_path": "gemma-4-E2B-it-Q4_K_M.gguf",
       "pair_count": 20,
       "pairs": [
         {
