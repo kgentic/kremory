@@ -6,9 +6,12 @@ rust-version = "1.86"
 license = "Apache-2.0"
 description = "Bi-temporal knowledge graph engine + agent memory orchestration in pure Rust"
 repository = "https://github.com/kgentic/kremory"
-# kremory.dev has NO DNS record (verified 2026-09-05: does not resolve, while a
-# control host resolved fine). A dead `homepage` puts a broken link on the
-# crates.io page, so this points at the repository until DNS exists.
+# kremory.dev IS registered (2026-05-21, expires 2027-05-21) and delegated to
+# Cloudflare nameservers, but publishes no A/AAAA record, so it resolves
+# nowhere (verified 2026-09-05 against a control host that resolved fine).
+# The fix is therefore adding a record, not acquiring a domain. A dead
+# `homepage` puts a broken link on the crates.io page, so this points at the
+# repository until something is actually served there.
 homepage = "https://github.com/kgentic/kremory"
 readme = "README.md"
 keywords = ["agent", "memory", "knowledge-graph", "bi-temporal", "embedding"]
