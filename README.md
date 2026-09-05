@@ -210,7 +210,7 @@ Wire it via `.with_embedder(MyEmbedder.into_dyn())` (or `Arc::new(MyEmbedder)`).
 
 Wire any provider — OpenAI, Ollama, local GGUF, sentence-transformers via HTTP, anything. Your API keys, your inference costs, your data.
 
-Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays around 1 MB. Measured 2026-08-03: `cargo package` on the 0.5.0 tree produces a **1.04 MB** `.crate` (4.3 MiB across 150 files, 1.0 MiB compressed); the published 0.5.0 is 0.885 MB. The prior "under 1MB" wording was true of the published artifact and would have become false at the next publish (N-1). See [ADR-002](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-002-byom-distribution-moat-2026-05-22.md).
+Why this matters: a bundled 440MB model cannot publish to crates.io (10MB compressed limit). kremory stays around 1 MB. Measured 2026-08-03: `cargo package` on the 0.5.0 tree produces a **1.04 MB** `.crate` (4.3 MiB across 150 files, 1.0 MiB compressed); the published 0.5.0 is 0.885 MB. The prior "under 1MB" wording was true of the published artifact and would have become false at the next publish (N-1). See [ADR-002](docs/adr/adr-002-byom-distribution-moat.md).
 
 ### What about GLiNER? (when you opt into NER)
 
@@ -293,7 +293,7 @@ example and its limits.
 > works correctly on whatever `valid_to` values you do supply — the gap is in automatic
 > inference, not in the filter itself.
 
-See [ADR-003](https://github.com/kgentic/kremory/blob/main/.ai-docs/adrs/rql/adr-003-bitemporal-audit-compliance-2026-05-22.md).
+See [ADR-003](docs/adr/adr-003-bitemporal-audit-compliance.md).
 
 ---
 
@@ -356,7 +356,7 @@ See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for 
 > indistinguishable from zero** (McNemar p=0.79), for ~24 minutes of runtime. Call it if you want
 > a tidier graph for browsing/debugging, or if you're building on the mutation/undo system below
 > — not because it improves what `recall()` returns. Full write-up:
-> `.ai-docs/decisions/dream-keep-or-cut-prereg-2026-08-19.md`.
+> [`docs/decisions/dream-keep-or-cut-prereg.md`](docs/decisions/dream-keep-or-cut-prereg.md).
 
 `dream()` consolidates the graph when called: community detection, the supersession sweep, and
 fact archival are **ON and commit**. Cross-episode entity merges are the one exception — they
@@ -488,7 +488,7 @@ sample), build-verified against the exact feature set this crate ships by defaul
 
 kremory comes within **0.4 points of a funded, hosted competitor**, reproduced under their own
 exact evaluation method, using a materially cheaper AI model. Full methodology, per-category
-breakdown, and every number's provenance: [`.ai-docs/RECALL-LEDGER.md`](.ai-docs/RECALL-LEDGER.md).
+breakdown, and reproduction steps: [`docs/benchmarks.md`](docs/benchmarks.md).
 
 **The honest caveat — this is not what you get with zero configuration.** `.recall()` defaults
 to `k=10` memories; the benchmark number above used `.recall(query).k(200)`. Out-of-the-box
@@ -502,8 +502,9 @@ let memories = mem.recall("What did we discuss about pricing?").k(200).await?;
 The one real known weak spot: **multi-hop questions** (connecting two separate facts to answer)
 score noticeably lower — 74% vs 90-95%+ on every other question type. Investigated; the cause is
 mostly genuinely hard inference and ambiguous questions, not a retrieval gap (kremory's own
-retrieval was confirmed correct for 96% of the failures checked) — see RECALL-LEDGER §4.24 for
-the full writeup, including what was tried and ruled out.
+retrieval was confirmed correct for 96% of the failures checked) — see
+[`docs/benchmarks.md`](docs/benchmarks.md) for the full writeup, including what was tried and
+ruled out.
 
 ---
 

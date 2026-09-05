@@ -128,12 +128,7 @@ Graphiti exposes a Python client with `get_episodes` and `get_nodes`. Export via
 
 ## Sources
 
-All competitor data verified against primary sources (2026-05-22):
-
-- `codemem`: `~/Documents/Projects/Ideas/kremory/.ai-docs/research/competitors/codemem-2026-05-22.md`
-- `codebase-memory-mcp` LICENSE: `~/Documents/Projects/Ideas/oss/codebase-memory-mcp/LICENSE` (read directly, MIT confirmed)
-- `codebase-memory-mcp` storage: `~/Documents/Projects/Ideas/oss/codebase-memory-mcp/src/store/store.c` (head read, `cbm_store_t` confirmed)
-- `codebase-memory-mcp` README: `~/Documents/Projects/Ideas/oss/codebase-memory-mcp/README.md` (2,502 stars, 14 tools, 11 integrations, 155 grammars — verified)
-- Mem0 / Letta / Zep: `.ai-docs/research/rqlm-licensing-revisit-research-2026-05-19.md`
-- Synthesis: `.ai-docs/research/rust-agent-memory-competitor-landscape-synthesis-2026-05-22.md`
-- Fork analysis: `.ai-docs/research/codebase-memory-mcp-fork-analysis-2026-05-22.md`
+Competitor data verified directly against each project's own repository (LICENSE file, source,
+README) and against Mem0/Letta/Zep's own public docs, as of 2026-05-22. Some figures (star
+counts, tool counts) drift over time — re-verify before quoting if this page is more than a few
+months old.

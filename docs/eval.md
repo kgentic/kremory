@@ -12,9 +12,8 @@ honours, and where each scorer's design is decided.
 > intentionally **deferred until kremory's public API stabilises** (post-v1.0.0).
 > A published number against a moving API surface is misleading to adopters,
 > and peer numbers (Mem0, Zep, Emergence) are all cloud-stack runs that a
-> local-14B kremory baseline would not be directly comparable to. See
-> `.ai-docs/research/v0.1.5-eval-speedup/peer-eval-methodology-2026-05-28.md`.
-> Smoke runs against local fixtures are the keeper signal for now.
+> local-14B kremory baseline would not be directly comparable to. Smoke runs
+> against local fixtures are the keeper signal for now.
 
 > For the dataset and fixture inventory see
 > [`docs/eval-fixtures.md`](./eval-fixtures.md).
@@ -190,6 +189,4 @@ cargo tree -p kremory --edges normal | grep autoagents-llamacpp
 ## Decisions and source-of-truth
 
 - Scorer fork decision (Option A — Rust port): `crates/kremory-eval/baselines/v0.1.4-scorer-decision.md`
-- Strategy: `.ai-docs/planning/quality-eval-strategy-2026-05-28.md`
-- Roadmap: `.ai-docs/planning/roadmap-post-v013-2026-05-28.md`
 - Fixture inventory: `docs/eval-fixtures.md`

@@ -4,8 +4,7 @@
 
 kremory uses [cargo-nextest](https://nexte.st) as the local test runner. It runs
 all test binaries in one global parallel pool, which on this suite is ~16x faster
-than `cargo test` (measured 568s → 35s; see [TD-109](../.ai-docs/tech-debt/tech-debt-register.md)
-and [`.ai-docs/specs/test-suite-build-perf-spec-2026-07-09.md`](../.ai-docs/specs/test-suite-build-perf-spec-2026-07-09.md)).
+than `cargo test` (measured 568s → 35s).
 
 ```bash
 cargo nextest run -p kremory      # unit + integration tests (~35s)

@@ -326,7 +326,7 @@ What it does NOT install:
 
 ## Cardinality discipline
 
-Per [ADR-rql-core-memory-observability-first-class-2026-05-20](../.ai-docs/adrs/rql/adr-rql-core-memory-observability-first-class-2026-05-20.md), label values are bounded:
+Per [the observability-first-class ADR](adr/adr-observability-first-class.md), label values are bounded:
 
 | Label | Cardinality source | Bound |
 |---|---|---|
@@ -345,7 +345,7 @@ Per [ADR-rql-core-memory-observability-first-class-2026-05-20](../.ai-docs/adrs/
 
 | Limitation | Cause | Workaround | Resolution path |
 |---|---|---|---|
-| `with_ollama` Tier 1 emits 0 token counts | `autoagents-llm 0.3.7` Ollama backend's `usage()` returns `None` | Use `.with_llm(custom_provider).with_token_tracking("ollama", model)` with a custom `ChatProvider` that overrides `usage()` by parsing Ollama's `prompt_eval_count` + `eval_count` fields | Awaiting `autoagents-llm 0.3.8` upstream PR (Ollama backend `usage()` override). Tracked in [.ai-docs/planning/roadmap-post-v013-2026-05-28.md](../.ai-docs/planning/roadmap-post-v013-2026-05-28.md) item B.2 |
+| `with_ollama` Tier 1 emits 0 token counts | `autoagents-llm 0.3.7` Ollama backend's `usage()` returns `None` | Use `.with_llm(custom_provider).with_token_tracking("ollama", model)` with a custom `ChatProvider` that overrides `usage()` by parsing Ollama's `prompt_eval_count` + `eval_count` fields | Awaiting `autoagents-llm 0.3.8` upstream PR (Ollama backend `usage()` override) |
 | Google Gemini backend emits 0 token counts | Same — AA's `google.rs` doesn't override `usage()` | Same workaround | Awaiting `autoagents-llm 0.3.8`. Tracked roadmap item B.3 |
 | Anthropic prompt-cache tokens not surfaced separately | v0.1.2 scope deferred; AA already parses the fields | Read `cache_creation_input_tokens` + `cache_read_input_tokens` from your own logs in the interim | v0.1.4 — kremory-side wiring; tracked roadmap item B.1 |
 | `rate_limited` / `timeout` error.type labels not producible | `autoagents-llm 0.3.7` `LLMError` has no structured variants for these | Both route through `HttpError`/`ProviderError` → `"server_error"` bucket. Query span attributes for raw error message detail | Awaiting `autoagents-llm 0.3.8`+ |
@@ -395,11 +395,9 @@ Slow ingest sessions:
 
 ## Cross-references
 
-- ADR-rql-core-memory-observability-first-class-2026-05-20 — observability as first-class concern + dual-emit policy
+- [Observability-first-class ADR](adr/adr-observability-first-class.md) — observability as first-class concern + dual-emit policy
 - ADR D7 — cardinality discipline
 - ADR D9 — cost emission ADR (superseded on cost-unit by v0.1.2 spec: gauge f64 USD, not micro-USD counter)
-- `.ai-docs/architecture/kremory-v012--llm-observability-parity-architecture.md` — v0.1.2 architecture spec
-- `.ai-docs/specs/test-strategy-kremory-v010-llm-integration-byom.md` §17 — v0.1.2 test contract (11 new G_v012_* tests)
 - `crates/kremory/monitoring/provider-rates.toml` — bundled rates source of truth
 
 ---

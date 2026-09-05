@@ -447,7 +447,7 @@ Notes (ADR-072 seq1):
 
 A measured failure mode worth knowing about: on our LoCoMo miss-set, **50% of the evidence turns we
 fail to retrieve sit in a session we ALREADY hit** — retrieval finds the right conversation and
-returns the wrong turn (`.ai-docs/RECALL-LEDGER.md` §5.7). Widening `k` does not fix this reliably;
+returns the wrong turn. Widening `k` does not fix this reliably;
 pulling the *rest of the hit's source* does.
 
 kremory has no built-in "session" concept, and does not need one — the behaviour composes from
