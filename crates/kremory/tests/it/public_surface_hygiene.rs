@@ -103,10 +103,24 @@ fn is_public_surface(rel: &str) -> bool {
         }
         return false;
     }
+    if DETECTOR_FILES.contains(&rel) {
+        return false;
+    }
     PUBLIC_REPO_DIRS
         .iter()
         .any(|d| rel.starts_with(&format!("{d}/")))
 }
+
+/// The only exempt paths: the two files that DEFINE the patterns above and must
+/// therefore contain them. Deliberately spelled out one path at a time rather
+/// than expressed as a directory or extension rule — a broad exemption here
+/// would silently hide real leaks, which is the failure this guard exists to
+/// prevent. `exemptions_are_all_live` below fails if either path stops existing,
+/// so a rename cannot leave a dead entry quietly covering nothing.
+const DETECTOR_FILES: [&str; 2] = [
+    "scripts/build-public-export.sh",
+    "crates/kremory/tests/it/public_surface_hygiene.rs",
+];
 
 /// Directories published via the repository but not via the crate package.
 /// `e2e-consumer/` is why this list exists: two example commands there carried
@@ -243,6 +257,20 @@ fn detector_fires_on_a_leak_and_not_on_lookalikes() {
         assert!(
             !LOCAL_PATH_MARKERS.iter().any(|m| c.contains(m)),
             "detector false-positived on ordinary text: {c}"
+        );
+    }
+}
+
+/// An allowlist rots the moment one of its entries stops matching a real file:
+/// the exemption survives, covers nothing, and nobody notices. This fails the
+/// build instead.
+#[test]
+fn exemptions_are_all_live() {
+    let root = repo_root();
+    for rel in DETECTOR_FILES {
+        assert!(
+            root.join(rel).is_file(),
+            "exempt path '{rel}' no longer exists — remove the exemption or fix the path"
         );
     }
 }
