@@ -149,6 +149,36 @@ pub struct ExtractionContext<'a> {
     /// existing cassette-backed test, `Some` only when a caller has
     /// deliberately dated the document.
     pub reference_time: Option<DateTime<Utc>>,
+    /// ADR-080 (prior-turn replay): the contents of the preceding episodes of
+    /// the SAME conversation thread, oldest-first, so that references in `text`
+    /// resolve. A bare `"I prefer that one"` has nothing to resolve against on
+    /// its own; with the preceding turns in view the extractor can name what
+    /// "that one" was.
+    ///
+    /// Both live competitors do exactly this and converged on N=10 — mem0
+    /// replays the last 10 rows of its `messages` table for the session
+    /// (`mem0/memory/main.py:920`), Graphiti the last 10 episodes for the group
+    /// (`graphiti_core/graphiti.py:1086`). See
+    /// `.ai-docs/research/competitive-landscape/write-path-teardown-2026-09-06.md`.
+    ///
+    /// Populated by `ingest_with` / the deferred path from
+    /// `TemporalGraph::prior_episodes_for_source`, keyed on the episode's
+    /// `source_id` (what `.from_chat(id)` sets) and scoped to `group_id`.
+    /// Empty in tests that don't need it.
+    ///
+    /// # Why the empty case MUST render nothing
+    ///
+    /// Identical hazard to [`ExtractionContext::reference_time`] above: the VCR
+    /// fingerprint hashes the rendered prompt
+    /// (`core/provider/record_replay.rs`), so a non-empty render for an empty
+    /// input would invalidate every committed chat cassette. `&[]` is the
+    /// default and MUST leave `build_triplet_prompt` byte-identical.
+    ///
+    /// Two independent properties keep that true in practice: an un-tagged
+    /// `remember()` receives a random-uuid source id, so no prior episode can
+    /// match it; and an empty slice renders `String::new()` into a format
+    /// string that already carried the separator newline.
+    pub prior_turns: &'a [String],
 }
 
 impl<'a> Default for ExtractionContext<'a> {
@@ -164,6 +194,7 @@ impl<'a> Default for ExtractionContext<'a> {
             arm_budget_ms: 30_000,
             model: None,
             reference_time: None,
+            prior_turns: &[],
         }
     }
 }

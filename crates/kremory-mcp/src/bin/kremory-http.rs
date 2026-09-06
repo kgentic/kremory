@@ -365,6 +365,15 @@ struct CreateMemoryBody {
     namespace: String,
     #[serde(default)]
     published_at: Option<String>,
+    /// Conversation/thread key (ADR-080). Forwarded to `RememberRequest`, which
+    /// maps a bare source id to `SourceKind::Chat` — i.e. `.from_chat(id)`.
+    ///
+    /// Two episodes posted with the SAME `source_id` are two turns of one
+    /// conversation, which is what makes prior-turn replay reachable over this
+    /// transport. Omitted (the pre-ADR-080 behaviour) means every episode gets a
+    /// fresh uuid and nothing can replay, so this is strictly additive.
+    #[serde(default)]
+    source_id: Option<String>,
 }
 
 async fn create_memory(
@@ -376,7 +385,7 @@ async fn create_memory(
         thread: None,
         content: body.content,
         source_kind: None,
-        source_id: None,
+        source_id: body.source_id,
         published_at: body.published_at,
         structured_facts: Vec::new(),
         skip_extraction: false,

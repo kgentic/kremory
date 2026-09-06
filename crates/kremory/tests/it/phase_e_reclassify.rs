@@ -786,8 +786,7 @@ async fn e_real_llm_smoke_reclassify() {
         std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
 
     // Per substrate SoT (tests/llm_integration.rs:1-25): gemma4-e2b:latest
-    let chat_model =
-        crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest");
+    let chat_model = crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest");
 
     let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)
@@ -862,6 +861,211 @@ async fn e_real_llm_smoke_reclassify() {
         snapshot
             .iter()
             .map(|(k, _, _, _)| k.key().name())
+            .collect::<Vec<_>>()
+    );
+}
+
+// ─── L3 registry bounds validation on the dream reclassify write path ─────────
+//
+// The LLM-emitted `entity_type_id` is untrusted input. `EntityTypeRegistry::
+// validate_or_fallback` is the project's single L3 bounds check (entity_types.rs
+// §L3): id=0 passes, any registered id passes, anything else maps to 0. Its doc
+// comment states the caller contract explicitly — "call this immediately after
+// LLM extraction, before any DB write. Never write an unvalidated id to
+// `entities.entity_type_id`."
+//
+// The single-entity L7 precedent (`core/reclassification.rs`) validates and then
+// SKIPS the write when the result is 0 (`outcome=invalid, reason=registry_rejected`).
+// These tests pin the same semantics for the batch dream pass.
+
+/// Registry bounds: an out-of-range `entity_type_id` (> max registered id) must
+/// NOT be persisted. Registry holds {0, 1}; the LLM emits 99.
+#[tokio::test]
+async fn e_registry_bounds_out_of_range_type_id_is_not_persisted() {
+    let (graph, _tmp) = open_graph().await;
+
+    insert_entity(&graph, "oob-entity", 0, "Phase1Ner", Some(0.2)).await;
+    insert_entity_type(&graph, 0, "Entity", "Catch-all.").await;
+    insert_entity_type(&graph, 1, "Person", "A human individual").await;
+
+    // 99 is beyond max registered id (1) → validate_or_fallback maps it to 0.
+    let mock = MockLlm::new(
+        r#"{"decisions": [{"entity_id": "oob-entity", "entity_type_id": 99, "confidence": 0.9}]}"#,
+    );
+
+    let result = kremory::core::dream::reclassify::reclassify(
+        &mock,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            model_id: "test-model",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
+        },
+    )
+    .await
+    .expect("reclassify must succeed");
+
+    let (new_type, new_source) = read_entity_fields(&graph, "oob-entity").await;
+    assert_eq!(
+        new_type, 0,
+        "out-of-registry entity_type_id=99 must NOT reach persistence; entity must stay at the catch-all"
+    );
+    assert_eq!(
+        new_source, "Phase1Ner",
+        "a registry-rejected decision must not stamp a source tier"
+    );
+    assert_eq!(
+        result.entities_reclassified, 0,
+        "a registry-rejected decision must not be counted as a reclassification"
+    );
+}
+
+/// Registry bounds: an `entity_type_id` inside the numeric range but absent from
+/// the registry (a gap) must NOT be persisted. Registry holds {0, 1, 5}; the LLM
+/// emits 3, which is <= max_id but unregistered.
+#[tokio::test]
+async fn e_registry_bounds_unknown_gap_type_id_is_not_persisted() {
+    let (graph, _tmp) = open_graph().await;
+
+    insert_entity(&graph, "gap-entity", 0, "Phase1Ner", Some(0.2)).await;
+    insert_entity_type(&graph, 0, "Entity", "Catch-all.").await;
+    insert_entity_type(&graph, 1, "Person", "A human individual").await;
+    insert_entity_type(&graph, 5, "Time", "A time of day or duration").await;
+
+    // 3 <= max_id (5) but is not registered → validate_or_fallback maps it to 0.
+    let mock = MockLlm::new(
+        r#"{"decisions": [{"entity_id": "gap-entity", "entity_type_id": 3, "confidence": 0.9}]}"#,
+    );
+
+    let result = kremory::core::dream::reclassify::reclassify(
+        &mock,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            model_id: "test-model",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
+        },
+    )
+    .await
+    .expect("reclassify must succeed");
+
+    let (new_type, new_source) = read_entity_fields(&graph, "gap-entity").await;
+    assert_eq!(
+        new_type, 0,
+        "unregistered (gap) entity_type_id=3 must NOT reach persistence"
+    );
+    assert_eq!(
+        new_source, "Phase1Ner",
+        "a registry-rejected decision must not stamp a source tier"
+    );
+    assert_eq!(
+        result.entities_reclassified, 0,
+        "a registry-rejected decision must not be counted as a reclassification"
+    );
+}
+
+/// Sensitivity guard for the two tests above: a decision whose `entity_type_id`
+/// IS registered must still be applied. Without this, a fix that rejected every
+/// decision would pass both bounds tests.
+#[tokio::test]
+async fn e_registry_bounds_registered_type_id_still_applies() {
+    let (graph, _tmp) = open_graph().await;
+
+    insert_entity(&graph, "in-registry-entity", 0, "Phase1Ner", Some(0.2)).await;
+    insert_entity_type(&graph, 0, "Entity", "Catch-all.").await;
+    insert_entity_type(&graph, 1, "Person", "A human individual").await;
+    insert_entity_type(&graph, 5, "Time", "A time of day or duration").await;
+
+    // 5 is registered despite the 2..=4 gap → must pass validation.
+    let mock = MockLlm::new(
+        r#"{"decisions": [{"entity_id": "in-registry-entity", "entity_type_id": 5, "confidence": 0.9}]}"#,
+    );
+
+    let result = kremory::core::dream::reclassify::reclassify(
+        &mock,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            model_id: "test-model",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts {
+                confidence_threshold: 0.5,
+                high_conf_threshold: 0.7,
+                max_batch_size: kremory::core::dream::reclassify::MAX_RECLASSIFY_BATCH,
+            },
+        },
+    )
+    .await
+    .expect("reclassify must succeed");
+
+    let (new_type, new_source) = read_entity_fields(&graph, "in-registry-entity").await;
+    assert_eq!(new_type, 5, "a registered entity_type_id must be persisted");
+    assert_eq!(
+        new_source, "DreamPass1",
+        "a registered high-confidence decision must still stamp DreamPass1"
+    );
+    assert_eq!(result.entities_reclassified, 1);
+}
+
+/// Observability: a registry-rejected decision must be attributable at the pass
+/// level, not only via the shared `rql.extraction.entity_type_id_fallback` counter
+/// that `validate_or_fallback` fires internally.
+#[tokio::test]
+async fn e_registry_bounds_rejection_emits_skipped_counter() {
+    use metrics_util::debugging::DebuggingRecorder;
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let (graph, _tmp) = open_graph().await;
+
+    insert_entity(&graph, "counter-entity", 0, "Phase1Ner", Some(0.2)).await;
+    insert_entity_type(&graph, 0, "Entity", "Catch-all.").await;
+    insert_entity_type(&graph, 1, "Person", "A human individual").await;
+
+    let mock = MockLlm::new(
+        r#"{"decisions": [{"entity_id": "counter-entity", "entity_type_id": 77, "confidence": 0.9}]}"#,
+    );
+
+    kremory::core::dream::reclassify::reclassify(
+        &mock,
+        ReclassifyParams {
+            conn: &graph.conn,
+            group_id: "test-group",
+            model_id: "test-model",
+            opts: kremory::core::dream::reclassify::ReclassifyOpts::default(),
+        },
+    )
+    .await
+    .expect("reclassify must succeed");
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let has_registry_rejected = snapshot.iter().any(|(k, _, _, _)| {
+        k.key().name() == "kremory.dream.reclassify_entities_skipped_total"
+            && k.key()
+                .labels()
+                .any(|l| l.key() == "reason" && l.value() == "registry_rejected")
+    });
+    assert!(
+        has_registry_rejected,
+        "reclassify_entities_skipped_total{{reason=registry_rejected}} must fire — got: {:?}",
+        snapshot
+            .iter()
+            .map(|(k, _, _, _)| (
+                k.key().name().to_string(),
+                k.key()
+                    .labels()
+                    .map(|l| format!("{}={}", l.key(), l.value()))
+                    .collect::<Vec<_>>()
+            ))
             .collect::<Vec<_>>()
     );
 }

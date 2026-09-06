@@ -195,58 +195,78 @@ impl<'a> std::future::IntoFuture for UpdateEpisodeMetadataRequest<'a> {
                 )));
             }
 
-            // Read existing metadata TEXT for the source_id.
-            let existing_text: Option<String> = conn
+            // Read (id, metadata) for EVERY row sharing this source_id.
+            //
+            // `source_id` is NOT unique — Migration 007 creates a plain
+            // `idx_episodes_source_id`, not a UNIQUE index (see
+            // `core/migrations/defs_b.rs:123`), and `docs/api.md` §5.1 teaches
+            // reusing one source id for a whole chat session. So N > 1 rows is
+            // the normal case, and the merge MUST be per row: reading one
+            // arbitrary row's metadata and broadcasting the result to all of
+            // them silently destroys every sibling's own keys.
+            let mut rows = conn
                 .query(
-                    "SELECT metadata FROM episodes WHERE source_id = ?1",
+                    "SELECT id, metadata FROM episodes WHERE source_id = ?1",
                     libsql::params![self.source_id.clone()],
                 )
                 .await
-                .map_err(CoreError::Database)?
-                .next()
-                .await
-                .map_err(CoreError::Database)?
-                .ok_or_else(|| {
-                    MemoryError::Other(
-                        "update_episode_metadata: metadata SELECT returned no rows".to_string(),
-                    )
-                })?
-                .get(0)
                 .map_err(CoreError::Database)?;
 
-            // Parse existing (NULL → empty object).
-            let mut existing_obj: serde_json::Map<String, serde_json::Value> = match existing_text {
-                Some(ref s) => serde_json::from_str(s).map_err(|e| {
-                    MemoryError::Other(format!(
-                        "update_episode_metadata: failed to parse existing metadata as JSON: {e}"
-                    ))
-                })?,
-                None => serde_json::Map::new(),
-            };
-
-            // Shallow-merge: iterate patch top-level keys, overwrite/insert.
-            // Arrays are replaced, not merged — this is automatic because we
-            // overwrite the top-level key, not recurse into nested structures.
-            if let Some(patch_obj) = patch_value.as_object() {
-                for (k, v) in patch_obj {
-                    existing_obj.insert(k.clone(), v.clone());
-                }
+            let mut existing: Vec<(i64, Option<String>)> = Vec::new();
+            while let Some(row) = rows.next().await.map_err(CoreError::Database)? {
+                let id: i64 = row.get(0).map_err(CoreError::Database)?;
+                let metadata_text: Option<String> = row.get(1).map_err(CoreError::Database)?;
+                existing.push((id, metadata_text));
             }
 
-            // Serialize and UPDATE.
-            let merged_text = serde_json::to_string(&existing_obj).map_err(|e| {
-                MemoryError::Other(format!(
-                    "update_episode_metadata: failed to serialize merged metadata: {e}"
-                ))
-            })?;
+            if existing.is_empty() {
+                return Err(MemoryError::Other(
+                    "update_episode_metadata: metadata SELECT returned no rows".to_string(),
+                ));
+            }
 
-            let updated = conn
-                .execute(
-                    "UPDATE episodes SET metadata = ?1 WHERE source_id = ?2",
-                    libsql::params![merged_text, self.source_id],
-                )
-                .await
-                .map_err(CoreError::Database)?;
+            // Validated as an object by `.patch()`; `as_object()` cannot fail
+            // here, and an empty map is the correct no-op base if it ever did.
+            let patch_obj = patch_value
+                .as_object()
+                .cloned()
+                .unwrap_or_else(serde_json::Map::new);
+
+            let mut updated: u64 = 0;
+            for (id, existing_text) in existing {
+                // Parse THIS row's existing metadata (NULL → empty object).
+                let mut existing_obj: serde_json::Map<String, serde_json::Value> =
+                    match existing_text {
+                        Some(ref s) => serde_json::from_str(s).map_err(|e| {
+                            MemoryError::Other(format!(
+                            "update_episode_metadata: failed to parse existing metadata as JSON: {e}"
+                        ))
+                        })?,
+                        None => serde_json::Map::new(),
+                    };
+
+                // Shallow-merge: iterate patch top-level keys, overwrite/insert.
+                // Arrays are replaced, not merged — this is automatic because we
+                // overwrite the top-level key, not recurse into nested structures.
+                for (k, v) in &patch_obj {
+                    existing_obj.insert(k.clone(), v.clone());
+                }
+
+                // Serialize and UPDATE this row BY ITS OWN id.
+                let merged_text = serde_json::to_string(&existing_obj).map_err(|e| {
+                    MemoryError::Other(format!(
+                        "update_episode_metadata: failed to serialize merged metadata: {e}"
+                    ))
+                })?;
+
+                updated += conn
+                    .execute(
+                        "UPDATE episodes SET metadata = ?1 WHERE id = ?2",
+                        libsql::params![merged_text, id],
+                    )
+                    .await
+                    .map_err(CoreError::Database)?;
+            }
 
             Ok(updated as usize)
         })
@@ -261,6 +281,10 @@ impl Memory {
     ///
     /// # Semantics
     ///
+    /// - **Per row**: `source_id` is NOT unique (Migration 007 creates a plain
+    ///   index, not a UNIQUE one), so N episodes may share one. The patch is
+    ///   merged into EACH row's OWN existing metadata and written back by that
+    ///   row's `id`. Sibling rows never see each other's keys.
     /// - **Shallow merge**: patch keys at the top level merge with existing
     ///   metadata; nested objects are NOT recursively merged.
     /// - **Arrays REPLACE not merge**: a patch `{"refs": [b]}` FULLY REPLACES

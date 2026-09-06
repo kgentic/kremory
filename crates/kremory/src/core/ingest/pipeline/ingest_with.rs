@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use chrono::{DateTime, Utc};
-use metrics::histogram;
+use metrics::{counter, histogram};
 
 use crate::core::config::{ContentType, ResolutionStrategy};
 use crate::core::contradiction::{DetectParams, TwoPoolDetector};
@@ -13,8 +13,8 @@ use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::graph::{
     EpisodeInsert, FactInsert, InsertEntityWithGroupParams, InsertEpisodicEdgeParams,
-    InvalidateFactWithReasonParams, SetEntityNerConfidenceParams, UpdateEntitySourceTierParams,
-    UpsertEntityWithGroupParams,
+    InvalidateFactWithReasonParams, PriorEpisodesParams, SetEntityNerConfidenceParams,
+    UpdateEntitySourceTierParams, UpsertEntityWithGroupParams,
 };
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
@@ -433,6 +433,40 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .graph
             .insert_episode_with_group(episode, group_id)
             .await?;
+
+        // ADR-080 — prior-turn replay. Fetch the preceding turns of THIS
+        // conversation so the extractor can resolve references in `text`.
+        //
+        // Ordering matters and is not incidental: the episode row was inserted
+        // immediately above, so the query MUST bound on `id < episode_id` or
+        // the episode replays itself.
+        //
+        // Inert unless the caller threaded a conversation. An un-tagged
+        // `remember()` is handed a random uuid source id
+        // (`facade/remember.rs`), so no prior row can match and this returns
+        // empty — which renders nothing and leaves the prompt (and therefore
+        // every committed VCR cassette) byte-identical.
+        let prior_turns: Vec<String> = match source_params.source_id.as_deref() {
+            Some(source_id) => {
+                self.graph
+                    .prior_episodes_for_source(PriorEpisodesParams {
+                        source_id,
+                        group_id,
+                        before_id: episode_id,
+                        limit: self.config.prior_turn_replay_depth,
+                    })
+                    .await?
+            }
+            None => Vec::new(),
+        };
+        if !prior_turns.is_empty() {
+            counter!("kremory.replay.ingest_with_replayed_total").increment(1);
+            tracing::debug!(
+                episode_id,
+                prior_turns = prior_turns.len(),
+                "kremory.replay.prior_turns_attached"
+            );
+        }
 
         // TD-136: dense episode arm — embed + store the episode's embedding when
         // the dense arm is enabled (no-op / byte-identical when off).
@@ -1041,6 +1075,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         arm_budget_ms: self.config.extraction_arm_budget_ms,
                         model: self.model.as_deref(),
                         reference_time: declared_reference_time,
+                        prior_turns: &prior_turns,
                     };
                     let result = extractor.extract(chunk.as_str(), &ctx).await?;
                     all_entities.extend(result.entities);
@@ -1064,6 +1099,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     arm_budget_ms: self.config.extraction_arm_budget_ms,
                     model: self.model.as_deref(),
                     reference_time: declared_reference_time,
+                    prior_turns: &prior_turns,
                 };
                 // Build the futures eagerly via `Iterator::map` (monomorphised
                 // at the concrete chunk lifetime) rather than `StreamExt::map`

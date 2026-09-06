@@ -95,6 +95,30 @@ pub struct InsertEpisodeParams<'a> {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// Bundled parameters for [`TemporalGraph::prior_episodes_for_source`] —
+/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+///
+/// The thread key is `episodes.source_id`, which the facade writes from
+/// [`SourceRef::id`](crate::memory::types::SourceRef) — i.e. exactly what
+/// `remember(..).from_chat(id)` / `.from_document(id)` / `.from_source(id, kind)`
+/// set. No new public surface is needed to thread a conversation: `source_id` is
+/// already the documented threading primitive (`docs/api.md` §5.1) and already
+/// carries an index (`idx_episodes_source_id`, Migration 007).
+pub struct PriorEpisodesParams<'a> {
+    /// Thread key — matched against `episodes.source_id`.
+    pub source_id: &'a str,
+    /// Namespace scope. `None` matches the `NULL` group, mirroring how
+    /// [`TemporalGraph::insert_episode_with_group`] binds `group_id`.
+    pub group_id: Option<&'a str>,
+    /// Exclusive upper bound on episode id. Pass the id of the episode being
+    /// ingested so it can never replay itself. Episode ids are `INTEGER PRIMARY
+    /// KEY AUTOINCREMENT`, so id order is insertion order.
+    pub before_id: i64,
+    /// Maximum number of prior episodes to return. `0` short-circuits without
+    /// touching the database.
+    pub limit: usize,
+}
+
 /// Bundled parameters for [`TemporalGraph::insert_episodic_edge`] —
 /// args-as-object per TD-042 (rust-conventions §too_many_arguments).
 pub struct InsertEpisodicEdgeParams<'a> {
@@ -347,6 +371,109 @@ impl TemporalGraph {
             out.push((id, content));
         }
         Ok(out)
+    }
+
+    /// Fetch the contents of the most recent episodes sharing `source_id`
+    /// within `group_id`, strictly before `before_id`, in CHRONOLOGICAL order.
+    ///
+    /// This is the read half of prior-turn replay (ADR-080): when ingesting turn
+    /// N of a conversation, the extractor is shown the preceding turns so that
+    /// references resolve ("I prefer that one" has nothing to resolve against on
+    /// its own). Both live competitors do this and converged on N=10 —
+    /// mem0 replays the last 10 rows of its `messages` table for the session
+    /// (`mem0/memory/main.py:920`), Graphiti the last 10 episodes for the group
+    /// (`graphiti_core/graphiti.py:1086`). See
+    /// `.ai-docs/research/competitive-landscape/write-path-teardown-2026-09-06.md`.
+    ///
+    /// # Ordering
+    ///
+    /// Selected `ORDER BY id DESC LIMIT n` (the *latest* n) then reversed in
+    /// Rust to ascending, so the extractor reads them oldest-first. This mirrors
+    /// mem0's `created_at DESC` + re-sort ASC (`storage.py:298-313`). `id` is
+    /// used rather than `timestamp` because `timestamp` is the caller-supplied
+    /// world clock and may be absent, equal, or non-monotonic across turns,
+    /// whereas `id` is `INTEGER PRIMARY KEY AUTOINCREMENT` and therefore always
+    /// reflects true insertion order.
+    ///
+    /// # Namespace scoping
+    ///
+    /// `group_id` uses `IS` rather than `=` so `None` matches the `NULL` group.
+    /// A plain `=` would silently return zero rows for un-namespaced ingests,
+    /// because `NULL = NULL` is `NULL` in SQL, not true.
+    ///
+    /// Returns an empty vec when `limit == 0` without issuing a query, which is
+    /// the off switch for the whole feature
+    /// (`PipelineConfig::prior_turn_replay_depth = 0`).
+    pub async fn prior_episodes_for_source(
+        &self,
+        params: PriorEpisodesParams<'_>,
+    ) -> Result<Vec<String>> {
+        let PriorEpisodesParams {
+            source_id,
+            group_id,
+            before_id,
+            limit,
+        } = params;
+        if limit == 0 || source_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _db_start = Instant::now();
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT content FROM episodes \
+                 WHERE source_id = ?1 \
+                   AND group_id IS ?2 \
+                   AND id < ?3 \
+                 ORDER BY id DESC \
+                 LIMIT ?4",
+                libsql::params![source_id, group_id, before_id, limit as i64],
+            )
+            .await?;
+        let mut out: Vec<String> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row.get::<String>(0)?);
+        }
+        // DESC-then-reverse: the query takes the LATEST `limit`, the reverse
+        // hands them to the extractor oldest-first.
+        out.reverse();
+        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("rql.db.prior_episodes_for_source_ms").record(_ms);
+        counter!("kremory.replay.prior_episodes_fetched_total").increment(out.len() as u64);
+        tracing::debug!(
+            _ms,
+            source_id,
+            before_id,
+            returned = out.len(),
+            "kremory.db.prior_episodes_for_source"
+        );
+        Ok(out)
+    }
+
+    /// Resolve the `source_id` (conversation thread key) of one episode.
+    ///
+    /// Exists for the DEFERRED (background) ingest path, whose
+    /// `IngestDeferredParams` carries `episode_id` but not the source — see
+    /// that struct's doc comment, which records the same plumbing gap for
+    /// `declared_reference_time`. Resolving it here keeps prior-turn replay
+    /// (ADR-080) behaving IDENTICALLY inline and in background mode; a silent
+    /// difference between the two would be worse than the missing plumbing,
+    /// because it would make extraction quality depend on which path a caller
+    /// happened to take.
+    ///
+    /// Returns `None` for a missing episode or a NULL `source_id`.
+    pub async fn source_id_for_episode(&self, episode_id: i64) -> Result<Option<String>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT source_id FROM episodes WHERE id = ?1",
+                libsql::params![episode_id],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(row.get::<Option<String>>(0)?),
+            None => Ok(None),
+        }
     }
 
     // === Episodic Edge Methods ===

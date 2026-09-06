@@ -10,17 +10,19 @@ mod facts;
 mod namespace;
 mod queries;
 
+#[cfg(feature = "content-search")]
+pub use entities::{EntitiesAfterIdParams, EntityReembedRow};
 pub use entities::{
     InsertEntityParams, ReassignEntityGroupDangerousParams, SetEntityEmbeddingParams,
     UpdateEntityGroupParams,
 };
-#[cfg(feature = "content-search")]
-pub use entities::{EntitiesAfterIdParams, EntityReembedRow};
 pub use entity_groups::{
     InsertEntityWithGroupParams, SetEntityNerConfidenceParams, UpdateEntitySourceTierParams,
     UpsertEntityWithGroupParams,
 };
-pub use episodes::{EpisodeInsert, InsertEpisodeParams, InsertEpisodicEdgeParams};
+pub use episodes::{
+    EpisodeInsert, InsertEpisodeParams, InsertEpisodicEdgeParams, PriorEpisodesParams,
+};
 pub use facts::{FactInsert, InvalidateFactWithReasonParams};
 pub use queries::GetNeighboursAtParams;
 

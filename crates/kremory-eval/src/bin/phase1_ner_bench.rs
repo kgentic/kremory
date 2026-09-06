@@ -147,6 +147,7 @@ async fn main() -> Result<()> {
         arm_budget_ms: 30_000,
         model: None,
         reference_time: None,
+        prior_turns: &[],
     };
     let warm_start = Instant::now();
     let _ = extractor
@@ -177,6 +178,7 @@ async fn main() -> Result<()> {
             arm_budget_ms: 30_000,
             model: None,
             reference_time: None,
+            prior_turns: &[],
         };
 
         let mut samples: Vec<u128> = Vec::with_capacity(runs_per_size);

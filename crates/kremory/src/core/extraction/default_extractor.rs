@@ -133,6 +133,7 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
             entities: &entities,
             relation_names: &relation_names,
             reference_time: ctx.reference_time,
+            prior_turns: ctx.prior_turns,
         });
         let stage3_start = Instant::now();
         let stage3_msgs = vec![

@@ -543,6 +543,9 @@ pub(crate) struct PipelineConfigOverrides {
     /// the ladder outright on ordinary documents under the 30s default. This
     /// field closes that gap the same way `rerank_candidate_max_chars` does.
     pub extraction_arm_budget_ms: Option<u64>,
+    /// Explicit override for [`PipelineConfig::prior_turn_replay_depth`]
+    /// (ADR-080). `None` leaves the default of 10.
+    pub prior_turn_replay_depth: Option<usize>,
     /// Explicit override for [`PipelineConfig::contradiction_detection_enabled`]
     /// (TD-172 / TD-167 / ADR-079 rev.2).
     ///
@@ -601,6 +604,9 @@ impl PipelineConfigOverrides {
         }
         if let Some(v) = self.contradiction_detection_enabled {
             builder = builder.contradiction_detection_enabled(v);
+        }
+        if let Some(v) = self.prior_turn_replay_depth {
+            builder = builder.prior_turn_replay_depth(v);
         }
         if let Some(v) = self.extraction_arm_budget_ms {
             builder = builder.extraction_arm_budget_ms(v);
@@ -682,6 +688,21 @@ pub struct PipelineConfig {
     /// `.extraction_arm_budget_ms(value)` on the builder. The benchmark
     /// suite sets this to 300_000 to accommodate qwen2.5:14b warm-up latency.
     pub extraction_arm_budget_ms: u64,
+    /// ADR-080 — how many preceding episodes of the SAME conversation thread
+    /// are replayed into the extraction prompt so that references resolve.
+    ///
+    /// Default **10**, the value mem0 (`mem0/memory/main.py:920`) and Graphiti
+    /// (`graphiti_core/graphiti.py:1086`) independently converged on.
+    ///
+    /// `0` disables the feature entirely — the query is short-circuited before
+    /// it touches the database. That off switch is REQUIRED, not decorative:
+    /// without it an A/B of this lever has no control arm, and a measurement
+    /// you cannot turn off is a measurement you cannot trust.
+    ///
+    /// The thread key is `episodes.source_id` (what `.from_chat(id)` sets), so
+    /// this is inert for callers who never tag a source — they receive a
+    /// random uuid per episode and nothing can match it.
+    pub prior_turn_replay_depth: usize,
     /// TD-NEW-A (Lane C): how many per-chunk extraction LLM calls to run
     /// concurrently within a single `ingest_with` call (`futures::buffered`,
     /// order-preserving for determinism). `1` = the pre-change sequential
@@ -800,6 +821,7 @@ impl PipelineConfig {
                 cache_ttl: Duration::from_secs(300),
                 cache_max_entries: 1000,
                 extraction_arm_budget_ms: 30_000,
+                prior_turn_replay_depth: 10,
                 extraction_concurrency: 5,
                 resolution_block_k: 10,
                 resolution_min_cosine: 0.0,
@@ -1052,6 +1074,14 @@ impl PipelineConfigBuilder {
     /// Default: 30_000 (30s — production fail-fast).
     /// Override for slow local LLMs: e.g. `300_000` for qwen2.5:14b on Apple
     /// silicon (~80-130s per call at 32k context).
+    /// ADR-080 — depth of prior-turn replay into the extraction prompt.
+    /// `0` disables it. See [`PipelineConfig::prior_turn_replay_depth`].
+    #[must_use]
+    pub fn prior_turn_replay_depth(mut self, depth: usize) -> Self {
+        self.inner.prior_turn_replay_depth = depth;
+        self
+    }
+
     pub fn extraction_arm_budget_ms(mut self, ms: u64) -> Self {
         self.inner.extraction_arm_budget_ms = ms;
         self

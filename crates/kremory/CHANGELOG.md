@@ -5,6 +5,39 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [Unreleased]
 
+### Added — prior-turn replay into the extraction prompt (ADR-080)
+
+When consecutive episodes are tagged with the same source id (`.from_chat(id)` and friends),
+the preceding turns of that conversation are now replayed into the extraction prompt as
+context, so references resolve — `"I prefer that one"` can be extracted against whatever
+"that one" was. Both live competitors do this and converged on a depth of 10; kremory now
+matches.
+
+- No new public method was needed. The thread key is `episodes.source_id`, which
+  `.from_chat(id)` has always set and which `docs/api.md` §5.1 already documented as the
+  conversation-threading primitive.
+- **Inert unless you thread a conversation.** An untagged `remember()` receives a fresh uuid,
+  so nothing matches and the prompt is byte-identical to before.
+- Replayed turns are **context only** — facts are extracted from the current turn alone, so an
+  early turn is not re-extracted on every later one.
+- Scoped to the same namespace as well as the same source id; never crosses either.
+- Bounded by a character budget, dropping OLDEST turns first.
+- New knob: `MemoryBuilder::prior_turn_replay_depth(n)`, default `10`, `0` disables.
+- The HTTP transport (`POST /memories`) accepts an optional `source_id` so the same threading
+  is reachable over the wire.
+
+### Fixed — `update_episode_metadata` overwrote every episode sharing a source id
+
+The metadata patch read one arbitrary row's metadata, merged the caller's patch into it, and
+wrote the result to **every** row with that source id — silently destroying the distinct
+metadata of the others. It now merges per row, into each row's own metadata. Same rows
+affected; the base value is no longer borrowed from a sibling.
+
+Reachable today through the documented session-threading recipe and through the Node binding's
+`remember({metadata, source_id})`, and ADR-080 makes multi-episode source ids the normal case,
+so this is a fix rather than hardening.
+
+
 ## [0.7.1] - 2026-09-05
 
 Packaging and public-surface hygiene only. No behaviour, API, or schema change.

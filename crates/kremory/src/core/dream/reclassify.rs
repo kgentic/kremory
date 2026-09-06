@@ -24,7 +24,9 @@
 //!
 //! - `kremory.dream.reclassify_call_duration_ms` histogram
 //! - `kremory.dream.reclassify_call_outcome_total{outcome=ok|parse_repair|parse_fail|llm_err}`
-//! - `kremory.dream.reclassify_entities_skipped_total{reason=consumer_pinned|dreampass1_excluded}`
+//! - `kremory.dream.reclassify_entities_skipped_total{reason=consumer_pinned|dreampass1_excluded|registry_rejected}`
+//!   (`registry_rejected` = the LLM emitted an `entity_type_id` absent from the
+//!   entity-type registry; the decision is discarded, never persisted.)
 //! - `kremory.dream.reclassify_source_tier_written_total{tier=DreamPass1|preserved}`
 //! - `kremory.dream.entities_reclassified_total{trigger=catch_all_cascade|low_confidence}`
 
@@ -361,6 +363,40 @@ pub async fn reclassify<L: ChatProvider>(
             continue;
         }
 
+        // Validate: entity_type_id must be bounded by the entity-type registry (L3).
+        //
+        // `entity_type_id` is untrusted LLM output. `validate_or_fallback` is the
+        // project's single L3 bounds check (`entity_types.rs` §L3) — it maps any
+        // out-of-range or unregistered (gap) id to 0 and fires
+        // `rql.extraction.entity_type_id_fallback{reason}`. Its caller contract is
+        // explicit: "call this immediately after LLM extraction, before any DB
+        // write. Never write an unvalidated id to `entities.entity_type_id`."
+        //
+        // The emitted id is already known non-zero here (guard above), so a
+        // validated result of 0 can only mean the registry rejected it. Semantics
+        // match the single-entity L7 precedent
+        // (`core/reclassification.rs::reclassify_entity_type_in_dream_phase`):
+        // registry-rejected → skip the write entirely, never fall back to writing 0.
+        let validated_type_id = registry.validate_or_fallback(decision.entity_type_id);
+        if validated_type_id == 0 {
+            counter!(
+                "kremory.dream.reclassify_entities_skipped_total",
+                "reason" => "registry_rejected"
+            )
+            .increment(1);
+            tracing::debug!(
+                target: "kremory::dream::reclassify",
+                entity_id = %decision.entity_id,
+                emitted_type_id = decision.entity_type_id,
+                "reclassify: entity_type_id not in registry — skipped (registry_rejected)"
+            );
+            result.warnings.push(format!(
+                "reclassify: decision for entity_id='{}' carried out-of-registry entity_type_id={} — skipped",
+                decision.entity_id, decision.entity_type_id
+            ));
+            continue;
+        }
+
         let conf = decision.confidence.unwrap_or(0.0);
         let high_conf = conf >= high_conf_threshold;
 
@@ -371,7 +407,7 @@ pub async fn reclassify<L: ChatProvider>(
                 conn,
                 group_id,
                 entity_id: &decision.entity_id,
-                new_type_id: decision.entity_type_id,
+                new_type_id: validated_type_id,
                 now: &now,
             })
             .await?;
@@ -386,7 +422,7 @@ pub async fn reclassify<L: ChatProvider>(
                 conn,
                 group_id,
                 entity_id: &decision.entity_id,
-                new_type_id: decision.entity_type_id,
+                new_type_id: validated_type_id,
                 now: &now,
             })
             .await?;
@@ -410,7 +446,7 @@ pub async fn reclassify<L: ChatProvider>(
             target: "kremory::dream::reclassify",
             entity_id = %decision.entity_id,
             old_type_id = candidate.entity_type_id,
-            new_type_id = decision.entity_type_id,
+            new_type_id = validated_type_id,
             confidence = conf,
             high_conf = high_conf,
             trigger = candidate.trigger.as_str(),

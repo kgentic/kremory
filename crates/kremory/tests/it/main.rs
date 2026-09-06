@@ -17,6 +17,7 @@ mod support;
 // --- test modules ---
 mod acronym_nickname_recall_s2_spike;
 mod adr029d_namespace_scoping_lint;
+mod adr080_prior_turn_replay;
 mod adr050_phase3_guards;
 mod adr050_phase4_budget;
 mod adr050_phase5_sink_wiring;
@@ -175,6 +176,7 @@ mod td232_dense_embed_failure_surfaced;
 mod td234_split_for_embedding_closes_the_loop;
 mod td_012_canary;
 mod td_028_pull_shape;
+mod td_metadata_multirow_patch;
 mod type_registry_collapse_lemma_false_merge_safety;
 mod type_registry_collapse_s3_spike;
 mod v014a_namespace_policy;

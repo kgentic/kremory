@@ -568,3 +568,8 @@ revisit = "never"
 symbol = "Memory::backfill_episode_embeddings"
 reason = "One-shot corpus-maintenance entrypoint gated `#[cfg(feature = 'content-search')]`, whose actual consumer is the kremory-http `backfill-episode-embeddings` CLI subcommand — a Rust transport concern, not a JS-consumer runtime surface. Identical rationale to its already-skipped sibling `Memory::reembed_all_episode_embeddings`, whose own skip reason ALREADY described this symbol as 'also unskipped-but-never-mirrored'. That is the point: the skip-list documented the gap in prose while the gate reported GREEN, because PAR-G2's blanket `#[cfg]` skip meant this method was never walked. V1-CANONICAL §3.2 cites this exact symbol as the proof the gate was blind; surfacing it here closes that finding. Revisit only if a JS consumer needs to trigger a full episode backfill at runtime."
 revisit = "never"
+
+[[skip]]
+symbol = "MemoryBuilder::prior_turn_replay_depth"
+reason = "ADR-030 Form B: the whole MemoryBuilder knob surface is deferred to JS together, since Memory.open is the single JS construction entry point. Same deferral as its ten siblings (rrf_k / temporal_weight / extraction_arm_budget_ms / ...). ADR-080."
+revisit = "when the JS surface gains a construction-time knob object"

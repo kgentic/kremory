@@ -451,7 +451,8 @@ returns the wrong turn. Widening `k` does not fix this reliably;
 pulling the *rest of the hit's source* does.
 
 kremory has no built-in "session" concept, and does not need one — the behaviour composes from
-primitives that already ship:
+primitives that already ship. (The same `source_id` you set here also drives **write**-side
+prior-turn replay — see §5.2. Threading a conversation buys both halves at once.)
 
 ```rust
 // 1. At ingest, scope the source id to the unit you want to expand to.
@@ -482,6 +483,60 @@ ranking pass. The trade-off is **context size**, not latency: you are choosing t
 rather than retrieval quality, so cap the expansion (most-relevant source only, or a token budget).
 
 Mirrored in the Node binding as `memory.recallBySourceId(sourceId, namespace)`.
+
+---
+
+### §5.2 — Prior-turn replay: references that resolve across turns
+
+The same `source_id` you set for session expansion also does work at **write** time.
+
+When you tag consecutive turns with one id, kremory shows the extractor the preceding turns of
+that conversation, so anaphoric references resolve:
+
+```rust
+// Turn 1 — a concrete fact.
+mem.remember("Bob: the blue jacket on the left is the one I want")
+    .from_chat("conv-42")
+    .in_namespace(ns.clone())
+    .await?;
+
+// Turn 2 — meaningless on its own. With the preceding turn in view, the
+// extractor can resolve "that one" to the blue jacket.
+mem.remember("Alice: I prefer that one too")
+    .from_chat("conv-42")
+    .in_namespace(ns.clone())
+    .await?;
+```
+
+There is no flag to set. Replay fires when — and only when — you thread a conversation:
+
+- **Tagged** (`.from_chat(id)` / `.from_document(id)` / `.from_source(id, kind)`) → the previous
+  episodes sharing that id, within the same namespace, are replayed as context.
+- **Untagged** → every `remember()` gets a fresh uuid, nothing matches, nothing changes.
+
+Details that matter in practice:
+
+| | |
+|---|---|
+| **Depth** | 10 preceding episodes. Both mem0 and Graphiti independently converged on 10. |
+| **Order** | Oldest-first, by insertion order — not by `published_at`, which is a world clock you may legitimately set out of order. |
+| **Scope** | Same `source_id` **and** same namespace. Never crosses either. |
+| **Not extracted** | Replayed turns are context only. Facts are extracted from the current turn alone, so an early turn is not re-extracted on every later one. |
+| **Bounded** | The replayed block has a character budget; if it is exceeded, the OLDEST turns are dropped first. |
+| **Off switch** | `MemoryBuilder::prior_turn_replay_depth(0)`. |
+
+```rust
+// Disable, or change the depth:
+let mem = Memory::builder()
+    .prior_turn_replay_depth(0)   // 0 = off; default 10
+    // ...
+    .build().await?;
+```
+
+Threading a conversation therefore buys you both halves at once: **write**-side reference
+resolution (this section) and **read**-side session expansion (§5.1).
+
+See `.ai-docs/adrs/adr-080-prior-turn-replay-into-extraction-2026-09-06.md`.
 
 ---
 

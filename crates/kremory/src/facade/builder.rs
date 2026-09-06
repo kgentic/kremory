@@ -499,6 +499,27 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// How many preceding episodes of the SAME conversation thread are
+    /// replayed into the extraction prompt so references resolve (ADR-080).
+    ///
+    /// Default (unset): **10**, the value mem0 and Graphiti independently
+    /// converged on. `0` disables replay entirely.
+    ///
+    /// The thread key is `episodes.source_id` — what
+    /// [`RememberRequest::from_chat`](crate::RememberRequest::from_chat) sets.
+    /// Callers who never tag a source get a fresh uuid per episode, so this is
+    /// inert for them whatever the depth.
+    ///
+    /// This setter exists because the off switch has to be REACHABLE: an A/B of
+    /// the replay lever needs a control arm, and a knob you cannot turn off is a
+    /// measurement you cannot trust.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::prior_turn_replay_depth`](crate::core::config::PipelineConfigBuilder::prior_turn_replay_depth).
+    pub fn prior_turn_replay_depth(mut self, depth: usize) -> Self {
+        self.config_overrides.prior_turn_replay_depth = Some(depth);
+        self
+    }
+
     /// Configure automatic dream-pass scheduling.
     ///
     /// Default: [`DreamSchedule::Off`] — no background task is spawned.

@@ -116,6 +116,7 @@ class CodememClient:
         importance: float = 0.5,
         tags: list[str] | None = None,
         published_at: str | None = None,
+        source_id: str | None = None,
     ) -> str | None:
         # kremory's POST /memories accepts {content, namespace, published_at?}
         # — memory_type/importance/tags are codemem-only fields kremory
@@ -131,6 +132,13 @@ class CodememClient:
         body: dict = {"content": content, "namespace": namespace}
         if published_at:
             body["published_at"] = published_at
+        # ADR-080 conversation threading. Two chunks posted with the same
+        # `source_id` are two turns of one conversation, which is the ONLY way
+        # prior-turn replay can fire — without it every chunk gets a fresh uuid
+        # server-side and the replay query matches nothing, so an A/B of that
+        # lever would measure exactly 0.000 for reasons unrelated to the lever.
+        if source_id:
+            body["source_id"] = source_id
         try:
             r = self.http.post(
                 "/memories",

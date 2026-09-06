@@ -665,6 +665,18 @@ def ingest_conversation(
                 tags.append(f"speaker:{sp}")
 
             chunk_t0 = time.monotonic()
+            # ADR-080: thread every chunk of this conversation under ONE
+            # source id so the server can replay preceding turns into the
+            # extraction prompt. Scoped to the CONVERSATION (not the session)
+            # because LoCoMo questions span sessions, matching mem0's
+            # session-scope shape.
+            #
+            # ⚠️ This CHANGES the ingest protocol relative to the published
+            # 92.08% figure, which was measured with no source id at all (every
+            # chunk got a server-side uuid). Any figure produced with this on
+            # must say so. Set KREMORY_BENCH_NO_THREAD=1 to reproduce the old
+            # protocol exactly.
+            thread_id = None if _os.environ.get("KREMORY_BENCH_NO_THREAD") else f"locomo/{sample_id}"
             mid = client.store_memory(
                 content=chunk_content,
                 namespace=namespace,
@@ -672,6 +684,7 @@ def ingest_conversation(
                 importance=0.5,
                 tags=tags,
                 published_at=sess_published_at,
+                source_id=thread_id,
             )
             chunk_elapsed = time.monotonic() - chunk_t0
             if mid:

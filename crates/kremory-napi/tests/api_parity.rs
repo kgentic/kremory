@@ -432,11 +432,11 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 89 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 90 (sanity cap — over-finding guard).
     // ⚠️ THIS NOTE ROTTED TWICE before 2026-08-12 (see the history below for the
     // exact sequence). Kept in sync again on 2026-09-02 (88 → 89, TD-231).
-    // The enforced value is the assert, and only the assert: `skip_count <= 89`.
-    // The lead line above and this note are now both 89. If you raise the assert
+    // The enforced value is the assert, and only the assert: `skip_count <= 90`.
+    // The lead line above and this note are now both 90. If you raise the assert
     // again, grep this file for the OLD number before you finish — this note has
     // already rotted twice from someone skipping that step.
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
@@ -488,10 +488,19 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // timeout at all). Same ADR-030 Form B deferral as its nine siblings.
     // The register was sitting exactly at the prior cap (88) before this
     // addition, so this is register growth, not walker over-finding.
+    // Raised 89 -> 90 (ADR-080, 2026-09-06) for exactly ONE entry —
+    // `MemoryBuilder::prior_turn_replay_depth` — the ELEVENTH per-knob override
+    // setter, deferred to JS under the identical ADR-030 Form B reason as its
+    // ten siblings. The register was sitting exactly at the prior cap (89)
+    // before this addition, so this is register growth, not walker
+    // over-finding; raised on the record rather than by pruning a legitimate
+    // entry to make room. NOTE TO THE NEXT PERSON: this file's lead comment and
+    // the assert must BOTH say 90 now — grep for the old number before you
+    // finish, because this note has already rotted twice.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 89,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 89. \
+        skip_count <= 90,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 90. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."

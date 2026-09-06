@@ -11,7 +11,9 @@ use crate::core::embed_prefix::document_embed_text;
 use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::error::{ContradictionResolution, IngestStatus};
 use crate::core::extraction_window::ExtractionWindowSplitter;
-use crate::core::graph::{FactInsert, InsertEpisodicEdgeParams, InvalidateFactWithReasonParams};
+use crate::core::graph::{
+    FactInsert, InsertEpisodicEdgeParams, InvalidateFactWithReasonParams, PriorEpisodesParams,
+};
 use crate::core::intelligence::{
     EntityExtractor, ExtractedEntity, ExtractedFact, ExtractionContext,
 };
@@ -116,6 +118,25 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .map(|s| s.name.clone())
             .collect();
 
+        // ADR-080 — prior-turn replay on the DEFERRED path. `IngestDeferredParams`
+        // does not carry the source id (same plumbing gap its
+        // `declared_reference_time` doc records), so resolve it from the episode
+        // row rather than letting background ingests silently skip replay —
+        // extraction quality must not depend on which path the caller took.
+        let prior_turns: Vec<String> = match self.graph.source_id_for_episode(episode_id).await? {
+            Some(source_id) if !source_id.is_empty() => {
+                self.graph
+                    .prior_episodes_for_source(PriorEpisodesParams {
+                        source_id: &source_id,
+                        group_id,
+                        before_id: episode_id,
+                        limit: self.config.prior_turn_replay_depth,
+                    })
+                    .await?
+            }
+            _ => Vec::new(),
+        };
+
         let mut all_facts: Vec<ExtractedFact> = Vec::new();
         for chunk in &chunks {
             let ctx = ExtractionContext {
@@ -132,6 +153,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 arm_budget_ms: self.config.extraction_arm_budget_ms,
                 model: self.model.as_deref(),
                 reference_time: declared_reference_time,
+                prior_turns: &prior_turns,
             };
             let result = extractor.extract(chunk, &ctx).await?;
             all_facts.extend(result.facts);

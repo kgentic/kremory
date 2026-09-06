@@ -331,7 +331,24 @@ pub(crate) struct TripletPromptParams<'a> {
     /// See [`crate::core::intelligence::ExtractionContext::reference_time`] —
     /// caller-DECLARED anchor only, never wall-clock.
     pub(crate) reference_time: Option<DateTime<Utc>>,
+    /// ADR-080 — contents of the preceding turns of this conversation thread,
+    /// oldest-first. Empty (the default) renders NOTHING and leaves the prompt
+    /// byte-identical; see
+    /// [`crate::core::intelligence::ExtractionContext::prior_turns`].
+    pub(crate) prior_turns: &'a [String],
 }
+
+/// Total character budget for the replayed-turn block (ADR-080).
+///
+/// Unbounded replay is a real production hazard, not a theoretical one: the
+/// depth is 10 episodes and an episode has no length limit, so a naive
+/// concatenation can push the extraction prompt past the model's context window
+/// — the same failure `MemoryBuilder::episode_content_warn_threshold` exists to
+/// warn about, arriving by a different route. The budget is spent OLDEST-FIRST
+/// and truncation drops whole turns from the FRONT, so the turns nearest the
+/// text being extracted — the ones a reference is most likely to point at —
+/// always survive.
+pub(crate) const PRIOR_TURNS_MAX_CHARS: usize = 4_000;
 
 pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
     let TripletPromptParams {
@@ -339,6 +356,7 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
         entities,
         relation_names,
         reference_time,
+        prior_turns,
     } = params;
     let entity_list = entities
         .iter()
@@ -389,8 +407,53 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
             "\"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0)"
         }
     };
+    // ADR-080 (prior-turn replay). Two properties are load-bearing.
+    //
+    // 1. BYTE IDENTITY WHEN EMPTY. `prior_block` is spliced immediately before
+    //    the existing `Text: ` marker and carries its OWN trailing `\n\n`, so
+    //    the empty case leaves the surrounding literal exactly as it was. An
+    //    empty section is only byte-safe if the separator lives inside the
+    //    block, not around it — the same trick `date_block` uses, arrived at the
+    //    other way round. The guard test asserts against the pre-ADR-080
+    //    literal, and ~305 committed cassettes depend on it.
+    //
+    // 2. CONTEXT, NOT MATERIAL. The instruction forbidding extraction FROM the
+    //    replayed turns is not politeness — without it every prior turn is
+    //    re-extracted on every subsequent turn, so an N-turn conversation emits
+    //    each early fact up to N times and the graph fills with duplicates that
+    //    the resolver then has to merge. mem0 and Graphiti both pass previous
+    //    turns as context only, for exactly this reason.
+    let prior_block = if prior_turns.is_empty() {
+        String::new()
+    } else {
+        // Spend the budget oldest-first but DROP from the front, so the turns
+        // adjacent to `text` — the likely referents — always survive.
+        let mut kept: Vec<&str> = Vec::new();
+        let mut used = 0usize;
+        for turn in prior_turns.iter().rev() {
+            let cost = turn.chars().count() + 3; // "- " + newline
+            if used + cost > PRIOR_TURNS_MAX_CHARS {
+                break;
+            }
+            used += cost;
+            kept.push(turn.as_str());
+        }
+        if kept.is_empty() {
+            String::new()
+        } else {
+            kept.reverse();
+            let body = kept
+                .iter()
+                .map(|t| format!("- {t}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "Earlier turns in this same conversation, oldest first. Use them ONLY to resolve references (pronouns, \"that one\", \"the same place\") appearing in the text below. Do NOT extract relationships from these earlier turns — they have already been processed.\n{body}\n\n"
+            )
+        }
+    };
     format!(
-        "Given entities: [{entity_list}]\nRelationship types: [{rel_list}]\n{date_block}\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\nText: {text}\n\nOutput a concise JSON array of objects with {field_list} fields."
+        "Given entities: [{entity_list}]\nRelationship types: [{rel_list}]\n{date_block}\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\n{prior_block}Text: {text}\n\nOutput a concise JSON array of objects with {field_list} fields."
     )
 }
 
@@ -430,6 +493,7 @@ mod td_187_tests {
             entities: &entities,
             relation_names: &relation_names,
             reference_time: None,
+            prior_turns: &[],
         });
 
         // Hand-reconstructed from the pre-TD-187 format! literal (no `reference_time`
@@ -455,6 +519,7 @@ mod td_187_tests {
             entities: &entities,
             relation_names: &relation_names,
             reference_time: Some(ts),
+            prior_turns: &[],
         });
 
         assert!(
@@ -493,6 +558,7 @@ mod td_187_tests {
             entities: &entities,
             relation_names: &relation_names,
             reference_time: Some(ts),
+            prior_turns: &[],
         });
 
         assert!(
@@ -521,6 +587,7 @@ mod td_187_tests {
             entities: &entities,
             relation_names: &relation_names,
             reference_time: None,
+            prior_turns: &[],
         });
 
         assert!(
@@ -545,6 +612,7 @@ mod td_187_tests {
                 entities: &entities,
                 relation_names: &relation_names,
                 reference_time,
+                prior_turns: &[],
             });
             assert_eq!(
                 actual.matches(", and ").count(),
@@ -552,5 +620,118 @@ mod td_187_tests {
                 "field list must contain exactly one ', and ' — got: {actual}"
             );
         }
+    }
+}
+
+// ─── ADR-080 prior-turn replay unit tests ────────────────────────────────────
+
+#[cfg(test)]
+mod adr_080_prior_turn_tests {
+    use super::*;
+
+    fn sample_entities() -> Vec<ExtractedEntity> {
+        vec![ExtractedEntity {
+            label: "Person".to_string(),
+            name: "Alice".to_string(),
+            properties: serde_json::Value::Null,
+        }]
+    }
+
+    fn build(prior: &[String]) -> String {
+        build_triplet_prompt(TripletPromptParams {
+            text: "Alice liked that one.",
+            entities: &sample_entities(),
+            relation_names: &["liked".to_string()],
+            reference_time: None,
+            prior_turns: prior,
+        })
+    }
+
+    /// The load-bearing one. An empty slice must render NOTHING, or every
+    /// committed VCR cassette's fingerprint changes — the prompt is hashed
+    /// (`core/provider/record_replay.rs`). The sibling test
+    /// `td_187_tests::build_triplet_prompt_with_none_is_byte_identical_to_pre_td187_prompt`
+    /// pins the full literal; this one pins the specific ADR-080 property.
+    #[test]
+    fn empty_prior_turns_render_nothing_and_keep_the_text_separator() {
+        let actual = build(&[]);
+        assert!(
+            !actual.contains("Earlier turns"),
+            "empty prior_turns must not render a replay block: {actual}"
+        );
+        // The separator must remain exactly `\n\n` before `Text: ` — the block
+        // carries its OWN trailing newlines precisely so this stays true.
+        assert!(
+            actual.contains("Do not repeat.\n\nText: Alice liked that one."),
+            "empty case changed the bytes around `Text:`: {actual}"
+        );
+    }
+
+    #[test]
+    fn non_empty_prior_turns_render_oldest_first_with_a_do_not_extract_instruction() {
+        let prior = vec![
+            "Alice: which jacket do you mean?".to_string(),
+            "Bob: the blue one on the left.".to_string(),
+        ];
+        let actual = build(&prior);
+
+        assert!(actual.contains("Earlier turns in this same conversation"));
+        assert!(actual.contains("- Alice: which jacket do you mean?"));
+        assert!(actual.contains("- Bob: the blue one on the left."));
+
+        // Oldest-first: the first turn must appear before the second.
+        let i0 = actual.find("which jacket").expect("turn 0 present");
+        let i1 = actual.find("the blue one").expect("turn 1 present");
+        assert!(i0 < i1, "prior turns rendered newest-first");
+
+        // The block must sit BEFORE the text under extraction.
+        let itext = actual.find("Text: Alice liked").expect("text present");
+        assert!(i1 < itext, "replay block must precede the text");
+
+        // CONTEXT, NOT MATERIAL. Without this instruction every prior turn is
+        // re-extracted on every later turn and the graph fills with duplicates.
+        assert!(
+            actual.contains("Do NOT extract relationships from these earlier turns"),
+            "missing the do-not-extract instruction: {actual}"
+        );
+    }
+
+    /// Budget truncation must drop from the FRONT. The turns nearest the text
+    /// are the likely referents of a pronoun in it, so they are the ones that
+    /// must survive a squeeze.
+    #[test]
+    fn budget_drops_oldest_turns_first() {
+        let big = "x".repeat(PRIOR_TURNS_MAX_CHARS / 2);
+        let prior = vec![
+            format!("OLDEST {big}"),
+            format!("MIDDLE {big}"),
+            "NEWEST short turn".to_string(),
+        ];
+        let actual = build(&prior);
+
+        assert!(
+            actual.contains("NEWEST short turn"),
+            "the most recent turn must always survive truncation"
+        );
+        assert!(
+            !actual.contains("OLDEST"),
+            "oldest turn should have been dropped by the budget"
+        );
+        assert!(
+            actual.len() < PRIOR_TURNS_MAX_CHARS * 2,
+            "replay block blew the character budget: {} chars",
+            actual.len()
+        );
+    }
+
+    /// A single turn larger than the whole budget must not render a
+    /// half-truncated fragment — it renders nothing, and the prompt stays
+    /// byte-identical to the no-replay case.
+    #[test]
+    fn one_oversized_turn_degrades_to_no_block_not_a_fragment() {
+        let huge = "y".repeat(PRIOR_TURNS_MAX_CHARS + 100);
+        let actual = build(&[huge]);
+        assert!(!actual.contains("Earlier turns"));
+        assert_eq!(actual, build(&[]), "must equal the no-replay rendering");
     }
 }
