@@ -8,7 +8,7 @@ description = "Node.js (napi-rs) binding for kremory agent memory"
 repository = "https://github.com/kgentic/kremory"
 # Workspace-internal build artifact, not a crates.io product — nobody `cargo
 # add`s a napi-rs binding crate. The real distribution surface for Node/TS
-# consumers is npm (`@kgentic/kremory-node`, a separate registry + publish
+# consumers is npm (`@kgentic-ai/kremory-node`, a separate registry + publish
 # step, not yet live). Verified 2026-09-02: this crate has never been
 # published to crates.io (registry returns "does not exist"); publish = false
 # makes that permanent rather than leaving a first-ever accidental publish

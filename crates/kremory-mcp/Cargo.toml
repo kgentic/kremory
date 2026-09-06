@@ -3,7 +3,7 @@ name = "kremory-mcp"
 version = "0.1.0"
 edition = "2021"
 # NOT a crates.io product. ADR-053 (2026-06-24) fixes this server's distribution
-# surface as npm (`@kgentic/kremory-mcp`, over the napi binding), not crates.io;
+# surface as npm (`@kgentic-ai/kremory-mcp`, over the napi binding), not crates.io;
 # verified 2026-09-05 the registry has never held it. Without this guard the
 # crate defaults to publishable, so a `--workspace` publish would ship it
 # first-ever AND with no `license` field and no `include` allowlist (the same

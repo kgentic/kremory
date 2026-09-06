@@ -358,7 +358,7 @@ fact-extraction production bug on the `ner` build.
   archival, and the supersession sweep all run by default; tune via `DreamOpts` +
   `RememberInto::with_opts(...)`. `DreamSummary` reports a `would-merge` vs `did-merge`
   split and per-op `consolidationOpsRan` flags.
-- **napi parity** — the reversibility + dream surfaces are exposed on `@kgentic/kremory-node`
+- **napi parity** — the reversibility + dream surfaces are exposed on `@kgentic-ai/kremory-node`
   with the same honest return shapes as the Rust facade.
 
 ### Fixed
