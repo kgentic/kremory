@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 use crate::core::error::Result;
-use crate::core::schema::{Episode, EpisodicEdge, TemporalGraph};
+use crate::core::schema::{EpisodicEdge, TemporalGraph};
 
 use super::parse_dt;
 
@@ -578,66 +578,5 @@ impl TemporalGraph {
             });
         }
         Ok(edges)
-    }
-
-    // === Extended Fact Methods ===
-
-    /// Return all episodes in a given `group_id`, ordered by timestamp ascending.
-    ///
-    /// Used by the L7 reclassification pass to build the contextual evidence
-    /// set for an entity.  Returns an empty `Vec` when the group has no episodes.
-    pub async fn get_episodes_in_group(&self, group_id: &str) -> Result<Vec<Episode>> {
-        let _db_start = Instant::now();
-        let mut rows = self
-            .conn
-            .query(
-                // TD-003 Phase G: added source_id (idx 10) + source_uri (idx 11) to
-                // close Episode struct ↔ table column asymmetry.
-                "SELECT id, content, timestamp, source_type, metadata, group_id, saga_id,
-                        sequence_number, content_hash, recorded_at, source_id, source_uri
-                 FROM episodes
-                 WHERE group_id = ?1
-                 ORDER BY timestamp ASC",
-                libsql::params![group_id],
-            )
-            .await?;
-        let mut episodes = Vec::new();
-        while let Some(row) = rows.next().await? {
-            let id: i64 = row.get::<i64>(0)?;
-            let content: String = row.get::<String>(1)?;
-            let ts_str: String = row.get::<String>(2)?;
-            let timestamp = parse_dt(&ts_str)?;
-            let source_type: Option<String> = row.get::<Option<String>>(3)?;
-            let meta_str: Option<String> = row.get::<Option<String>>(4)?;
-            let metadata: Option<serde_json::Value> = meta_str
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok());
-            let gid: Option<String> = row.get::<Option<String>>(5)?;
-            let saga_id: Option<String> = row.get::<Option<String>>(6)?;
-            let seq: Option<i64> = row.get::<Option<i64>>(7)?;
-            let content_hash: Option<String> = row.get::<Option<String>>(8)?;
-            let recorded_at: Option<String> = row.get::<Option<String>>(9)?;
-            let source_id: Option<String> = row.get::<Option<String>>(10)?;
-            let source_uri: Option<String> = row.get::<Option<String>>(11)?;
-            episodes.push(Episode {
-                id,
-                content,
-                timestamp,
-                source_type,
-                metadata,
-                group_id: gid,
-                saga_id,
-                sequence_number: seq,
-                content_hash,
-                recorded_at,
-                source_id,
-                source_uri,
-            });
-        }
-        let _ms = _db_start.elapsed().as_secs_f64() * 1000.0;
-        let count = episodes.len();
-        histogram!("rql.db.get_episodes_in_group_ms").record(_ms);
-        tracing::info!(_ms, count, group_id, "kremory.db.get_episodes_in_group");
-        Ok(episodes)
     }
 }

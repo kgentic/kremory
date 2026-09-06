@@ -1,12 +1,14 @@
 use super::*;
+use crate::memory::engine_handle::namespace_to_group_id;
 
 // ── UpdateSourceUriRequest ────────────────────────────────────────────────────
 
 /// Request to update an episode's `source_uri`. Built via [`Memory::update_source_uri`].
 ///
 /// Must call `.to(new_uri)` before `.await`. Errors if no episodes match the
-/// given `source_id`. Does NOT mutate facts, bi-temporal axes (`valid_from`,
-/// `valid_to`, `recorded_at`), or other episode columns.
+/// given `source_id` WITHIN the request's namespace scope (see
+/// [`Memory::update_source_uri`]). Does NOT mutate facts, bi-temporal axes
+/// (`valid_from`, `valid_to`, `recorded_at`), or other episode columns.
 ///
 /// # Substrate-purity
 ///
@@ -17,9 +19,16 @@ pub struct UpdateSourceUriRequest<'a> {
     pub(super) memory: &'a Memory,
     pub(super) source_id: String,
     pub(super) new_uri: Option<String>,
+    pub(super) namespace: Option<Namespace>,
 }
 
 impl<'a> UpdateSourceUriRequest<'a> {
+    /// Set the namespace for this operation (overrides Memory default).
+    pub fn in_namespace(mut self, ns: Namespace) -> Self {
+        self.namespace = Some(ns);
+        self
+    }
+
     /// Set the new `source_uri` value.
     pub fn to(mut self, new_uri: impl Into<String>) -> Self {
         self.new_uri = Some(new_uri.into());
@@ -47,11 +56,24 @@ impl<'a> IntoFuture for UpdateSourceUriRequest<'a> {
                 )
             })?;
             let conn = &tg.conn;
-            // Verify at least one episode with this source_id exists.
+            // TD-235: `source_id` is caller-chosen with NO uniqueness constraint
+            // (Migration 007 creates a plain index — `core/migrations/defs_b.rs:123`),
+            // so two namespaces can collide on one id. Resolve the scope EXACTLY as
+            // the sibling reader `Memory::recall_by_source_id` does, so reader and
+            // writer cannot disagree about which rows a source id names.
+            let group_filter: Option<String> = self
+                .namespace
+                .or_else(|| self.memory.default_namespace.clone())
+                .map(|ns| namespace_to_group_id(&ns));
+            // Verify at least one episode with this source_id exists IN SCOPE.
+            // `(?2 IS NULL OR group_id = ?2)` is TRUE when the filter is NULL
+            // → no namespace scope applied (the documented span-all path).
             let count: i64 = conn
                 .query(
-                    "SELECT COUNT(*) FROM episodes WHERE source_id = ?1",
-                    libsql::params![self.source_id.clone()],
+                    "SELECT COUNT(*) FROM episodes \
+                     WHERE source_id = ?1 \
+                       AND (?2 IS NULL OR group_id = ?2)",
+                    libsql::params![self.source_id.clone(), group_filter.clone()],
                 )
                 .await
                 .map_err(CoreError::Database)?
@@ -73,8 +95,10 @@ impl<'a> IntoFuture for UpdateSourceUriRequest<'a> {
             }
             let updated = conn
                 .execute(
-                    "UPDATE episodes SET source_uri = ?1 WHERE source_id = ?2",
-                    libsql::params![new_uri, self.source_id],
+                    "UPDATE episodes SET source_uri = ?1 \
+                     WHERE source_id = ?2 \
+                       AND (?3 IS NULL OR group_id = ?3)",
+                    libsql::params![new_uri, self.source_id, group_filter],
                 )
                 .await
                 .map_err(CoreError::Database)?;
@@ -86,11 +110,25 @@ impl<'a> IntoFuture for UpdateSourceUriRequest<'a> {
 // ── Memory::update_source_uri entry point ─────────────────────────────────────
 
 impl Memory {
-    /// Update the `source_uri` for all episode(s) with the given `source_id`.
+    /// Update the `source_uri` for the in-scope episode(s) with the given
+    /// `source_id`.
     ///
     /// Does NOT mutate facts, bi-temporal axes (`valid_from`, `valid_to`,
     /// `recorded_at`), or any other episode column. Returns `Err` if no
-    /// episodes match the given `source_id`.
+    /// episodes match the given `source_id` within the namespace scope below.
+    ///
+    /// # Namespace scope (TD-235)
+    ///
+    /// Identical to [`Memory::recall_by_source_id`] — the writer and its
+    /// sibling reader resolve scope the same way, by construction, through
+    /// `namespace_to_group_id`, so a `.with_thread(...)` namespace scopes to
+    /// that thread and not to the whole workspace:
+    /// `.in_namespace(ns)` restricts the write to that namespace only; with no
+    /// `.in_namespace(...)` call the Memory's `default_namespace` is used; if
+    /// no default is set the write spans ALL namespaces. That last case is the
+    /// only path by which this call can reach another tenant's rows, and it is
+    /// opt-in — it requires a `Memory` built with no default AND a request
+    /// naming no namespace.
     ///
     /// # Example
     ///
@@ -110,6 +148,7 @@ impl Memory {
             memory: self,
             source_id: source_id.into(),
             new_uri: None,
+            namespace: None,
         }
     }
 }
@@ -124,9 +163,16 @@ pub struct UpdateEpisodeMetadataRequest<'a> {
     pub(super) source_id: String,
     pub(super) patch: Option<serde_json::Value>,
     pub(super) pending_error: Option<MemoryError>,
+    pub(super) namespace: Option<Namespace>,
 }
 
 impl<'a> UpdateEpisodeMetadataRequest<'a> {
+    /// Set the namespace for this operation (overrides Memory default).
+    pub fn in_namespace(mut self, ns: Namespace) -> Self {
+        self.namespace = Some(ns);
+        self
+    }
+
     /// Set the JSON patch to merge.
     ///
     /// The patch MUST be a JSON object (`Value::Object(_)`). Non-object
@@ -169,11 +215,25 @@ impl<'a> std::future::IntoFuture for UpdateEpisodeMetadataRequest<'a> {
             })?;
             let conn = &tg.conn;
 
-            // Verify at least one episode with this source_id exists.
+            // TD-235: `source_id` is caller-chosen with NO uniqueness constraint
+            // (Migration 007 creates a plain index — `core/migrations/defs_b.rs:123`),
+            // so two namespaces can collide on one id. Resolve the scope EXACTLY as
+            // the sibling reader `Memory::recall_by_source_id` does, so reader and
+            // writer cannot disagree about which rows a source id names.
+            let group_filter: Option<String> = self
+                .namespace
+                .or_else(|| self.memory.default_namespace.clone())
+                .map(|ns| namespace_to_group_id(&ns));
+
+            // Verify at least one episode with this source_id exists IN SCOPE.
+            // `(?2 IS NULL OR group_id = ?2)` is TRUE when the filter is NULL
+            // → no namespace scope applied (the documented span-all path).
             let count: i64 = conn
                 .query(
-                    "SELECT COUNT(*) FROM episodes WHERE source_id = ?1",
-                    libsql::params![self.source_id.clone()],
+                    "SELECT COUNT(*) FROM episodes \
+                     WHERE source_id = ?1 \
+                       AND (?2 IS NULL OR group_id = ?2)",
+                    libsql::params![self.source_id.clone(), group_filter.clone()],
                 )
                 .await
                 .map_err(CoreError::Database)?
@@ -204,10 +264,19 @@ impl<'a> std::future::IntoFuture for UpdateEpisodeMetadataRequest<'a> {
             // the normal case, and the merge MUST be per row: reading one
             // arbitrary row's metadata and broadcasting the result to all of
             // them silently destroys every sibling's own keys.
+            //
+            // TD-235: scoped to the resolved namespace. The per-row `UPDATE ...
+            // WHERE id = ?2` below needs no namespace predicate of its own — it
+            // targets a primary key drawn from THIS scoped result set, so
+            // scoping here is what bounds the write. Do not "fix" that UPDATE by
+            // adding a group_id clause; it would be redundant, and reading it as
+            // missing is how this row gets mis-audited later.
             let mut rows = conn
                 .query(
-                    "SELECT id, metadata FROM episodes WHERE source_id = ?1",
-                    libsql::params![self.source_id.clone()],
+                    "SELECT id, metadata FROM episodes \
+                     WHERE source_id = ?1 \
+                       AND (?2 IS NULL OR group_id = ?2)",
+                    libsql::params![self.source_id.clone(), group_filter],
                 )
                 .await
                 .map_err(CoreError::Database)?;
@@ -285,6 +354,8 @@ impl Memory {
     ///   index, not a UNIQUE one), so N episodes may share one. The patch is
     ///   merged into EACH row's OWN existing metadata and written back by that
     ///   row's `id`. Sibling rows never see each other's keys.
+    /// - **Namespace-scoped**: only rows inside the resolved namespace scope
+    ///   are read or written — see the section below.
     /// - **Shallow merge**: patch keys at the top level merge with existing
     ///   metadata; nested objects are NOT recursively merged.
     /// - **Arrays REPLACE not merge**: a patch `{"refs": [b]}` FULLY REPLACES
@@ -296,6 +367,19 @@ impl Memory {
     /// - **Does NOT mutate**: facts, bi-temporal axes (`valid_from`,
     ///   `valid_to`, `recorded_at` on facts), `source_id`, `source_uri`,
     ///   `recorded_at` on episodes — only the `metadata` column changes.
+    ///
+    /// # Namespace scope (TD-235)
+    ///
+    /// Identical to [`Memory::recall_by_source_id`] — the writer and its
+    /// sibling reader resolve scope the same way, by construction, through
+    /// `namespace_to_group_id`, so a `.with_thread(...)` namespace scopes to
+    /// that thread and not to the whole workspace:
+    /// `.in_namespace(ns)` restricts the patch to that namespace only; with no
+    /// `.in_namespace(...)` call the Memory's `default_namespace` is used; if
+    /// no default is set the patch spans ALL namespaces. That last case is the
+    /// only path by which this call can reach another tenant's rows, and it is
+    /// opt-in — it requires a `Memory` built with no default AND a request
+    /// naming no namespace.
     ///
     /// # Substrate-purity
     ///
@@ -311,6 +395,7 @@ impl Memory {
             source_id: source_id.into(),
             patch: None,
             pending_error: None,
+            namespace: None,
         }
     }
 }
@@ -348,9 +433,17 @@ impl Memory {
         let conn = &tg.conn;
 
         let source_id = source_id.as_ref().to_string();
+        // TD-235: resolve through `namespace_to_group_id`, NOT the raw
+        // `ns.namespace`. A thread is PART of the namespace identity — a
+        // `Namespace::new("ws").with_thread("t")` is persisted as
+        // `group_id = "ws:t"` — so taking `ns.namespace` alone yielded the
+        // filter `"ws"`, which matched no row and returned ZERO episodes for a
+        // namespace that demonstrably owned them. Every other namespace-scoped
+        // facade op already resolved this way (`facade/dream.rs`,
+        // `facade/reverse.rs`); these three `source_id` sites were the outliers.
         let group_filter: Option<String> = namespace
             .or_else(|| self.default_namespace.clone())
-            .map(|ns| ns.namespace);
+            .map(|ns| namespace_to_group_id(&ns));
 
         // `(? IS NULL OR group_id = ?)` evaluates to TRUE when filter is NULL
         // → no namespace scope applied.

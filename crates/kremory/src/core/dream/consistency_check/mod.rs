@@ -8,9 +8,12 @@
 //! - `kremory.dream.consistency_check.scanned_total`
 //! - `kremory.dream.consistency_check.flagged_total`
 //! - `kremory.dream.consistency_check.cap_overflow_total{drop_count}`
-//! - `kremory.dream.consistency_check.verify_confirmed_total`
+//! - `kremory.dream.consistency_check.verify_confirmed_total{source=explicit|downgrade_low_conf}`
 //! - `kremory.dream.consistency_check.verify_corrected_total{from_type,to_type}`
 //! - `kremory.dream.consistency_check.verify_uncertain_total`
+//! - `kremory.dream.consistency_check.verify_low_confidence_downgrade_total{from_type,proposed_to_type}`
+//! - `kremory.dream.consistency_check.verify_correction_rejected_total{reason=registry_rejected|catch_all_target}`
+//! - `kremory.dream.consistency_check.dry_run_skipped_total{path=dream_phase|stage2_pre_write}`
 //! - `kremory.dream.consistency_check.embed_cosine_histogram`
 //! - `kremory.dream.consistency_check.llm_call_latency_ms_histogram`
 //! - `kremory.dream.consistency_check.verify_model_used{model_name,provider}`
@@ -327,6 +330,8 @@ pub struct VerifyBatchParams<'a> {
 ///
 /// Missing LLM decisions (M of N returned) default to `VerifyAction::Demote`
 /// per spec §10.4 DK3 ratified direction (Option α: strict safety default).
+/// A `correct` whose `new_type_id` is not a live `entity_types` row (or is the
+/// catch-all `0`) Demotes identically — see `verify.rs`'s registry-bounds guard.
 /// This ensures `verify_batch_for_candidates` can derive `ResolvedDecision`
 /// from the outcome without a DB round-trip — critical for the Stage 2
 /// pre-write flow (entities NOT yet in DB when this function returns).

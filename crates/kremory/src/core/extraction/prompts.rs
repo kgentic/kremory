@@ -31,7 +31,6 @@
 //! specs.
 
 use crate::core::entity_types::{EntityTypeRegistry, EntityTypeSpec};
-use crate::core::schema::{Entity, Episode};
 
 // ─── NEVER-list ──────────────────────────────────────────────────────────────
 
@@ -265,85 +264,6 @@ pub fn render_delimited_tuple_prompt() -> String {
      entity<|#|>Acme<|#|>2<|#|>A technology company.\n\
      <|COMPLETE|>"
         .to_string()
-}
-
-// ─── L7 reclassification prompt ──────────────────────────────────────────────
-
-/// Render the L7 dream-phase entity reclassification prompt.
-///
-/// Shows the LLM:
-/// 1. The entity's name and current properties.
-/// 2. The last N episode contents that mention this entity (contextual evidence).
-/// 3. The registered entity type table (id → name — description).
-///
-/// The LLM is asked to output a single `entity_type_id` integer from the
-/// registered table.  Positive framing is used per peer-prompt-engineering
-/// research (feedback_peer_prompt_engineering_positive_and_generic_examples):
-/// present what the type *is*, not what to avoid.
-///
-/// ## Episode selection
-///
-/// The caller is responsible for selecting the relevant episodes (typically
-/// those in the same `group_id` as the entity).  This function renders
-/// whichever slice is passed.  At most the last 5 episodes are shown in the
-/// prompt to bound token usage.
-pub fn render_reclassify_prompt(
-    entity: &Entity,
-    related_episodes: &[Episode],
-    registry: &EntityTypeRegistry,
-) -> String {
-    let entity_name = entity
-        .properties
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&entity.id);
-
-    let entity_desc = entity
-        .properties
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    // Show at most the last 5 episodes to bound prompt length.
-    let episode_window: &[Episode] = if related_episodes.len() > 5 {
-        &related_episodes[related_episodes.len() - 5..]
-    } else {
-        related_episodes
-    };
-
-    let episodes_block: String = episode_window
-        .iter()
-        .enumerate()
-        .map(|(i, ep)| format!("  [{}] {}", i + 1, ep.content.trim()))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let registry_table = render_registry_block(registry.specs());
-
-    format!(
-        "You are classifying an entity in a knowledge graph.\n\
-         \n\
-         Entity name: {entity_name}\n\
-         {desc_line}\
-         \n\
-         Recent context (episodes that mention this entity):\n\
-         {episodes_block}\n\
-         \n\
-         Available entity types:\n\
-         {registry_table}\n\
-         \n\
-         Select the most specific matching entity_type_id from the table above.\n\
-         Use id=0 (Entity) when none of the specific types clearly apply.\n\
-         Output a JSON object with a single field: {{\"entity_type_id\": <integer>}}",
-        entity_name = entity_name,
-        desc_line = if entity_desc.is_empty() {
-            String::new()
-        } else {
-            format!("Description: {entity_desc}\n")
-        },
-        episodes_block = episodes_block,
-        registry_table = registry_table,
-    )
 }
 
 // ─── TD-023 Hybrid GLiNER + LLM typing prompt ────────────────────────────────

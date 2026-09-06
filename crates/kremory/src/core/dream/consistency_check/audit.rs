@@ -173,6 +173,21 @@ pub(super) struct ApplyCorrectionParams<'a> {
     pub(super) now: &'a str,
 }
 
+/// Apply an LLM-decided type correction to a live entity row.
+///
+/// # Caller contract
+///
+/// `params.new_type_id` MUST already have been bounds-checked against the live
+/// `entity_types` registry. `entities.entity_type_id` carries NO foreign key
+/// (`migrations/defs_b.rs`, Migration 008 — `INTEGER NOT NULL DEFAULT 0`), so
+/// this function cannot and does not reject an unregistered id.
+///
+/// The guard lives at the single decision point in
+/// `verify.rs`'s `"correct"` arm, where `params.type_map` (the same registry
+/// map the prompt's type menu is rendered from) is in scope — placed there
+/// because that decision ALSO feeds the Stage 2 pre-write path
+/// (`ResolvedDecision::Correct` -> `ingest/pipeline/phase1.rs`), which never
+/// calls this function. Do not add a second write site without re-reading it.
 pub(super) async fn apply_correction(
     db: &libsql::Connection,
     params: ApplyCorrectionParams<'_>,

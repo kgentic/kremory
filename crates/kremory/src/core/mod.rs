@@ -161,12 +161,11 @@ pub mod migrations;
 #[cfg(feature = "ner")]
 pub mod ner;
 pub mod obs;
+pub mod provider;
 /// ADR-062 / ADR-067 Phase 3 — graph-proximity boost axis: pure
 /// `usize -> f32` bonus math, read-side-pure (no `execute(`).
 pub(crate) mod proximity;
-pub mod provider;
 pub mod rates;
-pub mod reclassification;
 /// TD-062 cross-encoder reranker (spec §3 Increment 3 / §4). Crate-internal —
 /// the `Reranker` trait + `FastEmbedReranker` are consumed by the recall
 /// pipeline (`facade::recall`); consumers configure it via

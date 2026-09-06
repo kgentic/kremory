@@ -157,19 +157,6 @@ pub(crate) struct RelOnlyOutput {
     pub(crate) relationships: Vec<RawRelationship>,
 }
 
-/// Wrapper for the L7 dream-phase reclassification response.
-///
-/// Single integer field: `entity_type_id`.  Integer schema enforcement
-/// is used (not string label) so the provider must emit a registered id
-/// directly, consistent with ingest-time EntityTyping enforcement.
-#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
-pub(crate) struct ReclassifyWrapper {
-    /// Integer entity type id within the owning namespace.
-    /// Must be a registered id from the entity_types table.
-    /// id=0 = "Entity" catch-all — treated as reclassification failure.
-    pub(crate) entity_type_id: u32,
-}
-
 // ─── LlmExtractionOutput visibility re-export ────────────────────────────────────
 
 // LlmExtractionOutput is defined and pub(crate) in mod.rs — imported directly by
@@ -377,20 +364,6 @@ pub(crate) static SCHEMA_RESOLUTION_VERDICT: LazyLock<Value> = LazyLock::new(|| 
 /// still run first so only the ambiguous remainder reaches this call.
 pub(crate) static SCHEMA_BATCHED_RESOLUTION: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(BatchedNodeResolutions)).unwrap_or_else(|e| {
-        panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
-    })
-});
-
-/// Schema for the L7 dream-phase entity reclassification call.
-///
-/// Root object with a single `entity_type_id: u32` field.  Integer-typed schema
-/// enforces the provider to emit an integer id matching the registered type table,
-/// consistent with the ingest-time `EntityTyping` schema enforcement.
-///
-/// id=0 is the catch-all sentinel; the reclassification pass treats any
-/// `validate_or_fallback`-returned 0 as a no-op (insufficient context).
-pub(crate) static SCHEMA_RECLASSIFY: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::to_value(schemars::schema_for!(ReclassifyWrapper)).unwrap_or_else(|e| {
         panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
     })
 });

@@ -118,12 +118,21 @@ async fn phase_2_metadata_update_persists_after_phase_1() {
         .await
         .expect("Phase 1 must succeed");
 
-    // NOTE: `update_episode_metadata` is source_id-global, NOT namespace-scoped.
-    // Verified at facade/mod.rs:2433 — `SELECT COUNT(*) FROM episodes WHERE source_id = ?1`
-    // has no namespace predicate. For the aidocs cutover this is safe (1 slug =
-    // 1 episode by atomic-doc grain per parent spec §4). If a slug ever has
-    // episodes in multiple namespaces, ALL get the metadata patch — flag.
+    // TD-235 (FIXED): this NOTE used to read "`update_episode_metadata` is
+    // source_id-global, NOT namespace-scoped ... if a slug ever has episodes in
+    // multiple namespaces, ALL get the metadata patch — flag." That flag was
+    // correct and went unactioned; both writers are now namespace-scoped on the
+    // same rule as their sibling reader `recall_by_source_id`
+    // (`facade/update.rs`, NOT `facade/mod.rs:2433` — the old line reference had
+    // also rotted; the code moved out of `mod.rs`). Cross-namespace behaviour is
+    // pinned by `it::td235_metadata_namespace_scope`.
+    //
+    // `.in_namespace(ns)` below is therefore load-bearing, not decoration: it
+    // scopes Phase 2 to the same namespace Phase 1 wrote into. Without it this
+    // `Memory` has no builder default, so the patch would take the documented
+    // span-all-namespaces path.
     mem.update_episode_metadata(slug)
+        .in_namespace(ns.clone())
         .patch(json!({ "docType": "spec", "complete_ingest": true }))
         .await
         .expect("Phase 2 metadata update must succeed");

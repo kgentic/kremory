@@ -227,7 +227,7 @@ impl JsMemory {
             self.inner.remember(opts.content.clone())
         };
 
-        if let Some(ns) = namespace {
+        if let Some(ns) = namespace.clone() {
             req = req.in_namespace(ns);
         }
         if !facts.is_empty() {
@@ -258,14 +258,22 @@ impl JsMemory {
         let mut warnings: Vec<String> = Vec::new();
 
         // Post-ingest: write source_uri if both source_id + source_uri supplied.
+        //
+        // TD-235: BOTH post-ingest writes MUST carry the same namespace Phase 1
+        // wrote into. `self.inner` is built by `Memory::auto()` and therefore
+        // holds NO substrate-side `default_namespace` — this wrapper keeps it in
+        // `JsMemory::default_namespace` instead. So without threading `namespace`
+        // through explicitly, these writes would resolve to "no scope" and span
+        // EVERY namespace, silently patching another tenant's rows that happen to
+        // share this caller-chosen `source_id` (which carries no uniqueness
+        // constraint). Pinned substrate-side by `it::td235_metadata_namespace_scope`.
         if let Some(ref uri) = opts.source_uri {
             if let Some(ref sid) = opts.source_id {
-                if let Err(e) = self
-                    .inner
-                    .update_source_uri(sid.clone())
-                    .to(uri.clone())
-                    .await
-                {
+                let mut uri_req = self.inner.update_source_uri(sid.clone());
+                if let Some(ns) = namespace.clone() {
+                    uri_req = uri_req.in_namespace(ns);
+                }
+                if let Err(e) = uri_req.to(uri.clone()).await {
                     warnings.push(format!("source_uri update failed: {e}"));
                 }
             } else {
@@ -274,14 +282,14 @@ impl JsMemory {
         }
 
         // Post-ingest: write metadata if both source_id + metadata supplied.
+        // Namespace-scoped for the same reason as the source_uri write above.
         if let Some(meta) = opts.metadata {
             if let Some(ref sid) = opts.source_id {
-                if let Err(e) = self
-                    .inner
-                    .update_episode_metadata(sid.clone())
-                    .patch(meta)
-                    .await
-                {
+                let mut meta_req = self.inner.update_episode_metadata(sid.clone());
+                if let Some(ns) = namespace {
+                    meta_req = meta_req.in_namespace(ns);
+                }
+                if let Err(e) = meta_req.patch(meta).await {
                     warnings.push(format!("metadata update failed: {e}"));
                 }
             } else {
@@ -934,8 +942,8 @@ impl JsMemory {
                 )))
             }
         };
-        let namespace = convert::resolve_recall_namespace(&opts)
-            .or_else(|| self.default_namespace.clone());
+        let namespace =
+            convert::resolve_recall_namespace(&opts).or_else(|| self.default_namespace.clone());
         let k = opts
             .as_ref()
             .and_then(|o| o.k)

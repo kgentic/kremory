@@ -373,10 +373,13 @@ pub async fn reclassify<L: ChatProvider>(
         // write. Never write an unvalidated id to `entities.entity_type_id`."
         //
         // The emitted id is already known non-zero here (guard above), so a
-        // validated result of 0 can only mean the registry rejected it. Semantics
-        // match the single-entity L7 precedent
-        // (`core/reclassification.rs::reclassify_entity_type_in_dream_phase`):
-        // registry-rejected → skip the write entirely, never fall back to writing 0.
+        // validated result of 0 can only mean the registry rejected it:
+        // skip the write entirely, never fall back to writing 0.
+        //
+        // This rule used to cite a single-entity `core/reclassification.rs`
+        // precedent. That module was never wired into any live path and was
+        // deleted (TD-237, 2026-09-06); the rule stands on its own terms, and
+        // this batch pass is now the only implementation of it.
         let validated_type_id = registry.validate_or_fallback(decision.entity_type_id);
         if validated_type_id == 0 {
             counter!(
