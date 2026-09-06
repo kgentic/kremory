@@ -985,6 +985,9 @@ impl Memory {
     /// - `.rename(new_id)` — REKEY the entity's id (rejects renaming INTO an
     ///   existing id with `Error::EntityEditConflict`; merge explicitly instead).
     /// - `.retype(type_id)` — change the entity's type (pins it `ConsumerPinned`).
+    ///   `type_id` must be REGISTERED in the namespace (or be the id=0 "Entity"
+    ///   catch-all, always allowed); an unregistered id errors
+    ///   `Error::EntityEditInvalid` rather than being coerced to the catch-all.
     ///
     /// The edit is undoable via [`undo_entity_edit`](Self::undo_entity_edit) with
     /// the returned `EditEntityOutcome.mutation_id`. Must call `.execute()`.

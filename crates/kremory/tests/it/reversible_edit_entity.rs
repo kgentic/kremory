@@ -12,6 +12,16 @@
 //!   a structured `EntityEditConflict`, never a silent fuse (ADR-059).
 //! - `edit_entity_retype` — a retype changes the type + pins `ConsumerPinned` +
 //!   invalidates community membership, without touching facts.
+//! - `edit_entity_retype_rejects_out_of_range_type_id` /
+//!   `edit_entity_retype_rejects_unregistered_gap_type_id` — a CONSUMER-supplied
+//!   `new_type_id` that no `entity_types` row explains is a loud
+//!   `EntityEditInvalid` naming the id, with NO write and NO provenance row —
+//!   never coerced to the catch-all (that is the LLM sites' semantics) and never
+//!   written dangling into the FK-less `entities.entity_type_id`.
+//! - `edit_entity_retype_accepts_registered_type_id` /
+//!   `edit_entity_retype_accepts_catch_all_zero` — the false-positive guards: a
+//!   registered id still applies, and id=0 ("Entity") is always admissible, even
+//!   on an unseeded namespace, so a mis-typed entity can be demoted.
 //! - `edit_entity_undo_restores` — undo reverses a rename (inverse rekey) and a
 //!   retype (type + community restore) exactly; second undo is a no-op.
 //! - `diarization_merge_unmerge_rename` — the end-to-end driver: merge "Speaker 1"
@@ -420,6 +430,12 @@ async fn edit_entity_rename_into_existing_rejected() {
 #[tokio::test]
 async fn edit_entity_retype() {
     let graph = TemporalGraph::open_in_memory().await.expect("open");
+    // Seed the namespace's entity-type registry, as `Engine::ingest_with` does for
+    // any namespace a consumer really ingests into. These tests plant entities via
+    // the low-level `insert_entity_with_group`, which bypasses ingest — so without
+    // this the registry is EMPTY and `retype(3)` was writing an id no `entity_types`
+    // row explains (the FK-less-column hole the retype guard now closes).
+    seed_default_types(&graph).await;
     insert_bare(&graph, NEW).await;
     insert_bare(&graph, "bob").await;
     let fact = plant_fact(&graph, NEW, "knows", "bob").await;
@@ -570,6 +586,9 @@ async fn edit_entity_undo_restores() {
     // ── Scenario B: retype → undo (type + community restore) ──
     {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
+        // Registry seeded as real ingest would (see `edit_entity_retype`) — id 4
+        // must be a REGISTERED type for the forward retype to be legal.
+        seed_default_types(&graph).await;
         insert_bare(&graph, NEW).await;
         set_community(&graph, NEW, 5).await;
 
@@ -713,4 +732,226 @@ async fn diarization_merge_unmerge_rename() {
         1,
         "the keeper is untouched by the rename"
     );
+}
+
+// ── Retype registry-bounds guard (consumer-supplied `new_type_id`) ───────────
+//
+// `EntityEditOp::Retype { new_type_id }` arrives from the PUBLIC builder
+// `mem.edit_entity(id).retype(n)` and is written straight to
+// `entities.entity_type_id`, a column with NO foreign key (Migration 008,
+// `defs_b.rs`) — so the database cannot reject a bogus id. Unlike the two LLM
+// sites (`dream::reclassify`, `dream::consistency_check::audit`) which coerce an
+// unusable id to the catch-all and CONTINUE, a consumer handing us an id no
+// registry row explains is a CALLER BUG: it must fail loudly rather than be
+// silently coerced (parse-loudly) or written dangling.
+
+/// Seed the standard `DEFAULT_ENTITY_TYPES` vocabulary (ids 0..=9) for `GROUP`,
+/// mirroring what `Engine::ingest_with` does lazily (`ingest_with.rs` step 2a)
+/// for every namespace a consumer actually ingests into. Tests that plant
+/// entities via the low-level `insert_entity_with_group` bypass ingest, so they
+/// must seed the registry themselves to be a faithful fixture.
+async fn seed_default_types(graph: &TemporalGraph) {
+    kremory::core::entity_types::ensure_default_types_seeded(&graph.conn, GROUP)
+        .await
+        .expect("seed default entity types");
+}
+
+/// Count `entity_edit` provenance rows — a rejected edit must write none.
+async fn entity_edit_log_rows(graph: &TemporalGraph) -> i64 {
+    let mut rows = graph
+        .conn
+        .query(
+            "SELECT COUNT(*) FROM graph_mutation_log WHERE kind = 'entity_edit'",
+            (),
+        )
+        .await
+        .expect("log count");
+    rows.next()
+        .await
+        .expect("row")
+        .expect("count")
+        .get::<i64>(0)
+        .expect("n")
+}
+
+async fn retype(
+    graph: &TemporalGraph,
+    entity_id: &str,
+    new_type_id: i64,
+) -> kremory::CoreResult<()> {
+    edit_entity(
+        graph,
+        EntityEditParams {
+            entity_id: entity_id.to_string(),
+            group_id: GROUP.to_string(),
+            op: EntityEditOp::Retype { new_type_id },
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+/// An id ABOVE the highest registered type is refused with a descriptive error
+/// naming the offending id — never silently coerced to the catch-all, and never
+/// written dangling into the FK-less `entities.entity_type_id`.
+#[tokio::test]
+async fn edit_entity_retype_rejects_out_of_range_type_id() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    seed_default_types(&graph).await;
+    insert_bare(&graph, NEW).await;
+
+    let err = retype(&graph, NEW, 99)
+        .await
+        .expect_err("an unregistered, out-of-range type id must be rejected");
+
+    match err {
+        kremory::core::error::Error::EntityEditInvalid { detail } => {
+            assert!(
+                detail.contains("99"),
+                "error must NAME the offending id so the caller can fix it; got: {detail}"
+            );
+            assert!(
+                detail.contains(GROUP),
+                "error must name the namespace whose registry was consulted; got: {detail}"
+            );
+        }
+        other => panic!("expected EntityEditInvalid, got {other:?}"),
+    }
+
+    // The write never happened — no silent fallback to the catch-all, no dangling id.
+    let (type_id, source) = entity_type(&graph, NEW).await;
+    assert_eq!(type_id, 0, "entity_type_id untouched by a rejected retype");
+    assert_ne!(
+        source.as_deref(),
+        Some("ConsumerPinned"),
+        "a rejected retype must not pin the type"
+    );
+    assert_eq!(
+        entity_edit_log_rows(&graph).await,
+        0,
+        "no entity_edit provenance row on a rejected retype"
+    );
+}
+
+/// An id WITHIN range but absent from the registry (a gap) is refused too —
+/// `<= max_id` is not the invariant; registry membership is.
+#[tokio::test]
+async fn edit_entity_retype_rejects_unregistered_gap_type_id() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    // Sparse registry: ids 0, 1 and 7 registered — 3 is a GAP below max_id.
+    kremory::core::entity_types::upsert_entity_types(
+        &graph.conn,
+        GROUP,
+        &[
+            kremory::EntityTypeSpec {
+                id: 0,
+                name: "Entity".to_string(),
+                description: "catch-all".to_string(),
+            },
+            kremory::EntityTypeSpec {
+                id: 1,
+                name: "Person".to_string(),
+                description: "A named individual.".to_string(),
+            },
+            kremory::EntityTypeSpec {
+                id: 7,
+                name: "Quantity".to_string(),
+                description: "A measurement with units.".to_string(),
+            },
+        ],
+    )
+    .await
+    .expect("seed sparse registry");
+    insert_bare(&graph, NEW).await;
+
+    let err = retype(&graph, NEW, 3)
+        .await
+        .expect_err("an id inside the range but absent from the registry must be rejected");
+
+    match err {
+        kremory::core::error::Error::EntityEditInvalid { detail } => {
+            assert!(
+                detail.contains('3'),
+                "error must NAME the offending id; got: {detail}"
+            );
+        }
+        other => panic!("expected EntityEditInvalid, got {other:?}"),
+    }
+
+    let (type_id, _) = entity_type(&graph, NEW).await;
+    assert_eq!(type_id, 0, "entity_type_id untouched by a rejected retype");
+    assert_eq!(
+        entity_edit_log_rows(&graph).await,
+        0,
+        "no entity_edit provenance row on a rejected retype"
+    );
+}
+
+/// A legitimately registered id still applies — the guard rejects the unknown,
+/// not the legal (`over-blocking-is-a-security-failure`: prove sensitivity in
+/// BOTH directions, not just on the cases that should be blocked).
+#[tokio::test]
+async fn edit_entity_retype_accepts_registered_type_id() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    seed_default_types(&graph).await;
+    insert_bare(&graph, NEW).await;
+
+    // 3 = "Location" in DEFAULT_ENTITY_TYPES, and 7 is the sparse-registry id
+    // used above — both are genuinely registered here.
+    retype(&graph, NEW, 3).await.expect("registered id applies");
+
+    let (type_id, source) = entity_type(&graph, NEW).await;
+    assert_eq!(type_id, 3, "registered entity_type_id applied");
+    assert_eq!(
+        source.as_deref(),
+        Some("ConsumerPinned"),
+        "a legal retype still pins ConsumerPinned"
+    );
+    assert_eq!(
+        entity_edit_log_rows(&graph).await,
+        1,
+        "a legal retype still writes its provenance row"
+    );
+}
+
+/// id=0 ("Entity") is the catch-all sentinel — ALWAYS a legal retype target, so
+/// a consumer can demote a mis-typed entity back to unclassified. It is admitted
+/// unconditionally (matching `EntityTypeRegistry::validate_or_fallback`'s own
+/// "id=0 always passes" invariant and the §5.8 guarantee that `ensure_catch_all`
+/// puts id=0 in every seeded namespace), so it holds even on an UNSEEDED one.
+#[tokio::test]
+async fn edit_entity_retype_accepts_catch_all_zero() {
+    // Seeded namespace: 3 → 0 is a real, observable demotion.
+    {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        seed_default_types(&graph).await;
+        insert_bare(&graph, NEW).await;
+        retype(&graph, NEW, 3).await.expect("retype to Location");
+        assert_eq!(entity_type(&graph, NEW).await.0, 3, "sanity: 3 applied");
+
+        retype(&graph, NEW, 0)
+            .await
+            .expect("demote to the id=0 catch-all must be legal");
+        assert_eq!(
+            entity_type(&graph, NEW).await.0,
+            0,
+            "entity demoted back to the catch-all"
+        );
+    }
+
+    // UNSEEDED namespace: id=0 bypasses the registry lookup entirely.
+    {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        insert_bare(&graph, NEW).await;
+        retype(&graph, NEW, 0)
+            .await
+            .expect("id=0 is admissible without consulting the registry");
+        let (type_id, source) = entity_type(&graph, NEW).await;
+        assert_eq!(type_id, 0);
+        assert_eq!(
+            source.as_deref(),
+            Some("ConsumerPinned"),
+            "the retype ran (it pinned the type), it was not skipped"
+        );
+    }
 }

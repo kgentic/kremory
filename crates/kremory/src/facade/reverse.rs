@@ -163,6 +163,14 @@ impl<'a> EditEntityRequest<'a> {
     /// Re-type the entity to `type_id` (pins it `ConsumerPinned`, invalidates its
     /// community membership, re-opens the freeze). Mutually exclusive with
     /// `.rename(...)`.
+    ///
+    /// `type_id` must be a type REGISTERED in the target namespace (see
+    /// `NamespaceSeed` / `Memory::register_namespace_with_seed`), or the id=0
+    /// "Entity" catch-all, which is always admissible so a mis-typed entity can be
+    /// demoted back to unclassified. An unregistered id fails with
+    /// [`Error::EntityEditInvalid`](crate::core::error::Error::EntityEditInvalid)
+    /// naming the offending id — it is NOT silently coerced to the catch-all,
+    /// because that would absorb an explicit caller mistake.
     #[must_use]
     pub fn retype(mut self, type_id: i64) -> Self {
         self.new_type_id = Some(type_id);
@@ -175,8 +183,11 @@ impl<'a> EditEntityRequest<'a> {
     ///
     /// Returns `Err` if `Memory` lacks a `TemporalGraph`, if the namespace cannot
     /// be resolved, if neither/both of `rename`/`retype` were set
-    /// (`EntityEditInvalid`), if the entity does not exist (`EntityEditNotFound`),
-    /// or if a rename targets an occupied id (`EntityEditConflict`).
+    /// (`EntityEditInvalid`), if `retype` named a type not registered in the
+    /// namespace (`EntityEditInvalid` — id=0 excepted), if the entity does not
+    /// exist (`EntityEditNotFound`), or if a rename targets an occupied id
+    /// (`EntityEditConflict`). A rejected edit writes nothing: no type change and
+    /// no `graph_mutation_log` row.
     pub async fn execute(self) -> Result<EditEntityOutcome> {
         let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
             MemoryError::Other(

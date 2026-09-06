@@ -682,8 +682,10 @@ impl JsMemory {
     /// facts). Wraps `Memory::edit_entity`.
     ///
     /// Set exactly one of `opts.newId` (rename/rekey — rejects an occupied id) or
-    /// `opts.typeId` (retype). `opts.namespace` scopes the entity (else the handle
-    /// default). Reverse via `undoEntityEdit` with the returned `mutationId`.
+    /// `opts.typeId` (retype — rejects a type id not registered in the namespace;
+    /// id 0, the "Entity" catch-all, is always allowed). `opts.namespace` scopes
+    /// the entity (else the handle default). Reverse via `undoEntityEdit` with the
+    /// returned `mutationId`.
     #[napi]
     pub async fn edit_entity(
         &self,

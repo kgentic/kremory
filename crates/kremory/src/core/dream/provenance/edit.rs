@@ -8,7 +8,11 @@
 //! - **`retype`** — change `entity_type_id` (+ `entity_type_source` /
 //!   `entity_type_assigned_at`) only; the id is unchanged so NO fact/edge rekey.
 //!   Community membership is invalidated (dropped) + the reconciler freeze is
-//!   re-opened so the next `dream()` re-places + re-evaluates the entity.
+//!   re-opened so the next `dream()` re-places + re-evaluates the entity. The
+//!   consumer-supplied `new_type_id` is bounds-checked against the namespace's
+//!   `entity_types` registry first ([`ensure_type_id_registered`]) — an
+//!   unregistered id is a loud [`Error::EntityEditInvalid`], never silently
+//!   coerced to the catch-all nor written dangling into the FK-less column.
 //! - **`rename`** — a **REKEY** of the composite TEXT PK `(id, group_id)`: every
 //!   entity-id foreign key is re-pointed `old_id → new_id` inside ONE
 //!   `BEGIN IMMEDIATE`. The full FK set (arch-spec §4.3, enumerated against the
@@ -60,6 +64,7 @@
 
 use metrics::counter;
 
+use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
@@ -74,6 +79,11 @@ pub enum EntityEditOp {
     /// Rename/REKEY: change the entity id (`old → new_id`), re-pointing every FK.
     Rename { new_id: String },
     /// Retype: change `entity_type_id` only; id unchanged, no rekey.
+    ///
+    /// `new_type_id` MUST be a type registered in the target namespace, or the
+    /// id=0 "Entity" catch-all (always admissible). An unregistered id is refused
+    /// with [`Error::EntityEditInvalid`] rather than coerced or written dangling —
+    /// see [`ensure_type_id_registered`].
     Retype { new_type_id: i64 },
 }
 
@@ -454,11 +464,107 @@ struct RetypeTxnParams<'a> {
     new_type_id: i64,
 }
 
+/// Guard the CONSUMER-supplied `new_type_id` against the namespace's live
+/// `entity_types` registry, BEFORE any write or provenance snapshot.
+///
+/// ## Why the DB cannot do this for us
+///
+/// `entities.entity_type_id` is `INTEGER NOT NULL DEFAULT 0` with **no foreign
+/// key** (Migration 008, `core/migrations/defs_b.rs`), so an unregistered id is
+/// accepted by SQLite and written dangling. It then resolves through the read-time
+/// `COALESCE(et.name, 'Entity')` join to the catch-all label — the entity is
+/// mislabelled permanently, with nothing anywhere reporting that it happened.
+/// Arch-spec §4.3 specifies the retype mechanics but never specified a bounds
+/// check on the incoming id; this closes that gap.
+///
+/// ## Why this does NOT reuse `validate_or_fallback`
+///
+/// [`EntityTypeRegistry::validate_or_fallback`] (L3, TD-013) silently coerces an
+/// unusable id to the id=0 catch-all, and the two sites that use it
+/// (`dream::reclassify`, `dream::consistency_check::audit`) then SKIP the write and
+/// continue. That is right for them: the id is LLM output, one arm of a multi-stage
+/// pass that should survive a bad emission.
+///
+/// This value is different in kind. It arrives from a consumer calling the public
+/// `mem.edit_entity(id).retype(n)` builder, so both of the current behaviours HIDE a
+/// caller mistake — writing `99` unchanged leaves a dangling id, and coercing `99`
+/// to the catch-all discards an explicit instruction without telling anyone. Per the
+/// project's parse-loudly discipline, an id no registry row explains is refused with
+/// an actionable [`Error::EntityEditInvalid`] naming the offending id.
+///
+/// ## id=0 is admitted unconditionally
+///
+/// Without a registry round-trip. It is the "Entity" catch-all sentinel that
+/// `NamespaceSeed::ensure_catch_all` guarantees in every seeded namespace
+/// (custom-entity-type-registry spec §5.8) and that `validate_or_fallback` itself
+/// documents as "always passes". Demoting a mis-typed entity back to unclassified
+/// is a legitimate consumer operation, so it must hold on ANY namespace — including
+/// one whose registry has not been seeded yet.
+///
+/// ## No false positive on the real consumer path
+///
+/// Every namespace a consumer can actually hold an entity in has been through
+/// `Engine::ingest_with`, which lazy-seeds the default vocabulary (ids 0..=9) at
+/// step 2a (`core/ingest/pipeline/ingest_with.rs`) before any registry-dependent
+/// work. A retype target is therefore checkable against a populated registry
+/// whenever there is an entity to retype.
+async fn ensure_type_id_registered(
+    conn: &libsql::Connection,
+    group_id: &str,
+    new_type_id: i64,
+) -> Result<()> {
+    if new_type_id == 0 {
+        return Ok(());
+    }
+    let registry = EntityTypeRegistry::load_for_group(conn, group_id).await?;
+    // Membership, not `<= max_id`: an id inside the range but absent from the
+    // registry (a gap) is just as unexplained as one above it. Read via `specs()`
+    // rather than `validate_or_fallback` so the L3 EXTRACTION fallback counter is
+    // not polluted with consumer-API rejections (per-source attribution).
+    let registered = u32::try_from(new_type_id)
+        .ok()
+        .is_some_and(|id| registry.specs().iter().any(|s| s.id == id));
+    if registered {
+        return Ok(());
+    }
+
+    let max_id = registry.max_id();
+    let registered_count = registry.specs().len();
+    let reason = if new_type_id < 0 || new_type_id > i64::from(max_id) {
+        "type_id_out_of_range"
+    } else {
+        "type_id_unregistered"
+    };
+    counter!(
+        "kremory.graph.entity_edit_rejected_total",
+        "op" => "retype",
+        "reason" => reason,
+    )
+    .increment(1);
+    Err(Error::EntityEditInvalid {
+        detail: format!(
+            "retype target entity_type_id={new_type_id} is not a registered entity type in \
+             namespace '{group_id}' ({registered_count} registered, highest id {max_id}) — \
+             register it first via \
+             `Memory::register_namespace_with_seed(ns, NamespaceSeed::Augment(vec![\
+             EntityTypeSpec {{ id: {new_type_id}, name: .., description: .. }}]))` or \
+             `MemoryBuilder::with_seed_registry(..)`; id=0 (\"Entity\") is the always-valid \
+             catch-all"
+        ),
+    })
+}
+
 /// Retype: change `entity_type_id`, stamp `entity_type_source = 'ConsumerPinned'`
 /// (§4.3 — a consumer-directed retype is an explicit pin; `ConsumerPinned` is an
 /// admissible CHECK value and is excluded from reclassify so the pin sticks) +
 /// `entity_type_assigned_at = now`. Invalidate community membership (drop) so
 /// community detection re-places it, and re-open the freeze. No fact/edge rekey.
+///
+/// `new_type_id` is bounds-checked against the namespace's `entity_types` registry
+/// FIRST — see [`ensure_type_id_registered`]. An unregistered id is an
+/// [`Error::EntityEditInvalid`] and short-circuits before the provenance snapshot,
+/// so a rejected retype leaves no `graph_mutation_log` row (mirroring the
+/// [`Error::EntityEditConflict`] rename path).
 async fn retype_txn(
     conn: &libsql::Connection,
     params: RetypeTxnParams<'_>,
@@ -469,6 +575,8 @@ async fn retype_txn(
         current,
         new_type_id,
     } = params;
+    // Refuse an unregistered id BEFORE the snapshot + write (parse-loudly).
+    ensure_type_id_registered(conn, group_id, new_type_id).await?;
     let pre_state = EntityEditPreState {
         old_id: entity_id.to_string(),
         new_id: entity_id.to_string(),

@@ -492,9 +492,18 @@ pub enum Error {
         group_id: String,
     },
 
-    /// `edit_entity(...)` was built with neither a `.rename(...)` nor a
-    /// `.retype(...)` target (or with both). Exactly one edit operation is
-    /// required per call. `detail` names which invariant was violated.
+    /// The `edit_entity(...)` request itself is malformed — a caller bug, never
+    /// retryable. `detail` names which invariant was violated. Two cases:
+    ///
+    /// - built with neither a `.rename(...)` nor a `.retype(...)` target (or with
+    ///   both) — exactly one edit operation is required per call;
+    /// - `.retype(type_id)` named a type that is not registered in the target
+    ///   namespace's `entity_types` registry. `entities.entity_type_id` has no
+    ///   foreign key (Migration 008), so an unregistered id would be written
+    ///   dangling and silently resolve to the "Entity" catch-all at read time.
+    ///   The cascade refuses instead of coercing, so an explicit mistake is
+    ///   visible rather than absorbed; `detail` names the offending id and how to
+    ///   register the type. id=0 ("Entity") is always admissible.
     #[error("entity edit request invalid: {detail}")]
     EntityEditInvalid { detail: String },
 

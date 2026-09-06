@@ -37,9 +37,22 @@
 //!
 //! * **Exactly three digits, with a non-digit boundary.** Without the boundary
 //!   test, `ADR-2026-05-20` (a real date-slugged citation in
-//!   `core/background/deferred_pipeline.rs`) is read as `ADR-202` and reported
-//!   as a dangling reference. That is a pure false positive on ordinary work,
+//!   `core/background/deferred_pipeline.rs`) is read as a dangling three-digit
+//!   reference and reported. That is a pure false positive on ordinary work,
 //!   and a guard that fires on ordinary work gets deleted.
+//!
+//!   ⚠️ The bad three-digit form is DESCRIBED here rather than written out,
+//!   deliberately. This scanner walks `git ls-files`, so it scans ITS OWN
+//!   SOURCE — and it did not notice, because while this file was untracked it
+//!   was outside the scan set. It went green, was committed, and failed on the
+//!   very next run, citing its own prose. Any example ADR number written
+//!   literally in this file becomes a citation the guard must then resolve.
+//!
+//!   Generalises past this file: a document that DESCRIBES a string must keep
+//!   that string out of the path of anything that scans for it. The same shape
+//!   bit twice more today — a blanket ADR renumber rewrote eight unrelated
+//!   citations, and a blanket npm-scope rename rewrote the register entry that
+//!   was documenting the rename.
 //! * **Scans every tracked file under `crates/`, with no extension allowlist.**
 //!   An allowlist rots the moment a citation lands in a file type nobody listed.
 //!   The obvious counter-risk is a recorded VCR cassette in which a model
@@ -213,12 +226,42 @@ fn read_text(path: &Path) -> Result<String, String> {
 
 /// Collect `(adr_number -> citing sites)` for everything tracked under `crates/`,
 /// alongside any file that could not be read.
+/// This file's own repo-relative path. See the exclusion in `scan_crates`.
+///
+/// Asserted to exist by `self_path_is_accurate` below, so a rename cannot
+/// silently turn the exclusion into a no-op — at which point the guard would
+/// start failing on its own fixtures again, which is precisely how it first
+/// broke.
+const SELF_PATH: &str = "crates/kremory/tests/it/adr_reference_integrity.rs";
+
 fn scan_crates(root: &Path, tracked: &[String]) -> (Vec<(String, String)>, Vec<String>, usize) {
     let mut refs: Vec<(String, String)> = Vec::new();
     let mut unreadable: Vec<String> = Vec::new();
     let mut scanned = 0usize;
 
     for rel in tracked.iter().filter(|p| p.starts_with("crates/")) {
+        // The scanner does not scan ITSELF. This is not a convenience
+        // exemption — it is structural.
+        //
+        // This file necessarily contains fake ADR numbers: they are the
+        // fixtures for `dangling_reference_is_detected` and the boundary
+        // cases in the design notes. Scanning them makes the guard cite its
+        // own test data and fail permanently.
+        //
+        // It went undetected in exactly the way that matters: the scan set is
+        // `git ls-files`, so while this file was UNTRACKED it was invisible to
+        // itself and the suite went green. It failed on the first run after
+        // being committed. A guard whose own arrival breaks the build is worse
+        // than no guard, because the obvious fix is to delete it.
+        //
+        // Cost of the exemption, stated plainly: a REAL ADR citation written
+        // in this file would not be checked. That is acceptable — this file
+        // guards ADR citations, it does not make architectural decisions, so
+        // it has no business citing one. If that ever changes, cite it from
+        // the code that implements the decision instead.
+        if rel == SELF_PATH {
+            continue;
+        }
         let path = root.join(rel);
         if !path.is_file() {
             continue;
@@ -369,4 +412,18 @@ fn exempt_numbers_are_all_still_needed() {
              delete the dead exemption ({why})"
         );
     }
+}
+
+/// The self-exclusion is keyed on a hard-coded path, so a file rename would
+/// turn it into a silent no-op and the guard would resume citing its own
+/// fixtures. This pins it.
+#[test]
+fn self_path_is_accurate() {
+    let root = repo_root();
+    assert!(
+        root.join(SELF_PATH).is_file(),
+        "SELF_PATH no longer names this file ({SELF_PATH}). The self-exclusion in \
+         scan_crates is now a no-op and the guard will start reporting its own test \
+         fixtures as dangling ADR citations. Update SELF_PATH to the new path."
+    );
 }
