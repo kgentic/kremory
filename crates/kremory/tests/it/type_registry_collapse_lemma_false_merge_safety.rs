@@ -196,8 +196,7 @@ async fn build_providers(
     // step), but built anyway so a genuine safety-margin FALSIFICATION (a
     // pair routing to the LLM-verify band instead of auto-merge) doesn't
     // crash on a missing provider.
-    let chat_model =
-        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
+    let chat_model = crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     let chat_cassette = chat_cassette_path();
     let provider: Arc<RecordReplayChatProvider> = match mode {

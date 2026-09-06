@@ -96,7 +96,8 @@ mod semantic_tests {
     /// Return true when an entity with the expected id (or whose id/properties
     /// contain the expected name) appears anywhere in the hit list.
     fn entity_in_hits(hits: &[SearchHit<Entity>], expected_name: &str) -> bool {
-        hits.iter().any(|hit| entity_matches(&hit.item, expected_name))
+        hits.iter()
+            .any(|hit| entity_matches(&hit.item, expected_name))
     }
 
     // ─── Test 1: self-retrieval with real embeddings ──────────────────────────

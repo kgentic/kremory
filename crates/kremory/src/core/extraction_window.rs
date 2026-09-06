@@ -457,10 +457,14 @@ mod utf8_boundary_tests {
         let sentence = "Català València Perpinyà Andorra Eivissa Menorca Mallorca \
                         Lleida Girona Tarragona Sabadell Terrassa Badalona Mataró. ";
         let text = sentence.repeat(80);
-        assert!(text.len() > 6809, "fixture must exceed the observed panic offset");
-        assert!(!text.is_char_boundary(text.len() / 2 + 1)
-                || text.chars().any(|c| c.len_utf8() > 1),
-                "fixture must actually contain multi-byte characters");
+        assert!(
+            text.len() > 6809,
+            "fixture must exceed the observed panic offset"
+        );
+        assert!(
+            !text.is_char_boundary(text.len() / 2 + 1) || text.chars().any(|c| c.len_utf8() > 1),
+            "fixture must actually contain multi-byte characters"
+        );
 
         for (min, max, density) in [(10, 60, 0.3), (5, 40, 0.2), (20, 120, 0.5)] {
             let splitter = ExtractionWindowSplitter::new(ExtractionWindowConfig {
@@ -488,7 +492,10 @@ mod utf8_boundary_tests {
         let text = "aè b€ c𝄞 d";
         for i in 0..=text.len() + 5 {
             let f = floor_char_boundary(text, i);
-            assert!(text.is_char_boundary(f), "returned non-boundary {f} for {i}");
+            assert!(
+                text.is_char_boundary(f),
+                "returned non-boundary {f} for {i}"
+            );
             assert!(f <= i.min(text.len()), "rounded UP: {f} > {i}");
             let _ = &text[..f]; // would panic if f were not a boundary
         }

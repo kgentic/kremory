@@ -891,13 +891,19 @@ mod utf8_boundary_util_tests {
         // genuinely straddles a character. (The assertion below caught this
         // when the fixture was wrong, which is the point of asserting it.)
         let llm_garbage = format!("x{}", "é".repeat(80)); // 161 bytes
-        assert!(!llm_garbage.is_char_boundary(100), "fixture must straddle byte 100");
+        assert!(
+            !llm_garbage.is_char_boundary(100),
+            "fixture must straddle byte 100"
+        );
         let _ = truncate_on_char_boundary(&llm_garbage, 100); // pre-fix: panic
 
         // audit.rs:293 shape — `&s[..8000]` guarded by a BYTE length check
         let episode = "ü".repeat(5000); // 10,000 bytes; byte 8000 is a boundary…
         let episode = format!("x{episode}"); // …shift by 1 so it is not
-        assert!(!episode.is_char_boundary(8000), "fixture must straddle byte 8000");
+        assert!(
+            !episode.is_char_boundary(8000),
+            "fixture must straddle byte 8000"
+        );
         let _ = truncate_on_char_boundary(&episode, 8000); // pre-fix: panic
     }
 }

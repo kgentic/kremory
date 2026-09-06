@@ -66,8 +66,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // measurement to complete an emulated L5 merge (repoint facts, then remove the
     // loser) so the loser does not linger as a 0-fact entity occupying a top-k slot.
     if let Some(i) = argv.iter().position(|a| a == "--delete-entity") {
-        let id = argv.get(i + 1).ok_or("--delete-entity needs <id> <group_id>")?;
-        let group = argv.get(i + 2).ok_or("--delete-entity needs <id> <group_id>")?;
+        let id = argv
+            .get(i + 1)
+            .ok_or("--delete-entity needs <id> <group_id>")?;
+        let group = argv
+            .get(i + 2)
+            .ok_or("--delete-entity needs <id> <group_id>")?;
         if db_path.contains("full-corpus") {
             return Err("refusing to mutate the canonical corpus — copy it first".into());
         }

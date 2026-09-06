@@ -218,8 +218,8 @@ mod tests {
         let sink = SingleMethodSink;
         sink.on_entity_extracted("e1", "Alice"); // overridden
         sink.on_dedup_merge("keep", "drop"); // default no-op — must not panic
-        // on_edge_added / on_contradiction / on_stage_change /
-        // on_ingestion_error take richer params; their defaults existing is
-        // already proven by `SingleMethodSink` compiling without them.
+                                             // on_edge_added / on_contradiction / on_stage_change /
+                                             // on_ingestion_error take richer params; their defaults existing is
+                                             // already proven by `SingleMethodSink` compiling without them.
     }
 }

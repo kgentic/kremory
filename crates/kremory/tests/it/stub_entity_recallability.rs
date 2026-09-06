@@ -149,15 +149,11 @@ async fn forward_reference_stub_is_findable_by_both_fts_and_dense() {
         )
         .await
         .expect("stub query must execute");
-    let row = rows
-        .next()
-        .await
-        .expect("stub query must return")
-        .expect(
-            "PRECONDITION FAILED: the commit reported a stub was inserted, but no row \
+    let row = rows.next().await.expect("stub query must return").expect(
+        "PRECONDITION FAILED: the commit reported a stub was inserted, but no row \
              exists at id 'analytical engine' — the id normalisation the test assumes \
              has changed.",
-        );
+    );
 
     let props: String = row.get(0).expect("properties column");
     let has_embedding: i64 = row.get(1).expect("embedding-not-null column");

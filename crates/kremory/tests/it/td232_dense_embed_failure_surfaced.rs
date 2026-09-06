@@ -65,7 +65,10 @@ impl kremory::core::provider::EmbeddingProvider for WindowLimitedEmbeddingProvid
 #[tokio::test]
 async fn short_document_reports_dense_embedded_true() {
     let embedder: std::sync::Arc<dyn DynEmbeddingProvider> =
-        std::sync::Arc::new(WindowLimitedEmbeddingProvider { dim: 16, max_chars: 100 });
+        std::sync::Arc::new(WindowLimitedEmbeddingProvider {
+            dim: 16,
+            max_chars: 100,
+        });
 
     let mem = Memory::open(unique_db("short_ok"))
         .with_llm(null_llm())
@@ -92,7 +95,10 @@ async fn short_document_reports_dense_embedded_true() {
 #[tokio::test]
 async fn oversized_document_ingest_still_succeeds_but_reports_dense_embedded_false() {
     let embedder: std::sync::Arc<dyn DynEmbeddingProvider> =
-        std::sync::Arc::new(WindowLimitedEmbeddingProvider { dim: 16, max_chars: 50 });
+        std::sync::Arc::new(WindowLimitedEmbeddingProvider {
+            dim: 16,
+            max_chars: 50,
+        });
 
     let mem = Memory::open(unique_db("oversized_fail"))
         .with_llm(null_llm())
@@ -104,14 +110,10 @@ async fn oversized_document_ingest_still_succeeds_but_reports_dense_embedded_fal
         .expect("build memory with dense episode arm on");
 
     let long_text = "x".repeat(500); // well over max_chars=50
-    let commit = mem
-        .remember(&long_text)
-        .skip_extraction()
-        .await
-        .expect(
-            "TD-232: ingest must NOT abort just because the dense arm failed \
+    let commit = mem.remember(&long_text).skip_extraction().await.expect(
+        "TD-232: ingest must NOT abort just because the dense arm failed \
              — BM25/entities are unaffected by an embed failure",
-        );
+    );
 
     assert_eq!(
         commit.dense_embedded,
@@ -127,7 +129,10 @@ async fn dense_arm_disabled_by_config_reports_dense_embedded_true() {
     // Some(true) because the embed was never ATTEMPTED — not because it
     // silently succeeded.
     let embedder: std::sync::Arc<dyn DynEmbeddingProvider> =
-        std::sync::Arc::new(WindowLimitedEmbeddingProvider { dim: 16, max_chars: 0 });
+        std::sync::Arc::new(WindowLimitedEmbeddingProvider {
+            dim: 16,
+            max_chars: 0,
+        });
 
     let mem = Memory::open(unique_db("disabled_by_config"))
         .with_llm(null_llm())

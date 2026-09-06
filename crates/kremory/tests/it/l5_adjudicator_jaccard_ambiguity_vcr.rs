@@ -600,7 +600,12 @@ async fn jaccard_500_ambiguity_is_decided_semantically_not_lexically() {
             "",
             row.llm_reasoning.as_deref().unwrap_or("<none>"),
         );
-        observed.push((pair.label, pair.expected, row.decision.clone(), row.llm_is_same));
+        observed.push((
+            pair.label,
+            pair.expected,
+            row.decision.clone(),
+            row.llm_is_same,
+        ));
 
         // ── The outcome assertions, on the GRAPH rather than on a counter. ──
         match pair.expected {

@@ -105,7 +105,8 @@ fn entity_matches(entity: &Entity, expected_name: &str) -> bool {
 
 /// Return true when a search hit's label or properties contain the expected name.
 fn entity_in_hits(hits: &[SearchHit<Entity>], expected_name: &str) -> bool {
-    hits.iter().any(|hit| entity_matches(&hit.item, expected_name))
+    hits.iter()
+        .any(|hit| entity_matches(&hit.item, expected_name))
 }
 
 /// Return true when `entities` (e.g. [`ContextResult::entities`]) contains a

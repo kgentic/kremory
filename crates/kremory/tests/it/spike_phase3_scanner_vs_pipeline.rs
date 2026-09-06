@@ -236,8 +236,7 @@ mod spike {
         if let Ok(v) = serde_json::from_str::<T>(t) {
             return v;
         }
-        let r =
-            jsonrepair::repair_json(t, &jsonrepair::Options::default()).unwrap_or(t.to_owned());
+        let r = jsonrepair::repair_json(t, &jsonrepair::Options::default()).unwrap_or(t.to_owned());
         if let Ok(v) = serde_json::from_str::<T>(&r) {
             return v;
         }

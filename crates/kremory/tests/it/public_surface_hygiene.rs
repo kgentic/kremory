@@ -71,7 +71,11 @@ fn shipping_files(root: &Path) -> Vec<PathBuf> {
         .args(["ls-files", "-z"])
         .output()
         .expect("git ls-files should run");
-    assert!(out.status.success(), "git ls-files failed: {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "git ls-files failed: {:?}",
+        out.status
+    );
 
     let listing = String::from_utf8(out.stdout).expect("tracked paths are UTF-8");
     listing
@@ -157,7 +161,10 @@ fn forbidden_terms(root: &Path) -> Option<Vec<String>> {
         return None;
     }
     let body = std::fs::read_to_string(&list).unwrap_or_else(|e| {
-        panic!("{} is required in the private repo but is unreadable: {e}", list.display())
+        panic!(
+            "{} is required in the private repo but is unreadable: {e}",
+            list.display()
+        )
     });
     let terms: Vec<String> = body
         .lines()
@@ -165,7 +172,11 @@ fn forbidden_terms(root: &Path) -> Option<Vec<String>> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| l.to_lowercase())
         .collect();
-    assert!(!terms.is_empty(), "{} has no terms — guard would be vacuous", list.display());
+    assert!(
+        !terms.is_empty(),
+        "{} has no terms — guard would be vacuous",
+        list.display()
+    );
     Some(terms)
 }
 
@@ -190,7 +201,11 @@ fn shipping_surface_carries_no_local_paths_or_private_codenames() {
     let mut findings: Vec<String> = Vec::new();
 
     for path in &files {
-        let rel = path.strip_prefix(&root).unwrap_or(path).display().to_string();
+        let rel = path
+            .strip_prefix(&root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
         let text = match read_text(path) {
             Ok(t) => t,
             Err(why) => {

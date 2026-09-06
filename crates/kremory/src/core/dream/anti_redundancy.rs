@@ -602,9 +602,9 @@ mod tests {
                 assert_eq!(existing_name, Some("Person".to_string()));
                 assert!(desc_cosine.expect("comparison happened").abs() < 1e-5);
             }
-            other => panic!(
-                "unrelated short names must not be falsely rejected (TD-097), got {other:?}"
-            ),
+            other => {
+                panic!("unrelated short names must not be falsely rejected (TD-097), got {other:?}")
+            }
         }
     }
 

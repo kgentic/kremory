@@ -331,8 +331,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 proximity_wall_time += walk_start.elapsed();
                 // Mirrors `degree`'s own shape immediately above: the walk
                 // always includes the seed itself, so neighbour count = len - 1.
-                let proximity_neighbour_count =
-                    proximity_subgraph.entities.len().saturating_sub(1);
+                let proximity_neighbour_count = proximity_subgraph.entities.len().saturating_sub(1);
                 let bonus = crate::core::proximity::proximity_bonus(
                     proximity_neighbour_count,
                     weights.proximity_weight,
@@ -1107,10 +1106,7 @@ mod tests {
 
         let top = *ctx.scores.get("aaa_top").expect("aaa_top must be a seed");
         let mid = *ctx.scores.get("mmm_mid").expect("mmm_mid must be a seed");
-        let prox = *ctx
-            .scores
-            .get("zzz_prox")
-            .expect("zzz_prox must be a seed");
+        let prox = *ctx.scores.get("zzz_prox").expect("zzz_prox must be a seed");
 
         assert!(
             (top - 1.0).abs() < 1e-6,
@@ -1206,10 +1202,7 @@ mod tests {
         }
 
         let start = std::time::Instant::now();
-        let ctx = rql
-            .contextualize(ctx_params("Megahubtest"))
-            .await
-            .unwrap();
+        let ctx = rql.contextualize(ctx_params("Megahubtest")).await.unwrap();
         let elapsed = start.elapsed();
 
         assert!(

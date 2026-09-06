@@ -98,7 +98,12 @@ pub(crate) async fn migrate_025_fact_dedup_expired_partial(
         (),
     )
     .await
-    .map_err(|e| other_err("creating active-only partial idx_facts_content_hash_unique", e))?;
+    .map_err(|e| {
+        other_err(
+            "creating active-only partial idx_facts_content_hash_unique",
+            e,
+        )
+    })?;
 
     Ok(())
 }

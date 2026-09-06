@@ -273,85 +273,85 @@ mod tests {
     /// This is deliberately the FULL measured set rather than a hand-picked list:
     /// a seven-pair test passes while ~72 identical failures survive.
     const REAL_CORRUPTING_MERGES: &[(&str, &str)] = &[
-    ("12 july 2023", "3 july 2023"),
-    ("20 july 2023", "3 july 2023"),
-    ("17 july 2023", "3 july 2023"),
-    ("28 august 2023", "23 august 2023"),
-    ("6 july 2023", "3 july 2023"),
-    ("15 july 2023", "3 july 2023"),
-    ("19 june 2023", "13 june 2023"),
-    ("9 april 2023", "3 april 2023"),
-    ("4 february 2023", "1 february 2023"),
-    ("21 june 2023", "13 june 2023"),
-    ("5 july 2023", "3 july 2023"),
-    ("27 june 2023", "3 june 2023"),
-    ("22 july 2023", "3 july 2023"),
-    ("11 august 2023", "3 august 2023"),
-    ("7 april 2023", "2 april 2023"),
-    ("6 may 2023", "4 may 2023"),
-    ("10 april 2023", "2 april 2023"),
-    ("31 july 2023", "3 july 2023"),
-    ("9 january 2023", "1 january 2023"),
-    ("13 august 2023", "3 august 2023"),
-    ("22 december 2022", "17 december 2022"),
-    ("25 february 2023", "5 february 2023"),
-    ("12 june 2023", "3 june 2023"),
-    ("5 august 2023", "3 august 2023"),
-    ("9 august 2023", "3 august 2023"),
-    ("7 july 2023", "3 july 2023"),
-    ("20 may 2022", "2 may 2022"),
-    ("22 august 2022", "14 august 2022"),
-    ("9 november 2022", "4 november 2022"),
-    ("23 january 2022", "21 january 2022"),
-    ("11 november 2022", "4 november 2022"),
-    ("9 october 2022", "6 october 2022"),
-    ("17 april 2022", "15 april 2022"),
-    ("7 november 2022", "4 november 2022"),
-    ("26 august 2023", "2 august 2023"),
-    ("6 december 2023", "1 december 2023"),
-    ("11 november 2023", "2 august 2023"),
-    ("8 december 2023", "1 december 2023"),
-    ("31 august 2023", "2 august 2023"),
-    ("11 august 2023", "2 august 2023"),
-    ("17 august 2023", "2 august 2023"),
-    ("7 january 2024", "2 january 2024"),
-    ("11 may 2023", "3 may 2023"),
-    ("6 may 2023", "3 may 2023"),
-    ("24 september 2023", "6 september 2023"),
-    ("6 october 2023", "1 october 2023"),
-    ("19 june 2022", "13 june 2022"),
-    ("22 july 2022", "9 july 2022"),
-    ("21 august 2022", "6 august 2022"),
-    ("23 april 2022", "12 april 2022"),
-    ("4 september 2022", "1 september 2022"),
-    ("20 march 2022", "17 march 2022"),
-    ("11 may 2022", "4 may 2022"),
-    ("18 september 2022", "1 september 2022"),
-    ("29 april 2022", "12 april 2022"),
-    ("10 august 2022", "6 august 2022"),
-    ("12 august 2023", "1 august 2023"),
-    ("8 september 2023", "3 september 2023"),
-    ("24 august 2023", "1 august 2023"),
-    ("30 august 2023", "16 august 2023"),
-    ("15 september 2023", "3 september 2023"),
-    ("17 september 2023", "3 september 2023"),
-    ("6 september 2023", "3 september 2023"),
-    ("25 february 2023", "1 february 2023"),
-    ("26 august 2023", "16 august 2023"),
-    ("19 august 2023", "16 august 2023"),
-    ("8 october 2023", "6 october 2023"),
-    ("10 january 2024", "6 january 2024"),
-    ("11 january 2024", "6 january 2024"),
-    ("19 august 2023", "13 august 2023"),
-    ("31 december 2023", "26 december 2023"),
-    ("14 august 2023", "3 august 2023"),
-    ("3 may 2023", "1 may 2023"),
-    ("22 august 2023", "3 august 2023"),
-    ("25 october 2023", "23 march 2023"),
-    ("26 march 2023", "23 march 2023"),
-    ("23 october 2023", "23 march 2023"),
-    ("31 may 2023", "1 may 2023"),
-    ("29 october 2023", "19 october 2023"),
+        ("12 july 2023", "3 july 2023"),
+        ("20 july 2023", "3 july 2023"),
+        ("17 july 2023", "3 july 2023"),
+        ("28 august 2023", "23 august 2023"),
+        ("6 july 2023", "3 july 2023"),
+        ("15 july 2023", "3 july 2023"),
+        ("19 june 2023", "13 june 2023"),
+        ("9 april 2023", "3 april 2023"),
+        ("4 february 2023", "1 february 2023"),
+        ("21 june 2023", "13 june 2023"),
+        ("5 july 2023", "3 july 2023"),
+        ("27 june 2023", "3 june 2023"),
+        ("22 july 2023", "3 july 2023"),
+        ("11 august 2023", "3 august 2023"),
+        ("7 april 2023", "2 april 2023"),
+        ("6 may 2023", "4 may 2023"),
+        ("10 april 2023", "2 april 2023"),
+        ("31 july 2023", "3 july 2023"),
+        ("9 january 2023", "1 january 2023"),
+        ("13 august 2023", "3 august 2023"),
+        ("22 december 2022", "17 december 2022"),
+        ("25 february 2023", "5 february 2023"),
+        ("12 june 2023", "3 june 2023"),
+        ("5 august 2023", "3 august 2023"),
+        ("9 august 2023", "3 august 2023"),
+        ("7 july 2023", "3 july 2023"),
+        ("20 may 2022", "2 may 2022"),
+        ("22 august 2022", "14 august 2022"),
+        ("9 november 2022", "4 november 2022"),
+        ("23 january 2022", "21 january 2022"),
+        ("11 november 2022", "4 november 2022"),
+        ("9 october 2022", "6 october 2022"),
+        ("17 april 2022", "15 april 2022"),
+        ("7 november 2022", "4 november 2022"),
+        ("26 august 2023", "2 august 2023"),
+        ("6 december 2023", "1 december 2023"),
+        ("11 november 2023", "2 august 2023"),
+        ("8 december 2023", "1 december 2023"),
+        ("31 august 2023", "2 august 2023"),
+        ("11 august 2023", "2 august 2023"),
+        ("17 august 2023", "2 august 2023"),
+        ("7 january 2024", "2 january 2024"),
+        ("11 may 2023", "3 may 2023"),
+        ("6 may 2023", "3 may 2023"),
+        ("24 september 2023", "6 september 2023"),
+        ("6 october 2023", "1 october 2023"),
+        ("19 june 2022", "13 june 2022"),
+        ("22 july 2022", "9 july 2022"),
+        ("21 august 2022", "6 august 2022"),
+        ("23 april 2022", "12 april 2022"),
+        ("4 september 2022", "1 september 2022"),
+        ("20 march 2022", "17 march 2022"),
+        ("11 may 2022", "4 may 2022"),
+        ("18 september 2022", "1 september 2022"),
+        ("29 april 2022", "12 april 2022"),
+        ("10 august 2022", "6 august 2022"),
+        ("12 august 2023", "1 august 2023"),
+        ("8 september 2023", "3 september 2023"),
+        ("24 august 2023", "1 august 2023"),
+        ("30 august 2023", "16 august 2023"),
+        ("15 september 2023", "3 september 2023"),
+        ("17 september 2023", "3 september 2023"),
+        ("6 september 2023", "3 september 2023"),
+        ("25 february 2023", "1 february 2023"),
+        ("26 august 2023", "16 august 2023"),
+        ("19 august 2023", "16 august 2023"),
+        ("8 october 2023", "6 october 2023"),
+        ("10 january 2024", "6 january 2024"),
+        ("11 january 2024", "6 january 2024"),
+        ("19 august 2023", "13 august 2023"),
+        ("31 december 2023", "26 december 2023"),
+        ("14 august 2023", "3 august 2023"),
+        ("3 may 2023", "1 may 2023"),
+        ("22 august 2023", "3 august 2023"),
+        ("25 october 2023", "23 march 2023"),
+        ("26 march 2023", "23 march 2023"),
+        ("23 october 2023", "23 march 2023"),
+        ("31 may 2023", "1 may 2023"),
+        ("29 october 2023", "19 october 2023"),
     ];
 
     /// RED before the numeric-token rule: `12 july 2023` vs `3 july 2023` tokenises
@@ -378,7 +378,10 @@ mod tests {
     #[test]
     fn documented_compatible_pairs_still_merge() {
         // lexical.rs:79 — worked spot-check against verified embedder data.
-        assert!(names_lexically_compatible("Alice Johnson", "Alice Marie Johnson"));
+        assert!(names_lexically_compatible(
+            "Alice Johnson",
+            "Alice Marie Johnson"
+        ));
         // Normalized equality — the dominant real merge (idempotent re-ingest).
         assert!(names_lexically_compatible("3 July 2023", "3 july 2023"));
         // Identical numerals must not be treated as a conflict.
@@ -398,7 +401,10 @@ mod tests {
     fn zero_padded_dates_are_the_same_date() {
         assert!(names_lexically_compatible("3 july 2023", "03 july 2023"));
         assert!(names_lexically_compatible("3 july 2023", "003 july 2023"));
-        assert!(names_lexically_compatible("1037 am on 09 october 2022", "1037 am on 9 october 2022"));
+        assert!(names_lexically_compatible(
+            "1037 am on 09 october 2022",
+            "1037 am on 9 october 2022"
+        ));
         // ...and the fix must not have made DIFFERENT days equal again.
         assert!(!names_lexically_compatible("03 july 2023", "30 july 2023"));
         assert!(!names_lexically_compatible("12 july 2023", "3 july 2023"));
@@ -409,7 +415,10 @@ mod tests {
     fn documented_incompatible_pairs_remain_incompatible() {
         // lexical.rs:77-80 — catastrophe cases the gate exists to block.
         assert!(!names_lexically_compatible("Ria", "Morocco"));
-        assert!(!names_lexically_compatible("Boston", "Boston Consulting Group"));
+        assert!(!names_lexically_compatible(
+            "Boston",
+            "Boston Consulting Group"
+        ));
     }
 
     /// Known FP, measured and documented at lexical.rs:69. It is routed to LLM

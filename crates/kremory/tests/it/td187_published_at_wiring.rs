@@ -287,7 +287,10 @@ impl StageChangeCountingSink {
 
     fn is_terminal(&self) -> bool {
         matches!(
-            *self.latest.lock().expect("StageChangeCountingSink poisoned"),
+            *self
+                .latest
+                .lock()
+                .expect("StageChangeCountingSink poisoned"),
             Some(kremory::core::error::IngestStatus::Complete)
                 | Some(kremory::core::error::IngestStatus::Failed(_))
         )
@@ -297,7 +300,10 @@ impl StageChangeCountingSink {
 impl kremory::core::sink::IngestEventSink for StageChangeCountingSink {
     fn on_stage_change(&self, stage: kremory::core::error::IngestStatus) {
         self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        *self.latest.lock().expect("StageChangeCountingSink poisoned") = Some(stage);
+        *self
+            .latest
+            .lock()
+            .expect("StageChangeCountingSink poisoned") = Some(stage);
     }
 }
 

@@ -53,8 +53,8 @@ fn kremory_src_root() -> PathBuf {
 
 /// Every `.rs` file under `dir`, recursively.
 fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
-    let entries = std::fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()));
+    let entries =
+        std::fs::read_dir(dir).unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()));
     for entry in entries {
         let path = entry
             .unwrap_or_else(|e| panic!("failed to read an entry of {}: {e}", dir.display()))

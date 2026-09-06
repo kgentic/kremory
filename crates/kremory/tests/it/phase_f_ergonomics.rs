@@ -170,8 +170,7 @@ async fn f7_real_llm_smoke() {
 
     let base_url =
         std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let model =
-        crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest");
+    let model = crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest");
 
     let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)

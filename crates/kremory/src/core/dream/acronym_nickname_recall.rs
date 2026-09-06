@@ -322,9 +322,8 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             // waiver became site-wide rather than initialism-only.
             let by_initialism = initialism_candidate(a, b);
             let is_nominated = by_initialism
-                || cooccur_pairs.contains(
-                    &crate::core::dream::provenance::reversal::sorted_pair(a, b),
-                );
+                || cooccur_pairs
+                    .contains(&crate::core::dream::provenance::reversal::sorted_pair(a, b));
             if is_nominated {
                 nominated.push(NominatedPair {
                     a: a.clone(),
@@ -1323,23 +1322,21 @@ async fn adjudicate_batch<L: ChatProvider>(
     // over a borrowing async fn would otherwise need.
     let call_futures: Vec<_> = chunk_plan
         .into_iter()
-        .map(|(range, chunk_len, messages)| {
-            async move {
-                let chunk_verdicts = match messages {
-                    Some(messages) => {
-                        call_adjudication_llm(CallAdjudicationLlmParams {
-                            llm,
-                            model_id,
-                            messages,
-                            chunk_len,
-                            group_id,
-                        })
-                        .await
-                    }
-                    None => HashMap::new(),
-                };
-                (range, chunk_verdicts)
-            }
+        .map(|(range, chunk_len, messages)| async move {
+            let chunk_verdicts = match messages {
+                Some(messages) => {
+                    call_adjudication_llm(CallAdjudicationLlmParams {
+                        llm,
+                        model_id,
+                        messages,
+                        chunk_len,
+                        group_id,
+                    })
+                    .await
+                }
+                None => HashMap::new(),
+            };
+            (range, chunk_verdicts)
         })
         .collect();
 
@@ -1657,7 +1654,9 @@ async fn load_entity_types(
         ))
     })? {
         let id: String = row.get(0).map_err(|e| {
-            Error::Other(anyhow::anyhow!("acronym_nickname_recall: type id read: {e}"))
+            Error::Other(anyhow::anyhow!(
+                "acronym_nickname_recall: type id read: {e}"
+            ))
         })?;
         let type_id: u32 = row.get(1).map_err(|e| {
             Error::Other(anyhow::anyhow!("acronym_nickname_recall: type read: {e}"))
@@ -2154,11 +2153,7 @@ mod tests {
     /// catch-all — which the type veto deliberately reads as "no information".
     /// A fixture built with it therefore cannot exercise the veto at all, so
     /// the type is a parameter here.
-    async fn insert_typed_entity(
-        graph: &TemporalGraph,
-        group_id: &str,
-        id_and_type: (&str, u32),
-    ) {
+    async fn insert_typed_entity(graph: &TemporalGraph, group_id: &str, id_and_type: (&str, u32)) {
         let (id, entity_type_id) = id_and_type;
         let props = serde_json::json!({ "name": id, "description": "fixture entity" });
         graph
@@ -2181,11 +2176,7 @@ mod tests {
     /// Takes the triple as ONE argument to stay at the project's arity-3 lint
     /// threshold without an `#[allow]` (TD-042 args-as-object, applied in its
     /// lightest form — a tuple reads fine for a subject/predicate/object).
-    async fn insert_fact(
-        graph: &TemporalGraph,
-        group_id: &str,
-        triple: (&str, &str, &str),
-    ) {
+    async fn insert_fact(graph: &TemporalGraph, group_id: &str, triple: (&str, &str, &str)) {
         let (subject, predicate, object) = triple;
         let now = chrono::Utc::now().to_rfc3339();
         let _rows_affected: u64 = graph
@@ -2398,9 +2389,7 @@ mod tests {
         // entities, the bulk set's membership must equal the per-pair
         // `cooccurs_in_graph` oracle's verdict — this is the quality-
         // neutrality proof (same pairs nominated, only faster).
-        let ids = [
-            "alpha", "beta", "gamma", "delta", "hub", "epsilon", "zeta",
-        ];
+        let ids = ["alpha", "beta", "gamma", "delta", "hub", "epsilon", "zeta"];
         for i in 0..ids.len() {
             for j in (i + 1)..ids.len() {
                 let a = ids[i];
@@ -2413,8 +2402,8 @@ mod tests {
                 })
                 .await
                 .expect("oracle query");
-                let bulk = bulk_set
-                    .contains(&crate::core::dream::provenance::reversal::sorted_pair(a, b));
+                let bulk =
+                    bulk_set.contains(&crate::core::dream::provenance::reversal::sorted_pair(a, b));
                 assert_eq!(
                     bulk, oracle,
                     "bulk precompute disagrees with per-pair cooccurs_in_graph oracle for ({a}, {b})"
@@ -3115,7 +3104,12 @@ mod tests {
         // peru` and the pair was never nominated, so the test passed with the
         // veto DISABLED: vacuous, and indistinguishable from working. Hence the
         // `candidates_nominated` precondition below.
-        insert_fact(&graph, "g22", ("amazon river", "located_in", "south america")).await;
+        insert_fact(
+            &graph,
+            "g22",
+            ("amazon river", "located_in", "south america"),
+        )
+        .await;
         insert_fact(&graph, "g22", ("peru", "located_in", "south america")).await;
 
         // The LLM says "same entity" with maximum confidence — i.e. the gate may
@@ -3181,7 +3175,12 @@ mod tests {
         insert_entity(&graph, "amazon river", "g23", "A river in South America.").await;
         insert_entity(&graph, "peru", "g23", "A country in South America.").await;
         insert_entity(&graph, "south america", "g23", "A continent.").await;
-        insert_fact(&graph, "g23", ("amazon river", "located_in", "south america")).await;
+        insert_fact(
+            &graph,
+            "g23",
+            ("amazon river", "located_in", "south america"),
+        )
+        .await;
         insert_fact(&graph, "g23", ("peru", "located_in", "south america")).await;
 
         let llm = ScriptedVerdictProvider {
@@ -3354,7 +3353,10 @@ mod tests {
             .expect("facts query");
         let mut aliases: Vec<(String, Option<String>)> = Vec::new();
         while let Some(row) = rows.next().await.expect("row iteration") {
-            aliases.push((row.get(0).expect("subject_id"), row.get(1).expect("object_id")));
+            aliases.push((
+                row.get(0).expect("subject_id"),
+                row.get(1).expect("object_id"),
+            ));
         }
         assert!(
             aliases.is_empty(),

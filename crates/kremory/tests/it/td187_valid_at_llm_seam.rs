@@ -157,10 +157,10 @@ async fn real_llm_resolves_a_relative_date_through_the_shipped_path() {
     // NOT `let _ = provider.flush()`. A failed flush means the cassette was never
     // written, so a recording run would report success having produced nothing —
     // the exact silent no-op this project has a rule about. Fail loudly instead.
-    provider
-        .flush()
-        .expect("cassette flush must succeed — a swallowed error here means the recording run \
-                 produced no cassette while reporting success");
+    provider.flush().expect(
+        "cassette flush must succeed — a swallowed error here means the recording run \
+                 produced no cassette while reporting success",
+    );
 
     // Recall the SUBJECT, not the object.
     //
@@ -197,6 +197,9 @@ async fn real_llm_resolves_a_relative_date_through_the_shipped_path() {
          The text says \"last year\", so a correctly-wired pipeline must resolve it \
          backwards. Every fact landing ON the anchor is precisely the pre-TD-187 \
          behaviour this feature exists to replace. Got: {:?}",
-        facts.iter().map(|f| (&f.predicate, f.valid_at)).collect::<Vec<_>>()
+        facts
+            .iter()
+            .map(|f| (&f.predicate, f.valid_at))
+            .collect::<Vec<_>>()
     );
 }

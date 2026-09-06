@@ -347,10 +347,7 @@ pub(crate) fn strip_code_fences(raw: &str) -> &str {
     };
     let body = &after_ticks[nl + 1..];
     // A missing CLOSING fence is common in truncated responses; keep the body.
-    body.trim_end()
-        .strip_suffix("```")
-        .unwrap_or(body)
-        .trim()
+    body.trim_end().strip_suffix("```").unwrap_or(body).trim()
 }
 
 pub(crate) fn repair_to_array(raw: &str) -> String {

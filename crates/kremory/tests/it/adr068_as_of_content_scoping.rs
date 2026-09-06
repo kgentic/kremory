@@ -166,9 +166,8 @@ async fn as_of_none_is_unaffected_for_content_terminal_regression_pin() {
 /// `td066_increment1_content_fusion.rs` uses for the fusion boundary itself.
 #[tokio::test]
 async fn as_of_scopes_dense_episode_arm_when_lexical_arm_would_miss() {
-    let embedder: Arc<dyn DynEmbeddingProvider> = Arc::new(AlwaysMatchEmbeddingProvider {
-        dim: 384,
-    });
+    let embedder: Arc<dyn DynEmbeddingProvider> =
+        Arc::new(AlwaysMatchEmbeddingProvider { dim: 384 });
     let mem = make_memory("adr068-dense-isolate", embedder).await;
 
     let t_before_ingest = Utc::now();

@@ -61,7 +61,9 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
         conn: &libsql::Connection,
         table: &str,
     ) -> std::result::Result<usize, libsql::Error> {
-        let mut rows = conn.query(&format!("SELECT rowid FROM {table}"), ()).await?;
+        let mut rows = conn
+            .query(&format!("SELECT rowid FROM {table}"), ())
+            .await?;
         let mut n = 0usize;
         while rows.next().await?.is_some() {
             n += 1;

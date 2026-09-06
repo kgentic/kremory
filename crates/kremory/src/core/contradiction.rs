@@ -547,7 +547,10 @@ mod tests {
             let after_open = start + r#"{"indices": ["#.len();
             let close = after_open + prompt[after_open..].find(']')?;
             // Populated = at least one digit between the brackets.
-            if prompt[after_open..close].chars().any(|c| c.is_ascii_digit()) {
+            if prompt[after_open..close]
+                .chars()
+                .any(|c| c.is_ascii_digit())
+            {
                 let end = close + prompt[close..].find('}').map_or(1, |i| i + 1);
                 return Some(&prompt[start..end.min(prompt.len())]);
             }
@@ -800,7 +803,10 @@ mod tests {
         // A wrapped object with `indices` but no `reason` must be rejected —
         // ADR-049 / llm-output-parse-loudly: missing `reason` is a parse
         // failure, not a silently-accepted degraded result.
-        assert_eq!(parse_index_list(r#"{"indices": [1, 3]}"#), Vec::<usize>::new());
+        assert_eq!(
+            parse_index_list(r#"{"indices": [1, 3]}"#),
+            Vec::<usize>::new()
+        );
     }
 
     #[test]

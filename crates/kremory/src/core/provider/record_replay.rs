@@ -204,21 +204,21 @@ fn canonicalize_timestamps_for_fingerprint(content: &str) -> String {
     instants.dedup();
 
     re.replace_all(content, |caps: &regex::Captures<'_>| {
-            let raw = &caps[0];
-            match chrono::DateTime::parse_from_rfc3339(raw) {
-                Ok(dt) => {
-                    let utc = dt.with_timezone(&chrono::Utc);
-                    match instants.binary_search(&utc) {
-                        Ok(rank) => format!("<T{rank}>"),
-                        // Unreachable: `utc` was collected into `instants`
-                        // above. Degrade to the literal rather than panic.
-                        Err(_) => raw.to_string(),
-                    }
+        let raw = &caps[0];
+        match chrono::DateTime::parse_from_rfc3339(raw) {
+            Ok(dt) => {
+                let utc = dt.with_timezone(&chrono::Utc);
+                match instants.binary_search(&utc) {
+                    Ok(rank) => format!("<T{rank}>"),
+                    // Unreachable: `utc` was collected into `instants`
+                    // above. Degrade to the literal rather than panic.
+                    Err(_) => raw.to_string(),
                 }
-                Err(_) => raw.to_string(),
             }
-        })
-        .into_owned()
+            Err(_) => raw.to_string(),
+        }
+    })
+    .into_owned()
 }
 
 /// Max characters of request text quoted in a replay-MISS error.
@@ -771,7 +771,11 @@ mod tests {
         let provider = RecordReplayChatProvider::replay(&path).expect("replay mode");
 
         let err = provider
-            .chat_with_tools(&[chat_msg_user("an entirely different request")], None, None)
+            .chat_with_tools(
+                &[chat_msg_user("an entirely different request")],
+                None,
+                None,
+            )
             .await
             .expect_err("an empty cassette must MISS");
 

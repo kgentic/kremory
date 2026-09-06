@@ -991,7 +991,12 @@ async fn read_fact(graph: &TemporalGraph, fact_id: i64) -> (String, String, bool
 #[tokio::test]
 async fn merge_expires_self_loop_fact_and_unmerge_revives_it() {
     let graph = TemporalGraph::open_in_memory().await.expect("open");
-    insert_embedded(&graph, KEEPER, "alice johnson, engineering lead, joined 2019").await;
+    insert_embedded(
+        &graph,
+        KEEPER,
+        "alice johnson, engineering lead, joined 2019",
+    )
+    .await;
     insert_embedded(&graph, LOSER, "alice j").await;
     insert_bare(&graph, "bob").await;
 
@@ -1051,7 +1056,10 @@ async fn merge_expires_self_loop_fact_and_unmerge_revives_it() {
     unmerge(&graph, mutation_id).await.expect("unmerge");
 
     let (sl_subj2, sl_obj2, sl_live2) = read_fact(&graph, self_loop).await;
-    assert_eq!(sl_subj2, LOSER, "undo re-points the subject back to the loser");
+    assert_eq!(
+        sl_subj2, LOSER,
+        "undo re-points the subject back to the loser"
+    );
     assert_eq!(sl_obj2, KEEPER, "object endpoint unchanged by undo");
     assert!(
         sl_live2,

@@ -484,25 +484,25 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                         )
                                         .increment(1);
                                         tracing::info!(
-                                            "gen_ai.system" = "unknown",
-                                            // TD-218: DERIVED, not hardcoded. This field read
-                            // `"extraction"` for every structured call in the
-                            // crate — including dream's — while the token
-                            // metric emitted from this same function labelled
-                            // the identical call `operation="dream"` via
-                            // `operation_for_schema`. A log line that
-                            // contradicts the metric beside it is worse than a
-                            // missing one: it answers the question wrongly and
-                            // stops you asking again. Single-sourced now.
-                            "gen_ai.operation.name" = operation_for_schema(schema_name),
-                                            "gen_ai.request.model" = %model_str,
-                                            "gen_ai.usage.input_tokens" = retry_in,
-                                            "gen_ai.usage.output_tokens" = retry_out,
-                                            "kremory.usage_reported" = retry_reported,
-                                            schema = schema_name,
-                                            arm = arm_name(arm),
-                                            "kremory.extraction.structured_call_success"
-                                        );
+                                                        "gen_ai.system" = "unknown",
+                                                        // TD-218: DERIVED, not hardcoded. This field read
+                                        // `"extraction"` for every structured call in the
+                                        // crate — including dream's — while the token
+                                        // metric emitted from this same function labelled
+                                        // the identical call `operation="dream"` via
+                                        // `operation_for_schema`. A log line that
+                                        // contradicts the metric beside it is worse than a
+                                        // missing one: it answers the question wrongly and
+                                        // stops you asking again. Single-sourced now.
+                                        "gen_ai.operation.name" = operation_for_schema(schema_name),
+                                                        "gen_ai.request.model" = %model_str,
+                                                        "gen_ai.usage.input_tokens" = retry_in,
+                                                        "gen_ai.usage.output_tokens" = retry_out,
+                                                        "kremory.usage_reported" = retry_reported,
+                                                        schema = schema_name,
+                                                        arm = arm_name(arm),
+                                                        "kremory.extraction.structured_call_success"
+                                                    );
                                         return Ok(retry_value);
                                     }
                                 }
@@ -990,7 +990,6 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
         return Ok(v);
     }
 
-
     // llm_json repair.
     if matches!(
         arm,
@@ -1297,16 +1296,16 @@ mod tests {
     #[test]
     fn truncated_arrays_keep_every_recoverable_element() {
         let cases: [(&str, &str); 3] = [
-            ("mid-number",     "[{\"a\":1},{\"a\":2"),
-            ("missing-bracket","[{\"a\":1},{\"a\":2}"),
-            ("mid-string",     "[{\"a\":1},{\"a\":\"partial"),
+            ("mid-number", "[{\"a\":1},{\"a\":2"),
+            ("missing-bracket", "[{\"a\":1},{\"a\":2}"),
+            ("mid-string", "[{\"a\":1},{\"a\":\"partial"),
         ];
         for (label, raw) in cases {
             let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
                 .unwrap_or_else(|e| panic!("[{label}] truncated input must still parse: {e}"));
-            let arr = v
-                .as_array()
-                .unwrap_or_else(|| panic!("[{label}] must stay an ARRAY, not collapse to one object: {v}"));
+            let arr = v.as_array().unwrap_or_else(|| {
+                panic!("[{label}] must stay an ARRAY, not collapse to one object: {v}")
+            });
             assert_eq!(
                 arr.len(),
                 2,
@@ -1316,7 +1315,6 @@ mod tests {
         }
     }
 
-
     /// TD-192 (Quinn M2): every shape that reaches the RECOVERY path must keep
     /// all its elements. `jsonrepair::repair_json` flattens an array to its first
     /// element for ALL of these — measured directly — so fence-stripping alone
@@ -1324,11 +1322,17 @@ mod tests {
     #[test]
     fn recovery_path_preserves_every_array_element_across_shapes() {
         let cases: [(&str, &str); 5] = [
-            ("fenced",         "```json\n[{\"a\":1},{\"a\":2}]\n```"),
-            ("prose+fenced",   "Here is the result:\n```json\n[{\"a\":1},{\"a\":2}]\n```"),
-            ("tilde-fenced",   "~~~json\n[{\"a\":1},{\"a\":2}]\n~~~"),
-            ("trailing-prose", "[{\"a\":1},{\"a\":2}]\nNote: that is all."),
-            ("no-lang-fence",  "```\n[{\"a\":1},{\"a\":2}]\n```"),
+            ("fenced", "```json\n[{\"a\":1},{\"a\":2}]\n```"),
+            (
+                "prose+fenced",
+                "Here is the result:\n```json\n[{\"a\":1},{\"a\":2}]\n```",
+            ),
+            ("tilde-fenced", "~~~json\n[{\"a\":1},{\"a\":2}]\n~~~"),
+            (
+                "trailing-prose",
+                "[{\"a\":1},{\"a\":2}]\nNote: that is all.",
+            ),
+            ("no-lang-fence", "```\n[{\"a\":1},{\"a\":2}]\n```"),
         ];
         for (label, raw) in cases {
             let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
@@ -1351,15 +1355,27 @@ mod tests {
     #[test]
     fn wrapper_object_survives_every_shape() {
         let cases: [(&str, &str); 3] = [
-            ("fenced",       "```json\n{\"indices\": [1, 2], \"reason\": \"role change\"}\n```"),
-            ("prose+fenced", "Sure:\n```json\n{\"indices\": [1, 2], \"reason\": \"role change\"}\n```"),
-            ("trailing",     "{\"indices\": [1, 2], \"reason\": \"role change\"}\nDone."),
+            (
+                "fenced",
+                "```json\n{\"indices\": [1, 2], \"reason\": \"role change\"}\n```",
+            ),
+            (
+                "prose+fenced",
+                "Sure:\n```json\n{\"indices\": [1, 2], \"reason\": \"role change\"}\n```",
+            ),
+            (
+                "trailing",
+                "{\"indices\": [1, 2], \"reason\": \"role change\"}\nDone.",
+            ),
         ];
         for (label, raw) in cases {
             let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
                 .unwrap_or_else(|e| panic!("[{label}] must parse: {e}"));
             assert!(v.is_object(), "[{label}] must stay an object, got: {v}");
-            assert_eq!(v["reason"], "role change", "[{label}] wrapper fields must survive");
+            assert_eq!(
+                v["reason"], "role change",
+                "[{label}] wrapper fields must survive"
+            );
         }
     }
 
@@ -1369,8 +1385,14 @@ mod tests {
     fn brackets_inside_string_values_do_not_truncate_the_span() {
         let raw = "```json\n[{\"o\":\"the [redacted] } file\"},{\"o\":\"second\"}]\n```";
         let v = parse_response_to_value(raw, FallbackArm::FormatSchema).expect("must parse");
-        let arr = v.as_array().unwrap_or_else(|| panic!("expected array, got: {v}"));
-        assert_eq!(arr.len(), 2, "string-internal brackets must not end the scan: {v}");
+        let arr = v
+            .as_array()
+            .unwrap_or_else(|| panic!("expected array, got: {v}"));
+        assert_eq!(
+            arr.len(),
+            2,
+            "string-internal brackets must not end the scan: {v}"
+        );
         assert_eq!(arr[0]["o"], "the [redacted] } file");
     }
 
@@ -1394,9 +1416,9 @@ mod tests {
         let raw = "```json\n[\n  {\"subject\": \"Caroline\", \"predicate\": \"Friendship\", \"object\": \"Mel\"},\n  {\"subject\": \"Caroline\", \"predicate\": \"Shared_Experience_At\", \"object\": \"Pride fest\"}\n]\n```";
         let v = parse_response_to_value(raw, FallbackArm::FormatSchema)
             .expect("a fenced array must parse");
-        let arr = v.as_array().unwrap_or_else(|| {
-            panic!("expected a JSON array, got: {v}")
-        });
+        let arr = v
+            .as_array()
+            .unwrap_or_else(|| panic!("expected a JSON array, got: {v}"));
         assert_eq!(
             arr.len(),
             2,
@@ -1584,8 +1606,7 @@ mod tests {
             Box<dyn autoagents_llm::chat::ChatResponse>,
             autoagents_llm::error::LLMError,
         > {
-            self.calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             tokio::time::sleep(std::time::Duration::from_secs(3_600)).await;
             Err(autoagents_llm::error::LLMError::ProviderError(
                 "stall was not cut by a timeout — the bound under test is absent".to_string(),
@@ -2274,7 +2295,9 @@ mod tests {
              the whole point of TD-166 (it is what makes the 48× breakdown measurable)"
         );
         assert_eq!(
-            counter_sum(&snapshot, "kremory_core_tokens_usage_missing_total", |_| true),
+            counter_sum(&snapshot, "kremory_core_tokens_usage_missing_total", |_| {
+                true
+            }),
             0,
             "usage WAS reported — the missing-counter must stay at zero"
         );
@@ -2370,7 +2393,10 @@ mod tests {
         assert_eq!(operation_for_schema("TripletList"), "extraction");
         assert_eq!(operation_for_schema("ResolutionVerdict"), "resolution");
         assert_eq!(operation_for_schema("BatchedResolution"), "resolution");
-        assert_eq!(operation_for_schema("ContradictionVerdict"), "contradiction");
+        assert_eq!(
+            operation_for_schema("ContradictionVerdict"),
+            "contradiction"
+        );
         assert_eq!(operation_for_schema("ReclassifyBatch"), "dream");
         assert_eq!(operation_for_schema("DiscoveryProposalBatch"), "dream");
         assert_eq!(operation_for_schema("IdentityVerdictBatch"), "dream");
@@ -2406,7 +2432,10 @@ mod tests {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = Vec::new();
         walk(&src, &mut files);
-        assert!(!files.is_empty(), "source gate found no .rs files under {src:?}");
+        assert!(
+            !files.is_empty(),
+            "source gate found no .rs files under {src:?}"
+        );
 
         let mut unclassified: Vec<String> = Vec::new();
         let mut seen = 0usize;
@@ -2462,7 +2491,9 @@ mod tests {
                 } else {
                     lines[i..(i + 6).min(lines.len())].join("\n")
                 };
-                let Some(start) = window.find('"') else { continue };
+                let Some(start) = window.find('"') else {
+                    continue;
+                };
                 let rest = &window[start + 1..];
                 let Some(end) = rest.find('"') else { continue };
                 let name = &rest[..end];

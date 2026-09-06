@@ -365,11 +365,7 @@ impl TemporalGraph {
     /// to overwrite an existing vector, which a `WHERE embedding IS NULL`
     /// predicate never can). Feature-gated behind `content-search`.
     #[cfg(feature = "content-search")]
-    pub async fn facts_after_id(
-        &self,
-        after_id: i64,
-        limit: usize,
-    ) -> Result<Vec<(i64, String)>> {
+    pub async fn facts_after_id(&self, after_id: i64, limit: usize) -> Result<Vec<(i64, String)>> {
         let mut rows = self
             .conn
             .query(

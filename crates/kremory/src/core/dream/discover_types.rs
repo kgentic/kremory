@@ -2435,15 +2435,11 @@ mod site2_type_novelty_tests {
             )
             .await
             .expect("query identity_verdict_audit");
-        let row = rows
-            .next()
-            .await
-            .expect("row read")
-            .expect(
-                "an accepted Pass-0 proposal must leave an identity_verdict_audit row (TD-210) \
+        let row = rows.next().await.expect("row read").expect(
+            "an accepted Pass-0 proposal must leave an identity_verdict_audit row (TD-210) \
                  — this is the RED assertion: pre-fix, discover_types never wrote to this table \
                  on the Pass path at all, so this query returns zero rows",
-            );
+        );
         let cosine: Option<f64> = row.get(0).expect("cosine column");
         let decision: String = row.get(1).expect("decision column");
         let structural_signal: bool = row.get(2).expect("structural_signal column");

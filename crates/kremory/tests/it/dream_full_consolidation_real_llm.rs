@@ -857,10 +857,8 @@ async fn happy_path() {
     // — all self-loops, confirming the mechanism above against real output
     // rather than inference.
     let archived_rows = archived_fact_triples(&tg, &group_id).await;
-    let cross_entity: Vec<&ArchivedFact> = archived_rows
-        .iter()
-        .filter(|f| !f.is_self_loop())
-        .collect();
+    let cross_entity: Vec<&ArchivedFact> =
+        archived_rows.iter().filter(|f| !f.is_self_loop()).collect();
     assert!(
         cross_entity.is_empty(),
         "happy_path: archival retired {} fact(s) BETWEEN DISTINCT ENTITIES on a fixture of three \

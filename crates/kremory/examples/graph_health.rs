@@ -130,7 +130,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     r.hard(Check {
         name: "no_self_referential_aliases",
         ok: self_aliases == 0,
-        detail: format!("{self_aliases} live `X potential_alias X` (L4 cannot emit this shape; pre-fix: 18)"),
+        detail: format!(
+            "{self_aliases} live `X potential_alias X` (L4 cannot emit this shape; pre-fix: 18)"
+        ),
     });
 
     // ── TD-203 D2 — a completed dream leaves no RESOLVABLE alias ─────────────
@@ -199,7 +201,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     r.hard(Check {
         name: "no_dangling_fact_endpoints",
         ok: dangling_subj + dangling_obj == 0,
-        detail: format!("{dangling_subj} subject + {dangling_obj} object reference a missing entity"),
+        detail: format!(
+            "{dangling_subj} subject + {dangling_obj} object reference a missing entity"
+        ),
     });
 
     // ── Entities are embedded — a NULL embedding is invisible to dense recall ─
@@ -291,10 +295,7 @@ fn pct(n: usize, d: usize) -> f64 {
 
 /// Count by materialising a NON-indexed column — `COUNT(*)` returns 0 on the
 /// `libsql_vector_idx`-carrying tables (SYSTEM-PRIMER §2).
-async fn count_rows(
-    graph: &TemporalGraph,
-    sql: &str,
-) -> Result<usize, Box<dyn std::error::Error>> {
+async fn count_rows(graph: &TemporalGraph, sql: &str) -> Result<usize, Box<dyn std::error::Error>> {
     let mut rows = graph.conn.query(sql, ()).await?;
     let mut n = 0usize;
     while rows.next().await?.is_some() {

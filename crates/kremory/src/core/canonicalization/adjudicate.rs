@@ -578,7 +578,10 @@ mod tests {
     fn prompt_teaches_both_sides_of_the_jaccard_ambiguity() {
         let messages = build_adjudication_messages(&[candidate("alice j", "alice johnson", 0.9)]);
         let system = format!("{messages:?}");
-        assert!(system.contains("pottery class"), "hypernym negative example");
+        assert!(
+            system.contains("pottery class"),
+            "hypernym negative example"
+        );
         assert!(system.contains("alice j"), "abbreviation positive example");
         assert!(
             system.contains("Pair 0:"),

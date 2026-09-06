@@ -351,8 +351,12 @@ pub(crate) fn parse_entities_integer(
         );
     }
 
-    let (raw, raw_count, deserialize_ok, parse_path): (Vec<RawEntityIntegerId>, usize, bool, ParsePath) =
-        parse_items(trimmed, "entities");
+    let (raw, raw_count, deserialize_ok, parse_path): (
+        Vec<RawEntityIntegerId>,
+        usize,
+        bool,
+        ParsePath,
+    ) = parse_items(trimmed, "entities");
 
     if deserialize_ok {
         // Path label restored (Vera DENT-001): a post-repair success is
@@ -600,9 +604,8 @@ mod td_187_valid_at_tests {
 
     #[test]
     fn explicit_null_is_none_not_an_error() {
-        let f = one_fact(
-            r#"{"items":[{"subject":"a","predicate":"b","object":"c","valid_at":null}]}"#,
-        );
+        let f =
+            one_fact(r#"{"items":[{"subject":"a","predicate":"b","object":"c","valid_at":null}]}"#);
         assert!(f.valid_at.is_none());
     }
 
@@ -860,12 +863,19 @@ mod tests {
         let (raw, raw_count, ok, path) = parse_items::<RawFact>(json, "items");
         assert_eq!(raw.len(), 1);
         assert_eq!(raw_count, 1);
-        assert!(ok, "well-formed wrapped triplet must report deserialize_ok=true");
+        assert!(
+            ok,
+            "well-formed wrapped triplet must report deserialize_ok=true"
+        );
         assert_eq!(path, ParsePath::Wrapped);
 
         // public parse_facts surface: exactly one fact, fields preserved.
         let (facts, raw_count2) = parse_facts_with_raw_count(json).unwrap();
-        assert_eq!(facts.len(), 1, "wrapped Groq shape must parse to exactly 1 fact");
+        assert_eq!(
+            facts.len(),
+            1,
+            "wrapped Groq shape must parse to exactly 1 fact"
+        );
         assert_eq!(raw_count2, 1);
         assert_eq!(facts[0].subject, "a");
         assert_eq!(facts[0].predicate, "p");
@@ -878,7 +888,11 @@ mod tests {
         // providers even when the schema advertises the wrapper.
         let json = r#"[{"subject":"a","predicate":"p","object":"b","is_entity_ref":false,"confidence":1.0}]"#;
         let (facts, raw_count) = parse_facts_with_raw_count(json).unwrap();
-        assert_eq!(facts.len(), 1, "bare-array Groq shape must parse to exactly 1 fact");
+        assert_eq!(
+            facts.len(),
+            1,
+            "bare-array Groq shape must parse to exactly 1 fact"
+        );
         assert_eq!(raw_count, 1);
         assert_eq!(facts[0].subject, "a");
     }
@@ -891,11 +905,15 @@ mod tests {
         // empty-field filter. Before removing #[serde(default)] from RawFact,
         // this payload deserialised (predicate="") and was silently filtered;
         // now it must fail parse (llm-output-parse-loudly).
-        let json = r#"{"items":[{"subject":"a","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
+        let json =
+            r#"{"items":[{"subject":"a","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
 
         // parse_items-level: the whole array fails to deserialize → loud signal.
         let (raw, raw_count, ok, path) = parse_items::<RawFact>(json, "items");
-        assert!(raw.is_empty(), "a triplet missing `predicate` must not yield a RawFact");
+        assert!(
+            raw.is_empty(),
+            "a triplet missing `predicate` must not yield a RawFact"
+        );
         assert_eq!(raw_count, 0);
         assert!(
             !ok,
@@ -919,15 +937,13 @@ mod tests {
         // the `rql.extraction.json_parse_fail{parser=facts}` counter, not masked
         // as a success. This is the metric that would have surfaced the 262
         // silent drops as an actual failure signal.
-        let json = r#"{"items":[{"subject":"a","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
-        let fails = captured_counter_label_values(
-            "rql.extraction.json_parse_fail",
-            "parser",
-            || {
+        let json =
+            r#"{"items":[{"subject":"a","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
+        let fails =
+            captured_counter_label_values("rql.extraction.json_parse_fail", "parser", || {
                 let (facts, _raw) = parse_facts_with_raw_count(json).unwrap();
                 assert!(facts.is_empty());
-            },
-        );
+            });
         assert_eq!(
             fails,
             vec!["facts".to_string()],
@@ -1109,16 +1125,12 @@ mod tests {
 
     #[test]
     fn parse_facts_malformed_input_reports_json_parse_fail_with_parser_facts_label() {
-        let parsers = captured_counter_label_values(
-            "rql.extraction.json_parse_fail",
-            "parser",
-            || {
-                let (facts, raw_count) =
-                    parse_facts_with_raw_count("not json at all").unwrap();
+        let parsers =
+            captured_counter_label_values("rql.extraction.json_parse_fail", "parser", || {
+                let (facts, raw_count) = parse_facts_with_raw_count("not json at all").unwrap();
                 assert!(facts.is_empty());
                 assert_eq!(raw_count, 0);
-            },
-        );
+            });
         assert_eq!(
             parsers,
             vec!["facts".to_string()],
@@ -1127,16 +1139,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_relation_names_malformed_input_reports_json_parse_fail_with_parser_relation_names_label()
-     {
-        let parsers = captured_counter_label_values(
-            "rql.extraction.json_parse_fail",
-            "parser",
-            || {
+    fn parse_relation_names_malformed_input_reports_json_parse_fail_with_parser_relation_names_label(
+    ) {
+        let parsers =
+            captured_counter_label_values("rql.extraction.json_parse_fail", "parser", || {
                 let names = parse_relation_names("not json at all").unwrap();
                 assert!(names.is_empty());
-            },
-        );
+            });
         assert_eq!(
             parsers,
             vec!["relation_names".to_string()],
@@ -1148,15 +1157,11 @@ mod tests {
     #[test]
     fn parse_entities_integer_malformed_input_reports_json_parse_fail_with_parser_label() {
         let registry = registry_with_person();
-        let parsers = captured_counter_label_values(
-            "rql.extraction.json_parse_fail",
-            "parser",
-            || {
-                let entities =
-                    parse_entities_integer("not json at all", &registry).unwrap();
+        let parsers =
+            captured_counter_label_values("rql.extraction.json_parse_fail", "parser", || {
+                let entities = parse_entities_integer("not json at all", &registry).unwrap();
                 assert!(entities.is_empty());
-            },
-        );
+            });
         assert_eq!(
             parsers,
             vec!["entities_integer".to_string()],
@@ -1167,14 +1172,11 @@ mod tests {
 
     #[test]
     fn parse_facts_wrapped_input_reports_json_parse_ok_with_parser_facts_label() {
-        let parsers = captured_counter_label_values(
-            "rql.extraction.json_parse_ok",
-            "parser",
-            || {
+        let parsers =
+            captured_counter_label_values("rql.extraction.json_parse_ok", "parser", || {
                 let facts = parse_facts(r#"{"items":[]}"#).unwrap();
                 assert!(facts.is_empty());
-            },
-        );
+            });
         assert_eq!(
             parsers,
             vec!["facts".to_string()],
@@ -1183,16 +1185,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_relation_names_wrapped_input_reports_json_parse_ok_with_parser_relation_names_label()
-     {
-        let parsers = captured_counter_label_values(
-            "rql.extraction.json_parse_ok",
-            "parser",
-            || {
+    fn parse_relation_names_wrapped_input_reports_json_parse_ok_with_parser_relation_names_label() {
+        let parsers =
+            captured_counter_label_values("rql.extraction.json_parse_ok", "parser", || {
                 let names = parse_relation_names(r#"{"items":[]}"#).unwrap();
                 assert!(names.is_empty());
-            },
-        );
+            });
         assert_eq!(
             parsers,
             vec!["relation_names".to_string()],
@@ -1220,4 +1218,3 @@ mod tests {
         );
     }
 }
-

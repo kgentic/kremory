@@ -101,7 +101,6 @@ fn unique_db(tag: &str) -> std::path::PathBuf {
     ))
 }
 
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dated_fact_keeps_its_own_valid_from_while_undated_falls_back() {
     let published = Utc.with_ymd_and_hms(2023, 8, 17, 0, 0, 0).unwrap();

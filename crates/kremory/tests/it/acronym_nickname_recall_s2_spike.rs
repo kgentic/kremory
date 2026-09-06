@@ -112,8 +112,7 @@ async fn build_provider(
     // dream model (F1 85.7, local-model-benchmark-2026-06-24 /
     // project_kremory_validated_model_findings_2026-06-24). acronym_
     // nickname_recall is a dream-phase pass, so it belongs on this tier.
-    let chat_model =
-        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
+    let chat_model = crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     let chat_cassette = chat_cassette_path(cassette_tag);
     let provider: Arc<RecordReplayChatProvider> = match mode {

@@ -163,6 +163,83 @@ pub(super) async fn verify_batch(
                     unreachable!("action=correct without new_type_id should be rejected at parse (SCOPE-001)")
                 });
 
+                // ── Registry-bounds guard on the LLM-emitted `new_type_id` ────
+                //
+                // `new_type_id` is UNTRUSTED LLM output and reaches persistence
+                // by TWO routes: `apply_correction` below (dream phase), and
+                // `VerifyAction::Correct` -> `ResolvedDecision::Correct` ->
+                // `ingest/pipeline/phase1.rs`'s entity INSERT (Stage 2
+                // pre-write). `entities.entity_type_id` is `INTEGER NOT NULL
+                // DEFAULT 0` with NO foreign key to `entity_types`
+                // (`migrations/defs_b.rs`, Migration 008), so the database
+                // accepts any integer. Neither the rowid-membership guard nor
+                // the confidence gate below checks the id itself.
+                //
+                // `params.type_map` IS the live registry: both entry points
+                // build it from `audit::load_type_registry` (`mod.rs` and
+                // `verify_batch_for_candidates` below), and it is the SAME map
+                // `build_verify_messages` renders as the prompt's type menu.
+                // So this asks exactly the right question — "is this one of the
+                // ids we showed you?" — and, unlike
+                // `EntityTypeRegistry::validate_or_fallback` (the sibling L3
+                // helper used by `dream/reclassify.rs` and
+                // `core/reclassification.rs`), it is applicable here:
+                // `validate_or_fallback` takes `u32` and is namespace-scoped,
+                // whereas this id is `i64` (negatives are representable) and
+                // `consistency_check` loads its registry namespace-blind.
+                //
+                // Semantics match the reclassify precedent exactly: an
+                // out-of-registry id is DISCARDED, never persisted and never
+                // coerced to 0. `0` is rejected on its own terms — the
+                // catch-all sentinel is a demotion, which has its own action
+                // (`Demote`); routing it through `apply_correction` would also
+                // stamp `entity_type_source = 'DreamPass4'`, which
+                // `load_candidates` excludes — a one-way trapdoor out of Pass 4.
+                //
+                // Ordering: this runs BEFORE the confidence gate deliberately.
+                // A structurally unusable decision must not be interpreted at
+                // all, and the gate's counter labels itself with
+                // `proposed_to_type` — letting an arbitrary LLM-chosen integer
+                // reach a metric label is an unbounded-cardinality hazard. For
+                // the same reason the counter below is labelled by `reason`
+                // only (mirroring `reclassify`), with the emitted id carried in
+                // the log event instead.
+                //
+                // WARN, not DEBUG: this module already escalated malformed
+                // decisions to WARN (see the fn-level doc) because they are
+                // prompt/schema tuning signal. Going off a menu the prompt
+                // supplied is the same class.
+                let rejection_reason = if new_type_id == 0 {
+                    Some("catch_all_target")
+                } else if type_map.contains_key(&new_type_id) {
+                    None
+                } else {
+                    Some("registry_rejected")
+                };
+                if let Some(reason) = rejection_reason {
+                    counter!(
+                        "kremory.dream.consistency_check.verify_correction_rejected_total",
+                        "reason" => reason
+                    )
+                    .increment(1);
+                    tracing::warn!(
+                        target: "kremory::dream::consistency_check",
+                        rowid = candidate.rowid,
+                        from_type = candidate.entity_type_id,
+                        emitted_type_id = new_type_id,
+                        reason,
+                        "correct decision carried an unusable new_type_id — discarded, \
+                         entity left unchanged (decision stays Demote per spec §10.4)"
+                    );
+                    // Leave the pre-allocated `Demote` in place: an
+                    // un-actionable decision is equivalent to a missing one,
+                    // and spec §10.4 (DK3 Option α, strict safety default)
+                    // rules that missing decisions Demote rather than Confirm.
+                    // Counted as `uncertain` — we could not establish a type.
+                    counts.uncertain += 1;
+                    continue;
+                }
+
                 // T2.2 (sprint plan + basket #83 gbrain C1 gate): downgrade
                 // low-confidence corrections to Confirm. The gbrain pattern
                 // says "downgrade to no_contradiction" — kremory's `Confirm`

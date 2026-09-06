@@ -323,10 +323,7 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             // `entity_types` names carry zero numerals or month words, so the veto
             // is inert on today's data. It earns its place as defence-in-depth for
             // future type names that DO carry a date (`meeting_2023`).
-            names: Some((
-                slots[*i].spec.name.as_str(),
-                slots[*j].spec.name.as_str(),
-            )),
+            names: Some((slots[*i].spec.name.as_str(), slots[*j].spec.name.as_str())),
         });
         record_write_gate_decision(decision);
         // Quinn MED-3 — see the Site #5 caller. `write_gate` is counter-free by

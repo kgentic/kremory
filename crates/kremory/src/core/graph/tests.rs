@@ -239,7 +239,10 @@ async fn test_reassert_expired_fact_succeeds_td133_b2() {
         .await
         .expect("re-asserting a superseded triple must succeed (TD-133 B2)");
     assert!(id2 > 0);
-    assert_ne!(id1, id2, "re-assertion must be a new row, not the expired one");
+    assert_ne!(
+        id1, id2,
+        "re-assertion must be a new row, not the expired one"
+    );
 
     // Exactly one ACTIVE fact now (the re-assertion); the expired one excluded.
     let facts = g.facts_at(Utc::now() + Duration::seconds(1)).await.unwrap();

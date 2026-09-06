@@ -750,7 +750,11 @@ impl RetrievedContext {
     /// sentinel `RetrievedContext::new()` already stamps.
     ///
     /// Added TD-199.
-    pub fn with_entity_type(mut self, entity_type_id: u32, entity_type_name: impl Into<String>) -> Self {
+    pub fn with_entity_type(
+        mut self,
+        entity_type_id: u32,
+        entity_type_name: impl Into<String>,
+    ) -> Self {
         self.entity_type_id = entity_type_id;
         self.entity_type_name = entity_type_name.into();
         self

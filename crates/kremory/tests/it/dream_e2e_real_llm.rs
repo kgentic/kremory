@@ -347,8 +347,7 @@ async fn dream_e2e_real_llm_five_pass_chain() {
     // `with_model_id` for capability detection AND is the cassette header model,
     // so record + replay agree. Override via OLLAMA_CHAT_MODEL to re-record with
     // a heavier model once TD-096 lands.
-    let chat_model =
-        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
+    let chat_model = crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     // Chat provider — mode-selected. record: live Ollama wrapped in record(...)
     // so one run refreshes the committed cassette. replay: offline cassette read

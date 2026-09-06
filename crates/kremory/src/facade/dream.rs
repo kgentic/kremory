@@ -295,21 +295,22 @@ impl<'a> DreamRequest<'a> {
                     crate::core::dream::discover_types::discover_types(
                         &arc_llm,
                         crate::core::dream::discover_types::DiscoverTypesParams {
-                        conn: &tg.conn,
-                        group_id: &group_id,
-                        embedder: embedder_ref,
-                        max_proposals: pass0_max,
-                        // TD-094: thread the resolved dream model id for capability detection.
-                        model_id: dream_model_id,
-                        // Site #2 (ADR-063 "The six sites" #2) — spike-gated, default
-                        // `false` (spec §8). Threaded from `DreamOpts::include_type_
-                        // novelty_llm_verify` so the DEFAULT build's Pass-0 outcome is
-                        // unchanged from before Site #2 landed.
-                        llm_verify_band: opts.include_type_novelty_llm_verify,
-                        // TD-123 — quarantined default `false` (unspiked cosine-alone
-                        // degeneracy risk). Threaded from `DreamOpts::include_
-                        // evidence_retype_by_similarity`.
-                        evidence_retype_by_similarity: opts.include_evidence_retype_by_similarity,
+                            conn: &tg.conn,
+                            group_id: &group_id,
+                            embedder: embedder_ref,
+                            max_proposals: pass0_max,
+                            // TD-094: thread the resolved dream model id for capability detection.
+                            model_id: dream_model_id,
+                            // Site #2 (ADR-063 "The six sites" #2) — spike-gated, default
+                            // `false` (spec §8). Threaded from `DreamOpts::include_type_
+                            // novelty_llm_verify` so the DEFAULT build's Pass-0 outcome is
+                            // unchanged from before Site #2 landed.
+                            llm_verify_band: opts.include_type_novelty_llm_verify,
+                            // TD-123 — quarantined default `false` (unspiked cosine-alone
+                            // degeneracy risk). Threaded from `DreamOpts::include_
+                            // evidence_retype_by_similarity`.
+                            evidence_retype_by_similarity: opts
+                                .include_evidence_retype_by_similarity,
                         },
                     ),
                 )

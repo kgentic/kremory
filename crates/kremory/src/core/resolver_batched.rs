@@ -24,9 +24,7 @@ use std::collections::{HashMap, HashSet};
 
 use metrics::{counter, histogram};
 
-use crate::core::extraction::schemas::{
-    BatchedNodeResolutions, SCHEMA_BATCHED_RESOLUTION,
-};
+use crate::core::extraction::schemas::{BatchedNodeResolutions, SCHEMA_BATCHED_RESOLUTION};
 use crate::core::extraction::structured::StructuredCallBuilder;
 use crate::core::intelligence::ExtractedEntity;
 use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider};
@@ -128,11 +126,12 @@ async fn resolve_window<L: ChatProvider + ?Sized>(
         chat_msg_user(prompt.as_str()),
     ];
 
-    let call_result = StructuredCallBuilder::new(llm, &SCHEMA_BATCHED_RESOLUTION, "BatchedResolution")
-        .messages(messages)
-        .model(model.unwrap_or(""))
-        .call()
-        .await;
+    let call_result =
+        StructuredCallBuilder::new(llm, &SCHEMA_BATCHED_RESOLUTION, "BatchedResolution")
+            .messages(messages)
+            .model(model.unwrap_or(""))
+            .call()
+            .await;
 
     counter!("kremory.resolution.batched_calls_total").increment(1);
 
@@ -418,7 +417,10 @@ mod tests {
         let resp = resolutions(vec![(0, "Alice", 7)]);
         let out = map_back(&resp, &worklist, &pool);
 
-        assert!(out.is_empty(), "out-of-range candidate_id must resolve to NEW");
+        assert!(
+            out.is_empty(),
+            "out-of-range candidate_id must resolve to NEW"
+        );
     }
 
     // (c) duplicate `id` rows -> first row wins.
@@ -530,10 +532,8 @@ mod tests {
         let e0 = make_entity("zeta", "Person", "Alice Johnson");
         let e1 = make_entity("alpha", "Location", "Javanese Island");
 
-        let worklist: Vec<AmbiguousEntity> = vec![
-            (0, &extracted_a, vec![&e0]),
-            (1, &extracted_b, vec![&e1]),
-        ];
+        let worklist: Vec<AmbiguousEntity> =
+            vec![(0, &extracted_a, vec![&e0]), (1, &extracted_b, vec![&e1])];
         let mut pool: Vec<&Entity> = vec![&e0, &e1];
         pool.sort_by(|a, b| a.id.cmp(&b.id));
         // Sorted by id: "alpha" (e1) before "zeta" (e0).

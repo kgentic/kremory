@@ -82,8 +82,7 @@ async fn c_d_real_llm_smoke_dream_with_pass_0() {
     // Per substrate SoT (tests/llm_integration.rs:1-25): gemma4-e2b:latest is the
     // interactive default (80% / ~37-54s). qwen2.5:14b is legacy fallback.
     // Callers can override via OLLAMA_CHAT_MODEL.
-    let chat_model =
-        crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest");
+    let chat_model = crate::helpers::chat_model::chat_model_or("gemma4-e2b:latest");
 
     let llm: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&base_url)

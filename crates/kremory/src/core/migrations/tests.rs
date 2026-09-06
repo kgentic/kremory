@@ -444,9 +444,12 @@ async fn dedup_index_sql(conn: &libsql::Connection) -> Option<String> {
 
 /// Minimal `facts` table carrying just the columns the dedup index targets.
 async fn seed_minimal_facts_table(conn: &libsql::Connection) {
-    conn.execute("CREATE TABLE facts (content_hash TEXT, expired_at TEXT)", ())
-        .await
-        .expect("create minimal facts table");
+    conn.execute(
+        "CREATE TABLE facts (content_hash TEXT, expired_at TEXT)",
+        (),
+    )
+    .await
+    .expect("create minimal facts table");
 }
 
 #[tokio::test]
@@ -636,9 +639,12 @@ async fn an_empty_scratch_is_repopulated_from_the_snapshot_before_the_swap() {
     seed_pre_004_entities(&conn, 3).await;
 
     // The two artifacts a crash between step 2 and step 3 leaves behind.
-    conn.execute("CREATE TABLE entities_bak_004 AS SELECT * FROM entities", ())
-        .await
-        .expect("snapshot");
+    conn.execute(
+        "CREATE TABLE entities_bak_004 AS SELECT * FROM entities",
+        (),
+    )
+    .await
+    .expect("snapshot");
     conn.execute_batch(
         "CREATE TABLE entities_new (
             id           TEXT NOT NULL,
@@ -703,9 +709,12 @@ async fn an_empty_scratch_is_repopulated_from_the_snapshot_before_the_swap() {
 async fn a_complete_scratch_is_swapped_as_is_without_repair() {
     let conn = in_memory_conn().await;
     seed_pre_004_entities(&conn, 3).await;
-    conn.execute("CREATE TABLE entities_bak_004 AS SELECT * FROM entities", ())
-        .await
-        .expect("snapshot");
+    conn.execute(
+        "CREATE TABLE entities_bak_004 AS SELECT * FROM entities",
+        (),
+    )
+    .await
+    .expect("snapshot");
     conn.execute_batch(
         "CREATE TABLE entities_new (
             id           TEXT NOT NULL,

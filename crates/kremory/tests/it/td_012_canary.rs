@@ -89,8 +89,7 @@ async fn td_012_no_placeholder_labels_in_fixture_extraction() {
         }
     };
 
-    let chat_model =
-        crate::helpers::chat_model::chat_model_or("qwen2.5:14b");
+    let chat_model = crate::helpers::chat_model::chat_model_or("qwen2.5:14b");
     eprintln!("td_012_canary: OLLAMA_HOST={base_url} OLLAMA_CHAT_MODEL={chat_model}");
 
     // Load the kremory-eval mock_interview fixture.

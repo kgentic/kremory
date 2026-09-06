@@ -508,7 +508,10 @@ async fn recall_ranks_alice_episodes_above_unrelated() {
         "Alice must appear as exactly one canonical RetrievedContext row \
          (no duplicates). Got {} rows: {:?}. Full result set ({} rows): {:?}",
         alice_rows.len(),
-        alice_rows.iter().map(|r| &r.entity_name).collect::<Vec<_>>(),
+        alice_rows
+            .iter()
+            .map(|r| &r.entity_name)
+            .collect::<Vec<_>>(),
         results.len(),
         results.iter().map(|r| &r.entity_name).collect::<Vec<_>>(),
     );

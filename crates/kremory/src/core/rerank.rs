@@ -226,9 +226,8 @@ impl FastEmbedReranker {
                     let init_options = match execution_provider {
                         RerankExecutionProvider::Cpu => fastembed::RerankInitOptions::new(chosen),
                         RerankExecutionProvider::CoreMl => {
-                            fastembed::RerankInitOptions::new(chosen).with_execution_providers(
-                                vec![ort::ep::CoreML::default().build()],
-                            )
+                            fastembed::RerankInitOptions::new(chosen)
+                                .with_execution_providers(vec![ort::ep::CoreML::default().build()])
                         }
                     };
                     fastembed::TextRerank::try_new(init_options)

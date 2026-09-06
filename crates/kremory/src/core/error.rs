@@ -649,7 +649,10 @@ mod tests {
 
     #[test]
     fn fact_insert_failure_reason_classifies_generic_database_error_as_db_error() {
-        let err = Error::Database(libsql::Error::SqliteFailure(1, "disk I/O error".to_string()));
+        let err = Error::Database(libsql::Error::SqliteFailure(
+            1,
+            "disk I/O error".to_string(),
+        ));
         assert_eq!(err.fact_insert_failure_reason(), "db_error");
     }
 

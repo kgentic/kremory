@@ -196,8 +196,7 @@ async fn build_providers(
     // dream model (F1 85.7, local-model-benchmark-2026-06-24 /
     // project_kremory_validated_model_findings_2026-06-24). Mirrors the Site
     // #3 harness's model choice exactly — same pass, same tier.
-    let chat_model =
-        crate::helpers::chat_model::chat_model_or("gemma4:e4b");
+    let chat_model = crate::helpers::chat_model::chat_model_or("gemma4:e4b");
 
     let chat_cassette = chat_cassette_path(cassette_tag);
     let provider: Arc<RecordReplayChatProvider> = match mode {
@@ -791,9 +790,8 @@ fn print_and_write_report(report: &MetricsReport) {
         .join("corpora")
         .join("site2_metrics.json");
     if std::env::var("KREMORY_UPDATE_BASELINE").is_ok() {
-        std::fs::write(&baseline_path, &json).unwrap_or_else(|e| {
-            panic!("failed to update baseline {baseline_path:?}: {e}")
-        });
+        std::fs::write(&baseline_path, &json)
+            .unwrap_or_else(|e| panic!("failed to update baseline {baseline_path:?}: {e}"));
         eprintln!("  BASELINE UPDATED at {baseline_path:?} (KREMORY_UPDATE_BASELINE set)");
     } else {
         eprintln!(

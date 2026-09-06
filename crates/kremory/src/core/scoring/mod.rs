@@ -93,11 +93,7 @@ pub(crate) fn weight_overrides_for(intent: Intent, base: ScoringWeights) -> Scor
             RELATIONAL_TEMPORAL_MULT,
             RELATIONAL_PROXIMITY_MULT,
         ),
-        Intent::Broad => (
-            BROAD_DEGREE_MULT,
-            BROAD_TEMPORAL_MULT,
-            BROAD_PROXIMITY_MULT,
-        ),
+        Intent::Broad => (BROAD_DEGREE_MULT, BROAD_TEMPORAL_MULT, BROAD_PROXIMITY_MULT),
     };
     ScoringWeights {
         graph_degree_weight: base.graph_degree_weight * degree_mult,
@@ -168,9 +164,8 @@ pub(crate) fn axis_reorders(seeds: &[SeedAxisContribution]) -> (bool, bool, bool
     let base = order_by(&|s| s.base);
     let with_degree = order_by(&|s| (s.base + s.degree_delta).min(1.0));
     let with_temporal = order_by(&|s| (s.base + s.degree_delta + s.temporal_delta).min(1.0));
-    let with_proximity = order_by(&|s| {
-        (s.base + s.degree_delta + s.temporal_delta + s.proximity_delta).min(1.0)
-    });
+    let with_proximity =
+        order_by(&|s| (s.base + s.degree_delta + s.temporal_delta + s.proximity_delta).min(1.0));
 
     (
         base != with_degree,
@@ -247,9 +242,18 @@ mod tests {
             seed("b", 0.48, (0.30, 0.0, 0.0)),
         ];
         let (degree_reordered, temporal_reordered, proximity_reordered) = axis_reorders(&seeds);
-        assert!(degree_reordered, "degree boost flipping b above a must count");
-        assert!(!temporal_reordered, "temporal delta is 0 → no temporal reorder");
-        assert!(!proximity_reordered, "proximity delta is 0 → no proximity reorder");
+        assert!(
+            degree_reordered,
+            "degree boost flipping b above a must count"
+        );
+        assert!(
+            !temporal_reordered,
+            "temporal delta is 0 → no temporal reorder"
+        );
+        assert!(
+            !proximity_reordered,
+            "proximity delta is 0 → no proximity reorder"
+        );
     }
 
     #[test]
@@ -262,8 +266,14 @@ mod tests {
         ];
         let (degree_reordered, temporal_reordered, proximity_reordered) = axis_reorders(&seeds);
         assert!(!degree_reordered, "no degree delta → no degree reorder");
-        assert!(temporal_reordered, "temporal boost lifting z above a must count");
-        assert!(!proximity_reordered, "proximity delta is 0 → no proximity reorder");
+        assert!(
+            temporal_reordered,
+            "temporal boost lifting z above a must count"
+        );
+        assert!(
+            !proximity_reordered,
+            "proximity delta is 0 → no proximity reorder"
+        );
     }
 
     /// ADR-062 Phase 3: proximity is applied AFTER degree and temporal — a
@@ -280,7 +290,10 @@ mod tests {
         ];
         let (degree_reordered, temporal_reordered, proximity_reordered) = axis_reorders(&seeds);
         assert!(!degree_reordered, "no degree delta → no degree reorder");
-        assert!(!temporal_reordered, "no temporal delta → no temporal reorder");
+        assert!(
+            !temporal_reordered,
+            "no temporal delta → no temporal reorder"
+        );
         assert!(
             proximity_reordered,
             "proximity boost lifting z above a must count"

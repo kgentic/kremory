@@ -36,9 +36,7 @@
 use crate::core::error::Result;
 
 #[cfg(feature = "content-search")]
-pub(crate) async fn migrate_022_episodes_content_recall(
-    conn: &libsql::Connection,
-) -> Result<()> {
+pub(crate) async fn migrate_022_episodes_content_recall(conn: &libsql::Connection) -> Result<()> {
     fn step<E: std::fmt::Display>(name: &str) -> impl Fn(E) -> crate::core::error::Error + '_ {
         move |e| {
             crate::core::error::Error::Other(anyhow::anyhow!(
