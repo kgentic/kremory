@@ -91,8 +91,8 @@ use kremory::ChatProvider;
 //   - `name: string`                                       — short identifier for metrics / logging
 //   - `extract: (err: null, text: string) => Promise<ExtractionResult>` — extraction fn
 //
-// `extract` is
-// stored as a `ThreadsafeFunction<String, ErrorStrategy::CalleeHandled>`, and
+// `extract` is stored as a
+// `ThreadsafeFunction<String, ErrorStrategy::CalleeHandled>`, and
 // `ErrorStrategy::CalleeHandled` means napi-rs invokes the JS callback with
 // the raw Node error-first convention `(err, value)` — the callback itself
 // receives the error slot, napi-rs does not unwrap it first. Argument 1

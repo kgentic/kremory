@@ -1,7 +1,7 @@
 //! `kremory-napi` — Node.js binding for the kremory `Memory` facade.
 //!
 //! Exposes `kremory::Memory` to TypeScript/JavaScript via napi-rs derive macros.
-//! Per ADR-030 Decision 2 Form B: single binding, no PyO3, no wasm-bindgen.
+//! Single binding, no PyO3, no wasm-bindgen.
 //!
 //! # Binding surface
 //!
@@ -62,14 +62,14 @@ impl JsMemory {
     /// (`OLLAMA_HOST` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`) via
     /// `Memory::auto`. Behavior is identical to v0.1.6-alpha.0.
     ///
-    /// ## Tier-2 path (BYOM embedder, ADR-030)
+    /// ## Tier-2 path (BYOM embedder)
     ///
     /// When `opts.withEmbedder` is a callback `(text: string) => Promise<number[]>`,
     /// the env-detected LLM is combined with the JS callback as the embedding
     /// provider via `MemoryBuilder::with_embedder`. Set `opts.embeddingDim` to
     /// the callback's output dimension — a mismatch yields a descriptive error.
     ///
-    /// ## BYOE extractor knobs (ADR-039 Shape B)
+    /// ## BYOE extractor knobs
     ///
     /// Composable knobs that mirror the Rust `MemoryBuilder`:
     ///   - `opts.gliner`              → enables `ExtractorKind::GlinerLlm` (requires `--features ner`)
@@ -116,7 +116,7 @@ impl JsMemory {
                 ));
             }
 
-            // Extractor knobs require a BYOM embedder (ADR-039 §6 compat matrix).
+            // Extractor knobs require a BYOM embedder.
             // All valid rows that include gliner or extractor also include withEmbedder.
             if (has_gliner || has_extractor)
                 && opts.as_ref().is_none_or(|o| o.with_embedder.is_none())
@@ -180,7 +180,7 @@ impl JsMemory {
 
     /// Ingest an episode with full provenance + optional pre-extracted facts.
     ///
-    /// ADR-034 + ADR-035 v0.1.8 unified ingest surface. Collapses prior
+    /// The v0.1.8 unified ingest surface. Collapses prior
     /// `JsMemory.ingest(text, opts)` + `JsMemory.ingest_episode(draft)`
     /// into a single options-object method that mirrors the substrate's
     /// fluent `mem.remember(content).with_facts(...).skip_extraction()....`
@@ -189,7 +189,7 @@ impl JsMemory {
     /// # Namespace resolution
     /// `opts.namespace` > handle-level default > rejection.
     ///
-    /// # Caller-pinned facts (ADR-035)
+    /// # Caller-pinned facts
     /// When `opts.structuredFacts` is supplied, those triples are pinned
     /// into the graph BEFORE Phase 2 LLM extraction runs. LLM-extracted
     /// duplicates are silently swallowed; caller wins via pre-write ordering.
@@ -200,8 +200,7 @@ impl JsMemory {
     #[napi]
     pub async fn remember(&self, opts: JsRememberOptions) -> napi::Result<JsIngestResult> {
         // Translate caller's JsStructuredFact (binding layer) → substrate
-        // StructuredFact (memory layer). Loud-parse on invalid timestamps
-        // per ADR-035 §3.
+        // StructuredFact (memory layer). Loud-parse on invalid timestamps.
         let facts: Vec<kremory::memory::types::StructuredFact> = match opts.structured_facts {
             Some(items) => items
                 .into_iter()
@@ -259,7 +258,7 @@ impl JsMemory {
 
         // Post-ingest: write source_uri if both source_id + source_uri supplied.
         //
-        // TD-235: BOTH post-ingest writes MUST carry the same namespace Phase 1
+        // BOTH post-ingest writes MUST carry the same namespace Phase 1
         // wrote into. `self.inner` is built by `Memory::auto()` and therefore
         // holds NO substrate-side `default_namespace` — this wrapper keeps it in
         // `JsMemory::default_namespace` instead. So without threading `namespace`
@@ -306,7 +305,7 @@ impl JsMemory {
         })
     }
 
-    /// Update an episode's metadata by source_id (B2). v0.1.8 1:1 contract per ADR-034.
+    /// Update an episode's metadata by source_id. v0.1.8 1:1 contract.
     ///
     /// Performs a shallow merge: existing metadata keys are preserved; the
     /// `patch` keys overwrite. Wraps substrate `Memory::update_episode_metadata`.
@@ -330,7 +329,7 @@ impl JsMemory {
         Ok(updated as f64)
     }
 
-    /// Update an episode's source URI by source_id (B3). v0.1.8 1:1 contract per ADR-034.
+    /// Update an episode's source URI by source_id. v0.1.8 1:1 contract.
     ///
     /// Wraps substrate `Memory::update_source_uri`. Rejects if no episode matches
     /// `source_id`. Returns the count of rows updated.
@@ -349,8 +348,8 @@ impl JsMemory {
         Ok(updated as f64)
     }
 
-    /// Direct slug/source_id lookup — returns episodes matching `source_id` (B5).
-    /// v0.1.8 1:1 contract per ADR-034 (renamed from `get_by_source_id`).
+    /// Direct slug/source_id lookup — returns episodes matching `source_id`.
+    /// v0.1.8 1:1 contract (renamed from `get_by_source_id`).
     ///
     /// Results are ordered newest-first. When `namespace` is omitted, the
     /// Memory handle's default namespace is used; when the handle has no default,
@@ -358,7 +357,7 @@ impl JsMemory {
     ///
     /// `sourceUri` on each returned `JsEpisode` reflects the current DB value
     /// (round-trips correctly, incl. after `updateSourceUri`) — the substrate
-    /// `recall_by_source_id` query projects `source_uri` (TD-003 Phase G).
+    /// `recall_by_source_id` query projects `source_uri`.
     #[napi]
     pub async fn recall_by_source_id(
         &self,
@@ -381,11 +380,11 @@ impl JsMemory {
         Ok(episodes.into_iter().map(convert::episode_to_js).collect())
     }
 
-    /// Trigger the dream-phase batch consolidation (B6, consumer-API hardening D2).
+    /// Trigger the dream-phase batch consolidation.
     ///
     /// Blocks until the dream completes. Returns a `JsDreamSummary` with per-phase
-    /// accounting (incl. the D5 `crossEpisodeWouldMerge`/`crossEpisodeMerged` split
-    /// and the D1b `consolidationOpsRan` ran-signal). Wraps `Memory::dream()`,
+    /// accounting (incl. the `crossEpisodeWouldMerge`/`crossEpisodeMerged` split
+    /// and the `consolidationOpsRan` ran-signal). Wraps `Memory::dream()`,
     /// threading the full `DreamOptions` consolidation-control surface — every
     /// consolidation knob (community / archival / supersession / cross-episode mode /
     /// budgets / grace / warn-floor) is now reachable from JS. An unknown
@@ -415,7 +414,7 @@ impl JsMemory {
         Ok(convert::dream_summary_to_js(summary))
     }
 
-    /// Run a single dream pass synchronously (Phase C DoD C7 / `v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    /// Run a single dream pass synchronously.
     ///
     /// Lower-level than `dream()` — calls the engine's `run_dream_pass_sync`
     /// directly with explicit pass options. Concurrent calls serialize via an
@@ -437,7 +436,7 @@ impl JsMemory {
     }
 
     /// Return episode IDs where Phase 1 ingest succeeded but Phase 2 produced
-    /// no facts (ghost episodes — Phase C DoD C4 / C7).
+    /// no facts (ghost episodes).
     ///
     /// `group_id` restricts the query to one namespace. Omit/`null` to return
     /// ghost episodes across all namespaces. Wraps `Memory::ghost_episodes`.
@@ -450,7 +449,7 @@ impl JsMemory {
     }
 
     /// Pin an entity as `ConsumerPinned`, protecting it from dream
-    /// reclassification (Phase C DoD C5 / C7).
+    /// reclassification.
     ///
     /// Writes `entity_type_source = 'ConsumerPinned'` on the entity row.
     /// Wraps `Memory::assert_entity_type`.
@@ -473,7 +472,7 @@ impl JsMemory {
             })
     }
 
-    /// Forget (hard-delete) all episodes matching `source_id` in `namespace` (B7).
+    /// Forget (hard-delete) all episodes matching `source_id` in `namespace`.
     ///
     /// Wraps `Memory::forget().by_source_id(source_id).in_namespace(namespace)`.
     /// AppendOnly namespaces reject with `NamespacePolicyViolation`. When `namespace`
@@ -507,9 +506,9 @@ impl JsMemory {
         Ok(deleted as f64)
     }
 
-    /// Bound a fact's world-time `valid_to` window explicitly (ADR-071 §Item 3,
-    /// TD-070) — the consumer-facing, consumer-EXPLICIT half of the
-    /// supersession gap (auto-detected supersession is deferred, TD-P1-AUTO).
+    /// Bound a fact's world-time `valid_to` window explicitly — the
+    /// consumer-facing, consumer-EXPLICIT half of the supersession gap
+    /// (auto-detected supersession is deferred to a future release).
     ///
     /// Wraps `Memory::supersede(factId).at(validTo).with_reason(reason?)
     /// .in_namespace(namespace)`. `validTo` is an RFC-3339 timestamp string; a
@@ -522,14 +521,14 @@ impl JsMemory {
     /// (`expiredAt = validTo`, `supersessionsRecorded` increments) —
     /// see `kremory::SupersedeRequest` for the full two-phase mechanism.
     ///
-    /// When `closeNow == true` (consumer-API hardening D4b), the deterministic
+    /// When `closeNow == true`, the deterministic
     /// `window_closeout` sweep runs INLINE right after bounding, retiring
     /// already-past-dated bounds in this one call — mirrors
     /// `SupersedeRequest::close_now()`. Only past-dated bounds retire; a
     /// future-dated bound returns `retired == 0` (deferred to a later dream sweep).
     ///
     /// Returns a `JsSupersedeOutcome` `{ outcome, retired }` where `outcome` is
-    /// `"bounded"` | `"rejected_time_inversion"` | `"not_found"` (mirrors the D4a
+    /// `"bounded"` | `"rejected_time_inversion"` | `"not_found"` (mirrors the
     /// honest `kremory::SupersedeOutcome::Bounded` rename) and `retired` is the
     /// in-band inline-close count (`0` unless `closeNow` retired past-dated bounds).
     #[napi]
@@ -581,10 +580,10 @@ impl JsMemory {
         Ok(convert::supersede_outcome_to_js(outcome))
     }
 
-    // ── Reversible-graph-mutations (ADR-073 Tier-1) — undo + inspect ──────────
+    // ── Reversible-graph-mutations (Tier-1) — undo + inspect ──────────────────
 
     /// Reverse ANY logged, reversible mutation by its `mutationId` — the unified
-    /// undo dispatcher (ADR-073 DX R1/R2). Wraps `Memory::undo`.
+    /// undo dispatcher. Wraps `Memory::undo`.
     ///
     /// Reads the mutation's kind and routes to the correct per-kind undo, returning
     /// a flat `UndoOutcome` `{ kind, unmerge?, editEntity?, deleteEntity?,
@@ -618,7 +617,7 @@ impl JsMemory {
         Ok(convert::undo_outcome_to_js(outcome))
     }
 
-    /// Reverse a prior entity-merge by its `mutationId` (ADR-073 Tier-1, §4.2).
+    /// Reverse a prior entity-merge by its `mutationId` (Tier-1).
     ///
     /// Fully restores the loser entity, its facts, its episodic edges, and the
     /// keeper's overwritten `access_count` / `ner_confidence`, then records a merge
@@ -638,7 +637,7 @@ impl JsMemory {
     }
 
     /// Restore a fact previously moved to `facts_archive` (P2 archival) back into
-    /// the live `facts` table (ADR-073 Tier-1, §4.4). Wraps
+    /// the live `facts` table (Tier-1). Wraps
     /// `Memory::restore_archived_fact`.
     ///
     /// Idempotent: if the fact is already live, returns `alreadyLive = true` and
@@ -660,7 +659,7 @@ impl JsMemory {
     }
 
     /// Clear a supersession bound (`valid_to` / `expired_at`) set by `supersede`,
-    /// re-opening the fact as currently-true (ADR-073 Tier-1, §4.5). Wraps
+    /// re-opening the fact as currently-true (Tier-1). Wraps
     /// `Memory::unsupersede`.
     ///
     /// Idempotent: a fact with no bound set returns `outcome = "not_superseded"`
@@ -677,7 +676,7 @@ impl JsMemory {
     }
 
     /// Edit an entity — retype or rename — with full FK-propagation, provenance,
-    /// and reconciler-freeze re-open (ADR-073 Tier-2a, §4.3). Completes the
+    /// and reconciler-freeze re-open (Tier-2a). Completes the
     /// diarization flow (rename `"Speaker 1"` → `"Alice"` propagating to all its
     /// facts). Wraps `Memory::edit_entity`.
     ///
@@ -721,8 +720,8 @@ impl JsMemory {
         Ok(convert::edit_entity_outcome_to_js(outcome))
     }
 
-    /// Reverse a prior `editEntity` from its provenance snapshot (ADR-073 Tier-2a,
-    /// §4.3). Pass the `mutationId` from the `EditEntityOutcome` (or from
+    /// Reverse a prior `editEntity` from its provenance snapshot (Tier-2a).
+    /// Pass the `mutationId` from the `EditEntityOutcome` (or from
     /// `mutationHistory` / `listMutations`). Idempotent. Wraps
     /// `Memory::undo_entity_edit`.
     #[napi]
@@ -736,7 +735,7 @@ impl JsMemory {
         Ok(convert::edit_entity_outcome_to_js(outcome))
     }
 
-    /// Delete an entity, reversibly (ADR-073 Tier-2b, §4.4). Archives the entity's
+    /// Delete an entity, reversibly (Tier-2b). Archives the entity's
     /// facts (recoverable — never hard-deleted), removes its edges / community
     /// membership / FTS / row, and retracts the DERIVED artifacts of neighbours whose
     /// live-fact support drops to zero. Reverse via `undoDeleteEntity` with the
@@ -763,7 +762,7 @@ impl JsMemory {
         Ok(convert::delete_entity_outcome_to_js(outcome))
     }
 
-    /// Delete a single fact, reversibly (ADR-073 Tier-2b, §4.5). The fact is archived
+    /// Delete a single fact, reversibly (Tier-2b). The fact is archived
     /// (recoverable via `restoreArchivedFact`); either endpoint whose support drops to
     /// zero has its DERIVED community membership retracted. Reverse via `undoDeleteFact`.
     /// A fact id is global (not namespace-scoped). Wraps `Memory::delete_fact`.
@@ -778,8 +777,8 @@ impl JsMemory {
         Ok(convert::delete_fact_outcome_to_js(outcome))
     }
 
-    /// Reverse a prior `deleteEntity` from its provenance snapshot (ADR-073 Tier-2b,
-    /// §4.4) — re-inserts the entity + FTS, restores its archived facts + episodic
+    /// Reverse a prior `deleteEntity` from its provenance snapshot (Tier-2b)
+    /// — re-inserts the entity + FTS, restores its archived facts + episodic
     /// edges, and un-retracts every community membership the cascade retracted.
     /// Idempotent. Wraps `Memory::undo_delete_entity`.
     #[napi]
@@ -798,8 +797,8 @@ impl JsMemory {
         Ok(convert::delete_entity_outcome_to_js(outcome))
     }
 
-    /// Reverse a prior `deleteFact` from its provenance snapshot (ADR-073 Tier-2b,
-    /// §4.5) — restores the archived fact + un-retracts any neighbour the cascade
+    /// Reverse a prior `deleteFact` from its provenance snapshot (Tier-2b) —
+    /// restores the archived fact + un-retracts any neighbour the cascade
     /// retracted. Idempotent. Wraps `Memory::undo_delete_fact`.
     #[napi]
     pub async fn undo_delete_fact(&self, mutation_id: i64) -> napi::Result<JsDeleteFactOutcome> {
@@ -812,8 +811,8 @@ impl JsMemory {
         Ok(convert::delete_fact_outcome_to_js(outcome))
     }
 
-    /// Inspect the mutations that touched one entity, newest-first (ADR-073 Tier-1,
-    /// §3 "Inspect surface") — the SEE half of the see+fix story. Each record
+    /// Inspect the mutations that touched one entity, newest-first (Tier-1) —
+    /// the SEE half of the see+fix story. Each record
     /// carries the `mutationId` to pass to `unmerge`. Includes already-undone
     /// mutations. Wraps `Memory::mutation_history`.
     ///
@@ -845,9 +844,8 @@ impl JsMemory {
             .collect())
     }
 
-    /// List logged graph mutations, newest-first (ADR-073 Tier-1, §3 "Inspect
-    /// surface"). Each record carries its `mutationId` to undo. Wraps
-    /// `Memory::list_mutations`.
+    /// List logged graph mutations, newest-first (Tier-1). Each record
+    /// carries its `mutationId` to undo. Wraps `Memory::list_mutations`.
     ///
     /// Filter via `opts`: `namespace` scopes to one namespace (else the
     /// `defaultNamespace`, else ALL namespaces); `kind` restricts the mutation kind
@@ -912,7 +910,7 @@ impl JsMemory {
     /// results — the string form built for an LLM consumer, rather than the
     /// structured rows [`recall`] returns.
     ///
-    /// TD-155 (2026-07-28): the binding previously hardcoded `.raw()`, so a Node
+    /// Previously the binding hardcoded `.raw()`, so a Node
     /// consumer could not reach this rendering at all — even though the Rust
     /// facade has always offered both terminals and the MCP tool surface
     /// DEFAULTS to it. Measured worth on LoCoMo: **~+4pt answerability, +10.8pt
@@ -1005,7 +1003,7 @@ impl JsMemory {
             .as_ref()
             .and_then(|o| o.as_of.as_deref())
             .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
-        // ADR-078: a negative or zero `rerankK` is dropped rather than coerced
+        // A negative or zero `rerankK` is dropped rather than coerced
         // to a default — `rerank_k` takes `usize`, and silently reranking at
         // some invented depth would be the "silent default" this project bans
         // on parsed input. Omit the knob and you get no rerank, which is the
@@ -1066,7 +1064,7 @@ impl JsMemory {
             .collect())
     }
 
-    /// Bulk-ingest multiple episodes in a single batch (ADR-034 §B8).
+    /// Bulk-ingest multiple episodes in a single batch.
     ///
     /// Wraps `Memory::remember_batch()`. Each entry in `opts.episodes` maps to
     /// one `RememberBatchBuilder::entry(content).in_namespace(ns).done()` call.
@@ -1142,7 +1140,7 @@ impl JsMemory {
             .collect())
     }
 
-    /// Query Phase 2 enrichment status for a background ingest run (ADR-034 §H1).
+    /// Query Phase 2 enrichment status for a background ingest run.
     ///
     /// Wraps `Memory::status_of`. `commit_id` must be the RFC-4122 UUID string
     /// from `IngestResult.run_id` (NOT `IngestResult.episode_entity_id`, which
@@ -1177,8 +1175,7 @@ impl JsMemory {
         Ok(convert::ingest_status_to_js(status))
     }
 
-    /// Block until Phase 2 enrichment for `commitId` reaches a terminal status
-    /// (ADR-034 §H2).
+    /// Block until Phase 2 enrichment for `commitId` reaches a terminal status.
     ///
     /// Wraps `Memory::await_enrichment`. `commit_id` is the RFC-4122 UUID
     /// string from `IngestResult.run_id` (NOT `IngestResult.episode_entity_id`).
@@ -1215,14 +1212,13 @@ impl JsMemory {
     }
 
     /// Block until the dream-phase run identified by `handleId` reaches a
-    /// terminal status (ADR-034 §H3).
+    /// terminal status.
     ///
     /// Wraps `Memory::await_dream`. `timeoutMs` is mandatory.
     /// Returns `DreamStatusResult` with `status` one of:
     /// `"pending"` | `"processing"` | `"complete"` | `"failed"`.
     ///
-    /// # Currently unreachable (F41, public-docs-and-api-surface-audit
-    /// phase1-findings.md)
+    /// # Currently unreachable
     ///
     /// No public JS (or Rust facade) call currently PRODUCES a `handleId` —
     /// `Memory.dream()` always blocks inline and returns a `DreamSummary`
@@ -1260,8 +1256,7 @@ impl JsMemory {
         Ok(convert::dream_status_to_js(status))
     }
 
-    /// Block until all episodes in `batchId` reach a terminal status
-    /// (ADR-034 §H4).
+    /// Block until all episodes in `batchId` reach a terminal status.
     ///
     /// Wraps `Memory::await_batch`. `timeoutMs` is mandatory.
     /// Returns `BatchStatus` with `total`, `completed`, `skipped`, `failed`.
@@ -1282,7 +1277,7 @@ impl JsMemory {
         Ok(convert::batch_status_to_js(status))
     }
 
-    /// Cancel an in-flight Phase 2 or Phase 3 run for `commitId` (ADR-034 §C1).
+    /// Cancel an in-flight Phase 2 or Phase 3 run for `commitId`.
     ///
     /// Wraps `Memory::cancel`. `commit_id` is the RFC-4122 UUID string from
     /// `IngestResult.run_id` (NOT `IngestResult.episode_entity_id`).
@@ -1309,13 +1304,12 @@ impl JsMemory {
         Ok(convert::cancel_outcome_to_js(outcome))
     }
 
-    /// Cancel a dream-phase run by its handle UUID (ADR-034 §C2).
+    /// Cancel a dream-phase run by its handle UUID.
     ///
     /// Wraps `Memory::cancel_dream`. `handleId` is the RFC-4122 UUID string of
     /// the dream run. Returns `CancelOutcome`.
     ///
-    /// # Currently unreachable (F41, public-docs-and-api-surface-audit
-    /// phase1-findings.md)
+    /// # Currently unreachable
     ///
     /// Same gap as `awaitDream` above: no public call produces a `handleId`
     /// to cancel, because `Memory.dream()` always blocks inline. See that
@@ -1340,12 +1334,11 @@ impl JsMemory {
         Ok(convert::cancel_outcome_to_js(outcome))
     }
 
-    /// Register a namespace and its policy explicitly, ahead of any writes
-    /// (ADR-034 §N1, ADR-029a).
+    /// Register a namespace and its policy explicitly, ahead of any writes.
     ///
     /// Wraps `Memory::register_namespace`. Idempotent for same policy; returns
     /// error on downgrade attempt. Calling at startup before `remember` is the
-    /// recommended pattern per ADR-029a Decision 6.
+    /// recommended pattern.
     #[napi]
     pub async fn register_namespace(&self, namespace: String) -> napi::Result<()> {
         self.inner
@@ -1355,7 +1348,7 @@ impl JsMemory {
     }
 
     /// Monotonically upgrade a namespace's immutability from `Mutable` to
-    /// `AppendOnly` (ADR-034 §N2, ADR-029b Decision 5).
+    /// `AppendOnly`.
     ///
     /// Wraps `Memory::upgrade_namespace_policy`. One-way ratchet: downgrade
     /// attempts return an error. Idempotent if already `AppendOnly`.
@@ -1369,8 +1362,8 @@ impl JsMemory {
             })
     }
 
-    /// TD-211 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-211): fill the
-    /// entity embedding gap — every entity whose `embedding` is still NULL.
+    /// Fill the entity embedding gap — every entity whose `embedding` is
+    /// still NULL.
     /// Wraps `Memory::backfill_entity_embeddings`. Unlike a full re-embed,
     /// this NEVER touches a row that already carries an embedding — safe to
     /// run against a live corpus, and idempotent (a second call finds
@@ -1396,7 +1389,7 @@ impl JsMemory {
         Ok(convert::embedding_backfill_to_js(stats))
     }
 
-    /// TD-211: fill the fact embedding gap — every fact whose `embedding` is
+    /// Fill the fact embedding gap — every fact whose `embedding` is
     /// still NULL. Wraps `Memory::backfill_fact_embeddings`. Same NULL-only,
     /// idempotent contract as `backfillEntityEmbeddings`.
     ///
@@ -1446,10 +1439,10 @@ impl JsMemory {
 // `MemoryBuilder::IntoFuture` is only implemented for `<WithLlm, WithEmbedder>` and
 // `<NoLlm, WithEmbedder>`. Therefore every builder path that ends in `.await` must have
 // both an LLM (optional for NoLlm path) AND an embedder set. The `withEmbedder`
-// callback is required when extractor knobs are used — the ADR-039 §6 compat matrix
+// callback is required when extractor knobs are used — the compat matrix
 // lists no row where an extractor is set without a BYOM embedder.
 
-/// Open a Memory with a caller-supplied JS embedder callback (ADR-030 Tier-2).
+/// Open a Memory with a caller-supplied JS embedder callback (Tier-2).
 ///
 /// Also applies any BYOE extractor / GLiNER knobs from the options object.
 /// Called when `opts.withEmbedder` is present.
@@ -1474,7 +1467,7 @@ async fn open_with_js_embedder(
     let emb: Arc<dyn kremory::DynEmbeddingProvider> =
         bridge::into_arc(bridge::JsEmbedderBridge::new(tsfn, expected_dim));
 
-    // F46 cause-fix: a BYOE extractor is exactly the documented "NoLlm
+    // A BYOE extractor is exactly the documented "NoLlm
     // typestate" case (`{ embedder, extractor }` → `ExtractorKind::Custom`,
     // per this fn's own doc comment above). Env-detecting an LLM here was
     // unconditional — forcing `MemoryBuilder<WithLlm, _>` regardless of

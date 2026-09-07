@@ -9,7 +9,7 @@ use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact, SourceKi
 
 // ── Input option structs ──────────────────────────────────────────────────────
 
-/// GLiNER configuration passed via `MemoryOpenOptionsJs.gliner` (ADR-039 Part 10).
+/// GLiNER configuration passed via `MemoryOpenOptionsJs.gliner`.
 ///
 /// # ⚠ Reserved / inert knobs — presence is the ONLY live signal
 ///
@@ -20,7 +20,7 @@ use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact, SourceKi
 /// with substrate defaults. To tune the span threshold today, set the
 /// `KREMORY_GLINER_THRESHOLD` env var (the substrate reads it, falling back to
 /// 0.3). These fields are retained (not removed) so the JS shape is forward-stable
-/// for when `GlinerConfig` gains public tuning knobs (ADR-039 §A6); they will
+/// for when `GlinerConfig` gains public tuning knobs; they will
 /// become live then.
 ///
 /// Requires kremory-napi built with `--features ner`. Passing this field on a
@@ -29,25 +29,25 @@ use kremory::{DreamSummary, Namespace, RetrievedContext, RetrievedFact, SourceKi
 #[derive(Default)]
 pub struct GlinerConfigJs {
     /// RESERVED / inert — model file path override. Not threaded to the substrate
-    /// today (`with_gliner()` takes no arg); reserved for a future ADR-039 §A6
+    /// today (`with_gliner()` takes no arg); reserved for a future
     /// tuning surface. `null` = use default bundled model.
     pub model_path: Option<String>,
     /// RESERVED / inert — span-detection confidence threshold in `[0.0, 1.0]`. Not
     /// threaded to the substrate today; set `KREMORY_GLINER_THRESHOLD` env instead
-    /// (substrate default `0.3`). Reserved for a future ADR-039 §A6 tuning surface.
+    /// (substrate default `0.3`). Reserved for a future tuning surface.
     pub threshold: Option<f64>,
 }
 
-// (F2) `From<GlinerConfigJs> for GlinerConfig` removed — `with_gliner()` no longer
+// `From<GlinerConfigJs> for GlinerConfig` removed — `with_gliner()` no longer
 // takes a config arg, so the conversion had no caller (dead code). GlinerConfigJs
 // is retained as the JS-side enable-signal (presence of `opts.gliner`). Restore a
-// mapping here if/when GlinerConfig gains public tuning knobs (ADR-039 §A6).
+// mapping here if/when GlinerConfig gains public tuning knobs.
 
-/// Options for `Memory.open` — live napi/cdylib build (Shape B, ADR-039 Part 10).
+/// Options for `Memory.open` — live napi/cdylib build.
 ///
 /// Replaces the old string-literal `extractor: 'auto'|'hybrid'|'nuextract'` API.
 /// Mirrors the Rust `MemoryBuilder` composable knobs:
-///   - `{ embedder, llm }`          → `ExtractorKind::IntegerId` (default since ADR-056;
+///   - `{ embedder, llm }`          → `ExtractorKind::IntegerId` (the default;
 ///                                     3-stage integer-ID extractor. Was `Llm`/graphiti.)
 ///   - `{ embedder, llm, gliner }`  → `ExtractorKind::GlinerLlm`
 ///   - `{ embedder, extractor }`    → `ExtractorKind::Custom` (NoLlm typestate)
@@ -71,7 +71,7 @@ pub struct JsOpenOptions {
     /// Default namespace applied to all operations on this handle when no
     /// per-call namespace is specified.
     pub default_namespace: Option<String>,
-    /// Optional BYOM embedder callback (ADR-030 Tier-2).
+    /// Optional BYOM embedder callback (Tier-2).
     ///
     /// Callback signature: `(text: string) => Promise<number[]>`.
     ///
@@ -84,11 +84,11 @@ pub struct JsOpenOptions {
             napi::threadsafe_function::ErrorStrategy::CalleeHandled,
         >,
     >,
-    /// GLiNER configuration (ADR-039 Shape B). When set, selects
+    /// GLiNER configuration. When set, selects
     /// `ExtractorKind::GlinerLlm` and requires `llm` to also be set.
     /// Requires kremory-napi built with `--features ner`.
     pub gliner: Option<GlinerConfigJs>,
-    /// External (BYOE) extractor bridge (ADR-039 Shape B).
+    /// External (BYOE) extractor bridge.
     ///
     /// When set, selects `ExtractorKind::Custom`. Mutually exclusive with
     /// `gliner` — setting both returns an error.
@@ -98,7 +98,7 @@ pub struct JsOpenOptions {
     /// called with the raw napi-rs error-first convention (`err` always
     /// `null`, real text is the second argument). See `ExternalExtractorJs`
     /// / `ExternalExtractorHandle` in bridge.rs for the full interface and
-    /// why (F45, public-docs-and-api-surface-audit phase1-findings.md).
+    /// why.
     #[napi(
         ts_type = "{ name: string, extract: (err: null, text: string) => Promise<{ entities: Array<{ name: string, label: string }>, facts: Array<{ subject: string, predicate: string, object: string }> }> } | undefined | null"
     )]
@@ -144,10 +144,10 @@ impl napi::bindgen_prelude::FromNapiValue for JsOpenOptions {
 /// `JsRememberOptions.structuredFacts`.
 ///
 /// When present, these triples are pinned directly into the kremory graph at
-/// ingest time, BEFORE the Phase 2 LLM extractor runs (ADR-035 Path X /
-/// Option A). LLM-extracted duplicates of the same `(subject, predicate,
-/// object)` triple are silently swallowed by the substrate's
-/// `try_insert_fact` helper — caller wins by virtue of being there first.
+/// ingest time, BEFORE the Phase 2 LLM extractor runs. LLM-extracted
+/// duplicates of the same `(subject, predicate, object)` triple are silently
+/// swallowed by the substrate's `try_insert_fact` helper — caller wins by
+/// virtue of being there first.
 ///
 /// To skip Phase 2 LLM extraction entirely (caller is the sole source of
 /// truth for facts), set `JsRememberOptions.skipExtraction = true`.
@@ -161,8 +161,8 @@ impl napi::bindgen_prelude::FromNapiValue for JsOpenOptions {
 ///   `"observation"`). When absent, the substrate uses its default.
 ///
 /// All required fields (subject, predicate, object) fail loudly with a
-/// descriptive `napi::Error` on missing/malformed values per ADR-035 §3
-/// (`llm-output-parse-loudly` discipline applied at the binding layer).
+/// descriptive `napi::Error` on missing/malformed values rather than
+/// silently defaulting.
 #[napi(object, js_name = "StructuredFact")]
 #[derive(Debug, Clone)]
 pub struct JsStructuredFact {
@@ -228,8 +228,8 @@ impl TryFrom<JsStructuredFact> for kremory::memory::types::StructuredFact {
     }
 }
 
-/// Options for `JsMemory.remember(opts)` — the single ingest surface per
-/// ADR-034 (collapses prior `JsMemory.ingest(text, opts)` +
+/// Options for `JsMemory.remember(opts)` — the single ingest surface
+/// (collapses prior `JsMemory.ingest(text, opts)` +
 /// `JsMemory.ingest_episode(draft)`).
 ///
 /// All fields except `content` are optional. Backward compat: `structured_facts:
@@ -255,7 +255,7 @@ pub struct JsRememberOptions {
     /// ISO-8601 / RFC-3339 timestamp used as the `published_at` bi-temporal
     /// anchor. When omitted, the substrate uses the ingest time.
     pub reference_time: Option<String>,
-    /// Pre-extracted RDF triples (ADR-035 Path X). When supplied, caller
+    /// Pre-extracted RDF triples. When supplied, caller
     /// facts are pinned BEFORE Phase 2 LLM extraction; LLM-extracted
     /// duplicates of the same triple are silently swallowed.
     pub structured_facts: Option<Vec<JsStructuredFact>>,
@@ -286,7 +286,7 @@ pub struct JsRecallOptions {
     /// Mutually exclusive with `in_namespaces` — setting both rejects at
     /// `.await` time with `ConflictingNamespaceSelectors`.
     pub namespace: Option<String>,
-    /// Multi-namespace recall (ADR-029c). Set instead of `namespace` to query
+    /// Multi-namespace recall. Set instead of `namespace` to query
     /// across many namespaces and receive RRF-blended results with per-row
     /// `namespace` attribution on each `JsRetrievedContext`.
     pub in_namespaces: Option<Vec<String>>,
@@ -308,15 +308,15 @@ pub struct JsRecallOptions {
     /// document type, conversation id, session id, or any custom key.
     pub filter_metadata: Option<Vec<JsMetadataFilter>>,
     /// Rerank the top-`n` fused candidates with a cross-encoder before
-    /// returning (substrate `SearchOpts::rerank_k` / TD-062). Omitted (the
+    /// returning (substrate `SearchOpts::rerank_k`). Omitted (the
     /// default) = no rerank.
     ///
     /// Mirrors the substrate field's own always-present contract: the option
-    /// is ACCEPTED regardless of build features (Rule 16 surface parity), and
-    /// is a documented no-op unless the binding was compiled with the
-    /// `rerank` feature. ADR-078 measured `n = 50` as the only depth that
-    /// changes which items reach the top-10 — `n = 20` permutes the same set
-    /// and leaves recall/hit-rate identical to no rerank at all.
+    /// is ACCEPTED regardless of build features, and is a documented no-op
+    /// unless the binding was compiled with the `rerank` feature.
+    /// Measurement found `n = 50` is the only depth that changes which items
+    /// reach the top-10 — `n = 20` permutes the same set and leaves
+    /// recall/hit-rate identical to no rerank at all.
     pub rerank_k: Option<i64>,
 }
 
@@ -328,7 +328,7 @@ pub struct JsIngestResult {
     /// Stable entity ID under which the episode is searchable immediately.
     /// This is a graph node UUID, NOT a run ID — see `run_id` below.
     pub episode_entity_id: String,
-    /// Background run identifier (Quinn Cycle 2 M-01 fix). Present when the
+    /// Background run identifier. Present when the
     /// substrate spawned a background Phase 2 enrichment task; absent when the
     /// inline path was used (no run to poll). Pass this string to
     /// `Memory.statusOf`, `Memory.awaitEnrichment`, or `Memory.cancel` to track
@@ -375,7 +375,7 @@ pub struct JsTypeProposal {
     pub justification: String,
 }
 
-/// Per-op ACTUALLY-RAN signal on `DreamSummary` (consumer-API hardening D1b).
+/// Per-op ACTUALLY-RAN signal on `DreamSummary`.
 ///
 /// Mirrors substrate `kremory::ConsolidationOpsRan`. With the all-ops-ON dream
 /// defaults, a consumer can no longer read an all-zero consolidation count as
@@ -400,28 +400,28 @@ pub struct JsConsolidationOpsRan {
 /// fields are safe as JS `number` (f64) — usize/u64 values far below 2^53 at
 /// practical memory scale.
 ///
-/// The `crossEpisodeWouldMerge` / `crossEpisodeMerged` split (D5) is the in-band
+/// The `crossEpisodeWouldMerge` / `crossEpisodeMerged` split is the in-band
 /// would-merge/did-merge distinction — `wouldMerge` counts every merge DECISION
 /// (both shadow + apply branches), `merged` counts only ACTUAL fusions (equals
-/// `wouldMerge` in apply mode, `0` in shadow). Use `consolidationOpsRan` (D1b) to
+/// `wouldMerge` in apply mode, `0` in shadow). Use `consolidationOpsRan` to
 /// tell "op disabled" from "op ran, found nothing" on any all-zero count.
 #[napi(object, js_name = "DreamSummary")]
 pub struct JsDreamSummary {
     pub communities_updated: f64,
-    /// Cross-episode merge DECISIONS this pass ("would-merge", D5). Does NOT imply
+    /// Cross-episode merge DECISIONS this pass ("would-merge"). Does NOT imply
     /// entities were fused — see `crossEpisodeMerged`.
     pub cross_episode_would_merge: f64,
-    /// Cross-episode merges that ACTUALLY committed this pass (D5). Equals
+    /// Cross-episode merges that ACTUALLY committed this pass. Equals
     /// `crossEpisodeWouldMerge` in apply mode, `0` in shadow (the default).
     pub cross_episode_merged: f64,
     pub supersessions_recorded: f64,
     pub facts_archived: f64,
-    /// Per-op ran-signal (D1b) — disambiguates "op disabled" from "op ran, found
+    /// Per-op ran-signal — disambiguates "op disabled" from "op ran, found
     /// nothing" for the all-zero consolidation counts above.
     pub consolidation_ops_ran: JsConsolidationOpsRan,
     /// `true` when a consolidation op was skipped because a per-pass budget
     /// ceiling (token or USD) tripped — distinguishes "nothing to spend" from
-    /// "spend was capped" (ADR-071 §Item 4a / TD-060).
+    /// "spend was capped".
     pub budget_exhausted: bool,
     pub duration_ms: f64,
     pub types_discovered: Vec<JsTypeProposal>,
@@ -435,18 +435,18 @@ pub struct JsDreamSummary {
 }
 
 /// Options for `JsMemory.dream`. All fields are optional — omit to use the
-/// substrate `DreamOpts::default()` (consumer-API hardening D1: all four
-/// consolidation ops default ON, made safe by ADR-073 Tier-1 reversibility).
+/// substrate `DreamOpts::default()` — all four consolidation ops default ON,
+/// made safe by Tier-1 reversibility (each op is undoable/restorable).
 ///
-/// # DreamOpts field enumeration (D2 / `schemas-enumerate-touching-layers`)
+/// # DreamOpts field enumeration
 ///
 /// The substrate `DreamOpts` has 18 pub fields. Each is either EXPOSED here or
 /// deliberately OMITTED with a reason:
 ///
-/// **Exposed (consolidation control — the D2 binding-parity surface):**
+/// **Exposed (consolidation control — the binding-parity surface):**
 /// `includeCommunityDetection`, `includeFactArchival`, `includeSupersessionSweep`,
 /// `includeSupersessionLlmNominate`, `crossEpisodeMode` (the honest tri-state that
-/// maps onto `include_cross_episode_merges` + `cross_episode_dry_run` per O1 —
+/// maps onto `include_cross_episode_merges` + `cross_episode_dry_run` —
 /// exposed as ONE string, never the two raw bools, to prevent the illegal
 /// `apply`+`dry_run` combo), `archiveGraceDays`, `netMutationWarnFloor`,
 /// `consolidationBudgetTokens`, `consolidationBudgetUsdMicro`.
@@ -455,17 +455,17 @@ pub struct JsDreamSummary {
 /// - `since`, `maxEpisodesPerRun` — run-scoping filters; the napi `dream()` operates
 ///   over all un-dreamed episodes. Per-run scoping is reachable via
 ///   `runDreamPassSync`'s `DreamPassOptions.maxEpisodesPerRun`; a timestamp `since`
-///   filter is deferred (v0.2.0).
+///   filter is deferred to a future release.
 /// - `includeTypeDiscovery`, `includeConsistencyCheck`, `includeTypeRegistryCollapse`,
 ///   `includeAcronymNicknameRecall`, `includeTypeNoveltyLlmVerify` — RECONCILIATION
-///   pass toggles (a different concern from the consolidation sub-phase this D2
+///   pass toggles (a different concern from the consolidation sub-phase this
 ///   surface targets). All default-ON; type-discovery is separately tunable via
 ///   `runDreamPassSync`'s `DreamPassOptions.includeTypeDiscovery`. Exposing the full
-///   reconciliation-pass matrix on `dream()` is deferred (v0.2.0).
-/// - `includeEvidenceRetypeBySimilarity` — reason: unvalidated, TD-123
-///   quarantine, default-false. NOT exposed on `JsDreamOpts`; the default-false
-///   pass-through (substrate `DreamOpts::default()`) is the correct binding
-///   behaviour until TD-123 lifts the quarantine.
+///   reconciliation-pass matrix on `dream()` is deferred to a future release.
+/// - `includeEvidenceRetypeBySimilarity` — reason: unvalidated and quarantined
+///   pending further evaluation, default-false. NOT exposed on `JsDreamOpts`;
+///   the default-false pass-through (substrate `DreamOpts::default()`) is the
+///   correct binding behaviour until the quarantine lifts.
 #[napi(object, js_name = "DreamOptions")]
 pub struct JsDreamOpts {
     /// Namespace to dream within. `null`/omit for Memory handle's default.
@@ -482,7 +482,7 @@ pub struct JsDreamOpts {
     /// Also run supersession's OPT-IN LLM-nominated value-change lane (only
     /// meaningful when `includeSupersessionSweep` is on). Default `false`.
     pub include_supersession_llm_nominate: Option<bool>,
-    /// Cross-episode entity-merge control (O1). One of `"off"` | `"shadow"` |
+    /// Cross-episode entity-merge control. One of `"off"` | `"shadow"` |
     /// `"apply"` — the honest tri-state that maps onto the substrate's coupled
     /// `include_cross_episode_merges` + `cross_episode_dry_run` bools. Default
     /// (omit) = the substrate default (`"shadow"` — computes decisions, fuses
@@ -497,7 +497,7 @@ pub struct JsDreamOpts {
     pub consolidation_budget_tokens: Option<f64>,
     /// Per-run USD-micro budget ceiling. INERT today (every op's per-call USD
     /// projection is 0 — the effective budget is token-based); reserved for a
-    /// future real cost source (D6). Default: no USD cap.
+    /// future real cost source. Default: no USD cap.
     pub consolidation_budget_usd_micro: Option<f64>,
 }
 
@@ -506,8 +506,8 @@ pub struct JsDreamOpts {
 /// posture — never a struct literal). Template = `js_dream_pass_opts_to_rust`.
 ///
 /// `namespace` is NOT consumed here — it is resolved separately by `dream()`.
-/// An unknown `cross_episode_mode` string fails LOUDLY (`llm-output-parse-loudly`
-/// extended to consumer input) rather than silently defaulting.
+/// An unknown `cross_episode_mode` string fails LOUDLY rather than silently
+/// defaulting.
 pub fn js_dream_opts_to_rust(js: Option<JsDreamOpts>) -> napi::Result<kremory::DreamOpts> {
     let mut base = kremory::DreamOpts::default();
     let Some(o) = js else {
@@ -537,7 +537,7 @@ pub fn js_dream_opts_to_rust(js: Option<JsDreamOpts>) -> napi::Result<kremory::D
     if let Some(v) = o.consolidation_budget_usd_micro {
         base.consolidation_budget_usd_micro = Some(v as u64);
     }
-    // O1: cross_episode as a single mode string, mapped onto the two coupled bools
+    // cross_episode as a single mode string, mapped onto the two coupled bools
     // (never exposed raw — prevents the illegal apply+dry_run combination). Parse
     // loudly: an unknown value is a caller error, surfaced not silently defaulted.
     if let Some(mode) = o.cross_episode_mode.as_deref() {
@@ -562,7 +562,7 @@ pub fn js_dream_opts_to_rust(js: Option<JsDreamOpts>) -> napi::Result<kremory::D
     Ok(base)
 }
 
-/// Options for `JsMemory.runDreamPassSync` (Phase C DoD C2 / C7).
+/// Options for `JsMemory.runDreamPassSync`.
 ///
 /// All fields optional — omit to use defaults from `DreamPassOpts::default()`.
 #[napi(object, js_name = "DreamPassOptions")]
@@ -606,7 +606,7 @@ pub fn js_dream_pass_opts_to_rust(js: Option<JsDreamPassOpts>) -> kremory::Dream
     }
 }
 
-/// Options for `JsMemory.rememberBatch` — bulk episode ingest per ADR-034.
+/// Options for `JsMemory.rememberBatch` — bulk episode ingest.
 ///
 /// Each entry maps to one `RememberBatchBuilder::entry(…).done()` call.
 /// `batchId` is threaded through to `RememberBatchBuilder::with_batch_id`.
@@ -618,7 +618,7 @@ pub struct JsBatchOptions {
     pub batch_id: Option<String>,
 }
 
-/// Result of `JsMemory.statusOf` / `JsMemory.awaitEnrichment` per ADR-034.
+/// Result of `JsMemory.statusOf` / `JsMemory.awaitEnrichment`.
 ///
 /// Maps substrate `IngestStatus` to a flat JS object with a discriminator string
 /// so consumers can switch on `result.status` without a Rust enum on the wire.
@@ -634,7 +634,7 @@ pub struct JsIngestStatusResult {
     pub error_message: Option<String>,
 }
 
-/// Result of `JsMemory.awaitDream` per ADR-034.
+/// Result of `JsMemory.awaitDream`.
 ///
 /// Maps substrate `DreamStatus`. `status` is one of:
 /// `"pending"` | `"processing"` | `"complete"` | `"failed"`.
@@ -646,7 +646,7 @@ pub struct JsDreamStatusResult {
     pub error_message: Option<String>,
 }
 
-/// Result of `JsMemory.awaitBatch` per ADR-034.
+/// Result of `JsMemory.awaitBatch`.
 ///
 /// Maps substrate `BatchStatus`. All counters are safe as JS `number` (f64)
 /// since they are usize values at practical memory scale.
@@ -662,7 +662,7 @@ pub struct JsBatchStatus {
     pub failed: f64,
 }
 
-/// Result of `JsMemory.cancel` / `JsMemory.cancelDream` per ADR-034.
+/// Result of `JsMemory.cancel` / `JsMemory.cancelDream`.
 ///
 /// Maps substrate `CancelOutcome`.
 #[napi(object, js_name = "CancelOutcome")]
@@ -676,7 +676,7 @@ pub struct JsCancelOutcome {
     pub partial: Vec<String>,
 }
 
-/// A single connected fact surfaced by recall (ADR-074 / TD-116).
+/// A single connected fact surfaced by recall.
 ///
 /// Maps directly to `kremory::RetrievedFact`. Timestamps are RFC-3339 strings
 /// and episode ids are stringified for JS ergonomics.
@@ -730,11 +730,11 @@ pub fn retrieved_fact_to_js(f: RetrievedFact) -> JsRetrievedFact {
     }
 }
 
-/// A single source reference contributing to a retrieved entity (TD-118).
+/// A single source reference contributing to a retrieved entity.
 ///
 /// Maps directly to `kremory::SourceRef`, mirroring the MCP `SourceRefWire`
-/// shape so the napi and MCP surfaces are two projections of one data model
-/// (`web-app-ui-parity-for-agents`). Timestamps are RFC-3339 strings.
+/// shape so the napi and MCP surfaces are two projections of one data model.
+/// Timestamps are RFC-3339 strings.
 #[napi(object, js_name = "SourceRef")]
 pub struct JsSourceRef {
     /// Source category, e.g. `"meeting"` / `"document"` / `"chat"` / `"episode"`.
@@ -767,7 +767,7 @@ fn source_kind_to_string(kind: SourceKind) -> String {
     }
 }
 
-/// Convert a `kremory::SourceRef` to the napi-facing `JsSourceRef` (TD-118).
+/// Convert a `kremory::SourceRef` to the napi-facing `JsSourceRef`.
 fn source_ref_to_js(sr: SourceRef) -> JsSourceRef {
     JsSourceRef {
         kind: source_kind_to_string(sr.kind),
@@ -790,19 +790,19 @@ pub struct JsRetrievedContext {
     pub summary: String,
     /// Relevance score in the range `[0.0, 1.0]`. Higher is more relevant.
     pub score: f64,
-    /// Source references that contributed to this entity (TD-118). Each entry
+    /// Source references that contributed to this entity. Each entry
     /// carries `kind`/`id`/`occurred_at`/`published_at` — mirroring the MCP
     /// `SourceRefWire` surface so JS consumers get the same provenance the MCP
     /// wire already exposes (previously flattened to bare `id` strings).
     pub source_refs: Vec<JsSourceRef>,
     /// `true` when the entity is a stub placeholder awaiting full extraction.
     pub incomplete: bool,
-    /// Integer entity-type id for this entity within its namespace (TD-013).
+    /// Integer entity-type id for this entity within its namespace.
     ///
     /// Mirrors `entities.entity_type_id`. `0` = "Entity" catch-all sentinel.
     /// Use `entity_type_name` for the human-readable label.
     pub entity_type_id: u32,
-    /// Resolved entity type name (TD-013).
+    /// Resolved entity type name.
     ///
     /// Populated from `COALESCE(entity_types.name, 'Entity')` via the SQL JOIN
     /// already present in all entity SELECT paths. `"Entity"` is the fallback
@@ -813,10 +813,10 @@ pub struct JsRetrievedContext {
     ///
     /// The JS projection of `RetrievedContext::is_content_passage()` — a FIELD
     /// rather than a method, because values crossing the napi boundary are plain
-    /// objects. Same information, the modality's own shape (ADR-031 parity).
+    /// objects. Same information, the modality's own shape.
     ///
-    /// **Read this before using `entityId`.** Since ADR-078 made `content-search`
-    /// a default, `recall(..).raw()` returns a HETEROGENEOUS list, and a passage's
+    /// **Read this before using `entityId`.** Since `content-search` became a
+    /// default, `recall(..).raw()` returns a HETEROGENEOUS list, and a passage's
     /// `entityId` is an **episode id**, not an entity id — passing it to any
     /// entity-scoped call fails with `no entity '<n>' in namespace '<ns>'`.
     /// `entityTypeId` cannot disambiguate either: a passage carries `0`, which is
@@ -827,8 +827,8 @@ pub struct JsRetrievedContext {
     ///   .filter(r => !r.isContentPassage);
     /// ```
     ///
-    /// Added 2026-08-05 — the Rust consumer E2E fell into exactly this
-    /// (V1-CANONICAL §0b-sexies, E2E-2), and the JS surface had the same trap.
+    /// The Rust consumer E2E fell into exactly this same trap, and the JS
+    /// surface had it too.
     pub is_content_passage: bool,
     /// The namespace this result was retrieved from. Set for both single-namespace
     /// (`namespace`) and multi-namespace (`in_namespaces`) recall. `None` for
@@ -837,7 +837,7 @@ pub struct JsRetrievedContext {
     /// Note: only the namespace string is surfaced. `thread` and `policy` fields
     /// on `kremory::Namespace` are not yet exposed via this binding.
     pub namespace: Option<String>,
-    /// Connected facts anchored on this entity (ADR-074 / TD-116) — the
+    /// Connected facts anchored on this entity — the
     /// LLM-consumable knowledge (natural-language fact strings + structured
     /// triple + both bi-temporal clocks + confidence + provenance). Empty for
     /// entities with no connected facts.
@@ -885,7 +885,7 @@ pub fn resolve_recall_namespace(opts: &Option<JsRecallOptions>) -> Option<Namesp
         .map(Namespace::new)
 }
 
-/// Resolve the multi-namespace selector from `JsRecallOptions` (ADR-029c).
+/// Resolve the multi-namespace selector from `JsRecallOptions`.
 /// Returns `None` if `in_namespaces` is unset or empty.
 pub fn resolve_recall_namespaces(opts: &Option<JsRecallOptions>) -> Option<Vec<Namespace>> {
     opts.as_ref()
@@ -896,10 +896,11 @@ pub fn resolve_recall_namespaces(opts: &Option<JsRecallOptions>) -> Option<Vec<N
 
 /// Convert a substrate `kremory::core::schema::Episode` to `JsEpisode`.
 ///
-/// TD-003 Phase G: `source_id` and `source_uri` are now taken directly from the
-/// `Episode` struct (columns were always in the DB; G-2 adds them to the Rust type
-/// and fixes the SELECT projections). The previous workaround that took `source_id`
-/// as a separate `&str` argument and hardcoded `source_uri: None` is removed.
+/// `source_id` and `source_uri` are now taken directly from the
+/// `Episode` struct (these columns were always in the DB; the Rust type and
+/// its SELECT projections have since been updated to include them). The
+/// previous workaround that took `source_id` as a separate `&str` argument
+/// and hardcoded `source_uri: None` is removed.
 pub fn episode_to_js(ep: kremory::core::schema::Episode) -> JsEpisode {
     // id: i64 → f64. Safe: i64 values from SQLite rowid fit in f64 mantissa
     // (2^53 > i64::MAX is false but rowids in practice never exceed 2^53).
@@ -958,8 +959,8 @@ pub fn dream_summary_to_js(s: DreamSummary) -> JsDreamSummary {
 
 /// Convert a substrate `kremory::IngestStatus` to `JsIngestStatusResult`.
 ///
-/// Intermediate-state variants (`Deduplicating`, `Invalidating`) that were added
-/// after ADR-034 are mapped to `"pending"` with a note so consumers are not
+/// Intermediate-state variants (`Deduplicating`, `Invalidating`) that were
+/// added later are mapped to `"pending"` with a note so consumers are not
 /// broken by future substrate additions.
 pub fn ingest_status_to_js(s: kremory::IngestStatus) -> JsIngestStatusResult {
     match s {
@@ -987,11 +988,11 @@ pub fn ingest_status_to_js(s: kremory::IngestStatus) -> JsIngestStatusResult {
             status: "failed".to_string(),
             error_message: Some(msg),
         },
-        // ── DUR-3 wire-layer cause-fix (V1-CANONICAL §4.2, 2026-08-04) ───────
+        // ── Terminal status variants must not fall through to "pending" ──────
         // These three arms were all falling through the catch-all below and
         // being reported to JS as "pending". Two of them are TERMINAL, so a Node
         // consumer polling `statusOf` would poll forever on an episode that was
-        // already finished — DUR-3's exact shape, on the napi surface.
+        // already finished.
         //
         // `EntitiesReady` is the pre-existing one and the worst: it is SQL
         // 'Verified', the state `Memory::wait_for_processing` resolves `Ok(())`
@@ -1078,14 +1079,14 @@ pub fn cancel_outcome_to_js(o: kremory::CancelOutcome) -> JsCancelOutcome {
     }
 }
 
-/// Outcome of `JsMemory.supersede` (ADR-071 §Item 3, consumer-API hardening D4).
+/// Outcome of `JsMemory.supersede`.
 ///
 /// `outcome` is one of `"bounded"` | `"rejected_time_inversion"` | `"not_found"`
 /// (mirrors `kremory::SupersedeOutcome` + the `outcome` label on
 /// `kremory.dream.consolidation.supersede_request_total` 1:1). The honest rename
-/// `Applied` → `Bounded` (D4a): `execute()` only BOUNDS `valid_to`; it does not
+/// `Applied` → `Bounded`: `execute()` only BOUNDS `valid_to`; it does not
 /// retire the fact. `retired` carries the inline `.closeNow()` window-closeout
-/// count IN-BAND (D4b) — `0` for a plain supersede OR a future-dated bound whose
+/// count IN-BAND — `0` for a plain supersede OR a future-dated bound whose
 /// window has not yet closed, so a consumer observes the deferral from the return
 /// value, not a doc caveat.
 #[napi(object, js_name = "SupersedeOutcome")]
@@ -1121,11 +1122,12 @@ pub fn supersede_outcome_to_js(o: kremory::SupersedeOutcome) -> JsSupersedeOutco
     }
 }
 
-// ── Reversible-graph-mutations (ADR-073 Tier-1) outcome + inspect mirrors ──────
+// ── Reversible-graph-mutations (Tier-1) outcome + inspect mirrors ─────────────
 
-/// Outcome of `JsMemory.unmerge` — mirrors `kremory::UnmergeOutcome`. Every count
-/// is the ACTUAL number reversed (success-signal honesty, §3.1). All counts as JS
-/// `number` (f64): usize values far below 2^53 at practical scale.
+/// Outcome of `JsMemory.unmerge` — mirrors `kremory::UnmergeOutcome`. Every
+/// count is the ACTUAL number reversed — never a placeholder or optimistic
+/// estimate. All counts as JS `number` (f64): usize values far below 2^53 at
+/// practical scale.
 #[napi(object, js_name = "UnmergeOutcome")]
 pub struct JsUnmergeOutcome {
     /// The restored loser entity id (the entity that had been hard-DELETEd).
@@ -1180,8 +1182,7 @@ pub fn restore_archived_outcome_to_js(
 }
 
 /// Result of `JsMemory.backfillEntityEmbeddings` / `.backfillFactEmbeddings` —
-/// mirrors `kremory::facade::EpisodeEmbeddingBackfill` (TD-211,
-/// `.ai-docs/tech-debt/tech-debt-register.md` §TD-211). Not crate-root
+/// mirrors `kremory::facade::EpisodeEmbeddingBackfill`. Not crate-root
 /// re-exported by the substrate (only reachable as
 /// `kremory::facade::EpisodeEmbeddingBackfill`), and not one of the
 /// mechanical parity test's tracked struct types (`tracked_struct_types()`,
@@ -1276,9 +1277,9 @@ pub struct JsEditEntityOptions {
 }
 
 /// Outcome of `JsMemory.editEntity` / `JsMemory.undoEntityEdit` — mirrors
-/// `kremory::EditEntityOutcome`. Every count is the ACTUAL rows affected
-/// (success-signal honesty, §3.1). Counts as JS `number` (f64): usize values far
-/// below 2^53 at practical scale.
+/// `kremory::EditEntityOutcome`. Every count is the ACTUAL rows affected —
+/// never a placeholder or optimistic estimate. Counts as JS `number` (f64):
+/// usize values far below 2^53 at practical scale.
 #[napi(object, js_name = "EditEntityOutcome")]
 pub struct JsEditEntityOutcome {
     /// The entity id AFTER the edit (new id for a rename; unchanged for a retype;
@@ -1322,10 +1323,11 @@ pub fn edit_entity_outcome_to_js(o: kremory::EditEntityOutcome) -> JsEditEntityO
 }
 
 /// Outcome of `JsMemory.deleteEntity` / `JsMemory.undoDeleteEntity` — mirrors
-/// `kremory::DeleteEntityOutcome` (ADR-073 Tier-2b, §4.4). Every count is the ACTUAL
-/// rows affected (success-signal honesty). On a forward delete the counts are what was
-/// retracted/removed; on an undo they are the inverse (rows restored). Counts as JS
-/// `number` (f64): usize values far below 2^53 at practical scale.
+/// `kremory::DeleteEntityOutcome` (Tier-2b). Every count is the ACTUAL rows
+/// affected — never a placeholder or optimistic estimate. On a forward
+/// delete the counts are what was retracted/removed; on an undo they are the
+/// inverse (rows restored). Counts as JS `number` (f64): usize values far
+/// below 2^53 at practical scale.
 #[napi(object, js_name = "DeleteEntityOutcome")]
 pub struct JsDeleteEntityOutcome {
     /// The deleted (or, on undo, restored) entity id.
@@ -1362,7 +1364,7 @@ pub fn delete_entity_outcome_to_js(o: kremory::DeleteEntityOutcome) -> JsDeleteE
 }
 
 /// Outcome of `JsMemory.deleteFact` / `JsMemory.undoDeleteFact` — mirrors
-/// `kremory::DeleteFactOutcome` (ADR-073 Tier-2b, §4.5).
+/// `kremory::DeleteFactOutcome` (Tier-2b).
 #[napi(object, js_name = "DeleteFactOutcome")]
 pub struct JsDeleteFactOutcome {
     /// The deleted (or, on undo, restored) fact id.
@@ -1395,7 +1397,7 @@ pub fn delete_fact_outcome_to_js(o: kremory::DeleteFactOutcome) -> JsDeleteFactO
     }
 }
 
-/// Outcome of `JsMemory.undo` — the unified undo dispatcher (ADR-073 DX R1/R2).
+/// Outcome of `JsMemory.undo` — the unified undo dispatcher.
 /// Mirrors `kremory::UndoOutcome` as a FLAT JS object carrying the dispatched
 /// `kind` PLUS exactly one populated per-kind outcome field (the other three are
 /// omitted). A JS consumer switches on `kind`, then reads the matching field:
@@ -1462,7 +1464,7 @@ pub fn undo_outcome_to_js(o: kremory::UndoOutcome) -> JsUndoOutcome {
 
 /// A single logged graph mutation from `JsMemory.mutationHistory` /
 /// `JsMemory.listMutations` — mirrors `kremory::MutationRecord` (the consumer
-/// INSPECT view, §3). Carries the `mutationId` to pass to `unmerge` (or the
+/// INSPECT view). Carries the `mutationId` to pass to `unmerge` (or the
 /// matching undo method for the kind).
 #[napi(object, js_name = "MutationRecord")]
 pub struct JsMutationRecord {
@@ -1548,7 +1550,7 @@ mod tests {
         ctx
     }
 
-    /// TD-118: source_refs project the full `kremory::SourceRef` shape
+    /// `source_refs` project the full `kremory::SourceRef` shape
     /// (kind/id/occurred_at/published_at), not a flattened bare-id string.
     /// Drives the real producer (`retrieved_context_to_js`) and asserts each
     /// provenance field survives the projection — mirrors the MCP wire.
@@ -1601,7 +1603,7 @@ mod tests {
         );
     }
 
-    /// TD-013 Phase 8: entity_type_id is correctly wired as u32 on JsRetrievedContext.
+    /// `entity_type_id` is correctly wired as u32 on JsRetrievedContext.
     #[test]
     fn entity_type_id_wired_as_u32() {
         let ctx = make_ctx(1, "Person");
@@ -1609,7 +1611,7 @@ mod tests {
         assert_eq!(js.entity_type_id, 1u32, "entity_type_id must be u32 id=1");
     }
 
-    /// TD-013 Phase 8: entity_type_name string matches known type for id=1.
+    /// `entity_type_name` string matches known type for id=1.
     #[test]
     fn entity_type_name_matches_known_type() {
         let ctx = make_ctx(1, "Person");
@@ -1617,7 +1619,7 @@ mod tests {
         assert_eq!(js.entity_type_name, "Person");
     }
 
-    /// TD-013 Phase 8: id=0 sentinel resolves to "Entity" fallback.
+    /// id=0 sentinel resolves to "Entity" fallback.
     #[test]
     fn entity_type_id_zero_resolves_to_entity_fallback() {
         let ctx = make_ctx(0, "Entity");
@@ -1639,7 +1641,7 @@ mod tests {
         assert_eq!(js.entity_type_name, "Organisation");
     }
 
-    // ── ADR-074 review H2: facts must survive the napi wire layer ──────────
+    // ── Facts must survive the napi wire layer ─────────────────────────────
     //
     // `make_ctx` above (and `RetrievedContext::new()` generally) always
     // defaults `facts: Vec::new()` — `RetrievedContext` is `#[non_exhaustive]`
@@ -1832,16 +1834,16 @@ mod tests {
         assert!(js.score >= 0.0);
     }
 
-    /// **DUR-3 sibling guard (V1-CANONICAL §4.2).** Every known `IngestStatus`
-    /// variant must map to its OWN discriminator — never silently into the
-    /// `_ =>` forward-compat arm, which returns `"pending"`.
+    /// Every known `IngestStatus` variant must map to its OWN discriminator
+    /// — never silently into the `_ =>` forward-compat arm, which returns
+    /// `"pending"`.
     ///
     /// This is the defect this test exists for: three variants
     /// (`EntitiesReady`, `SkippedIdempotent`, `ExtractionSkipped`) were falling
     /// through that arm, and two of them are **terminal**. A Node consumer
     /// polling `statusOf` therefore saw `"pending"` on an episode that had
-    /// already finished — the same "poll forever on a completed ingest" shape as
-    /// DUR-3 itself, but on the wire rather than in the column. `EntitiesReady`
+    /// already finished — a "poll forever on a completed ingest" bug, but on
+    /// the wire rather than in the column. `EntitiesReady`
     /// is SQL `'Verified'`, the exact state `Memory::wait_for_processing`
     /// resolves `Ok(())` on, so Rust callers saw success while JS callers saw
     /// pending.
