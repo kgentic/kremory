@@ -3,14 +3,12 @@
 //!   - `graph_batch_status(batch_id)` → `BackgroundIngestor.batch_tracker`
 //!   - everything else → `EngineGraphHandle` pass-through
 //!
-//! Closes ADR-052 facade gap (v0.2.3 Phase 7 blocking_issue): consumers using
-//! `Memory::send_batched()` now receive `on_batch_phase2_complete` via the same
-//! sink path that direct `BackgroundIngestor` consumers use.
+//! Consumers using `Memory::send_batched()` now receive `on_batch_phase2_complete`
+//! via the same sink path that direct `BackgroundIngestor` consumers use.
 //!
 //! ## Pattern
 //!
-//! CFSR (Tokio actor bridging) + Composition over inheritance — per
-//! `.ai-docs/specs/v0-2-3-followup-dual-path-consolidation-arch-spec-2026-06-15.md §2`.
+//! CFSR (Tokio actor bridging) + Composition over inheritance.
 //!
 //! ## Routing table (arch spec §2.2)
 //!
@@ -57,11 +55,11 @@ use crate::memory::{
 // ---------------------------------------------------------------------------
 
 /// `GraphHandle` implementation that routes background ingest through the
-/// `BackgroundIngestor` OS-thread path (ADR-051) and delegates all
+/// `BackgroundIngestor` OS-thread path and delegates all
 /// non-background methods to `EngineGraphHandle`.
 ///
 /// Rationale: the `EngineGraphHandle` tokio-spawn path does NOT fire
-/// `on_batch_phase2_complete` (Quinn MED-3 / v0.2.3 Phase 7 facade gap).
+/// `on_batch_phase2_complete`.
 /// `BackgroundIngestor` owns the `BatchTracker` and fires the callback
 /// after all episodes in a batch reach Phase 2 terminal state.
 ///
@@ -132,7 +130,8 @@ impl Drop for BackgroundIngestorGraphHandle {
             }
             Err(poisoned) => {
                 // Mutex poisoned: worker already dead; no shutdown needed,
-                // but log so the condition is visible per CLAUDE.md Rule 19.
+                // but log so the condition is observable (poison state is
+                // otherwise silent).
                 tracing::warn!(
                     target: "kremory.background_ingestor_handle",
                     "guard mutex poisoned at drop — worker already dead; \
@@ -164,13 +163,12 @@ fn ingest_send_err_to_memory_err(e: IngestSendError) -> MemoryError {
 impl GraphHandle for BackgroundIngestorGraphHandle {
     // Pass-through to the inner EngineGraphHandle so the LIVE SearchConfig
     // (incl. KREMORY_CONTENT_WEIGHT/KREMORY_RRF_K boot overrides) reaches the
-    // facade recall path on the background-routed handle too
-    // (recall-improvement-e2e-spec-2026-07-22 §S0-infra).
+    // facade recall path on the background-routed handle too.
     fn search_config(&self) -> crate::core::config::SearchConfig {
         self.engine_handle.search_config()
     }
 
-    // TD-172: pass-through, so the background-routed handle reports the same
+    // Pass-through, so the background-routed handle reports the same
     // LIVE contradiction-detection flag as the inline one. Omitting this would
     // silently fall back to the trait default (`true`) and report the OPPOSITE
     // of the truth for a consumer who opted out — exactly the config-drift
@@ -184,7 +182,8 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
     // ROUTING: run_in_background=true → BackgroundIngestor (sink fires via OS-thread path).
     //          run_in_background=false → EngineGraphHandle (inline; no BatchTracker update).
     //
-    // This is the primary routing method that closes ADR-052 Gap 1 (Quinn MED-3).
+    // This is the primary routing method — the one place run_in_background
+    // decides between the BackgroundIngestor and EngineGraphHandle paths.
 
     async fn graph_ingest_episode(
         &self,
@@ -214,7 +213,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
             let result = if let Some(bid) = batch_id.clone() {
                 // Batched background path (BatchTracker update + on_batch_phase2_complete).
                 //
-                // Quinn final MED-02 fix: must propagate group_id to the batched path or
+                // Must propagate group_id to the batched path or
                 // multi-namespace consumers' batched episodes land in the wrong namespace
                 // shard.  `send_batched(text, bid)` hardcodes group_id=None (ingestor.rs:230);
                 // its own doc-comment directs full-control consumers to `enqueue_req`.
@@ -223,7 +222,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                     .enqueue_req(IngestRequest {
                         text,
                         reference_time: None,
-                        // TD-187 Gap 1 (2026-08-20): mirrors the foreground
+                        // Mirrors the foreground
                         // path's `declared_reference_time = source_ref.published_at`
                         // (`engine_handle.rs:282`) — a consumer calling
                         // `.with_sink()` did not previously get grounded
@@ -241,8 +240,8 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                         text,
                         SendParams {
                             group_id,
-                            // TD-187 Gap 1 (2026-08-20): see the comment on
-                            // the batched branch above.
+                            // See the comment on the batched branch above
+                            // regarding `declared_reference_time`.
                             declared_reference_time: source_ref.published_at,
                             ..SendParams::default()
                         },
@@ -250,7 +249,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                     .map_err(ingest_send_err_to_memory_err)?
             };
 
-            // Observability: triple-emit per ADR-052 DoD item 5.
+            // Observability: emit both a counter and a debug trace for this path.
             metrics::counter!(
                 "kremory.background_ingestor_handle.ingest_total",
                 "path" => "background"
@@ -346,7 +345,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
     // ── 6. graph_batch_status ────────────────────────────────────────────────
     //
     // ROUTING: BackgroundIngestor.batch_tracker — source-of-truth per arch spec §2.3.
-    // After this fix lands, all batched ingest via Memory::send_batched routes through
+    // All batched ingest via Memory::send_batched routes through
     // BackgroundIngestor. The BackgroundIngestor.batch_tracker is the canonical
     // BatchTracker for background-path batches.
     //

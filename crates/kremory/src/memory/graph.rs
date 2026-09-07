@@ -3,7 +3,7 @@
 //! ## Why a trait
 //!
 //! Per ADR-Phase-D.0 §"rqlm public API surface" + the canonical Zep
-//! pattern (verified context7 2026-05-13): rqlm orchestrates over an
+//! pattern: rqlm orchestrates over an
 //! opaque graph handle that downstream SDK consumers implement against
 //! their own concrete graph. Generics on the
 //! public fns would propagate `<L: ChatProvider, Emb: EmbeddingProvider>`
@@ -22,8 +22,7 @@
 //!
 //! ## D.6.4 extension — canonical definition (supersedes D.0a)
 //!
-//! Per ADR rqlm-async-event-handle-api-design-2026-05-19 §4.9:
-//! all methods are required — NO defaults. Every impl (e.g. StubGraphHandle
+//! All methods are required — NO defaults. Every impl (e.g. StubGraphHandle
 //! in tests, or a consumer-supplied concrete handle) must explicitly implement all methods.
 //! Compile failure is the enforcement mechanism.
 
@@ -46,7 +45,7 @@ use super::{
 };
 
 /// Bundled parameters for [`GraphHandle::graph_submit_dream`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). `async_trait` counts the
+/// (rust-conventions §too_many_arguments). `async_trait` counts the
 /// receiver, so the 5 declared args trip the 5-arg threshold. Borrow lives for
 /// the duration of one submit call.
 pub struct GraphSubmitDreamParams<'a> {
@@ -58,7 +57,7 @@ pub struct GraphSubmitDreamParams<'a> {
 }
 
 /// Bundled parameters for [`GraphHandle::graph_ingest_episode`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). Borrows live for the
+/// (rust-conventions §too_many_arguments). Borrows live for the
 /// duration of a single ingest call; callers construct a fresh value per call.
 pub struct GraphIngestEpisodeParams<'a> {
     pub namespace: &'a Namespace,
@@ -72,7 +71,7 @@ pub struct GraphIngestEpisodeParams<'a> {
 }
 
 /// Bundled parameters for [`GraphHandle::graph_assert_entity_type`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object (rust-conventions §too_many_arguments).
 /// `async_trait` counts the receiver, so the 4 declared args trip the 3-arg
 /// threshold. Borrow lives for the duration of one assert call.
 pub struct GraphAssertEntityTypeParams<'a> {
@@ -81,8 +80,8 @@ pub struct GraphAssertEntityTypeParams<'a> {
     pub group_id: Option<&'a str>,
 }
 
-/// Bundled parameters for [`GraphHandle::graph_search`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). `async_trait` counts the
+/// Bundled parameters for [`GraphHandle::graph_search`] — args-as-object
+/// (rust-conventions §too_many_arguments). `async_trait` counts the
 /// receiver, so the 4 declared args trip the 3-arg threshold. Borrows live for
 /// the duration of one search call.
 pub struct GraphSearchParams<'a> {
@@ -101,7 +100,7 @@ pub struct GraphSearchParams<'a> {
 /// downstream consumers.
 ///
 /// **All methods are required — no defaults.** This is the compiler-enforced
-/// shape-stability constraint per ADR §4.9 (cycle-1 Vera finding #1 resolved).
+/// shape-stability constraint.
 #[async_trait]
 pub trait GraphHandle: Send + Sync {
     // ── Phase 1 + 2: episode ingest ──────────────────────────────────────────
@@ -133,7 +132,7 @@ pub trait GraphHandle: Send + Sync {
     /// Idempotent: if a run is already active for `(namespace, thread, batch_id)`,
     /// returns the existing `DreamHandle` without starting a new run.
     /// Parameter mismatch on existing key → `tracing::warn!` (not error).
-    // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+    // Substrate primitive; consumer-facing surface is kremory::Memory facade.
     async fn graph_submit_dream(&self, params: GraphSubmitDreamParams<'_>) -> Result<DreamHandle>;
 
     /// Query Phase 3 status for a `DreamHandle` run_id.
@@ -162,8 +161,7 @@ pub trait GraphHandle: Send + Sync {
     /// Hybrid retrieval over the scoped graph.
     async fn graph_search(&self, params: GraphSearchParams<'_>) -> Result<Vec<RetrievedContext>>;
 
-    /// The live search-fusion config for this handle
-    /// (recall-improvement-e2e-spec-2026-07-22 §S0-infra). Default returns
+    /// The live search-fusion config for this handle. Default returns
     /// `SearchConfig::default()` (stub/test handles that carry no `Engine`);
     /// `EngineGraphHandle` overrides it to expose the `Engine`'s configured
     /// `SearchConfig`, so the facade recall path reads the LIVE
@@ -175,13 +173,13 @@ pub trait GraphHandle: Send + Sync {
     }
 
     /// Whether ingest-time contradiction detection is live on this handle
-    /// (TD-172; `PipelineConfig::contradiction_detection_enabled`).
+    /// (`PipelineConfig::contradiction_detection_enabled`).
     ///
     /// Sibling of [`GraphHandle::search_config`] and exposed for the same
-    /// TD-135 reason: a consumer must be able to read the config the pipeline
+    /// reason: a consumer must be able to read the config the pipeline
     /// ACTUALLY uses rather than re-reading env, which drifts. This one matters
     /// more than its sibling, because it gates the only DESTRUCTIVE default-ON
-    /// path in the pipeline (ADR-079 rev.2 supersession) — an unreportable
+    /// path in the pipeline — an unreportable
     /// destructive default is invisible config.
     ///
     /// Default `true` mirrors `PipelineConfig`'s own default, so stub/test
@@ -215,10 +213,6 @@ pub trait GraphHandle: Send + Sync {
     ///
     /// Returns a [`DreamSummary`] with pass statistics. All counts are zero in
     /// the Phase C stub.
-    ///
-    /// # ADR reference
-    ///
-    /// ADR-045 §3; Phase C DoD C1 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
     async fn graph_run_dream_pass_sync(
         &self,
         opts: crate::core::ingest::DreamPassOpts,
@@ -228,19 +222,11 @@ pub trait GraphHandle: Send + Sync {
     ///
     /// An optional `group_id` restricts the query to one namespace/thread.
     /// `None` returns ghost episodes across all namespaces.
-    ///
-    /// # ADR reference
-    ///
-    /// ADR-045 §3; Phase C DoD C4.
     async fn graph_ghost_episodes(&self, group_id: Option<&str>) -> Result<Vec<i64>>;
 
     /// Pin an entity as `ConsumerPinned`, protecting it from dream reclassification.
     ///
     /// Writes `entity_type_source = 'ConsumerPinned'` on the entity row.
-    ///
-    /// # ADR reference
-    ///
-    /// ADR-045 §3; Phase C DoD C5.
     async fn graph_assert_entity_type(&self, params: GraphAssertEntityTypeParams<'_>)
         -> Result<()>;
 }

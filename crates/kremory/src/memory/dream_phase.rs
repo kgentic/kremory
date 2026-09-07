@@ -13,9 +13,8 @@
 //! type_discovery / aliases / reclassify / consistency_check / canonicalize).
 //! Reconciliation cost-control is the per-pass `DreamOpts` knobs
 //! (`include_type_discovery`, `include_consistency_check`) — NOT `DreamMode`.
-//! When consolidation is scoped, its gating is (re)designed with the real passes;
-//! do not repurpose this table for reconciliation. See
-//! `.ai-docs/architecture/dream-phase-two-sub-phases-2026-07-01.md`.
+//! When consolidation is scoped, its gating is (re)designed with the real
+//! passes; do not repurpose this table for reconciliation.
 //!
 //! ## Static pass table (consolidation, per architecture spec §2.4.B)
 //!
@@ -68,7 +67,7 @@ impl PassDef {
 /// Static pass table for CONSOLIDATION (sub-phase 2) — canonical ordering +
 /// mode-gating per architecture spec §2.4.B, to be wired when consolidation is
 /// built. DORMANT scaffolding: not iterated by any production code today (only
-/// the shape test `b1_static_pass_table.rs`); TD-086 tracks its reconciliation.
+/// the shape test `b1_static_pass_table.rs`).
 ///
 /// Order matters: community must complete before distillation (graph topology
 /// must stabilise before cross-episode synthesis). Supersession precedes archive

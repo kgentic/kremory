@@ -12,7 +12,7 @@
 //!
 //! All three dream methods (`graph_submit_dream`, `graph_dream_status`,
 //! `graph_run_consolidation`) return `Err(MemoryError::NotImplemented)`
-//! uniformly per F-01 LOCKED + ADR-007 §3. Real dream execution ships in
+//! uniformly. Real dream execution ships in
 //! v0.1.1. The DashMap registries for dream state are allocated but remain
 //! empty at runtime.
 //!
@@ -63,8 +63,8 @@ use crate::memory::{
 /// namespace string directly; this helper returns the fully-qualified key used
 /// for isolation within a single thread.
 ///
-/// Visibility: `pub(crate)` (Vera cycle-1 MED-4 — promoted in v0.1.4 for the
-/// ADR-029a `register_namespace` facade method). External callers MUST NOT
+/// Visibility: `pub(crate)` — promoted in v0.1.4 for the
+/// `register_namespace` facade method. External callers MUST NOT
 /// depend on the `namespace:thread` string layout — this is substrate detail.
 pub(crate) fn namespace_to_group_id(ns: &Namespace) -> String {
     match &ns.thread {
@@ -105,7 +105,7 @@ pub struct EngineGraphHandle {
 }
 
 /// Bundled parameters for [`EngineGraphHandle::with_config`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments).
+/// (rust-conventions §too_many_arguments).
 pub struct WithConfigParams {
     pub graph: Arc<TemporalGraph>,
     pub chat: Arc<dyn ChatProvider + Send + Sync>,
@@ -158,7 +158,7 @@ impl EngineGraphHandle {
 
 #[async_trait]
 impl GraphHandle for EngineGraphHandle {
-    // ── search config accessor (recall-improvement-e2e-spec-2026-07-22 §S0-infra) ──
+    // ── search config accessor ──────────────────────────────────────────────
     //
     // Expose the Engine's LIVE `SearchConfig` so the facade recall path
     // (`facade::recall::fuse_content_stream`) reads the configured
@@ -170,7 +170,7 @@ impl GraphHandle for EngineGraphHandle {
         self.engine.config.search.clone()
     }
 
-    // TD-172: expose the Engine's LIVE contradiction-detection flag, so a
+    // Expose the Engine's LIVE contradiction-detection flag, so a
     // consumer reads what the ingest path actually does rather than re-deriving
     // it from `KREMORY_CONTRADICTION_DETECTION` (which the builder seam can now
     // legitimately override, making env an unreliable proxy).
@@ -195,7 +195,7 @@ impl GraphHandle for EngineGraphHandle {
             sink,
         } = params;
         let group_id = namespace_to_group_id(namespace);
-        // TD-181: prefer the caller's declared document anchor over ingest
+        // Prefer the caller's declared document anchor over ingest
         // wall-clock. `reference_time` becomes `valid_from` for every
         // LLM-EXTRACTED fact (`ingest/pipeline/deferred.rs:73` ->  `:450`), so
         // using `occurred_at` meant a document the caller explicitly dated (a
@@ -212,13 +212,13 @@ impl GraphHandle for EngineGraphHandle {
         // sets it, and this falls straight back to `occurred_at`, so no existing
         // behaviour moves.
         //
-        // It also makes the extraction path REPRODUCIBLE, which is what TD-181
-        // needs: `valid_from` is rendered into the `ContradictionVerdict` prompt
+        // It also makes the extraction path REPRODUCIBLE: `valid_from` is
+        // rendered into the `ContradictionVerdict` prompt
         // (`core/contradiction.rs:143`), so a wall-clock anchor changed the prompt
         // — and therefore the VCR fingerprint — on every single run.
         let reference_time = Some(source_ref.published_at.unwrap_or(source_ref.occurred_at));
 
-        // ── ADR-052 Gap 1: coerce the memory-layer EnrichmentEventSink to the
+        // ── Coerce the memory-layer EnrichmentEventSink to the
         // core-layer IngestEventSink supertrait so the unified extraction routine
         // (Engine::ingest → ingest_with) can fire the per-entity / per-edge /
         // stage-transition callbacks. The fb85ba8 consolidation dropped this
@@ -230,7 +230,7 @@ impl GraphHandle for EngineGraphHandle {
             .as_ref()
             .map(|s| Arc::clone(s) as Arc<dyn crate::core::sink::IngestEventSink>);
 
-        // ADR-035 §5 Option A: translate caller's StructuredFact (memory layer)
+        // Translate caller's StructuredFact (memory layer)
         // into PrePinnedFact (core layer) so engine.ingest can pin them
         // BEFORE Phase 2 LLM runs. Translation handles None valid_from by
         // falling back to source_ref's published_at, then to occurred_at
@@ -239,7 +239,7 @@ impl GraphHandle for EngineGraphHandle {
         // job during Phase 2 if applicable. Confidence defaults to 1.0
         // (StructuredFact does not carry a confidence field). `valid_to`
         // passes through as-is (`None` = open-ended, matching StructuredFact's
-        // own doc comment) — ADR-068 boy-scout: this used to be silently
+        // own doc comment) — this used to be silently
         // dropped (see `PrePinnedFact::valid_to`'s doc comment).
         let pre_pinned_facts: Vec<PrePinnedFact> = structured_facts
             .iter()
@@ -274,7 +274,7 @@ impl GraphHandle for EngineGraphHandle {
             // via Memory::update_source_uri() builder (facade/mod.rs G2).
             let source_uri_owned: Option<String> = None;
             let recorded_at_owned = Some(source_ref.occurred_at);
-            // TD-187: the caller-DECLARED anchor ONLY (never the coalesced
+            // The caller-DECLARED anchor ONLY (never the coalesced
             // `reference_time` above, which falls back to `occurred_at` —
             // usually wall-clock). `Option<DateTime<Utc>>` is `Copy`, so this
             // captures cleanly into the `async move` block below like
@@ -299,7 +299,7 @@ impl GraphHandle for EngineGraphHandle {
 
             let pre_pinned_facts_owned = pre_pinned_facts.clone();
             let skip_extraction_owned = !opts.enrich_per_episode;
-            // ADR-052 Gap 1: move the coerced core-layer sink into the spawned
+            // Move the coerced core-layer sink into the spawned
             // background task so the deferred Engine::ingest fires the callbacks.
             let core_sink_owned = core_sink.clone();
             let task = tokio::task::spawn(async move {
@@ -372,8 +372,6 @@ impl GraphHandle for EngineGraphHandle {
         //     the engine always does its pipeline — there is no Phase-1-only variant at this
         //     substrate level; skipped enrichment is tracked via batch_status as "skipped").
         //
-        // Quinn Phase 4 MED-03 cause-fix (ADR-051 Phase 5) + Phase 5 M-1 doc-correction:
-        //
         // On inline ingest error, we CANNOT write `Failed` because the episode_id is
         // unavailable in this scope. Two failure shapes both lose it:
         //   1. Failure BEFORE the episode INSERT (embed fail, early validation) → no
@@ -388,7 +386,7 @@ impl GraphHandle for EngineGraphHandle {
         // The inline path doesn't have that handle.
         //
         // The honest response: emit `kremory.engine_handle.inline_ingest_fail_no_episode_id_total`
-        // + `tracing::error!` so the gap is visible per CLAUDE.md Rule 19, then propagate the
+        // + `tracing::error!` so the gap is visible, then propagate the
         // original error. Episodes that committed a Pending row but failed extraction will
         // stay at Pending forever on this path — accept it as a known limitation, tracked
         // for a future fix that threads `Result<(IngestResult, Option<i64>), Error>` or
@@ -398,7 +396,7 @@ impl GraphHandle for EngineGraphHandle {
             .ingest(crate::core::ingest::IngestParams {
                 text: content,
                 reference_time,
-                // TD-187: the caller-DECLARED anchor ONLY — see the doc
+                // The caller-DECLARED anchor ONLY — see the doc
                 // comment on `IngestParams::declared_reference_time`.
                 declared_reference_time: source_ref.published_at,
                 group_id: Some(&group_id),
@@ -410,7 +408,7 @@ impl GraphHandle for EngineGraphHandle {
                     entity_types_override: None,
                     pre_pinned_facts,
                     skip_extraction: !opts.enrich_per_episode,
-                    // ADR-052 Gap 1: wire the coerced sink onto the INLINE path —
+                    // Wire the coerced sink onto the INLINE path —
                     // this is the path `Memory::remember(..).with_event_sink(..).await`
                     // (no .no_wait()) drives, exercised by golden_path_smoke. The
                     // background sub-path above returns before this point, so
@@ -449,7 +447,7 @@ impl GraphHandle for EngineGraphHandle {
             }
         }
 
-        // ADR-051 Phase 4: inline ingest completed successfully → mark episode
+        // Inline ingest completed successfully → mark episode
         // as Verified so `Memory::wait_for_processing` callers do not busy-poll
         // waiting for a background worker that never fires on the inline path.
         //
@@ -457,13 +455,12 @@ impl GraphHandle for EngineGraphHandle {
         // — we log it and continue. The episode data is fully committed; only the
         // status column is affected.
         //
-        // Quinn Phase 4 MED-02 cause-fix (ADR-051 Phase 5):
         // Gate the Verified write on `enrich_per_episode`. When skip_extraction=true
         // (enrich_per_episode=false), extraction was intentionally skipped — writing
         // Verified would be semantically wrong ("extraction was verified" when no
         // extraction ran).
         //
-        // ── DUR-3 cause-fix (V1-CANONICAL §4.2, 2026-08-04) ──────────────────
+        // ── DUR-3 cause-fix ──────────────────────────────────────────────────
         // That reasoning is correct and its REMEDY was not: leaving the status at
         // `Pending` made the episode terminally indistinguishable from one whose
         // work is still coming. Nothing is ever enqueued for a skip_extraction
@@ -517,7 +514,7 @@ impl GraphHandle for EngineGraphHandle {
             episode_entity_id: ingest_result.episode_id.to_string(),
             committed_at: Utc::now(),
             stub_entities_inserted: ingest_result.stub_entities_inserted,
-            // TD-232: the inline path — the one place this IS known
+            // The inline path — the one place this IS known
             // synchronously. See `EpisodeCommit::dense_embedded`.
             dense_embedded: Some(ingest_result.dense_embedded),
         })
@@ -655,7 +652,7 @@ impl GraphHandle for EngineGraphHandle {
         let limit = opts.limit;
         let as_of = opts.as_of;
 
-        // ADR-068 NFR — "how often is as_of actually used" adoption counter
+        // "How often is as_of actually used" adoption counter
         // for a brand-new, previously-erroring surface (observability-first-
         // class: a new capability needs a usage signal from day one, mirrors
         // recall-v2's `intent_classified_total` reasoning for a similarly-new
@@ -679,7 +676,7 @@ impl GraphHandle for EngineGraphHandle {
             .await
             .map_err(MemoryError::Core)?;
 
-        // ADR-068: `context.facts` above is ALREADY `as_of`-filtered at its
+        // `context.facts` above is ALREADY `as_of`-filtered at its
         // one true source (`TemporalGraph::get_neighbours_at`, called from
         // `contextualize()` for every seed). The per-entity projection below
         // (G5) only re-shapes already-filtered facts into `RetrievedFact` —
@@ -688,24 +685,23 @@ impl GraphHandle for EngineGraphHandle {
         // between two copies of the same predicate (treat-cause-not-symptom:
         // filter once, at the SQL layer that owns the temporal columns).
         //
-        // Rule 19 / ADR-074 review H1: observe the fact→entity ownership
+        // Observe the fact→entity ownership
         // projection BEFORE `context.entities` is consumed by the loop below.
         // This is the exact silent projection/filter shape whose prior version
-        // dropped facts undetected in production (TD-116) — a same-shaped
+        // dropped facts undetected in production — a same-shaped
         // regression must show up here, not require a re-run of that incident.
         // A fact "drops" when NEITHER its `subject_id` NOR its `object_id`
         // matches any entity in this recall's result set — e.g. the group_id
         // filter below strips a neighbour entity out of `context.entities`
-        // while its connecting fact remains in `context.facts` (ADR-074
-        // review M3). G5 (gap-register / ADR-074 F1): a fact is now "attached"
-        // whenever EITHER endpoint survives into the result set — matching the
-        // per-entity projection fix below, which attaches a fact to an entity
-        // whether that entity is the fact's subject OR its object. Computed
-        // once, globally, so a fact is counted attached at most once (never
-        // double-counted across the per-entity loop; Rule 19 anti-pattern #9,
-        // "counters that lie").
+        // while its connecting fact remains in `context.facts`. A fact is now
+        // "attached" whenever EITHER endpoint survives into the result set —
+        // matching the per-entity projection fix below, which attaches a fact
+        // to an entity whether that entity is the fact's subject OR its
+        // object. Computed once, globally, so a fact is counted attached at
+        // most once — never double-counted across the per-entity loop, which
+        // would make the counter lie about what was actually served.
         //
-        // TD-197 review Finding 1: `facts_attached` must reflect the
+        // `facts_attached` must reflect the
         // population the consumer ACTUALLY receives. The per-entity
         // projection below additionally drops reserved-predicate meta-edges
         // (`crate::core::disambiguation::is_reserved_predicate`) regardless
@@ -714,8 +710,8 @@ impl GraphHandle for EngineGraphHandle {
         // alone would say it was. Pre-fix, this counter incremented on
         // ownership ALONE, computed ahead of (and blind to) that later
         // filter — the counter said "attached" for facts that were then
-        // silently dropped a few lines below, itself an instance of the Rule
-        // 19 anti-pattern this comment already named. `facts_dropped_reserved`
+        // silently dropped a few lines below, the same counters-that-lie
+        // shape described above. `facts_dropped_reserved`
         // makes that drop visible as its own bucket instead of folding it
         // into `facts_attached`; `facts_dropped_ownership` keeps its
         // pre-existing meaning (a non-reserved fact with no ownership match).
@@ -814,14 +810,14 @@ impl GraphHandle for EngineGraphHandle {
             let entity_type_id = entity.entity_type_id;
             let entity_type_name = entity.label.clone();
 
-            // ADR-074 / TD-116 / G5 (gap-register F1): surface the entity's
+            // Surface the entity's
             // connected facts — BOTH subject-owned and object-owned, deduped by
             // construction (`context.facts.iter()` visits each `Fact` row once;
             // the OR below just decides whether THIS entity's projection keeps
             // it, so a self-referential fact where the entity is both subject
             // and object still appears exactly once) — so recall returns the
             // actual knowledge from every entity's own point of view, not just
-            // the subject's. Pre-G5 this filter was `f.subject_id == entity.id`
+            // the subject's. Previously this filter was `f.subject_id == entity.id`
             // only: an object entity (e.g. "Acme" in "Alice works_at Acme") got
             // an empty `facts` list even though `contextualize`/`get_neighbours`
             // had already collected both the entity and its connecting fact.
@@ -830,7 +826,7 @@ impl GraphHandle for EngineGraphHandle {
             // (natural-language string + structured triple + BOTH bi-temporal
             // clocks + confidence + provenance).
             //
-            // TD-197: `crate::core::disambiguation::is_reserved_predicate`
+            // `crate::core::disambiguation::is_reserved_predicate`
             // excludes internal meta-edges (e.g. `potential_alias`) from this
             // projection — they are disambiguation bookkeeping, not domain
             // facts, and must never reach a consumer via `recall()`. This is
@@ -885,7 +881,7 @@ impl GraphHandle for EngineGraphHandle {
                         // `valid_to`). The wire-facing "world clock" invalid_at IS
                         // `Fact.valid_to`; a future "fix" to read `f.invalid_at` here
                         // would silently break the supersession signal on every
-                        // `RetrievedFact` (ADR-074 review M4).
+                        // `RetrievedFact`.
                         invalid_at: f.valid_to,
                         recorded_at: f.recorded_at,
                         expired_at: f.expired_at,
@@ -983,7 +979,7 @@ impl GraphHandle for EngineGraphHandle {
 // Batch status helpers (private)
 // ---------------------------------------------------------------------------
 
-// F43 cause-fix: these two functions are the ONLY batch-status writers on the
+// These two functions are the ONLY batch-status writers on the
 // INLINE ingest path (`graph_ingest_episode`'s `run_in_background: false`
 // branch, which `RememberBatchBuilder::execute()` always takes — see
 // `facade/remember.rs`). Unlike the background-spawn path above, the inline
@@ -1225,10 +1221,10 @@ mod tests {
         assert_eq!(namespace_to_group_id(&ns), "ws-1");
     }
 
-    /// ADR-074 review H1 (Rule 19): `graph_search`'s fact→entity ownership
+    /// `graph_search`'s fact→entity ownership
     /// projection must be observed — this is the exact silent-drop shape
-    /// TD-116 fixed; a regression must show up as a metric delta, not require
-    /// another production incident to notice.
+    /// this codebase fixed once already; a regression must show up as a
+    /// metric delta, not require another production incident to notice.
     #[tokio::test]
     async fn graph_search_emits_facts_attached_and_dropped_counters() {
         use crate::core::graph::{FactInsert, InsertEntityParams};
@@ -1309,19 +1305,19 @@ mod tests {
         assert_eq!(dropped, 0, "no facts should be dropped in this fixture");
     }
 
-    /// TD-197 review Finding 1: `facts_attached_total` must count only the
+    /// `facts_attached_total` must count only the
     /// facts `recall()` actually served — NOT every ownership-matched fact.
     /// A reserved-predicate meta-edge (`potential_alias`) whose subject
     /// matches a result entity satisfies the OWNERSHIP test but is dropped
     /// by the per-entity projection's `is_reserved_predicate` filter a few
-    /// lines below regardless. Pre-fix, `facts_attached` was computed from
-    /// ownership alone, ahead of that filter, so it counted this fact as
-    /// "attached" even though it never reached the consumer — the exact
-    /// Rule 19 "counters that lie" shape the surrounding comment already
-    /// named for a different case. This fixture has 2 candidate facts (1
-    /// reserved, 1 domain), both subject-owned by `alice`: under the buggy
-    /// ownership-only formula `facts_attached` would read 2; the fix must
-    /// read 1, with the reserved one visible in its own bucket.
+    /// lines below regardless. Computing the counter from ownership alone,
+    /// ahead of that filter, would count this fact as "attached" even
+    /// though it never reaches the consumer — the same counters-that-lie
+    /// shape the surrounding comment already named for a different case.
+    /// This fixture has 2 candidate facts (1 reserved, 1 domain), both
+    /// subject-owned by `alice`: under the buggy ownership-only formula
+    /// `facts_attached` would read 2; the fix must read 1, with the
+    /// reserved one visible in its own bucket.
     #[tokio::test]
     async fn graph_search_facts_attached_excludes_reserved_predicate() {
         use crate::core::disambiguation::RESERVED_PREDICATE_POTENTIAL_ALIAS;
@@ -1384,7 +1380,7 @@ mod tests {
             .expect("graph_search ok");
         drop(guard);
 
-        // The TD-197 fix itself: never serve the reserved predicate.
+        // Never serve the reserved predicate.
         assert!(
             results
                 .iter()
@@ -1428,7 +1424,7 @@ mod tests {
         );
     }
 
-    /// G5 (gap-register / ADR-074 F1): `graph_search` must attach a fact to
+    /// `graph_search` must attach a fact to
     /// BOTH the subject's AND the object's `RetrievedContext.facts` when the
     /// entity is an *object entity* (`fact.object_id == Some(entity.id)`).
     /// Pre-fix, the per-entity projection at the bottom of `graph_search` only

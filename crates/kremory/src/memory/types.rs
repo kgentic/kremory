@@ -38,7 +38,7 @@ pub struct Namespace {
     pub thread: Option<String>,
     /// Policy attached at construction time. `None` defers to whatever policy
     /// is already stored for this namespace; on first write, `None` resolves
-    /// to `NamespacePolicy::default()`. Added v0.1.4 (ADR-029a).
+    /// to `NamespacePolicy::default()`. Added v0.1.4.
     ///
     /// `#[serde(default)]` preserves backward-compat deserialization for
     /// `Namespace` JSON written before v0.1.4 (no `policy` field).
@@ -73,8 +73,7 @@ impl Namespace {
     /// [`crate::Memory::register_namespace`] call. Subsequent calls with a
     /// different policy on an EXISTING namespace are rejected at
     /// `register_namespace` time with
-    /// [`crate::core::error::Error::NamespacePolicyImmutable`]. Added v0.1.4
-    /// (ADR-029a Decision 5).
+    /// [`crate::core::error::Error::NamespacePolicyImmutable`]. Added v0.1.4.
     pub fn with_policy(
         mut self,
         policy: NamespacePolicy,
@@ -85,7 +84,7 @@ impl Namespace {
     }
 }
 
-// ── NamespacePolicy + ImmutabilityLevel (ADR-029a) ───────────────────────────
+// ── NamespacePolicy + ImmutabilityLevel ──────────────────────────────────────
 
 /// Per-namespace policy controls.
 ///
@@ -97,8 +96,8 @@ impl Namespace {
 ///
 /// **Policy values are PERSISTED but NOT ENFORCED at v0.1.4.** Setting
 /// `immutability: AppendOnly` records the intent; subsequent `dream()` /
-/// `forget()` calls still proceed normally. Enforcement lands in v0.1.5+
-/// per ADR-029b, which adds the composite-PK storage migration required to
+/// `forget()` calls still proceed normally. Enforcement lands in v0.1.5+,
+/// which adds the composite-PK storage migration required to
 /// make AppendOnly actually safe.
 ///
 /// # Construction
@@ -154,7 +153,7 @@ pub struct NamespacePolicy {
 ///
 /// `#[non_exhaustive]` allows adding new variants (e.g. `Eventual`,
 /// `Strict`) without a SemVer-major bump. Match arms must include a
-/// wildcard `_` when destructuring. Added v0.1.4 (ADR-029a Decision 2).
+/// wildcard `_` when destructuring. Added v0.1.4.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -164,8 +163,8 @@ pub enum ImmutabilityLevel {
     #[default]
     Mutable,
 
-    /// Append-only intent. v0.1.4: persisted but not enforced. v0.1.5+
-    /// (ADR-029b): existing rows are never mutated, archived, superseded,
+    /// Append-only intent. v0.1.4: persisted but not enforced. v0.1.5+:
+    /// existing rows are never mutated, archived, superseded,
     /// or moved. Writes that ADD new rows still proceed; writes that would
     /// mutate existing rows return an error.
     AppendOnly,
@@ -249,7 +248,7 @@ impl Default for NamespacePolicy {
 /// [`crate::core::error::Error::InvalidPolicy`].
 ///
 /// `#[non_exhaustive]` — future validation rules add variants without
-/// SemVer-major bumps. Added v0.1.4 (ADR-029a Decision 4).
+/// SemVer-major bumps. Added v0.1.4.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum InvalidPolicyError {
@@ -335,7 +334,7 @@ pub struct StructuredFact {
     /// `crate::core::disambiguation::is_reserved_predicate` recognises), the
     /// fact is still written to the graph, but no `recall()` call will ever
     /// render it back to a consumer — it is reserved for internal
-    /// disambiguation bookkeeping (TD-197). There is no write-time error for
+    /// disambiguation bookkeeping. There is no write-time error for
     /// this today; the fact simply never comes back on any read path.
     pub predicate: String,
     pub object: String,
@@ -375,14 +374,14 @@ pub struct DreamPhaseResult {
     pub supersessions_recorded: usize,
     pub facts_archived: usize,
     pub duration_ms: u64,
-    /// Types proposed and accepted by Dream Pass 0 type discovery (ADR-037 §3).
+    /// Types proposed and accepted by Dream Pass 0 type discovery.
     /// Empty when Pass 0 was not run or produced no accepted proposals.
     #[serde(default)]
     pub types_discovered: Vec<crate::core::dream::TypeProposal>,
     /// Warnings emitted during the dream phase (e.g. degraded-mode notices).
     #[serde(default)]
     pub dream_warnings: Vec<String>,
-    /// TD-060 (ADR-071 §Item 4a step 6) — `true` when the consolidation
+    /// `true` when the consolidation
     /// sub-phase's `ConsolidationBudget` (token or USD ceiling) was exhausted this
     /// run, skipping at least one op. `#[serde(default)]` so older persisted/
     /// deserialized payloads without this field still parse (this is an internal
@@ -404,14 +403,14 @@ pub struct SearchOpts {
     pub as_of: Option<DateTime<Utc>>,
     /// Restrict to a specific source kind (e.g. only `Document` results).
     pub source_kind: Option<SourceKind>,
-    /// TD-062 (spec §3 Increment 3): rerank the top-`n` post-fusion candidates
+    /// Rerank the top-`n` post-fusion candidates
     /// with a cross-encoder before returning. `None` (default) = no rerank —
     /// today's behaviour, unaffected whether or not the `rerank` Cargo
     /// feature is compiled in. `Some(n)` reranks the top `n` fused
     /// candidates (`n.min(results.len())`); any candidates beyond `n` pass
     /// through unreranked, appended after in their original fused order.
     /// A no-op when the `rerank` feature is not compiled in (the field
-    /// always exists — per CLAUDE.md Rule 16 web-app-ui-parity, the MCP tool
+    /// always exists — the MCP tool
     /// surface must be able to set it — but only has an effect when the
     /// feature is on).
     #[serde(default)]
@@ -419,20 +418,19 @@ pub struct SearchOpts {
 }
 
 /// Default value for `RetrievedContext::entity_type_name` when absent from
-/// serialised JSON (pre-TD-013 data) or constructed via `::new()` without
+/// serialised JSON (older data) or constructed via `::new()` without
 /// a type name. Mirrors the SQL COALESCE sentinel: `COALESCE(et.name, 'Entity')`.
 fn default_entity_type_name() -> String {
     "Entity".to_string()
 }
 
-/// One connected fact surfaced by recall (ADR-074 / TD-116).
+/// One connected fact surfaced by recall.
 ///
 /// Peer-convergent LLM-facing shape (Graphiti `EntityEdge.fact`, Zep context
 /// facts, Mem0 `memory`): a natural-language `fact` string, the structured
 /// triple, both bi-temporal clocks, confidence, and provenance. Returning both
 /// clocks (world `valid_at`/`invalid_at` and system `recorded_at`/`expired_at`)
-/// alongside `confidence` is ahead of every surveyed peer (see
-/// `.ai-docs/research/recall-response-shape-for-llm-consumers-2026-07-14.md`).
+/// alongside `confidence` is ahead of every surveyed peer.
 ///
 /// `#[non_exhaustive]` — consumers READ the fields; construction is the recall
 /// path's job (facts are computed by `contextualize`, not caller-built).
@@ -466,7 +464,7 @@ pub struct RetrievedFact {
     pub score: f32,
 }
 
-/// Bundled parameters for [`RetrievedFact::new`] — args-as-object per TD-042
+/// Bundled parameters for [`RetrievedFact::new`] — args-as-object
 /// (rust-conventions §too_many_arguments; `RetrievedFact` has 12 fields, well
 /// past the threshold that motivated [`RetrievedContextNewParams`]).
 ///
@@ -493,11 +491,10 @@ impl RetrievedFact {
     /// `expired_at` default to `None`; use [`Self::with_invalid_at`] /
     /// [`Self::with_expired_at`] to override.
     ///
-    /// Added TD-199: `contextualize` (this crate's own recall path) has
+    /// `contextualize` (this crate's own recall path) has
     /// always built facts internally, but nothing public existed for a
     /// cross-crate caller (test fixtures, `kremory-mcp`'s drift guard) to
-    /// build a faithful one — see the TD-199 register entry for the coverage
-    /// gap this was blocking.
+    /// build a faithful one.
     pub fn new(params: RetrievedFactNewParams) -> Self {
         let RetrievedFactNewParams {
             fact,
@@ -548,7 +545,7 @@ impl RetrievedFact {
 /// `#[non_exhaustive]` — construction from outside this crate must go through
 /// `RetrievedContext::new()` + the `with_*` fluent setters. This keeps future
 /// field additions source-compatible across minor versions. Added v0.1.4 as
-/// prereq for ADR-029c multi-namespace recall.
+/// prereq for multi-namespace recall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct RetrievedContext {
@@ -568,11 +565,11 @@ pub struct RetrievedContext {
 
     /// Integer entity-type id for this result's entity within its namespace.
     ///
-    /// Mirrors `entities.entity_type_id` (introduced by Migration 008, TD-013).
+    /// Mirrors `entities.entity_type_id` (introduced by Migration 008).
     /// `0` = "Entity" catch-all sentinel. Populated by the engine recall path
     /// from the SQL LEFT JOIN with `entity_types`. Defaults to `0` for results
     /// constructed via `RetrievedContext::new()` (e.g. test fixtures,
-    /// pre-TD-013 serialised JSON).
+    /// older serialised JSON).
     ///
     /// `#[serde(default)]` ensures backward-compatible deserialisation.
     #[serde(default)]
@@ -607,17 +604,17 @@ pub struct RetrievedContext {
     ///
     /// # Policy
     ///
-    /// `namespace.policy` is always `None` regardless of the registered policy
-    /// (ADR-029c Decision 3). Policy is not fetched per-result.
+    /// `namespace.policy` is always `None` regardless of the registered policy.
+    /// Policy is not fetched per-result.
     #[serde(default)]
     pub namespace: Option<Namespace>,
 
-    /// Connected facts anchored on this entity (ADR-074 / TD-116) — the
+    /// Connected facts anchored on this entity — the
     /// LLM-consumable knowledge. Each carries a natural-language `fact` string,
     /// the structured triple, both bi-temporal clocks, confidence, and
     /// provenance. Populated by the recall path from `contextualize`'s computed
     /// facts (those where this entity is the subject); empty for results built
-    /// via `RetrievedContext::new()` and for pre-TD-116 serialised JSON.
+    /// via `RetrievedContext::new()` and for older serialised JSON.
     ///
     /// `#[serde(default)]` — additive on a `#[non_exhaustive]` type, so this is
     /// backward-compatible (old JSON deserialises to an empty vec).
@@ -625,8 +622,8 @@ pub struct RetrievedContext {
     pub facts: Vec<RetrievedFact>,
 }
 
-/// Bundled parameters for [`RetrievedContext::new`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`RetrievedContext::new`] — args-as-object
+/// (rust-conventions §too_many_arguments).
 pub struct RetrievedContextNewParams {
     pub entity_id: String,
     pub entity_name: String,
@@ -650,8 +647,8 @@ impl RetrievedContext {
     ///
     /// # Why you almost certainly need this
     ///
-    /// `recall(..).raw()` returns a **heterogeneous** list. Since ADR-078 made
-    /// `content-search` a default feature, content passages are interleaved with
+    /// `recall(..).raw()` returns a **heterogeneous** list. Since
+    /// `content-search` became a default feature, content passages are interleaved with
     /// graph entities — and a passage's [`entity_id`](Self::entity_id) is an
     /// **episode id**, not an entity id. Passing it to any entity-scoped call
     /// (`edit_entity`, `mutation_history`, …) fails with a confusing
@@ -670,8 +667,8 @@ impl RetrievedContext {
     ///
     /// # Provenance
     ///
-    /// Added 2026-08-05 after the project's OWN consumer E2E fell into this
-    /// (V1-CANONICAL §0b-sexies, E2E-2). Its filter — `!entity_id.is_empty() &&
+    /// This exists because the project's own consumer E2E fell into this trap:
+    /// its filter — `!entity_id.is_empty() &&
     /// !incomplete` — was a reasonable reading of the API and silently harvested a
     /// passage as an entity. `search.rs:1975` had already recorded the gap
     /// deliberately ("`RetrievedContext` has no dedicated 'kind' discriminator …
@@ -716,22 +713,22 @@ impl RetrievedContext {
     /// Set the namespace attribution for this result. Called by both the
     /// single-namespace (`in_namespace`) and multi-namespace (`in_namespaces`)
     /// recall execution paths. Callers constructing results directly may omit
-    /// (defaults to `None`). Added v0.1.5 (ADR-029c Decision 2).
+    /// (defaults to `None`). Added v0.1.5.
     pub fn with_namespace(mut self, ns: Namespace) -> Self {
         self.namespace = Some(ns);
         self
     }
 
-    /// Set the connected facts anchored on this entity (ADR-074 / TD-116).
+    /// Set the connected facts anchored on this entity.
     /// Default empty (`RetrievedContext::new()`'s starting value). The recall
     /// path (`contextualize`) sets this field directly since it lives in the
     /// same crate; this setter is for callers outside `kremory` — test
     /// fixtures, hand-built results — that need to populate it faithfully.
     ///
-    /// Added TD-199: before this setter existed, no cross-crate caller could
+    /// Before this setter existed, no cross-crate caller could
     /// build a facts-populated `RetrievedContext`, which left the
     /// facts-populated branch of `render_temporal_facts` unexercised by
-    /// `kremory-mcp`'s TD-198 drift guard (Quinn's LOW-1 on that review).
+    /// `kremory-mcp`'s drift guard.
     pub fn with_facts(mut self, facts: Vec<RetrievedFact>) -> Self {
         self.facts = facts;
         self
@@ -748,8 +745,6 @@ impl RetrievedContext {
     /// recall SQL path can never emit (e.g. `entity_type_id: 7,
     /// entity_type_name: "Entity"`). Default `(0, "Entity")` — the same
     /// sentinel `RetrievedContext::new()` already stamps.
-    ///
-    /// Added TD-199.
     pub fn with_entity_type(
         mut self,
         entity_type_id: u32,
@@ -761,18 +756,17 @@ impl RetrievedContext {
     }
 }
 
-/// One BM25-ranked passage from `.content()` recall (ADR-072 seq1 — raw
+/// One BM25-ranked passage from `.content()` recall (raw
 /// full-text search over `episodes.content`, no LLM, no embeddings).
 ///
 /// `ContentPassage` is a **distinct projection**, not an extension of
 /// [`RetrievedContext`] — the entity-shaped `#[non_exhaustive]`
 /// `RetrievedContext` contract (`entity_id`/`entity_name`/`entity_type_id`)
-/// carries no slot for a text passage, and is deliberately untouched by seq1
-/// (ADR-072 §6b: "does NOT extend the entity-shaped RetrievedContext").
+/// carries no slot for a text passage, and is deliberately untouched by seq1.
 /// Obtained via `mem.recall(query).content().await?` — the sibling terminal
 /// of `.raw()` (`facade::recall::RecallRequest::content`).
 ///
-/// Feature-gated behind `content-search` (ADR-072 §6 Finding 3 two-lever
+/// Feature-gated behind `content-search` (a two-lever
 /// gating model) — this type does not exist in the default build.
 #[cfg(feature = "content-search")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -796,7 +790,7 @@ pub struct ContentPassage {
     /// (lower = more relevant, matching kremory's existing FTS score
     /// convention — `core::search::SearchHit::score` doc: "lower = more
     /// relevant"). NOT fused with vector/entity/fact scores — seq1 is a
-    /// BM25-only parallel arm (ADR-072 §6b).
+    /// BM25-only parallel arm.
     pub score: f32,
     /// Attribution back to the originating episode. `kind` is always
     /// [`SourceKind::Episode`]; `occurred_at` is the episode's own
@@ -856,7 +850,7 @@ pub struct EpisodeCommit {
     #[serde(default)]
     pub stub_entities_inserted: usize,
     /// Did this episode's DENSE (content-search) arm get indexed, or did it
-    /// silently fail? TD-232: `maybe_embed_episode` (`core/ingest/mod.rs`)
+    /// silently fail? `maybe_embed_episode` (`core/ingest/mod.rs`)
     /// swallows an over-context-window or store failure into a `tracing::warn!`
     /// plus a metrics counter and returns `Ok` regardless, by design (a
     /// genuine embed failure must never abort an otherwise-successful
@@ -872,7 +866,7 @@ pub struct EpisodeCommit {
     ///   config choice, not a failure). Both cases mean "no silent-degrade
     ///   risk here", which is the only thing this field promises.
     /// - `Some(false)` — attempted on the inline path and FAILED (the exact
-    ///   silent-degrade TD-232 exists to surface: over the embedder's context
+    ///   silent-degrade this field exists to surface: over the embedder's context
     ///   window, or the embedder unreachable). A caller ingesting long
     ///   documents should treat this as "re-chunk this content before
     ///   ingesting it again if you need it recall-reachable via content
@@ -985,8 +979,6 @@ pub struct CancelOutcome {
 
 /// Options for `submit_dream_phase` batch consolidation.
 ///
-/// Per ADR §4.7 / ADR-037 §3 (D6).
-///
 /// `#[non_exhaustive]` (consumer-API hardening O5, dream-consumer-api-hardening
 /// spec §5) — this struct gains fields frequently (17 and counting). External
 /// callers construct it from `DreamOpts::default()` + the `DreamRequest::opts` /
@@ -999,19 +991,18 @@ pub struct DreamOpts {
     /// Only consolidate episodes committed after this timestamp.
     /// `None` = consolidate all un-dreamed episodes in scope.
     pub since: Option<DateTime<Utc>>,
-    /// Run Dream Pass 0 type discovery (ADR-037 §3).
+    /// Run Dream Pass 0 type discovery.
     /// When `true` (default), catch-all entities are clustered and presented
     /// to the LLM for new entity-type proposals.
     /// Set to `false` to skip type discovery on this dream cycle.
     pub include_type_discovery: bool,
-    /// Run Dream Pass consistency_check (ADR-047) — the LLM type-verification
+    /// Run Dream Pass consistency_check — the LLM type-verification
     /// pass. When `true` (default), typed entities are re-verified against the
     /// registry and corrected. Set to `false` to skip this LLM-cost pass on this
     /// dream cycle (the deterministic aliases + canonicalize passes still run).
     ///
     /// This is the per-pass cost lever, mirroring `include_type_discovery`. The
-    /// coarser Full/Light `DreamMode` gating is a separate concern deferred to
-    /// SCOPE-002 (Phase 5) — see `dream-phase-reconciliation-v2-2026-06-30` §D4.
+    /// coarser Full/Light `DreamMode` gating is a separate concern, deferred.
     pub include_consistency_check: bool,
     /// Maximum number of episodes processed per dream run.
     ///
@@ -1020,16 +1011,16 @@ pub struct DreamOpts {
     /// are processed in one run.
     ///
     /// When the cap is hit the counter
-    /// `kremory.dream.batch_cap_hit_total{phase=pass0|pass2}` is incremented
-    /// per CLAUDE.md Rule 19 (observability-first-class).  Use this knob for
+    /// `kremory.dream.batch_cap_hit_total{phase=pass0|pass2}` is incremented.
+    /// Use this knob for
     /// rate-limiting dream-phase LLM spend on large corpora.
     pub max_episodes_per_run: Option<usize>,
-    /// Run Site #3 type-registry post-hoc collapse (ADR-063 spec §4) — merges
+    /// Run Site #3 type-registry post-hoc collapse — merges
     /// near-duplicate `entity_types` rows (e.g. Pass-0-discovered "Company" +
     /// "Business Organisation") via description-cosine + lexical pre-filter +
     /// LLM-verify band, remapping `entities.entity_type_id` onto the keeper.
     ///
-    /// DEFAULT `true` — VALIDATED (2026-07-03). The S3 spike + the fair
+    /// DEFAULT `true` — VALIDATED. The S3 spike + the fair
     /// adversarial metrics harness (`crates/kremory/tests/corpora/site3_metrics.json`,
     /// n=119) cleared the spec §4.2 enablement gate: precision 0.949, Wilson-95%
     /// lower bound 0.861 ≥ 0.85 (strict lower-CI bar met, no N-limited fallback
@@ -1048,7 +1039,7 @@ pub struct DreamOpts {
     /// collisions. Set to `false` to skip this LLM-cost collapse pass on a given
     /// dream cycle.
     pub include_type_registry_collapse: bool,
-    /// Run Site #5 instance acronym/nickname recall (ADR-063 spec §3) — a new
+    /// Run Site #5 instance acronym/nickname recall — a new
     /// dream pass (NOT an extension of L7 `resolve_pending_aliases`) that
     /// nominates entity-instance pairs via a deterministic structural
     /// pre-filter (initialism test OR graph co-occurrence, spec §3.1) and
@@ -1056,7 +1047,7 @@ pub struct DreamOpts {
     /// closing the acronym/nickname gap `names_lexically_compatible`
     /// documents as inherent (`disambiguation/lexical.rs`).
     ///
-    /// 🔴 **DEFAULT FLIPPED `true` → `false` on 2026-08-17 (TD-222).** Measured
+    /// 🔴 **DEFAULT FLIPPED `true` → `false`.** Measured
     /// on the real LoCoMo corpus, this pass DISSOLVES the conversation's own
     /// participants and buys nothing. Opt in only if you have measured it on
     /// YOUR corpus.
@@ -1092,13 +1083,13 @@ pub struct DreamOpts {
     /// which is the dominant class a real graph produces. The gate measured the
     /// input class its author thought of.
     ///
-    /// Re-enabling is a real option once TD-222 is fixed — the prime suspect is
+    /// Re-enabling is a real option once this is fixed — the prime suspect is
     /// the adjudication prompt (`build_adjudication_messages`), which tells the
     /// model co-occurrence suggests identity, illustrates that class with
     /// `Bob`/`Robert` (a NICKNAME example, not a co-occurrence one), and gives
     /// no negative instruction or any hint that the merge is irreversible.
     ///
-    /// --- ORIGINAL JUSTIFICATION (2026-07-03), retained; its scope is the
+    /// --- ORIGINAL JUSTIFICATION, retained; its scope is the
     /// narrowness described above ---
     /// S1/S2/S6 spikes + the fair adversarial metrics harness
     /// (`crates/kremory/tests/corpora/site5_metrics.json`, n=140) cleared the
@@ -1106,68 +1097,67 @@ pub struct DreamOpts {
     /// ≥ 0.85, recall 0.988, ZERO false merges on the coincidental-collision and
     /// distinct-people-same-nickname safety categories.
     pub include_acronym_nickname_recall: bool,
-    /// Run Site #2 type-novelty DESCRIPTION-gate LLM-verify band (ADR-063
-    /// "The six sites" #2; impl spec §4.3 sibling table) — extends Pass 0's
+    /// Run Site #2 type-novelty DESCRIPTION-gate LLM-verify band — extends Pass 0's
     /// existing anti-redundancy gate (`discover_types` / `anti_redundancy.rs`) so a
     /// proposal whose best desc-cosine match against an existing type falls in the
     /// AMBIGUOUS zone (`[0.70, 0.85)`, or `≥0.85` with zero name-lemma overlap) is
     /// adjudicated by the shared `write_gate` (spec §2.2) instead of a hard cosine
     /// cutoff alone.
     ///
-    /// DEFAULT `true` since 2026-07-03 (ADR-065). A `NeedsLlmVerify`
+    /// DEFAULT `true`. A `NeedsLlmVerify`
     /// classification is adjudicated by `adjudicate_type_novelty` and decided by
     /// the Site-#2-LOCAL `type_novelty_is_redundant` (trust the confident LLM
     /// verdict as terminal arbiter) — NOT the shared `write_gate`, whose Row 6
-    /// deterministic-corroboration requirement (an ADR-057 entity-homonymy guard)
+    /// deterministic-corroboration requirement (an entity-homonymy guard)
     /// over-generalized to type synonyms and made this gate inert (12/12
     /// false-accept). Re-validated on the 26-row site2 corpus (cross-family
-    /// qwen2.5:7b audited, Phase 0): 11/12 redundant rejected + 14/14 novel +
-    /// 8/8 band-edge accepted (precision 0.933). See `site2_metrics.json` /
-    /// `site2_corpus_audit.md`. Set to `false` to preserve the pre-Site-#2 hard
+    /// qwen2.5:7b reviewed): 11/12 redundant rejected + 14/14 novel +
+    /// 8/8 band-edge accepted (precision 0.933). See `site2_metrics.json`.
+    /// Set to `false` to preserve the pre-Site-#2 hard
     /// cutoff (≥0.85 rejects, `[0.70, 0.85)` accepts) if you do not want the
     /// LLM-verify-band adjudication.
     pub include_type_novelty_llm_verify: bool,
-    /// TD-123 — gate Pass 0's in-place evidence-retype step (`discover_types`'s
-    /// `retype_evidence_by_similarity`, ADR-037 §9.6) which retypes catch-all
+    /// Gate Pass 0's in-place evidence-retype step (`discover_types`'s
+    /// `retype_evidence_by_similarity`) which retypes catch-all
     /// evidence entities to a newly-accepted type when a BARE ENTITY NAME
     /// embedding is cosine ≥ 0.75 to the new type's DESCRIPTION embedding.
     ///
-    /// This is a Vera-surfaced 7th cosine-alone-write site outside ADR-063's six
+    /// This is a 7th cosine-alone-write site outside the six
     /// enumerated sites: it is the same degenerate-embedding failure class
-    /// TD-097 documented (bare short labels collapse to near-identical vectors
+    /// documented elsewhere (bare short labels collapse to near-identical vectors
     /// under `nomic-embed-text`), but cross-domain (instance name vs. type
-    /// description) rather than name-vs-name, so the ADR-057/063
+    /// description) rather than name-vs-name, so the existing
     /// lexical-compatibility gate does not transplant here unmodified (an
     /// instance name like "Nobu Malibu" shares no lemma with its type
     /// "Restaurant" even on a CORRECT match — a lexical gate would reject
     /// legitimate retypes, not just degenerate ones).
     ///
-    /// DEFAULT `false` — UNLIKE ADR-063's six sites, this comparison has never
-    /// been `/ship-spike`-validated on kremory's own corpus/embedder (ADR-063's
+    /// DEFAULT `false` — unlike the six existing sites, this comparison has never
+    /// been `/ship-spike`-validated on kremory's own corpus/embedder (the project's
     /// own precondition: "every kremory-specific numeric threshold MUST PASS a
     /// `/ship-spike`... BEFORE it is wired into the production path"). Quarantined
-    /// default-off mirrors the same pre-spike posture ADR-063 used for every
-    /// other new mechanism (Sites #2/#3/#5 all shipped disabled pending S1-S6).
+    /// default-off mirrors the same pre-spike posture used for every
+    /// other new mechanism (Sites #2/#3/#5 all shipped disabled pending validation).
     /// When `false` (default), evidence entities stay catch-all
     /// (`entity_type_id = 0`) after Pass 0 accepts a new type; Pass 2
     /// `reclassify` — LLM + `ner_confidence`-gated, not cosine-alone — runs
     /// immediately after Pass 0 in the same `mem.dream()` call and safely picks
-    /// up the promotion instead (ADR-037 §9.6 "cascading retype"), so disabling
+    /// up the promotion instead (a "cascading retype"), so disabling
     /// this flag does not lose retype coverage, only the unvalidated cosine-alone
     /// shortcut. Set to `true` only after a dedicated spike validates
     /// `EVIDENCE_RETYPE_COSINE` (currently 0.75) on real data.
     pub include_evidence_retype_by_similarity: bool,
-    /// Run the CONSOLIDATION community-detection op (ADR-066 §2.1, spec P4) —
+    /// Run the CONSOLIDATION community-detection op (spec P4) —
     /// deterministic in-Rust label propagation over the entity co-occurrence graph,
     /// persisting `entity_communities` + `community_summaries`. Zero-LLM.
     ///
     /// DEFAULT `true` (consumer-API hardening D1) — all four consolidation ops
-    /// default ON, made safe by ADR-073 Tier-1 reversibility. Community detection
+    /// default ON, made safe by Tier-1 reversibility. Community detection
     /// is a full-recompute (wipe-then-rebuild) with no accumulated corruption, so
     /// it is intrinsically reversible. Toggle off with `false` to skip the
     /// graph-global co-occurrence partition on a given dream cycle.
     pub include_community_detection: bool,
-    /// Run the CONSOLIDATION cross-episode entity-merge op (ADR-066 §2.2, spec P3)
+    /// Run the CONSOLIDATION cross-episode entity-merge op (spec P3)
     /// — merge the SAME referent re-extracted verbatim (or trivially fuzzy) across
     /// DISTINCT episodes, gated by a mandatory structural-corroboration signal
     /// (shared neighbour / identical `(predicate, object)`) so a shared label alone
@@ -1177,27 +1167,27 @@ pub struct DreamOpts {
     /// DEFAULT `true` (consumer-API hardening D1), landing in SHADOW by
     /// construction (`cross_episode_dry_run: true` below) — the op computes every
     /// merge decision + emits telemetry but fuses nothing until a consumer opts
-    /// into apply. A fused merge is reversible via ADR-073 Tier-1
+    /// into apply. A fused merge is reversible
     /// (`mem.unmerge(...)` / nogood), which is what makes default-ON safe.
     ///
     /// **Prefer the `CrossEpisodeMode` builder** (`DreamRequest::cross_episode`) —
     /// it maps the tri-state Off/Shadow/Apply onto this flag + `cross_episode_dry_run`
     /// as one honest control. Setting these two raw bools directly is the L2 escape
-    /// hatch (ADR-038) for callers who need to compose `DreamOpts` manually.
+    /// hatch for callers who need to compose `DreamOpts` manually.
     pub include_cross_episode_merges: bool,
-    /// Shadow-mode gate for the CONSOLIDATION cross-episode merge op (ADR-070 Stage 2
-    /// of the enablement ratchet). When `true` (and `include_cross_episode_merges` is
+    /// Shadow-mode gate for the CONSOLIDATION cross-episode merge op
+    /// (part of the enablement ratchet). When `true` (and `include_cross_episode_merges` is
     /// also `true`), the op computes every clique-cover + F2 corroboration decision
     /// EXACTLY as it would live, but SKIPS the `apply_entity_merge` call — no entity is
     /// actually fused. Every decision (merge-would-fire or defer/skip) still emits its
-    /// `DecisionRecord` (ADR-070 Fork 2/3) with `mode = Shadow`, so an operator can
+    /// `DecisionRecord` with `mode = Shadow`, so an operator can
     /// observe the op's real decision distribution on THEIR data before trusting it
     /// with destructive writes.
     ///
     /// Mirrors the existing `ConsistencyCheckOpts.dry_run` precedent — same "decision
     /// computed, write skipped, skip-signal emitted" contract, generalized to this op.
     ///
-    /// **Compound default `true`** (ADR-070 §2.2): a consumer flipping
+    /// **Compound default `true`**: a consumer flipping
     /// `include_cross_episode_merges: true` for the FIRST time, WITHOUT also explicitly
     /// setting `cross_episode_dry_run: false`, gets Stage 2 (shadow) automatically —
     /// the op runs, computes decisions, emits telemetry, but does not commit merges.
@@ -1205,7 +1195,7 @@ pub struct DreamOpts {
     /// true` AND `cross_episode_dry_run: false`. Only matters when
     /// `include_cross_episode_merges` is true (the op is off otherwise).
     pub cross_episode_dry_run: bool,
-    /// Run the CONSOLIDATION supersession sweep (ADR-066 §2.3, spec P1) — the
+    /// Run the CONSOLIDATION supersession sweep (spec P1) — the
     /// deterministic world-time window close-out lane (retire facts whose
     /// `valid_to` has passed but were never marked expired). Zero-LLM,
     /// pure date-compare, orthogonal to ingest's same-object dedup.
@@ -1215,8 +1205,8 @@ pub struct DreamOpts {
     /// can be re-opened (`mem.unsupersede`). Toggle off with `false` to skip the
     /// window close-out on a given dream cycle.
     pub include_supersession_sweep: bool,
-    /// Also run supersession's OPT-IN LLM-nominated value-change lane (ADR-066
-    /// §2.3, spec P1.3) — only meaningful when `include_supersession_sweep` is
+    /// Also run supersession's OPT-IN LLM-nominated value-change lane
+    /// (spec P1.3) — only meaningful when `include_supersession_sweep` is
     /// also `true`. The LLM only NOMINATES the value-change pairing; the write
     /// decision stays the deterministic date-compare (a time-inverted nomination
     /// is rejected structurally). Default-off because auto-superseding a
@@ -1225,7 +1215,7 @@ pub struct DreamOpts {
     ///
     /// DEFAULT `false`.
     pub include_supersession_llm_nominate: bool,
-    /// Run the CONSOLIDATION fact-archival op (ADR-066 §2.4, spec P2) — MOVE a
+    /// Run the CONSOLIDATION fact-archival op (spec P2) — MOVE a
     /// long-expired, unreferenced fact from the live `facts` table into the
     /// append-only `facts_archive` audit table (INSERT + FTS-shadow delete +
     /// DELETE in one transaction), gated by a ref-count "orphans nothing" guard.
@@ -1236,8 +1226,8 @@ pub struct DreamOpts {
     /// check — reversible by design. Toggle off with `false` to keep long-expired
     /// facts in the live table.
     pub include_fact_archival: bool,
-    /// Per-run token budget ceiling for the consolidation sub-phase (ADR-066 §2.5
-    /// F-1, spec P0.1). Soft partial-abort: an op whose projected spend would push
+    /// Per-run token budget ceiling for the consolidation sub-phase
+    /// (spec P0.1, F-1). Soft partial-abort: an op whose projected spend would push
     /// cumulative usage past this ceiling is SKIPPED (later ops still run), matching
     /// kremory's warn-and-continue posture. `None` = unbounded.
     ///
@@ -1245,8 +1235,8 @@ pub struct DreamOpts {
     /// LLM-nominate lane consumes tokens; the other three consolidation ops
     /// (cross_episode, archive, communities) are zero-LLM / zero-token.
     pub consolidation_budget_tokens: Option<u64>,
-    /// Per-run USD-micro budget ceiling for the consolidation sub-phase (TD-060,
-    /// ADR-071 §Item 4a). Mirrors `consolidation_budget_tokens` exactly — soft
+    /// Per-run USD-micro budget ceiling for the consolidation sub-phase.
+    /// Mirrors `consolidation_budget_tokens` exactly — soft
     /// partial-abort, AND-gated with the token ceiling at each op's pre-check
     /// (`budget.check(...) && budget.check_usd(...)`), both must pass for the op to
     /// run. `None` = unbounded (no USD cap configured; most local-Ollama runs are
@@ -1265,13 +1255,13 @@ pub struct DreamOpts {
     /// local-Ollama runs are $0-cost and never need one regardless.
     pub consolidation_budget_usd_micro: Option<u64>,
     /// Grace window (days) before an expired fact becomes archival-eligible
-    /// (ADR-066 §2.4, spec P2.1). A fact is a candidate only when
+    /// (spec P2.1). A fact is a candidate only when
     /// `expired_at < now - archive_grace_days`. `None` = no grace (archive
     /// immediately on expiry — not recommended).
     ///
     /// DEFAULT `Some(90)`.
     pub archive_grace_days: Option<u32>,
-    /// TD-106 (ADR-071 §Item 4b) — post-aggregation WARN-only guard on the
+    /// Post-aggregation WARN-only guard on the
     /// consolidation sub-phase's aggregate destructive-mutation count
     /// (`cross_episode_merges + supersessions_recorded + facts_archived`;
     /// `communities_updated` is EXCLUDED — a community "update" is a recomputed
@@ -1287,7 +1277,7 @@ pub struct DreamOpts {
     pub net_mutation_warn_floor: Option<usize>,
 }
 
-/// L1 opinionated control (ADR-038) for the cross-episode entity-merge op — the
+/// L1 opinionated control for the cross-episode entity-merge op — the
 /// honest tri-state that the two raw `DreamOpts` bools
 /// (`include_cross_episode_merges` + `cross_episode_dry_run`) encode implicitly.
 ///
@@ -1299,7 +1289,7 @@ pub struct DreamOpts {
 /// |---|---|---|---|
 /// | `Off` | `false` | — | op does not run |
 /// | `Shadow` | `true` | `true` | compute + emit decisions, fuse nothing |
-/// | `Apply` | `true` | `false` | compute + fuse (reversible via ADR-073 unmerge) |
+/// | `Apply` | `true` | `false` | compute + fuse (reversible via unmerge) |
 ///
 /// Only cross_episode carries this shadow/apply distinction — the other three
 /// consolidation ops have no `dry_run` axis, so a mode enum on them would be dead
@@ -1310,15 +1300,15 @@ pub enum CrossEpisodeMode {
     /// The cross-episode merge op does not run.
     Off,
     /// The op computes every merge decision + emits telemetry, but fuses no
-    /// entities (shadow gate, ADR-070 Stage 2).
+    /// entities (shadow gate).
     Shadow,
-    /// The op computes AND commits merges. Each fusion is reversible via ADR-073
-    /// Tier-1 (`mem.unmerge` / nogood).
+    /// The op computes AND commits merges. Each fusion is reversible
+    /// (`mem.unmerge` / nogood).
     Apply,
 }
 
 impl DreamOpts {
-    /// True when ANY of the four CONSOLIDATION ops is enabled (ADR-066 spec §5).
+    /// True when ANY of the four CONSOLIDATION ops is enabled (spec §5).
     ///
     /// The facade uses this to skip the whole `run_consolidation` dispatcher when
     /// no op is on. With the consumer-API-hardening D1 defaults (all four ops ON)
@@ -1343,83 +1333,78 @@ impl Default for DreamOpts {
             include_type_discovery: true,
             include_consistency_check: true,
             max_episodes_per_run: None,
-            // ENABLED 2026-07-03 — both fair-validated against 100+-pair
+            // ENABLED — both fair-validated against 100+-pair
             // adversarial corpora (gemma4:e4b + real nomic), spec §4.2 gate PASS,
             // ZERO false merges. See site3_metrics.json / site5_metrics.json.
             include_type_registry_collapse: true,
-            // TD-222 (2026-08-17): was `true`. Measured A/B on conv0 — zero
+            // Was `true`. Measured A/B on conv0 — zero
             // benefit on either scorer, ~84 min of runtime, and it dissolved
             // both speakers of the conversation into the family pets. See the
             // field's doc comment for the numbers and the mutation log.
             include_acronym_nickname_recall: false,
-            // ENABLED 2026-07-03 (ADR-065) — Site #2 now trusts the LLM as
+            // ENABLED — Site #2 now trusts the LLM as
             // terminal arbiter (`type_novelty_is_redundant`) instead of the
             // over-generalized shared `write_gate` Row 6. Re-validated on the
-            // 26-row site2 corpus (cross-family qwen2.5:7b audited, Phase 0):
+            // 26-row site2 corpus (cross-family qwen2.5:7b reviewed):
             // 11/12 redundant rejected + 14/14 novel + 8/8 band-edge accepted
-            // (precision 0.933, recall 1.0). See site2_metrics.json /
-            // site2_corpus_audit.md. The single miss (s2-025 Employer/Company)
+            // (precision 0.933, recall 1.0). See site2_metrics.json.
+            // The single miss (s2-025 Employer/Company)
             // is an orthogonal LLM-judgment miss tracked by a follow-up TD.
             include_type_novelty_llm_verify: true,
-            // DEFAULT `false` (TD-123) — this cosine-only bare-name-vs-type-
+            // DEFAULT `false` — this cosine-only bare-name-vs-type-
             // description comparison has never been spike-validated (unlike
-            // ADR-063's six sites), so it stays quarantined off; Pass 2
+            // the six existing sites), so it stays quarantined off; Pass 2
             // reclassify (LLM + confidence-gated) safely covers the same
             // promotion in the same dream cycle. See field doc.
             include_evidence_retype_by_similarity: false,
-            // CONSOLIDATION sub-phase (ADR-066 §5) — ALL FOUR ops default ON. Made
-            // safe by ADR-073 Tier-1 (reversible graph mutations: provenance +
+            // CONSOLIDATION sub-phase — ALL FOUR ops default ON. Made
+            // safe by Tier-1 reversibility (reversible graph mutations: provenance +
             // unmerge + nogood + inspect) — every destructive consolidation write is
             // now reversible, so an embedded library can settle-and-improve the graph
             // by default without stranding a consumer's data. Toggle any op off via
             // its `include_*` knob (this is the "keep-on + honest surfaces" posture,
-            // NOT ADR-071's original defaults-off — see the consumer-API hardening
-            // spec `.ai-docs/specs/dream-consumer-api-hardening-arch-spec-2026-07-10.md`).
+            // not the original defaults-off approach).
             //
-            // ADR-071 Item 2: P4 communities has NO Wilson-LB gate (unlike Item 1's
-            // P3 corpus gate) — the mechanical proof is the reversibility argument:
+            // P4 communities has NO Wilson-LB gate (unlike P3's
+            // corpus gate) — the mechanical proof is the reversibility argument:
             // full-recompute (wipe-then-rebuild, `communities.rs`) with no accumulated
-            // corruption, verified in code (`.ai-docs/specs/adr-071-dream-phase-
-            // hardening-impl-spec-2026-07-06.md` §Item 2). ENABLED.
+            // corruption. ENABLED.
             include_community_detection: true,
-            // ADR-071 Item 1: P3 corpus gate PASSED (Wilson-LB 0.971297 >= 0.95, zero
-            // hub/two-hub false-merges — see
-            // .ai-docs/research/adr-071-p3-corpus-calibration-findings-2026-07-09.md) ->
+            // P3 corpus gate PASSED (Wilson-LB 0.971297 >= 0.95, zero
+            // hub/two-hub false-merges) ->
             // ENABLED. Lands in SHADOW by construction (`cross_episode_dry_run: true`
-            // below, ADR-070 §2.2): decisions are computed + emit DecisionRecord{mode=
+            // below): decisions are computed + emit DecisionRecord{mode=
             // Shadow}, but `apply_entity_merge` is SKIPPED — no entity is fused. Stage-5
             // (real apply) is a deferred later ratchet (set `cross_episode_dry_run:
             // false`), NOT this build (locked-decision-3).
             include_cross_episode_merges: true,
-            // Compound default TRUE (ADR-070 §2.2): the FIRST enablement of
+            // Compound default TRUE: the FIRST enablement of
             // `include_cross_episode_merges` lands in shadow mode (decisions computed +
             // observed, no entity fused) until an operator explicitly sets this `false`
             // to reach Stage 5 (apply). Irrelevant while the op is off (default).
             cross_episode_dry_run: true,
             // Consumer-API hardening (D1): the deterministic world-time
             // window-closeout sweep defaults ON alongside the other three ops.
-            // Reversible via `mem.unsupersede(fact_id)` (ADR-071 §Item 3 companion) —
+            // Reversible via `mem.unsupersede(fact_id)` —
             // the sweep only sets `expired_at = valid_to` on already-past-dated
             // bounds, and a bounded window can be re-opened. The optional
             // LLM-nominate value-change lane stays OFF (unsafe without a
             // functional-predicate registry — see field doc).
             include_supersession_sweep: true,
             include_supersession_llm_nominate: false,
-            // ADR-071 Item 2: P2 archive has NO Wilson-LB gate (unlike Item 1's P3
+            // P2 archive has NO Wilson-LB gate (unlike P3's
             // corpus gate) — the mechanical proof is the reversibility argument:
             // archive is an append-only MOVE into `facts_archive` (recoverable),
-            // guarded by the P2.2 ref-count "orphans nothing" check, verified in
-            // code (`.ai-docs/specs/adr-071-dream-phase-hardening-impl-spec-
-            // 2026-07-06.md` §Item 2). ENABLED.
+            // guarded by the P2.2 ref-count "orphans nothing" check. ENABLED.
             include_fact_archival: true,
             // Conservative token cap (only supersession's LLM-nominate lane spends).
             consolidation_budget_tokens: Some(50_000),
-            // TD-060: no USD cap by default — most consolidation ops run against
+            // No USD cap by default — most consolidation ops run against
             // local Ollama at $0 cost; a non-None default is a product/UX call the
             // ADR does not make.
             consolidation_budget_usd_micro: None,
             archive_grace_days: Some(90),
-            // TD-106: calibration default (see field doc — mirrors gbrain's
+            // Calibration default (see field doc — mirrors gbrain's
             // NET_DELETION_WARN_FLOOR scaled ~10x).
             net_mutation_warn_floor: Some(500),
         }

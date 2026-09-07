@@ -12,8 +12,7 @@
 //!
 //! ## Layer ownership
 //!
-//! Per the canonical Zep / Graphiti split (verified 2026-05-13 via context7;
-//! recorded in `project_zep_graphiti_split_canonical.md`):
+//! Per the canonical Zep / Graphiti split:
 //!
 //! - kremory::core owns per-episode work: `add_episode` cycle = LLM entity / edge
 //!   extraction + dedup + fact invalidation + temporal validity inference
@@ -49,7 +48,7 @@ pub use types::{
     RetrievedContext, RetrievedContextNewParams, RetrievedFact, RetrievedFactNewParams, SearchOpts,
     SourceKind, SourceRef, StructuredFact, SubmitOpts,
 };
-// ADR-072 seq1: `.content()` recall projection. Feature-gated (mirrors the
+// `.content()` recall projection. Feature-gated (mirrors the
 // type itself, `memory::types::ContentPassage`).
 #[cfg(feature = "content-search")]
 pub use types::ContentPassage;
@@ -69,7 +68,7 @@ use uuid::Uuid;
 
 // ── D.6.4 public API surface (ADR §4.10) ─────────────────────────────────────
 
-/// Bundled parameters for [`submit_episode`] — args-as-object per TD-042
+/// Bundled parameters for [`submit_episode`] — args-as-object
 /// (rust-conventions §too_many_arguments). `batch_id`: caller-set string
 /// grouping this episode with others — plain `Option<String>`, no `BatchRef`
 /// wrapper, matching universal prior art.
@@ -89,7 +88,7 @@ pub struct SubmitEpisodeParams<'a> {
 ///
 /// Phase 1 (store + embed) commits synchronously. Episode searchable on return.
 /// Phase 2 (LLM enrich) controlled by `params.opts`.
-// Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+// Substrate primitive; consumer-facing surface is kremory::Memory facade.
 pub async fn submit_episode(params: SubmitEpisodeParams<'_>) -> Result<EpisodeCommit> {
     let SubmitEpisodeParams {
         graph,
@@ -116,7 +115,7 @@ pub async fn submit_episode(params: SubmitEpisodeParams<'_>) -> Result<EpisodeCo
         .await
 }
 
-/// Bundled parameters for [`submit_dream_phase`] — args-as-object per TD-042
+/// Bundled parameters for [`submit_dream_phase`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 pub struct SubmitDreamPhaseParams<'a> {
     pub graph: &'a dyn GraphHandle,
@@ -129,7 +128,7 @@ pub struct SubmitDreamPhaseParams<'a> {
 
 /// Submit a batch consolidation (dream phase). Returns immediately.
 /// Idempotent on `(scope, batch_id)` key. See ADR §2.10 for CAS semantics.
-// Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+// Substrate primitive; consumer-facing surface is kremory::Memory facade.
 pub async fn submit_dream_phase(params: SubmitDreamPhaseParams<'_>) -> Result<DreamHandle> {
     let SubmitDreamPhaseParams {
         graph,
@@ -245,9 +244,9 @@ pub async fn await_batch_enrichment(
     since = "0.1.0",
     note = "Use submit_episode + EnrichmentEventSink for accurate per-episode counts"
 )]
-// Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+// Substrate primitive; consumer-facing surface is kremory::Memory facade.
 //
-// TD-042 documented exemption: this fn is `#[deprecated]` (removal scheduled).
+// Documented exemption: this fn is `#[deprecated]` (removal scheduled).
 // Per the treat-cause exemption precedent, args-as-object churn on dying code is
 // waste — the allow stays until the fn is removed. New code uses `submit_episode`.
 #[allow(clippy::too_many_arguments)]
@@ -298,7 +297,7 @@ pub async fn run_dream_phase(
     graph.graph_run_consolidation(&namespace, provider).await
 }
 
-/// Bundled parameters for [`search`] — args-as-object per TD-042
+/// Bundled parameters for [`search`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 pub struct SearchParams<'a> {
     pub graph: &'a dyn GraphHandle,
@@ -316,7 +315,6 @@ pub async fn search(params: SearchParams<'_>) -> Result<Vec<RetrievedContext>> {
         namespace,
         opts,
     } = params;
-    // ADR-068 (supersedes `adr-memory-builder-as-of-fail-loud` / F4 / DENT-001):
     // `as_of` point-in-time recall is now IMPLEMENTED — `opts.as_of` passes
     // through to `graph_search` → `contextualize()` → `TemporalGraph::
     // get_neighbours_at`, which applies the valid-time predicate at the 1-hop
@@ -362,7 +360,7 @@ pub fn context_block(results: &[RetrievedContext], template: ContextTemplate) ->
 }
 
 /// Read-only accessor over one connected fact, for the generic renderers
-/// below (TD-198). Implemented by [`RetrievedFact`] here; kremory-mcp
+/// below. Implemented by [`RetrievedFact`] here; kremory-mcp
 /// implements it for its own `RetrievedFactWire` DTO (already-formatted
 /// RFC-3339 strings rather than `chrono::DateTime<Utc>` — the shapes
 /// genuinely diverge, which is why this is a companion trait rather than a
@@ -372,7 +370,7 @@ pub fn context_block(results: &[RetrievedContext], template: ContextTemplate) ->
 /// renderers can serve both this crate's types and kremory-mcp's wire DTOs
 /// from ONE implementation. It is `pub` only because kremory-mcp is a separate
 /// crate. Methods may be added in a minor release; downstream implementors
-/// should expect breakage. (Quinn review LOW-2, 2026-08-11.)
+/// should expect breakage.
 pub trait RenderableFact {
     /// Natural-language rendering, e.g. `"Alice likes tea"`.
     fn fact_text(&self) -> &str;
@@ -395,7 +393,7 @@ impl RenderableFact for RetrievedFact {
 }
 
 /// Read-only accessor over one source reference, for the generic renderers
-/// below (TD-198). Implemented by [`SourceRef`] here; kremory-mcp implements
+/// below. Implemented by [`SourceRef`] here; kremory-mcp implements
 /// it for its own `SourceRefWire` DTO.
 ///
 /// **Not intended for external implementation** — see [`RenderableFact`].
@@ -424,10 +422,10 @@ impl RenderableSourceRef for SourceRef {
 /// [`render_edge_summary`], and [`render_temporal_facts`] need to render a
 /// result — the single point where kremory's `RetrievedContext` and
 /// kremory-mcp's `RetrievedContextWire` DTO converge, so the renderer bodies
-/// below are written ONCE (TD-198; previously three functions independently
-/// hand-mirrored in `kremory-http.rs` — the exact
-/// two-implementations-must-agree shape that caused TD-173's silent `.max()`
-/// fusion regression, re-created for rendering by TD-196).
+/// below are written ONCE — previously three functions independently
+/// hand-mirrored in `kremory-http.rs`: the exact
+/// two-implementations-must-agree shape that caused a prior silent `.max()`
+/// fusion regression, re-created for rendering by a later, similar bug.
 ///
 /// Implemented by [`RetrievedContext`] here; kremory-mcp implements it for
 /// its own `RetrievedContextWire` DTO (`crates/kremory-mcp/src/conversions.rs`)
@@ -443,8 +441,8 @@ pub trait RenderableContext {
 
     fn entity_name(&self) -> &str;
     fn summary(&self) -> &str;
-    /// `Some(group_id)` when this result carries namespace attribution
-    /// (ADR-029c Decision 7); `None` when absent. kremory-mcp's `/search`
+    /// `Some(group_id)` when this result carries namespace attribution;
+    /// `None` when absent. kremory-mcp's `/search`
     /// takes exactly one `namespace` per request, so every item in one
     /// response necessarily shares the same group_id — the multi-namespace
     /// `[ns:...]` prefix below therefore never fires for it, without this
@@ -477,12 +475,12 @@ impl RenderableContext for RetrievedContext {
 }
 
 /// Render one block per entity: name, summary, connected facts, source
-/// pointers. `pub` + generic over [`RenderableContext`] (TD-198) — so
+/// pointers. `pub` + generic over [`RenderableContext`] — so
 /// kremory-mcp's `format=text` HTTP rendering path can call this directly
 /// instead of maintaining its own hand-mirrored copy.
 pub fn render_entities<T: RenderableContext>(results: &[T]) -> String {
     // Detect multi-namespace context: emit [ns:{group_id}] prefix when results
-    // span more than one distinct group_id (ADR-029c Decision 7).
+    // span more than one distinct group_id.
     let multi_ns = is_multi_namespace(results);
     let mut out = String::new();
     for (i, r) in results.iter().enumerate() {
@@ -500,7 +498,7 @@ pub fn render_entities<T: RenderableContext>(results: &[T]) -> String {
         out.push_str(r.entity_name());
         out.push('\n');
         out.push_str(r.summary());
-        // ADR-074 / TD-116: list the entity's connected facts (the knowledge)
+        // List the entity's connected facts (the knowledge)
         // under its heading, not just the type-label summary.
         if !r.facts().is_empty() {
             out.push_str("\n\nFacts:");
@@ -525,7 +523,7 @@ pub fn render_entities<T: RenderableContext>(results: &[T]) -> String {
 }
 
 /// One line per entity-source-edge for compact context. `pub` + generic
-/// over [`RenderableContext`] (TD-198) — see [`render_entities`].
+/// over [`RenderableContext`] — see [`render_entities`].
 pub fn render_edge_summary<T: RenderableContext>(results: &[T]) -> String {
     let mut out = String::new();
     for r in results {
@@ -545,7 +543,7 @@ pub fn render_edge_summary<T: RenderableContext>(results: &[T]) -> String {
 }
 
 /// Emit the `[ns:{group_id}]` attribution marker when results span more than
-/// one namespace (ADR-029c Decision 7). Free fn (not a closure) to avoid a
+/// one namespace. Free fn (not a closure) to avoid a
 /// `&mut out` + `&r` borrow conflict in the render loops.
 fn push_ns_prefix<T: RenderableContext>(out: &mut String, r: &T, multi_ns: bool) {
     if multi_ns {
@@ -558,10 +556,10 @@ fn push_ns_prefix<T: RenderableContext>(out: &mut String, r: &T, multi_ns: bool)
 }
 
 /// Flattens source_refs with `valid_at` annotations. `pub` + generic over
-/// [`RenderableContext`] (TD-198) — see [`render_entities`].
+/// [`RenderableContext`] — see [`render_entities`].
 pub fn render_temporal_facts<T: RenderableContext>(results: &[T]) -> String {
     // Detect multi-namespace context: emit [ns:{group_id}] prefix per result
-    // when results span more than one distinct group_id (ADR-029c Decision 7).
+    // when results span more than one distinct group_id.
     let multi_ns = is_multi_namespace(results);
     let mut out = String::new();
     for (i, r) in results.iter().enumerate() {
@@ -570,7 +568,7 @@ pub fn render_temporal_facts<T: RenderableContext>(results: &[T]) -> String {
         }
         if r.facts().is_empty() {
             // No connected facts — fall back to the entity + source_ref line
-            // (preserves pre-TD-116 rendering for fact-less entities).
+            // (preserves the original rendering for fact-less entities).
             for sr in r.source_refs() {
                 push_ns_prefix(&mut out, r, multi_ns);
                 out.push_str(r.entity_name());
@@ -581,7 +579,7 @@ pub fn render_temporal_facts<T: RenderableContext>(results: &[T]) -> String {
                 out.push('\n');
             }
         } else {
-            // ADR-074 / TD-116: render the actual connected facts — the
+            // Render the actual connected facts — the
             // LLM-consumable knowledge — each with its world-clock validity,
             // instead of the entity name + type-label summary.
             for f in r.facts() {
@@ -603,7 +601,7 @@ pub fn render_temporal_facts<T: RenderableContext>(results: &[T]) -> String {
 
 /// Determine whether `results` span more than one distinct namespace group_id.
 /// Used by `render_entities` and `render_temporal_facts` to decide whether to
-/// emit `[ns:{group_id}]` attribution markers (ADR-029c Decision 7).
+/// emit `[ns:{group_id}]` attribution markers.
 ///
 /// Returns `true` only when at least two distinct, non-`None` group_ids appear
 /// in the result set. Single-namespace results and results without namespace
@@ -1212,12 +1210,11 @@ mod tests {
         assert_eq!(resolved_fallback, now);
     }
 
-    /// ADR-068 (supersedes `adr-memory-builder-as-of-fail-loud`): `search()`
-    /// no longer fails loud on `opts.as_of` — the guard is gone and `as_of`
-    /// passes through to `graph.graph_search`, exactly like `limit` does.
-    /// Retired name `as_of_errors_unsupported` (per the ADR's companion spec
-    /// Decision 3: "this specific test name is retired since there's no more
-    /// `Unsupported` path for `as_of` to hit"). This unit level only proves
+    /// `search()` no longer fails loud on `opts.as_of` — the guard is gone
+    /// and `as_of` passes through to `graph.graph_search`, exactly like
+    /// `limit` does. Retired name `as_of_errors_unsupported` (this specific
+    /// test name is retired since there's no more `Unsupported` path for
+    /// `as_of` to hit). This unit level only proves
     /// the STUB-level delegation contract (opts round-trip to `GraphHandle`
     /// unchanged, no error) — the real valid-time SQL filtering correctness
     /// is covered end-to-end in `tests/facade_as_of_warn.rs` against a real

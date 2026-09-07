@@ -1,6 +1,5 @@
 //! `EnrichmentEventSink` — Phase 3 event sink extending `IngestEventSink`.
 //!
-//! Per ADR D.6.5 + ADR rqlm-async-event-handle-api-design-2026-05-19 §4.8:
 //! rqlm extends `IngestEventSink` (from kremory::core::sink) with Phase 3
 //! (batch consolidation / dream-phase) events.
 //!
@@ -34,9 +33,9 @@ pub struct BatchPhase2Complete {
     pub duration_ms: u64,
 }
 
-/// A cross-episode merge decision (ADR-070 Fork 1/5), passed to
-/// [`EnrichmentEventSink::on_merge_proposed`]. Args-as-object per the TD-042
-/// convention (mirrors [`BatchPhase2Complete`]) so the callback stays within the
+/// A cross-episode merge decision, passed to
+/// [`EnrichmentEventSink::on_merge_proposed`]. Args-as-object (mirrors
+/// [`BatchPhase2Complete`]) so the callback stays within the
 /// project's method-arity budget.
 ///
 /// Borrowed (`&str`) rather than owned: the event fires sync-inline from inside the
@@ -62,7 +61,7 @@ pub struct MergeProposed<'a> {
 /// both accept `Option<Arc<dyn EnrichmentEventSink>>`.
 ///
 /// Phase 3 events: `on_community_updated`, `on_batch_phase2_complete`,
-/// `on_worker_resumed` (crash-resume), and `on_merge_proposed` (ADR-070 Fork 5 — a
+/// `on_worker_resumed` (crash-resume), and `on_merge_proposed` (a
 /// cross-episode merge decision, shadowed or applied). All but the first two carry a
 /// default no-op, so consumers implement only the events they care about.
 ///
@@ -94,7 +93,7 @@ pub struct MergeProposed<'a> {
 /// catch their own panics if they call into FFI or other panic-on-failure
 /// code (e.g. wrap in `std::panic::catch_unwind`).
 ///
-/// # Thread-context contract (ADR-052 D4)
+/// # Thread-context contract
 ///
 /// All callbacks inherited from `IngestEventSink` (stage-change, entity
 /// extracted, edge added, ingestion error) fire **sync-inline on the
@@ -107,11 +106,11 @@ pub struct MergeProposed<'a> {
 /// WILL deadlock because the callback fires from within an `async fn` run
 /// via `rt.block_on(async { … })` on the background worker runtime.
 ///
-/// # Inline-path coverage (MED-02, updated v0.2.4 — ADR-052 Gap 1)
+/// # Inline-path coverage
 ///
 /// The inline ingest path (`run_in_background=false`, i.e.
-/// `Memory::remember(..).with_event_sink(..)` without `.no_wait()`) **is** sink-wired
-/// as of ADR-052 Gap 1: `engine_handle.rs` coerces the `EnrichmentEventSink` to the
+/// `Memory::remember(..).with_event_sink(..)` without `.no_wait()`) **is** sink-wired:
+/// `engine_handle.rs` coerces the `EnrichmentEventSink` to the
 /// core `IngestEventSink` supertrait and threads it into the shared `engine.ingest()`
 /// extraction routine (`sink: core_sink`). A consumer registering a sink on the inline
 /// path therefore receives the extraction fire-sites (`on_stage_change`,
@@ -126,7 +125,7 @@ pub struct MergeProposed<'a> {
 /// scope — see `engine_handle.rs`), so it emits
 /// `kremory.engine_handle.inline_ingest_fail_no_episode_id_total` instead.
 ///
-/// # `IngestStatus::EntitiesReady` vs `Complete` (ADR-052 D2/D5)
+/// # `IngestStatus::EntitiesReady` vs `Complete`
 ///
 /// `on_stage_change(EntitiesReady)` fires after Phase 2a (entity writes)
 /// completes — i.e., after the SQL column writes `'Verified'`.
@@ -143,10 +142,10 @@ pub struct MergeProposed<'a> {
 /// entered.  It does NOT fire when zero facts were extracted (fast-exit
 /// path).  Fires regardless of whether contradictions are actually found.
 ///
-/// # `IngestStatus::SkippedIdempotent` (MED-05 / ADR-050 Phase 5, v0.2.4)
+/// # `IngestStatus::SkippedIdempotent`
 ///
 /// The `IngestStatus` enum carries `#[non_exhaustive]`.  `SkippedIdempotent`
-/// was added in v0.2.4 (ADR-050 Phase 5) and fires via
+/// was added in v0.2.4 and fires via
 /// `on_stage_change(SkippedIdempotent)` each time Guard #1 in
 /// `run_verify_stage` detects a duplicate content hash — i.e., the entity
 /// was already processed in this crash-resume pass and Phase 2 is skipped.
@@ -192,11 +191,11 @@ pub trait EnrichmentEventSink: IngestEventSink {
     ///
     /// **Default no-op**: This is an operational-observability event, NOT a
     /// correctness event. Existing consumers that don't care about crash-resume
-    /// MUST NOT be forced to implement a no-op (arch spec §3.1.2, ADR-050).
+    /// MUST NOT be forced to implement a no-op.
     /// This is an explicit, scoped deviation from v0.2.3's "no default impls"
     /// policy for `IngestEventSink` correctness methods.
     ///
-    /// **Forward-compat note (MED-05 ADR-050 idempotency)**: After v0.2.4,
+    /// **Forward-compat note**: After v0.2.4,
     /// sink consumers MUST deduplicate `on_stage_change(Extracting)` callbacks
     /// on `(episode_id, stage)` because crash-resume may re-enter
     /// `run_verify_stage` for partially-processed episodes. `on_worker_resumed`
@@ -204,8 +203,8 @@ pub trait EnrichmentEventSink: IngestEventSink {
     /// is about to occur.
     fn on_worker_resumed(&self, _from_cursor: &str, _op_name: &str) {}
 
-    /// A cross-episode merge decision was made during Phase 3 consolidation
-    /// (ADR-070 Fork 1/5) — fires whether the decision was shadowed
+    /// A cross-episode merge decision was made during Phase 3 consolidation —
+    /// fires whether the decision was shadowed
     /// ([`MergeProposed::dry_run`]` == true`, no entity fused) or applied
     /// (`dry_run == false`, the loser was fused into the keeper). The `dry_run` flag
     /// lets a consumer observing a shadow window tell "would-have-merged" from

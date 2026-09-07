@@ -4,7 +4,7 @@
 //
 // This adapter belongs in `kremory::memory` (the facade layer), not in `kremory::core`:
 // it depends on `autoagents-llm` types, which would introduce an upward dependency
-// into the atomic-design topology (ADR-007 + ADR-005 §9) if placed in core.
+// into the atomic-design topology if placed in core.
 
 use std::sync::Arc;
 

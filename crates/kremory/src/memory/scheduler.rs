@@ -12,10 +12,6 @@
 //! clean exit. Dropping the handle without calling `stop` cancels the task but
 //! does not wait for it to drain (fire-and-forget teardown). For graceful
 //! shutdown call `stop().await`.
-//!
-//! # ADR reference
-//!
-//! Phase C DoD C9–C11 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,10 +77,6 @@ pub enum DreamSchedule {
 /// Call [`DreamSchedulerHandle::stop`] for graceful shutdown. Dropping the
 /// handle cancels the task without waiting — use `stop().await` when
 /// deterministic teardown matters (e.g. in tests or CLI tools).
-///
-/// # ADR reference
-///
-/// Phase C DoD C11 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
 pub struct DreamSchedulerHandle {
     token: CancellationToken,
     join: tokio::task::JoinHandle<()>,
