@@ -1,5 +1,9 @@
 // kremory-napi `unmerge` — reverse a prior entity-merge by its mutationId.
 //
+// ⚠️ `@kgentic-ai/kremory-node` is UNPUBLISHED (v0.4.1) — the `Memory` import
+// below resolves to the LOCALLY BUILT native module (`../index.js`), not a
+// published npm package.
+//
 // This file is NEVER executed — only type-checked, mirroring
 // `__test__/types.check.ts`'s own established convention (see its header
 // comment: "This file is NEVER executed — only type-checked via `tsc
