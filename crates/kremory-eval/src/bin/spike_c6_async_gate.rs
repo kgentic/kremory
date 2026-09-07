@@ -1,17 +1,17 @@
-//! C6 Async-Gate Feasibility Spike (2026-06-10).
+//! C6 Async-Gate Feasibility Spike.
 //!
 //! # Purpose
 //!
-//! Empirically validates the C6 architecture BEFORE Phase A implementation begins.
-//! Per CLAUDE.md Rule 23 (mechanical-compile-spike-beats-paper-review) and Vera
-//! Cycle 2 RISK-005 (single-fixture extrapolation concern).
+//! Empirically validates the C6 architecture BEFORE Phase A implementation
+//! begins — a paper review can't substitute for a real measurement, and a
+//! single fixture alone risks over-extrapolating from one data point.
 //!
 //! # What this spike measures
 //!
 //! 1. **Stage 2 LLM verify works at INGEST time** — invokes `run_consistency_check`
 //!    immediately after each episode is ingested (simulating Stage 2 firing in the
 //!    background pipeline with access to source-episode context) and measures
-//!    precision lift on the TD-036 mis-typed fixture.
+//!    precision lift on the mis-typed fixture.
 //!
 //! 2. **Hot-path latency** — measures Phase 1 duration (embed + episode INSERT only,
 //!    no LLM) across 5 fixture ingestions to confirm <100ms p50 target is met.

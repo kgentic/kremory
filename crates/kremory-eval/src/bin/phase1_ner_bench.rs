@@ -1,20 +1,14 @@
 //! Phase 1 NER standalone benchmark (O11y Sprint O0.1).
 //!
-//! Closes the load-bearing gap in `c6-async-gate-feasibility-2026-06-10.md` GAP-001:
-//! the previous spike binary used full `Engine::ingest_with` which includes Phase 2
-//! LLM extraction (~80-130s per call per qwen2.5:14b per `intelligence.rs:94`),
-//! making it impossible to isolate Phase 1 NER wall-clock — the critical ADR-049
-//! <100ms p50 hot-path target.
+//! Closes the gap where the previous spike binary used full `Engine::ingest_with`,
+//! which includes Phase 2 LLM extraction (~80-130s per call per qwen2.5:14b per
+//! `intelligence.rs:94`), making it impossible to isolate Phase 1 NER wall-clock
+//! against the <100ms p50 hot-path target. `ingest_phase1_ner()` was split out
+//! of the full pipeline specifically to make this measurable in isolation.
 //!
 //! This binary calls `ner_singleton()` directly and measures GLiNER alone across
 //! synthetic text sizes 300 / 1k / 5k / 25k / 100k characters with N=10 runs each.
 //! Captures p50/p95/p99 wall-clock + entity-extraction count + characters/second.
-//!
-//! ## Governing references
-//! - Sprint plan O0.1
-//! - ADR-049 §5.5 `ingest_phase1_ner()` split + <100ms p50 hot-path target
-//! - `c6-verify-model-local-ladder-benchmark-2026-06-10.md` GAP-001
-//! - `prior-art-adoption-audit-2026-06-10.md` Top 5 finding #1 (hot-path measurement)
 //!
 //! ## Usage
 //!
@@ -77,7 +71,7 @@ struct SizeResult {
     max_us: u128,
     entities_per_run: usize,
     chars_per_second: f64,
-    /// Target check — flag if p50 exceeds the ADR-049 hot-path threshold.
+    /// Target check — flag if p50 exceeds the <100ms hot-path threshold.
     p50_under_100ms: bool,
 }
 
@@ -210,9 +204,9 @@ async fn main() -> Result<()> {
         let min_us = samples.iter().copied().min().unwrap_or(0);
         let max_us = samples.iter().copied().max().unwrap_or(0);
         let entities_per_run = total_entities / runs_per_size;
-        // Quinn LOW-03 fix: guard zero-mean to avoid f64::INFINITY which
-        // serde_json serialises as `null` — a confusing sentinel for a
-        // throughput metric. Zero is the explicit "no data" value.
+        // Guard zero-mean to avoid f64::INFINITY, which serde_json serialises
+        // as `null` — a confusing sentinel for a throughput metric. Zero is
+        // the explicit "no data" value.
         let chars_per_second = if mean_us == 0 {
             0.0
         } else {

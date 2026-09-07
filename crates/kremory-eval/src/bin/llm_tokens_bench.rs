@@ -11,12 +11,6 @@
 //! analysis can derive **estimated tokens per LLM call** = latency_ms ×
 //! (tokens/sec from this benchmark).
 //!
-//! ## Governing references
-//! - O11y Sprint plan O0.3
-//! - Manual Ollama API exploration (2026-06-11 session) — confirmed eval_count
-//!   in response body but absent from autoagents-llm `ChatProvider` trait surface
-//! - CLAUDE.md Rule 19 (observability first-class)
-//!
 //! ## Usage
 //!
 //! ```text
@@ -137,12 +131,11 @@ async fn measure_one(
     model: &str,
     prompt: &str,
 ) -> Result<OllamaGenerateResponse> {
-    // Quinn MED-01 fix: `keep_alive` is a TOP-LEVEL Ollama API field, not an
-    // option. Nesting it inside `options` causes Ollama to silently ignore it
-    // (per autoagents-llm OllamaGenerateRequest struct — keep_alive not in
-    // options), defaulting to 5-minute keep_alive. That risks reload spikes
-    // when sweeping across many models and contradicts
-    // `feedback_td024_keepalive_thrash_hurts_precision`.
+    // `keep_alive` is a TOP-LEVEL Ollama API field, not an option. Nesting it
+    // inside `options` causes Ollama to silently ignore it (per autoagents-llm
+    // OllamaGenerateRequest struct — keep_alive not in options), defaulting to
+    // 5-minute keep_alive. That risks reload spikes when sweeping across many
+    // models, which would hurt measurement precision.
     let body = serde_json::json!({
         "model": model,
         "prompt": prompt,

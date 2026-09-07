@@ -442,7 +442,7 @@ impl<J: Judge + Send + Sync> Scorer<LongMemEvalSample, LongMemEvalOutput> for Lo
         // (`is_correct: bool`) — using the bool directly is more reliable than
         // substring-matching reasoning text, which fails when the judge model
         // produces positive reasoning without an explicit "yes" prefix
-        // (observed: Gemma 4 E2B-IT, 2026-05-28 O13 smoke).
+        // (observed with Gemma 4 E2B-IT).
         //
         // Backward compat with MockJudge: all existing tests set
         // `is_correct` to match their "yes"/"no" reasoning strings.
@@ -625,9 +625,9 @@ mod tests {
     }
 
     /// Regression: scorer must use `verdict.is_correct` bool, not substring-match
-    /// "yes" in reasoning. Observed 2026-05-28 with Gemma 4 E2B-IT: positive
-    /// reasoning ("matching the correct answer") that lacked an explicit "yes"
-    /// prefix produced false 0.0 scores before the fix landed in this release.
+    /// "yes" in reasoning. Observed with Gemma 4 E2B-IT: positive reasoning
+    /// ("matching the correct answer") that lacked an explicit "yes" prefix
+    /// produced false 0.0 scores before the fix landed in this release.
     #[tokio::test]
     async fn scorer_uses_is_correct_bool_when_reasoning_lacks_yes_prefix() {
         let judge = MockJudge::new(JudgeVerdict {

@@ -730,11 +730,10 @@ fn write_risk001_doc(
 fn install_metrics_recorder() -> metrics_util::debugging::Snapshotter {
     let recorder = metrics_util::debugging::DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
-    // Quinn LOW-01 fix: surface install-failure with a WARN. If a previous
-    // process or test harness already installed a global recorder, this
-    // snapshotter would observe ZERO metrics and the downstream JSON dump
-    // would silently report `metric_count: 0`. The WARN tells the operator
-    // why.
+    // Surfaces install-failure with a WARN. If a previous process or test
+    // harness already installed a global recorder, this snapshotter would
+    // observe ZERO metrics and the downstream JSON dump would silently
+    // report `metric_count: 0`. The WARN tells the operator why.
     if metrics::set_global_recorder(recorder).is_err() {
         eprintln!(
             "[sweep] WARN: global metrics recorder already installed — snapshot will be EMPTY. \
@@ -802,8 +801,8 @@ async fn main() -> Result<()> {
     // - verify_model: gemma4-e2b:latest (interactive default, RISK-001 target)
     // - ingest_model: qwen2.5:14b (legacy fallback, handles 21-type integer enum reliably)
     //
-    // KREMORY_VERIFY_PROVIDER=anthropic routes verify calls to Anthropic instead of Ollama.
-    // This is the sub-decision (iv) path: frontier-only Pass 4 (ADR-047 amendment 2026-06-10).
+    // KREMORY_VERIFY_PROVIDER=anthropic routes verify calls to Anthropic instead of Ollama,
+    // for running Dream Pass 4 verification with only the frontier model.
     let verify_provider_name =
         std::env::var("KREMORY_VERIFY_PROVIDER").unwrap_or_else(|_| "ollama".to_string());
     let verify_model = std::env::var("KREMORY_VERIFY_MODEL")

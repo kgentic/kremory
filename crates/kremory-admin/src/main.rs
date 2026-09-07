@@ -1,7 +1,7 @@
 //! kremory-admin — migration + admin tooling for kremory databases.
 //!
-//! ADR-029b Decision 7: migration binary for composite-PK migration,
-//! namespace relabeling, preflight checks, and rollback support.
+//! Migration binary for composite-PK migration, namespace relabeling,
+//! preflight checks, and rollback support.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -115,7 +115,7 @@ async fn cmd_migrate(args: MigrateArgs) -> Result<()> {
     //
     // For v0.1.5, migrations run automatically. This command provides the
     // --preflight and --dry-run audit surface. Full rollback-004 and
-    // relabel-namespace commands follow in subsequent commits per ADR-029b §8.
+    // relabel-namespace commands are not yet implemented.
 
     if !args.i_have_a_backup {
         anyhow::bail!(

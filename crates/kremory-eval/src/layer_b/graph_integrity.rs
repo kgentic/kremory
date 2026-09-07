@@ -16,9 +16,9 @@
 //! | 6 | `no_transitive_merge_chain` | No entity is the SURVIVOR of one live merge and the VICTIM   |
 //! |   |                         | of another (see "Why invariant 6 is different" below)            |
 //! | 7 | `world_time_grounding`  | `valid_from` shows real episode-anchored date resolution, not    |
-//! |   |                         | ingest wall-clock (TD-187/TD-229; see below — breaks convention) |
+//! |   |                         | ingest wall-clock (see below — breaks convention)                |
 //!
-//! # Why invariant 6 is different — it reads HISTORY, not state (TD-223)
+//! # Why invariant 6 is different — it reads HISTORY, not state
 //!
 //! Invariants 1–5 all query the graph's CURRENT state (`list_entities`,
 //! `facts_at`, `entity_history`, `episodic_edges_for_entity`). That makes every
@@ -55,32 +55,32 @@
 //! Evidence base is n = 2 databases: enough to reject invariants 1–5 as blind,
 //! NOT enough to establish a false-positive rate.
 //!
-//! # Why invariant 7 deliberately breaks `empty_graph_all_pass` (TD-187 / TD-229)
+//! # Why invariant 7 deliberately breaks `empty_graph_all_pass`
 //!
 //! `world_time_grounding`'s G-POP guard fails any run with fewer than 200
 //! episode-linked facts — INCLUDING an empty graph. Every other invariant in
 //! this file passes vacuously on an empty graph (nothing to violate). This one
-//! doesn't, on purpose: TD-224 already proved that a graph too small/empty to
-//! say anything is exactly the shape that makes a metric report a perfect
-//! score while measuring nothing. `empty_graph_all_pass` (the test) now
-//! expects exactly one failure, `world_time_grounding`, and asserts the other
-//! six still pass — don't "fix" that test by loosening G-POP.
+//! doesn't, on purpose: a graph too small/empty to say anything is exactly the
+//! shape that makes a metric report a perfect score while measuring nothing.
+//! `empty_graph_all_pass` (the test) now expects exactly one failure,
+//! `world_time_grounding`, and asserts the other six still pass — don't "fix"
+//! that test by loosening G-POP.
 //!
 //! # Why `world_time_grounding` measures `valid_from`, not `valid_to`
 //!
-//! TD-187's fix (commits `4e4eaa3e`, `f6df1d25`) threads the episode's own
-//! declared date into extraction and persists the resolved date into
-//! `valid_from` — when a fact STARTS being true in world time. It does not
-//! touch `valid_to` — when a fact STOPS being true in world time — which
-//! remains NULL on every fact measured so far (TD-229, post-split). A metric
-//! that reasoned about `valid_to` would report a perfect score on every
-//! database forever, by construction (TD-224's vacuity pattern, recreated).
-//! Do not extend this invariant to score supersession/archive in world time
-//! until `valid_to` extraction exists — there is nothing to measure yet.
+//! Commits `4e4eaa3e` and `f6df1d25` thread the episode's own declared date
+//! into extraction and persist the resolved date into `valid_from` — when a
+//! fact STARTS being true in world time. They do not touch `valid_to` — when
+//! a fact STOPS being true in world time — which remains NULL on every fact
+//! measured so far. A metric that reasoned about `valid_to` would report a
+//! perfect score on every database forever, by construction — the same
+//! vacuity pattern this file's guards exist to prevent. Do not extend this
+//! invariant to score supersession/archive in world time until `valid_to`
+//! extraction exists — there is nothing to measure yet.
 //!
 //! # The inverted-vacuity trap — same-day agreement is BANNED from the pass condition
 //!
-//! Measured directly (2026-08-20), same-day `date(valid_from) == date(episode
+//! Measured directly, same-day `date(valid_from) == date(episode
 //! timestamp)` agreement scores **HIGHER on the BROKEN corpus (100%, all
 //! 5,106 facts in `.context/full-corpus.db`) than on the FIXED one (95.2%,
 //! 359/377 facts in `.context/td186a-variance/dream-on-adj.db`)** — because
@@ -620,14 +620,13 @@ async fn check_no_transitive_merge_chain(
 }
 
 /// Check invariant 7: `valid_from` shows real episode-anchored world-time
-/// resolution, not ingest wall-clock (TD-187 / TD-229).
+/// resolution, not ingest wall-clock.
 ///
 /// Joins every live-or-superseded fact to its source episode
 /// (`f.source_episode_id = e.id`) and compares `date(f.valid_from)` against
 /// `date(e.timestamp)` — the episode's OWN declared date, not
 /// `e.recorded_at` (ingest wall-clock in every database measured, pre- and
-/// post-fix; see the correction recorded against TD-187 in the tech-debt
-/// register, 2026-08-20, before trusting `recorded_at` as an anchor).
+/// post-fix — do not trust `recorded_at` as a world-time anchor).
 /// `predicate = 'potential_alias'` facts are excluded — a dream-generated
 /// system assertion, correctly ingest-dated, not a grounding claim.
 ///
@@ -643,17 +642,16 @@ async fn check_no_transitive_merge_chain(
 /// doc "The inverted-vacuity trap" section for why same-day agreement can
 /// never appear here:
 ///
-/// - **G-POP**: `n_linked >= 200` — the TD-224 defence; an empty/tiny graph
-///   must NOT pass. Deliberately breaks `empty_graph_all_pass` (see module
-///   doc).
+/// - **G-POP**: `n_linked >= 200` — an empty/tiny graph must NOT pass.
+///   Deliberately breaks `empty_graph_all_pass` (see module doc).
 /// - **G-DAYS**: `distinct_days >= 10` — measured: broken corpus 1, fixed
 ///   corpus 31.
 /// - **G-BACKREF** (load-bearing): `back >= 8` AND `back_pct >= 2.0` — a
 ///   pipeline with no date anchor CANNOT date a fact before its own episode.
 ///   Measured: broken corpus 0, fixed corpus 18 (4.8%).
 /// - **G-FWD**: `fwd_pct <= 3.0` — hallucinated-future ceiling. Measured:
-///   both corpora 0.0% (see the register's TD-187 entry for why this is
-///   reported as "untested by this corpus", not "confirmed working").
+///   both corpora 0.0%, reported as "untested by this corpus", not
+///   "confirmed working".
 async fn check_world_time_grounding(graph: &TemporalGraph) -> EvalError<InvariantResult> {
     const NAME: &str = "world_time_grounding";
     const MIN_LINKED: i64 = 200;
@@ -816,8 +814,8 @@ mod tests {
     }
 
     /// NOT `all_passed()` any more — invariant 7 (`world_time_grounding`)
-    /// deliberately fails on an empty graph (G-POP, TD-224 defence; see the
-    /// module doc "Why invariant 7 deliberately breaks `empty_graph_all_pass`").
+    /// deliberately fails on an empty graph (G-POP; see the module doc "Why
+    /// invariant 7 deliberately breaks `empty_graph_all_pass`").
     /// This test now proves the OTHER SIX still pass vacuously on nothing,
     /// while the new one correctly refuses to.
     #[tokio::test]
@@ -861,7 +859,7 @@ mod tests {
             .unwrap();
         graph
             // entity_group_id=None → 'default', matching `insert_entity("e1", …)`
-            // above (no group → 'default') so the composite FK lines up (ADR-029b).
+            // above (no group → 'default') so the composite FK lines up.
             .insert_episodic_edge(InsertEpisodicEdgeParams {
                 episode_id: 1,
                 entity_id: "e1",
@@ -1087,7 +1085,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Invariant 6 — no_transitive_merge_chain (TD-223)
+    // Invariant 6 — no_transitive_merge_chain
     // -----------------------------------------------------------------------
 
     /// Insert one `entity_merge` row shaped EXACTLY as the dream pass emits it.
@@ -1308,12 +1306,12 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Invariant 7 — world_time_grounding (TD-187 / TD-229)
+    // Invariant 7 — world_time_grounding
     // -----------------------------------------------------------------------
 
     /// G-POP directly: an empty graph has 0 episode-linked facts, nowhere
-    /// near the 200 floor. This is the TD-224 defence — an empty/tiny graph
-    /// must NOT pass a metric that's supposed to say something meaningful.
+    /// near the 200 floor. An empty/tiny graph must NOT pass a metric that's
+    /// supposed to say something meaningful.
     #[tokio::test]
     async fn world_time_check_fails_on_empty_graph() {
         let graph = empty_graph().await;
@@ -1537,10 +1535,10 @@ mod tests {
         );
     }
 
-    /// Drive invariant 7 against a REAL on-disk graph, on the SAME two
-    /// artefacts cited in the tech-debt register's TD-187 correction (2026-08-20)
-    /// — this is the G-CONTROL guard: proof the instrument can actually detect
-    /// both the broken and fixed state, not just pass by construction.
+    /// Drive invariant 7 against a REAL on-disk graph, on the same two
+    /// artefacts used to validate `world_time_grounding` above — this is the
+    /// G-CONTROL guard: proof the instrument can actually detect both the
+    /// broken and fixed state, not just pass by construction.
     ///
     /// Unlike `chain_check_against_real_database` (print-only), this test
     /// ASSERTS the verdict, so a `cargo test` run's own exit code is the

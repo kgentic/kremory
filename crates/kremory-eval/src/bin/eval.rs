@@ -103,7 +103,7 @@ enum LayerCmd {
         /// Path to a real on-disk graph for the 6.3 integrity invariants.
         ///
         /// `None` makes the integrity section report **SKIPPED**, never
-        /// "passed". Before TD-224 this ran against an empty in-memory graph and
+        /// "passed". Previously this ran against an empty in-memory graph and
         /// every invariant passed vacuously — a green result that could not
         /// distinguish a healthy graph from a destroyed one.
         graph_db: Option<String>,
@@ -352,14 +352,14 @@ async fn run_layer_b_async(
         ragas_mean_hallucination
     );
 
-    // --- 6.3 Graph Integrity (TD-224) ---
+    // --- 6.3 Graph Integrity ---
     //
     // This section used to open `TemporalGraph::open_in_memory()` and run the
     // invariants against an EMPTY graph. Every invariant passed unconditionally,
     // because there was nothing there to violate them — a green result that could
     // not distinguish a healthy graph from one whose entities had been merged out
-    // of existence. That is the same defect as TD-223 one layer up: a check that
-    // exists, reports success, and can never fire.
+    // of existence. That is the same defect as any check that exists, reports
+    // success, and can never fire.
     //
     // A vacuous pass is now UNREPRESENTABLE. Without a real graph the section
     // reports SKIPPED and says why; it never claims `all_passed`.
@@ -768,14 +768,13 @@ async fn run_layer_a_longmemeval_async(
             let scorer = Arc::new(LongMemEvalScorer::new(GemmaJudge::from_env()));
 
             // Standard Ollama-conventional env vars (matches litellm / ollama-haystack
-            // / langchain-ollama community usage). Defaults chosen for O13:
+            // / langchain-ollama community usage). Defaults:
             //   chat  = qwen2.5:14b      (clean entity extraction, no thinking-config)
             //   embed = nomic-embed-text (768-dim, matches kremory facade default)
             //
-            // Rationale (O13 resolution 2026-05-28): `Memory::with_ollama` /
-            // `Memory::auto` hardcode `llama3.2` 3B which emits duplicate
-            // 'VerbatimString' entities on LongMemEval text → intra-batch
-            // dedup failure. qwen2.5:14b extracts cleanly.
+            // `Memory::with_ollama` / `Memory::auto` hardcode `llama3.2` 3B, which
+            // emits duplicate 'VerbatimString' entities on LongMemEval text →
+            // intra-batch dedup failure. qwen2.5:14b extracts cleanly.
             let ollama_host = std::env::var("OLLAMA_HOST")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string());
             let chat_model =
@@ -1087,8 +1086,8 @@ mod tests {
         }
     }
 
-    /// TD-224. Without a graph the integrity section must SKIP, so `graph_db`
-    /// must arrive as `None` — the binary can then refuse to report a pass it did
+    /// Without a graph the integrity section must SKIP, so `graph_db` must
+    /// arrive as `None` — the binary can then refuse to report a pass it did
     /// not earn, instead of checking an empty graph and calling that green.
     #[test]
     fn parse_args_layer_b_graph_db_absent_by_default() {
