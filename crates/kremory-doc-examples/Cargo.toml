@@ -33,3 +33,6 @@ autoagents-llm = { version = "0.3", features = ["ollama"] }
 # For docs/observability.md's "Reading metrics in your app" snippets.
 metrics = "0.24"
 metrics-util = "0.18"
+# docs/observability.md line 61 constructs a real PrometheusBuilder; version
+# pinned to match kremory-mcp's existing optional dependency.
+metrics-exporter-prometheus = "0.18.3"
