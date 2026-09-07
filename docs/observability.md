@@ -257,9 +257,9 @@ Fields:
 ```rust
 let mem = Memory::open("./agent.db")
     .with_provider_rates_path("./my-rates.toml")
-    .with_llm(my_llm)
+    .with_llm(Arc::new(my_llm))
     .with_token_tracking("openai", "gpt-4o-mini")
-    .with_embedder(my_embedder)
+    .with_embedder(Arc::new(my_embedder))
     .await?;
 ```
 
@@ -272,10 +272,19 @@ Format identical to the bundled file. Useful for:
 
 ```rust
 use kremory::observability::ProviderRates;
+use std::path::Path;
 
-let rates = ProviderRates::from_path("./my-rates.toml")?;
+let rates = ProviderRates::from_path(Path::new("./my-rates.toml"))?;
 let cost = rates.lookup_rate("openai", "gpt-4o-mini").unwrap_or(0.0);
 ```
+
+`ProviderRates::from_path` takes a concrete `&Path` (not generic over `AsRef<Path>`) — a bare
+`&str` literal does not coerce; wrap it in `Path::new(...)`. `from_path` returns
+`Result<ProviderRates, RatesError>` — `RatesError::Io` if the file can't be read, `RatesError::Parse`
+if the TOML is malformed. Each row deserialises into `kremory::observability::ProviderRateEntry`
+(the schema from the "Provider rates (cost emission)" section above); `ProviderRates::cost_usd`
+takes its arguments bundled as `CostUsdParams { provider, model, tokens_input, tokens_output }`
+rather than four positional arguments.
 
 ---
 
@@ -285,7 +294,7 @@ Enable the `otel` cargo feature:
 
 ```toml
 [dependencies]
-kremory = { version = "0.6", features = ["otel"] }
+kremory = { version = "0.7", features = ["otel"] }
 ```
 
 In your app:
@@ -310,6 +319,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+`init_telemetry` returns `Result<TelemetryHandle, TelemetryInitError>` — two variants:
+`Exporter(String)` (OTLP exporter build failed) and `Subscriber(String)` (the `tracing-subscriber`
+global default could not be installed — usually another subscriber was already registered).
 
 What this installs:
 - `tracing_subscriber::EnvFilter` (respects `RUST_LOG` env var; default `info,kremory=debug`)

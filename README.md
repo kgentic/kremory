@@ -195,14 +195,19 @@ impl EmbeddingProvider for MyEmbedder {
 > fields into locals *before* the `async move` block (the pattern kremory's own
 > embedder impls use) or write the method as a plain `async fn embed`.
 
-The full trait (`kremory::EmbeddingProvider`):
+The full trait (`kremory::EmbeddingProvider`, reference — already imported above, shown again here
+for the complete shape in one place):
 
-```rust
+```rust,ignore
 pub trait EmbeddingProvider: Send + Sync {
     fn embed<'a>(&'a self, text: &'a str)
         -> impl Future<Output = CoreResult<Vec<f32>>> + Send + 'a;
     fn last_usage_tokens(&self) -> Option<u64> { None }
     // `into_dyn(self) -> Arc<dyn DynEmbeddingProvider>` is provided by default.
+    // `ArcEmbedder(Arc<dyn DynEmbeddingProvider>)` goes the other direction —
+    // a thin adapter that lets an already-`.into_dyn()`'d Arc satisfy a call
+    // site expecting `impl EmbeddingProvider` (used internally; rarely needed
+    // by consumers, who normally go via `.into_dyn()` or `Arc::new(...)`).
 }
 ```
 
@@ -248,12 +253,16 @@ ollama pull nomic-embed-text   # embeddings, 768-dim
 Prefer a smaller footprint? Wire the lighter model explicitly:
 
 ```rust
-let mem = Memory::with_ollama_at_model(
+let mem = kremory::facade::providers::with_ollama_at_model(
     "http://localhost:11434",
     Some("qwen2.5:7b".into()),   // 4.7GB, F1 ~79
     "./agent.db",
 ).await?;
 ```
+
+`with_ollama_at_model` lives in `kremory::facade::providers` (a free function, not an inherent
+`Memory::` method like its sibling `with_ollama_at`) — it's the internal path `Memory::auto` uses
+for env-driven model selection, exposed publicly for direct use.
 
 Or set any model via `OLLAMA_CHAT_MODEL`, or wire your own provider through `with_llm`. The
 empirical ladder's source of truth is
@@ -301,10 +310,9 @@ See [ADR-003](docs/adr/adr-003-bitemporal-audit-compliance.md).
 
 ```rust
 // Single tenant
-let mem = Memory::auto("./agent.db")
-    .default_namespace(Namespace::new("my-agent"))
-    .await?;
-mem.remember("User prefers dark mode").await?;  // uses default namespace
+let mem = Memory::auto("./agent.db").await?;
+let ns = Namespace::new("my-agent");
+mem.remember("User prefers dark mode").in_namespace(ns.clone()).await?;
 
 // Multi-tenant: per-call namespace override
 mem.remember("Tenant A data")
@@ -426,7 +434,7 @@ kremory emits structured metrics + tracing spans for every LLM and embedding cal
 **Optional OTLP export** — enable the `otel` cargo feature:
 
 ```toml
-kremory = { version = "0.6", features = ["otel"] }
+kremory = { version = "0.7", features = ["otel"] }
 ```
 
 ```rust

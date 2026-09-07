@@ -334,10 +334,18 @@ PRELUDE_REFRESH_LINES = """\
     let my_llm = __llm_seed.clone();
     #[allow(unused)]
     let my_embedder = __emb_seed.clone();
+    // `llm` / `emb` (unlike `my_llm` / `my_embedder`) are pre-wrapped in `Arc<dyn ...>`:
+    // most doc sections that use these short names call `.with_llm(llm)` /
+    // `.with_embedder(emb)` bare, matching the convention of "you already have an
+    // Arc'd provider in scope" (as a real consumer following the doc top-to-bottom
+    // would, from an earlier section) -- vs `my_llm` / `my_embedder`, which several
+    // OTHER sections wrap explicitly via `Arc::new(my_llm)`. Discovered empirically
+    // (2026-09-07): the un-wrapped form was a harness bug relative to its own stated
+    // intent -- see this file's README "llm, emb, l, e" prelude row.
     #[allow(unused)]
-    let llm = __llm_seed.clone();
+    let llm: Arc<dyn ChatProvider> = Arc::new(__llm_seed.clone());
     #[allow(unused)]
-    let emb = __emb_seed.clone();
+    let emb: Arc<dyn DynEmbeddingProvider> = Arc::new(__emb_seed.clone());
     #[allow(unused)]
     let l = __llm_seed.clone();
     #[allow(unused)]

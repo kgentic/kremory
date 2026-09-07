@@ -1,6 +1,6 @@
 # kremory API Reference
 
-> **v0.6.0** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
+> **v0.7** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
 > (`kremory::memory::submit_episode`, etc.) remain public for advanced users; most applications
 > should use the facade described below. Since v0.1.3 the facade gained a fully-wired dream
 > consolidation phase (§6), reversible graph mutations with a see/undo surface (§6a), opt-in
@@ -22,22 +22,21 @@ use kremory::{Memory, Namespace};
 //   $OPENAI_API_KEY     → OpenAI (gpt-4o-mini + text-embedding-3-small)
 //   $ANTHROPIC_API_KEY  → Anthropic LLM + deterministic embedder fallback (warns)
 //   (none)              → Err(Error::NoProviderConfigured) — helpful message included
-let mem = Memory::auto("./agent.db")
-    .default_namespace(Namespace::new("user-jim"))
-    .await?;
+let mem = Memory::auto("./agent.db").await?;
+let ns = Namespace::new("user-jim");
 
 // Ingest — blocks until Phase 2 enrichment done (~500ms typical)
-mem.remember("User prefers concise replies").await?;
+mem.remember("User prefers concise replies").in_namespace(ns.clone()).await?;
 
 // Recall — returns prompt-ready context string
-let context: String = mem.recall("what does user prefer?").await?;
+let context: String = mem.recall("what does user prefer?").in_namespace(ns.clone()).await?;
 
 // Dream (consolidation) — blocks until done (~5–60s depending on corpus)
-let summary = mem.dream().await?;
+let summary = mem.dream().in_namespace(ns.clone()).await?;
 println!("communities updated: {}", summary.communities_updated);
 
-// Forget (GDPR-style delete of everything in the default namespace)
-let deleted_count = mem.forget().execute().await?;
+// Forget (GDPR-style delete of everything in this namespace)
+let deleted_count = mem.forget().in_namespace(ns.clone()).execute().await?;
 
 // Explicit close (flushes WAL)
 mem.close().await?;
@@ -90,7 +89,7 @@ let mem = Memory::open("./agent.db")
 The builder is type-state guarded: `.await` on a `MemoryBuilder` without calling both
 `.with_llm()` (optionally followed by `.with_token_tracking()`) and `.with_embedder()` is a **compile error**, not a runtime error.
 
-```rust
+```rust,compile_fail
 // Compile error — missing .with_embedder()
 let mem = Memory::open("./agent.db").with_llm(llm).await?; // ERROR
 ```
@@ -141,8 +140,14 @@ let ns_thread = Namespace::new("tenant-acme").with_thread("support-ticket-1042")
 
 ### Default namespace (set once at construction)
 
+`default_namespace` is a `MemoryBuilder` method — reach for `Memory::open(...)` (Tier 2) rather
+than `Memory::auto(...)` (Tier 1, a plain `async fn` with no builder chain) when you want a
+default namespace set once at construction:
+
 ```rust
-let mem = Memory::auto("./agent.db")
+let mem = Memory::open("./agent.db")
+    .with_llm(llm)
+    .with_embedder(emb)
     .default_namespace(Namespace::new("user-jim"))
     .await?;
 
@@ -169,7 +174,7 @@ This is a compile-time-visible design choice — the error type is named and mat
 ```rust
 match mem.remember("data").await {
     Ok(commit) => { /* ... */ }
-    Err(kremory::CoreError::MissingNamespace { request }) => {
+    Err(kremory::MemoryError::MissingNamespace { request }) => {
         eprintln!("must call .in_namespace() or set a default_namespace for {request}");
     }
     Err(e) => return Err(e.into()),
@@ -185,7 +190,7 @@ let mem = Memory::open("./shared.db")
     .with_embedder(emb)
     .await?;
 
-for tenant in &["acme", "globex", "initech"] {
+for tenant in ["acme", "globex", "initech"] {
     mem.remember(format!("Tenant {} onboarded", tenant))
         .in_namespace(Namespace::new(tenant))
         .await?;
@@ -228,6 +233,11 @@ let ns = Namespace::new("never-forget").with_policy(custom)?;
 mem.register_namespace(ns).await?;
 ```
 
+`.with_policy(...)`'s `?` is `InvalidPolicyError` — currently one variant,
+`IncoherentAppendOnly { policy }`, returned when `immutability: AppendOnly` is combined with
+`forgettable=true` or `dream_eligible=true` (AppendOnly requires both `false`, since forget and
+dream are both mutations).
+
 **Idempotency + immutability**: calling `register_namespace` with the SAME
 policy is `Ok(())` (safe for startup-code re-execution). Calling with a
 DIFFERENT policy on an existing namespace surfaces
@@ -236,11 +246,65 @@ DIFFERENT policy on an existing namespace surfaces
 **Lazy population**: namespaces observed via the first `remember()` / `recall()`
 / `forget()` / `dream()` call get a default-policy row written automatically.
 Call `register_namespace` explicitly at startup for namespaces that need a
-non-default policy — there is no retroactive upgrade at v0.1.4.
+non-default policy declared up front.
+
+**Retroactive upgrade**: `Memory::upgrade_namespace_policy(namespace)` monotonically ratchets an
+existing namespace's immutability from `Mutable` to `AppendOnly` (ADR-029b Decision 5) — a
+**one-way** move; attempting the reverse (`AppendOnly → Mutable`) returns
+`Err(MemoryError::Core(Error::NamespacePolicyImmutable { .. }))`. Calling it on an
+already-`AppendOnly` namespace is idempotent (`Ok(())`).
+
+```rust
+// Ratchet an existing namespace to AppendOnly. Idempotent if already AppendOnly;
+// errors on a downgrade attempt or a policy mismatch.
+mem.upgrade_namespace_policy(Namespace::new("compliance-log")).await?;
+```
 
 **Operational visibility**: every non-default policy registration emits
 `tracing::warn!` on target `kremory.namespace` with the marker
 `POLICY DECLARED BUT NOT ENFORCED`. Default-policy registrations are silent.
+
+### Custom entity-type registry (per-namespace vocabulary)
+
+Every namespace has an `entity_types` registry (id=0 "Entity" is always the catch-all). The
+general-purpose defaults cover common cases; a domain consumer that needs its own vocabulary
+(e.g. "Court", "Statute" for a legal use case) seeds it explicitly via `NamespaceSeed`:
+
+```rust
+use kremory::{EntityTypeSpec, NamespaceSeed};
+
+// At startup, BEFORE the first `remember()` for this namespace:
+let outcome = mem.register_namespace_with_seed(
+    Namespace::new("legal-docs"),
+    NamespaceSeed::Augment(vec![EntityTypeSpec {
+        id: 10,   // consumer ids should be >= 10; 0-9 are the general defaults
+        name: "Court".into(),
+        description: "A court, tribunal, or judicial body.".into(),
+    }]),
+).await?;
+```
+
+`SeedOutcome::Seeded { rows_written }` on a fresh namespace; `SeedOutcome::AlreadySeeded` on a
+namespace that already has rows matching the seed (idempotent, safe for repeated startup calls).
+`NamespaceSeed::Replace` is greenfield-only — it fails loudly (`NamespaceRegistrationError::
+AlreadyPopulated`) rather than mutate a populated namespace's existing `entity_type_id`s.
+
+To add a type to an ALREADY-populated namespace, use the incremental path,
+`Memory::assert_entity_type`, which also pins an entity as `ConsumerPinned` so dream-phase
+reclassification never overwrites it:
+
+```rust
+use kremory::GraphAssertEntityTypeParams;
+
+mem.assert_entity_type(GraphAssertEntityTypeParams {
+    entity_id: "court-of-appeal",
+    entity_type_id: 10,
+    group_id: None,   // None = default namespace
+}).await?;
+```
+
+`MemoryBuilder::with_seed_registry(seed)` applies the same seeding at `Memory::open(...)`
+construction time, for the default namespace.
 
 ---
 
@@ -266,7 +330,7 @@ mem.remember("Alice decided the team will use async channels")
 
 mem.remember("Q4 revenue target is $2M")
     .from_document("q4-plan-v2.pdf")  // SourceKind::Document
-    .in_namespace(ns)
+    .in_namespace(ns.clone())
     .published_at(Utc::now())         // bi-temporal anchor: sets valid_from precedence
     .await?;
 
@@ -307,15 +371,35 @@ mem.remember("Alice is the CEO of Acme Corp")
 
 ```rust
 let commits: Vec<kremory::EpisodeCommit> = mem.remember_batch()
-    .add("Meeting at 2pm")
+    .entry("Meeting at 2pm")
         .from_chat("session-42")
         .in_namespace(Namespace::new("user-jim"))
-    .add("Alice prefers async Rust")
-        .from_note("note-7")
+        .done()
+    .entry("Alice prefers async Rust")
+        .from_document("note-7")   // EpisodeEntryBuilder has from_chat/from_document only
+                                    // (no from_note/from_source — unlike RememberRequest, §4)
         .in_namespace(Namespace::new("user-jim"))
+        .done()
     .with_batch_id("import-2026-05-27")  // idempotent — safe to retry
     .await?;
 ```
+
+### Chunking large documents before `remember()`
+
+`kremory::split_for_embedding(text, max_chars)` splits text into chunks that fit your embedder's
+context window (kremory never calls this automatically — you decide when a document is too large
+and re-`remember()` each chunk yourself, per its own module doc comment):
+
+```rust
+use kremory::split_for_embedding;
+
+let chunks = split_for_embedding("Some text\n\nfrom a\ndocument", 20);
+assert!(chunks.iter().all(|c| c.chars().count() <= 20));
+```
+
+Returns the text unchanged (as a single-element `Vec`) when it already fits — always safe to call
+unconditionally, including on short episodes. A reasonable `max_chars` for `nomic-embed-text`'s
+~2048-token window is `6000`-`8000`; check your own embedder's real limit rather than assume.
 
 ---
 
@@ -367,9 +451,14 @@ let results: Vec<RetrievedContext> = mem.recall("preferences")
     .await?;
 
 for r in &results {
-    println!("{}: {:.3}", r.content, r.score);
+    println!("{}: {:.3}", r.summary, r.score);
 }
 ```
+
+`RetrievedContext::new(...)` / `RetrievedFact::new(...)` (bundled-params structs
+`RetrievedContextNewParams` / `RetrievedFactNewParams`) are the constructors used when building
+result sets by hand — mainly test fixtures and advanced substrate consumers, not the ordinary
+`recall()` path above.
 
 ### `as_of` (bi-temporal filtering)
 
@@ -395,7 +484,7 @@ since ADR-078 (2026-07-28) — so the terminal and the `ContentPassage` type exi
 If you have disabled default features, re-enable it explicitly:
 
 ```toml
-kremory = { version = "0.6", default-features = false, features = ["content-search"] }
+kremory = { version = "0.7", default-features = false, features = ["content-search"] }
 ```
 
 ⚠️ Disabling it does **not** just remove `.content()` — it also removes the BM25 content arm and the
@@ -527,10 +616,11 @@ Details that matter in practice:
 
 ```rust
 // Disable, or change the depth:
-let mem = Memory::builder()
+let mem = Memory::open("./agent.db")
+    .with_llm(llm)
+    .with_embedder(emb)
     .prior_turn_replay_depth(0)   // 0 = off; default 10
-    // ...
-    .build().await?;
+    .await?;
 ```
 
 Threading a conversation therefore buys you both halves at once: **write**-side reference
@@ -600,14 +690,12 @@ Toggle individual ops via `DreamOpts` (all fields default `true` except where no
 ```rust
 use kremory::memory::types::{DreamOpts, CrossEpisodeMode};
 
-let opts = DreamOpts {
-    include_community_detection: false,   // skip P4 communities
-    include_fact_archival: false,         // skip P2 archival
-    include_supersession_sweep: true,     // keep the supersession window closeout
-    include_consistency_check: false,     // skip the LLM type-verify pass
-    max_episodes_per_run: Some(500),      // rate-limit LLM spend on large corpora (default: None)
-    ..DreamOpts::default()
-};
+let mut opts = DreamOpts::default();
+opts.include_community_detection = false;   // skip P4 communities
+opts.include_fact_archival = false;         // skip P2 archival
+opts.include_supersession_sweep = true;     // keep the supersession window closeout
+opts.include_consistency_check = false;     // skip the LLM type-verify pass
+opts.max_episodes_per_run = Some(500);      // rate-limit LLM spend on large corpora (default: None)
 
 let summary = mem.dream().with_opts(opts).await?;
 ```
@@ -664,6 +752,42 @@ let handle: kremory::DreamHandle = mem.dream()
 
 let summary = mem.await_dream(&handle, std::time::Duration::from_secs(120)).await?;
 ```
+
+`DreamStatus` (`Pending | Processing | Complete | Failed(String)`) is `await_dream`'s result type.
+
+Cancel a fire-and-forget run that hasn't finished yet with `Memory::cancel_dream(&handle)` — same
+`CancelOutcome` shape as the ordinary ingest-side `mem.cancel(&commit)` (§8):
+
+```rust
+let outcome = mem.cancel_dream(&handle).await?;
+```
+
+### Periodic scheduling — `DreamSchedule`
+
+Instead of calling `mem.dream()` yourself on a cron, configure a schedule once at construction:
+
+```rust
+use kremory::DreamSchedule;
+use std::time::Duration;
+
+let mem = Memory::open("./agent.db")
+    .with_llm(llm)
+    .with_embedder(emb)
+    .with_dream_schedule(DreamSchedule::Interval(Duration::from_secs(300)))
+    .await?;
+```
+
+`DreamSchedule::Off` (default) runs no automatic pass. `DreamSchedule::Interval(d)` re-triggers `d`
+after each pass COMPLETES (not wall-clock periodic). `DreamSchedule::EveryNIngests(n)` triggers
+after every `n`th successful ingest instead of a time interval. Stop a build-time schedule with
+`mem.stop_dream_scheduler().await`, or start an independent one at runtime with
+`mem.start_dream_scheduler(schedule) -> DreamSchedulerHandle` (`.with_dream_llm(...)` /
+`.with_dream_model_id(...)` set a separate LLM slot for scheduled passes, distinct from the main
+ingest/recall LLM).
+
+> `DreamMode` (`Full` / `Light`) is a **reserved, not-yet-wired** enum for a future consolidation
+> sub-mode — it does not gate any of the reconciliation passes documented above, which are
+> controlled by `DreamOpts` instead. Ignore it until it ships.
 
 ---
 
@@ -846,8 +970,13 @@ let outcome: kremory::CancelOutcome = mem.cancel(&commit).await?;
 
 ```rust
 // Block until all episodes in a batch reach terminal status
-let batch_status = mem.await_batch("import-2026-05-27", Duration::from_secs(60)).await?;
+let batch_status: kremory::BatchStatus = mem.await_batch("import-2026-05-27", Duration::from_secs(60)).await?;
 ```
+
+`await_batch` (and `await_dream`, `await_enrichment`) share one internal options type,
+`AwaitOpts { timeout, poll_interval }`, built from the `Duration` argument you pass — not
+something you construct yourself at the facade layer, but the name to grep for if you're reading
+the substrate-level `await_*` free functions in `kremory::memory`.
 
 ### Explicit await-enrichment form
 
@@ -858,6 +987,27 @@ let commit = mem.remember("data")
     .await?;
 ```
 
+### Background ingestor (OS-thread pipeline, ADR-051)
+
+`Memory::send_batched(text, batch_id)` is a lighter-weight alternative to `remember(...)` for
+high-throughput batch ingest. When a sink is configured on the builder via `.with_event_sink(...)`,
+`send_batched` routes through a `BackgroundIngestor` — a dedicated OS thread (not a `tokio::spawn`
+task) that drains a work queue and fires `on_batch_phase2_complete` on the configured sink when the
+batch reaches terminal state. With no sink configured, it routes through the ordinary tokio-spawn
+path instead, and the callback never fires (there is no listener to receive it).
+
+```rust
+mem.send_batched("Meeting notes...".to_string(), "batch-42".to_string()).await?;
+```
+
+Requires a `default_namespace` on the builder — `send_batched` has no per-call namespace override
+(use `remember_batch().with_batch_id(...)` if you need per-entry namespace control). The
+`BackgroundIngestor` internals (`IngestorConfig` — channel capacities, worker thread name;
+`IngestGuard` — explicit shutdown handle; `IngestError` / `IngestErrorKind` — the error-feedback
+channel's failure record and its coarse category; `IngestSendError` — enqueue-time failure) are
+public but mainly relevant if you are tuning queue capacity or building your own supervision
+around the worker thread — the defaults are sensible for most consumers.
+
 ---
 
 ## §9 — Event sinks
@@ -867,7 +1017,7 @@ during ingest and dream phases.
 
 ```rust
 use kremory::{EnrichmentEventSink, IngestEventSink, ContradictionDetected, BatchPhase2Complete,
-              IngestStatus, IngestionError};
+              IngestStatus, IngestionError, OnEdgeAddedParams};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -880,7 +1030,7 @@ impl IngestEventSink for LiveDashboardSink {
     fn on_entity_extracted(&self, _id: &str, _name: &str) {
         self.entity_count.fetch_add(1, Ordering::Relaxed);
     }
-    fn on_edge_added(&self, _from: &str, _to: &str, _predicate: &str) {}
+    fn on_edge_added(&self, _params: OnEdgeAddedParams<'_>) {}
     fn on_contradiction(&self, _e: ContradictionDetected) {
         self.contradiction_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -898,7 +1048,10 @@ impl EnrichmentEventSink for LiveDashboardSink {
 ### Memory-level sink (applies to all operations)
 
 ```rust
-let sink = Arc::new(LiveDashboardSink { /* ... */ });
+let sink = Arc::new(LiveDashboardSink {
+    entity_count: Arc::new(AtomicUsize::new(0)),
+    contradiction_count: Arc::new(AtomicUsize::new(0)),
+});
 
 let mem = Memory::open("./agent.db")
     .with_llm(llm)
@@ -913,10 +1066,17 @@ mem.remember("Event B").await?;
 
 ### Per-call override
 
+`.with_event_sink(...)` on a single `remember(...)` call overrides the Memory-level default for
+just that call — e.g. wire in your own audit-log sink (implementing `EnrichmentEventSink`, the
+same trait `LiveDashboardSink` implements above) for one sensitive operation without touching the
+default sink every other call uses:
+
 ```rust
-// This call uses a one-off audit sink, overriding the Memory-level default
+// This call uses a one-off custom sink, overriding the Memory-level default —
+// `MySink` here stands in for your own EnrichmentEventSink implementation
+// (e.g. one that appends every event to an audit-log JSONL file).
 mem.remember("sensitive operation")
-    .with_event_sink(Arc::new(AuditSink::new("audit-log.jsonl")))
+    .with_event_sink(Arc::new(MySink))
     .await?;
 
 // All other calls still use the Memory-level default sink
@@ -930,59 +1090,115 @@ mem.remember("normal operation").await?;
 For users who need full control: custom graph backends, multi-engine setups, direct
 vector index manipulation, or cross-tenant orchestration above the facade.
 
-```rust
+Illustrative — `graph` and `provider` below stand for a `&dyn GraphHandle` and an
+`Arc<dyn ChatProvider>` YOU supply (e.g. `kremory::memory::TemporalGraph`, or your own
+`GraphHandle` impl); this snippet shows the call shape, not a standalone program:
+
+```rust,ignore
 use kremory::memory::{submit_episode, submit_dream_phase, await_enrichment, search,
                        context_block, GraphHandle, Namespace, SourceRef, SourceKind,
-                       SubmitOpts, SearchOpts, ContextTemplate};
+                       SubmitOpts, SearchOpts, ContextTemplate, SubmitEpisodeParams,
+                       SearchParams};
 use std::sync::Arc;
 
 // You supply the graph handle (e.g. kremory::memory::TemporalGraph or your own impl)
-// and manage LLM + embedder Arcs directly.
-let commit = submit_episode(
-    graph.as_ref(),
-    "Alice prefers async Rust",
-    SourceRef {
+// and manage LLM + embedder Arcs directly. Both fns take a single bundled params
+// struct (args-as-object, TD-042) rather than positional arguments.
+let commit = submit_episode(SubmitEpisodeParams {
+    graph: graph.as_ref(),
+    content: "Alice prefers async Rust",
+    source_ref: SourceRef {
         kind: SourceKind::Chat,
         id: "session-42".into(),
         occurred_at: chrono::Utc::now(),
         published_at: None,
     },
-    vec![],             // structured_facts (empty = run Phase 2 LLM extraction)
-    provider.clone(),   // Arc<dyn ChatProvider>
-    Namespace::new("user-alice"),
-    None,               // batch_id
-    SubmitOpts::default(),
-    None,               // event sink
-).await?;
+    structured_facts: vec![],   // empty = run Phase 2 LLM extraction
+    provider: provider.clone(), // Arc<dyn ChatProvider>
+    namespace: Namespace::new("user-alice"),
+    batch_id: None,
+    opts: SubmitOpts::default(),
+    sink: None,
+}).await?;
 
 // Hybrid retrieval
-let results = search(
-    graph.as_ref(),
-    &Namespace::new("user-alice"),
-    "rust preferences",
-    SearchOpts { limit: Some(10), ..Default::default() },
-).await?;
+let results = search(SearchParams {
+    graph: graph.as_ref(),
+    query: "rust preferences",
+    namespace: Namespace::new("user-alice"),
+    opts: SearchOpts { limit: Some(10), ..Default::default() },
+}).await?;
 
 // Render as prompt-ready string
 let ctx = context_block(&results, ContextTemplate::TemporalFacts);
 ```
 
+`GraphHandle::graph_run_consolidation` (the trait method backing dream consolidation) returns
+`DreamPhaseResult` — the raw per-op counts that `impl From<DreamPhaseResult> for DreamSummary`
+converts into the facade's `DreamSummary` (§6). `IngestResult` is the return type of
+`ingest_episode`, a `#[deprecated]` free function superseded by `submit_episode` — new code should
+not reach for either directly.
+
+**Diagnostic / lower-level dream internals** (Phase C developer surface, mainly for
+debugging/tooling rather than mainline consumer code): `Memory::run_dream_pass_sync(opts:
+DreamPassOpts) -> Result<DreamSummary>` runs a synchronous dream pass — note its own doc comment
+flags that two of its sub-passes (type discovery, ghost-episode retry) are stubs returning
+empty/zero counts, so treat it as diagnostic rather than a source of truth for those counts;
+`Memory::ghost_episodes(group_id)` lists episode ids that never completed extraction (candidates
+for re-ingest); `TypeProposal` is the Dream Pass 0 type-discovery output shape. `Memory::
+assert_entity_type` (§3) also lives in this tier.
+
 ### Custom `GraphHandle` backend
 
-Implement `GraphHandle` to plug kremory into a custom storage backend:
+Implement `GraphHandle` to plug kremory into a custom storage backend. `GraphHandle` is declared
+with `#[async_trait]` (not native `async fn` in trait) — an implementer needs the SAME macro on
+the `impl` block, exactly as below, for the desugared `async fn` signatures to match. `GraphHandle`
+has 12 required methods with no default bodies (ADR §4.9 — compiler-enforced shape stability), so
+a real implementation is a substantial adapter; the sketch below is illustrative pseudo-code, not
+a runnable snippet:
 
-```rust
+```rust,ignore
 use kremory::GraphHandle;
 
 struct MyGraphBackend { /* ... */ }
 
 #[async_trait::async_trait]
 impl GraphHandle for MyGraphBackend {
-    // implement all required methods
+    // Implement all 12 required methods — ingest, dream, search, etc.
+    // See `kremory::memory::graph::GraphHandle` for the full method list.
 }
 
 // Then pass it to Memory::open via a lower-level constructor (advanced)
 ```
+
+### Introspection — reading back the ACTIVE config
+
+`Memory::search_config() -> SearchConfig` and `Memory::contradiction_detection_enabled() -> bool`
+are read-only accessors (both cheap — no I/O) that report the config the pipeline is *actually*
+running: the compiled-in default, folded through any `KREMORY_*` env override at construction, and
+any explicit builder `.with_*` call, in that precedence order. Reach for these instead of
+re-reading env vars yourself — a transport or consumer that re-reads env can drift from what the
+search path actually uses, which is how a config-mismatch has produced a bogus benchmark number in
+the past:
+
+```rust
+let cfg = mem.search_config();
+println!("graph_degree_weight = {}", cfg.graph_degree_weight);
+println!("contradiction detection on: {}", mem.contradiction_detection_enabled());
+```
+
+### Process-global engine singleton
+
+`kremory::engine()` / `kremory::engine_init()` (re-exported from `core::engine`) are a
+process-global handle to the same underlying engine the `Memory` facade wraps — an intentional,
+consumer-facing escape hatch (not an internal accident) for advanced setups that need to reach the
+engine directly rather than through a `Memory` instance. Most applications never need this; reach
+for it only when composing multiple engines or orchestrating above the facade, per this section's
+scope.
+
+`kremory::CoreConfig` (a re-export of `core::config::Config`) is the substrate-level config type
+these lower-level constructors and the process-global engine consume — see `core::config` for its
+fields.
 
 ---
 
@@ -1155,7 +1371,7 @@ continues to compile and run. The notable surface + behaviour changes, at the AP
 | **Multi-namespace recall** | `recall(q).in_namespaces(&[...])` fans out across namespaces with cross-namespace RRF blending. |
 | **Metadata filters** | `recall(q).filter_metadata(key, value)` / `.filter_metadata_in(key, &[..])` post-filter recall by episode metadata. |
 | **Async extraction wait** | `mem.wait_for_processing(episode_id, timeout)` polls an episode to a terminal extraction state (ADR-051). |
-| **Feature flags** (§13) | The crate has an explicit **empty** default feature set + opt-in features (`ner`, `embeddings`, `content-search`, `otel`, `trace`, …). There is no separate `substrate` feature — the facade + substrate free-functions ship in the one default surface. |
+| **Feature flags** (§13) | The crate's `default` feature set is **`["content-search"]`** (ADR-078, 2026-07-28 — it was previously empty); see §13. There is no separate `substrate` feature — the facade + substrate free-functions ship in the one default surface. |
 | **Node/napi binding** (§14) | The JS binding mirrors the surface in camelCase, including the undo + inspect surface. |
 
 The substrate free-functions (`kremory::memory::submit_episode`, etc.) remain public and unchanged.
@@ -1184,7 +1400,44 @@ empty). Opt into the surfaces below as needed:
 # `content-search` is listed explicitly for clarity, but it is ON by default
 # since ADR-078 (2026-07-28) — you only need to name it if you have set
 # `default-features = false`.
-kremory = { version = "0.6", features = ["content-search", "otel"] }
+kremory = { version = "0.7", features = ["content-search", "otel"] }
+```
+
+### Advanced tuning knobs (`MemoryBuilder`)
+
+Beyond the setters already shown elsewhere in this reference, `MemoryBuilder` has a cluster of
+recall-scoring and extraction-tuning knobs — each an explicit override that wins over both its
+compiled-in default AND any matching `KREMORY_*` env var, for that one `Memory` instance. Verify
+the live, in-effect values via `Memory::search_config()` / `Memory::contradiction_detection_enabled()`
+(§10 Introspection):
+
+| Setter | Tunes |
+|---|---|
+| `with_content_stream_weight(f32)` | RRF weight of the BM25 `content-search` stream (default `1.0`) |
+| `with_graph_degree_weight(f32)` | Weight of the additive graph-degree bonus (default `0.05`, live) |
+| `with_proximity_weight(f32)` | Weight of the additive graph-proximity boost (default `0.0`, off) |
+| `with_temporal_weight(f32)` | Weight of the additive temporal-recency boost (default `0.0`, off) |
+| `with_rrf_k(usize)` | RRF fusion constant `k` (default `1`) |
+| `with_episode_dense_enabled(bool)` | Dense (embedding) episode retrieval arm (default `false`) |
+| `with_fact_dense_enabled(bool)` | Dense (embedding) fact retrieval arm (default `false`) |
+| `with_embed_task_prefix_enabled(bool)` | nomic `search_document:`/`search_query:` task-prefixing (default `false`; nomic-specific) |
+| `with_rerank_candidate_max_chars(usize)` | Truncates each rerank candidate's summary text before the cross-encoder (default `0` = unlimited) |
+| `with_contradiction_detection_enabled(bool)` | Ingest-time contradiction detection — gates a DESTRUCTIVE supersession path (default `true`) |
+| `extraction_arm_budget_ms(u64)` | Per-arm wall-clock cap for structured-output extraction (default `30_000`; raise for slow local LLMs) |
+| `prior_turn_replay_depth(usize)` | Preceding episodes replayed into extraction for reference resolution (§5.2; default `10`) |
+| `allowed_entity_types(Vec<String>)` | Entity type names the extractor may emit (required for non-empty `ner`-feature output) |
+| `episode_content_warn_threshold(Option<usize>)` | Soft warn threshold (chars) for oversize episode content (default `Some(10_000)`) |
+| `with_extractor(Arc<Ext>)` | Plug in a custom entity extractor (BYOE); mutually exclusive with `.with_gliner()` |
+| `with_await_extraction(bool)` / `with_await_extraction_timeout(Duration)` | Block `remember()` on Phase 2 LLM extraction instead of the default fire-and-forget-with-poll behaviour |
+
+```rust
+let mem = Memory::open("./agent.db")
+    .with_llm(llm)
+    .with_embedder(emb)
+    .with_rrf_k(60)                 // override the default k=1 for this instance
+    .with_temporal_weight(0.1)      // turn on the temporal-recency axis
+    .extraction_arm_budget_ms(180_000)  // slow local model — raise the per-arm timeout
+    .await?;
 ```
 
 ---
@@ -1212,4 +1465,4 @@ in **camelCase**. The reversibility surface is fully mirrored:
 
 ---
 
-*API reference current as of kremory v0.4.0 (2026-07-12). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Dream reversibility: ADR-073. Content recall: ADR-072. Crate topology: ADR-028 (single-crate + cargo features, supersedes ADR-007 + ADR-008).*
+*API reference current as of kremory v0.7 (2026-09-07). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Dream reversibility: ADR-073. Content recall: ADR-072. Crate topology: ADR-028 (single-crate + cargo features, supersedes ADR-007 + ADR-008).*

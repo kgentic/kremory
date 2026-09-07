@@ -122,11 +122,17 @@ when you can state the invariant precisely in the message.
 
 ## Examples
 
+These snippets are illustrative pseudo-code for kremory CONTRIBUTORS (this document is an
+internal source-code style guide, not a consumer-facing API reference) — they use representative
+field/type names (`PipelineConfig`, a hypothetical `Error` variant set, the crate-private
+`GLINER`/`GlinerExtractor` internals) to demonstrate the pattern rather than being tied to the
+exact current shape of those internal types, which evolve independently of this policy document.
+
 ### Example 1 — User-input (configuration validation)
 
 **Do — return `Err` for bad caller input:**
 
-```rust
+```rust,ignore
 fn validate_config(config: &PipelineConfig) -> Result<()> {
     if config.embedding_dim == 0 {
         return Err(Error::EmbeddingDimZero);
@@ -143,7 +149,7 @@ fn validate_config(config: &PipelineConfig) -> Result<()> {
 
 **Don't — panic on configuration errors the caller can fix:**
 
-```rust
+```rust,ignore
 fn validate_config(config: &PipelineConfig) {
     // WRONG: caller can pass embedding_dim = 0; this is user-input, not a bug
     assert!(config.embedding_dim > 0, "embedding_dim must be > 0");
@@ -156,7 +162,7 @@ fn validate_config(config: &PipelineConfig) {
 
 **Do — panic with `invariant:` message for a structurally impossible `None`:**
 
-```rust
+```rust,ignore
 if GLINER.get().is_none() {
     let g = GlinerExtractor::new().map_err(Error::from)?;
     let _ = GLINER.set(g);
@@ -170,7 +176,7 @@ let extractor = GLINER.get().unwrap_or_else(|| {
 **Don't — use `.expect()` with a non-invariant message, or return `Err` for
 a structural guarantee:**
 
-```rust
+```rust,ignore
 // WRONG: expect() without "invariant:" prefix; clippy denies expect_used anyway
 let extractor = GLINER.get().expect("just initialised");
 
@@ -198,7 +204,7 @@ logic bug, it is missing required input.
 
 ```rust
 // Returns Err(Error::MissingNamespace { request: "remember" })
-let mem = Memory::open("./agent.db").with_llm(l).with_embedder(e).await?;
+let mem = Memory::open("./agent.db").with_llm(Arc::new(l.clone())).with_embedder(Arc::new(e.clone())).await?;
 let _ = mem.remember("data").await;   // no default_namespace + no .in_namespace()
 
 // Correct caller pattern — provide namespace:
@@ -208,8 +214,8 @@ mem.remember("data")
 
 // OR set default at construction:
 let mem = Memory::open("./agent.db")
-    .with_llm(l)
-    .with_embedder(e)
+    .with_llm(Arc::new(l))
+    .with_embedder(Arc::new(e))
     .default_namespace(Namespace::new("my-agent"))
     .await?;
 mem.remember("data").await?;  // uses default
@@ -220,10 +226,10 @@ mem.remember("data").await?;  // uses default
 ```rust
 match mem.remember("data").await {
     Ok(_) => {}
-    Err(kremory::CoreError::MissingNamespace { request }) => {
+    Err(kremory::MemoryError::MissingNamespace { request }) => {
         eprintln!("missing namespace for {request}");
     }
-    Err(e) => return Err(e),
+    Err(e) => return Err(e.into()),
 }
 ```
 
