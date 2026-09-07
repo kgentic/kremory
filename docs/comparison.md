@@ -41,7 +41,7 @@ refs:
 
 ## Comparison Matrix
 
-| Dimension | **kremory** | cogniplex/codemem | DeusData/codebase-memory-mcp | Mem0 OSS | Letta OSS | Zep/Graphiti |
+| Dimension | **kremory** (updated 2026-09-04) | cogniplex/codemem (unverified since 2026-05-22) | DeusData/codebase-memory-mcp (unverified since 2026-05-22) | Mem0 OSS (unverified since 2026-05-22) | Letta OSS (unverified since 2026-05-22) | Zep/Graphiti (unverified since 2026-05-22) |
 |---|---|---|---|---|---|---|
 | **Language** | Pure Rust | Pure Rust (93% bytes) [codemem §1] | Pure C (95% bytes) [store.c verified] | Python | Python | Python |
 | **License** | Apache-2.0 [ADR-v3] | Apache-2.0 [codemem Cargo.toml] | MIT [LICENSE: "Copyright (c) 2025 DeusData"] | Apache-2.0 [licensing-revisit §3] | Apache-2.0 [licensing-revisit §3] | Apache-2.0 (Graphiti) [licensing-revisit §3] |

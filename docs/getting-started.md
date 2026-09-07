@@ -13,7 +13,7 @@
 - Rust + Cargo (this was run against `rustc 1.93.1` / `cargo 1.93.1`; kremory's
   stated MSRV is 1.86).
 - For the worked example below specifically (not for kremory in general —
-  kremory is BYOM/BYOE, see [§2 of `api.md`](./api.md)): a local
+  kremory lets you bring your own LLM and embedder, see [§2 of `api.md`](./api.md)): a local
   [Ollama](https://ollama.com) server with two models pulled:
 
   ```sh
@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     // Tier 1 "just works" path: Memory::with_ollama assumes Ollama running
     // at http://localhost:11434 with gemma4:e4b (chat) + nomic-embed-text
     // (embeddings) pulled — see "Other ways to open a Memory" below for
-    // OpenAI / Anthropic / fully-custom BYOM+BYOE.
+    // OpenAI / Anthropic / a fully custom chat provider + embedder.
     let mem = Memory::with_ollama("./agent.db").await?;
 
     let ns = Namespace::new("agent");
@@ -175,8 +175,8 @@ verified:
 - **`Memory::with_openai(path)`** / **`Memory::with_anthropic(path)`** —
   same shape, gated on `$OPENAI_API_KEY` / `$ANTHROPIC_API_KEY`.
 - **`Memory::open(path).with_llm(...).with_embedder(...).await?`** — Tier 2,
-  fully custom BYOM + BYOE (bring your own chat provider and your own
-  embedder). This is what you want for a production deployment or a
+  fully custom BYOM (bring your own chat provider) plus your own embedder.
+  This is what you want for a production deployment or a
   non-Ollama/OpenAI/Anthropic backend. See [`api.md` §2](./api.md) for the
   full builder walkthrough — it needs more setup than this guide's minimal
   path, which is why it isn't the first thing shown here.

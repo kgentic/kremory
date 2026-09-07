@@ -1,5 +1,19 @@
 # kremory API Reference
 
+This is the complete reference for `kremory::Memory` — every builder knob, every request
+method, and the reversibility/feature-flag/Node-binding surfaces around it. Reach for
+[`getting-started.md`](./getting-started.md) first if you haven't run a working program yet;
+come here once you're past that and need the full picture, or to look up a specific method.
+
+The sections below are organised by *feature*, roughly in the order a consumer adopts them —
+Quickstart → customizing the LLM/embedder → namespaces → ingest → recall → dream/consolidation
+→ reversibility → forget → async patterns → event sinks → advanced composition → the
+bi-temporal model → migration → feature flags → the Node binding — rather than by internal
+implementation grouping. Sections that have a "why would I want this" trade-off worth stating
+(e.g. §5's `.content()` vs `.raw()` latency numbers, §6a's `merge_nogood` rationale) lead with
+that trade-off before the code; sections that are simple mechanism (e.g. §4's basic ingest)
+just show the code.
+
 > **v0.7** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
 > (`kremory::memory::submit_episode`, etc.) remain public for advanced users; most applications
 > should use the facade described below. Since v0.1.3 the facade gained a fully-wired dream
@@ -32,7 +46,7 @@ mem.remember("User prefers concise replies").in_namespace(ns.clone()).await?;
 let context: String = mem.recall("what does user prefer?").in_namespace(ns.clone()).await?;
 
 // Dream (consolidation) — blocks until done (~5–60s depending on corpus)
-let summary = mem.dream().in_namespace(ns.clone()).await?;
+let summary = mem.dream().in_namespace(ns.clone()).execute().await?;
 println!("communities updated: {}", summary.communities_updated);
 
 // Forget (GDPR-style delete of everything in this namespace)
@@ -649,7 +663,10 @@ but fuses nothing) until you opt into Apply.
 
 ```rust
 // Default: blocks until consolidation complete (~5–60s depending on corpus + models)
-let summary = mem.dream().await?;
+// .execute() is required — dream() is the single most consequential call in
+// the API (it commits merges/archival/supersession by default), so it gets
+// the same explicit destructive terminal as forget() / undo() / etc.
+let summary = mem.dream().execute().await?;
 
 // Reconciliation counts:
 println!("types discovered:         {}", summary.types_discovered.len());
@@ -697,7 +714,7 @@ opts.include_supersession_sweep = true;     // keep the supersession window clos
 opts.include_consistency_check = false;     // skip the LLM type-verify pass
 opts.max_episodes_per_run = Some(500);      // rate-limit LLM spend on large corpora (default: None)
 
-let summary = mem.dream().with_opts(opts).await?;
+let summary = mem.dream().with_opts(opts).execute().await?;
 ```
 
 `DreamOpts` is `#[non_exhaustive]` — build it from `DreamOpts::default()` + field mutation, never a
@@ -712,6 +729,7 @@ two coupled raw bools (`include_cross_episode_merges` + `cross_episode_dry_run`)
 // Apply   → compute + commit merges (each fusion reversible via mem.unmerge — §6a)
 let summary = mem.dream()
     .cross_episode(CrossEpisodeMode::Apply)
+    .execute()
     .await?;
 ```
 
@@ -723,6 +741,7 @@ fields and preserves every other knob.
 ```rust
 let summary = mem.dream()
     .in_namespace(Namespace::new("tenant-acme"))
+    .execute()
     .await?;
 ```
 
@@ -736,6 +755,7 @@ let summary = mem.dream()
 let summary = mem.dream()
     .in_namespace(ns)
     .for_batch("daily-2026-05-27")
+    .execute()
     .await?;
 ```
 
@@ -1177,9 +1197,10 @@ impl GraphHandle for MyGraphBackend {
 are read-only accessors (both cheap — no I/O) that report the config the pipeline is *actually*
 running: the compiled-in default, folded through any `KREMORY_*` env override at construction, and
 any explicit builder `.with_*` call, in that precedence order. Reach for these instead of
-re-reading env vars yourself — a transport or consumer that re-reads env can drift from what the
-search path actually uses, which is how a config-mismatch has produced a bogus benchmark number in
-the past:
+re-reading env vars yourself — a transport or consumer that re-reads env independently can drift
+from what the search path actually uses, silently reporting the wrong config to whoever is asking
+(a health-check endpoint, a debug log, a benchmark harness). `search_config()` reads the single
+source of truth the recall path itself resolves against, so it can't drift from it:
 
 ```rust
 let cfg = mem.search_config();
@@ -1429,6 +1450,17 @@ the live, in-effect values via `Memory::search_config()` / `Memory::contradictio
 | `episode_content_warn_threshold(Option<usize>)` | Soft warn threshold (chars) for oversize episode content (default `Some(10_000)`) |
 | `with_extractor(Arc<Ext>)` | Plug in a custom entity extractor (BYOE); mutually exclusive with `.with_gliner()` |
 | `with_await_extraction(bool)` / `with_await_extraction_timeout(Duration)` | Block `remember()` on Phase 2 LLM extraction instead of the default fire-and-forget-with-poll behaviour |
+
+**Why some of these are plain `bool` and one (`.cross_episode(CrossEpisodeMode)`, §6) is a
+tri-state enum instead:** the bools above each toggle ONE independent, orthogonal on/off
+decision — enabling `with_fact_dense_enabled(true)` doesn't change what any other setter means.
+`CrossEpisodeMode` exists because cross-episode merging is controlled by **two COUPLED raw
+bools** (`include_cross_episode_merges` + `cross_episode_dry_run`) where certain combinations are
+ambiguous or contradictory to read at a call site (what does `dry_run: true` mean when
+`include: false`?) — the tri-state enum (`Off` / `Shadow` / `Apply`) makes every valid
+combination a single, self-explaining value and the invalid one unrepresentable. That is the
+dividing line: a lone, independent knob stays a `bool`; two knobs whose meanings interact become
+one enum.
 
 ```rust
 let mem = Memory::open("./agent.db")

@@ -59,14 +59,14 @@ This mirrors [`crates/kremory/examples/quickstart.rs`](crates/kremory/examples/q
 (same API calls, embedder body simplified for readability) — that file gets compiled by
 `cargo test` (and directly via `cargo build --example quickstart`), so the API shape here is
 checked against the real crate, not hand-typed and left to drift. It wires a real local Ollama
-model (BYOM) and a custom embedder (BYOE):
+model (BYOM) and a custom embedder:
 
 ```rust
 use std::sync::Arc;
 use autoagents_llm::{backends::ollama::Ollama, builder::LLMBuilder};
 use kremory::{CoreResult, EmbeddingProvider, Memory, Namespace};
 
-/// BYOE — a real consumer calls their embedding backend (OpenAI, Ollama
+/// A real consumer calls their embedding backend (OpenAI, Ollama
 /// `nomic-embed-text`, a local GGUF, …) inside `embed`. This one is a
 /// deterministic hash so the example needs no network embedding model.
 struct DemoEmbedder;
@@ -253,16 +253,17 @@ ollama pull nomic-embed-text   # embeddings, 768-dim
 Prefer a smaller footprint? Wire the lighter model explicitly:
 
 ```rust
-let mem = kremory::facade::providers::with_ollama_at_model(
+let mem = Memory::with_ollama_at_model(
     "http://localhost:11434",
     Some("qwen2.5:7b".into()),   // 4.7GB, F1 ~79
     "./agent.db",
 ).await?;
 ```
 
-`with_ollama_at_model` lives in `kremory::facade::providers` (a free function, not an inherent
-`Memory::` method like its sibling `with_ollama_at`) — it's the internal path `Memory::auto` uses
-for env-driven model selection, exposed publicly for direct use.
+`Memory::with_ollama_at_model` is the inherent, discoverable form (shows up in `Memory::<tab>`
+completion) — it delegates to `kremory::facade::providers::with_ollama_at_model`, the original
+free function `Memory::auto` uses internally for env-driven model selection. The free function
+remains callable directly if you already depend on it; both reach the same code.
 
 Or set any model via `OLLAMA_CHAT_MODEL`, or wire your own provider through `with_llm`. The
 empirical ladder's source of truth is
@@ -380,7 +381,10 @@ use kremory::{Memory, Namespace};
 let ns = Namespace::new("agent");
 
 // dream() is opt-in; when called, all ops run and every mutation is reversible.
-let summary = mem.dream().await?;
+// .execute() is required — dream() is the single most consequential call in
+// the API (it commits merges/archival/supersession by default), so it gets
+// the same explicit destructive terminal as forget() / undo() / etc.
+let summary = mem.dream().execute().await?;
 println!("communities updated: {}", summary.communities_updated);
 
 // SEE what dream() did to one entity (newest-first) …
