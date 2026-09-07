@@ -192,23 +192,16 @@ fn extract_adr_refs(text: &str) -> BTreeSet<String> {
 /// exists to catch. `exempt_numbers_are_all_still_needed` below fails if any
 /// entry stops being necessary, so an exemption cannot outlive its reason.
 ///
-/// ADR-019 was removed from this list on 2026-09-07: a comment-hygiene pass
-/// stripped every citation to it under `crates/` (it had cited only doc
-/// comments, none of which resolved to a file — exactly the exemption this
-/// list existed for), so `exempt_numbers_are_all_still_needed` correctly
-/// caught the exemption as dead and this list follows its own rule.
-const EXEMPT_ADR_NUMBERS: [(&str, &str); 2] = [
-    (
-        "020",
-        "BeginGuard explicit-commit discipline — recorded at \
-         .ai-docs/architecture/kremory-v010-architect-INDEX-2026-05-26.md:242, never a file",
-    ),
-    (
-        "022",
-        "Mutex<()> write-serialiser closing DENT-002 — recorded at \
-         .ai-docs/architecture/kremory-v010-architect-INDEX-2026-05-26.md:244, never a file",
-    ),
-];
+/// ADR-019 and ADR-020 were removed from this list on 2026-09-07: the same
+/// comment-hygiene pass stripped every citation to each under `crates/` (both
+/// had cited only doc comments, none of which resolved to a file — exactly
+/// the exemption this list existed for), so `exempt_numbers_are_all_still_needed`
+/// correctly caught both exemptions as dead and this list follows its own rule.
+const EXEMPT_ADR_NUMBERS: [(&str, &str); 1] = [(
+    "022",
+    "Mutex<()> write-serialiser closing DENT-002 — recorded at \
+     .ai-docs/architecture/kremory-v010-architect-INDEX-2026-05-26.md:244, never a file",
+)];
 
 /// The doc that holds the exempt decisions above. If it moves, the justifications
 /// above become unverifiable and the exemptions must be re-grounded.
