@@ -1,17 +1,13 @@
 //! JSON-to-domain parsers for extraction output.
 //!
-//! Split from `mod.rs` as part of TD-001 (E0-B).
+//! Split from `mod.rs`.
 //!
-//! # Shape-tolerant parsing (2026-07-20 parse-layer hardening)
+//! # Shape-tolerant parsing
 //!
 //! Every parser in this module that deserialises LLM-emitted item lists routes
 //! through [`parse_items`] — a single shared helper that accepts BOTH the
 //! wrapped-object shape strict schemas advertise (`{"items": [...]}`) AND the
-//! bare-array shape lenient providers still emit (`[...]`). See
-//! `.ai-docs/specs/extraction-parse-layer-shape-robustness-observability-2026-07-20.md`
-//! for the full design + Vera Cycle-1 review that hardened it further
-//! (SCOPE-003 wrapper discipline, ASMP-001 ordering invariant, RISK-001
-//! partial-drop visibility, DENT-001 metric-family reuse).
+//! bare-array shape lenient providers still emit (`[...]`).
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use metrics::counter;
@@ -23,7 +19,7 @@ use crate::core::intelligence::{ExtractedEntity, ExtractedFact};
 
 /// Parse an LLM-emitted `valid_at` into UTC, or `None` if it is not a date.
 ///
-/// TD-187 round 2. Deliberately accepts exactly TWO shapes and nothing else:
+/// Deliberately accepts exactly TWO shapes and nothing else:
 ///
 /// 1. `YYYY-MM-DD` — what our prompt asks for. Midnight UTC.
 /// 2. Full RFC 3339 (`2023-05-07T00:00:00Z`) — what models trained on graphiti's
@@ -32,11 +28,11 @@ use crate::core::intelligence::{ExtractedEntity, ExtractedFact};
 /// Everything else returns `None` and is COUNTED by the caller. It is not
 /// `dateparser`-style best-effort on purpose: a lenient parser that coerces
 /// "last Tuesday" into *some* date would manufacture a confident wrong value in
-/// a column `as_of()` FILTERS on (ADR-068), silently excluding legitimate facts.
+/// a column `as_of()` FILTERS on, silently excluding legitimate facts.
 /// A missing date is recoverable — the persist sites fall back to the episode's
 /// `ref_time`. A wrong one is not. Refusing to guess is the safe direction here.
 ///
-/// No 3p crate (Rule 33): the shapes are two, formally specified, and already
+/// No 3p crate: the shapes are two, formally specified, and already
 /// covered by `chrono`, which is a direct dependency. `chrono-english` and
 /// `interim` solve relative-PHRASE resolution, which is the LLM's job here, not
 /// the parser's — see the decision record for why that alternative was rejected
@@ -53,11 +49,11 @@ fn parse_llm_date(s: &str) -> Option<DateTime<Utc>> {
 
 /// Which shape matched during [`parse_items`] parsing.
 ///
-/// Exposed so callers that need per-path success tracking (Vera DENT-001 —
-/// post-repair success is suspicious and must be tracked separately from a
-/// clean wrapped/bare-array parse, per `observability-first-class` cardinal
-/// failure mode #9) can label their own metrics accordingly. Callers that
-/// don't need the breakdown may ignore the returned value.
+/// Exposed so callers that need per-path success tracking can label their own
+/// metrics accordingly — a post-repair success is a weaker signal than a clean
+/// wrapped/bare-array parse and should be counted separately, not folded into
+/// one "parse succeeded" total. Callers that don't need the breakdown may
+/// ignore the returned value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParsePath {
     /// The wrapped-object shape (`{wrapper_key: [...]}`) matched on the
@@ -67,7 +63,7 @@ pub(crate) enum ParsePath {
     /// string.
     BareArray,
     /// Either shape matched only after [`repair_to_array`] ran — a suspicious
-    /// success (Rule 20) regardless of which of the two shapes it was.
+    /// success regardless of which of the two shapes it was.
     PostRepair,
     /// Neither shape matched at all (`deserialize_ok == false`).
     None,
@@ -80,14 +76,14 @@ pub(crate) enum ParsePath {
 ///      [`serde_json::Value::get`] on the parsed `Value`, NEVER via a
 ///      `#[serde(default)]` wrapper struct. A default-wrapper struct cannot
 ///      distinguish a wrong/missing top-level key from a genuine empty array
-///      (Vera SCOPE-003) — `Value::get` can, because it only matches on the
+///      — `Value::get` can, because it only matches on the
 ///      exact key.
 ///   2. **Bare array**: `[...]` — lenient providers (e.g. Ollama) still emit
 ///      this shape even when the schema advertises a wrapper.
 ///   3. **Post-repair retry of (1) and (2)** on the output of
 ///      [`repair_to_array`] (markdown fences, single-object, trailing commas).
 ///
-/// # Ordering invariant (Vera ASMP-001)
+/// # Ordering invariant
 /// The wrapper-key extraction (step 1) MUST run on the **original** string
 /// before any repair pass. `repair_to_array` wraps a bare `{...}` object in an
 /// array (`{...}` → `[{...}]`) — if repair ran first, a genuine
@@ -117,7 +113,7 @@ pub(crate) fn parse_items<T: serde::de::DeserializeOwned>(
 ) -> (Vec<T>, usize, bool, ParsePath) {
     let trimmed = json.trim();
 
-    // Attempt on the ORIGINAL string first — ASMP-001 ordering invariant.
+    // Attempt on the ORIGINAL string first — ordering invariant.
     if let Some((items, count, path)) = try_parse_shape::<T>(trimmed, wrapper_key) {
         return (items, count, true, path);
     }
@@ -142,7 +138,7 @@ fn try_parse_shape<T: serde::de::DeserializeOwned>(
     wrapper_key: &str,
 ) -> Option<(Vec<T>, usize, ParsePath)> {
     // Wrapped: {wrapper_key: [...]}. `Value::get` — never a
-    // `#[serde(default)]` wrapper struct (Vera SCOPE-003): a default wrapper
+    // `#[serde(default)]` wrapper struct: a default wrapper
     // can't distinguish a wrong/missing key from a genuine empty array.
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(s) {
         if let Some(inner) = value.get(wrapper_key) {
@@ -162,14 +158,14 @@ fn try_parse_shape<T: serde::de::DeserializeOwned>(
     None
 }
 
-// ─── Always-on yield observability (C2 / RISK-001) ───────────────────────────
+// ─── Always-on yield observability ───────────────────────────
 
 /// Emit the always-on raw-vs-emitted yield metrics for a single parser call.
 ///
-/// Extends the existing `rql.extraction.*` metric family (Vera DENT-001 — no
+/// Extends the existing `rql.extraction.*` metric family (no
 /// parallel namespace). `parser` MUST be a bounded label drawn from the small
-/// fixed set of parser names in this crate — never raw text (Rule 19 /
-/// cardinality safety).
+/// fixed set of parser names in this crate — never raw text (cardinality
+/// safety).
 ///
 /// - `rql.extraction.parse_raw_items{parser}` — items found before filtering.
 /// - `rql.extraction.parse_emitted{parser}` — usable items after filtering.
@@ -179,7 +175,7 @@ fn try_parse_shape<T: serde::de::DeserializeOwned>(
 ///   that caused the empty benchmark fact graph this spec fixes. A genuinely
 ///   empty extraction has `raw_count == 0`, so this never false-fires on a
 ///   fact-less episode.
-/// - **Partial-drop** (Vera RISK-001, `emitted > 0 && emitted < raw_count`):
+/// - **Partial-drop** (`emitted > 0 && emitted < raw_count`):
 ///   an INFO log — this repo has no CI/dashboards, so a lone counter would
 ///   never be seen; the log line is the operator-visible signal.
 pub(crate) fn emit_parse_yield_metrics(parser: &'static str, raw_count: usize, emitted: usize) {
@@ -263,7 +259,7 @@ pub(crate) fn parse_relation_names(json: &str) -> anyhow::Result<Vec<String>> {
 
 // ─── Entity parsers ───────────────────────────────────────────────────────────
 
-/// Legacy string-label entity parser (pre-TD-013 L1 path).
+/// Legacy string-label entity parser.
 ///
 /// Production extractors now use `parse_entities_integer`.  This function is
 /// retained as a test fixture for the string-label parse path (used by
@@ -317,7 +313,7 @@ pub(crate) fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>>
         .collect())
 }
 
-/// Parse the integer-ID entity JSON emitted by the L1 extraction path (TD-013).
+/// Parse the integer-ID entity JSON emitted by the L1 extraction path.
 ///
 /// Accepts two input shapes:
 /// 1. Wrapped: `{"entities": [{"name": "Alice", "entity_type_id": 1}, ...]}` — primary.
@@ -331,7 +327,7 @@ pub(crate) fn parse_entities(json: &str) -> anyhow::Result<Vec<ExtractedEntity>>
 /// - Resolves the integer id to a label string via `EntityTypeRegistry::id_to_name`.
 /// - Builds `ExtractedEntity { name, label, properties }` — downstream contract preserved.
 ///
-/// Routes through the shared [`parse_items`] helper (Vera SCOPE-003): the
+/// Routes through the shared [`parse_items`] helper: the
 /// previous `EntityListIntegerWrapper` + `#[serde(default)]` deserialize was a
 /// live wrong-key hazard — `{"result": [...]}` would silently deserialize to
 /// an empty wrapper, indistinguishable from a genuine `{"entities": []}`.
@@ -341,7 +337,7 @@ pub(crate) fn parse_entities_integer(
 ) -> anyhow::Result<Vec<ExtractedEntity>> {
     let trimmed = json.trim();
 
-    // KREMORY_DEBUG=1: emit raw stage1 LLM output for diagnosis (Rule 19).
+    // KREMORY_DEBUG=1: emit raw stage1 LLM output for diagnosis.
     if std::env::var("KREMORY_DEBUG").is_ok() {
         tracing::debug!(
             target: "kremory.extraction.parsers",
@@ -359,10 +355,9 @@ pub(crate) fn parse_entities_integer(
     ) = parse_items(trimmed, "entities");
 
     if deserialize_ok {
-        // Path label restored (Vera DENT-001): a post-repair success is
+        // Path label restored: a post-repair success is
         // suspicious and must stay distinguishable from a clean
-        // wrapped/bare_array parse (Rule 20 — post-repair success is
-        // suspicious, track separately). `parse_items` now reports which of
+        // wrapped/bare_array parse. `parse_items` now reports which of
         // the three shapes actually matched via `ParsePath`.
         let path_label = match parse_path {
             ParsePath::Wrapped => "wrapped",
@@ -452,8 +447,8 @@ pub(crate) fn parse_facts_with_raw_count(
     json: &str,
 ) -> anyhow::Result<(Vec<ExtractedFact>, usize)> {
     let trimmed = json.trim();
-    // KREMORY_DEBUG=1: emit raw stage3 triplet output to stderr for diagnosis (Rule 19).
-    // Closes the observability gap identified in TD-080: an empty fact list could be a
+    // KREMORY_DEBUG=1: emit raw stage3 triplet output to stderr for diagnosis.
+    // Closes the observability gap: an empty fact list could be a
     // genuine `[]` emission OR a malformed payload silently swallowed below — this dump
     // distinguishes them. Mirrors the stage1 dump in `parse_entities_integer`.
     if std::env::var("KREMORY_DEBUG").is_ok() {
@@ -465,7 +460,7 @@ pub(crate) fn parse_facts_with_raw_count(
         );
     }
 
-    // Root-cause fix (2026-07-20, corrects ADR-077): the strict schema
+    // Root-cause fix: the strict schema
     // `TripletListWrapper` makes providers emit `{"items":[...]}`, but this parser
     // previously only accepted a bare `[...]`, so every wrapped emission from a
     // strict provider (e.g. Groq gpt-oss) silently dropped to 0 facts — the cause
@@ -495,15 +490,15 @@ pub(crate) fn parse_facts_with_raw_count(
             keep
         })
         .map(|f| {
-            // TD-187 round 2 — parse `valid_at` HERE, at the boundary.
+            // Parse `valid_at` HERE, at the boundary.
             //
             // A malformed date degrades this ONE field to `None` and is counted;
             // it never fails the payload, never drops the fact, and never touches
             // its siblings. That is deliberate and matches the closest prior art
             // (graphiti `edge_operations.py` wraps its `fromisoformat` in
             // try/except and leaves the field None) — with the addition graphiti
-            // lacks: a per-outcome counter, so silent degradation is visible
-            // (Rule 19). A date the model invented in the wrong FORMAT is a
+            // lacks: a per-outcome counter, so silent degradation is visible.
+            // A date the model invented in the wrong FORMAT is a
             // parse problem; a date it invented in the right format is not
             // detectable here and is bounded by the prompt instead.
             let valid_at = match f.valid_at.as_deref().map(str::trim) {
@@ -544,8 +539,8 @@ pub(crate) fn parse_facts_with_raw_count(
     }
     // Always-on, per-outcome — an aggregate that hid `malformed` inside `absent`
     // would make a broken date format indistinguishable from a corpus that simply
-    // states no dates, which is exactly the ambiguity that made TD-187 round 1
-    // measure null for a month.
+    // states no dates, which is exactly the ambiguity that caused this signal
+    // to measure null for a month before being caught.
     if valid_at_absent > 0 {
         counter!("rql.extraction.valid_at", "outcome" => "absent").increment(valid_at_absent);
     }
@@ -560,7 +555,7 @@ pub(crate) fn parse_facts_with_raw_count(
     Ok((facts, raw_count))
 }
 
-// ─── TD-187 round 2: `valid_at` boundary parsing ─────────────────────────────
+// ─── `valid_at` boundary parsing ─────────────────────────────
 
 #[cfg(test)]
 mod td_187_valid_at_tests {
@@ -674,7 +669,7 @@ mod td_187_valid_at_tests {
     }
 
     /// `parse_llm_date` must REFUSE to guess. This is the property that keeps a
-    /// wrong value out of a column `as_of()` filters on (ADR-068).
+    /// wrong value out of a column `as_of()` filters on.
     #[test]
     fn parse_llm_date_refuses_ambiguous_and_relative_input() {
         assert!(parse_llm_date("2023-05-07").is_some());
@@ -728,7 +723,7 @@ mod tests {
         // it on the first (unrepaired) attempt, so this only parses after
         // `repair_to_array` strips the trailing comma. The eventual shape
         // that matches is a bare array, but the OUTER path label must be
-        // `PostRepair` (Vera DENT-001: post-repair success is suspicious and
+        // `PostRepair` (post-repair success is suspicious and
         // must stay distinguishable from a clean first-attempt parse).
         let (items, raw_count, ok, path) = parse_items::<u32>("[1,2,3,]", "items");
         assert_eq!(items, vec![1, 2, 3]);
@@ -741,13 +736,13 @@ mod tests {
         );
     }
 
-    // ── ASMP-001: ordering invariant ───────────────────────────────────────
+    // ── Ordering invariant ───────────────────────────────────────
 
     #[test]
     fn parse_items_wrapped_empty_yields_zero_raw_count_no_repair_needed() {
         // A genuine `{"items": []}` must be recognised as a structurally-valid
         // empty result WITHOUT falling through to repair_to_array. If the
-        // wrapper-key extraction ran AFTER repair (the ASMP-001 bug),
+        // wrapper-key extraction ran AFTER repair,
         // repair_to_array would wrap the whole object in an array
         // (`[{"items":[]}]`), the wrapper-key lookup would then run against
         // an array (no string keys), and the parse would fail entirely
@@ -774,7 +769,7 @@ mod tests {
         assert_eq!(path, ParsePath::BareArray);
     }
 
-    // ── SCOPE-003: wrong-key hazard ─────────────────────────────────────────
+    // ── Wrong-key hazard ─────────────────────────────────────────
 
     #[test]
     fn parse_items_wrong_top_level_key_does_not_silently_succeed_as_empty() {
@@ -842,7 +837,7 @@ mod tests {
         assert_eq!(raw_count, 2, "raw_count must count both facts pre-filter");
     }
 
-    // ── TD-133 PREVENTION: parse_facts CONTRACT regression gate ─────────────
+    // ── parse_facts CONTRACT regression gate ─────────────
     //
     // These pin the exact wrapper-drift bug that caused the 262/520 Groq parse
     // loss (SYSTEM-PRIMER §5) so it can never silently regress locally, plus
@@ -855,7 +850,7 @@ mod tests {
     #[test]
     fn parse_facts_wrapped_groq_shape_yields_one_fact() {
         // (a) The strict-provider wrapped shape `{"items":[...]}` — the exact
-        // shape Groq gpt-oss emits and that the original TD-133 bug dropped to 0
+        // shape Groq gpt-oss emits and that a prior wrapper-drift bug dropped to 0
         // facts. Must parse to exactly one fact.
         let json = r#"{"items":[{"subject":"a","predicate":"p","object":"b","is_entity_ref":false,"confidence":1.0}]}"#;
 
@@ -1002,10 +997,10 @@ mod tests {
         );
     }
 
-    // ── parse_entities_integer: `path` label restored (Vera DENT-001) ───────
+    // ── parse_entities_integer: `path` label restored ───────
     //
     // These pin the actual shape reported on `rql.extraction.json_parse_ok`'s
-    // `path` label — Rule 20: a post-repair success is suspicious and must
+    // `path` label — a post-repair success is suspicious and must
     // stay distinguishable from a clean wrapped/bare_array parse. Uses
     // `metrics_util::debugging::DebuggingRecorder` (library-safe local
     // recorder, no global state) — same pattern as `tests/b1_observability.rs`.
@@ -1214,7 +1209,7 @@ mod tests {
             paths,
             vec!["post_repair".to_string()],
             "a shape that only parses after repair must report path=post_repair \
-             (Rule 20: post-repair success is suspicious), got {paths:?}"
+             (post-repair success is suspicious), got {paths:?}"
         );
     }
 }
