@@ -4,18 +4,17 @@ use super::*;
 
 // ── SupersedeRequest ─────────────────────────────────────────────────────────
 
-/// Consumer-facing supersede builder (**ADR-071 §Item 3**, TD-070). Obtain via
+/// Consumer-facing supersede builder. Obtain via
 /// `mem.supersede(fact_id)`.
 ///
 /// Bounds a fact's WORLD-time `valid_to` window explicitly — the consumer
 /// asserts "this fact's validity ends here" (e.g. a document was superseded by
 /// a newer version, a price changed, a status expired). This is the
-/// consumer-EXPLICIT half of TD-070/065's supersession gap; auto-detected
+/// consumer-EXPLICIT half of the supersession story; auto-detected
 /// supersession (the system inferring a supersession from new input) is
-/// deliberately deferred (tracked as TD-P1-AUTO — not built here).
+/// deliberately deferred — not built here.
 ///
-/// # Mechanism (**ADR-083 Amendment C** —
-/// `.ai-docs/adrs/adr-083-adr071-amendment-reconcile-shipped-adr070-2026-07-09.md`)
+/// # Mechanism
 ///
 /// `.execute()` writes `facts.valid_to` via the NEW
 /// [`TemporalGraph::bound_valid_to`] primitive (`core/graph/facts.rs`) — **NOT**
@@ -49,9 +48,9 @@ pub struct SupersedeRequest<'a> {
     /// the `bound_valid_to` call only — it does NOT route to
     /// `invalidate_fact_with_reason` (that primitive writes `invalid_at`, a
     /// domain-invalidation semantic that would break the `window_closeout`
-    /// predicate — Amendment C point 4).
+    /// predicate).
     pub(super) reason: Option<String>,
-    /// D4 (consumer-API hardening): when `true`, `.execute()` runs the deterministic
+    /// When `true`, `.execute()` runs the deterministic
     /// `window_closeout` sweep inline right after bounding `valid_to`, retiring
     /// already-past-dated bounds in one call. Set via [`Self::close_now`]. Default
     /// `false` — the retirement is otherwise deferred to the next `mem.dream()` with
@@ -67,7 +66,7 @@ impl<'a> SupersedeRequest<'a> {
     }
 
     /// Optional human-readable reason, threaded as a tracing field only —
-    /// never a metric label (cardinality discipline, ADR-071 §Item 5).
+    /// never a metric label (cardinality discipline).
     pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
         self.reason = Some(reason.into());
         self
@@ -79,7 +78,7 @@ impl<'a> SupersedeRequest<'a> {
         self
     }
 
-    /// D4 (consumer-API hardening): retire the bound in ONE call instead of waiting
+    /// Retire the bound in ONE call instead of waiting
     /// for the next `mem.dream()` supersession sweep. After bounding `valid_to`,
     /// `.execute()` runs the deterministic `window_closeout` inline and returns
     /// [`SupersedeOutcome::Bounded`] carrying the retirement `retired` count.
@@ -89,8 +88,8 @@ impl<'a> SupersedeRequest<'a> {
     /// returns `Bounded { retired: 0 }` (its retirement is deferred to a later dream
     /// sweep once the window closes). The count is carried IN-BAND (`retired == 0` on
     /// a future-dated bound) rather than a doc caveat, so a caller can observe the
-    /// deferral without inspecting the sweep — the same honesty D4a fixes for the
-    /// variant name.
+    /// deferral without inspecting the sweep — the same honesty applied to the
+    /// variant name below.
     ///
     /// NOTE: `window_closeout` is namespace-scoped — the returned `retired` is the
     /// total retired in the resolved namespace this sweep, which includes any OTHER
@@ -101,7 +100,7 @@ impl<'a> SupersedeRequest<'a> {
     }
 
     /// Execute the supersession. Bounds `fact_id`'s world-time `valid_to` via
-    /// [`TemporalGraph::bound_valid_to`] (ADR-071 §Item 3; ADR-083 Amendment C) — NOT
+    /// [`TemporalGraph::bound_valid_to`] — NOT
     /// `invalidate_fact`.
     ///
     /// # Errors
@@ -116,14 +115,13 @@ impl<'a> SupersedeRequest<'a> {
         // loudly rather than silently mis-bounding the fact.
         let valid_to = self.valid_to.ok_or_else(|| {
             MemoryError::Other(
-                "SupersedeRequest::execute requires .at(valid_to) — no silent default \
-                 (ADR-071 §Item 3 required-input discipline)"
+                "SupersedeRequest::execute requires .at(valid_to) — no silent default"
                     .into(),
             )
         })?;
 
         let ns = self.memory.resolve_namespace(self.namespace)?;
-        // ADR-029a lazy population: ensure namespace row exists before read.
+        // Lazy population: ensure namespace row exists before read.
         self.memory.ensure_namespace_policy(&ns).await?;
         let group_id = namespace_to_group_id(&ns);
 
@@ -135,10 +133,10 @@ impl<'a> SupersedeRequest<'a> {
             )
         })?;
 
-        // AppendOnly enforcement (ADR-029b §3.1 — "valid_to set on facts" is a
-        // named mutation): supersede bounds `facts.valid_to`, a mutation of an
+        // AppendOnly enforcement: "valid_to set on facts" is a
+        // named mutation — supersede bounds `facts.valid_to`, a mutation of an
         // existing row, and is prohibited on AppendOnly namespaces. Mirrors
-        // `ForgetRequest::execute` (forget.rs) — Quinn Item-3 HIGH. Without this
+        // `ForgetRequest::execute` (forget.rs). Without this
         // the mutation not only violates policy, it is permanently orphaned:
         // `dream()` itself refuses to run on AppendOnly namespaces, so
         // `window_closeout` could never complete the system-time close.
@@ -171,7 +169,7 @@ impl<'a> SupersedeRequest<'a> {
             return Ok(SupersedeOutcome::NotFound);
         };
 
-        // Time-inversion guard (§3b step 3): a bound predating the fact's own
+        // Time-inversion guard: a bound predating the fact's own
         // `valid_from` is nonsensical regardless of consumer intent. DB row
         // stays UNCHANGED — no partial write.
         if valid_to < fact.valid_from {
@@ -183,7 +181,7 @@ impl<'a> SupersedeRequest<'a> {
             return Ok(SupersedeOutcome::RejectedTimeInversion);
         }
 
-        // Amendment C: bound_valid_to, NOT invalidate_fact — writes `valid_to`
+        // bound_valid_to, NOT invalidate_fact — writes `valid_to`
         // (world-time), not `expired_at` (system-time). The dream supersession
         // sweep's `window_closeout` does the system-time close later.
         tg.bound_valid_to(self.fact_id, valid_to)
@@ -191,7 +189,7 @@ impl<'a> SupersedeRequest<'a> {
             .map_err(MemoryError::Core)?;
 
         // fact_id/group_id/reason are KREMORY_DEBUG-gated tracing FIELDS only —
-        // never counter labels (cardinality discipline, ADR-071 §Item 5).
+        // never counter labels (cardinality discipline).
         if std::env::var("KREMORY_DEBUG").is_ok() {
             tracing::debug!(
                 fact_id = self.fact_id,
@@ -207,7 +205,7 @@ impl<'a> SupersedeRequest<'a> {
         )
         .increment(1);
 
-        // D4: `execute()` only BOUNDS `valid_to` — retirement is a separate step, so
+        // `execute()` only BOUNDS `valid_to` — retirement is a separate step, so
         // the honest default is `retired: 0`. When `.close_now()` was requested, run
         // the deterministic window_closeout inline and carry the real count IN-BAND
         // (a future-dated bound retires nothing → `retired == 0`, observable without
@@ -232,12 +230,12 @@ impl<'a> SupersedeRequest<'a> {
 /// `kremory.dream.consolidation.supersede_request_total` (`bounded` /
 /// `rejected_time_inversion` / `not_found`).
 ///
-/// `#[non_exhaustive]` (D4/O5) — the outcome surface is unreleased and may gain
+/// `#[non_exhaustive]` — the outcome surface is unreleased and may gain
 /// variants; callers match with a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SupersedeOutcome {
-    /// `valid_to` was BOUNDED successfully (D4, consumer-API hardening honest
+    /// `valid_to` was BOUNDED successfully (an honest
     /// rename of the former `Applied`). `execute()` only writes `valid_to`; it does
     /// NOT retire the fact — so `retired` is `0` unless `.close_now()` was called,
     /// in which case it carries the inline `window_closeout` retirement count (which
@@ -325,7 +323,7 @@ mod supersede_tests {
             .await
             .expect("supersede must succeed");
 
-        // D4: execute() only BOUNDS — never retires — so retired is 0.
+        // execute() only BOUNDS — never retires — so retired is 0.
         assert_eq!(outcome, SupersedeOutcome::Bounded { retired: 0 });
 
         let tg = mem.temporal_graph.as_ref().expect("temporal_graph");
@@ -342,7 +340,7 @@ mod supersede_tests {
         );
     }
 
-    /// D4 (consumer-API hardening) — `.close_now()` on a PAST-dated bound runs the
+    /// `.close_now()` on a PAST-dated bound runs the
     /// inline window_closeout and returns `Bounded { retired: >0 }`, while a
     /// FUTURE-dated bound in the same namespace is left un-retired (its window has
     /// not closed). Proves the honest in-band count: the deferral is observable from
@@ -450,7 +448,7 @@ mod supersede_tests {
         );
     }
 
-    /// D4 — `.close_now()` on a FUTURE-dated bound returns `Bounded { retired: 0 }`
+    /// `.close_now()` on a FUTURE-dated bound returns `Bounded { retired: 0 }`
     /// (nothing to retire yet). The honest zero, observable in-band.
     #[tokio::test]
     async fn close_now_on_future_bound_retires_zero() {
@@ -510,9 +508,9 @@ mod supersede_tests {
         );
     }
 
-    /// AC (Quinn Item-3 HIGH) — supersede bounds `facts.valid_to`, a mutation of
-    /// an existing row, so it MUST be blocked on AppendOnly namespaces (ADR-029b
-    /// §3.1 names "valid_to set on facts" as a prohibited mutation). Mirrors
+    /// AC — supersede bounds `facts.valid_to`, a mutation of
+    /// an existing row, so it MUST be blocked on AppendOnly namespaces
+    /// ("valid_to set on facts" is a prohibited mutation there). Mirrors
     /// `forget.rs::by_source_id_appendonly_blocks_forget`. The DB row must stay
     /// unchanged.
     #[tokio::test]

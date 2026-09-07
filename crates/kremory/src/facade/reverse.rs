@@ -1,7 +1,5 @@
-//! Consumer-facing reversal + INSPECT builders (arch-spec
-//! `reversible-graph-mutations-arch-spec-2026-07-10.md` §3.1 + §3 "Inspect
-//! surface") — the `Memory` surface for the Stage-1 reversal primitives AND the
-//! read-only inspect surface.
+//! Consumer-facing reversal + INSPECT builders — the `Memory` surface for
+//! the Stage-1 reversal primitives AND the read-only inspect surface.
 //!
 //! The three FIX builders (`Unmerge` / `RestoreArchived` / `Unsupersede`) are each
 //! a `#[must_use]` handle that must call `.execute()` (mirrors `SupersedeRequest` /
@@ -561,7 +559,7 @@ pub enum UndoOutcome {
     DeleteFact(DeleteFactOutcome),
 }
 
-/// The unified undo dispatcher (ADR-073 DX R1/R2). Obtain via
+/// The unified undo dispatcher. Obtain via
 /// `mem.undo(mutation_id)`.
 ///
 /// Reads the `graph_mutation_log` row for `mutation_id`, matches on its `kind`,
@@ -710,7 +708,7 @@ impl<'a> UndoRequest<'a> {
 
 #[cfg(test)]
 mod undo_dispatch_tests {
-    //! R1/R2 (ADR-073 DX) — `mem.undo(mutation_id)` dispatches each of the four
+    //! `mem.undo(mutation_id)` dispatches each of the four
     //! LOGGED kinds to the correct per-kind undo (same effect as the per-kind
     //! method), returns `MutationNotFound` for an unknown id, and returns a loud
     //! `UndoUnsupportedKind` for a would-be RESERVED-kind row. Deterministic,

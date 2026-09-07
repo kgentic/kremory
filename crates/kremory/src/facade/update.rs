@@ -56,7 +56,7 @@ impl<'a> IntoFuture for UpdateSourceUriRequest<'a> {
                 )
             })?;
             let conn = &tg.conn;
-            // TD-235: `source_id` is caller-chosen with NO uniqueness constraint
+            // `source_id` is caller-chosen with NO uniqueness constraint
             // (Migration 007 creates a plain index — `core/migrations/defs_b.rs:123`),
             // so two namespaces can collide on one id. Resolve the scope EXACTLY as
             // the sibling reader `Memory::recall_by_source_id` does, so reader and
@@ -117,7 +117,7 @@ impl Memory {
     /// `recorded_at`), or any other episode column. Returns `Err` if no
     /// episodes match the given `source_id` within the namespace scope below.
     ///
-    /// # Namespace scope (TD-235)
+    /// # Namespace scope
     ///
     /// Identical to [`Memory::recall_by_source_id`] — the writer and its
     /// sibling reader resolve scope the same way, by construction, through
@@ -215,7 +215,7 @@ impl<'a> std::future::IntoFuture for UpdateEpisodeMetadataRequest<'a> {
             })?;
             let conn = &tg.conn;
 
-            // TD-235: `source_id` is caller-chosen with NO uniqueness constraint
+            // `source_id` is caller-chosen with NO uniqueness constraint
             // (Migration 007 creates a plain index — `core/migrations/defs_b.rs:123`),
             // so two namespaces can collide on one id. Resolve the scope EXACTLY as
             // the sibling reader `Memory::recall_by_source_id` does, so reader and
@@ -265,7 +265,7 @@ impl<'a> std::future::IntoFuture for UpdateEpisodeMetadataRequest<'a> {
             // arbitrary row's metadata and broadcasting the result to all of
             // them silently destroys every sibling's own keys.
             //
-            // TD-235: scoped to the resolved namespace. The per-row `UPDATE ...
+            // Scoped to the resolved namespace. The per-row `UPDATE ...
             // WHERE id = ?2` below needs no namespace predicate of its own — it
             // targets a primary key drawn from THIS scoped result set, so
             // scoping here is what bounds the write. Do not "fix" that UPDATE by
@@ -368,7 +368,7 @@ impl Memory {
     ///   `valid_to`, `recorded_at` on facts), `source_id`, `source_uri`,
     ///   `recorded_at` on episodes — only the `metadata` column changes.
     ///
-    /// # Namespace scope (TD-235)
+    /// # Namespace scope
     ///
     /// Identical to [`Memory::recall_by_source_id`] — the writer and its
     /// sibling reader resolve scope the same way, by construction, through
@@ -406,7 +406,7 @@ impl Memory {
     /// Direct lookup of episodes matching `source_id`. Returns episodes
     /// ordered by `recorded_at DESC` (newest first).
     ///
-    /// # Namespace scope (Vera F11 fold-in)
+    /// # Namespace scope
     ///
     /// When `namespace` is `Some`, the query is restricted to that namespace
     /// only. When `None`, the Memory's default namespace is used; if no
@@ -433,7 +433,7 @@ impl Memory {
         let conn = &tg.conn;
 
         let source_id = source_id.as_ref().to_string();
-        // TD-235: resolve through `namespace_to_group_id`, NOT the raw
+        // Resolve through `namespace_to_group_id`, NOT the raw
         // `ns.namespace`. A thread is PART of the namespace identity — a
         // `Namespace::new("ws").with_thread("t")` is persisted as
         // `group_id = "ws:t"` — so taking `ns.namespace` alone yielded the
@@ -447,7 +447,7 @@ impl Memory {
 
         // `(? IS NULL OR group_id = ?)` evaluates to TRUE when filter is NULL
         // → no namespace scope applied.
-        // TD-003 Phase G: SELECT now projects source_id (idx 9), source_uri (idx 10),
+        // SELECT now projects source_id (idx 9), source_uri (idx 10),
         // content_hash (idx 11) — closing Episode struct ↔ table column asymmetry.
         // Previously content_hash was hardcoded None; source_id/source_uri were absent.
         let mut rows = conn
@@ -551,8 +551,8 @@ mod update_source_uri_tests {
     /// `#[cfg(any(test, feature = "test-utils"))]`.
     ///
     /// Returns the `group_id` used for the episode row.
-    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // Test helper: exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow) — args-as-object targets `src/`
     // production fns, not `#[cfg(test)]` seeders.
     #[allow(clippy::too_many_arguments)]
     async fn seed_episode_with_source(
@@ -819,8 +819,8 @@ mod update_episode_metadata_tests {
 
     /// Seed an episode row with a given `source_id` and `metadata` JSON text
     /// directly via SQL, bypassing the facade ingest path.
-    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // Test helper: exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow) — args-as-object targets `src/`
     // production fns, not `#[cfg(test)]` seeders.
     #[allow(clippy::too_many_arguments)]
     async fn seed_episode_with_metadata(

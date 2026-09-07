@@ -1,33 +1,31 @@
 use super::*;
 
-// ── Per-pass progress signal (TD-218) ─────────────────────────────────────────
+// ── Per-pass progress signal ───────────────────────────────────────────────────
 
 /// Wrap ONE dream pass so a long run is attributable FROM THE LOG ALONE.
 ///
 /// # Why this exists
-/// On the 2026-08-13 full-scale run consolidation took **83 minutes** and the
-/// only output for ~82 of them was a stream of `kremory.extraction.
-/// structured_call_success`. From outside, *"working through pass 3 of 5"* and
-/// *"wedged retrying one item"* produced the identical signal, so an operator's
-/// judgement about whether to wait or kill the run was a guess — exactly what
-/// Rule 19 exists to prevent for multi-stage work.
+/// On a full-scale run, consolidation took 83 minutes, and for ~82 of them the
+/// only output was a stream of `kremory.extraction.structured_call_success`.
+/// From outside, *"working through pass 3 of 5"* and *"wedged retrying one
+/// item"* produce the identical signal, so an operator has no way to judge
+/// whether to wait or kill the run.
 ///
-/// # What the register got wrong, and what it got right
-/// TD-218 recorded those calls as *"byte-indistinguishable from ingest-time
-/// extraction"*. **That is false** — verified against the run's own server log
-/// on 2026-08-14: every line already carries `schema="…"`, and the ingest-path
-/// calls additionally sit inside a `kremory.ingest{kremory.operation="ingest"}`
-/// span (581 of 903 calls in that run; the other 322 were dream). Attributing
-/// the 83 minutes was in fact a one-liner over the existing log: **309
-/// `IdentityVerdictBatch` calls, 19:43:34 → 21:06:57 — a SINGLE pass, ~16 s
-/// each.** Everything else in dream finished in seconds.
+/// # Dream-phase calls ARE distinguishable from ingest-time extraction
+/// Both emit the same underlying event, but every line already carries
+/// `schema="…"`, and ingest-path calls additionally sit inside a
+/// `kremory.ingest{kremory.operation="ingest"}` span (581 of 903 calls in
+/// that run; the other 322 were dream). Attributing the 83 minutes is a
+/// one-liner over the existing log: 309 `IdentityVerdictBatch` calls, 19:43:34
+/// → 21:06:57 — a SINGLE pass, ~16 s each. Everything else in dream finished
+/// in seconds.
 ///
-/// The complaint's substance survives that correction: knowing *which* pass is
-/// running is not the same as knowing *how far through* it is. A pass that is
-/// 309 LLM calls long looks identical, call by call, whether it is advancing or
-/// retrying one item forever. So this wrapper supplies the framing
-/// (START/DONE plus elapsed), and `acronym_nickname_recall`'s adjudication loop
-/// supplies the intra-pass `completed/total` counter.
+/// Knowing *which* pass is running is still not the same as knowing *how far
+/// through* it is. A pass that is 309 LLM calls long looks identical, call by
+/// call, whether it is advancing or retrying one item forever. So this
+/// wrapper supplies the framing (START/DONE plus elapsed), and
+/// `acronym_nickname_recall`'s adjudication loop supplies the intra-pass
+/// `completed/total` counter.
 ///
 /// # Shape
 /// Mirrors the span already used by ingest and `contextualize`
@@ -117,10 +115,9 @@ impl<'a> DreamRequest<'a> {
     /// `(pass_name, entity_id, content_hash)` and is written solely by the
     /// background *ingest* verify stage, never by dream.
     ///
-    /// Corrected 2026-08-06 per `docs-match-implementation-as-dod` (stale-done
-    /// severity — downstream reasoning rested on a capability that is absent;
-    /// see the sibling corrections at `kremory-mcp/src/bin/kremory-http.rs` and
-    /// `kremory-mcp/src/params.rs`). Tracked as TD-188.
+    /// The same "documented as idempotent, not implemented" gap was also
+    /// present in `kremory-mcp/src/bin/kremory-http.rs` and
+    /// `kremory-mcp/src/params.rs` and has been corrected there too.
     pub fn for_batch(mut self, id: impl Into<String>) -> Self {
         self.batch_id = Some(id.into());
         self
@@ -200,12 +197,11 @@ impl<'a> DreamRequest<'a> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
         let sink = self.memory.resolve_sink(self.sink);
         let opts = self.opts.unwrap_or_default();
-        // ADR-029a lazy population.
+        // Lazy population: ensures a namespace-policy row exists before use.
         self.memory.ensure_namespace_policy(&ns).await?;
 
-        // ADR-029b §3.1 enforcement — v0.1.5 closure of the v0.1.4
-        // declare-but-don't-enforce contract. DreamRequest mutates the
-        // graph (consolidation rewrites facts) and is prohibited on
+        // Enforces the namespace immutability policy: DreamRequest mutates
+        // the graph (consolidation rewrites facts) and is prohibited on
         // AppendOnly namespaces. Returns the canonical CoreError variant
         // so callers can pattern-match on the policy violation.
         if let Some(tg) = self.memory.temporal_graph.as_ref() {
@@ -227,7 +223,7 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
-        // dream() is a Category B method (ADR-041) — requires LLM; returns LlmRequired on NoLlm.
+        // dream() is a Category B method — requires LLM; returns LlmRequired on NoLlm.
         // Consolidation (communities/merges/supersessions/archival) IS implemented —
         // `run_consolidation` below wires all four ops when
         // `opts.any_consolidation_enabled()` (default true; cross-episode merge
@@ -238,42 +234,43 @@ impl<'a> DreamRequest<'a> {
             "dream",
             "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",
         )?;
-        // TD-094: resolve the model id the dream LLM passes use for capability
+        // Resolve the model id the dream LLM passes use for capability
         // detection — the dedicated `with_dream_model_id` string when set, else
         // the main `with_model_id` string, else "" (→ PromptOnly degrade). This
-        // is the missing half of the Option-1 (2026-06-23) refactor: the passes
-        // were made to take a consumer-supplied model id, but the facade never
-        // threaded one, silently degrading every LLM pass to zero output.
+        // closes a gap where the passes were made to take a consumer-supplied
+        // model id, but the facade never threaded one, silently degrading
+        // every LLM pass to zero output.
         let dream_model_id = self.memory.dream_model_id_or_main().unwrap_or_default();
         let dream_start = std::time::Instant::now();
         let mut result = memory::DreamPhaseResult::default();
-        // SCOPE-001 (dream-phase-reconciliation-v2 Phase 1): accumulate per-pass
-        // counts in locals so the DreamSummary is built ONCE at the end of the
-        // pass chain. The reclassify pass previously early-returned on success,
-        // making every pass ordered after it unreachable — the root cause of
-        // "mem.dream() runs only 2 of the 5 designed passes".
+        // Accumulate per-pass counts in locals so the DreamSummary is built
+        // ONCE at the end of the pass chain. The reclassify pass previously
+        // early-returned on success, making every pass ordered after it
+        // unreachable — the root cause of "mem.dream() runs only 2 of the 5
+        // designed passes".
         let mut entities_reclassified: usize = 0;
-        // Phase 2 (§D3) deterministic-pass accumulators — consumed by per-pass
-        // counters below. Phase 4 folds these into DreamSummary as pub fields;
-        // that schema change MUST re-run the napi parity gate (readiness R-05)
-        // and also close the pre-existing JsDreamSummary gap for
-        // `types_discovered` + `entities_reclassified`.
+        // Deterministic-pass accumulators — consumed by per-pass counters
+        // below, and later folded into DreamSummary as pub fields. Changing
+        // this schema must re-run the napi parity gate and also close the
+        // pre-existing JsDreamSummary gap for `types_discovered` +
+        // `entities_reclassified`.
         let mut aliases_resolved: usize = 0;
         let mut canonicalization_merges: usize = 0;
-        // Phase 3 (§D3, ADR-047) consistency_check accumulator — Full-mode LLM pass.
+        // consistency_check accumulator — Full-mode LLM pass.
         let mut consistency_check_corrected: usize = 0;
-        // The resolved sink is threaded into `run_consolidation` below (ADR-070 Fork 5),
-        // where the orchestrator fires `on_merge_proposed` for each cross_episode merge
-        // decision. Other dream events are still fired by the graph impl internally.
+        // The resolved sink is threaded into `run_consolidation` below, where
+        // the orchestrator fires `on_merge_proposed` for each cross_episode
+        // merge decision. Other dream events are still fired by the graph
+        // impl internally.
 
-        // ADR-037 §3 D6 — Dream Pass 0: type discovery.
+        // Dream Pass 0: type discovery.
         // Run after core dream phase so Pass 0 can observe freshly-consolidated graph state.
         if opts.include_type_discovery {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
                 let embedder_ref: Option<&dyn crate::core::provider::DynEmbeddingProvider> =
                     Some(self.memory.embedder.as_ref());
-                // ADR-037 §3 D6: wrap `Arc<dyn ChatProvider>` in `ArcChatProvider`
+                // Wrap `Arc<dyn ChatProvider>` in `ArcChatProvider`
                 // newtype so `discover_types<L: ChatProvider>` (Sized bound) can
                 // accept it monomorphized. Orphan rules prevent
                 // `impl ChatProvider for Arc<dyn ChatProvider>` directly.
@@ -313,14 +310,14 @@ impl<'a> DreamRequest<'a> {
                             group_id: &group_id,
                             embedder: embedder_ref,
                             max_proposals: pass0_max,
-                            // TD-094: thread the resolved dream model id for capability detection.
+                            // Thread the resolved dream model id for capability detection.
                             model_id: dream_model_id,
-                            // Site #2 (ADR-063 "The six sites" #2) — spike-gated, default
-                            // `false` (spec §8). Threaded from `DreamOpts::include_type_
-                            // novelty_llm_verify` so the DEFAULT build's Pass-0 outcome is
-                            // unchanged from before Site #2 landed.
+                            // Spike-gated, default `false`. Threaded from
+                            // `DreamOpts::include_type_novelty_llm_verify` so the
+                            // default build's Pass-0 outcome is unchanged from
+                            // before this knob was added.
                             llm_verify_band: opts.include_type_novelty_llm_verify,
-                            // TD-123 — quarantined default `false` (unspiked cosine-alone
+                            // Quarantined default `false` (unspiked cosine-alone
                             // degeneracy risk). Threaded from `DreamOpts::include_
                             // evidence_retype_by_similarity`.
                             evidence_retype_by_similarity: opts
@@ -349,7 +346,7 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
-        // Dream Pass — aliases (dream-phase-reconciliation-v2 §D3): resolve
+        // Dream Pass — aliases: resolve
         // pending `potential_alias` facts (merge or revoke). Deterministic (no
         // LLM). Ordered BEFORE reclassify so an entity about to be merged away
         // is not reclassified first. Non-fatal: failure warns + continues.
@@ -377,7 +374,7 @@ impl<'a> DreamRequest<'a> {
             // Counter emitted inside the graph-present block so it reflects an
             // actual pass run (not the degenerate no-temporal-graph path).
             //
-            // Quinn MNT-002: carries `sweep="pre"` so it shares a label KEY with
+            // Carries `sweep="pre"` so it shares a label KEY with
             // the post-consolidation sweep's emission below. Emitting the same
             // metric name with two different label SETS splits it into series a
             // `sweep`-filtered query silently drops half of — an observability
@@ -386,22 +383,21 @@ impl<'a> DreamRequest<'a> {
                 .increment(aliases_resolved as u64);
         }
 
-        // Dream Pass — acronym_nickname_recall (ADR-063 spec §3, "Site #5"):
-        // nominate entity-instance pairs via a deterministic structural
-        // pre-filter (initialism test OR graph co-occurrence, spec §3.1) and
-        // adjudicate nominated pairs via batched LLM verdicts + the shared
-        // write_gate (spec §3.2/§3.3). Gated by
-        // `include_acronym_nickname_recall` (**default `false`** since TD-222 —
-        // `memory/types.rs:1321`; the 2026-07-03 validation was on a curated
-        // harness and did not survive the real corpus). Ordered
-        // immediately AFTER aliases (`resolve_pending_aliases`, above) and
-        // BEFORE reclassify (spec §3.0): merges land before type-correctness
-        // is re-verified, avoiding a wasted reclassify pass on an entity
-        // about to be merged away, and can reuse the now-resolved alias
-        // state as one of its co-occurrence signals without racing a
-        // concurrent alias mutation. Non-fatal: failure warns + continues.
+        // Dream Pass — acronym_nickname_recall: nominate entity-instance pairs
+        // via a deterministic structural pre-filter (initialism test OR graph
+        // co-occurrence) and adjudicate nominated pairs via batched LLM
+        // verdicts + the shared write_gate. Gated by
+        // `include_acronym_nickname_recall` (**default `false`** —
+        // `memory/types.rs:1321`; an earlier validation on a curated harness
+        // did not survive the real corpus). Ordered immediately AFTER aliases
+        // (`resolve_pending_aliases`, above) and BEFORE reclassify: merges
+        // land before type-correctness is re-verified, avoiding a wasted
+        // reclassify pass on an entity about to be merged away, and can reuse
+        // the now-resolved alias state as one of its co-occurrence signals
+        // without racing a concurrent alias mutation. Non-fatal: failure
+        // warns + continues.
         let mut acronym_recall_merges: usize = 0;
-        // TD-222 MEASUREMENT LEVER — `KREMORY_DREAM_DISABLE_ACRONYM_RECALL=1`.
+        // MEASUREMENT LEVER — `KREMORY_DREAM_DISABLE_ACRONYM_RECALL=1`.
         //
         // NOT a product feature and NOT a new config surface: `DreamOpts::
         // include_acronym_nickname_recall` is the real, library-level knob and
@@ -418,7 +414,7 @@ impl<'a> DreamRequest<'a> {
         // from unvalidated instruments; this one states its own configuration in
         // the run's log.
         //
-        // Remove once TD-222 is resolved and the answer is recorded in
+        // Remove once this question is answered and recorded in
         // RECALL-LEDGER.
         let disable_acronym_recall =
             std::env::var("KREMORY_DREAM_DISABLE_ACRONYM_RECALL").is_ok_and(|v| v == "1");
@@ -426,7 +422,7 @@ impl<'a> DreamRequest<'a> {
             tracing::warn!(
                 target: "kremory::dream",
                 "KREMORY_DREAM_DISABLE_ACRONYM_RECALL=1 — acronym/nickname recall pass SKIPPED \
-                 (TD-222 measurement arm). This is a benchmark lever, not a supported config."
+                 (measurement arm). This is a benchmark lever, not a supported config."
             );
             metrics::counter!("kremory.dream.acronym_recall.disabled_by_env_total").increment(1);
         }
@@ -442,11 +438,11 @@ impl<'a> DreamRequest<'a> {
                         crate::core::dream::acronym_nickname_recall::AcronymNicknameRecallParams {
                             graph: tg,
                             group_id: &group_id,
-                            // TD-094-style threading: reuse the resolved dream model id.
+                            // Reuse the resolved dream model id.
                             model_id: dream_model_id,
-                            // TD-112: Site #5 merges live (no dry-run gate, ON by
+                            // Merges live (no dry-run gate, ON by
                             // default) — thread the embedder so the surviving keeper's
-                            // stored embedding is refreshed post-merge (Quinn M1).
+                            // stored embedding is refreshed post-merge.
                             embedder: Some(self.memory.embedder.as_ref()),
                         },
                     ),
@@ -474,12 +470,12 @@ impl<'a> DreamRequest<'a> {
             }
         }
         // Folded into DreamSummary.acronym_nickname_merges at the end of the chain
-        // (ADR-063 §3 observability — surfaced to consumers, not just a counter).
+        // (surfaced to consumers, not just a counter).
 
-        // ADR-046 Option E — Dream Pass 2: reclassify.
+        // Dream Pass 2: reclassify.
         // Runs AFTER Pass 0 so newly discovered types (from Pass 0) are available in
         // the entity type registry for the reclassify LLM prompt.
-        // Pass ordering per DoD E7: Pass 0 commits → Pass 2 (reclassify) → Pass 3 (consolidation).
+        // Pass ordering: Pass 0 commits → Pass 2 (reclassify) → Pass 3 (consolidation).
         // Pass 3 (consolidation) IS implemented — see `run_consolidation` below,
         // dispatched after consistency_check + canonicalize.
         {
@@ -521,7 +517,7 @@ impl<'a> DreamRequest<'a> {
                             conn: &tg.conn,
                             group_id: &group_id,
                             opts: pass2_opts,
-                            // TD-094: thread the resolved dream model id for capability detection.
+                            // Thread the resolved dream model id for capability detection.
                             model_id: dream_model_id,
                         },
                     ),
@@ -529,11 +525,11 @@ impl<'a> DreamRequest<'a> {
                 .await
                 {
                     Ok(reclassify_result) => {
-                        // Aggregate entities_reclassified into DreamSummary (E8).
-                        // SCOPE-001 (dream-phase-reconciliation-v2 §D1/§D3): accumulate
-                        // into the local and FALL THROUGH — do NOT early-return. Passes
-                        // ordered after reclassify (consistency_check, canonicalize per
-                        // the D3 canonical ordering) dispatch below and must be reachable.
+                        // Aggregate entities_reclassified into DreamSummary.
+                        // Accumulate into the local and FALL THROUGH — do NOT
+                        // early-return. Passes ordered after reclassify
+                        // (consistency_check, canonicalize) dispatch below
+                        // and must be reachable.
                         entities_reclassified = reclassify_result.entities_reclassified;
                         result.dream_warnings.extend(reclassify_result.warnings);
                     }
@@ -552,18 +548,18 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
-        // Dream Pass — consistency_check (dream-phase-reconciliation-v2 §D3,
-        // ADR-047): re-verify entity types (embed-prefilter → LLM verify).
-        // LLM-cost pass — gated by the per-pass opt-out `include_consistency_check`
-        // (default true; mirrors `include_type_discovery`). NOTE: this is the
-        // interim per-pass cost lever; the coarser Full/Light `DreamMode` gating
-        // (what `Light` should mean at the enum level) is the separate SCOPE-002
-        // concern deferred to Phase 5 — do NOT conflate the two. Ordered AFTER
-        // reclassify (correct the types reclassify just assigned) and BEFORE
+        // Dream Pass — consistency_check: re-verify entity types
+        // (embed-prefilter → LLM verify). LLM-cost pass — gated by the
+        // per-pass opt-out `include_consistency_check` (default true; mirrors
+        // `include_type_discovery`). NOTE: this is the interim per-pass cost
+        // lever; the coarser Full/Light `DreamMode` gating (what `Light`
+        // should mean at the enum level) is a separate, not-yet-addressed
+        // concern — do NOT conflate the two. Ordered AFTER reclassify
+        // (correct the types reclassify just assigned) and BEFORE
         // canonicalize (merges benefit from corrected types). Non-fatal.
         if opts.include_consistency_check {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
-                // TD-218: bound here only so the pass wrapper can label its
+                // Bound here only so the pass wrapper can label its
                 // START/DONE lines; this pass itself scopes by connection.
                 let group_id = namespace_to_group_id(&ns);
                 match dream_pass(
@@ -575,7 +571,7 @@ impl<'a> DreamRequest<'a> {
                             embedder: self.memory.embedder.as_ref(),
                             llm: llm.as_ref(),
                             opts: crate::core::dream::consistency_check::ConsistencyCheckOpts {
-                                // TD-094: thread the resolved dream model id as the
+                                // Thread the resolved dream model id as the
                                 // verify model. `None` when unknown → verify.rs
                                 // degrades to PromptOnly (unchanged from before).
                                 verify_model_override: (!dream_model_id.is_empty())
@@ -606,23 +602,22 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
-        // Dream Pass — canonicalize (dream-phase-reconciliation-v2 §D3): merge
-        // near-duplicate surface forms by embedding similarity above
-        // L5_CANONICALIZATION_THRESHOLD. Ordered LAST so merges benefit from the
-        // corrected type distribution. Non-fatal.
+        // Dream Pass — canonicalize: merge near-duplicate surface forms by
+        // embedding similarity above L5_CANONICALIZATION_THRESHOLD. Ordered
+        // LAST so merges benefit from the corrected type distribution.
+        // Non-fatal.
         //
-        // NO LONGER DETERMINISTIC-ONLY: every candidate is now ADJUDICATED through
-        // the shared ADR-063 write_gate before it is applied. Measured 2026-08-19
-        // on LoCoMo conv0 (n=149, k=10): the unadjudicated pass cost -9.9 nDCG@10,
+        // NO LONGER DETERMINISTIC-ONLY: every candidate is now ADJUDICATED
+        // through the shared write_gate before it is applied. Measured on
+        // LoCoMo conv0 (n=149, k=10): the unadjudicated pass cost -9.9 nDCG@10,
         // all 10 of its merges being hypernym collapses that deleted the
         // distinguishing token (`pottery class` -> `pottery`). See
         // `core/canonicalization/adjudicate.rs`'s module header.
         if let Some(tg) = self.memory.temporal_graph.as_ref() {
             let group_id = namespace_to_group_id(&ns);
             let canonicalize_llm = crate::core::provider::ArcChatProvider::new(llm.clone());
-            // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): thread the
-            // embedder so the keeper's stored embedding is recomputed + persisted
-            // after each merge instead of going stale.
+            // Thread the embedder so the keeper's stored embedding is
+            // recomputed + persisted after each merge instead of going stale.
             match dream_pass(
                 "canonicalize",
                 &group_id,
@@ -634,7 +629,7 @@ impl<'a> DreamRequest<'a> {
                         embedder: Some(self.memory.embedder.as_ref()),
                         adjudicator: Some(crate::core::canonicalization::L5Adjudicator {
                             llm: &canonicalize_llm,
-                            // TD-094-style threading: reuse the resolved dream
+                            // Reuse the resolved dream
                             // model id. Passing no model is the bug that ran
                             // dream's LLM passes empty.
                             model_id: dream_model_id,
@@ -662,14 +657,14 @@ impl<'a> DreamRequest<'a> {
                 .increment(canonicalization_merges as u64);
         }
 
-        // Dream Pass — type_registry_collapse (ADR-063 spec §4, "Site #3"):
-        // merge near-duplicate `entity_types` rows via description-cosine +
-        // lexical pre-filter + LLM-verify band, remapping
-        // `entities.entity_type_id` onto the keeper. Spike-gated per spec §8 —
-        // gated by `include_type_registry_collapse` (default `false`). Ordered
-        // LAST (after canonicalize) per spec §4.0: type collapse benefits from
-        // a stable entity population that Pass 0/2/4/L5 have already finished
-        // touching this cycle, and downstream queries against `entity_types`
+        // Dream Pass — type_registry_collapse: merge near-duplicate
+        // `entity_types` rows via description-cosine + lexical pre-filter +
+        // LLM-verify band, remapping `entities.entity_type_id` onto the
+        // keeper. Spike-gated — gated by `include_type_registry_collapse`
+        // (default `false`). Ordered LAST (after canonicalize): type
+        // collapse benefits from a stable entity population that Pass
+        // 0/2/4/L5 have already finished touching this cycle, and downstream
+        // queries against `entity_types`
         // see the collapsed registry as early as possible in the NEXT cycle
         // without perturbing the CURRENT cycle's other passes mid-flight.
         // Non-fatal: failure warns + continues.
@@ -687,7 +682,7 @@ impl<'a> DreamRequest<'a> {
                             conn: &tg.conn,
                             group_id: &group_id,
                             embedder: Some(self.memory.embedder.as_ref()),
-                            // TD-094-style threading: reuse the resolved dream model id.
+                            // Reuse the resolved dream model id.
                             model_id: dream_model_id,
                         },
                     ),
@@ -715,12 +710,12 @@ impl<'a> DreamRequest<'a> {
             }
         }
         // Folded into DreamSummary.type_registry_merges at the end of the chain
-        // (ADR-063 §4 observability — surfaced to consumers, not just a counter).
+        // (surfaced to consumers, not just a counter).
 
-        // Dream CONSOLIDATION sub-phase (ADR-066) — graph-global cleanup ops
+        // Dream CONSOLIDATION sub-phase — graph-global cleanup ops
         // (supersession / archive / cross_episode / communities). Runs AFTER the
         // reconciliation chain (all merges/reclassifications settled). Gated by the
-        // per-op `DreamOpts.include_*` flags. Since ADR-071 Item 1, cross_episode
+        // per-op `DreamOpts.include_*` flags. cross_episode
         // defaults ON (in SHADOW — `cross_episode_dry_run: true`), so
         // `any_consolidation_enabled()` is TRUE by default and this block RUNS (the op
         // computes merge decisions + emits shadow telemetry, but fuses nothing);
@@ -728,9 +723,8 @@ impl<'a> DreamRequest<'a> {
         // `unwrap_or_default()` folds a
         // dispatcher error into an all-zero summary + the counts land on the four
         // (already-existing) DreamSummary consolidation fields. The four ops
-        // (P1-P4) are fully implemented (doc-drift fix, ADR-071 impl-spec
-        // §"Pre-existing doc drift to fix in passing" — this comment previously said
-        // "Ops are STUBS at P0 (return 0); P1-P4 fill them").
+        // (P1-P4) are fully implemented — despite an earlier version of this
+        // comment claiming they were stubs that only P1-P4 would fill in.
         let consolidation = if opts.any_consolidation_enabled() {
             if let Some(tg) = self.memory.temporal_graph.as_ref() {
                 let group_id = namespace_to_group_id(&ns);
@@ -743,7 +737,7 @@ impl<'a> DreamRequest<'a> {
                             group_id: &group_id,
                             opts: &opts,
                             model_id: dream_model_id,
-                            // ADR-070 Fork 5: the orchestrator fires on_merge_proposed from
+                            // The orchestrator fires on_merge_proposed from
                             // this sink for each cross_episode merge decision.
                             sink: sink.as_ref(),
                         },
@@ -758,7 +752,7 @@ impl<'a> DreamRequest<'a> {
             crate::core::dream::consolidation::ConsolidationSummary::default()
         };
 
-        // Dream Pass — aliases, SECOND SWEEP (TD-203 D2). Deterministic, no LLM.
+        // Dream Pass — aliases, SECOND SWEEP. Deterministic, no LLM.
         //
         // The first sweep runs at position 2, BEFORE `acronym_nickname_recall`
         // (which CREATES `potential_alias` facts), `canonicalize` and
@@ -775,8 +769,8 @@ impl<'a> DreamRequest<'a> {
         // Re-running the pass on a copy resolved 28 of the 42 in under a second.
         //
         // A SECOND sweep rather than MOVING the first: the first sweep's
-        // position is load-bearing for its own stated reason (spec §D3 — an
-        // entity about to be merged away must not be reclassified first), so
+        // position is load-bearing for its own stated reason (an entity about
+        // to be merged away must not be reclassified first), so
         // moving it would trade this defect for that one. The pass is
         // idempotent (it only ever invalidates) and cheap (0.72-17 ms measured
         // per namespace on a 1197-entity corpus), so running it twice is
@@ -808,17 +802,16 @@ impl<'a> DreamRequest<'a> {
             }
         }
 
-        // SCOPE-001 restructure gate (dream-phase-reconciliation-v2 Phase 1):
-        // reaching this point proves control flowed PAST the reclassify pass
-        // instead of early-returning inside its success arm. Passes wired in
-        // Phase 2-3 (consistency_check, canonicalize per §D3) dispatch between
-        // the reclassify block above and this line. This counter is the
-        // mechanical regression guard for the early-return trap
-        // (tests/dream_scope001_restructure.rs).
+        // Restructure gate: reaching this point proves control flowed PAST
+        // the reclassify pass instead of early-returning inside its success
+        // arm. Passes wired afterward (consistency_check, canonicalize)
+        // dispatch between the reclassify block above and this line. This
+        // counter is the mechanical regression guard for the early-return
+        // trap (tests/dream_scope001_restructure.rs).
         metrics::counter!("kremory.dream.passes_continued_past_reclassify_total").increment(1);
 
         // Build the DreamSummary ONCE, at the end of the pass chain. Per-pass
-        // counts accumulated in locals above are folded in here (§SCOPE-001).
+        // counts accumulated in locals above are folded in here.
         let mut summary = DreamSummary::from(result);
         summary.entities_reclassified = entities_reclassified;
         summary.aliases_resolved = aliases_resolved;
@@ -826,7 +819,7 @@ impl<'a> DreamRequest<'a> {
         summary.acronym_nickname_merges = acronym_recall_merges;
         summary.type_registry_merges = type_registry_merges;
         summary.consistency_check_corrected = consistency_check_corrected;
-        // ADR-066 CONSOLIDATION: fold the four op counts into the (already-existing)
+        // CONSOLIDATION: fold the four op counts into the (already-existing)
         // DreamSummary consolidation fields, replacing their honest-zeros. Inert
         // (all zero) unless a consolidation op was enabled + fired.
         summary.communities_updated = consolidation.communities_updated;
@@ -843,9 +836,9 @@ impl<'a> DreamRequest<'a> {
             supersession_sweep: consolidation.ran_supersession_sweep,
         };
         summary.warnings.extend(consolidation.warnings);
-        // TD-060 (ADR-071 §Item 4a step 6, Vera HIGH-1): propagate the budget flag
-        // past the internal ConsolidationSummary — without this hop the flag is
-        // set on a struct discarded 4 lines earlier and no consumer can read it.
+        // Propagate the budget flag past the internal ConsolidationSummary —
+        // without this hop the flag is set on a struct discarded 4 lines
+        // earlier and no consumer can read it.
         summary.budget_exhausted = consolidation.budget_exhausted;
         summary.duration_ms = dream_start.elapsed().as_millis() as u64;
         Ok(summary)
@@ -867,9 +860,9 @@ impl<'a> IntoFuture for DreamFireAndForget<'a> {
             let ns = self.inner.memory.resolve_namespace(self.inner.namespace)?;
             let sink = self.inner.memory.resolve_sink(self.inner.sink);
             let opts = self.inner.opts.unwrap_or_default();
-            // ADR-029a lazy population.
+            // Lazy population: ensures a namespace-policy row exists before use.
             self.inner.memory.ensure_namespace_policy(&ns).await?;
-            // dream consolidation is Category B (ADR-041) — requires LLM.
+            // dream consolidation is a Category B method — requires LLM.
             let llm = self.inner.memory.dream_llm_or_main(
                 "dream",
                 "wire an LLM via Memory::open(…).with_llm(…) to enable the dream consolidation phase",

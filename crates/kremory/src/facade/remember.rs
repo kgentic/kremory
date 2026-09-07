@@ -13,7 +13,7 @@ pub struct RememberRequest<'a> {
     pub(super) sink: Option<Arc<dyn EnrichmentEventSink>>,
     pub(super) no_wait: bool,
     pub(super) opts: Option<SubmitOpts>,
-    /// ADR-035 §2 — when `true`, Phase 2 LLM extraction is skipped at engine
+    /// When `true`, Phase 2 LLM extraction is skipped at engine
     /// level. Episode + embedding + `with_facts` triples are still persisted.
     /// Set via [`RememberRequest::skip_extraction`] builder method.
     pub(super) skip_extraction: bool,
@@ -70,7 +70,7 @@ impl<'a> RememberRequest<'a> {
         self
     }
 
-    /// Set the bi-temporal anchor for the source document (Story #318).
+    /// Set the bi-temporal anchor for the source document.
     ///
     /// When set, `valid_from` for structured facts without their own anchor
     /// falls back to this timestamp.
@@ -86,7 +86,7 @@ impl<'a> RememberRequest<'a> {
     /// Attach pre-extracted structured facts.
     ///
     /// Caller's facts are pinned into the graph BEFORE Phase 2 LLM extraction
-    /// runs (ADR-035 Path X / Option A). LLM-extracted duplicates of the same
+    /// runs. LLM-extracted duplicates of the same
     /// `(subject, predicate, object)` triple are silently swallowed via the
     /// substrate `try_insert_fact` helper — caller wins by virtue of being
     /// there first. Phase 2 LLM extraction still runs on `content`
@@ -94,7 +94,7 @@ impl<'a> RememberRequest<'a> {
     ///
     /// ⚠️ `StructuredFact.predicate` values recognised as reserved (e.g.
     /// `"potential_alias"` — see `crate::core::disambiguation::
-    /// is_reserved_predicate`, TD-197) are stored but never returned by any
+    /// is_reserved_predicate`) are stored but never returned by any
     /// `recall()` call. This is a read-side exclusion, not a rejection: the
     /// call succeeds, the fact is written, and it simply never comes back to
     /// a consumer. Callers should avoid these predicate strings for their
@@ -117,7 +117,7 @@ impl<'a> RememberRequest<'a> {
     ///
     /// Method name is implementation-agnostic — if a future kremory version
     /// swaps the Phase 2 extractor (GLiNER, regex, hybrid), the semantics
-    /// remain "skip the discovery step". Added v0.1.8 per ADR-035 §2.
+    /// remain "skip the discovery step". Added in v0.1.8.
     pub fn skip_extraction(mut self) -> Self {
         self.skip_extraction = true;
         self
@@ -159,8 +159,8 @@ impl<'a> RememberRequest<'a> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
         let sink = self.memory.resolve_sink(self.sink);
 
-        // G4: soft warn at content threshold. Never enforced; observability only.
-        // TD-232: this threshold does not protect the dense/embedding arm — see
+        // Soft warn at content threshold. Never enforced; observability only.
+        // This threshold does not protect the dense/embedding arm — see
         // `MemoryBuilder::episode_content_warn_threshold`'s doc comment. Content
         // past the embedder's own (smaller, provider-specific) context window
         // silently loses dense-arm coverage; check
@@ -196,7 +196,7 @@ impl<'a> RememberRequest<'a> {
             opts.enrich_per_episode = false;
         }
 
-        // ADR-029a lazy population: ensure a default-policy row exists for
+        // Lazy population: ensures a default-policy row exists for
         // the namespace before the first write.
         self.memory.ensure_namespace_policy(&ns).await?;
 
@@ -213,16 +213,15 @@ impl<'a> RememberRequest<'a> {
         })
         .await?;
 
-        // ADR-051 Phase 4: opt-in synchronous-extraction ergonomics.
+        // Opt-in synchronous-extraction ergonomics.
         // When `await_extraction = true`, block until the background worker
         // transitions the episode to `Verified` (or return Err on
-        // `Failed` / timeout). Per spec §Phase 4 DoD item 3.
+        // `Failed` / timeout).
         //
         // The episode rowid is stored in `episode_entity_id` as a decimal
         // string (see engine_handle.rs — `ingest_result.episode_id.to_string()`).
         // We parse it back to i64 here.
         //
-        // Quinn Phase 4 MED-04 cause-fix (ADR-051 Phase 5):
         // When parsing fails, the path was `run_in_background=true` (`.no_wait()`),
         // which sets `episode_entity_id` to a UUID string (see engine_handle.rs
         // background path — `run_id.to_string()`). A UUID is not a parseable i64
@@ -232,8 +231,7 @@ impl<'a> RememberRequest<'a> {
         // observable. Callers combining `with_await_extraction(true)` + `.no_wait()`
         // receive the commit immediately — `await_extraction` semantics are degraded
         // to fire-and-forget for this combination, and the log makes that visible.
-        // Per Critical Rule 19 (observability-first-class): silent behavior changes
-        // MUST emit a signal.
+        // Silent behavior changes MUST emit a signal.
         if self.memory.await_extraction {
             match commit.episode_entity_id.parse::<i64>() {
                 Ok(episode_id) => {
@@ -250,7 +248,7 @@ impl<'a> RememberRequest<'a> {
                 Err(parse_err) => {
                     // episode_entity_id is a UUID (background/no_wait path) — cannot
                     // call wait_for_processing without an i64 rowid. Skip wait, emit
-                    // observability signal per Critical Rule 19.
+                    // an observability signal.
                     tracing::warn!(
                         target: "kremory.remember",
                         episode_entity_id = %commit.episode_entity_id,
@@ -335,7 +333,7 @@ impl<'a> RememberBatchBuilder<'a> {
                 occurred_at: Utc::now(),
                 published_at: ep.published_at,
             });
-            // ADR-029a lazy population.
+            // Lazy population: ensures a namespace-policy row exists.
             self.memory.ensure_namespace_policy(&ns).await?;
             let commit = memory::submit_episode(memory::SubmitEpisodeParams {
                 graph: self.memory.graph.as_ref(),

@@ -49,10 +49,10 @@ pub(crate) struct GraphOpenParams {
     pub embedder: Arc<dyn DynEmbeddingProvider>,
     pub embedding_dim: Option<usize>,
     pub allowed_entity_types: Vec<String>,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
+    /// Consumer-supplied model identifier. Threaded to
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
-    /// TD-141: explicit per-knob `SearchConfig` overrides from
+    /// Explicit per-knob `SearchConfig` overrides from
     /// `MemoryBuilder::with_content_stream_weight` /
     /// `with_rrf_k` / `with_episode_dense_enabled`. Applied AFTER
     /// `search_env_overrides` at every construction site — explicit
@@ -60,38 +60,38 @@ pub(crate) struct GraphOpenParams {
     pub overrides: PipelineConfigOverrides,
 }
 
-/// Bundled non-generic parameters for [`open_graph`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). The `path: impl AsRef<Path>`
+/// Bundled non-generic parameters for [`open_graph`] — args-as-object to
+/// stay under the `clippy::too_many_arguments` threshold. The `path: impl AsRef<Path>`
 /// generic stays a lead positional param.
 pub(crate) struct OpenGraphParams {
     pub llm: Arc<dyn ChatProvider>,
     pub embedder: Arc<dyn DynEmbeddingProvider>,
     pub embedding_dim: Option<usize>,
     pub allowed_entity_types: Vec<String>,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
+    /// Consumer-supplied model identifier. Threaded to
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
-    /// TD-141: see [`GraphOpenParams::search`] doc — same precedence contract.
+    /// See [`GraphOpenParams::search`] doc — same precedence contract.
     pub overrides: PipelineConfigOverrides,
 }
 
 /// Bundled non-generic parameters for [`open_engine_handle`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). The `path: impl AsRef<Path>`
+/// to stay under the `clippy::too_many_arguments` threshold. The `path: impl AsRef<Path>`
 /// generic stays a lead positional param.
 pub(crate) struct OpenEngineHandleParams {
     pub llm: Arc<dyn ChatProvider>,
     pub embedder: Arc<dyn DynEmbeddingProvider>,
     pub embedding_dim: Option<usize>,
     pub allowed_entity_types: Vec<String>,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Threaded to
+    /// Consumer-supplied model identifier. Threaded to
     /// `Engine`; `None` → capability detection falls to `PromptOnly`.
     pub model: Option<String>,
-    /// TD-141: see [`GraphOpenParams::search`] doc — same precedence contract.
+    /// See [`GraphOpenParams::search`] doc — same precedence contract.
     pub overrides: PipelineConfigOverrides,
 }
 
 /// Bundled non-generic parameters for [`build_memory_with_model`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments). The
+/// args-as-object to stay under the `clippy::too_many_arguments` threshold. The
 /// `path: impl AsRef<Path>` generic stays a lead positional param.
 struct BuildMemoryWithModelParams<'a> {
     llm: Arc<dyn ChatProvider>,
@@ -139,7 +139,7 @@ pub(crate) async fn open_graph(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    // TD-141 precedence: explicit programmatic `search` overrides are applied
+    // Precedence: explicit programmatic `search` overrides are applied
     // LAST, after the env overrides, so `.with_content_stream_weight(...)`
     // etc. win over `KREMORY_CONTENT_WEIGHT` etc. Unset (default) overrides
     // are a no-op — env-only behaviour is unchanged.
@@ -187,7 +187,7 @@ pub(crate) async fn open_graph_with_extractor(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    // TD-141 precedence: explicit programmatic overrides win over env — see
+    // Precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
     let mut config_builder =
         params
@@ -239,7 +239,7 @@ pub(crate) async fn open_graph_no_llm(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    // TD-141 precedence: explicit programmatic overrides win over env — see
+    // Precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
     let mut config_builder =
         params
@@ -275,11 +275,8 @@ pub(crate) async fn open_graph_no_llm(
 /// `BackgroundIngestor` and the `EngineGraphHandle` delegate).
 ///
 /// Two separate calls to this function open two separate libSQL connections
-/// to the same database file.  libSQL WAL mode serialises concurrent writes;
-/// safety verified empirically by Spike B + Spike C in
-/// `.ai-docs/specs/v0-2-3-followup-dual-path-consolidation-arch-spec-2026-06-15.md §6`.
-///
-/// Per arch spec §3.3 (two-Engine WAL safety note).
+/// to the same database file. libSQL WAL mode serialises concurrent writes;
+/// this has been verified empirically (two-Engine WAL safety).
 pub(crate) async fn open_engine_handle(
     path: impl AsRef<Path>,
     params: OpenEngineHandleParams,
@@ -305,7 +302,7 @@ pub(crate) async fn open_engine_handle(
     );
     let graph_for_facade = Arc::clone(&graph);
 
-    // TD-141 precedence: explicit programmatic overrides win over env — see
+    // Precedence: explicit programmatic overrides win over env — see
     // `open_graph`'s comment for the full rationale.
     let mut config_builder = overrides.apply(search_env_overrides(resolution_env_overrides(
         PipelineConfig::builder().embedding_dim(resolved_dim),
@@ -358,7 +355,7 @@ pub async fn auto(path: impl AsRef<Path>) -> Result<Memory> {
 ///
 /// Chat model: `gemma4:e4b` (reasoning disabled) · Embedding model: `nomic-embed-text`.
 ///
-/// Default chosen by kremory's own benchmark (2026-06-24, Apple Silicon M4 Max;
+/// Default chosen by kremory's own benchmark (Apple Silicon M4 Max;
 /// reproduce via `scripts/model-benchmark/`): `gemma4:e4b` with `think:false`
 /// gives the best extraction that fits the inline 30s budget — F1 84% / recall
 /// 90% / slowest call ~16s. (With thinking ON the same model is ~44s/call and
@@ -374,24 +371,24 @@ pub async fn with_ollama(path: impl AsRef<Path>) -> Result<Memory> {
     with_ollama_at("http://localhost:11434", path).await
 }
 
-/// ADR-075 P1 (TD-124): apply optional resolution candidate-blocking overrides
-/// from env so library DEFAULTS stay pure-P0-safe while benchmarks / advanced
+/// Apply optional resolution candidate-blocking overrides from env so
+/// library DEFAULTS stay pure-P0-safe while benchmarks / advanced
 /// consumers can tune throughput. Unset vars leave the builder unchanged.
 /// - `KREMORY_RESOLUTION_BLOCK_K` — `usize`, the ANN blocking width.
 /// - `KREMORY_RESOLUTION_MIN_COSINE` — `f32` in `[0,1]`, the auto-different floor.
-/// - `KREMORY_RESOLUTION_STRATEGY` — `"batched"` (default) | `"pairwise"` (ADR-076):
-///   `pairwise` restores the pre-ADR-076 one-LLM-call-per-pair fan-out — used as
+/// - `KREMORY_RESOLUTION_STRATEGY` — `"batched"` (default) | `"pairwise"`:
+///   `pairwise` restores the one-LLM-call-per-pair fan-out — used as
 ///   the A/B baseline + as an instant rollback without a code change.
 /// - `KREMORY_RESOLUTION_BATCH_MAX_ENTITIES` — `usize`, the batched-window cap
-///   (ADR-076, default 32); raise on a large-context model to shrink call count.
+///   (default 32); raise on a large-context model to shrink call count.
 ///
 /// Reading env here is consistent with this module's existing env-detection
 /// (`OLLAMA_HOST` / `OLLAMA_CHAT_MODEL`); the `with_ollama_*` layer is the
 /// batteries-included boot surface, not the pure library core.
 fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
-    // TD-167 / ADR-079 rev.2: override contradiction detection, which is
-    // default-ON since the coexistence-prompt fix (7/8 set-valued destroyed ->
-    // 0/8). Accepts 1/true/yes/on and 0/false/no/off.
+    // Override contradiction detection, which is default-ON since the
+    // coexistence-prompt fix (7/8 set-valued destroyed -> 0/8). Accepts
+    // 1/true/yes/on and 0/false/no/off.
     //
     // An unrecognised value WARNS and leaves the DEFAULT in place. The warning
     // must not name a direction: this knob's default has already moved twice in
@@ -404,7 +401,7 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
                 tracing::warn!(
                     "KREMORY_CONTRADICTION_DETECTION disabled — facts will be APPENDED \
                      only; genuine supersession (works_at Acme -> works_at Globex) will \
-                     no longer be detected (TD-167 / ADR-079)."
+                     no longer be detected."
                 );
                 b = b.contradiction_detection_enabled(false);
             }
@@ -449,7 +446,7 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
     b
 }
 
-/// recall-improvement-e2e-spec-2026-07-22 §S0-infra: apply the server-boot
+/// Apply the server-boot
 /// search-fusion SWEEP knobs from env to the pipeline config builder, so a
 /// weight/`k` sweep costs a **server restart, not a rebuild**. Composed onto the
 /// SAME builder chain as [`resolution_env_overrides`] at every `open_graph`
@@ -460,14 +457,14 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
 ///
 /// - `KREMORY_CONTENT_WEIGHT` (f32)  → `SearchConfig::content_stream_weight`
 /// - `KREMORY_RRF_K` (usize)         → `SearchConfig::rrf_k`
-/// - `KREMORY_PROXIMITY_WEIGHT` (f32) → `SearchConfig::proximity_weight` (ADR-062 / ADR-082 Phase 3)
+/// - `KREMORY_PROXIMITY_WEIGHT` (f32) → `SearchConfig::proximity_weight`
 /// - `KREMORY_RERANK_CANDIDATE_MAX_CHARS` (usize) → `SearchConfig::rerank_candidate_max_chars` (reranker latency lever 1)
 ///
-/// Absent env → defaults preserved (byte-identical, DoD #1). **Fail-loud**
-/// (Rule 21 / observability-at-write-time): a malformed value is WARN-logged +
-/// ignored — never silently accepted as garbage. Applied values are INFO-logged
-/// at the apply site. `KREMORY_ENTITY_STREAM_WEIGHT` is deliberately DEFERRED to
-/// Stage B ([G13], its only consumer) — no dead config ships now.
+/// Absent env → defaults preserved (byte-identical). **Fail-loud**: a
+/// malformed value is WARN-logged + ignored — never silently accepted as
+/// garbage. Applied values are INFO-logged at the apply site.
+/// `KREMORY_ENTITY_STREAM_WEIGHT` is deliberately DEFERRED — its only
+/// consumer does not exist yet — no dead config ships now.
 fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
     if let Ok(raw) = std::env::var("KREMORY_CONTENT_WEIGHT") {
         match raw.trim().parse::<f32>() {
@@ -498,11 +495,11 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // TD-136 dense-episode A/B knob. Truthy = `1`/`true`/`yes`/`on`
+    // Dense-episode A/B knob. Truthy = `1`/`true`/`yes`/`on`
     // (case-insensitive); any other value is treated as OFF and WARN-logged so
     // a typo (`KREMORY_EPISODE_DENSE=ture`) never silently enables/disables the
     // arm. Absent env → default `false` (byte-identical BM25-only). Fail-loud
-    // per Rule 21 — mirrors the parse-and-warn discipline of the two knobs above.
+    // — mirrors the parse-and-warn discipline of the two knobs above.
     if let Ok(raw) = std::env::var("KREMORY_EPISODE_DENSE") {
         let trimmed = raw.trim();
         match trimmed.to_ascii_lowercase().as_str() {
@@ -527,7 +524,7 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // TD-139 DoD item 2 dense-fact A/B knob. Same truthy/parse/warn discipline
+    // Dense-fact A/B knob. Same truthy/parse/warn discipline
     // as KREMORY_EPISODE_DENSE immediately above — mirrors it exactly, this is
     // a SIBLING knob (its own SearchConfig field), not a re-read of the same one.
     if let Ok(raw) = std::env::var("KREMORY_FACT_DENSE") {
@@ -554,7 +551,7 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // TD-143 nomic task-prefix A/B knob. Same truthy/parse/warn discipline as
+    // Nomic task-prefix A/B knob. Same truthy/parse/warn discipline as
     // KREMORY_EPISODE_DENSE / KREMORY_FACT_DENSE above. See
     // `core::config::SearchConfig::embed_task_prefix_enabled` for the full
     // correctness note (flipping this on an existing corpus requires a
@@ -585,7 +582,7 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // ADR-062 / ADR-082 Phase 3 axis-C A/B knob. Same parse/fail-loud
+    // Axis-C A/B knob. Same parse/fail-loud
     // discipline as KREMORY_CONTENT_WEIGHT above (a float weight, not a
     // boolean). Absent/malformed → default 0.0 (axis OFF) retained.
     if let Ok(raw) = std::env::var("KREMORY_PROXIMITY_WEIGHT") {
@@ -604,7 +601,7 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // TD-157 (2026-07-28): ADR-082's temporal-recency axis had working compute
+    // The temporal-recency axis had working compute
     // and NO way to enable it — no builder method, no env override, and
     // `SearchConfig` derives no `Deserialize`, so no config-file path either.
     // Its `0.0` default was therefore unreachable-by-construction and the axis
@@ -627,16 +624,16 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // ADR-062 axis-C hop bound, sweepable for the SAME reason the weight is.
-    // Added 2026-07-27 after the first axis-C A/B: at the default
+    // Axis-C hop bound, sweepable for the SAME reason the weight is. After
+    // the first axis-C A/B: at the default
     // `proximity_hop_bound = 2` the per-recall trace showed
     // `seed_count=50 boosted_count=48` — the walk reaches neighbours for ~96%
     // of seeds, so the boost is a near-uniform additive offset and cannot
     // discriminate at ANY weight (measured flat across w=0.05/0.15/0.40). The
     // hop bound, not the weight, is the parameter that controls selectivity —
-    // and it was the one knob NOT sweepable without a rebuild, which is the
-    // TD-141 lesson (a knob you cannot set is a knob you cannot evaluate)
-    // recurring inside axis-C's own tuning surface.
+    // and it was the one knob NOT sweepable without a rebuild: a knob you
+    // cannot set is a knob you cannot evaluate, recurring inside axis-C's own
+    // tuning surface.
     if let Ok(raw) = std::env::var("KREMORY_PROXIMITY_HOP_BOUND") {
         match raw.trim().parse::<u32>() {
             Ok(v) => {
@@ -694,10 +691,10 @@ pub async fn with_ollama_at_model(
     // .think(false): kremory extraction is structured-output, not reasoning.
     // Disabling thinking on capable models (gemma4:e4b, qwen3.5:9b) BOTH raises
     // extraction quality AND keeps per-call latency inside the inline budget
-    // (kremory benchmark 2026-06-24, M4 Max: gemma4:e4b 44s/F1 75 thinking-on →
+    // (kremory benchmark, M4 Max: gemma4:e4b 44s/F1 75 thinking-on →
     // 16s/F1 84 think:false). No-op on non-thinking models.
     // .keep_alive("1h"): avoids per-call model-unload thrash on multi-chunk
-    // ingest (autoagents-llm defaults keep_alive="0"; TD-024).
+    // ingest (autoagents-llm defaults keep_alive="0").
     let chat_provider: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&url)
         .model(model.clone())
@@ -746,11 +743,11 @@ pub async fn with_ollama_at_model(
 pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> Result<Memory> {
     let url: String = url.into();
 
-    // Default per kremory's own benchmark (2026-06-24, M4 Max; scripts/model-benchmark):
+    // Default per kremory's own benchmark (M4 Max; scripts/model-benchmark):
     // gemma4:e4b + think:false is the best extraction model that fits the inline
     // 30s budget (F1 84% / recall 90% / slowest call ~16s). think:false also
     // RAISES quality here (thinking-on: 44s/call, F1 75). keep_alive("1h")
-    // avoids per-call unload thrash on multi-chunk ingest (TD-024).
+    // avoids per-call unload thrash on multi-chunk ingest.
     let chat_provider: Arc<Ollama> = LLMBuilder::<Ollama>::new()
         .base_url(&url)
         .model("gemma4:e4b")
@@ -833,7 +830,7 @@ pub async fn with_openai(path: impl AsRef<Path>) -> Result<Memory> {
 }
 
 /// Bundled parameters for [`with_openai_compatible_chat_ollama_embed`] —
-/// args-as-object per TD-042.
+/// args-as-object to stay under the `clippy::too_many_arguments` threshold.
 pub struct OpenAiCompatibleParams<'a> {
     /// Chat endpoint base URL, e.g. `https://api.groq.com/openai/v1` (Groq),
     /// `https://api.together.xyz/v1` (Together), or a local vLLM `…/v1`.
@@ -858,7 +855,7 @@ pub struct OpenAiCompatibleParams<'a> {
 /// vs ~1.5–2s local), and quality matches the gpt-4o-mini extraction the LoCoMo/
 /// LongMemEval peers used, while embeddings stay local + free.
 /// Derive the token/cost `provider` label from an OpenAI-compatible chat base
-/// URL (ADR-D9 cost-table lookup + `kremory_core_tokens_total{provider}`). The
+/// URL (looked up against `kremory_core_tokens_total{provider}`). The
 /// factory below is generic over ANY OpenAI-compatible endpoint, so the label
 /// must reflect the ACTUAL provider — a hardcoded `"openai"` mis-attributes
 /// Groq/Together spend and misses their pricing rows in provider-rates.toml.
@@ -935,7 +932,7 @@ pub async fn with_openai_compatible_chat_ollama_embed(
 ///
 /// Note: the Anthropic API still uses `claude-3-haiku-20240307` as the model string.
 /// The metric label is `claude-haiku-4-5` to match the `monitoring/provider-rates.toml`
-/// entry (spec §F-09).
+/// entry.
 ///
 /// **Note**: Anthropic has no embedding API. Uses `DeterministicEmbeddingProvider`
 /// (FNV-1a, dim=384) as a non-semantic stand-in. Bring your own embedder via
@@ -947,12 +944,11 @@ pub async fn with_anthropic(path: impl AsRef<Path>) -> Result<Memory> {
 
     // Anthropic API identifier — the model string sent in HTTP requests.
     //
-    // Default: claude-haiku-4-5-20251001 (current Claude 4.5 Haiku as of 2026-06-10).
+    // Default: claude-haiku-4-5-20251001 (the current Claude 4.5 Haiku model).
     // Was previously incorrectly defaulted to "claude-3-haiku-20240307" with a comment
     // claiming it was "the API-level name for claude-haiku-4-5" — that was wrong;
     // claude-3-haiku-20240307 is the deprecated March-2024 model and now returns 404.
-    // Discovered via OOB cloud-model smoke (crates/kremory/tests/oob_anthropic_smoke.rs)
-    // 2026-06-10 during v0.1.2 Phase D resolution work.
+    // Discovered via OOB cloud-model smoke (crates/kremory/tests/oob_anthropic_smoke.rs).
     //
     // capability_of() in provider.rs recognizes "claude-haiku-4-5*" prefix and routes
     // to NativeStructuredOutput, so this default is wire-compatible with kremory's
@@ -1034,20 +1030,18 @@ async fn build_memory_with_model(
             embedding_dim,
             allowed_entity_types: vec![],
             // Tier-1 shortcuts know the concrete model string — thread it so
-            // capability detection reaches the provider-native schema arm
-            // (Option-1, 2026-06-23).
+            // capability detection reaches the provider-native schema arm.
             model: model.map(str::to_owned),
             // Tier-1 shortcuts (`with_ollama`, `with_openai`, ...) do not go
             // through `MemoryBuilder`, so there is no programmatic override to
             // thread — env (`KREMORY_CONTENT_WEIGHT` etc.) remains the only
-            // tuning path for these convenience constructors, unchanged by
-            // TD-141.
+            // tuning path for these convenience constructors.
             overrides: PipelineConfigOverrides::default(),
         },
     )
     .await?;
 
-    // T6 cycle 2 (ARCH-001 + ARCH-002) — Warm schema caches for Tier 1 paths.
+    // Warm schema caches for Tier 1 paths.
     // Spawned on a background tokio task so Memory construction is not blocked.
     // The concrete model string is forwarded so the provider-native schema arm
     // (NativeSchema / FormatSchema) is reached — not just connection-pool warm.
@@ -1072,9 +1066,9 @@ async fn build_memory_with_model(
         // Tier-1 shortcuts are one-provider convenience constructors; a separate
         // dream model is a two-provider configuration only the `MemoryBuilder`
         // chain exposes. `None` → dream falls back to the main provider,
-        // byte-for-byte unchanged behaviour (TD-052b §2.3a).
+        // byte-for-byte unchanged behaviour.
         dream_llm: None,
-        // TD-094: Tier-1 shortcuts know the concrete model string, so thread it
+        // Tier-1 shortcuts know the concrete model string, so thread it
         // to the dream passes for capability detection. `dream_model_id` stays
         // `None` — a dedicated dream model is a two-provider `MemoryBuilder`-only
         // configuration; here dream falls back to this `model_id`.
@@ -1086,7 +1080,7 @@ async fn build_memory_with_model(
         temporal_graph: Some(temporal_graph),
         episode_content_warn_threshold: Some(10_000),
         dream_scheduler: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        // Tier 1 shortcuts default to fire-and-forget (ADR-051 design intent).
+        // Tier 1 shortcuts default to fire-and-forget (by design).
         await_extraction: false,
         await_extraction_timeout: std::time::Duration::from_secs(60),
     })
@@ -1126,7 +1120,7 @@ where
 mod search_env_override_tests {
     use super::*;
 
-    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (R4b): the boot env
+    /// The boot env
     /// override helper applies `KREMORY_CONTENT_WEIGHT`/`KREMORY_RRF_K` to the
     /// resulting `SearchConfig`, preserves defaults when absent, and fail-loud
     /// IGNORES a malformed value (never panics, never silently accepts garbage).
@@ -1134,10 +1128,10 @@ mod search_env_override_tests {
     /// Sequenced within ONE test (remove → assert default → set → assert applied
     /// → set-garbage → assert default retained → remove) so it is deterministic
     /// regardless of runner — env is process-global, and nextest additionally
-    /// isolates each test in its own process (kremory's runner, TD-109).
+    /// isolates each test in its own process (kremory's runner).
     #[test]
     fn search_env_overrides_apply_default_and_failloud() {
-        // Absent → byte-identical defaults (DoD #1).
+        // Absent → byte-identical defaults.
         std::env::remove_var("KREMORY_CONTENT_WEIGHT");
         std::env::remove_var("KREMORY_RRF_K");
         let default_cfg = search_env_overrides(PipelineConfig::builder())
@@ -1173,7 +1167,7 @@ mod search_env_override_tests {
         );
         assert_eq!(
             bad_cfg.search.rrf_k, 1,
-            "garbage KREMORY_RRF_K must be ignored, default 1 retained (flipped 2026-09-07)"
+            "garbage KREMORY_RRF_K must be ignored, default 1 retained"
         );
 
         std::env::remove_var("KREMORY_CONTENT_WEIGHT");
