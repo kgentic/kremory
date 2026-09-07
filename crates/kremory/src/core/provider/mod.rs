@@ -5,7 +5,7 @@
 // ChatProvider + Vec<ChatMessage> exclusively; the old LlmClient / LlmRequest
 // types are gone.
 //
-// BYOM invariant (ADR-Phase-D.0, 2026-05-18 §7): kremory exposes ONLY the
+// BYOM invariant: kremory exposes ONLY the
 // `autoagents-llm` TRAIT surface here. The concrete `LlamaCppProvider`
 // (`autoagents-llamacpp` crate) lives in the host binary crate that co-locates
 // the concrete LLM client — not in this substrate crate. DoD: `cargo tree -p kremory --edges normal
@@ -143,7 +143,7 @@ pub fn capability_of(model: &str) -> ProviderCaps {
         // boundary panics. `get` returns `None` there, which is also the correct
         // semantic: a YYYY-MM-DD date is pure ASCII, so anything that is not a
         // clean 10-byte boundary cannot be one and must fall through
-        // conservatively. Last of the TD-164 byte-slice family.
+        // conservatively.
         let date_candidate = rest.get(..10).unwrap_or("");
         let looks_like_date = date_candidate.len() == 10
             && date_candidate.as_bytes()[4] == b'-'
@@ -277,8 +277,8 @@ mod record_replay;
 pub use record_replay::{Cassette, CassetteEntry, RecordReplayChatProvider, VcrMode};
 
 // ---------------------------------------------------------------------------
-// TokenCountingChatProvider — production token-accounting decorator
-// (v0.2.4 Phase 4 / ADR-050 budget tracking). NOT test-gated: the dream-pass
+// TokenCountingChatProvider — production token-accounting decorator for
+// budget tracking. NOT test-gated: the dream-pass
 // wraps its real provider with this in production. Compile-spike landed ahead of
 // the build sprint per impl-spec §11 readiness-gate contingency.
 // ---------------------------------------------------------------------------

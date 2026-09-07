@@ -1,7 +1,5 @@
 //! `BatchProgress` — in-memory tracker for `on_batch_phase2_complete` terminal detection.
 //!
-//! Implements ADR-052 Gap 1 §3.2 + impl spec §6 Phase 4.
-//!
 //! ## Race-safety invariant
 //!
 //! `total` MUST be incremented (under the mutex) BEFORE the work item is

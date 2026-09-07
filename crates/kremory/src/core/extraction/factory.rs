@@ -40,9 +40,9 @@ pub(crate) enum ExtractorKind<L: ChatProvider> {
     /// Integer-ID 3-stage extraction (entities → relation names → triplets).
     /// **Production default** (wired in `Engine::new`). On real LLMs this extracts
     /// materially more relationship facts than the `Llm` (graphiti) variant — 16 vs 3
-    /// on the `mock_interview` corpus, 3 vs 0 on short prose (qwen2.5:14b, 2026-06-29
-    /// probe). Amends ADR-039, which originally made `Llm` the `Engine::new` default;
-    /// see `.ai-docs/research/extractor-wiring-investigation-2026-06-29.md`.
+    /// on the `mock_interview` corpus, 3 vs 0 on short prose (qwen2.5:14b, measured
+    /// empirically). This reverses an earlier default that used `Llm` for
+    /// `Engine::new`.
     IntegerId(IntegerIdLlmExtractor<L>),
 
     /// Pure-LLM 2-stage extraction (Graphiti-quality prompts, entities → triplets).
@@ -53,7 +53,7 @@ pub(crate) enum ExtractorKind<L: ChatProvider> {
     #[allow(dead_code)]
     Llm(LlmExtractor<L>),
 
-    /// GLiNER span-discovery + ONE LLM typing call (TD-023).
+    /// GLiNER span-discovery + ONE LLM typing call.
     /// Requires the `ner` cargo feature.
     /// Construction wired in E-2 via `MemoryBuilder::with_gliner` + `with_llm` knobs.
     #[cfg(feature = "ner")]

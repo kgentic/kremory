@@ -1,6 +1,6 @@
 //! ProgrammaticFirstExtractor — candidates first, LLM for typing + relationships.
 //!
-//! Split from `mod.rs` as part of TD-001 (E0-B).
+//! Split from `mod.rs` during a module reorganization.
 
 // Items used only in #[cfg(test)] — suppress dead_code for non-test builds.
 #![allow(dead_code)]
@@ -190,14 +190,14 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
         tracing::info!(_ms, stage = "entity_typing", "kremory.extraction.stage_ms");
         let typing_text = serde_json::to_string(&typing_value).unwrap_or_default();
 
-        // Routed through the shared shape-tolerant `parse_items` helper
-        // (Vera SCOPE-001, boy-scout): the previous `parse_json_lenient::<
+        // Routed through the shared shape-tolerant `parse_items` helper:
+        // the previous `parse_json_lenient::<
         // EntityOnlyOutput>` deserialized the whole `#[serde(default)]`
         // wrapper struct directly, which cannot distinguish a wrong/missing
         // "entities" key from a genuine empty list, and had zero raw-vs-
         // emitted observability. `ProgrammaticFirstExtractor` is dormant (not
         // wired into `ExtractorKind` production dispatch) but is fixed now
-        // per boy-scout discipline while the risk is low.
+        // while the risk is low.
         let (raw_entities, raw_entity_count, entity_deserialize_ok, _entity_parse_path): (
             Vec<RawEntity>,
             usize,
@@ -274,8 +274,7 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
         tracing::info!(_ms, stage = "relationships", "kremory.extraction.stage_ms");
         let rel_text = serde_json::to_string(&rel_value).unwrap_or_default();
 
-        // Same shape-tolerant + observable routing as the entities call above
-        // (Vera SCOPE-001).
+        // Same shape-tolerant + observable routing as the entities call above.
         let (raw_rels, raw_rel_count, rel_deserialize_ok, _rel_parse_path): (
             Vec<RawRelationship>,
             usize,
@@ -307,10 +306,10 @@ impl<L: ChatProvider> EntityExtractor for ProgrammaticFirstExtractor<L> {
                 object: r.object,
                 is_entity_ref: r.is_entity_ref,
                 confidence: r.confidence,
-                // TD-187 round 2: `RawRelationship` carries no date, so this arm
+                // `RawRelationship` carries no date, so this arm
                 // cannot supply one. Always `None` ⇒ the persist sites fall back
-                // to the episode `ref_time`, i.e. exactly the pre-TD-187
-                // behaviour. Stated rather than left implicit: a payload that
+                // to the episode `ref_time`.
+                // Stated rather than left implicit: a payload that
                 // falls back to this arm silently loses per-fact dates, so a
                 // corpus with a high fallback rate will show `valid_at` uptake
                 // far below what the primary arm achieves.

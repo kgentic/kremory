@@ -1,6 +1,6 @@
 //! SingleCallExtractor — free discovery: entities + relationships in one pass.
 //!
-//! Split from `mod.rs` as part of TD-001 (E0-B).
+//! Split from `mod.rs` during a module reorganization.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -58,7 +58,7 @@ pub enum PromptVersion {
     /// Saves ~100 tokens of prefill budget vs V1. Omits the "no duplicates"
     /// instruction — viable for larger models (qwen2.5:14b+) that dedupe
     /// without being told, but causes intra-batch duplicate emissions on
-    /// smaller models (observed 2026-05-28 with llama3.2:3b emitting
+    /// smaller models (observed empirically with llama3.2:3b emitting
     /// `'VerbatimString'` and gemma4-e2b emitting `'car'` multiple times in
     /// a single extraction). Use explicitly when targeting large models with
     /// tight prefill budgets.

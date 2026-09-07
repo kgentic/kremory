@@ -1,4 +1,4 @@
-//! Temporal-recency boost axis (recall-v2-architecture-2026-07-03, Phase 2b).
+//! Temporal-recency boost axis.
 //!
 //! Additive + bounded `[0, weight]`, matching [`crate::core::search::
 //! graph_degree_bonus`] so a single `.min(1.0)` clamp covers BOTH axes at the
@@ -8,7 +8,7 @@
 //!
 //! Signal: `valid_from` (world-time recency), `recorded_at` audit-only fallback.
 //! No new query — operates only on facts already fetched by the 1-hop
-//! expansion, so the axis stays read-side-pure (spec NFR / RISK-003: zero
+//! expansion, so the axis stays read-side-pure (zero
 //! `execute(` in `core/scoring/*`).
 
 use chrono::{DateTime, Utc};
@@ -18,7 +18,7 @@ use crate::core::schema::Fact;
 /// Seconds in a day, as `f64`, for the age→days conversion.
 const SECS_PER_DAY: f64 = 86_400.0;
 
-/// Bundled parameters for [`temporal_boost`] — args-as-object per TD-042
+/// Bundled parameters for [`temporal_boost`] — args-as-object
 /// (rust-conventions §too_many_arguments; the codebase's `GetNeighboursAtParams`
 /// / `ContextualizeParams` convention). `#[allow(clippy::too_many_arguments)]`
 /// is banned in src.

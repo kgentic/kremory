@@ -3,7 +3,7 @@
 //! This module owns all prompt-string construction for entity extraction.
 //! The functions here are called by the extractors in `extraction/mod.rs`.
 //!
-//! ## Design (TD-013 Phase 3)
+//! ## Design
 //!
 //! Three layers of guidance compose into a complete entity-extraction prompt:
 //!
@@ -45,7 +45,7 @@ use crate::core::entity_types::{EntityTypeRegistry, EntityTypeSpec};
 // Adaptation: Python f-string → Rust raw string literal; categories preserved
 //             verbatim; possessor-qualification rule kept intact.
 // Attribution required per Apache 2.0 §4 — see NOTICE / LICENSE entries.
-// Ported 2026-06-10 during v0.1.2 Phase D post-ship prompt-quality sweep.
+// Ported during a post-ship prompt-quality sweep.
 // ────────────────────────────────────────────────────────────────────────────
 pub const NEVER_LIST: &str = r#"NEVER extract any of the following:
 - Pronouns (you, me, I, he, she, they, we, us, it, them, him, her, this, that, those, who, which)
@@ -266,11 +266,11 @@ pub fn render_delimited_tuple_prompt() -> String {
         .to_string()
 }
 
-// ─── TD-023 Hybrid GLiNER + LLM typing prompt ────────────────────────────────
+// ─── Hybrid GLiNER + LLM typing prompt ───────────────────────────────────────
 
-/// Render the batched-typing prompt for the TD-023 hybrid extractor.
+/// Render the batched-typing prompt for the hybrid extractor.
 ///
-/// Uses INDEX-BASED mapping per [[load-bearing-invariants-at-emit-not-prompt]]:
+/// Uses INDEX-BASED mapping:
 /// the LLM emits `{typings: [{idx, entity_type_id}, ...]}` where `idx` is the
 /// 0-based position of the candidate in the input list. Bounded small int =
 /// hard to corrupt = no name-drift surface.
@@ -279,7 +279,7 @@ pub fn render_delimited_tuple_prompt() -> String {
 /// model cannot emit an out-of-range index.
 ///
 /// One LLM call total for typing, not one-per-entity. Designed for the
-/// TD-022 empirical pivot: GLiNER does fast span discovery, LLM does
+/// empirical pivot: GLiNER does fast span discovery, LLM does
 /// disambiguation where GLiNER's training corpus doesn't reach (e.g.
 /// "Los Angeles Superior Court" → Court vs Organisation).
 pub fn render_hybrid_typing_prompt(
@@ -501,7 +501,7 @@ mod tests {
         let specs = make_test_specs();
         let result = render_registry_block(&specs);
 
-        // TD-013 Phase 8: registry block renders names as quoted strings (LLM
+        // Registry block renders names as quoted strings (LLM
         // emits string label per L2 schema; integer id is server-side via
         // registry.label_to_id lookup).
         assert!(result.contains("\"Entity\""), "must render Entity entry");
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn render_registry_block_format_uses_dash_separator() {
-        // TD-013 Phase 8 v3: format contract is `  {id} — {name} — {description}`.
+        // Format contract is `  {id} — {name} — {description}`.
         let specs = vec![EntityTypeSpec {
             id: 1,
             name: "Person".to_string(),
@@ -583,7 +583,7 @@ mod tests {
             result.contains("Examples (cross-domain)"),
             "must contain cross-domain examples"
         );
-        // Section 3: registry table (TD-013 Phase 8: string-label format)
+        // Section 3: registry table (string-label format)
         assert!(
             result.contains("Entity types"),
             "must contain registry header"

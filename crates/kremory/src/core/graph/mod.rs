@@ -29,7 +29,7 @@ pub use queries::GetNeighboursAtParams;
 #[cfg(test)]
 mod tests;
 
-/// Bundled parameters for [`fact_content_hash`] — args-as-object per TD-042
+/// Bundled parameters for [`fact_content_hash`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 pub(super) struct FactContentHashParams<'a> {
     pub subject_id: &'a str,
@@ -71,7 +71,7 @@ pub(super) fn parse_dt(s: &str) -> anyhow::Result<DateTime<Utc>> {
         .with_timezone(&Utc))
 }
 
-/// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): resolve an
+/// Resolve an
 /// entity's display name from its raw `properties` JSON text, falling back to
 /// `fallback_id` (the entity's own id-slug) when `properties` is absent,
 /// unparseable, or has no string `"name"` key.
@@ -82,8 +82,8 @@ pub(super) fn parse_dt(s: &str) -> anyhow::Result<DateTime<Utc>> {
 /// the raw display name at write time (`json!({"name": extracted.name, ..})`
 /// in ingest/`text_utils.rs`/`resolver.rs`; `json!({"name": id, ..})` in the
 /// dream-phase maintenance paths where the id-slug already IS the name). The
-/// id-slug fallback here additionally matches the precedent TD-112's
-/// merge-time re-embed already established
+/// id-slug fallback here additionally matches the same precedent already
+/// established at merge-time re-embed
 /// (`core::canonicalization::apply_merge_with_audit`, `emb.embed_dyn(keeper_id)`)
 /// for the rare row with no `name` property at all: `normalize_name` only
 /// lowercases + strips punctuation, so the id-slug is a faithful stand-in for
@@ -189,7 +189,7 @@ pub(super) fn row_to_fact(row: &libsql::Row) -> anyhow::Result<Fact> {
         memory_type,
         content_hash,
         access_count,
-        // ADR-029b: composite FK fields — absent on pre-migration-004 rows;
+        // Composite FK fields — absent on pre-migration-004 rows;
         // populated by the migration 004 backfill. None on fresh rows until
         // the caller explicitly sets subject_group_id / object_group_id.
         subject_group_id: None,

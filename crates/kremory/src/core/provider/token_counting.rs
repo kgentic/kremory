@@ -1,11 +1,8 @@
 // ---------------------------------------------------------------------------
 // TokenCountingChatProvider — trait-seam token-accounting decorator
-// (v0.2.4 Phase 4, ADR-050 budget tracking).
+// for budget tracking.
 //
-// COMPILE-SPIKE (readiness-gate fix 2026-06-16): the readiness gate flipped
-// FAIL→READY contingent on this decorator being the second compile-spike of the
-// sprint (per CLAUDE.md Rule 23 — compile-spike beats paper review). The gate's
-// original FAIL reason #4 was the Phase-4 token-usage data-path gap:
+// COMPILE-SPIKE: this decorator exists because
 // `StructuredCallBuilder::call()` (`extraction/structured.rs`) discards
 // `ChatResponse.usage()`, so per-call token counts are unreachable without an
 // architectural change. The breaking Option A (change the builder's return type)
@@ -14,7 +11,7 @@
 // response, and accumulates totals into a shared `Arc<Mutex<TokenAccumulator>>`
 // the budget-INSERT site reads after the pass.
 //
-// ## Usage field names — verified against the pinned AutoAgents source (Rule 10)
+// ## Usage field names — verified against the pinned AutoAgents source
 //
 // The impl-spec §4 named the fields `usage().tokens_input` / `tokens_output`.
 // `autoagents_llm::chat::Usage` (pinned branch checkout `0b9fa9b`) actually
@@ -148,7 +145,7 @@ impl ChatProvider for TokenCountingChatProvider {
         Ok(response)
     }
 
-    // Option-1 (2026-06-23): the `ChatProvider::model()` override is removed.
+    // The `ChatProvider::model()` override is removed.
     // Token-counting carries no model knowledge — the model string flows from the
     // builder via `Engine.model` / `ExtractionContext.model`, not via wrapper-chain
     // delegation.

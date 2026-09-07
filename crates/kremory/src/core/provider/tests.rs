@@ -123,8 +123,7 @@ async fn mock_provider_no_match_returns_none() {
 }
 
 // Real LlamaCppProvider smoke tests live in
-// `rust-pipeline/tests/llamacpp_smoke.rs` per Vera D.1a cycle-1
-// MEDIUM-1 + ADR-Phase-D.0 §7 — keeping `autoagents-llamacpp` out
+// `rust-pipeline/tests/llamacpp_smoke.rs` — keeping `autoagents-llamacpp` out
 // of rql-core's dev-dependencies is required for the strict BYOM
 // invariant (`cargo tree -p rql-core | grep autoagents-llamacpp`
 // must print empty).
@@ -171,7 +170,7 @@ fn capability_of_openai_strict() {
 /// The date sniff used `&rest[..10]`, a **byte** slice. `rest.len() >= 10` counts
 /// bytes, so a suffix like "日本語テスト…" passes the length guard while byte 10
 /// lands inside a 3-byte character — and slicing a `str` off a char boundary
-/// panics. Last of the TD-164 byte-slice family. Amplified by `panic = "abort"`
+/// panics. Amplified by `panic = "abort"`
 /// in release (`Cargo.toml:26`): this would take the whole host process down, not
 /// just the request.
 ///
@@ -439,7 +438,6 @@ mod record_replay {
     }
 
     /// (c) `model_id()` returns the caller-supplied/cassette model, NOT empty.
-    /// Spec §3.4 ASMP-002 / §9 P2 DoD.
     #[tokio::test]
     async fn model_delegation_not_default_empty() {
         let cassette = temp_cassette_path("model");

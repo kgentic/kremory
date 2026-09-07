@@ -223,7 +223,7 @@ impl ChatProvider for ArcChatProvider {
         self.0.chat_with_tools(messages, tools, json_schema).await
     }
 
-    // Option-1 (2026-06-23): the `ChatProvider::model()` override is removed.
+    // The `ChatProvider::model()` override is removed.
     // `ArcChatProvider` wraps a raw consumer provider with no model knowledge;
     // the model string now flows from the builder via `Engine.model` /
     // `ExtractionContext.model`, not by delegating through the wrapper chain.

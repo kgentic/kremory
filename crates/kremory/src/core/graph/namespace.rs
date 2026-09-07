@@ -9,7 +9,7 @@ impl TemporalGraph {
     /// `group_id`, or `None` if the namespace has not been observed.
     ///
     /// Used by `register_namespace` to detect idempotency vs immutable-conflict.
-    /// Substrate-only (ADR-029a Decision 8).
+    /// Substrate-only.
     pub(crate) async fn get_namespace_policy(
         &self,
         group_id: &str,
@@ -39,7 +39,7 @@ impl TemporalGraph {
     /// Substrate-only. Caller (`register_namespace`) holds the BEGIN IMMEDIATE
     /// guard for race safety; this method does NOT manage its own transaction.
     /// `ON CONFLICT DO NOTHING` keeps the operation idempotent at the SQL level
-    /// when called concurrently (ADR-029a Decision 8).
+    /// when called concurrently.
     pub(crate) async fn set_namespace_policy(
         &self,
         group_id: &str,
@@ -62,7 +62,7 @@ impl TemporalGraph {
 
     /// Write an updated `NamespacePolicy` for an existing `group_id`, stamping
     /// `upgraded_at = now()`. Used by `Memory::upgrade_namespace_policy` for
-    /// the monotonic Mutable → AppendOnly upgrade (ADR-029b Decision 5).
+    /// the monotonic Mutable → AppendOnly upgrade.
     ///
     /// Caller holds the `BEGIN IMMEDIATE` guard. This method does NOT open a
     /// transaction — it is meant to be called inside the caller's atomic block.
@@ -95,7 +95,7 @@ impl TemporalGraph {
     /// observation. Called by `remember`/`recall`/`forget`/`dream` on first
     /// encounter with a previously-unregistered namespace.
     ///
-    /// # Race safety (Vera cycle-2 ASMP-001)
+    /// # Race safety
     ///
     /// This method opens its own `BEGIN IMMEDIATE` guard via
     /// `begin_immediate_if_needed`, which is a no-op when nested under an
@@ -131,7 +131,7 @@ impl TemporalGraph {
         }
     }
 
-    /// Read the namespace policy using the per-handle LRU cache (ADR-029b Decision 4).
+    /// Read the namespace policy using the per-handle LRU cache.
     ///
     /// Cache hit: returns the cached policy immediately (no DB read).
     /// Cache miss: reads from `namespaces` table, populates cache, returns result.

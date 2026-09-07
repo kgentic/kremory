@@ -1,21 +1,17 @@
-//! LLM adjudication for L5 surface-form canonicalization (ADR-063's shared
-//! identity machinery, applied to the one identity site that never got it).
+//! LLM adjudication for L5 surface-form canonicalization, using the same
+//! nominate → adjudicate → `write_gate` pipeline already applied to the other
+//! identity-resolution sites in this codebase.
 //!
 //! ## Why this module exists
 //!
-//! Governing spec: `.ai-docs/specs/adr-063-embedding-identity-impl-spec-2026-07-02.md`
-//! (§2.1 batch schema, §2.2 write-gate decision table, §2.3 failure-mode default,
-//! §4.4 batched adjudication, §5.1 RISK-003 audit-inside-transaction).
+//! Three identity-resolution call sites already share a nominate → adjudicate →
+//! `write_gate` pipeline (type-registry collapse, acronym/nickname recall, and a
+//! verify band). L5 was the precedent that motivated that design — the
+//! destructive-merge site whose dangers shaped it — but was never itself wired
+//! through it. Its `names_lexically_compatible` gate was left as the DECIDER.
 //!
-//! ADR-063 gave three identity sites a nominate → adjudicate → `write_gate`
-//! pipeline (Site #3 type-registry collapse, Site #5 acronym/nickname recall,
-//! Site #2's verify band). L5 was cited throughout that spec as the *precedent*
-//! — the destructive-merge site whose dangers motivated the design — and was
-//! never itself wired through it. Its `names_lexically_compatible` gate was left
-//! as the DECIDER.
-//!
-//! Measured cost of that omission (2026-08-19, LoCoMo conv0, n=149, k=10,
-//! `evidence_eval` instrument-validated by its own shuffle self-test):
+//! Measured cost of that omission (LoCoMo conv0, n=149, k=10, `evidence_eval`
+//! instrument-validated by its own shuffle self-test):
 //!
 //! | arm | nDCG@10 |
 //! |---|---|
@@ -35,10 +31,10 @@
 //! identical to `pottery class` / `pottery`; no threshold separates them, 8 tests
 //! across 5 files encode the abbreviation case, and corpus recall fell
 //! 0.568 → 0.263. The discriminator is SEMANTIC (is one a category the other
-//! belongs to?), which is exactly what an adjudicator is for — and a fourth
-//! per-pair deterministic discriminator is banned by `20e1f4e3`.
+//! belongs to?), which is exactly what an adjudicator is for — and no
+//! deterministic per-pair discriminator exists that can make it instead.
 //!
-//! ## Shape (mirrors `dream::type_registry_collapse`, spec §4.4)
+//! ## Shape (mirrors `dream::type_registry_collapse`)
 //!
 //! 1. The caller nominates: cosine > threshold AND `names_lexically_compatible`.
 //!    That gate is DEMOTED from decider to NOMINATOR and stays at 0.5.
@@ -46,12 +42,14 @@
 //!    calls — the shared schema, the shared parse-loudly discipline.
 //! 3. Every candidate is decided by the shared deterministic [`write_gate`].
 //!
-//! ## Two deliberate divergences from Site #3, both load-bearing
+//! ## Two deliberate divergences from the type-registry-collapse site, both
+//! ## load-bearing
 //!
 //! **1. `merge_threshold` is [`f32::INFINITY`], not L5's real cosine threshold.**
 //! `write_gate` row 1 merges when there is NO LLM verdict but
-//! `cosine >= merge_threshold` and a deterministic signal fired. Site #3 is immune
-//! because its LLM-verify band sits BELOW its auto-merge threshold, so a failed
+//! `cosine >= merge_threshold` and a deterministic signal fired. The
+//! type-registry-collapse site is immune because its LLM-verify band sits BELOW
+//! its auto-merge threshold, so a failed
 //! call lands in row 2 (`Reject`). L5 is not: every nominated pair is above the
 //! cosine threshold BY CONSTRUCTION, so a timed-out or unparseable call would fall
 //! straight through row 1 and merge anyway — silently restoring the −9.9 nDCG
@@ -61,25 +59,26 @@
 //! `absent_verdict_rejects_never_merges`.
 //!
 //! **2. The deterministic signal is RE-DERIVED here, never asserted by the caller.**
-//! Per [[contract-first-before-new-public-surface]] (derive > declare): the caller
-//! could pass `from_lexical(true)` since its nominees passed the gate, but that
-//! makes the fact ATTESTED. Re-deriving it costs one pure string comparison and
-//! catches a real hazard — L5's transitive chain resolution can hand this module a
+//! The caller could pass `from_lexical(true)` since its nominees passed the gate,
+//! but that would make the fact ATTESTED rather than verified. Re-deriving it
+//! costs one pure string comparison and catches a real hazard — L5's transitive
+//! chain resolution can hand this module a
 //! `(loser, effective_keeper)` pair that NO raw cosine pair contained and that is
 //! NOT lexically compatible (the `melanie` → `caroline` → `loved ones` cascade
 //! shape). Re-derivation makes row 6 fire on exactly that pair, downgrading it to
 //! `PotentialAlias` instead of merging. Pinned by
 //! `transitive_incompatible_pair_downgrades_via_row_6`.
 //!
-//! ## Audit rows — wider than Site #3, deliberately
+//! ## Audit rows — wider than the type-registry-collapse site, deliberately
 //!
-//! Site #3 writes an `identity_verdict_audit` row for `Merge` and
-//! `PotentialAlias` only. This site additionally writes one for `Reject` whenever
-//! a verdict exists, because a rejected hypernym collapse IS the fix working and
-//! the `reasoning` text is the diagnostic surface for re-measuring the 2×2. A
-//! counter alone records that a reject happened; it cannot say `pottery class is a
-//! class ABOUT pottery, not the same entity` (Rule 19 — a routing decision that
-//! drops a candidate must be inspectable, not merely counted).
+//! The type-registry-collapse site writes an `identity_verdict_audit` row for
+//! `Merge` and `PotentialAlias` only. This site additionally writes one for
+//! `Reject` whenever a verdict exists, because a rejected hypernym collapse IS
+//! the fix working and the `reasoning` text is the diagnostic surface for
+//! re-measuring the 2×2. A counter alone records that a reject happened; it
+//! cannot say `pottery class is a class ABOUT pottery, not the same entity` — a
+//! routing decision that drops a candidate must be inspectable, not merely
+//! counted.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -97,8 +96,8 @@ use crate::core::provider::{chat_msg_system, chat_msg_user, ArcChatProvider};
 
 /// Site label on every shared `kremory.identity.*` counter this module emits.
 /// Matches `MergeSite::Canonicalize`'s own `"canonicalize"` wire string rather
-/// than inventing a `site#N` number — L5 is ADR-063's precedent site, not one of
-/// its numbered three.
+/// than inventing a `site#N` number — L5 predates the other numbered sites and
+/// was their precedent, not one of them.
 pub(super) const SITE_LABEL: &str = "l5_canonicalize";
 
 /// The LLM handle for the adjudicated L5 path. Bundling the provider WITH its
@@ -110,8 +109,8 @@ pub struct L5Adjudicator<'a> {
     /// stays non-generic and every existing `adjudicator: None` call site
     /// compiles without a turbofish.
     pub llm: &'a ArcChatProvider,
-    /// Resolved dream model id, threaded from the facade (TD-094 threading —
-    /// the bug where dream's LLM passes ran with no model and returned empty).
+    /// Resolved dream model id, threaded from the facade — without it, dream's
+    /// LLM passes run with no model and return empty.
     pub model_id: &'a str,
 }
 
@@ -138,7 +137,7 @@ pub(super) struct Adjudicated {
     pub(super) verdict: Option<IdentityVerdictItem>,
 }
 
-/// Bundled params — args-as-object per TD-042 (`clippy.toml`
+/// Bundled params — args-as-object (`clippy.toml`
 /// `too-many-arguments-threshold = 3`; `#[allow]` banned in `src`).
 pub(super) struct AdjudicateParams<'a> {
     pub(super) candidates: &'a [Candidate<'a>],
@@ -204,7 +203,7 @@ fn decide(candidate: &Candidate<'_>, verdict: Option<IdentityVerdictItem>) -> Wr
             ),
         ),
         llm_verdict: verdict,
-        // Site #6 floor not shipped — composes as a no-op (spec §2.2.1).
+        // An optional confidence-floor gate is not shipped — composes as a no-op.
         min_confidence_floor: None,
         // Row 0 temporal veto: never collapse two points in time.
         names: Some((candidate.loser_id, candidate.keeper_id)),
@@ -246,7 +245,7 @@ async fn adjudicate_chunk(
     let raw_value = StructuredCallBuilder::new(adjudicator.llm, &schema, "IdentityVerdictBatch")
         .model(adjudicator.model_id)
         .messages(build_adjudication_messages(chunk))
-        // Dream is latency-tolerant by design (ADR-063 spec) — raised for THIS
+        // Dream is latency-tolerant by design — raised for THIS
         // call site only, never the shared default other sites depend on.
         .ttft_budget_ms(ADJUDICATION_TTFT_BUDGET_MS)
         .call()
@@ -354,8 +353,7 @@ async fn adjudicate_chunk(
 /// merges that cost 9.9 nDCG (`pottery class` → `pottery`) and the merges that
 /// must be KEPT (`alice j` → `alice johnson`) are the same Jaccard 0.500 shape.
 ///
-/// Positive AND negative worked examples per
-/// [[prompt-engineering-positive-and-generic-examples]]; the examples are generic
+/// Positive AND negative worked examples are included; the examples are generic
 /// (not drawn from any corpus under evaluation) so this prompt is not tuned to the
 /// benchmark it will be measured on.
 fn build_adjudication_messages(chunk: &[Candidate<'_>]) -> Vec<crate::core::provider::ChatMessage> {
@@ -420,7 +418,7 @@ fn truncate_for_prompt(description: &str) -> String {
 
 /// Insert one `identity_verdict_audit` row for a NON-merge decision, outside any
 /// transaction. `Merge` rows are written INSIDE the merge's `BEGIN IMMEDIATE` by
-/// `apply_merge_with_audit` (spec §5.1 RISK-003), never here.
+/// `apply_merge_with_audit`, never here.
 pub(super) async fn write_non_merge_audit_row(
     conn: &libsql::Connection,
     row: super::IdentityVerdictAuditRow<'_>,

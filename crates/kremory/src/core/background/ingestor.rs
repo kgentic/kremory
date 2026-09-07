@@ -1,6 +1,6 @@
 //! `BackgroundIngestor` + `IngestGuard` + send/queue operations.
 //!
-//! Sprint plan T2.1 / ADR-049 §Decision 6 §5.1 — Stage 1 enqueue module.
+//! Stage 1 enqueue module.
 //!
 //! Owns:
 //! - [`BackgroundIngestor`] — cloneable handle; submits work via mpsc channel
@@ -75,14 +75,14 @@ pub(super) struct Inner {
 /// async tasks — move the engine into the ingestor and interact with the graph
 /// through the facade `Memory` handle.
 ///
-/// ## Event sink (ADR-052 Gap 1)
+/// ## Event sink
 ///
 /// An optional [`EnrichmentEventSink`] can be attached at construction time via
 /// [`IngestorConfig::with_sink`].  When set, the sink receives callbacks at each
 /// pipeline stage on the background worker OS thread (D4 thread-context contract).
 /// All existing code paths remain unaffected when `sink` is `None`.
 /// Bundled (non-generic) parameters for [`BackgroundIngestor::send`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments). The generic
+/// args-as-object (rust-conventions §too_many_arguments). The generic
 /// `text: impl Into<String>` stays a lead positional param on `send`.
 ///
 /// `Default` yields all-`None` (equivalent to the prior `send(text, None, None,
@@ -90,7 +90,7 @@ pub(super) struct Inner {
 #[derive(Debug, Clone, Default)]
 pub struct SendParams {
     pub reference_time: Option<DateTime<Utc>>,
-    /// TD-187 Gap 1 (2026-08-20): the caller-DECLARED document anchor —
+    /// The caller-DECLARED document anchor —
     /// mirrors [`super::IngestRequest::declared_reference_time`]. Distinct
     /// from `reference_time` above; see that field's doc comment for why the
     /// two must never be collapsed.
@@ -106,8 +106,6 @@ pub struct BackgroundIngestor {
     ///
     /// `Arc` so `BackgroundIngestor` remains `Clone`.  `None` when no sink was
     /// configured — all code paths compile and behave identically to pre-v0.2.3.
-    ///
-    /// Per ADR-052 Gap 1; impl spec §3 Phase 2.
     pub(crate) sink: Option<Arc<dyn EnrichmentEventSink>>,
     /// Per-batch terminal-detection tracker.
     ///
@@ -223,8 +221,7 @@ impl BackgroundIngestor {
     /// `reference_time`, `group_id`, and `content_type` default to `None`.
     /// Full-control batched enqueue is `pub(crate)`-internal; consumers needing
     /// non-default fields on a batched send should use [`Memory`](crate::Memory)
-    /// once the facade-level batched method lands (Phase 7 follow-up — Quinn
-    /// MED-3 / facade-gap; ADR-052 Gap 1 unresolved at v0.2.3).
+    /// once the facade-level batched method lands.
     ///
     /// ## Race-safety invariant (arch spec §3.3)
     ///
@@ -232,7 +229,7 @@ impl BackgroundIngestor {
     /// BEFORE** `work_tx.try_send` fires.  This prevents a fast Phase 2
     /// completion from triggering premature terminal detection.
     ///
-    /// ## Drop-before-complete contract (shipped in v0.2.3 Phase 7)
+    /// ## Drop-before-complete contract
     ///
     /// When [`IngestGuard`] is dropped (stop flag set), the worker fires
     /// `on_batch_phase2_complete` with `outcome="interrupted"` for every batch
@@ -242,9 +239,6 @@ impl BackgroundIngestor {
     /// Consumers MUST treat `outcome="interrupted"` as terminal.  The
     /// `BatchPhase2Complete` payload reflects only the episodes that completed
     /// before the stop flag fired; `succeeded + failed + skipped ≤ total`.
-    ///
-    /// Per impl spec §6 Phase 4 DoD item 4 (Quinn MED-1/2/3 folded as
-    /// doc-comment per `feedback_boy_scout_includes_quinn_low_findings`).
     pub fn send_batched(
         &self,
         text: impl Into<String>,
@@ -324,11 +318,9 @@ impl BackgroundIngestor {
     /// Returns a reference to the event sink, if one was configured via
     /// [`IngestorConfig::with_sink`].
     ///
-    /// Provided so Phase 6 integration tests (and future Phase 4 batch-tracker
+    /// Provided so integration tests (and future batch-tracker
     /// code) can verify that a sink was wired without poking the private field.
     /// Returns `None` when no sink was configured.
-    ///
-    /// Per ADR-052 Gap 1; impl spec §3 Phase 2.
     pub fn sink(&self) -> Option<&Arc<dyn EnrichmentEventSink>> {
         self.sink.as_ref()
     }

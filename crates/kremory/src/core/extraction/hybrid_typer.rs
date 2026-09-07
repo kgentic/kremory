@@ -1,7 +1,7 @@
-//! TD-023 — Hybrid GLiNER + LLM-typing extractor.
+//! Hybrid GLiNER + LLM-typing extractor.
 //!
 //! Two-phase entity extraction designed to combine GLiNER's speed advantage
-//! (64-83× faster than LLM-only per TD-022 empirical bench) with the LLM's
+//! (64-83× faster than LLM-only, measured empirically) with the LLM's
 //! disambiguation strength (gemma4 picks Court / Drug / Theory better than
 //! GLiNER on hard corpora like legal_deposition).
 //!
@@ -22,8 +22,8 @@
 //!
 //! ## No-2nd-LLM-call invariant
 //!
-//! Per [[no-second-llm-pass-for-entity-extraction]]: this extractor makes
-//! ONE LLM call total for typing. It REPLACES the current 3-stage extraction
+//! This extractor makes ONE LLM call total for typing. It REPLACES the prior
+//! 3-stage extraction
 //! (entities + relations + triplets), reducing total calls from 3 → 1 for
 //! the typing surface. Relation/fact extraction is intentionally NOT done in
 //! this extractor; downstream code uses `ingest_deferred` for relations,
@@ -43,12 +43,12 @@ use crate::core::provider::{chat_msg_user, ChatProvider};
 
 /// Builder-time configuration for the GLiNER candidate-generation extractor.
 ///
-/// **Hidden (F2):** `with_gliner()` is now a no-arg knob, so this type has no
-/// constructor or consumer. Kept (not deleted) as the ADR-039 §A6 forward-compat
+/// **Hidden:** `with_gliner()` is now a no-arg knob, so this type has no
+/// constructor or consumer. Kept (not deleted) as a forward-compat
 /// placeholder + the `kremory-napi` `GlinerConfigJs` doc-mirror target. When real
 /// tuning fields land (threshold, model path, batch size), un-hide this and add a
 /// `with_gliner_config(GlinerConfig)` knob — both non-breaking. `#[doc(hidden)]`
-/// keeps it off the consumer-visible surface so F2's "do-nothing config" smell is
+/// keeps it off the consumer-visible surface so its "do-nothing config" smell is
 /// fully removed.
 #[cfg(feature = "ner")]
 #[doc(hidden)]
@@ -111,8 +111,8 @@ impl<L: ChatProvider + 'static> EntityExtractor for GlinerLlmExtractor<L> {
         // misses all-caps Person names (e.g. legal depositions: "CLIFFORD
         // REEVES", "DIANA OHLSSON"). Per-word normalization avoids touching
         // intentional all-caps like product names ("GPT-4" stays unchanged
-        // because of the digit). Empirical bench (TD-023 v4 + this fix
-        // expected): +6.2pt → +10-12pt total on legal_deposition.
+        // because of the digit). Measured empirically: +6.2pt → +10-12pt total
+        // on legal_deposition.
         let normalized_text = normalize_allcaps_words(text);
         let normalized_count = if normalized_text != text {
             1usize
@@ -169,9 +169,9 @@ impl<L: ChatProvider + 'static> EntityExtractor for GlinerLlmExtractor<L> {
         // Schema bounds: idx ∈ [0, num_candidates - 1], entity_type_id ∈ registry
         let schema = hybrid_typing_schema_with_bounds(candidate_names.len(), registry.specs());
 
-        // Force the LlmJsonRepair arm — the original 2026-06-04 choice is
+        // Force the LlmJsonRepair arm — this choice is
         // correct for our production target (GLiNER + gemma4-e2b). Empirical
-        // 2026-06-09 verification confirmed:
+        // verification confirmed:
         //
         //   gemma4-e2b + FormatSchema     → 80% precision (LLM mistypes
         //     South Korea→Organisation, supplier→Quantity etc — small model
@@ -283,7 +283,7 @@ fn normalize_allcaps_words(text: &str) -> String {
 /// Parse `{typings: [{idx, entity_type_id}]}` and merge LLM typings back
 /// into the GLiNER candidate list via the bounded `idx` field.
 ///
-/// Per [[load-bearing-invariants-at-emit-not-prompt]] the candidate-to-typing
+/// The candidate-to-typing
 /// link is enforced at emit by the schema's `idx` enum bounds. Out-of-range
 /// emissions are dropped here (defensive); candidates with no matching
 /// typing keep their GLiNER label (fallback — better a rough type than a
@@ -294,8 +294,9 @@ fn parse_typed_response(
     gliner_entities: &[ExtractedEntity],
     registry: &EntityTypeRegistry,
 ) -> Vec<ExtractedEntity> {
-    // All-or-nothing wrapper deserialization per [[llm-output-parse-loudly]].
-    // On gemma4-e2b empirical 2026-06-09: LLM typing under LlmJsonRepair often
+    // All-or-nothing wrapper deserialization: a partially malformed response is
+    // rejected entirely rather than partially trusted.
+    // On gemma4-e2b, empirically: LLM typing under LlmJsonRepair often
     // produces semantically wrong choices (Amazon Robotics→Location,
     // France→Quantity, etc) — when the response fails to parse, that's
     // actually GOOD because the GLiNER fallback labels (which were correct)
@@ -326,7 +327,7 @@ fn parse_typed_response(
         // back to GLiNER's hint downstream (don't record in typing_by_idx).
         // The schema's enum excludes 0 at the FormatSchema layer; the
         // LlmJsonRepair arm bypasses the enum, so this is the parser-side
-        // backstop per [[audit-what-guards-mask-before-deleting]].
+        // backstop.
         if typing.entity_type_id == 0 {
             metrics::counter!(
                 "rql.hybrid.llm_chose_catch_all",
@@ -391,7 +392,7 @@ fn parse_typed_response(
 // the WHOLE response rejected so GLiNER's open-vocab fallback labels (which are
 // correct ~90% of the time on small-model output) win.
 //
-// Empirical 2026-06-09 verification: row-tolerant parsing was tried and dropped
+// Empirical verification: row-tolerant parsing was tried and dropped
 // precision from 90%→60% because it kept the small model's semantically wrong
 // individual typings. The test names below reflect the all-or-nothing contract.
 
@@ -459,7 +460,7 @@ mod tests {
     /// All-or-nothing contract — the WHOLE wrapper deserialization fails,
     /// all candidates fall back to GLiNER's open-vocab labels. This is the
     /// desired behavior on small models where LLM typings degrade GLiNER's
-    /// good labels (verified 2026-06-09 — row-tolerant let through 60%, all-
+    /// good labels (verified empirically — row-tolerant let through 60%, all-
     /// or-nothing keeps 90%).
     #[test]
     fn parses_typo_in_one_row_rejects_whole_response() {

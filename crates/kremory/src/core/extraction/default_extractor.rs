@@ -1,6 +1,6 @@
 //! Three-stage default extractor.
 //!
-//! Split from `mod.rs` as part of TD-001 (E0-B).
+//! Split from `mod.rs` during a module reorganization.
 
 // Items used only in #[cfg(test)] — suppress dead_code for non-test builds.
 #![allow(dead_code)]
@@ -65,9 +65,9 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
             chat_msg_user(stage1_prompt),
         ];
         // Build per-call schema with entity_type_id constrained to registered integer IDs.
-        // Decode-time enforcement (TD-013 L1 / CLAUDE.md Rule 15): structural
+        // Decode-time enforcement: structural
         // grammar prevents LLM from emitting ids outside the registry enum.
-        // Spike 1c/1d (2026-06-03): confirmed qwen2.5:14b emits id=0 on adversarial bypass.
+        // Confirmed empirically: qwen2.5:14b emits id=0 on adversarial bypass.
         let stage1_schema = schemas::entity_list_schema_with_id_bounds(ctx.registry_specs);
         let stage1_value = structured::StructuredCallBuilder::new(
             self.llm.as_ref(),
@@ -162,7 +162,7 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
         let fact_count = facts.len();
         histogram!("rql.extraction.entity_count").record(entity_count as f64);
         histogram!("rql.extraction.fact_count").record(fact_count as f64);
-        // Stage-level raw-vs-persisted gap (spec 2026-07-20 §C4): the same
+        // Stage-level raw-vs-persisted gap: the same
         // signal that would have caught the empty-benchmark-fact-graph bug
         // without a manual debug session — `raw_fact_count - fact_count` is
         // always visible, always on.

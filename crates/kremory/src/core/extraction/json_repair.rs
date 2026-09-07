@@ -1,6 +1,6 @@
 //! JSON repair and NuExtract-specific parsing utilities.
 //!
-//! Split from `mod.rs` as part of TD-001 (E0-B).
+//! Split from `mod.rs` during a module reorganization.
 
 use metrics::counter;
 use tracing;
@@ -297,7 +297,7 @@ pub(crate) fn parse_nuextract_response(
                 object: r.object,
                 is_entity_ref,
                 confidence: r.confidence,
-                // TD-187 round 2: the repair path reconstructs from
+                // The repair path reconstructs from
                 // `RawRelationship`, which has no date field — see the same note
                 // in `programmatic.rs`. `None` ⇒ episode `ref_time` fallback.
                 valid_at: None,
@@ -318,7 +318,7 @@ pub(crate) fn parse_nuextract_response(
 /// Returns `raw` trimmed and unchanged when there is no opening fence, so it is
 /// safe to call unconditionally.
 ///
-/// # Why this is its own function (TD-192)
+/// # Why this is its own function
 ///
 /// The fence-strip used to live INSIDE [`repair_to_array`], welded to that
 /// function's other job — wrapping a bare `{...}` in an array. That coupling
@@ -330,7 +330,7 @@ pub(crate) fn parse_nuextract_response(
 /// element of a fenced ARRAY after the first. See that call site for the full
 /// failure.
 ///
-/// Hand-rolled rather than taking a dependency (Rule 33): the grammar is a
+/// Hand-rolled rather than taking a dependency: the grammar is a
 /// formally-specified, ~10-line, edge-case-free prefix/suffix strip, and the
 /// crate's existing JSON-repair dependency (`llm_json`) demonstrably does NOT
 /// handle fences — it was already in the fallback chain at the call site and
@@ -352,7 +352,7 @@ pub(crate) fn strip_code_fences(raw: &str) -> &str {
 
 pub(crate) fn repair_to_array(raw: &str) -> String {
     // Behaviour-preserving: this is the extracted fence-strip that used to be
-    // inlined here (TD-192). Single source of truth, shared with
+    // inlined here. Single source of truth, shared with
     // `structured.rs::parse_response_to_value`.
     let s = strip_code_fences(raw);
     if s.is_empty() || s == "[]" {
