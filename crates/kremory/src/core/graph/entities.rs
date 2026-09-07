@@ -7,16 +7,16 @@ use crate::core::schema::{Entity, TemporalGraph};
 
 use super::row_to_entity;
 
-/// Bundled parameters for [`TemporalGraph::insert_entity`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`TemporalGraph::insert_entity`] — args-as-object,
+/// kept under the workspace's too-many-arguments clippy threshold.
 pub struct InsertEntityParams<'a> {
     pub id: &'a str,
     pub entity_type_id: u32,
     pub properties: serde_json::Value,
 }
 
-/// Bundled parameters for [`TemporalGraph::update_entity_group`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`TemporalGraph::update_entity_group`] — args-as-object,
+/// kept under the workspace's too-many-arguments clippy threshold.
 pub struct UpdateEntityGroupParams<'a> {
     pub id: &'a str,
     pub group_id: Option<&'a str>,
@@ -24,7 +24,7 @@ pub struct UpdateEntityGroupParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::reassign_entity_group_dangerous`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object, kept under the workspace's too-many-arguments clippy threshold.
 pub struct ReassignEntityGroupDangerousParams<'a> {
     pub id: &'a str,
     pub old_group_id: &'a str,
@@ -32,8 +32,9 @@ pub struct ReassignEntityGroupDangerousParams<'a> {
     pub bypass_policy: bool,
 }
 
-/// Bundled parameters for [`TemporalGraph::entities_after_id`] — args-as-object
-/// per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`, `self` counts).
+/// Bundled parameters for [`TemporalGraph::entities_after_id`] — args-as-object,
+/// kept under the workspace's too-many-arguments clippy threshold (`self` counts
+/// toward it).
 #[cfg(feature = "content-search")]
 pub struct EntitiesAfterIdParams<'a> {
     pub after_id: &'a str,
@@ -41,7 +42,7 @@ pub struct EntitiesAfterIdParams<'a> {
     pub limit: usize,
 }
 
-/// One page-row from [`TemporalGraph::entities_after_id`] (TD-112) — the
+/// One page-row from [`TemporalGraph::entities_after_id`] — the
 /// composite `(id, group_id)` PK plus the resolved embed text. A bare 3-tuple
 /// of `String`s would be positionally ambiguous at every call site; this
 /// struct names each field. `id` + `group_id` together are what the caller
@@ -56,14 +57,13 @@ pub struct EntityReembedRow {
 }
 
 /// Bundled parameters for [`TemporalGraph::set_entity_embedding_in_group`] —
-/// args-as-object per TD-042 (workspace clippy `too_many_arguments` threshold is
-/// 3 INCLUDING `&self`, and `#[allow(clippy::*)]` is banned in `src/`).
+/// args-as-object (the workspace clippy `too_many_arguments` threshold is 3
+/// INCLUDING `&self`, and `#[allow(clippy::*)]` is banned in `src/`).
 pub struct SetEntityEmbeddingParams<'a> {
     /// Entity id. NOT unique on its own — see `group_id`.
     pub id: &'a str,
-    /// ADR-029d / TD-206 — the namespace half of the composite entity key
-    /// `(id, group_id)`. Omitting it writes across every namespace holding the
-    /// same name.
+    /// The namespace half of the composite entity key `(id, group_id)`.
+    /// Omitting it writes across every namespace holding the same name.
     pub group_id: &'a str,
     /// The replacement vector.
     pub embedding: &'a [f32],
@@ -81,15 +81,15 @@ impl TemporalGraph {
         let now = Utc::now().to_rfc3339();
         // Transaction guards the invariant: row in `entities` ⟹ row in `entities_fts`.
         // Without a transaction, a crash or FTS error between the two INSERTs leaves an
-        // entity permanently invisible to FTS search (HIGH-2 remediation, 2026-05-15).
+        // entity permanently invisible to FTS search.
         // Uses BeginGuard so nested calls (caller already holds an outer txn) are a no-op
         // on BEGIN/COMMIT — required to avoid "transaction within a transaction" errors
         // when this method is called from inside the ingest pipeline's outer txn.
         let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
-            // ADR-045 §2 + migration-010-detail-spec §1.2: entity_type_source stamped
-            // 'Phase1Ner' at INSERT time — all entity inserts via this method are Phase 1
-            // (with_facts stub creation path). entity_type_assigned_at = now().
+            // entity_type_source stamped 'Phase1Ner' at INSERT time — all entity
+            // inserts via this method are Phase 1 (with_facts stub creation path).
+            // entity_type_assigned_at = now().
             self.conn
                 .execute(
                     "INSERT INTO entities (id, entity_type_id, properties, recorded_at, \
@@ -115,8 +115,7 @@ impl TemporalGraph {
             }
             Err(e) => {
                 let _ = guard.rollback().await;
-                // R2.2 §spec-td-085: error-path counter + paired warn (ADR D1).
-                // Reason labels per pre-R2 enumeration table §2.
+                // Error-path counter + paired warn, with a bounded reason label.
                 let reason: &'static str = match &e {
                     crate::core::error::Error::Serialization(_) => "serialization",
                     crate::core::error::Error::Database(_) => "db_error",
@@ -217,7 +216,7 @@ impl TemporalGraph {
         let _db_start = Instant::now();
         let props_str = serde_json::to_string(&properties)?;
         let now = Utc::now().to_rfc3339();
-        // ADR-029b: entities.group_id is NOT NULL post-migration-004. COALESCE maps
+        // entities.group_id is NOT NULL post-migration-004. COALESCE maps
         // None → 'default' so callers using None-as-unscoped retain their semantics
         // while the storage constraint is satisfied.
         let effective_group_id = group_id.unwrap_or("default");
@@ -236,14 +235,13 @@ impl TemporalGraph {
     /// Reassign an entity's `group_id` WITHOUT touching `properties`.
     ///
     /// **DANGEROUS** — callers MUST set `bypass_policy = false` in production.
-    /// Only migration tooling (`kremory-admin`, Decision 7) may pass `true`.
+    /// Only migration tooling (`kremory-admin`) may pass `true`.
     ///
-    /// Composite-PK semantics (ADR-029b Decision 1): the entity is identified
-    /// by `(id, old_group_id)`. The update is a single `UPDATE … WHERE id = ?
-    /// AND group_id = ?` — if the row is absent (wrong `old_group_id` or
-    /// entity not found), returns `Ok(0)`.
+    /// Composite-PK semantics: the entity is identified by `(id, old_group_id)`.
+    /// The update is a single `UPDATE … WHERE id = ? AND group_id = ?` — if the
+    /// row is absent (wrong `old_group_id` or entity not found), returns `Ok(0)`.
     ///
-    /// Policy checks (ADR-029b Decision 5):
+    /// Policy checks:
     /// - Source namespace (`old_group_id`) must not be `AppendOnly`.
     /// - Destination namespace (`new_group_id`) must not be `AppendOnly`.
     /// - Both checks are skipped when `bypass_policy = true`.
@@ -311,7 +309,7 @@ impl TemporalGraph {
     /// `entities_fts` is a standalone FTS5 virtual table (no `content=` parameter).
     /// SQLite does NOT auto-cascade deletes from `entities` into it. This function
     /// deletes from `entities_fts` first, then from `entities`, to ensure no zombie
-    /// FTS rows remain after re-index (HIGH-1 remediation, 2026-05-15).
+    /// FTS rows remain after re-index.
     ///
     /// Batches deletes at 500 IDs to stay well below SQLite's 32766-variable limit.
     pub async fn delete_entities_by_ids(&self, ids: &[String]) -> Result<u64> {
@@ -438,7 +436,7 @@ impl TemporalGraph {
 
     /// Set or update the embedding vector for an entity.
     /// `embedding` is a 384-dimensional f32 vector.
-    /// Namespace-SCOPED embedding write — TD-206 / ADR-029d.
+    /// Namespace-SCOPED embedding write.
     ///
     /// Prefer this over [`TemporalGraph::set_entity_embedding`] on every
     /// production path. The unscoped sibling matches on `id` ALONE, but the
@@ -477,16 +475,14 @@ impl TemporalGraph {
     /// ⚠️ NAMESPACE-UNSCOPED — see [`TemporalGraph::set_entity_embedding_in_group`].
     ///
     /// Matches on `id` alone and therefore writes across ALL namespaces holding
-    /// that name (TD-206). Retained for single-namespace test fixtures, where the
+    /// that name. Retained for single-namespace test fixtures, where the
     /// distinction cannot arise.
     ///
-    /// **Compiled out of production builds** (Quinn MNT-003). "Do not add
-    /// production callers" was the previous protection, and a doc comment is not
-    /// enforcement — the whole point of TD-206 is that this method is easy to
-    /// reach for by mistake. `cfg`-gating makes a production caller
-    /// UNREPRESENTABLE rather than discouraged, per
-    /// `load-bearing-invariants-at-emit-not-prompt`. If you need it on a real
-    /// path, you need [`TemporalGraph::set_entity_embedding_in_group`].
+    /// **Compiled out of production builds.** A doc comment saying "do not add
+    /// production callers" is not enforcement — this method is easy to reach
+    /// for by mistake. `cfg`-gating makes a production caller UNREPRESENTABLE
+    /// rather than merely discouraged. If you need it on a real path, you need
+    /// [`TemporalGraph::set_entity_embedding_in_group`].
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn set_entity_embedding(&self, id: &str, embedding: &[f32]) -> Result<()> {
         let _db_start = Instant::now();
@@ -536,43 +532,43 @@ impl TemporalGraph {
         Ok(())
     }
 
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): select up
-    /// to `limit` entities ordered by the composite PK `(id, group_id)` ASC,
-    /// for the `Memory::reembed_all_entity_embeddings` maintenance loop.
-    /// Returns one [`EntityReembedRow`] per entity — `embed_text` resolved via
-    /// [`super::entity_display_name`] (mirrors what ingest embeds for a NEW
-    /// entity; see that fn's doc for the full precedent).
+    /// Select up to `limit` entities ordered by the composite PK
+    /// `(id, group_id)` ASC, for the `Memory::reembed_all_entity_embeddings`
+    /// maintenance loop. Returns one [`EntityReembedRow`] per entity —
+    /// `embed_text` resolved via [`super::entity_display_name`] (mirrors what
+    /// ingest embeds for a NEW entity; see that fn's doc for the full
+    /// precedent).
     ///
     /// NOT filtered by embedding state — pages through EVERY entity row,
     /// including ones that already carry an embedding. This is the whole
-    /// point: after a dream-phase merge/alias (TD-112's original bug) or an
-    /// embedding-config change (TD-143's `embed_task_prefix_enabled` knob, a
-    /// model swap, a dimension change), the stale row already HAS a vector —
-    /// a `WHERE embedding IS NULL` predicate could never re-touch it (mirrors
-    /// [`TemporalGraph::episodes_after_id`]'s identical TD-143 rationale for
+    /// point: after a dream-phase merge/alias or an embedding-config change
+    /// (the `embed_task_prefix_enabled` knob, a model swap, a dimension
+    /// change), the stale row already HAS a vector — a `WHERE embedding IS
+    /// NULL` predicate could never re-touch it (mirrors
+    /// [`TemporalGraph::episodes_after_id`]'s identical rationale for
     /// episodes).
     ///
     /// **Composite-PK cursor, not a bare `id` cursor**: `entities` has
-    /// `PRIMARY KEY (id, group_id)` (ADR-029d "per-namespace-open" — the SAME
-    /// surface name may legitimately exist as two independent rows across two
-    /// namespaces), so an `id`-only cursor can silently DROP a row: if a page
-    /// boundary falls between two rows that share an `id`, `WHERE id >
-    /// last_id` excludes BOTH rows, including whichever one the previous page
-    /// did not return. Ordering + cursoring on the FULL composite key `(id,
-    /// group_id)` visits every row exactly once regardless of cross-namespace
-    /// id reuse. `after_id = ""`, `after_group_id = ""` starts from the
-    /// beginning — both columns are non-empty for every real row (`id` is a
-    /// normalized name-slug; `group_id` is NOT NULL post-migration-004, and
-    /// COALESCEd to `'default'` here to also tolerate a pre-migration NULL).
+    /// `PRIMARY KEY (id, group_id)` (the SAME surface name may legitimately
+    /// exist as two independent rows across two namespaces), so an `id`-only
+    /// cursor can silently DROP a row: if a page boundary falls between two
+    /// rows that share an `id`, `WHERE id > last_id` excludes BOTH rows,
+    /// including whichever one the previous page did not return. Ordering +
+    /// cursoring on the FULL composite key `(id, group_id)` visits every row
+    /// exactly once regardless of cross-namespace id reuse. `after_id = ""`,
+    /// `after_group_id = ""` starts from the beginning — both columns are
+    /// non-empty for every real row (`id` is a normalized name-slug;
+    /// `group_id` is NOT NULL post-migration-004, and COALESCEd to `'default'`
+    /// here to also tolerate a pre-migration NULL).
     ///
-    /// ✅ **RESOLVED 2026-08-12 by TD-206 — the "known limitation" that stood
-    /// here is GONE, and it is worth saying why rather than deleting it.**
+    /// ✅ **The "known limitation" that used to stand here is GONE, and it is
+    /// worth saying why rather than deleting it.**
     ///
     /// This block used to warn that the maintenance loop's write-back updated
     /// `WHERE id = ?` with no `group_id` predicate, "identical to its
     /// ingest-time call site", and concluded that scoping it "would need a new
-    /// overload threaded through its ingest call site too — out of TD-112's
-    /// scope". Both halves are now false:
+    /// overload threaded through its ingest call site too — out of scope for
+    /// now". Both halves are now false:
     ///
     /// - The write-back is [`TemporalGraph::set_entity_embedding_in_group`]
     ///   (`facade/mod.rs:1698`), scoped on the composite `(id, group_id)` key.
@@ -580,24 +576,25 @@ impl TemporalGraph {
     ///   `#[cfg(any(test, feature = "test-utils"))]`, so it is not merely
     ///   unused on production paths — it does not EXIST in a production build.
     ///
-    /// The comment is rewritten rather than removed because of what TD-206
-    /// found: the deferral above described the cross-namespace overwrite as a
-    /// tolerable transient ("the FINAL state is still correct once the whole
-    /// page walk completes"). It was not transient. This loop rewrites EVERY
-    /// entity, so a single full re-embed collapsed each name's vector across
-    /// all namespaces to whichever row happened to run last — and 90 entity
-    /// names exist in more than one namespace on the shipped LoCoMo corpus.
-    /// A doc comment that reasons an active defect into a non-issue is the
-    /// most expensive kind of stale: it is why nobody looked again.
+    /// The comment is rewritten rather than removed because of what closing
+    /// this gap found: the deferral above described the cross-namespace
+    /// overwrite as a tolerable transient ("the FINAL state is still correct
+    /// once the whole page walk completes"). It was not transient. This loop
+    /// rewrites EVERY entity, so a single full re-embed collapsed each name's
+    /// vector across all namespaces to whichever row happened to run last —
+    /// and 90 entity names exist in more than one namespace on the shipped
+    /// LoCoMo corpus. A doc comment that reasons an active defect into a
+    /// non-issue is the most expensive kind of stale: it is why nobody looked
+    /// again.
     ///
     /// The composite-PK cursor described above is what made the fix complete —
     /// scoping the write is only correct because the walk visits `(id,
     /// group_id)` pairs, not bare ids.
     ///
     /// Feature-gated behind `content-search` (mirrors the episode/fact
-    /// siblings — all three bulk re-embed paths ship together). Args-as-object
-    /// per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`, `self`
-    /// counts).
+    /// siblings — all three bulk re-embed paths ship together). Args-as-object,
+    /// kept under the workspace's too-many-arguments clippy threshold (`self`
+    /// counts toward it).
     #[cfg(feature = "content-search")]
     pub async fn entities_after_id(
         &self,
@@ -634,8 +631,7 @@ impl TemporalGraph {
         Ok(out)
     }
 
-    /// TD-211 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-211): select up
-    /// to `limit` entities whose `embedding` is still NULL, for the
+    /// Select up to `limit` entities whose `embedding` is still NULL, for the
     /// `Memory::backfill_entity_embeddings` maintenance loop — the entity
     /// sibling of [`TemporalGraph::episodes_missing_embedding`]. Returns one
     /// [`EntityReembedRow`] per entity, `embed_text` resolved the SAME way
@@ -652,9 +648,9 @@ impl TemporalGraph {
     /// argument as [`TemporalGraph::episodes_missing_embedding`]'s
     /// doc): once a row's embedding is backfilled it drops out of the next
     /// page, so — unlike `entities_after_id` — this needs no cursor, only a
-    /// `LIMIT`. Ordered by the composite `(id, group_id)` per ADR-029d /
-    /// TD-206 (matches `entities_after_id`'s tie-break, even though no
-    /// cursor is threaded through it here).
+    /// `LIMIT`. Ordered by the composite `(id, group_id)` (matches
+    /// `entities_after_id`'s tie-break, even though no cursor is threaded
+    /// through it here).
     #[cfg(feature = "content-search")]
     pub async fn entities_missing_embeddings(&self, limit: usize) -> Result<Vec<EntityReembedRow>> {
         let mut rows = self
@@ -683,19 +679,19 @@ impl TemporalGraph {
         Ok(out)
     }
 
-    /// TD-211: namespace-scoped backfill setter for the entity NULL-only
-    /// gap-fill path — mirrors [`TemporalGraph::backfill_fact_embedding`]
-    /// (Story #214, `graph/facts.rs`) exactly in shape, including its
-    /// defensive `CASE WHEN ?1 IS NULL` guard, giving the "backfill" method
-    /// family (episode / fact / entity) a self-consistent name across all
-    /// three tables.
+    /// Namespace-scoped backfill setter for the entity NULL-only gap-fill
+    /// path — mirrors [`TemporalGraph::backfill_fact_embedding`]
+    /// (`graph/facts.rs`) exactly in shape, including its defensive
+    /// `CASE WHEN ?1 IS NULL` guard, giving the "backfill" method family
+    /// (episode / fact / entity) a self-consistent name across all three
+    /// tables.
     ///
     /// Scoped by the composite `(id, group_id)` key like
-    /// [`TemporalGraph::set_entity_embedding_in_group`] (TD-206) — NOT the
-    /// unscoped, `#[cfg(any(test, feature = "test-utils"))]`-only
-    /// `set_entity_embedding`, whose doc comment explains why an unscoped
-    /// write on this table is a production hazard. Idempotent: safe to
-    /// re-run (a plain `UPDATE ... WHERE id = ? AND group_id = ?`).
+    /// [`TemporalGraph::set_entity_embedding_in_group`] — NOT the unscoped,
+    /// `#[cfg(any(test, feature = "test-utils"))]`-only `set_entity_embedding`,
+    /// whose doc comment explains why an unscoped write on this table is a
+    /// production hazard. Idempotent: safe to re-run (a plain
+    /// `UPDATE ... WHERE id = ? AND group_id = ?`).
     #[cfg(feature = "content-search")]
     pub async fn backfill_entity_embedding(
         &self,

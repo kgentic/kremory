@@ -1,18 +1,12 @@
 //! Stage 2 verify hook — GLiNER NER + verify_batch + Stage 3 write (Path α)
 //! or LLM direct-extract + Stage 3 write (Path β).
 //!
-//! ADR-051: GLiNER-to-background unified hot path.
-//! Spec: `.ai-docs/specs/v0-2-2-adr-051-only-impl-spec-2026-06-11.md` Phase 2.
+//! GLiNER-to-background unified hot path.
 //!
-//! # Phase 3 note — dead_code suppressions removed
-//!
-//! `run_verify_stage` and its private helpers are now called by
-//! `deferred_pipeline::process_deferred` (ADR-051 Phase 3 wiring). The four
-//! dead_code allow attributes present in Phase 2 have been removed per Phase 3 DoD M-03.
+//! `run_verify_stage` and its private helpers are called by
+//! `deferred_pipeline::process_deferred`.
 //!
 //! # Observability surface
-//!
-//! Per CLAUDE.md Rule 19 (observability-first-class):
 //!
 //! **Histograms** (arm-labelled):
 //! - `kremory.verify_stage.duration_ms{arm="gliner"}` — GLiNER/extractor extract call
@@ -33,7 +27,7 @@
 //! - `tracing::warn!` on verify_batch failure (candidates_count, error chain)
 //! - `tracing::error!` on terminal failure (full diagnostic context)
 //!
-//! # Honest hot-path latency numbers (ADR-049 §5.5 Cascade Amendment, post-ADR-051)
+//! # Honest hot-path latency numbers
 //!
 //! `run_verify_stage` runs **entirely in the background pipeline** — it is NOT on
 //! the `Memory::ingest` caller hot path. The caller returns after `embed + INSERT
@@ -41,15 +35,14 @@
 //!
 //! Background pipeline latency targets (normative for v0.2.x):
 //! - **Path β (LLM direct extract)**: ~60–250ms p50, <500ms p99 hard cap.
-//!   Matches the ADR-051 unified hot-path target; Path β never had sync GLiNER.
+//!   Matches the unified hot-path target; Path β never had sync GLiNER.
 //! - **Path α (GLiNER + verify_batch)**: ~450–650ms p50 today (GLiNER alone
-//!   measures 386ms p50 @ 300 chars per `phase1_ner_bench`). ADR-051 §"Revised
-//!   hot path" target is ~60–250ms p50 once GLiNER migration is complete.
+//!   measures 386ms p50 @ 300 chars per `phase1_ner_bench`). The target is
+//!   ~60–250ms p50 once GLiNER migration is complete.
 //! - **Hard cap**: <500ms p99 for all paths (embed-tail + INSERT contention budget).
 //!
-//! Source: ADR-049 §5.5 SLA Cascade Amendment (2026-06-11), superseding original
-//! <100ms p50 target that was empirically refuted by `phase1_ner_bench`.
-//! See also ADR-051 §"Revised hot path" for the target architecture.
+//! This target supersedes an original <100ms p50 target that was empirically
+//! refuted by `phase1_ner_bench`.
 
 use std::time::Instant;
 
@@ -72,8 +65,8 @@ use super::DeferredRequest;
 
 // ─── State transition helper ───────────────────────────────────────────────────
 
-/// Bundled parameters for [`update_episode_status`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`update_episode_status`] — args-as-object, kept
+/// under the workspace's too-many-arguments clippy threshold.
 struct UpdateEpisodeStatusParams<'a> {
     conn: &'a libsql::Connection,
     episode_id: i64,
@@ -84,7 +77,7 @@ struct UpdateEpisodeStatusParams<'a> {
 
 /// Write `UPDATE episodes SET episode_processing_status = ?` for a given episode id.
 ///
-/// The single authoritative write path for status transitions (ADR-051 state machine).
+/// The single authoritative write path for status transitions.
 /// Emits `kremory.episode.processing_status_transition_total{from, to}` counter.
 async fn update_episode_status(params: UpdateEpisodeStatusParams<'_>) -> Result<(), Error> {
     let UpdateEpisodeStatusParams {
@@ -117,8 +110,8 @@ async fn update_episode_status(params: UpdateEpisodeStatusParams<'_>) -> Result<
 
 // ─── Stage 3 write helper ──────────────────────────────────────────────────────
 
-/// Bundled parameters for [`stage3_write`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`stage3_write`] — args-as-object, kept under the
+/// workspace's too-many-arguments clippy threshold.
 struct Stage3WriteParams<'a> {
     graph: &'a TemporalGraph,
     episode_id: i64,
@@ -128,9 +121,9 @@ struct Stage3WriteParams<'a> {
     /// Namespace the entities + episodic edges are written under. Sourced from
     /// `DeferredRequest.group_id` at the call site. `None` ⇒ `'default'`.
     ///
-    /// TD-080 #1 (2026-06-29): previously hardcoded `'default'`, so a non-default
-    /// namespace background ingest wrote entities in `'default'` while the deferred
-    /// fact targeted the requested namespace → composite-FK
+    /// Previously hardcoded `'default'`, so a non-default namespace background
+    /// ingest wrote entities in `'default'` while the deferred fact targeted
+    /// the requested namespace → composite-FK
     /// `(facts.subject_group_id) → entities(id, group_id)` mismatch → fact silently
     /// dropped. Threading this makes the entity namespace match the fact namespace.
     group_id: Option<&'a str>,
@@ -142,26 +135,25 @@ struct Stage3WriteParams<'a> {
 /// instead of the generic `&Engine<L, Emb>`, keeping `verify_stage.rs` free of
 /// type-parameter entanglement.
 ///
-/// **ADR-050 Phase 3 — idempotency key (Guard #1)**:
+/// **Idempotency key (Guard #1)**:
 /// Per entity: after `INSERT OR IGNORE INTO entities`, queries `SELECT rowid` to
 /// obtain the integer row identifier, computes `content_hash` from the canonical
 /// entity view `{id, label, entity_type_id, group_id}` (via `idempotency.rs`),
 /// and checks `dream_idempotency_keys(pass_name='verify_stage', entity_id=rowid,
 /// content_hash=hash)`. On HIT the FTS + episodic-edge + sink callbacks are
-/// skipped (entity was already processed in this state — R-10). On MISS the full
+/// skipped (entity was already processed in this state). On MISS the full
 /// write completes and the idempotency key is inserted so a future crash-resume
 /// skips correctly.
 ///
-/// **ADR-050 Phase 3 — is_dream_generated**:
+/// **is_dream_generated**:
 /// Entities written here carry `is_dream_generated = 1` so Pass-2 reclassify
 /// (Guard anti-loop) can exclude them from its candidate-selection query.
 ///
-/// `sink` receives `on_entity_extracted` and `on_edge_added("mention")` callbacks
-/// per ADR-052 Gap 1 fire-sites 2 + 3.
+/// `sink` receives `on_entity_extracted` and `on_edge_added("mention")` callbacks.
 ///
 /// Returns the number of entity rows written (idempotent-skips do NOT count).
 ///
-/// NOTE (MED-04): `entity_extracted_total{arm}` counter is emitted at the call
+/// NOTE: `entity_extracted_total{arm}` counter is emitted at the call
 /// sites in `run_verify_stage` (where `arm` is in scope) rather than inside this
 /// function, to keep the argument count within the 5-arg clippy limit. The sink
 /// `on_entity_extracted` callback fires here; the labelled metric fires per-entity
@@ -175,7 +167,7 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
         sink,
         group_id,
     } = params;
-    // TD-080 #1: effective namespace for entity + edge writes. `None` ⇒ `'default'`,
+    // Effective namespace for entity + edge writes. `None` ⇒ `'default'`,
     // matching the composite-FK target (entities.group_id) used by deferred facts.
     let gid = group_id.unwrap_or("default");
     let now = Utc::now().to_rfc3339();
@@ -202,9 +194,9 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
             .map_err(|e| Error::Other(anyhow::anyhow!("stage3_write serialize props: {e}")))?;
 
         // INSERT OR IGNORE — first-mention-wins per ingest_with convention.
-        // ADR-050: is_dream_generated = 1 marks this row as dream-generated so
+        // is_dream_generated = 1 marks this row as dream-generated so
         // Pass-2 reclassify (Guard anti-loop) can exclude it via
-        // `AND is_dream_generated = 0` (impl-spec §3 Phase 3 DoD).
+        // `AND is_dream_generated = 0`.
         graph
             .conn
             .execute(
@@ -230,14 +222,14 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
                 ))
             })?;
 
-        // ── ADR-050 Guard #1: idempotency key check ───────────────────────────
+        // ── Guard #1: idempotency key check ────────────────────────────────────
         //
         // Query entities.rowid — works whether the entity was just inserted (new)
         // or already existed (INSERT OR IGNORE was a no-op). The rowid is stable
         // for the life of the row (SQLite WITHOUT ROWID is NOT used here).
         //
-        // impl-spec §3 Phase 3: `SELECT rowid FROM entities WHERE id = ?` then
-        // check `dream_idempotency_keys(pass_name, entity_id=rowid, content_hash)`.
+        // `SELECT rowid FROM entities WHERE id = ?` then check
+        // `dream_idempotency_keys(pass_name, entity_id=rowid, content_hash)`.
         // On HIT → skip FTS + edge + sink (entity already processed in this state).
         // On MISS → continue write, INSERT idempotency key on success.
         let entity_rowid: i64 = {
@@ -278,11 +270,11 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
         };
 
         // Build synthetic Entity for canonical-view hashing.
-        // TD-080 #1: group_id MUST mirror the INSERT above (`gid`) so the
-        // idempotency content-hash is computed per-namespace — otherwise two
-        // entities with the same id in different namespaces would collide on the
+        // group_id MUST mirror the INSERT above (`gid`) so the idempotency
+        // content-hash is computed per-namespace — otherwise two entities with
+        // the same id in different namespaces would collide on the
         // 'default'-hashed key. Audit/mutable fields (recorded_at, updated_at,
-        // access_count, properties) are excluded from the hash by design — R-10.
+        // access_count, properties) are excluded from the hash by design.
         let synthetic = Entity {
             id: entity_id.clone(),
             label: candidate.name.clone(),
@@ -325,8 +317,8 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
 
         if already_processed {
             // Guard #1 HIT — entity already processed in this state.
-            // Phase 5 (ADR-050 §3.1.1): triple-emit — sink + counter + tracing.
-            // D7: entity_rowid NOT a metric label (high cardinality).
+            // Triple-emit — sink + counter + tracing.
+            // entity_rowid NOT a metric label (high cardinality).
             if let Some(s) = sink {
                 s.on_stage_change(IngestStatus::SkippedIdempotent);
             }
@@ -347,10 +339,10 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
 
         // ── Guard #1 MISS: full write path ─────────────────────────────────────
 
-        // ── Fire-site 2: on_entity_extracted (ADR-052 Gap 1 §3.1 row 2) ─────
+        // ── Fire-site 2: on_entity_extracted ─────────────────────────────────
         // Triple-emit: sink + counter + tracing within 5 lines.
-        // D7: entity_id/episode_id are in tracing fields only, NOT metric labels.
-        // MED-04 note: arm-labelled entity_extracted_total counter is emitted at
+        // entity_id/episode_id are in tracing fields only, NOT metric labels.
+        // arm-labelled entity_extracted_total counter is emitted at
         // call sites (run_verify_stage) where arm is in scope; keeping stage3_write
         // at 5 args satisfies clippy::too_many_arguments. The unlabelled counter
         // here is removed in favour of the call-site arm-labelled emit.
@@ -375,14 +367,14 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
                 ))
             })?;
 
-        // Episodic edge — link entity to its source episode. TD-080 #1:
+        // Episodic edge — link entity to its source episode.
         // `stage3_write` now persists entities under `gid` (the INSERT above), so
         // the episodic edge MUST reference the SAME namespace for the Migration 006
         // composite FK (entity_id, entity_group_id) to resolve. `group_id` (`None`
         // ⇒ `'default'`) matches the entity write.
-        // ── Fire-site 3: on_edge_added("mention") (ADR-052 Gap 1 §3.1 row 3) ─
+        // ── Fire-site 3: on_edge_added("mention") ────────────────────────────
         // Triple-emit fires on Ok only; edge insertion errors are soft (.ok() precedent).
-        // D7: episode_id/entity_id in tracing fields only, NOT metric labels.
+        // episode_id/entity_id in tracing fields only, NOT metric labels.
         let episode_id_str = episode_id.to_string();
         if graph
             .insert_episodic_edge(InsertEpisodicEdgeParams {
@@ -409,12 +401,12 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
             tracing::debug!(episode_id, entity_id = %entity_id, predicate = "mention", "kremory.sink.edge_added");
         }
 
-        // ── ADR-050 Guard #1: record idempotency key on success ───────────────
+        // ── Guard #1: record idempotency key on success ────────────────────────
         // INSERT after FTS + edge succeed. If this INSERT fails (unlikely — disk
         // full, lock), log + continue; the entity IS written so returning Err here
         // would misrepresent the state. Next run will re-process (no harm, no
         // data loss — idempotency degrades gracefully to "may re-process once").
-        // D7: entity_rowid NOT a metric label.
+        // entity_rowid NOT a metric label.
         if let Err(e) = graph
             .conn
             .execute(
@@ -438,7 +430,7 @@ async fn stage3_write(params: Stage3WriteParams<'_>) -> Result<usize, Error> {
             .increment(1);
         }
 
-        // TD-080 P0 (Rule 19): namespace label makes per-namespace entity provenance
+        // Emits a structured namespace label so per-namespace entity provenance is
         // visible — "entity landed in `default` instead of `X`" was invisible before,
         // which is exactly what made the composite-FK fact-drop expensive to diagnose.
         metrics::counter!(
@@ -472,7 +464,7 @@ fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandi
         .entities
         .iter()
         .map(|e| {
-            // L-02 scope tightening: allow scoped to the f64→f32 confidence cast only.
+            // Scoped narrowly to the f64→f32 confidence cast only.
             // `confidence` is mathematically bounded to [0.0, 1.0] so no real
             // mantissa truncation is possible; clippy can't prove the bound.
             let confidence = e
@@ -496,8 +488,7 @@ fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandi
 /// Run the Stage 2 verify gate for one episode.
 ///
 /// Owns the post-INSERT-episode extraction work for the background worker.
-/// Called by `deferred_pipeline::process_deferred` once Phase 3 wires the call
-/// (current stub in `deferred_pipeline` calls `Engine::ingest_deferred` instead).
+/// Called by `deferred_pipeline::process_deferred`.
 ///
 /// # Branch logic
 ///
@@ -506,7 +497,7 @@ fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandi
 /// - `verify_llm = None` → **Path β** (LLM direct extract):
 ///   `extractor.extract_dyn` (extractor IS an LLM) → `stage3_write` with Confirm decisions
 ///
-/// # State transitions (ADR-051 §4 state machine)
+/// # State transitions
 ///
 /// ```text
 /// Pending → Extracting   on entry, before first external call
@@ -522,10 +513,10 @@ fn extraction_result_to_candidates(result: &ExtractionResult) -> Vec<EntityCandi
 /// `Ok(n)` — `n` entities written to the `entities` table.
 /// `Err` — extraction, verify, or write failure (episode status already `Failed`).
 ///
-/// `pub` + `#[doc(hidden)]` per MNT-002 pattern: integration tests in
+/// `pub` + `#[doc(hidden)]`: integration tests in
 /// `tests/verify_stage_integration.rs` call this directly under `feature = "test-utils"`.
-/// Bundled parameters for [`run_verify_stage`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`run_verify_stage`] — args-as-object, kept under
+/// the workspace's too-many-arguments clippy threshold.
 #[doc(hidden)]
 pub struct RunVerifyStageParams<'a> {
     pub request: &'a DeferredRequest,
@@ -542,7 +533,7 @@ pub struct RunVerifyStageParams<'a> {
     pub allowed_entity_types: &'a [String],
     /// Entity labels that must never be extracted, forwarded into the context.
     pub excluded_entity_types: &'a [String],
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Sourced from
+    /// Consumer-supplied model identifier. Sourced from
     /// the Engine (`graph.model`) at the deferred call site and forwarded into
     /// the `ExtractionContext` so the background extraction arm reaches the same
     /// capability detection (FormatSchema/NativeSchema) as the inline path.
@@ -579,14 +570,13 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
 
     // ── Pending → Extracting ───────────────────────────────────────────────────
     //
-    // Quinn H-01 fix: the initial transition UPDATE used bare `.await?`, which
-    // would propagate Err WITHOUT writing `Failed` — contradicting the function's
-    // own doc-comment invariant ("the Failed write is performed synchronously
-    // before Err is returned so the status column is always coherent"). Cause-fix
-    // per Rule 8: replace the bare `?` with the same explicit match-and-best-
-    // effort-Failed-write pattern used on every other error path. If the Failed
-    // write ALSO fails (DB unrecoverable), we can't progress further — log + return
-    // the original error.
+    // The initial transition UPDATE must not use a bare `.await?`, which would
+    // propagate Err WITHOUT writing `Failed` — contradicting this function's own
+    // invariant ("the Failed write is performed synchronously before Err is
+    // returned so the status column is always coherent"). Use the same explicit
+    // match-and-best-effort-Failed-write pattern used on every other error path.
+    // If the Failed write ALSO fails (DB unrecoverable), we can't progress
+    // further — log + return the original error.
     if let Err(e) = update_episode_status(UpdateEpisodeStatusParams {
         conn,
         episode_id: request.episode_id,
@@ -619,9 +609,11 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
         })
         .await;
         // ── Fire-site 5a: on_stage_change(Failed) — status_transition_fail arm ─
-        // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" label is bounded enum)
-        // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
-        // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+        // Triple-emit; "arm" label is a bounded enum.
+        // Failed-arm tracing must be tracing::error!.
+        // callback_duration_ms wraps on_stage_change so a slow consumer
+        // implementation is visible via histogram rather than silently
+        // blocking the worker.
         let cb_start = Instant::now();
         if let Some(s) = sink {
             s.on_stage_change(IngestStatus::Failed(e.to_string()));
@@ -647,11 +639,13 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
         return Err(e);
     }
 
-    // ── Fire-site 1: on_stage_change(Extracting) (ADR-052 Gap 1 §3.1 row 1) ──
+    // ── Fire-site 1: on_stage_change(Extracting) ──────────────────────────────
     // Triple-emit: sink + counter + tracing within 5 lines.
     // Fires after update_episode_status("Extracting") returns Ok.
-    // D7: episode_id in tracing field only, NOT a metric label.
-    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+    // episode_id in tracing field only, NOT a metric label.
+    // callback_duration_ms wraps on_stage_change so a slow consumer
+    // implementation is visible via histogram rather than silently
+    // blocking the worker.
     let cb_start = Instant::now();
     if let Some(s) = sink {
         s.on_stage_change(IngestStatus::Extracting);
@@ -675,7 +669,7 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
     );
 
     // ── Extract candidates ─────────────────────────────────────────────────────
-    // ADR-051: forward the configured entity-type vocabulary into the context.
+    // Forward the configured entity-type vocabulary into the context.
     // The `ner` (GLiNER) arm is closed-vocabulary and rejects an empty
     // `allowed_entity_types`; building `::default()` here silently dropped the
     // configured types on the deferred path (caught by `--all-features
@@ -683,7 +677,7 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
     let ctx = ExtractionContext {
         allowed_entity_types,
         excluded_entity_types,
-        // Option-1: forward the Engine model so background extraction reaches
+        // Forward the Engine model so background extraction reaches
         // the same capability-detection arm as the inline path (no PromptOnly
         // downgrade on the deferred path).
         model,
@@ -722,9 +716,11 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
             })
             .await;
             // ── Fire-site 5b: on_stage_change(Failed) — extract_fail arm ────────
-            // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" is bounded enum)
-            // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
-            // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+            // Triple-emit; "arm" is a bounded enum.
+            // Failed-arm tracing must be tracing::error!.
+            // callback_duration_ms wraps on_stage_change so a slow consumer
+            // implementation is visible via histogram rather than silently
+            // blocking the worker.
             let cb_start = Instant::now();
             if let Some(s) = sink {
                 s.on_stage_change(IngestStatus::Failed(e.to_string()));
@@ -765,7 +761,7 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                     candidates: &candidates,
                     source_episode_text: &request.text,
                     llm,
-                    // ADR-029d/TD-129: thread the request's namespace through so the
+                    // Thread the request's namespace through so the
                     // rowid lookup inside verify_batch_for_candidates resolves to
                     // THIS namespace's entity, not an arbitrary same-id row in
                     // another namespace.
@@ -803,9 +799,11 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                     })
                     .await;
                     // ── Fire-site 5c: on_stage_change(Failed) — verify_fail arm ──
-                    // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
-                    // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
-                    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                    // Triple-emit; "arm" is a bounded enum.
+                    // Failed-arm tracing must be tracing::error!.
+                    // callback_duration_ms wraps on_stage_change so a slow
+                    // consumer implementation is visible via histogram rather
+                    // than silently blocking the worker.
                     let cb_start = Instant::now();
                     if let Some(s) = sink {
                         s.on_stage_change(IngestStatus::Failed(e.to_string()));
@@ -839,7 +837,7 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                 candidates: &candidates,
                 decisions: &vb_result.decisions,
                 sink,
-                // TD-080 #1: write entities into the request's namespace so the
+                // Write entities into the request's namespace so the
                 // deferred fact's composite FK resolves (entities(id, group_id)).
                 group_id: request.group_id.as_deref(),
             })
@@ -851,10 +849,10 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
 
             match write_result {
                 Ok(n) => {
-                    // ── MED-04: arm-labelled entity_extracted_total counter ─────────
+                    // ── arm-labelled entity_extracted_total counter ─────────────────
                     // Emitted here (where `arm` is in scope) rather than inside
                     // stage3_write (which would require a 6th arg, violating clippy limit).
-                    // D7: n is entity count, not an ID — safe as increment value.
+                    // n is entity count, not an ID — safe as increment value.
                     metrics::counter!(
                         "kremory.sink.entity_extracted_total",
                         "arm" => arm
@@ -884,9 +882,11 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                     })
                     .await;
                     // ── Fire-site 5d: on_stage_change(Failed) — write_fail (Path α) ─
-                    // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
-                    // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
-                    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                    // Triple-emit; "arm" is a bounded enum.
+                    // Failed-arm tracing must be tracing::error!.
+                    // callback_duration_ms wraps on_stage_change so a slow
+                    // consumer implementation is visible via histogram rather
+                    // than silently blocking the worker.
                     let cb_start = Instant::now();
                     if let Some(s) = sink {
                         s.on_stage_change(IngestStatus::Failed(e.to_string()));
@@ -930,7 +930,7 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                 candidates: &candidates,
                 decisions: &decisions,
                 sink,
-                // TD-080 #1: write entities into the request's namespace so the
+                // Write entities into the request's namespace so the
                 // deferred fact's composite FK resolves (entities(id, group_id)).
                 group_id: request.group_id.as_deref(),
             })
@@ -942,7 +942,7 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
 
             match write_result {
                 Ok(n) => {
-                    // ── MED-04: arm-labelled entity_extracted_total counter ─────────
+                    // ── arm-labelled entity_extracted_total counter ─────────────────
                     // Emitted here (where `arm` is in scope) rather than inside
                     // stage3_write (which would require a 6th arg, violating clippy limit).
                     metrics::counter!(
@@ -974,9 +974,11 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
                     })
                     .await;
                     // ── Fire-site 5d: on_stage_change(Failed) — write_fail (Path β) ─
-                    // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
-                    // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
-                    // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                    // Triple-emit; "arm" is a bounded enum.
+                    // Failed-arm tracing must be tracing::error!.
+                    // callback_duration_ms wraps on_stage_change so a slow
+                    // consumer implementation is visible via histogram rather
+                    // than silently blocking the worker.
                     let cb_start = Instant::now();
                     if let Some(s) = sink {
                         s.on_stage_change(IngestStatus::Failed(e.to_string()));
@@ -1024,9 +1026,11 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
         );
         // ── Fire-site 5e: on_stage_change(Failed) — status_transition_fail (Verified) ─
         // Entities written; status column failed. Sink receives Failed, not EntitiesReady.
-        // (ADR-052 Gap 1 §3.1 row 5; triple-emit; D7 — "arm" bounded enum)
-        // MED-01 fix: Failed-arm tracing must be tracing::error! (arch spec §3.1 row 12).
-        // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+        // Triple-emit; "arm" is a bounded enum.
+        // Failed-arm tracing must be tracing::error!.
+        // callback_duration_ms wraps on_stage_change so a slow consumer
+        // implementation is visible via histogram rather than silently
+        // blocking the worker.
         let cb_start = Instant::now();
         if let Some(s) = sink {
             s.on_stage_change(IngestStatus::Failed(e.to_string()));
@@ -1051,11 +1055,13 @@ pub async fn run_verify_stage(params: RunVerifyStageParams<'_>) -> Result<usize,
         );
         // Fall through — entities are persisted, return Ok so caller counts them.
     } else {
-        // ── Fire-site 4: on_stage_change(EntitiesReady) (ADR-052 Gap 1 §3.1 row 4) ─
+        // ── Fire-site 4: on_stage_change(EntitiesReady) ───────────────────────────
         // Triple-emit: sink + counter + tracing within 5 lines.
         // Fires after update_episode_status("Verified") returns Ok.
-        // D7: episode_id in tracing field only, NOT a metric label.
-        // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+        // episode_id in tracing field only, NOT a metric label.
+        // callback_duration_ms wraps on_stage_change so a slow consumer
+        // implementation is visible via histogram rather than silently
+        // blocking the worker.
         let cb_start = Instant::now();
         if let Some(s) = sink {
             s.on_stage_change(IngestStatus::EntitiesReady);

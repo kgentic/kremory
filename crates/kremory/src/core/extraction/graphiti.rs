@@ -1,6 +1,4 @@
 //! LlmExtractor and Graphiti-quality prompt builders.
-//!
-//! Split from `mod.rs` as part of TD-001 (E0-B).
 
 // Items used only in #[cfg(test)] — suppress dead_code for non-test builds.
 #![allow(dead_code)]
@@ -311,19 +309,19 @@ pub(crate) fn build_relation_names_prompt(
 
 /// Build full-triplet prompt for the 3-stage IntegerIdLlmExtractor pipeline.
 ///
-/// TD-187 (temporal grounding): `reference_time` is the caller-DECLARED
-/// document anchor (`ExtractionContext::reference_time`) — and ONLY that.
-/// When `Some`, a one-line date-grounding block is appended so the LLM can
-/// resolve relative-time phrases ("yesterday", "last week") in `text` against
-/// an absolute date. When `None` (the default — unchanged from before
-/// TD-187), NOTHING extra is rendered: the returned prompt is byte-identical
-/// to the pre-TD-187 prompt. This is load-bearing for VCR cassette replay —
-/// see `ExtractionContext::reference_time`'s doc comment for why.
+/// `reference_time` is the caller-DECLARED document anchor
+/// (`ExtractionContext::reference_time`) — and ONLY that. When `Some`, a
+/// one-line date-grounding block is appended so the LLM can resolve
+/// relative-time phrases ("yesterday", "last week") in `text` against an
+/// absolute date. When `None` (the default), NOTHING extra is rendered: the
+/// returned prompt is byte-identical to the prompt without date grounding.
+/// This is load-bearing for VCR cassette replay — see
+/// `ExtractionContext::reference_time`'s doc comment for why.
 ///
-/// Args-as-object (TD-042): adding `reference_time` took this to 4 positional
-/// params and tripped clippy `too_many_arguments` (4/3 — the project threshold
-/// is 3 and `#[allow]` is banned in `src/`). Grouped into a params struct per
-/// the ratified TD-042 pattern rather than suppressed.
+/// Args-as-object: adding `reference_time` took this to 4 positional params
+/// and tripped clippy `too_many_arguments` (4/3 — the project threshold is 3
+/// and `#[allow]` is banned in `src/`). Grouped into a params struct rather
+/// than suppressed.
 pub(crate) struct TripletPromptParams<'a> {
     pub(crate) text: &'a str,
     pub(crate) entities: &'a [ExtractedEntity],
@@ -331,14 +329,14 @@ pub(crate) struct TripletPromptParams<'a> {
     /// See [`crate::core::intelligence::ExtractionContext::reference_time`] —
     /// caller-DECLARED anchor only, never wall-clock.
     pub(crate) reference_time: Option<DateTime<Utc>>,
-    /// ADR-080 — contents of the preceding turns of this conversation thread,
+    /// Contents of the preceding turns of this conversation thread,
     /// oldest-first. Empty (the default) renders NOTHING and leaves the prompt
     /// byte-identical; see
     /// [`crate::core::intelligence::ExtractionContext::prior_turns`].
     pub(crate) prior_turns: &'a [String],
 }
 
-/// Total character budget for the replayed-turn block (ADR-080).
+/// Total character budget for the replayed-turn block.
 ///
 /// Unbounded replay is a real production hazard, not a theoretical one: the
 /// depth is 10 episodes and an episode has no length limit, so a naive
@@ -364,8 +362,8 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let rel_list = relation_names.join(", ");
-    // TD-187 round 2. The date rules and the `valid_at` output field are ONE
-    // gated unit, both conditional on `reference_time`.
+    // The date rules and the `valid_at` output field are ONE gated unit, both
+    // conditional on `reference_time`.
     //
     // Round 1 rendered only the rules, and the output-field sentence — which is
     // unconditional — still listed five fields, none a date. The model was told
@@ -376,8 +374,9 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
     // The field mention MUST stay inside this gate. It lives one sentence away
     // from the unconditional field list, and moving it there would re-fingerprint
     // all 303 committed chat cassettes (`record_replay.rs` hashes the rendered
-    // prompt). With `None` this renders byte-identically to pre-TD-187, which the
-    // guard test below asserts against a hardcoded pre-change literal.
+    // prompt). With `None` this renders byte-identically to the pre-date-grounding
+    // prompt, which the guard test below asserts against a hardcoded pre-change
+    // literal.
     //
     // Wording is graphiti's (`graphiti_core/prompts/extract_edges.py`), adopted
     // deliberately rather than paraphrased — it is load-bearing, not cosmetic.
@@ -397,8 +396,9 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
     // to a list that already reads `..., and "confidence"` produces a double
     // conjunction ("and X, and Y") — sloppy prose in the one place we are asking a
     // language model to follow a spec precisely. Switching the whole clause keeps
-    // both arms grammatical, and the `None` arm below is the VERBATIM pre-TD-187
-    // literal, which is what keeps the 303 cassette fingerprints stable.
+    // both arms grammatical, and the `None` arm below is the VERBATIM
+    // pre-date-grounding literal, which is what keeps the 303 cassette
+    // fingerprints stable.
     let field_list = match reference_time {
         Some(_) => {
             "\"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), \"confidence\" (0.0-1.0), and \"valid_at\" (ISO 8601 date YYYY-MM-DD, or null)"
@@ -407,14 +407,14 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
             "\"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0)"
         }
     };
-    // ADR-080 (prior-turn replay). Two properties are load-bearing.
+    // Prior-turn replay. Two properties are load-bearing.
     //
     // 1. BYTE IDENTITY WHEN EMPTY. `prior_block` is spliced immediately before
     //    the existing `Text: ` marker and carries its OWN trailing `\n\n`, so
     //    the empty case leaves the surrounding literal exactly as it was. An
     //    empty section is only byte-safe if the separator lives inside the
     //    block, not around it — the same trick `date_block` uses, arrived at the
-    //    other way round. The guard test asserts against the pre-ADR-080
+    //    other way round. The guard test asserts against the pre-replay
     //    literal, and ~305 committed cassettes depend on it.
     //
     // 2. CONTEXT, NOT MATERIAL. The instruction forbidding extraction FROM the
@@ -457,7 +457,7 @@ pub(crate) fn build_triplet_prompt(params: TripletPromptParams<'_>) -> String {
     )
 }
 
-// ─── TD-187 unit tests ──────────────────────────────────────────────────────
+// ─── Date-grounding unit tests ───────────────────────────────────────────────
 
 #[cfg(test)]
 mod td_187_tests {
@@ -481,7 +481,8 @@ mod td_187_tests {
 
     /// Guards all 303 committed VCR chat cassettes (`crates/kremory/tests/cassettes/`):
     /// the fingerprint hashes the rendered prompt (`record_replay.rs:225-263`), so
-    /// `reference_time: None` MUST render byte-identically to the pre-TD-187 prompt.
+    /// `reference_time: None` MUST render byte-identically to the prompt
+    /// without date grounding.
     #[test]
     fn build_triplet_prompt_with_none_is_byte_identical_to_pre_td187_prompt() {
         let entities = sample_entities();
@@ -496,9 +497,9 @@ mod td_187_tests {
             prior_turns: &[],
         });
 
-        // Hand-reconstructed from the pre-TD-187 format! literal (no `reference_time`
-        // parameter, no date_block interpolation) — this is the exact string every
-        // one of the 303 cassettes was recorded against.
+        // Hand-reconstructed from the format! literal before date grounding existed
+        // (no `reference_time` parameter, no date_block interpolation) — this is
+        // the exact string every one of the 303 cassettes was recorded against.
         let expected = "Given entities: [Alice (Person), Bob (Person)]\nRelationship types: [met]\n\nExtract the key relationships from this text as (subject, predicate, object) triplets. Only include each distinct relationship once. Do not repeat.\n\nText: Alice met Bob yesterday.\n\nOutput a concise JSON array of objects with \"subject\", \"predicate\", \"object\", \"is_entity_ref\" (boolean), and \"confidence\" (0.0-1.0) fields.";
 
         assert_eq!(
@@ -530,14 +531,14 @@ mod td_187_tests {
             actual.contains("Resolve relative expressions"),
             "expected relative-time resolution instruction, got: {actual}"
         );
-        // No time-of-day rendered — date-only per TD-187 spec (avoid fingerprint churn).
+        // No time-of-day rendered — date-only (avoid fingerprint churn).
         assert!(
             !actual.contains("12:00:00"),
             "must not render time-of-day, got: {actual}"
         );
     }
 
-    // ─── TD-187 round 2: the instruction must come WITH a slot ────────────────
+    // ─── The instruction must come WITH a slot ─────────────────────────────
 
     /// The round-1 defect, as an executable assertion.
     ///
@@ -623,7 +624,7 @@ mod td_187_tests {
     }
 }
 
-// ─── ADR-080 prior-turn replay unit tests ────────────────────────────────────
+// ─── Prior-turn replay unit tests ────────────────────────────────────────────
 
 #[cfg(test)]
 mod adr_080_prior_turn_tests {
@@ -651,7 +652,7 @@ mod adr_080_prior_turn_tests {
     /// committed VCR cassette's fingerprint changes — the prompt is hashed
     /// (`core/provider/record_replay.rs`). The sibling test
     /// `td_187_tests::build_triplet_prompt_with_none_is_byte_identical_to_pre_td187_prompt`
-    /// pins the full literal; this one pins the specific ADR-080 property.
+    /// pins the full literal; this one pins the specific prior-turn-replay property.
     #[test]
     fn empty_prior_turns_render_nothing_and_keep_the_text_separator() {
         let actual = build(&[]);

@@ -3,7 +3,7 @@
 //
 // A record/replay decorator over `Arc<dyn ChatProvider>` for deterministic,
 // no-Ollama CI runs of the golden-path smoke test (Tier 2 of the 3-tier test
-// pyramid). See `.ai-docs/specs/v0-2-4-test-infra-o11y-harness-arch-spec-2026-06-15.md`.
+// pyramid).
 //
 // Three modes:
 //   Record      — delegate to the wrapped real provider, capture
@@ -14,22 +14,22 @@
 //   Replay      — inner is None; match the request fingerprint against a loaded
 //                 cassette and return the recorded response via a per-fingerprint
 //                 cursor. On MISS: LOUD error naming the unmatched fingerprint
-//                 (NO silent default, NO fallthrough-to-live — Decision D3).
+//                 (NO silent default, NO fallthrough-to-live).
 //   Passthrough — delegate, no capture.
 //
-// Thread-safety (NEW-201): cassette state (replay cursor + record buffer) is
+// Thread-safety: cassette state (replay cursor + record buffer) is
 // held behind a SINGLE `Arc<Mutex<CassetteState>>`, NOT RefCell/Cell, because
 // `ChatProvider: Send + Sync` and the decorator Arc is shared across the
 // background worker thread.
 //
-// model resolution (Option-1, 2026-06-23 — supersedes the former ASMP-002
-// `ChatProvider::model()` override, removed when published autoagents-llm 0.3.7
-// dropped the trait method): the model is a caller-supplied field exposed via the
-// inherent `model_id()`. In Record/Passthrough it is the value passed to
-// `record()`/`passthrough()`; in Replay it is the cassette header's stored `model`.
-// The header is a plain (non-Mutex) field so `model_id()` can return `&str` directly.
+// model resolution: supersedes the former `ChatProvider::model()` override,
+// removed when published autoagents-llm 0.3.7 dropped the trait method. The
+// model is a caller-supplied field exposed via the inherent `model_id()`. In
+// Record/Passthrough it is the value passed to `record()`/`passthrough()`; in
+// Replay it is the cassette header's stored `model`. The header is a plain
+// (non-Mutex) field so `model_id()` can return `&str` directly.
 //
-// Fingerprint (§4.2): Sha256 of (model || messages-json || schema-json ||
+// Fingerprint: Sha256 of (model || messages-json || schema-json ||
 // tools-count-marker), stable across runs/platforms.
 //
 // Gated: test-infra only — never part of the production public API.
@@ -54,8 +54,8 @@ pub struct CassetteEntry {
     pub response_text: String,
 }
 
-/// On-disk cassette file format (§4.1). The top-level `model` header is
-/// LOAD-BEARING (DENT-001; Option-1 2026-06-23): Replay-mode `model_id()` returns
+/// On-disk cassette file format. The top-level `model` header is
+/// LOAD-BEARING: Replay-mode `model_id()` returns
 /// it so extraction builders route to the correct capability arm.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Cassette {
@@ -70,7 +70,7 @@ pub struct Cassette {
     pub entries: std::collections::BTreeMap<String, Vec<CassetteEntry>>,
 }
 
-/// Shared, mutable cassette state behind a single `Mutex` (NEW-201).
+/// Shared, mutable cassette state behind a single `Mutex`.
 ///
 /// In Record mode `entries` is the capture buffer (appended to from any thread,
 /// including the Phase-2 worker thread). In Replay mode `cursors` tracks how many
@@ -104,9 +104,9 @@ pub struct RecordReplayChatProvider {
     mode: VcrMode,
     /// `Some` for Record/Passthrough (the real provider); `None` for Replay.
     inner: Option<Arc<dyn ChatProvider>>,
-    /// Shared cassette state (capture buffer + replay cursor) — see NEW-201.
+    /// Shared cassette state (capture buffer + replay cursor).
     state: Arc<Mutex<CassetteState>>,
-    /// Stored model header (Option-1 2026-06-23): plain field so `model_id()`
+    /// Stored model header: plain field so `model_id()`
     /// returns `&str` directly without holding the `Mutex`. In Record/Passthrough
     /// this is the caller-supplied model passed to `record()`/`passthrough()`; in
     /// Replay it is the cassette header `model`.
@@ -155,15 +155,14 @@ static RFC3339_IN_PROMPT: std::sync::LazyLock<Option<regex::Regex>> =
 /// interpolates `fact.valid_from.to_rfc3339()` at microsecond precision
 /// (`core/contradiction.rs:137-171`), and for LLM-extracted facts `valid_from`
 /// is the episode's `ref_time` — wall-clock at ingest, **by deliberate design**
-/// (TD-187 decision, "Consequences accepted": `as_of()` is document-granular for
-/// extracted facts). So a freshly-ingested fixture yields a different request on
-/// every run, the SHA256 never repeats, and re-recording writes a key that can
-/// never be hit again. Proven live 2026-08-13.
+/// (`as_of()` is document-granular for extracted facts). So a freshly-ingested
+/// fixture yields a different request on every run, the SHA256 never repeats,
+/// and re-recording writes a key that can never be hit again.
 ///
 /// Wiring `published_at` into the extraction path to make this deterministic was
 /// considered and **REJECTED**: `reference_time: None` is a load-bearing guard
-/// that keeps 303 committed cassettes byte-identical (TD-187 §F1). Fixing five
-/// cassettes by invalidating three hundred is not a fix.
+/// that keeps 303 committed cassettes byte-identical. Fixing five cassettes by
+/// invalidating three hundred is not a fix.
 ///
 /// # Why RANK rather than erasure
 ///
@@ -231,10 +230,9 @@ const MISS_REQUEST_QUOTE_CHARS: usize = 1500;
 /// Render the request messages for a replay-MISS error, truncated on a char
 /// boundary.
 ///
-/// Spec `v0-2-4-test-infra-o11y-harness-arch-spec-2026-06-15.md` §4.3 requires
-/// the miss error to name "the (truncated) request so the failure is debuggable
-/// without re-running with eprintln". The code sample beneath that sentence
-/// omitted it and the implementation copied the sample; this closes the gap.
+/// The miss error must name the (truncated) request so the failure is
+/// debuggable without re-running with eprintln — a prior implementation
+/// reported only the request's length, which closes that gap.
 ///
 /// The cut is taken via `char_indices` because byte-slicing a `String` at a
 /// fixed offset panics mid-codepoint, and the amount omitted is reported so a
@@ -263,7 +261,7 @@ fn render_request_for_miss(messages: &[ChatMessage]) -> String {
 }
 
 /// Bundled parameters for [`RecordReplayChatProvider::fingerprint`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object, kept under the workspace's too-many-arguments clippy threshold.
 struct FingerprintParams<'a> {
     /// Chat messages contributing to the fingerprint.
     messages: &'a [ChatMessage],
@@ -277,8 +275,8 @@ impl RecordReplayChatProvider {
     /// Record mode: wrap a real provider and capture responses to `cassette_path`
     /// on [`Self::flush`].
     ///
-    /// Option-1 (2026-06-23): `model` is supplied by the caller (it can no longer
-    /// be read off `inner.model()` — that trait method does not exist on published
+    /// `model` is supplied by the caller (it can no longer be read off
+    /// `inner.model()` — that trait method does not exist on published
     /// `autoagents-llm` 0.3.7). The string is load-bearing: it feeds the request
     /// fingerprint + cassette header, so record/replay must use the same value.
     pub fn record(
@@ -333,8 +331,8 @@ impl RecordReplayChatProvider {
 
     /// Passthrough mode: delegate to a real provider, capture nothing.
     ///
-    /// Option-1 (2026-06-23): `model` is caller-supplied (no longer read off
-    /// `inner.model()` — absent on published 0.3.7).
+    /// `model` is caller-supplied (no longer read off `inner.model()` — absent
+    /// on published 0.3.7).
     pub fn passthrough(inner: Arc<dyn ChatProvider>, model: impl Into<String>) -> Self {
         Self {
             mode: VcrMode::Passthrough,
@@ -345,14 +343,14 @@ impl RecordReplayChatProvider {
         }
     }
 
-    /// kremory-inherent model accessor (Option-1, 2026-06-23). Returns the model
-    /// string captured at construction (cassette header in Replay; caller-supplied
-    /// in Record/Passthrough). Replaces the former `ChatProvider::model()` override.
+    /// kremory-inherent model accessor. Returns the model string captured at
+    /// construction (cassette header in Replay; caller-supplied in
+    /// Record/Passthrough). Replaces the former `ChatProvider::model()` override.
     pub fn model_id(&self) -> &str {
         &self.model
     }
 
-    /// Deterministic fingerprint for a chat request (§4.2).
+    /// Deterministic fingerprint for a chat request.
     ///
     /// `Sha256(model || 0x1F || json(messages) || 0x1F || json(schema) ||
     /// 0x1F || "tools:N")`, hex-encoded. Stable across Rust releases and
@@ -417,7 +415,7 @@ impl RecordReplayChatProvider {
         Ok(hex)
     }
 
-    /// Flush the recorded cassette to disk (NEW-202).
+    /// Flush the recorded cassette to disk.
     ///
     /// MUST be called explicitly in the Record path AFTER `wait_for_processing`
     /// returns (so Phase-2 worker-thread writes have landed in the shared buffer)
@@ -587,9 +585,9 @@ impl ChatProvider for RecordReplayChatProvider {
         }
     }
 
-    // Option-1 (2026-06-23): the `ChatProvider::model()` override is removed (the
-    // trait method does not exist on published 0.3.7). The model is now a
-    // caller-supplied field exposed via the inherent `model_id()`.
+    // The `ChatProvider::model()` override is removed (the trait method does
+    // not exist on published 0.3.7). The model is now a caller-supplied field
+    // exposed via the inherent `model_id()`.
 }
 
 #[cfg(test)]
@@ -599,16 +597,14 @@ mod tests {
 
     /// A replay MISS must quote the REQUEST, not merely report its length.
     ///
-    /// This module shipped with ZERO tests, and the spec's own P3 checklist
-    /// (`v0-2-4-test-infra-o11y-harness-arch-spec-2026-06-15.md` §9) called for
-    /// a miss test that was never written — which is why the following survived
-    /// for months:
+    /// This module shipped with ZERO tests, though a miss test covering this
+    /// exact requirement was specified and never written — which is why the
+    /// following survived for months:
     ///
-    /// §4.3 of that spec says, in prose, that the error names "the (truncated)
-    /// request so the failure is debuggable without re-running with eprintln".
-    /// The code sample printed DIRECTLY BENEATH that sentence formats only
-    /// `messages_len={n}` — a length. The implementation copied the sample, not
-    /// the sentence.
+    /// The requirement is that the error name "the (truncated) request so the
+    /// failure is debuggable without re-running with eprintln". A prior
+    /// implementation formatted only `messages_len={n}` — a length, not the
+    /// request itself.
     ///
     /// The consequence is not cosmetic. The cassette is keyed by a SHA256 over
     /// the full request, and stores only `{call_index, response_text}` — never
@@ -667,9 +663,9 @@ mod tests {
 
     /// Absolute timestamps must drop out of the fingerprint.
     ///
-    /// This is the defect proven live on 2026-08-13: the same logical request,
-    /// re-ingested, carries a different wall-clock and therefore a different
-    /// SHA256, so the cassette key can never repeat.
+    /// This guards the defect where the same logical request, re-ingested,
+    /// carries a different wall-clock and therefore a different SHA256, so
+    /// the cassette key can never repeat.
     #[test]
     fn same_order_different_absolute_times_canonicalize_identically() {
         let monday = "  [1] a → p → b (valid from: 2026-08-13T15:11:21.276196+00:00)\n  \
@@ -726,8 +722,7 @@ mod tests {
     /// Episode prose routinely contains `2023-05-07`. Rewriting those would
     /// change the hashed content of corpora that replay correctly today and
     /// re-fingerprint the 303 committed cassettes — turning a five-cassette
-    /// problem into a three-hundred-cassette one, which is exactly why TD-187
-    /// §F1 gated its own prompt change.
+    /// problem into a three-hundred-cassette one.
     #[test]
     fn bare_dates_in_prose_are_untouched() {
         let prose = "We met on 2023-05-07 and again on 1999-12-31.";
@@ -740,9 +735,9 @@ mod tests {
 
     /// A request with no timestamps at all must hash exactly as before.
     ///
-    /// This is what keeps every existing extraction cassette valid: TD-187 gates
-    /// its date block on `reference_time.is_some()`, which the facade never
-    /// sets, so those prompts carry no RFC3339 and take the early return.
+    /// This is what keeps every existing extraction cassette valid: the date
+    /// block gates on `reference_time.is_some()`, which the facade never sets,
+    /// so those prompts carry no RFC3339 and take the early return.
     #[test]
     fn timestamp_free_content_is_returned_verbatim() {
         let plain = "Extract entities from: Alice works at Acme Corp.";

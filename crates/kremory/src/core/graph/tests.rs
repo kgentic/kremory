@@ -98,7 +98,7 @@ async fn test_insert_fact_returns_id() {
     assert!(id > 0);
 }
 
-/// ADR-035 §5 Option A: `try_insert_fact` returns `Ok(Some(id))` on fresh insert.
+/// `try_insert_fact` returns `Ok(Some(id))` on fresh insert.
 #[tokio::test]
 async fn test_try_insert_fact_returns_some_on_fresh_insert() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -117,7 +117,7 @@ async fn test_try_insert_fact_returns_some_on_fresh_insert() {
     assert!(id.unwrap() > 0);
 }
 
-/// ADR-035 §5 Option A: `try_insert_fact` returns `Ok(None)` on content_hash collision.
+/// `try_insert_fact` returns `Ok(None)` on content_hash collision.
 #[tokio::test]
 async fn test_try_insert_fact_returns_none_on_duplicate() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -143,7 +143,7 @@ async fn test_try_insert_fact_returns_none_on_duplicate() {
     );
 }
 
-/// ADR-035 §5 Option A: `try_insert_fact_with_group` returns `Ok(Some(id))` on fresh insert.
+/// `try_insert_fact_with_group` returns `Ok(Some(id))` on fresh insert.
 #[tokio::test]
 async fn test_try_insert_fact_with_group_returns_some_on_fresh_insert() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -165,10 +165,10 @@ async fn test_try_insert_fact_with_group_returns_some_on_fresh_insert() {
     assert!(id.is_some(), "fresh insert must return Some(id)");
 }
 
-/// ADR-035 finding: `content_hash` does NOT include `group_id` — same triple
-/// in different groups still collides. This test pins the invariant that
-/// caller's `insert_fact_with_group(group=X)` and engine's `insert_fact(no group)`
-/// will dedup against each other (the basis of Path X caller-wins semantics).
+/// `content_hash` does NOT include `group_id` — same triple in different
+/// groups still collides. This test pins the invariant that caller's
+/// `insert_fact_with_group(group=X)` and engine's `insert_fact(no group)` will
+/// dedup against each other (the basis of Path X caller-wins semantics).
 #[tokio::test]
 async fn test_try_insert_fact_with_group_dedups_cross_variant() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -197,15 +197,15 @@ async fn test_try_insert_fact_with_group_dedups_cross_variant() {
     );
 }
 
-/// TD-133 B2 regression: re-asserting a triple that was superseded/expired must
-/// SUCCEED. The dedup pre-check SELECT excludes expired rows (`expired_at IS
-/// NULL`) but the UNIQUE index previously covered ALL rows, so a legitimate
-/// bi-temporal assert→expire→re-assert (ADR-003) collided on the stale expired
-/// row's `content_hash` → `UNIQUE constraint failed` → the re-assertion was
-/// silently lost (21 such `unique_violation` drops measured on the TD-133
-/// instrumented conv0 run, 2026-07-21). `migrate_025_fact_dedup_expired_partial`
-/// scopes the index to ACTIVE rows, matching the SELECT predicate, so an expired
-/// row no longer blocks re-assertion.
+/// Re-asserting a triple that was superseded/expired must SUCCEED. The dedup
+/// pre-check SELECT excludes expired rows (`expired_at IS NULL`) but the
+/// UNIQUE index previously covered ALL rows, so a legitimate bi-temporal
+/// assert→expire→re-assert collided on the stale expired row's `content_hash`
+/// → `UNIQUE constraint failed` → the re-assertion was silently lost (21 such
+/// `unique_violation` drops measured on an instrumented corpus run).
+/// `migrate_025_fact_dedup_expired_partial` scopes the index to ACTIVE rows,
+/// matching the SELECT predicate, so an expired row no longer blocks
+/// re-assertion.
 #[tokio::test]
 async fn test_reassert_expired_fact_succeeds_td133_b2() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -636,7 +636,7 @@ async fn test_get_neighbours_zero_hops() {
     assert_eq!(subgraph.entities[0].id, "alice");
 }
 
-// === get_neighbours_at (ADR-068 / TD-079 implement fork) — Phase 0 gate ===
+// === get_neighbours_at ===
 
 /// `as_of: None` must be functionally identical to `get_neighbours` (the SQL
 /// text is copy-identical by construction — see `get_neighbours_at`'s own doc
@@ -687,7 +687,7 @@ async fn test_get_neighbours_at_none_matches_get_neighbours() {
     assert_eq!(orig_ids, new_ids);
 }
 
-/// ADR-068 Decision 1 — `as_of(t)` BEFORE a fact's `valid_from` excludes it
+/// `as_of(t)` BEFORE a fact's `valid_from` excludes it
 /// (and the neighbour reached only via that fact is unreachable).
 #[tokio::test]
 async fn test_get_neighbours_at_before_window_excludes_fact() {
@@ -734,7 +734,7 @@ async fn test_get_neighbours_at_before_window_excludes_fact() {
     assert_eq!(subgraph.entities[0].id, "alice");
 }
 
-/// ADR-068 Decision 1 — `as_of(t)` INSIDE `[valid_from, valid_to)` includes
+/// `as_of(t)` INSIDE `[valid_from, valid_to)` includes
 /// the fact (and reaches the neighbour through it).
 #[tokio::test]
 async fn test_get_neighbours_at_inside_window_includes_fact() {
@@ -781,7 +781,7 @@ async fn test_get_neighbours_at_inside_window_includes_fact() {
     assert_eq!(entity_ids, vec!["acme", "alice"]);
 }
 
-/// ADR-068 Decision 1 — `as_of(t)` AT `valid_to` excludes the fact: the
+/// `as_of(t)` AT `valid_to` excludes the fact: the
 /// predicate is `valid_to > ?t` (strictly greater), a half-open window
 /// `[valid_from, valid_to)`.
 #[tokio::test]
@@ -825,7 +825,7 @@ async fn test_get_neighbours_at_at_boundary_valid_to_excludes_fact() {
     );
 }
 
-/// ADR-068 Decision 1 — `as_of(t)` AFTER `valid_to` excludes the fact.
+/// `as_of(t)` AFTER `valid_to` excludes the fact.
 #[tokio::test]
 async fn test_get_neighbours_at_after_window_excludes_fact() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -868,10 +868,10 @@ async fn test_get_neighbours_at_after_window_excludes_fact() {
     );
 }
 
-/// ADR-068 Decision 1 (load-bearing half) — a fact flagged `invalid_at` by
-/// the contradiction resolver, but still valid-time-in-window at `t`, MUST
-/// still be included: `as_of` filters on `valid_from`/`valid_to` ONLY,
-/// deliberately never on `invalid_at`. Stamped via raw SQL against `g.conn`
+/// A fact flagged `invalid_at` by the contradiction resolver, but still
+/// valid-time-in-window at `t`, MUST still be included: `as_of` filters on
+/// `valid_from`/`valid_to` ONLY, deliberately never on `invalid_at`. Stamped
+/// via raw SQL against `g.conn`
 /// (`pub` specifically for test use, per its own doc comment) because no
 /// public primitive sets `invalid_at` without ALSO setting `expired_at`
 /// (`invalidate_fact_with_reason` stamps both together) — which would
@@ -927,14 +927,14 @@ async fn test_get_neighbours_at_invalid_at_flagged_fact_still_included() {
     );
 }
 
-// === recall-v2 Phase 4 (TD-056, spec R1) — in-BFS fan-out cap ===
+// === recall-v2 in-BFS fan-out cap ===
 
 /// The `max_visited` cap must (a) be **byte-identical at hops=1** even for a hub
 /// with MORE than `cap` direct neighbours (the cap is checked at the top of the
 /// loop, so all hop-1 neighbours are enqueued in the seed's own iteration before
 /// it can fire), and (b) **bound the hops=2 traversal**, preventing the
 /// hub-explosion that widening the hop count would otherwise reintroduce on the
-/// always-on default path (spec R1 — the highest-priority Phase-4 spike).
+/// always-on default path.
 #[tokio::test]
 async fn get_neighbours_at_fan_out_cap_byte_identical_at_hops1_bounds_hops2() {
     // Matches the shipped default `SearchConfig::expansion_fan_out_cap`.
@@ -1327,11 +1327,10 @@ async fn test_insert_entity_with_group() {
     assert_eq!(entity.group_id.as_deref(), Some("group-abc"));
 }
 
-/// Stream 3 A.4.5 contract test — updated for ADR-029b:
 /// Lane A indexer call sites pass `group_id=None` (folder_id absent pre-Lane-B).
-/// Post-ADR-029b, None maps to 'default' (entities.group_id is NOT NULL).
-/// The entity is stored in the default namespace and is visible under
-/// unscoped queries or queries scoped to 'default'.
+/// None maps to 'default' (entities.group_id is NOT NULL). The entity is
+/// stored in the default namespace and is visible under unscoped queries or
+/// queries scoped to 'default'.
 #[tokio::test]
 async fn lane_a_indexer_writes_null_group_id_when_folder_id_absent() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -1342,7 +1341,7 @@ async fn lane_a_indexer_writes_null_group_id_when_folder_id_absent() {
     .unwrap();
 
     let entity = g.get_entity("doc:welcome:chunk_0").await.unwrap().unwrap();
-    // ADR-029b: None maps to 'default' — not NULL (NOT NULL constraint enforced).
+    // None maps to 'default' — not NULL (NOT NULL constraint enforced).
     assert_eq!(
         entity.group_id.as_deref(),
         Some("default"),
@@ -1386,7 +1385,7 @@ async fn test_update_entity_group_changes_scope() {
 
 #[tokio::test]
 async fn test_update_entity_group_to_none() {
-    // ADR-029b: entities.group_id is NOT NULL post-migration-004.
+    // entities.group_id is NOT NULL post-migration-004.
     // Passing None to update_entity_group maps to 'default' (not NULL).
     let g = TemporalGraph::open_in_memory().await.unwrap();
 
@@ -1416,7 +1415,7 @@ async fn test_update_entity_group_to_none() {
     );
 }
 
-// === HIGH-2 RED→GREEN: insert_entity atomicity ===
+// === insert_entity atomicity ===
 //
 // Verifies that if the FTS insert fails (simulated by dropping entities_fts
 // before the call), the entities row is NOT committed — i.e., the transaction
@@ -1500,7 +1499,7 @@ async fn insert_entity_with_group_rolls_back_entities_row_when_fts_fails() {
     );
 }
 
-// === SHA-256 dedup (Story #209) ===
+// === SHA-256 dedup ===
 
 #[tokio::test]
 async fn insert_fact_duplicate_returns_error() {
@@ -1578,7 +1577,7 @@ async fn fact_content_hash_deterministic() {
     assert_eq!(h1.len(), 64);
 }
 
-// === SQLite-first vector ordering backfill (Story #214) ===
+// === SQLite-first vector ordering backfill ===
 
 /// FU.8: facts_missing_embeddings returns (id, subject_id, predicate,
 /// object_value, object_id) — the 5-tuple now includes object_id so callers
@@ -1694,10 +1693,8 @@ async fn backfill_fact_embedding_is_idempotent() {
         .unwrap();
 }
 
-/// FU.1: N concurrent callers racing to insert_fact with the same content must
+/// N concurrent callers racing to insert_fact with the same content must
 /// produce exactly 1 Ok(id) and N-1 Err(Duplicate). Only 1 row must exist.
-///
-/// AC from Story #209 / FU.1: insert_fact_concurrent_dedup_exactly_one_wins.
 #[tokio::test]
 async fn insert_fact_concurrent_dedup_exactly_one_wins() {
     use std::sync::Arc;
@@ -1767,7 +1764,7 @@ async fn insert_fact_concurrent_dedup_exactly_one_wins() {
     );
 }
 
-// === forget_entity — cascade delete atomicity (Story #216) ===
+// === forget_entity — cascade delete atomicity ===
 
 #[tokio::test]
 async fn forget_entity_removes_entity_facts_and_edges() {
@@ -1838,7 +1835,7 @@ async fn forget_entity_returns_false_for_nonexistent() {
     assert!(!found, "forget_entity must return false when entity absent");
 }
 
-// === batch_forget — 100-item chunk deletion (Story #217) ===
+// === batch_forget — 100-item chunk deletion ===
 
 #[tokio::test]
 async fn batch_forget_250_entities_deleted_cleanly() {
