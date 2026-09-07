@@ -611,3 +611,163 @@ than fixed here.
 - `cargo nextest run -p kremory -p kremory-mcp --features content-search,test-utils` —
   1799/1800 passed, 6 skipped, 1 failed (pre-existing/cross-agent, see above — not a
   regression from this scope's edits).
+
+---
+
+## 10. `crates/kremory/src/core/*.rs` (top-level only) + `crates/kremory/src/core/ingest/**` — FIXED (this pass)
+
+**Scope note:** top-level only for `core/*.rs` — NOT `core/dream/**`, `core/migrations/**`,
+`core/extraction/**`, `core/background/**`, `core/disambiguation/**`, `core/graph/**`,
+`core/provider/**`, `core/scoring/**` (those are other agents' scopes, §9 above covers
+`dream`/`migrations`). This scope is 43 files: every `.rs` file directly under `core/` plus
+every file under `core/ingest/` (including the nested `core/ingest/pipeline/` subdirectory).
+
+### Discrepancy vs the audit's estimated counts — confirmed and material
+
+The audit's §4 high-confidence table only lists a subset of this scope's files, and even for
+listed files the counts are undercounts once the full violation-class net (not just
+`Vera`/`Quinn`/`Finding N`/`F\d\d`/`steal-matrix`) is applied. Concretely:
+
+- **`ingest_with.rs`**: audit's §4 table says 18 (narrow bucket only). This agent's actual
+  fix count for that one file: **~112 replacement sites** across the full pattern class
+  (`TD-\d+`, `ADR-\d+`, `DUR-\d+`, `Q-0\d`, `SCOPE-\d+`, `GAP-\d+`, `QB-\d+`, `Rule \d+`,
+  memory-rule-slugs in `[[...]]` form, `V1-CANONICAL`, session dates). Not in tension with
+  the audit's 18 — that number was always scoped to the narrow bucket only.
+- **The audit's own §5 `Rule \d+` sample said "30 hits, 12 files" for the ENTIRE 182-file
+  codebase.** A grep of just THIS scope's 43 files independently found the same 30 hits
+  distributed across files this list didn't fully enumerate for this directory (`context.rs`,
+  `ingest/pipeline/deferred.rs` were in the audit's 12; several more `Rule \d+`-adjacent
+  hits surfaced only once the broader net — `spec §`, `MNT-002`, `V1-CANONICAL`, `FU\.\d`,
+  `D9`/`D9a`, `C\d+ spec`, `\.ai-docs/` paths, `ADR-Phase-` — was applied to the same files).
+  This confirms the audit's per-pattern counts are a **lower bound**, not a ceiling: files can
+  (and in this scope routinely did) carry violation classes the original 14-pattern sweep
+  never tested for.
+- **Files in this scope with material hit counts that don't appear in the audit's §4 table at
+  all**: `identity_verdict.rs` (25 fixes — `spec §`, `MNT-002`, `RISK-001`, `S4`/`S2` spike
+  labels, memory-rule-slugs), `entity_types.rs` (25 fixes — `spec §` ×11, `ASMP-00\d` ×3, and
+  the `D9`/`D9a` decision-label shorthand used unexplained 14 times), `format.rs` (10 fixes —
+  `Story #151`/`#152`/`#164`), `speculative_cache.rs` (11 fixes — `Story #149`, `FU.\d`
+  follow-up-task labels), `text_utils.rs` (8 fixes — `Story #148`/`#149`, `FU.5`),
+  `resolver_batched.rs` (5 fixes — `RISK-00\d`), `engine.rs` (5 fixes — `Story #5`), `error.rs`
+  (8 fixes — `DUR-3`, `Story #5`/`#150`/`#155`/`#209`, `arch-spec §`), `rates.rs` (4 fixes —
+  `TD-133`), `contradiction.rs`/`arena.rs`/`mod.rs`/`confidence.rs`/`rerank.rs`/`sink.rs`
+  (1–3 fixes each — `Option-1`, `P4`/`A.0`/`K7` internal spike labels, `MNT-002`,
+  `spec §`/`R4 §`, `Risk #N`). None of these files appear in the audit's §4 table, which only
+  sampled a subset of the codebase for its worked-example illustration, not an exhaustive
+  per-file census.
+
+### New violation classes found in this scope, not in the audit's original pattern list
+
+Beyond the `Rule \d+` class the audit itself flagged as newly-discovered (§5):
+
+- **`DUR-\d+`** — an internal invariant/decision numbering scheme (`DUR-2`, `DUR-3`, `DUR-7`),
+  heaviest in `ingest_with.rs` (~15 occurrences) and `deferred.rs`/`sink.rs`/`error.rs`/
+  `speculative_cache.rs`.
+- **`Story #\d+`/`Story #[A-Z]\d+`** — internal tracking-story IDs (e.g. `Story #148`,
+  `Story #A1`), found in 9 files across this scope, never mentioned in the audit.
+- **`\[\[memory-rule-slug\]\]`** — the maintainer's own personal global rule-file citations in
+  double-bracket form (e.g. `[[load-bearing-invariants-at-emit-not-prompt]]`,
+  `[[treat-cause-not-symptom]]`, `[[audit-what-guards-mask-before-deleting]]`,
+  `[[observability-first-class]]`, `[[llm-output-parse-loudly]]`). Arguably the single WORST
+  instance of the pattern the whole audit is about: even `Rule 19` at least resolves to a
+  numbered heading in a file that exists (`~/.claude/CLAUDE.md`); a memory-rule-slug resolves
+  to a markdown file in the maintainer's private `~/.claude/rules/` or session-memory
+  directory that has no stable public identity at all. Found in `identity_verdict.rs`,
+  `ingest_with.rs` (×2), `ingest/mod.rs` (deferred.rs's precursor pass).
+- **`V1-CANONICAL §N.N`** — an internal canonical-spec-document name+section citation, distinct
+  from `ADR-\d+`/`TD-\d+` (no numeric ID to grep for), found in `config.rs`, `sink.rs`,
+  `schema.rs`, `search.rs`, `deferred.rs`.
+  **`Q-0\d`/`SCOPE-\d+`/`GAP-\d+`/`QB-\d+`** — one-off internal finding/decision-tag families,
+  each occurring only in `ingest_with.rs` but each unambiguously the same unresolvable-citation
+  shape as `RISK-\d+`/`ASMP-\d+`/`MED-\d+`.
+- **`spec §N.N` / `C\d+ spec §N.N` / `arch-spec §N.N` / `arch spec §N.N`** — bare internal
+  design/architecture-spec section references with no accompanying ADR/TD number, so invisible
+  to the audit's original regex set entirely. The single largest additional-fix contributor in
+  this scope — found in 9 files, ~35 total sites.
+- **`.ai-docs/research/...\.md` / `.ai-docs/specs/...\.md` inline paths** — internal doc-path
+  citations embedded directly in `///` doc comments (not just alongside a TD/ADR number),
+  found in `extraction_window.rs`, `context.rs`.
+- **`ADR-Phase-[A-Z]\.\d:\d+`** — a non-numeric ADR variant (e.g. `ADR-Phase-D.0:88`) that the
+  audit's `ADR-\d+` regex cannot match at all (no digits immediately after `ADR-`). Found in
+  `extraction_window.rs`, `config.rs`.
+- **`MNT-002`** — an internal "maintenance pattern" tag, found in `identity_verdict.rs` (×5)
+  and `mod.rs`.
+- **`FU\.\d` (`FU.2`, `FU.5`, `FU.6`)** — internal "follow-up task N" numbering, found in
+  `text_utils.rs`, `speculative_cache.rs`, `schema.rs`.
+- **`D9`/`D9a`** (entity_types.rs only, 14 occurrences) and **`P4`/`A.0`/`K7`** (arena.rs,
+  3 occurrences) — bare internal decision-label shorthand used the SAME way `Rule \d+` and
+  `TD-\d+` are used elsewhere: as a parenthetical justification tag that assumes the reader
+  already knows what the letter+number means, rather than stating the invariant plainly.
+  Distinguished from the legitimate bare-label precedent (`Site #N`, `Migration NNN`,
+  `Pass 0/1/2`, `Phase 1/2 ingest`, `L1`–`L7`) by whether the label is EXPLAINED once and used
+  consistently as real domain vocabulary (kept) vs. cited repeatedly as an unexplained
+  reference back to an external decision record (stripped). `D9`/`D9a` failed this test —
+  it was consistently used as `"(D9)"`/`"(D9a)"` parenthetical tags across 14 sites, always
+  requiring the reader to already know the referent, never itself defining the invariant at
+  most of those sites.
+
+### Ambiguous bare labels deliberately LEFT UNTOUCHED (judgment calls, flagged per the task's
+own instruction not to guess)
+
+- **`D7:`** (deferred.rs, mod.rs, ingest_with.rs — recurring, e.g. "D7: episode_id is a tracing
+  field only, NEVER a metric label") — a real, consistently-explained metric-cardinality rule
+  used as domain shorthand, not a citation back to an external record. Kept per the
+  `Site #N`/`Migration NNN` precedent.
+- **`Bug A`/`Bug B`/`Bug E`** (ingest_with.rs) — bare section-marker labels with no numeric
+  citation attached; read as local structural headings within the function, not references to
+  an external bug tracker. Left alone.
+- **`P0`** (ingest_with.rs, "pure P0 behaviour") — a baseline-behavior shorthand with no
+  adjacent citation; ambiguous whether it originates from an internal spec's phase-numbering
+  scheme, but occurs bare with no explanatory tag attached to strip. Left alone.
+- **`G1`/`G2`/`G3`** (schema.rs, `migrate_006` test suite — "G1 shape gate", "G2 pre-condition
+  gate", "G3 gate must fire") — flagged as a genuine judgment call, not a confident classification.
+  These *may* derive from an external review's G-numbered findings (the pattern shape matches
+  `MED-NN`/`HIGH-NN` structurally), but within the test suite they read as locally-defined gate
+  names with their own inline explanation each time. Left untouched; recommend a follow-up
+  agent with access to the review history that produced them re-examine this one.
+
+### The `adr_reference_integrity.rs` test — a real, fixed consequence of this scope's edits
+
+`cargo nextest` initially failed 1 test after this scope's edits landed:
+`adr_reference_integrity::exempt_numbers_are_all_still_needed`, panicking with *"ADR-020 is
+exempt but nothing under `crates/` cites it any more — delete the dead exemption."* Unlike
+§9's ADR-019 case (flagged, not fixed, because it was outside that agent's scope), **this one
+WAS caused by this scope's edits** — `schema.rs`'s `BeginGuard`-related citations, part of
+this scope, carried the last remaining `ADR-020` reference under `crates/`. Fixed directly:
+removed the now-dead `"020"` entry from `EXEMPT_ADR_NUMBERS` in
+`crates/kremory/tests/it/adr_reference_integrity.rs`, following the exact precedent the file's
+own doc comment already established for the ADR-019 case (both removals are now documented in
+the same comment, in the same historical note). Re-verified: `grep -rn 'ADR-020' crates/`
+returns only the doc-comment prose describing the removal (which is excluded from the guard's
+own scan via `SELF_PATH`, so it cannot re-trigger the check).
+
+### Total scale (this scope)
+
+- **43 files** in scope; **19 files** required at least one fix
+  (`intelligence.rs`, `identity_verdict.rs`, `format.rs`, `entity_types.rs`, `extraction_window.rs`,
+  `text_utils.rs`, `error.rs`, `resolver_batched.rs`, `engine.rs`, `sink.rs`,
+  `speculative_cache.rs`, `rates.rs`, `schema.rs`, `arena.rs`, `contradiction.rs`,
+  `resolver_batched.rs`, `context.rs`, `confidence.rs`, `rerank.rs`, `mod.rs`, `search.rs`,
+  `config.rs`, `ingest/tests.rs`, `ingest/helpers.rs`, `ingest/pipeline/types.rs`,
+  `ingest/pipeline/phase1.rs`, `ingest/pipeline/deferred.rs`, `ingest/pipeline/ingest_with.rs`
+  — 27 files with confirmed fixes, some via a second later sweep after the broadened net).
+- **~330 individual comment/doc-string replacement sites** across those 27 files (single
+  largest: `ingest_with.rs` at ~112; `search.rs` ~75; `config.rs` 65; `schema.rs` ~73;
+  `identity_verdict.rs` 25; `entity_types.rs` 25).
+- **24 files with zero hits** on the full broadened pattern net (verified, not assumed):
+  `intent.rs`, `ner.rs`, `chunking.rs`, `hybrid_extractor.rs`, `hybrid_extractor_helpers.rs`,
+  `hybrid_extractor_parsing.rs`, `hybrid_extractor_prompts.rs`, `chat_tracking.rs`,
+  `embedding.rs`, `embed_prefix.rs`, `proximity.rs`, `grounding.rs`, `obs.rs`, and 11 more.
+
+### Full quality gate (this scope)
+
+- `cargo check -p kremory --features content-search` — clean after every file, no errors
+  introduced (run incrementally, ~15 times, once per file/batch).
+- `cargo build -p kremory` — exit 0.
+- `cargo clippy -p kremory --all-targets --all-features` — exit 0, zero warnings.
+- `cargo nextest run -p kremory -p kremory-mcp --features content-search,test-utils` —
+  **1800/1800 passed, 6 skipped, 0 failed** (after fixing the `adr_reference_integrity.rs`
+  dead-exemption regression this scope's own edits caused — see above; the fix is a test-suite
+  change, not a source-comment change, and is the one edit in this pass outside the
+  `core/*.rs`/`core/ingest/**` scope, made because the task's quality-gate requirement cannot
+  be satisfied otherwise).
