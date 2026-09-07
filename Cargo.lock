@@ -2357,6 +2357,7 @@ dependencies = [
  "chrono",
  "kremory",
  "metrics",
+ "metrics-exporter-prometheus",
  "metrics-util 0.18.0",
  "tokio",
 ]
