@@ -180,23 +180,24 @@ fn extract_adr_refs(text: &str) -> BTreeSet<String> {
 
 /// ADR numbers cited under `crates/` that legitimately have no `adr-NNN-*` file.
 ///
-/// These three are v0.1.0-era decisions that were recorded as ROWS in the
-/// architect index rather than promoted to standalone files. They are real,
-/// ratified and still load-bearing in the code that cites them — the record
-/// simply lives in a different artifact shape, so demanding a file would be
-/// demanding a rewrite of settled history.
+/// These are v0.1.0-era decisions that were recorded as ROWS in the architect
+/// index rather than promoted to standalone files. They are real, ratified and
+/// still load-bearing in the code that cites them — the record simply lives in
+/// a different artifact shape, so demanding a file would be demanding a
+/// rewrite of settled history.
 ///
 /// Spelled out one number at a time, each with the line that holds it, rather
 /// than expressed as a range (`< 026`) — a range would silently absorb any
 /// future dangling reference in that span, which is the failure this guard
 /// exists to catch. `exempt_numbers_are_all_still_needed` below fails if any
 /// entry stops being necessary, so an exemption cannot outlive its reason.
-const EXEMPT_ADR_NUMBERS: [(&str, &str); 3] = [
-    (
-        "019",
-        "insert_fact tx-wrap / atomicity-gap closure — recorded at \
-         .ai-docs/architecture/kremory-v010-architect-INDEX-2026-05-26.md:241, never a file",
-    ),
+///
+/// ADR-019 was removed from this list on 2026-09-07: a comment-hygiene pass
+/// stripped every citation to it under `crates/` (it had cited only doc
+/// comments, none of which resolved to a file — exactly the exemption this
+/// list existed for), so `exempt_numbers_are_all_still_needed` correctly
+/// caught the exemption as dead and this list follows its own rule.
+const EXEMPT_ADR_NUMBERS: [(&str, &str); 2] = [
     (
         "020",
         "BeginGuard explicit-commit discipline — recorded at \
@@ -209,7 +210,7 @@ const EXEMPT_ADR_NUMBERS: [(&str, &str); 3] = [
     ),
 ];
 
-/// The doc that holds the three exempt decisions. If it moves, the justifications
+/// The doc that holds the exempt decisions above. If it moves, the justifications
 /// above become unverifiable and the exemptions must be re-grounded.
 const EXEMPTION_SOURCE_DOC: &str =
     ".ai-docs/architecture/kremory-v010-architect-INDEX-2026-05-26.md";
