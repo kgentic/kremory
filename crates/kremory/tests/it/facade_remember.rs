@@ -8,6 +8,7 @@
 
 use kremory::{DynEmbeddingProvider, Memory, MemoryError, Namespace, SourceKind};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// `remember()` without namespace returns MissingNamespace before graph call.
 #[tokio::test]
@@ -72,6 +73,66 @@ fn remember_batch_chain_compiles() {
         .in_namespace(Namespace::new("ns"))
         .done()
         .with_batch_id("batch-abc");
+}
+
+/// F43 regression (public-docs-and-api-surface-audit phase1-findings.md):
+/// a real multi-episode batch via `remember_batch()` + `await_batch()` must
+/// report done, not hang/time out.
+///
+/// Root cause (verified against a REAL `EngineGraphHandle`, not a stub —
+/// `open_no_ns()` wires an in-memory libSQL graph + null LLM/embedder, the
+/// same real-substrate pattern the rest of this file uses):
+/// `RememberBatchBuilder::execute()` always drives each episode through the
+/// INLINE `graph_ingest_episode` branch (`enrich_per_episode: true,
+/// run_in_background: false` — see `facade/remember.rs`), which calls
+/// `batch_status_increment_completed`/`_skipped` in `engine_handle.rs`.
+/// Before the fix, those functions set `total: 1` ONLY on the first
+/// episode's `or_insert` and never incremented it again on the
+/// `and_modify` branch, so `BatchStatus::is_done()`
+/// (`completed+skipped+failed==total`) could never hold once more than one
+/// episode completed. A batch of exactly 1 episode was unaffected (it never
+/// reaches `and_modify`), which is why this needs ≥2 episodes to reproduce.
+#[tokio::test]
+async fn remember_batch_of_three_reports_done_not_timeout() {
+    let mem = open_no_ns().await;
+    let batch_id = "f43-regression-batch";
+    let ns = Namespace::new("f43-ns");
+
+    let commits = mem
+        .remember_batch()
+        .entry("episode one")
+        .in_namespace(ns.clone())
+        .done()
+        .entry("episode two")
+        .in_namespace(ns.clone())
+        .done()
+        .entry("episode three")
+        .in_namespace(ns.clone())
+        .done()
+        .with_batch_id(batch_id)
+        .await
+        .expect("batch of 3 with null LLM/embedder should not fail to ingest");
+    assert_eq!(commits.len(), 3, "all 3 episodes should have committed");
+
+    // Before the fix this reliably timed out: BatchStatus { total: 1,
+    // completed: 3, .. } never satisfies is_done(). The timeout here is
+    // short deliberately — the inline batch path completes synchronously
+    // inside `remember_batch()` above, so `await_batch`'s first poll
+    // already sees a terminal DashMap entry; it should not need to wait at
+    // all, let alone time out.
+    let status = mem
+        .await_batch(batch_id, Duration::from_secs(3))
+        .await
+        .expect("await_batch must not time out for a 3-episode inline batch");
+    assert!(
+        status.is_done(),
+        "expected is_done() == true, got {status:?}"
+    );
+    assert_eq!(
+        status.total, 3,
+        "total must track all 3 episodes, not just the first"
+    );
+    assert_eq!(status.completed + status.skipped + status.failed, 3);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -983,9 +983,23 @@ impl GraphHandle for EngineGraphHandle {
 // Batch status helpers (private)
 // ---------------------------------------------------------------------------
 
+// F43 cause-fix: these two functions are the ONLY batch-status writers on the
+// INLINE ingest path (`graph_ingest_episode`'s `run_in_background: false`
+// branch, which `RememberBatchBuilder::execute()` always takes — see
+// `facade/remember.rs`). Unlike the background-spawn path above, the inline
+// path never pre-registers `total` before completion; each call here IS the
+// only signal that "one more episode in this batch reached a terminal
+// status." `total` must therefore be incremented on EVERY call (both the
+// `and_modify` and `or_insert` arms), not just the first (`or_insert`) one —
+// the prior code left `total` pinned at 1 forever after the first episode,
+// so `BatchStatus::is_done()` (`completed + skipped + failed == total`) could
+// never hold for a batch of 2+ episodes.
 fn batch_status_increment_completed(map: &DashMap<String, BatchStatus>, batch_id: &str) {
     map.entry(batch_id.to_owned())
-        .and_modify(|s| s.completed += 1)
+        .and_modify(|s| {
+            s.total += 1;
+            s.completed += 1;
+        })
         .or_insert(BatchStatus {
             total: 1,
             completed: 1,
@@ -996,7 +1010,10 @@ fn batch_status_increment_completed(map: &DashMap<String, BatchStatus>, batch_id
 
 fn batch_status_increment_skipped(map: &DashMap<String, BatchStatus>, batch_id: &str) {
     map.entry(batch_id.to_owned())
-        .and_modify(|s| s.skipped += 1)
+        .and_modify(|s| {
+            s.total += 1;
+            s.skipped += 1;
+        })
         .or_insert(BatchStatus {
             total: 1,
             completed: 0,
