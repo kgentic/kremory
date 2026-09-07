@@ -1,30 +1,588 @@
 /**
- * Any CSS included here will be global. The classic template
- * bundles Infima by default. Infima is a CSS framework designed to
- * work well for content-centric websites.
+ * kremory docs theme — "Architectural Systems Precision".
+ *
+ * Source of truth for every value in this file:
+ *   .context/stitch/kremory-redesign/DESIGN.md
+ *
+ * The design system's three load-bearing rules, which most of the overrides
+ * below exist to enforce against Infima's defaults:
+ *
+ *   1. Depth is PLANAR. Separation comes from 1px hairline rules and tonal
+ *      shifts, never from drop shadows or blurs. Infima ships shadows on
+ *      navbars, cards, dropdowns and code blocks; they are all removed here.
+ *   2. Corners are MILLED, not friendly. 4px default; 6-8px only on large
+ *      technical frames. Pills are forbidden — badges/tags are square.
+ *   3. Code is a CARBON SURFACE in both colour modes. A terminal does not
+ *      turn white because the page did.
+ *
+ * Colour roles (`overrideXColor` values from the design system, which are the
+ * real brand colours — NOT the washed-out Material-derived `namedColors`):
+ *   charcoal #121316 · gold #C49B5B · carbon #1D1F24 · bone #F9F8F5
+ *
+ * Accessibility note: the raw brand gold (#C49B5B) is a 2.4:1 contrast against
+ * bone and therefore cannot carry text. Text-bearing gold uses the design
+ * system's own accessible derivation instead — #7A581F in light (6.6:1) and
+ * #ECBF7C in dark (9.9:1). Raw #C49B5B is reserved for what the design system
+ * reserves it for: 1px accents, focus strokes, and graph nodes.
  */
 
-/* You can override the default Infima variables here. */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Brand tokens — mode-independent
+   ───────────────────────────────────────────────────────────────────────── */
 :root {
-  --ifm-color-primary: #2e8555;
-  --ifm-color-primary-dark: #29784c;
-  --ifm-color-primary-darker: #277148;
-  --ifm-color-primary-darkest: #205d3b;
-  --ifm-color-primary-light: #33925d;
-  --ifm-color-primary-lighter: #359962;
-  --ifm-color-primary-lightest: #3cad6e;
-  --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  --krem-charcoal: #121316;
+  --krem-carbon: #1d1f24;
+  --krem-carbon-rule: #2a2c33;
+  --krem-gold: #c49b5b;
+  --krem-gold-text: #7a581f;
+  --krem-gold-dim: #ecbf7c;
+  --krem-bone: #f9f8f5;
+  --krem-bone-panel: #f4f2ec;
+  --krem-rule: #e4e1d8;
+
+  /* Spacing scale — 4px grid. */
+  --krem-space-2xs: 4px;
+  --krem-space-xs: 8px;
+  --krem-space-sm: 12px;
+  --krem-space-md: 16px;
+  --krem-space-lg: 24px;
+  --krem-space-xl: 32px;
+  --krem-space-2xl: 48px;
+  --krem-space-3xl: 64px;
+  --krem-space-4xl: 96px;
 }
 
-/* For readability concerns, you should choose a lighter palette in dark mode. */
+/* ─────────────────────────────────────────────────────────────────────────
+   Light mode — the drafting surface
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --ifm-color-primary: #7a581f;
+  --ifm-color-primary-dark: #6b4d1a;
+  --ifm-color-primary-darker: #5f4417;
+  --ifm-color-primary-darkest: #4f3913;
+  --ifm-color-primary-light: #8c6626;
+  --ifm-color-primary-lighter: #9c722b;
+  --ifm-color-primary-lightest: #b48335;
+
+  --ifm-background-color: var(--krem-bone);
+  --ifm-background-surface-color: var(--krem-bone-panel);
+  --ifm-font-color-base: #1a1c1a;
+  --ifm-heading-color: var(--krem-charcoal);
+  --ifm-color-emphasis-100: #f4f2ec;
+  --ifm-color-emphasis-200: #eae7de;
+  --ifm-color-emphasis-300: var(--krem-rule);
+  --ifm-toc-border-color: var(--krem-rule);
+  --ifm-hr-border-color: var(--krem-rule);
+  --ifm-table-border-color: var(--krem-rule);
+  --ifm-table-stripe-background: #f4f2ec;
+  --ifm-table-head-background: #efece4;
+
+  --ifm-navbar-background-color: rgba(249, 248, 245, 0.94);
+  --ifm-navbar-link-color: #46464b;
+  --ifm-navbar-link-hover-color: var(--krem-charcoal);
+  --ifm-menu-color: #46464b;
+  --ifm-menu-color-active: var(--krem-charcoal);
+  --ifm-menu-color-background-active: #efece4;
+  --ifm-menu-color-background-hover: #f4f2ec;
+  --ifm-breadcrumb-color-active: var(--krem-charcoal);
+  --ifm-breadcrumb-item-background-active: #efece4;
+
+  --krem-surface: var(--krem-bone);
+  --krem-panel: var(--krem-bone-panel);
+  --krem-border: var(--krem-rule);
+  --krem-muted: #46464b;
+  --krem-accent-text: var(--krem-gold-text);
+
+  --docusaurus-highlighted-code-line-bg: rgba(196, 155, 91, 0.16);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Dark mode — the carbon plane
+   ───────────────────────────────────────────────────────────────────────── */
 [data-theme='dark'] {
-  --ifm-color-primary: #25c2a0;
-  --ifm-color-primary-dark: #21af90;
-  --ifm-color-primary-darker: #1fa588;
-  --ifm-color-primary-darkest: #1a8870;
-  --ifm-color-primary-light: #29d5b0;
-  --ifm-color-primary-lighter: #32d8b4;
-  --ifm-color-primary-lightest: #4fddbf;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --ifm-color-primary: #ecbf7c;
+  --ifm-color-primary-dark: #e0af69;
+  --ifm-color-primary-darker: #d5a25a;
+  --ifm-color-primary-darkest: #c9964b;
+  --ifm-color-primary-light: #f0c98e;
+  --ifm-color-primary-lighter: #f4d3a0;
+  --ifm-color-primary-lightest: #f8ddb3;
+
+  --ifm-background-color: var(--krem-charcoal);
+  --ifm-background-surface-color: var(--krem-carbon);
+  --ifm-font-color-base: #e6e5e1;
+  --ifm-heading-color: #f2f1ee;
+  --ifm-color-emphasis-100: #1d1f24;
+  --ifm-color-emphasis-200: #24262c;
+  --ifm-color-emphasis-300: var(--krem-carbon-rule);
+  --ifm-toc-border-color: var(--krem-carbon-rule);
+  --ifm-hr-border-color: var(--krem-carbon-rule);
+  --ifm-table-border-color: var(--krem-carbon-rule);
+  --ifm-table-stripe-background: #1a1c20;
+  --ifm-table-head-background: #1d1f24;
+
+  --ifm-navbar-background-color: rgba(18, 19, 22, 0.94);
+  --ifm-navbar-link-color: #a1a2a8;
+  --ifm-navbar-link-hover-color: #f2f1ee;
+  --ifm-menu-color: #a1a2a8;
+  --ifm-menu-color-active: #f2f1ee;
+  --ifm-menu-color-background-active: #1d1f24;
+  --ifm-menu-color-background-hover: #1a1c20;
+  --ifm-breadcrumb-color-active: #f2f1ee;
+  --ifm-breadcrumb-item-background-active: #1d1f24;
+
+  --krem-surface: var(--krem-charcoal);
+  --krem-panel: var(--krem-carbon);
+  --krem-border: var(--krem-carbon-rule);
+  --krem-muted: #9a9ba1;
+  --krem-accent-text: var(--krem-gold-dim);
+
+  --docusaurus-highlighted-code-line-bg: rgba(196, 155, 91, 0.14);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Typography — Inter for structure, JetBrains Mono for constructs
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --ifm-font-family-base: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Helvetica, Arial, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', ui-monospace, SFMono-Regular,
+    Menlo, Consolas, monospace;
+
+  --ifm-font-size-base: 16px;
+  --ifm-line-height-base: 1.625;
+  --ifm-heading-font-weight: 600;
+  --ifm-h1-font-size: 2.25rem;
+  --ifm-h2-font-size: 1.625rem;
+  --ifm-h3-font-size: 1.25rem;
+  --ifm-code-font-size: 88%;
+  --ifm-code-padding-horizontal: 0.32rem;
+  --ifm-code-padding-vertical: 0.12rem;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  letter-spacing: -0.03em;
+}
+
+/* Section headings sit on a drafting rule, per "Drafting Rules": main layout
+   zones snap to continuous 1px lines rather than being separated by whitespace margin. */
+.markdown > h2 {
+  border-top: 1px solid var(--krem-border);
+  padding-top: var(--krem-space-lg);
+  margin-top: var(--krem-space-2xl);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Shapes — milled corners, no pills
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --ifm-global-radius: 0.25rem;
+  --ifm-button-border-radius: 0.25rem;
+  --ifm-code-border-radius: 0.25rem;
+  --ifm-pre-border-radius: 0.375rem;
+  --ifm-alert-border-radius: 0.25rem;
+  --ifm-card-border-radius: 0.25rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Elevation — planar only. Every Infima shadow is removed and replaced with
+   a hairline stroke. This is rule 1 of the design system.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --ifm-global-shadow-lw: none;
+  --ifm-global-shadow-md: none;
+  --ifm-global-shadow-tl: none;
+  --ifm-navbar-shadow: none;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--krem-border);
+  backdrop-filter: blur(8px);
+}
+
+.navbar-sidebar,
+.dropdown__menu,
+.navbar__items .dropdown__menu {
+  box-shadow: 0 2px 4px rgba(18, 19, 22, 0.06);
+  border: 1px solid var(--krem-border);
+}
+
+.theme-doc-sidebar-container {
+  border-right: 1px solid var(--krem-border) !important;
+}
+
+.card {
+  box-shadow: none;
+  border: 1px solid var(--krem-border);
+  background: var(--krem-panel);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Focus — a 1px gold stroke, never a fuzzy halo
+   ───────────────────────────────────────────────────────────────────────── */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.menu__link:focus-visible,
+.navbar__link:focus-visible {
+  outline: 1px solid var(--krem-gold);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Links
+   ───────────────────────────────────────────────────────────────────────── */
+.markdown a:not(.card):not(.button) {
+  text-decoration-color: color-mix(in srgb, var(--ifm-color-primary) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.markdown a:not(.card):not(.button):hover {
+  text-decoration-color: currentColor;
+}
+
+/* Active nav item gets the gold underline the design uses for active state. */
+.navbar__link--active {
+  color: var(--ifm-navbar-link-hover-color);
+  border-bottom: 1px solid var(--krem-gold);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Code — inline is a tinted chip; blocks are a carbon monolith in BOTH modes
+   ───────────────────────────────────────────────────────────────────────── */
+/* Inline code only. `:not(pre) > code` is load-bearing: without it this rule
+   also paints the <code> INSIDE every fenced block, which lays a light panel
+   over the carbon surface and leaves the syntax colours stranded on it. */
+:not(pre) > code {
+  font-family: var(--ifm-font-family-monospace);
+  background: var(--krem-panel);
+  border: 1px solid var(--krem-border);
+  border-radius: 2px;
+}
+
+[data-theme='dark'] :not(pre) > code {
+  background: #1a1c20;
+  border-color: var(--krem-carbon-rule);
+}
+
+/* Rule 3: a terminal does not turn white because the page did. Both colour
+   modes render fenced blocks on the same carbon surface.
+
+   Selectors use [class*=] rather than [class^=]: Docusaurus emits the CSS
+   Module hash and the stable `theme-` class in either order, so anchoring to
+   the start of the attribute silently matches nothing. */
+.theme-code-block,
+div[class*='codeBlockContainer'] {
+  box-shadow: none !important;
+  border: 1px solid var(--krem-carbon-rule);
+  border-radius: 0.375rem;
+  overflow: hidden;
+}
+
+div[class*='codeBlockContent'],
+.theme-code-block > div {
+  background: var(--krem-charcoal);
+}
+
+/* The prism theme writes background-color and color as INLINE styles on the
+   <pre>, so both need !important to be reachable from a stylesheet. */
+pre.prism-code,
+.theme-code-block pre {
+  background-color: var(--krem-charcoal) !important;
+  color: #dedcd7 !important;
+}
+
+pre.prism-code code {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* The utility bar the design puts above every terminal block. */
+div[class*='codeBlockTitle'] {
+  background: var(--krem-carbon) !important;
+  border-bottom: 1px solid var(--krem-carbon-rule) !important;
+  color: #a1a2a8 !important;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Syntax: gold reserved for keywords and pointers, slate for comments,
+   crisp white for parameters — per the design's Code & Terminal Blocks spec.
+   Prism emits per-token inline colours from the theme, hence !important. */
+.token.keyword,
+.token.builtin,
+.token.rule,
+.token.important,
+.token.atrule {
+  color: var(--krem-gold) !important;
+}
+
+.token.comment,
+.token.prolog,
+.token.cdata {
+  color: #7c7f88 !important;
+  font-style: normal !important;
+}
+
+.token.string,
+.token.char,
+.token.attr-value,
+.token.regex {
+  color: #cfae7e !important;
+}
+
+.token.function,
+.token.class-name,
+.token.namespace,
+.token.macro {
+  color: #f2f1ee !important;
+}
+
+.token.number,
+.token.boolean,
+.token.constant,
+.token.symbol {
+  color: #e0af69 !important;
+}
+
+.token.punctuation,
+.token.operator {
+  color: #9a9ba1 !important;
+}
+
+.token.property,
+.token.tag,
+.token.attr-name,
+.token.variable,
+.token.parameter,
+.token.plain {
+  color: #dedcd7 !important;
+}
+
+.token.deleted {
+  color: #e6837f !important;
+}
+
+.token.inserted {
+  color: #9ec78a !important;
+}
+
+/* Copy button — square, hairline, no fill. */
+button[class*='copyButton'] {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid var(--krem-carbon-rule) !important;
+  border-radius: 2px !important;
+  color: #a1a2a8 !important;
+}
+
+button[class*='copyButton']:hover {
+  border-color: var(--krem-gold) !important;
+  color: #f2f1ee !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Admonitions — structural panes with a hairline, not tinted blobs
+   ───────────────────────────────────────────────────────────────────────── */
+.theme-admonition {
+  border: 1px solid var(--krem-border);
+  border-left-width: 2px;
+  box-shadow: none;
+  background: var(--krem-panel);
+}
+
+.theme-admonition .admonitionHeading_node_modules-\@docusaurus-theme-classic-lib-theme-Admonition-Layout-styles-module,
+.theme-admonition [class*='admonitionHeading'] {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Tables — drafting grid
+   ───────────────────────────────────────────────────────────────────────── */
+/* NOTE: do NOT set `display: table` here. Infima ships `display: block;
+   overflow: auto` on tables specifically so a wide table scrolls horizontally
+   instead of overflowing the content column — the comparison matrix is wider
+   than the viewport and gets clipped without it. Only the colours and the
+   hairline grid are overridden. */
+table {
+  border: 1px solid var(--krem-border);
+  border-radius: 0.25rem;
+  border-collapse: collapse;
+}
+
+table thead tr {
+  border-bottom: 1px solid var(--krem-border);
+}
+
+table th {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--krem-muted);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Buttons — per the design's three variants
+   ───────────────────────────────────────────────────────────────────────── */
+.button {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 0.25rem;
+  box-shadow: none;
+  border: 1px solid transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.button--primary {
+  background: var(--krem-charcoal);
+  border-color: var(--krem-charcoal);
+  color: var(--krem-bone);
+}
+
+.button--primary:hover {
+  background: var(--krem-carbon);
+  border-color: var(--krem-carbon);
+  border-bottom-color: var(--krem-gold);
+  color: var(--krem-bone);
+}
+
+.button--secondary {
+  background: var(--krem-panel);
+  border-color: var(--krem-border);
+  color: var(--ifm-font-color-base);
+}
+
+.button--secondary:hover {
+  background: var(--krem-panel);
+  border-color: var(--ifm-heading-color);
+  color: var(--ifm-heading-color);
+}
+
+[data-theme='dark'] .button--primary {
+  background: var(--krem-bone);
+  border-color: var(--krem-bone);
+  color: var(--krem-charcoal);
+}
+
+[data-theme='dark'] .button--primary:hover {
+  background: #eceae5;
+  border-color: #eceae5;
+  border-bottom-color: var(--krem-gold);
+  color: var(--krem-charcoal);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Badges & tags — square, never pills
+   ───────────────────────────────────────────────────────────────────────── */
+.badge,
+.pagination-nav__link,
+.breadcrumbs__link {
+  border-radius: 2px;
+}
+
+.pagination-nav__link {
+  border: 1px solid var(--krem-border);
+  background: var(--krem-panel);
+}
+
+.pagination-nav__sublabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--krem-muted);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Sidebar & TOC — mono section labels, hairline active state
+   ───────────────────────────────────────────────────────────────────────── */
+.menu__link {
+  border-radius: 2px;
+  font-size: 14px;
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  border-left: 2px solid var(--krem-gold);
+  border-radius: 0 2px 2px 0;
+  font-weight: 500;
+}
+
+.table-of-contents {
+  border-left: 1px solid var(--krem-border);
+  font-size: 13px;
+}
+
+.table-of-contents__link--active {
+  color: var(--ifm-heading-color);
+  font-weight: 500;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Footer — an elevated carbon monolith in both modes
+   ───────────────────────────────────────────────────────────────────────── */
+.footer--dark {
+  --ifm-footer-background-color: var(--krem-charcoal);
+  --ifm-footer-color: #a1a2a8;
+  --ifm-footer-link-color: #c8c7c3;
+  --ifm-footer-title-color: #f2f1ee;
+  border-top: 1px solid var(--krem-carbon-rule);
+}
+
+.footer__title {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.footer__link-item:hover {
+  color: var(--krem-gold-dim);
+}
+
+.footer__copyright {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11.5px;
+  color: #6d7079;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Navbar monogram — the charcoal `K` block from the design's header lockup.
+   The logo is an SVG so it carries its own colour; this only sizes it.
+   ───────────────────────────────────────────────────────────────────────── */
+.navbar__logo {
+  height: 1.75rem;
+  width: 1.75rem;
+}
+
+.navbar__title {
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }

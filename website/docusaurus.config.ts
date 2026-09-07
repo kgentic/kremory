@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'kremory',
   tagline: 'The SQLite of agent memory',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon-64.png',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
@@ -41,6 +41,16 @@ const config: Config = {
     locales: ['en'],
   },
 
+  headTags: [
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'apple-touch-icon',
+        href: '/img/apple-touch-icon.png',
+      },
+    },
+  ],
+
   presets: [
     [
       'classic',
@@ -59,8 +69,7 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with a real social card image when the site is actually deployed.
-    image: 'img/docusaurus-social-card.jpg',
+    image: 'img/social-card.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },
@@ -68,7 +77,11 @@ const config: Config = {
       title: 'kremory',
       logo: {
         alt: 'kremory logo',
-        src: 'img/logo.svg',
+        src: 'img/logo.png',
+        // The mark's charcoal strokes disappear against the carbon page in
+        // dark mode; the dark variant recolours only those strokes to bone
+        // and leaves the gold leg and junction node untouched.
+        srcDark: 'img/logo-dark.png',
       },
       items: [
         {
@@ -126,8 +139,13 @@ const config: Config = {
       copyright: `Copyright © ${new Date().getFullYear()} kgentic. Apache-2.0 licensed.`,
     },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      // Fenced code renders on the same carbon surface in BOTH colour modes
+      // (design system rule 3 — a terminal does not turn white because the
+      // page did), so both slots take a dark base theme. The actual token
+      // palette is overridden in src/css/custom.css.
+      theme: prismThemes.vsDark,
+      darkTheme: prismThemes.vsDark,
+      additionalLanguages: ['rust', 'toml', 'bash', 'json'],
     },
   } satisfies Preset.ThemeConfig,
 };
