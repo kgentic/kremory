@@ -447,6 +447,11 @@ mod defs_l;
 // defs_i's `content-search` gating exactly).
 #[cfg(feature = "content-search")]
 mod defs_m;
+// defs_n (steal-matrix-rescore item 2): migrate_027_fts5_porter_stemmer. NOT
+// feature-gated at the module level — its `entities_fts`/`facts_fts` steps
+// are unconditional (base schema); only its `episodes_fts` step is
+// `content-search`-gated internally, mirroring Migration 022's own gate.
+mod defs_n;
 
 pub(crate) use defs_a::*;
 pub(crate) use defs_b::*;
@@ -473,6 +478,8 @@ pub(crate) use defs_l::*;
 // the item level, so gate the re-export too (mirrors defs_i).
 #[cfg(feature = "content-search")]
 pub(crate) use defs_m::*;
+// defs_n: unconditional re-export — see the module-level comment above.
+pub(crate) use defs_n::*;
 
 #[cfg(test)]
 mod tests;

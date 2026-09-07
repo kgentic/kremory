@@ -993,6 +993,14 @@ impl TemporalGraph {
         #[cfg(feature = "content-search")]
         crate::core::migrations::migrate_026_episodes_embedding(&self.conn, dim).await?;
 
+        // Migration 027 (steal-matrix-rescore item 2): tokenize='porter unicode61'
+        // on entities_fts/facts_fts (unconditional) and episodes_fts
+        // (content-search only, gated internally). Idempotent: each table's
+        // own sqlite_master.sql is checked for "porter" before dropping +
+        // recreating + backfilling. MUST run after migrate_022/026 so
+        // episodes_fts already exists when this checks/rebuilds it.
+        crate::core::migrations::migrate_027_fts5_porter_stemmer(&self.conn).await?;
+
         Ok(())
     }
 
@@ -1737,6 +1745,203 @@ mod schema_tests {
             "facts.corroboration_inert must remain present exactly once after re-run \
              (idempotent — no duplicate-column error)"
         );
+    }
+
+    /// Migration 027 (steal-matrix-rescore item 2): `entities_fts` must stem via
+    /// porter, not just tokenize via unicode61. The discriminating assertion is
+    /// `MATCH 'painting'` finding a row stored as "...painted...": bare unicode61
+    /// requires an exact token match, so this assertion would go RED if the
+    /// `tokenize='porter unicode61'` clause were removed — proving the test is
+    /// sensitive to the mechanism it guards, not just to unicode61 already being
+    /// present (which predates this migration and would pass regardless).
+    #[tokio::test]
+    async fn migrate_027_entities_fts_stems_via_porter() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO entities (id, properties, recorded_at) \
+                 VALUES ('e1', 'painted the fence yesterday', datetime('now'))",
+                (),
+            )
+            .await
+            .expect("insert entity");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO entities_fts(entity_id, label, properties) VALUES ('e1', '', 'painted the fence yesterday')",
+                (),
+            )
+            .await
+            .expect("insert entities_fts row (mirrors production write path)");
+
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT entity_id FROM entities_fts WHERE entities_fts MATCH 'painting'",
+                (),
+            )
+            .await
+            .expect("fts match query");
+        let row = rows.next().await.expect("row").expect(
+            "porter stemming must match 'painting' against a stored 'painted' — \
+             if this fails, entities_fts is NOT using the porter tokenizer",
+        );
+        let id: String = row.get(0).expect("entity_id col");
+        assert_eq!(id, "e1");
+    }
+
+    /// Same discriminating assertion as the entities_fts test above, for
+    /// `facts_fts` — mirrors `insert_fact_with_group`'s own guard (a row is only
+    /// written when `object_value.is_some()`).
+    #[tokio::test]
+    async fn migrate_027_facts_fts_stems_via_porter() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO entities (id, recorded_at) VALUES ('e1', datetime('now'))",
+                (),
+            )
+            .await
+            .expect("insert entity");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO facts (subject_id, predicate, object_value, valid_from, recorded_at) \
+                 VALUES ('e1', 'did', 'painted the fence yesterday', datetime('now'), datetime('now'))",
+                (),
+            )
+            .await
+            .expect("insert fact");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO facts_fts(fact_id, predicate, object_value) VALUES (1, 'did', 'painted the fence yesterday')",
+                (),
+            )
+            .await
+            .expect("insert facts_fts row");
+
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT fact_id FROM facts_fts WHERE facts_fts MATCH 'painting'",
+                (),
+            )
+            .await
+            .expect("fts match query");
+        let row = rows.next().await.expect("row").expect(
+            "porter stemming must match 'painting' against a stored 'painted' — \
+             if this fails, facts_fts is NOT using the porter tokenizer",
+        );
+        let id: i64 = row.get(0).expect("fact_id col");
+        assert_eq!(id, 1);
+    }
+
+    /// content-search only: `episodes_fts` is external-content, so this also
+    /// exercises the backfill's `INSERT ... SELECT` shape (Migration 022's own
+    /// pattern, reused here after the porter drop+recreate).
+    #[cfg(feature = "content-search")]
+    #[tokio::test]
+    async fn migrate_027_episodes_fts_stems_via_porter() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO episodes (content, timestamp, recorded_at) \
+                 VALUES ('painted the fence yesterday', datetime('now'), datetime('now'))",
+                (),
+            )
+            .await
+            .expect("insert episode");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO episodes_fts(rowid, content) SELECT id, content FROM episodes WHERE content = 'painted the fence yesterday'",
+                (),
+            )
+            .await
+            .expect("insert episodes_fts row");
+
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH 'painting'",
+                (),
+            )
+            .await
+            .expect("fts match query");
+        rows.next().await.expect("row").expect(
+            "porter stemming must match 'painting' against a stored 'painted' — \
+             if this fails, episodes_fts is NOT using the porter tokenizer",
+        );
+    }
+
+    /// Idempotency + no data loss: running the full migration chain twice must
+    /// leave `entities_fts` with porter AND the backfilled row still findable —
+    /// proves `table_already_has_porter`'s gate actually short-circuits the
+    /// second DROP+CREATE (a bug here would silently discard the row on rerun).
+    #[tokio::test]
+    async fn migrate_027_is_idempotent_and_preserves_data_on_rerun() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO entities (id, properties, recorded_at) \
+                 VALUES ('e1', 'painted the fence yesterday', datetime('now'))",
+                (),
+            )
+            .await
+            .expect("insert entity");
+        graph
+            .conn
+            .execute(
+                "INSERT INTO entities_fts(entity_id, label, properties) VALUES ('e1', '', 'painted the fence yesterday')",
+                (),
+            )
+            .await
+            .expect("insert entities_fts row");
+
+        graph
+            .run_migrations_again_for_test()
+            .await
+            .expect("second run must be no-op, not an error");
+
+        let mut sql_rows = graph
+            .conn
+            .query(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entities_fts'",
+                (),
+            )
+            .await
+            .expect("sqlite_master query");
+        let sql: String = sql_rows
+            .next()
+            .await
+            .expect("row")
+            .expect("entities_fts must still exist")
+            .get(0)
+            .expect("sql col");
+        assert!(
+            sql.contains("porter"),
+            "entities_fts must still declare porter after a second migration run"
+        );
+
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT entity_id FROM entities_fts WHERE entities_fts MATCH 'painting'",
+                (),
+            )
+            .await
+            .expect("fts match query");
+        let row = rows.next().await.expect("row").expect(
+            "the backfilled row from before the second run must still be present and findable — \
+             a bug in the idempotency gate would DROP the table again and silently discard it",
+        );
+        let id: String = row.get(0).expect("entity_id col");
+        assert_eq!(id, "e1");
     }
 
     /// When facts_bak_006 is present, calling migrate_006 directly must return
