@@ -6,7 +6,7 @@ use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
 /// Bundled parameters for [`TemporalGraph::insert_entity_with_group`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to satisfy a too-many-arguments lint.
 pub struct InsertEntityWithGroupParams<'a> {
     pub id: &'a str,
     pub entity_type_id: u32,
@@ -15,7 +15,7 @@ pub struct InsertEntityWithGroupParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::upsert_entity_with_group`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to satisfy a too-many-arguments lint.
 pub struct UpsertEntityWithGroupParams<'a> {
     pub id: &'a str,
     pub entity_type_id: u32,
@@ -24,7 +24,7 @@ pub struct UpsertEntityWithGroupParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::set_entity_ner_confidence`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to satisfy a too-many-arguments lint.
 pub struct SetEntityNerConfidenceParams<'a> {
     pub id: &'a str,
     pub group_id: Option<&'a str>,
@@ -32,7 +32,7 @@ pub struct SetEntityNerConfidenceParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::update_entity_source_tier`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to satisfy a too-many-arguments lint.
 pub struct UpdateEntitySourceTierParams<'a> {
     pub id: &'a str,
     pub group_id: Option<&'a str>,
@@ -43,21 +43,20 @@ impl TemporalGraph {
     /// Insert an entity with an optional group_id.
     /// Existing tests use `insert_entity`; this variant is for new code that needs group scoping.
     ///
-    /// **Entity identity is per-namespace-open (ADR-029d, supersedes ADR-029b §3
-    /// real-entity fail-fast)**: the composite PK `(id, group_id)` (migration 004)
-    /// makes the same surface name in two namespaces two independent rows — the
-    /// competitor-standard model (Graphiti/Zep/mem0/Neo4j all isolate per
-    /// partition). This insert therefore SUCCEEDS across namespaces. A
-    /// cross-namespace name reuse is emitted as a NON-BLOCKING observability
-    /// signal (trace + `rql.entity.cross_namespace_collision_total` counter), not
-    /// an error — so multi-tenant/multi-conversation ingest is not aborted by a
-    /// generic recurring name ("the user", "Alice", "session 1").
+    /// **Entity identity is per-namespace-open**: the composite PK `(id, group_id)`
+    /// (migration 004) makes the same surface name in two namespaces two
+    /// independent rows — the competitor-standard model (Graphiti/Zep/mem0/Neo4j
+    /// all isolate per partition). This insert therefore SUCCEEDS across
+    /// namespaces. A cross-namespace name reuse is emitted as a NON-BLOCKING
+    /// observability signal (trace + `rql.entity.cross_namespace_collision_total`
+    /// counter), not an error — so multi-tenant/multi-conversation ingest is not
+    /// aborted by a generic recurring name ("the user", "Alice", "session 1").
     ///
     /// Strict global uniqueness (audit-grade single-tenant) is a NAMED-but-not-yet
-    /// -built opt-in (`NamespacePolicy::with_entity_identity_scope`, ADR-029d
-    /// Decision 3). Dangling `subject_id` references remain protected by the FK
-    /// constraint `facts → entities` (`PRAGMA foreign_keys = ON`), a separate
-    /// mechanism untouched here.
+    /// -built opt-in (`NamespacePolicy::with_entity_identity_scope`). Dangling
+    /// `subject_id` references remain protected by the FK constraint
+    /// `facts → entities` (`PRAGMA foreign_keys = ON`), a separate mechanism
+    /// untouched here.
     pub async fn insert_entity_with_group(
         &self,
         params: InsertEntityWithGroupParams<'_>,
@@ -69,15 +68,15 @@ impl TemporalGraph {
             group_id,
         } = params;
         let _db_start = Instant::now();
-        // ADR-029b: entities.group_id is NOT NULL post-migration-004. COALESCE maps
+        // entities.group_id is NOT NULL post-migration-004. COALESCE maps
         // None → 'default' so callers using None-as-unscoped retain their semantics
         // while the storage constraint is satisfied.
         let effective_group_id = group_id.unwrap_or("default");
-        // ADR-029d (supersedes ADR-029b §3 real-entity fail-fast): per-namespace-open.
-        // The same surface name in a DIFFERENT group_id is a legitimate independent
-        // row under the composite PK — NOT an error. We keep the detection purely as
-        // a NON-BLOCKING observability signal (a consumer may still want to know "you
-        // wrote a name that also exists in namespace X"), but the insert proceeds.
+        // Per-namespace-open: the same surface name in a DIFFERENT group_id is a
+        // legitimate independent row under the composite PK — NOT an error. We
+        // keep the detection purely as a NON-BLOCKING observability signal (a
+        // consumer may still want to know "you wrote a name that also exists in
+        // namespace X"), but the insert proceeds.
         //
         // Uses effective_group_id (not the raw Option) so None → 'default' is resolved
         // before comparison (so the same name written twice to 'default' is NOT flagged).
@@ -93,9 +92,9 @@ impl TemporalGraph {
                 let existing_ns: Option<String> = row.get(0).ok();
                 let existing_str = existing_ns.as_deref().unwrap_or("<null>").to_string();
                 let attempted_str = effective_group_id;
-                // Rule 19 (observability-first-class): this signal had a log line but
-                // no metric. Add the counter so cross-namespace name reuse is countable
-                // (e.g. to detect a consumer that expected strict-global identity).
+                // This signal had a log line but no metric. Add the counter so
+                // cross-namespace name reuse is countable (e.g. to detect a
+                // consumer that expected strict-global identity).
                 metrics::counter!(
                     "rql.entity.cross_namespace_collision_total",
                     "existing_ns" => existing_str.clone(),
@@ -109,7 +108,7 @@ impl TemporalGraph {
                     attempted_ns = %attempted_str,
                     "cross-namespace entity name reuse (per-namespace-open, ADR-029d — permitted, not an error)"
                 );
-                // ADR-029d: NO `return Err` — the insert below proceeds.
+                // Per-namespace-open: NO `return Err` — the insert below proceeds.
             }
         }
         let props_str = serde_json::to_string(&properties)?;
@@ -120,10 +119,10 @@ impl TemporalGraph {
         // called from inside the ingest pipeline's outer txn.
         let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
-            // ADR-045 §2 + migration-010-detail-spec §1.2: all callers of this method
-            // are Phase 1 entity inserts. Source-tier stamped 'Phase1Ner' at INSERT time.
-            // ner_confidence populated separately via set_entity_ner_confidence when
-            // a GLiNER span score is available (pipeline.rs Phase 1 entity loop).
+            // All callers of this method are Phase 1 entity inserts. Source-tier
+            // stamped 'Phase1Ner' at INSERT time. ner_confidence populated
+            // separately via set_entity_ner_confidence when a GLiNER span score
+            // is available (pipeline.rs Phase 1 entity loop).
             self.conn
                 .execute(
                     "INSERT INTO entities \
@@ -184,15 +183,15 @@ impl TemporalGraph {
         } = params;
         let now = Utc::now().to_rfc3339();
         let props_str = properties.to_string();
-        // ADR-029b: entities.group_id is NOT NULL post-migration-004; composite PK is
+        // entities.group_id is NOT NULL post-migration-004; composite PK is
         // (id, group_id). ON CONFLICT must target the composite PK.
         // None → 'default' so callers using None-as-unscoped retain their semantics.
         let effective_group_id = group_id.unwrap_or("default");
         let guard = self.begin_immediate_if_needed().await?;
         let inner: Result<()> = async {
-            // ADR-045 §2 / spec §1.2: stamp Phase1Ner on INSERT; preserve existing
-            // entity_type_source on conflict (stub-promotion must not overwrite a
-            // ConsumerPinned or Phase2Llm tier that was already assigned).
+            // Stamp Phase1Ner on INSERT; preserve existing entity_type_source on
+            // conflict (stub-promotion must not overwrite a ConsumerPinned or
+            // Phase2Llm tier that was already assigned).
             self.conn
                 .execute(
                     "INSERT INTO entities \
@@ -248,8 +247,6 @@ impl TemporalGraph {
     ///
     /// Called after GLiNER extraction inserts the entity row. Only writes when
     /// `confidence` is `Some` — no-op on `None` (LLM-only paths produce no score).
-    ///
-    /// Governing spec: migration-010-detail-spec §1.1 + ADR-045 §6 (Phase 1 GLiNER NER).
     pub async fn set_entity_ner_confidence(
         &self,
         params: SetEntityNerConfidenceParams<'_>,
@@ -276,8 +273,6 @@ impl TemporalGraph {
     /// Used exclusively by the ConsumerPinned write path in `pipeline.rs` after a
     /// `try_insert_fact_with_group` success — stamps `'ConsumerPinned'` so the dream
     /// reclassify pass skips this entity.
-    ///
-    /// Governing spec: migration-010-detail-spec §1.2 + ADR-045 §3 (ConsumerPinned protection).
     pub async fn update_entity_source_tier(
         &self,
         params: UpdateEntitySourceTierParams<'_>,
@@ -298,7 +293,7 @@ impl TemporalGraph {
             )
             .await
             .map_err(crate::core::error::Error::from)?;
-        // Rule 19 §3: per-source UPDATE counter so tier-flip writes are observable
+        // Per-source UPDATE counter so tier-flip writes are observable
         // independently of INSERT counters (update_entity_source_tier is UPDATE-only;
         // it never fires `entity_persisted_total`).
         metrics::counter!(

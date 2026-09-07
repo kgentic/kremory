@@ -1,7 +1,7 @@
 //! Serde models for LLM JSON output coercion.
 //!
 //! All `Raw*` structs, label helpers, and hybrid typing wrappers used across
-//! the extraction submodules. Split from `mod.rs` as part of TD-001 (E0-B).
+//! the extraction submodules. Split from `mod.rs`.
 
 // Items used only in #[cfg(test)] — suppress dead_code for non-test builds.
 #![allow(dead_code)]
@@ -111,14 +111,12 @@ pub(super) fn default_entity_label() -> String {
 /// This array exists only for prompt interpolation + test fixtures + alias-map
 /// canonical-form reference.
 ///
-/// TD-013 PR1-corrected (2026-06-03): the ENTITY_TYPE_ALLOWLIST positive
+/// The ENTITY_TYPE_ALLOWLIST positive
 /// hard-reject mechanism was DELETED. It was an ecosystem outlier — no peer
 /// agentic-memory system (Graphiti, Mem0, LightRAG, Cognee, LlamaIndex)
 /// uses a positive allowlist. Graphiti uses regex-only Cypher-safety
 /// validation; Cognee uses unconstrained `type: str`. kremory now follows
 /// Graphiti's pattern: structural-validity check + placeholder-reject only.
-/// See ADR adr-td-013-graph-quality-remediation-2026-06-03 (PR1-corrected
-/// amendment) and `feedback_vera_challenges_contents_user_challenges_mechanism`.
 pub const ENTITY_TYPE_CANONICAL_FORMS: &[&str] = &[
     // Core NER types (referenced in extraction prompts as guidance, not constraint)
     "Person",
@@ -198,7 +196,7 @@ pub fn normalize_label(raw: &str) -> String {
 
 /// Returns `true` when `label` passes structural validity + placeholder-reject.
 ///
-/// TD-013 PR1-corrected (2026-06-03): this function's semantics CHANGED from
+/// This function's semantics CHANGED from
 /// "positive allowlist match" to "structural validity + placeholder reject".
 /// Now accepts ANY label that is (a) not empty / "Entity" / "UNKNOWN", and
 /// (b) matches a Cypher-safe identifier pattern. Aligns with Graphiti's
@@ -207,7 +205,7 @@ pub fn normalize_label(raw: &str) -> String {
 /// call sites; the BEHAVIOR is now ecosystem-aligned.
 ///
 /// Placeholder labels ("Entity", "UNKNOWN", empty) ALWAYS return `false` —
-/// they indicate LLM classification failure (TD-012 protection preserved).
+/// they indicate LLM classification failure.
 pub fn is_canonical_entity_type(label: &str) -> bool {
     let trimmed = label.trim();
     if trimmed.is_empty()
@@ -273,9 +271,9 @@ pub(crate) struct RawEntitySimple {
     pub(crate) label: String,
 }
 
-// ─── L1: Integer-ID classification structs (TD-013) ─────────────────────────
+// ─── L1: Integer-ID classification structs ───────────────────────────────────
 
-/// Entity as emitted by the LLM in the integer-ID path (TD-013 L1).
+/// Entity as emitted by the LLM in the integer-ID path.
 ///
 /// The LLM emits `entity_type_id` — an integer constrained at decode time via
 /// JSON schema `enum` to the registered type IDs for this namespace.  Grammar
@@ -283,10 +281,10 @@ pub(crate) struct RawEntitySimple {
 /// out-of-range value from reaching the application; `validate_or_fallback`
 /// provides a second safety net for the PromptOnly fallback arm.
 ///
-/// Spike 1c/1d (2026-06-03) confirmed: qwen2.5:14b emits id=0 (catch-all)
+/// Empirically confirmed: qwen2.5:14b emits id=0 (catch-all)
 /// even when prompted to bypass — grammar physically prevents out-of-range.
-// NOTE: `#[serde(default)]` is intentionally REMOVED from `name` and `entity_type_id`
-// (2026-06-04). Previously defaults swallowed truncated LLM output: a fragmented
+// NOTE: `#[serde(default)]` is intentionally REMOVED from `name` and `entity_type_id`.
+// Previously defaults swallowed truncated LLM output: a fragmented
 // post-repair JSON like `[{"name":"Boston\", \"entity_type_id\":3}, {"}]` deserialized
 // as a single entity with name=<garbage> and entity_type_id=0 (the default), collapsing
 // all extractions to label="Entity". Without defaults, missing fields fail loudly so
@@ -307,7 +305,7 @@ pub(crate) struct RawEntityIntegerId {
     pub(crate) confidence: Option<f32>,
 }
 
-/// Wrapper for the integer-ID entity list (TD-013 L1).
+/// Wrapper for the integer-ID entity list.
 ///
 /// Root key `entities` matches the spike 1c grammar shape and aligns with
 /// Graphiti's extraction output format.  Distinct from `EntityListWrapper`
@@ -318,14 +316,13 @@ pub(crate) struct EntityListIntegerWrapper {
     pub(crate) entities: Vec<RawEntityIntegerId>,
 }
 
-// ─── TD-023 Hybrid typing schema (index-based) ───────────────────────────────
+// ─── Hybrid typing schema (index-based) ──────────────────────────────────────
 //
-// Per [[load-bearing-invariants-at-emit-not-prompt]] the candidate-to-typing
-// link is enforced STRUCTURALLY via a bounded integer index, NOT via name
-// preservation. Avoids fuzzy-match band-aids in the parser.
+// The candidate-to-typing link is enforced STRUCTURALLY via a bounded integer
+// index, NOT via name preservation. Avoids fuzzy-match band-aids in the parser.
 //
-// Required fields, NO #[serde(default)] per [[llm-output-parse-loudly]] —
-// missing field = parse error so the fallback ladder can retry.
+// Required fields, NO #[serde(default)] — missing field = parse error so the
+// fallback ladder can retry.
 
 #[cfg_attr(not(feature = "ner"), allow(dead_code))]
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -345,9 +342,8 @@ pub(crate) struct HybridTypingWrapper {
 
 /// Fact triplet as emitted by the IntegerIdLlmExtractor (stage 3).
 ///
-/// `subject`/`predicate`/`object` carry **no** `#[serde(default)]` (TD-133
-/// PREVENTION, per `llm-output-parse-loudly`): all three are content fields
-/// that are always consumed downstream — `subject` → `subject_id`, `object` →
+/// `subject`/`predicate`/`object` carry **no** `#[serde(default)]`: all three
+/// are content fields that are always consumed downstream — `subject` → `subject_id`, `object` →
 /// `object_id` (entity ref) or `object_value` (literal) in
 /// `ingest/pipeline/{deferred,ingest_with}.rs`. kremory has NO unary/object-less
 /// fact path, and an empty content field is filtered out as invalid. A default
@@ -364,10 +360,10 @@ pub(crate) struct HybridTypingWrapper {
 /// literal value", a graceful non-corrupting default (no data loss).
 /// `confidence` keeps its default: optional metadata per the rule.
 ///
-/// `valid_at` (TD-187 round 2) is the ONE field here that is genuinely optional
+/// `valid_at` is the ONE field here that is genuinely optional
 /// *data* rather than an optional *hint*, and it takes `Option<String>` +
-/// `#[serde(default)]` deliberately — the optional-metadata carve-out of
-/// `llm-output-parse-loudly`, NOT the loud-parse rule that governs
+/// `#[serde(default)]` deliberately — this is the optional-metadata
+/// carve-out, NOT the loud-parse rule that governs
 /// subject/predicate/object. A missing date is the COMMON case, not a defect:
 /// measured on 30 real conv0 turns, 61% of facts carry no resolvable time at
 /// all. Making it required would fail the whole payload on the majority path

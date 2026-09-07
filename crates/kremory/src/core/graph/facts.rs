@@ -7,8 +7,8 @@ use crate::core::schema::{Fact, TemporalGraph};
 
 use super::{fact_content_hash, row_to_fact, FactContentHashParams};
 
-/// Bundled parameters for the `insert_fact*` family — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments). Construct via [`FactInsert::new`] +
+/// Bundled parameters for the `insert_fact*` family — args-as-object to satisfy
+/// a too-many-arguments lint. Construct via [`FactInsert::new`] +
 /// chainable setters. `group_id` is intentionally NOT a field: the
 /// `*_with_group` variants take it as a sibling arg so the group capability
 /// stays explicit to those methods.
@@ -70,7 +70,7 @@ impl<'a> FactInsert<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::invalidate_fact_with_reason`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to satisfy a too-many-arguments lint.
 pub struct InvalidateFactWithReasonParams {
     pub fact_id: i64,
     pub expired_at: DateTime<Utc>,
@@ -79,11 +79,9 @@ pub struct InvalidateFactWithReasonParams {
 
 impl TemporalGraph {
     pub async fn insert_fact(&self, fact: FactInsert<'_>) -> Result<i64> {
-        // TD-080 #3 (2026-06-29, spec
-        // `td-080-facade-fact-quality-and-namespace-clearance-sprint-2026-06-29.md` §P2):
-        // delegate to the group-aware path. `insert_fact` is DEFAULT-NAMESPACE-ONLY by
+        // Delegate to the group-aware path. `insert_fact` is DEFAULT-NAMESPACE-ONLY by
         // contract; any namespaced caller MUST use `insert_fact_with_group(.., Some(ns))`
-        // so the composite FK resolves (see the TD-080 #1 background-path fix).
+        // so the composite FK resolves.
         //
         // We pass `Some("default")` — NOT `None`. `facts.subject_group_id` is NOT NULL
         // (schema DEFAULT 'default' applies only when the column is omitted from the
@@ -102,8 +100,8 @@ impl TemporalGraph {
     /// the `with_facts` caller-pin path (`memory/engine_handle.rs`) so that
     /// pre-pinned caller facts dedup cleanly against LLM-extracted ones
     /// without aborting the surrounding write. Mirrors the
-    /// `disambiguation.rs:279` swallow pattern as a reusable helper per
-    /// ADR-035 §5. Added v0.1.8.
+    /// `disambiguation.rs:279` swallow pattern as a reusable helper.
+    /// Added v0.1.8.
     pub async fn try_insert_fact(&self, fact: FactInsert<'_>) -> Result<Option<i64>> {
         let subject_id = fact.subject_id;
         let predicate = fact.predicate;
@@ -152,10 +150,7 @@ impl TemporalGraph {
         Ok(())
     }
 
-    /// Bound a fact's world-time `valid_to` window (ADR-071 §Item 3, TD-070;
-    /// mechanism corrected by ADR-083,
-    /// `.ai-docs/adrs/adr-083-adr071-amendment-reconcile-shipped-adr070-
-    /// 2026-07-09.md` §Amendment C).
+    /// Bound a fact's world-time `valid_to` window.
     ///
     /// Mirrors `invalidate_fact`'s exact shape (single `UPDATE` + the same
     /// histogram/trace instrumentation) but writes `valid_to` (world/valid-time
@@ -169,7 +164,7 @@ impl TemporalGraph {
     /// half of that two-phase chain. Calling `invalidate_fact` instead for this
     /// purpose would retire the fact immediately (system-time) while leaving
     /// `valid_to` NULL — starving `window_closeout`'s predicate forever and
-    /// breaking the producer→consumer chain (Amendment C, Vera cycle-1 ASMP-002).
+    /// breaking the producer→consumer chain.
     pub async fn bound_valid_to(&self, fact_id: i64, valid_to: DateTime<Utc>) -> Result<()> {
         let _db_start = Instant::now();
         let valid_to_str = valid_to.to_rfc3339();
@@ -187,8 +182,8 @@ impl TemporalGraph {
 
     /// Fetch a single fact by id, scoped to `group_id` (namespace boundary).
     ///
-    /// Used by `SupersedeRequest::execute()` (ADR-071 §Item 3, TD-070) to read
-    /// the fact's own `valid_from` for the time-inversion guard before calling
+    /// Used by `SupersedeRequest::execute()` to read the fact's own
+    /// `valid_from` for the time-inversion guard before calling
     /// `bound_valid_to`. Returns `Ok(None)` when the id doesn't exist OR exists
     /// under a different `group_id` — both are legitimate "not found in this
     /// namespace" outcomes, not an error (mirrors `SupersedeOutcome::NotFound`).
@@ -320,8 +315,7 @@ impl TemporalGraph {
         Ok(())
     }
 
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): select up
-    /// to `limit` facts with `id > after_id`, ordered by `id` ASC, for the
+    /// Select up to `limit` facts with `id > after_id`, ordered by `id` ASC, for the
     /// `Memory::reembed_all_fact_embeddings` maintenance loop. Returns
     /// `(fact_id, fact_text)` pairs — mirrors [`TemporalGraph::episodes_after_id`]'s
     /// return shape exactly (`facts.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`,
@@ -361,8 +355,8 @@ impl TemporalGraph {
     /// columns (which may be NULL on pre-migration-004 rows).
     ///
     /// NOT filtered by embedding state — pages through EVERY fact row,
-    /// including ones that already carry an embedding (identical TD-143
-    /// rationale to the episode/entity siblings: a full re-embed must be able
+    /// including ones that already carry an embedding (the same rationale
+    /// as the episode/entity siblings: a full re-embed must be able
     /// to overwrite an existing vector, which a `WHERE embedding IS NULL`
     /// predicate never can). Feature-gated behind `content-search`.
     #[cfg(feature = "content-search")]
@@ -428,12 +422,12 @@ impl TemporalGraph {
             embedding,
         } = fact;
 
-        // P3 self-loop guard (TD-080 §P3): formal invariant check — no DB needed.
+        // P3 self-loop guard: formal invariant check — no DB needed.
         // object_value facts have object_id=None and are never self-loops.
         // Counter fires PRE-swallow so try_* callers still feed P5 quality metrics.
         if object_id == Some(subject_id) {
-            // emit_and_trace! (ADR D1 §R4.2 trial): single macro enforces dual-emit
-            // co-location structurally — counter + warn are syntactically inseparable.
+            // emit_and_trace! enforces dual-emit co-location structurally —
+            // counter + warn are syntactically inseparable.
             emit_and_trace!(
                 counter: "kremory.fact.rejected_total", "reason" => "self_loop";
                 level: warn;
@@ -449,14 +443,14 @@ impl TemporalGraph {
         let _db_start = Instant::now();
         let now = Utc::now().to_rfc3339();
         let valid_from_str = valid_from.to_rfc3339();
-        // Story #209: compute SHA-256 content hash for dedup
+        // Compute SHA-256 content hash for dedup
         let hash = fact_content_hash(FactContentHashParams {
             subject_id,
             predicate,
             object_id,
             object_value,
         });
-        // FU.1: acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
+        // Acquire BEGIN IMMEDIATE before the SELECT-check to serialise concurrent
         // writers and close the TOCTTOU window between the dup-check SELECT and the INSERT.
         let guard = self.begin_immediate_if_needed().await?;
         // Inner ops wrapped so we can explicitly rollback on Err — see insert_fact rationale.
@@ -545,13 +539,13 @@ impl TemporalGraph {
                 // chunks; the second write hits the `content_hash` uniqueness check and the
                 // caller's `try_insert_fact*` wrapper swallows it into
                 // `with_facts_deduped_total`. Counting it under `insert_fact_error_total`
-                // was a lying instrument ([[observability-first-class]] #9): on the LoCoMo
-                // Groq conv0 run the error counter matched `with_facts_deduped_total` 1:1
-                // (100% benign dedups), which (a) mis-framed a whole debug session as a
-                // "214 insert-error bug" and (b) makes the fail-loud
-                // `insert_fact_error_total == 0` gate impossible to satisfy on any run with
-                // duplicate extraction. Skip the error counter + warn for `Duplicate`; emit
-                // a debug trace for provenance and return so the wrapper counts the dedup.
+                // was a lying instrument: on the LoCoMo Groq conv0 run the error counter
+                // matched `with_facts_deduped_total` 1:1 (100% benign dedups), which (a)
+                // mis-framed a whole debug session as a "214 insert-error bug" and (b)
+                // makes the fail-loud `insert_fact_error_total == 0` gate impossible to
+                // satisfy on any run with duplicate extraction. Skip the error counter +
+                // warn for `Duplicate`; emit a debug trace for provenance and return so
+                // the wrapper counts the dedup.
                 if matches!(e, crate::core::error::Error::Duplicate { .. }) {
                     tracing::debug!(
                         error = %e,
@@ -559,11 +553,10 @@ impl TemporalGraph {
                     );
                     return Err(e);
                 }
-                // R2.2 §spec-td-085: error-path counter + paired warn (ADR D1).
-                // Reason labels per pre-R2 enumeration table §3, sub-classified via
-                // the shared `Error::fact_insert_failure_reason` (B2 observability
-                // hardening, 2026-07-21) so this taxonomy matches the deferred +
-                // foreground ingest paths instead of drifting independently.
+                // Error-path counter + paired warn. Reason labels are
+                // sub-classified via the shared `Error::fact_insert_failure_reason`
+                // so this taxonomy matches the deferred + foreground ingest
+                // paths instead of drifting independently.
                 let reason: &'static str = e.fact_insert_failure_reason();
                 metrics::counter!(
                     "kremory.db.insert_fact_error_total",
@@ -584,7 +577,7 @@ impl TemporalGraph {
     ///
     /// Sibling helper to `try_insert_fact`. Use this when the caller has a
     /// `group_id` available (e.g. resolved from a `Namespace`). Same
-    /// silent-dedup semantics + counter emission. Added v0.1.8 per ADR-035 §5.
+    /// silent-dedup semantics + counter emission. Added v0.1.8.
     pub async fn try_insert_fact_with_group(
         &self,
         fact: FactInsert<'_>,
@@ -650,7 +643,7 @@ impl TemporalGraph {
     /// Backfill a vector embedding for a specific fact by ID.
     ///
     /// Called after crash-recovery when SQLite has the row but the vector index
-    /// did not receive the write. Story #214.
+    /// did not receive the write.
     pub async fn backfill_fact_embedding(&self, fact_id: i64, embedding: &[f32]) -> Result<()> {
         let vec_str = format!(
             "[{}]",

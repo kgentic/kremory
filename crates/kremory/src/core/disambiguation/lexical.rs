@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 /// Minimum token-Jaccard overlap (over significant name tokens) required for two
 /// entity names to be considered lexically compatible for a DESTRUCTIVE merge.
 ///
-/// ADR-057: cosine similarity over bare entity NAMES is an unreliable identity
+/// Cosine similarity over bare entity NAMES is an unreliable identity
 /// signal — anisotropic embedders (e.g. nomic-embed-text on short proper nouns)
 /// return cosine 0.90–1.00 between completely unrelated names (`cos(Ria,Morocco)
 /// = 1.0000`, verified `tests/spike_td080_embedder_cosine.rs`). A cosine-only
@@ -27,33 +27,30 @@ pub(crate) const L4_LEXICAL_JACCARD_MIN: f32 = 0.5;
 /// 2. **Token-Jaccard ≥ [`L4_LEXICAL_JACCARD_MIN`]** over *significant* tokens
 ///    (length ≥ 2 after [`normalize_name`] — drops single-initial noise like "j").
 ///
-/// ## Measured precision/recall (Phase A corpus, ~~67~~ **68** adversarial pairs)
+/// ## Measured precision/recall (Phase A corpus, 68 adversarial pairs)
 ///
-/// Count corrected 2026-08-12 (Quinn LOW-2): `kremory-eval/fixtures/entity_pairs.jsonl`
-/// holds **68** rows, verified by `wc -l` and a JSON parse. The metrics below are
-/// asserted live by `tests::corpus_precision_recall`, so they are current; only the
-/// row count was stale, and it had been repeated forward into new docs unchecked.
+/// `kremory-eval/fixtures/entity_pairs.jsonl` holds **68** rows, verified by
+/// `wc -l` and a JSON parse. The metrics below are asserted live by
+/// `tests::corpus_precision_recall`, so they stay current with the corpus.
 ///
 /// See `tests::corpus_precision_recall` for the live assertion.
 ///
 /// | Metric | Value | Threshold |
 /// |---|---|---|
 /// | Precision | 0.9545 (21/22) | ≥ 0.95 (hard gate) |
-/// | Trivial recall | 1.00 (8/8) | ≥ 0.90 (RISK-006 guard) |
+/// | Trivial recall | 1.00 (8/8) | ≥ 0.90 (guard threshold) |
 /// | Overall recall | 0.568 (21/37) | recorded only |
 ///
 /// **Token-Jaccard capability gaps (categories where overall recall < 1.0):**
 ///
 /// These are NOT accepted failures. They are inherent limits of a name-token
 /// approach that cannot be closed by hardcoded lists — NOR by any embedding
-/// technique. (DENT-001, 2026-07-02: the earlier claim here — "context-embedding
-/// (ADR-058 B1) closes these" — is WRONG and has been struck. B1 was empirically
-/// KILLED: embedding `name + context` as the PRIMARY identity signal for entity
-/// instances scored F1 0.051 vs bare-name 0.528 — a ~10x regression — because the
-/// same entity recurs across divergent contexts, ADR-058 B1 probe 2026-06-30. R3
-/// (embedding-identity-degeneracy swarm) confirms NO surveyed embedding technique
-/// discriminates bare proper nouns; the signal is genuinely absent from the vector
-/// space.) The ratified mechanism for these gaps is ADR-063 **Site #5**
+/// technique. Embedding `name + context` as the PRIMARY identity signal for
+/// entity instances was tried and empirically KILLED: it scored F1 0.051 vs
+/// bare-name 0.528 — a ~10x regression — because the same entity recurs
+/// across divergent contexts. No surveyed embedding technique discriminates
+/// bare proper nouns; the signal is genuinely absent from the vector space.
+/// The mechanism for these gaps is **Site #5**
 /// (`core::dream::acronym_nickname_recall`): a deterministic structural pre-filter
 /// (initialism test OR graph co-occurrence) nominates candidates → margin-triggered
 /// LLM adjudication in the latency-tolerant dream phase → a deterministic write-gate
@@ -68,15 +65,16 @@ pub(crate) const L4_LEXICAL_JACCARD_MIN: f32 = 0.5;
 ///   diacritics, so tokens never collide → gap when the diacritic is the only
 ///   difference. Multi-token pairs ("Café de Flore" / "Cafe de Flore") pass via
 ///   shared "de"+"flore". Single-token diacritic pairs remain a name-token gap
-///   (candidate for a normalization-time fold, out of ADR-063's scope).
+///   (candidate for a normalization-time fold; not handled by Site #5).
 ///
 /// **Known FP (homonym — measured, documented, routed to LLM adjudication):**
 /// - `Amazon` / `Amazon River`: Jaccard 1/2 = 0.5 → gate TRUE despite
-///   `should_merge=false`. Name tokens alone cannot distinguish homonyms. Under
-///   ADR-063, a margin-triggered LLM adjudication with the entities' context
+///   `should_merge=false`. Name tokens alone cannot distinguish homonyms. A
+///   margin-triggered LLM adjudication with the entities' context
 ///   (Site #5 / Site #2 write-gate) resolves the homonym via world knowledge —
-///   the LLM sees "Amazon River" (geography) is not "Amazon" (e-commerce) — rather
-///   than any embedding-cosine test, which R3 shows cannot separate them reliably.
+///   the LLM sees "Amazon River" (geography) is not "Amazon" (e-commerce) —
+///   rather than any embedding-cosine test, which cannot separate them
+///   reliably.
 ///
 /// Worked spot-checks against verified embedder data (`tests/spike_td080_embedder_cosine.rs`):
 /// - `Ria`/`Morocco`, `Ria`/`Amazon Robotics`, `Northeastern University`/`Amazon
@@ -118,11 +116,11 @@ pub(crate) fn names_lexically_compatible(a: &str, b: &str) -> bool {
 ///
 /// The same rule [`names_lexically_compatible`] applies, exposed on its own for
 /// destructive-merge paths that must NOT run the token-Jaccard arm. Site #5
-/// (`acronym_nickname_recall`, ADR-063) is exactly that case: acronym and nickname
+/// (`acronym_nickname_recall`) is exactly that case: acronym and nickname
 /// pairs (`IBM` / `International Business Machines`) share **zero** tokens by
 /// construction, so Jaccard would reject precisely the merges that site exists for
 /// — but a timestamp collapsing onto its bare time (`1037 am on 27 june 2023` →
-/// `1037 am`) must still be blocked. TD-212.
+/// `1037 am`) must still be blocked.
 ///
 /// Wired into the shared `identity_verdict::write_gate` as its row-0 veto, so it
 /// applies at Site #5 AND Site #3. **Both were evidence-checked before wiring, not
@@ -167,7 +165,7 @@ const MONTH_WORDS: [&str; 12] = [
 /// plus any month word. Two names carrying different sets of these are different
 /// things, however much surrounding text they share.
 ///
-/// ## Why this cannot be left to token-Jaccard (ADR-057's deterministic check)
+/// ## Why this cannot be left to token-Jaccard alone
 ///
 /// Jaccard is a *proportion of shared tokens*, so a one-token difference is diluted
 /// by everything the names have in common — and dates are mostly common tokens.
@@ -212,9 +210,9 @@ const MONTH_WORDS: [&str; 12] = [
 /// fact in a register is what stops the next reader checking.
 ///
 /// What is genuinely NOT covered: `site5_acronym_nickname` (10 of 21 merges collapse
-/// a timestamp onto its bare time) reaches `apply_merge` via ADR-063's structural
+/// a timestamp onto its bare time) reaches `apply_merge` via Site #5's structural
 /// pre-filter and the shared `identity_verdict::write_gate`, and never calls this
-/// function — TD-212. Nor does this address the documented `Amazon`/`Amazon River`
+/// function. Nor does this address the documented `Amazon`/`Amazon River`
 /// homonym FP, which carries no temporal tokens and is routed to LLM adjudication
 /// by design.
 ///
@@ -228,7 +226,7 @@ fn temporal_discriminators(s: &str) -> BTreeSet<String> {
     /// `03 july 2023` are the same day. Without this, the rule blocks a merge
     /// that previously succeeded — an over-blocking regression, which this
     /// codebase treats as a correctness failure in a safety control, not a
-    /// tolerable conservatism (Quinn review of `af7eb720`, finding MED-2).
+    /// tolerable conservatism.
     fn canonical_number(digits: &str) -> String {
         let trimmed = digits.trim_start_matches('0');
         if trimmed.is_empty() {
@@ -251,7 +249,7 @@ fn temporal_discriminators(s: &str) -> BTreeSet<String> {
         out.insert(canonical_number(&digits));
     }
     // `eq_ignore_ascii_case` rather than `to_lowercase()`: the input is already
-    // normalized, so the allocation was dead on every token (Quinn LOW-1). The
+    // normalized, so the allocation was dead on every token. The
     // canonical lowercase form is inserted so the set is spelling-independent.
     for token in s.split_whitespace() {
         if let Some(month) = MONTH_WORDS.iter().find(|m| token.eq_ignore_ascii_case(m)) {
@@ -388,11 +386,11 @@ mod tests {
         assert!(names_lexically_compatible("iPhone 12 Pro", "iphone 12 pro"));
     }
 
-    /// Regression guard for the over-blocking defect found by adversarial review of
-    /// `af7eb720` (Quinn MED-2). The first cut of the temporal rule treated `3` and
-    /// `03` as different identity tokens, so two spellings of the SAME date stopped
-    /// merging — a merge that succeeded before the fix. It was in neither validation
-    /// corpus, which is why it survived RED/GREEN and the full gate.
+    /// Regression guard for an over-blocking defect: the first cut of the
+    /// temporal rule treated `3` and `03` as different identity tokens, so
+    /// two spellings of the SAME date stopped merging — a merge that
+    /// succeeded before the fix. It was in neither validation corpus, which
+    /// is why it survived RED/GREEN and the full gate.
     ///
     /// Failure direction was safe (a missed consolidation, not corrupted data), but
     /// an over-block in a safety control is a correctness failure here, not
@@ -422,8 +420,8 @@ mod tests {
     }
 
     /// Known FP, measured and documented at lexical.rs:69. It is routed to LLM
-    /// adjudication under ADR-063, NOT to this gate. Pinned so the numeric rule is
-    /// not silently credited with fixing it.
+    /// adjudication via the Site #5/#2 write-gate, NOT to this gate. Pinned
+    /// so the numeric rule is not silently credited with fixing it.
     #[test]
     fn known_homonym_false_positive_is_unchanged() {
         assert!(names_lexically_compatible("Amazon", "Amazon River"));

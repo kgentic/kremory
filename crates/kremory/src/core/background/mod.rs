@@ -1,19 +1,12 @@
 //! `kremory::core::background` — fire-and-forget background ingestion pipeline.
 //!
-//! Split from `background.rs` per sprint plan T2.1 + ADR-049 §Decision 6.
-//! Module layout:
+//! Split from `background.rs` into submodules. Module layout:
 //!
 //! - [`ingestor`]          — [`BackgroundIngestor`] + [`IngestGuard`] + send/queue ops
 //! - [`deferred_pipeline`] — worker loop, spawn_worker, drain logic, error reporting
-//! - [`verify_stage`]      — Stage 2 hook (no-op stub until ADR-049 Stage 2 wiring)
+//! - [`verify_stage`]      — Stage 2 hook (no-op stub, not yet wired)
 //!
 //! Shared types live here so both submodules can import without circular deps.
-//!
-//! # ADR reference
-//!
-//! ADR-049 §Decision 6 mandates this split as a prerequisite for Phase B Stage 2
-//! wiring. See `.ai-docs/adrs/adr-049-c6-async-gate-verify-pre-write-2026-06-10.md`
-//! and `.ai-docs/plans/v0-2-0-phase-b-prep-sprint-plan-2026-06-10.md` §T2.1.
 
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
@@ -31,8 +24,8 @@ pub mod verify_stage;
 
 pub use batch_tracker::BatchTracker;
 pub use ingestor::{BackgroundIngestor, IngestGuard, SendParams};
-// Quinn MED-02 fix: no re-export of run_verify_stage. The stub is Phase B
-// internal scaffolding (ADR-049 §Decision 6 mandate); Phase B will call it via
+// No re-export of run_verify_stage. The stub is Phase B
+// internal scaffolding; Phase B will call it via
 // `super::verify_stage::run_verify_stage` from deferred_pipeline. Re-export here
 // would leak misleadingly-named no-op into the v0.2.0 public surface.
 
@@ -44,7 +37,7 @@ pub use ingestor::{BackgroundIngestor, IngestGuard, SendParams};
 pub(crate) struct IngestRequest {
     pub text: String,
     pub reference_time: Option<DateTime<Utc>>,
-    /// TD-187 Gap 1 (2026-08-20): the caller-DECLARED document anchor
+    /// The caller-DECLARED document anchor
     /// (`SourceRef::published_at`) ONLY — never `reference_time` /
     /// `occurred_at` / wall-clock. See
     /// [`crate::core::intelligence::ExtractionContext::reference_time`] for
@@ -74,14 +67,14 @@ pub(crate) struct IngestRequest {
 /// Created after a successful Phase 1 NER ingest.  The worker processes these
 /// when the NER channel is idle, giving NER priority over LLM fact extraction.
 ///
-/// `pub` + `#[doc(hidden)]` per MNT-002 pattern (E0365 constraint): integration
+/// `pub` + `#[doc(hidden)]` (E0365 constraint): integration
 /// tests in `tests/verify_stage_integration.rs` need to construct this directly
 /// under `feature = "test-utils"`.  Not part of the stable public API.
 #[doc(hidden)]
 pub struct DeferredRequest {
     pub text: String,
     pub reference_time: Option<DateTime<Utc>>,
-    /// TD-187 Gap 1 (2026-08-20): propagated from [`IngestRequest::declared_reference_time`]
+    /// Propagated from [`IngestRequest::declared_reference_time`]
     /// at the Phase 1 → Phase 2 handoff (`deferred_pipeline.rs`'s `process_item`),
     /// then read at the `ingest_deferred` call site
     /// (`deferred_pipeline.rs`'s `process_deferred`) and passed as
@@ -128,7 +121,7 @@ impl From<&Error> for IngestErrorKind {
             // IntegerIdLlmExtractor's per-stage extraction (default_extractor.rs:80/118)
             // — i.e. an LLM provider failure, carrying which stage failed. Classify as
             // Llm so it's not silently demoted to Other (graphiti LlmExtractor uses
-            // Error::Llm for the equivalent failures). Observability correctness (Rule 19).
+            // Error::Llm for the equivalent failures).
             Error::ExtractionStage { .. } => IngestErrorKind::Llm,
             Error::Embedding(_) => IngestErrorKind::Embedding,
             // Config, Search, Parse, Serialization, Other all collapse to Other.
@@ -187,7 +180,8 @@ pub enum IngestSendError {
 ///
 /// When throttling fires, the counter
 /// `kremory.ingest.llm_rate_limit_deferred_total{namespace}` is incremented
-/// per ADR-019 / CLAUDE.md Rule 19 (observability-first-class).
+/// so rate-limit backpressure is directly observable rather than only
+/// visible as increased end-to-end latency.
 #[derive(Debug, Clone)]
 pub struct RateLimit {
     /// Tokens replenished per second.  E.g. `2.0` = max 2 LLM calls/s sustained.
@@ -297,13 +291,11 @@ pub struct IngestorConfig {
     ///
     /// When `Some`, the sink receives [`EnrichmentEventSink`] callbacks at each
     /// stage of background Phase 1 + Phase 2 processing.  Callbacks fire
-    /// **sync-inline** on the background worker OS thread (ADR-052 D4 contract).
+    /// **sync-inline** on the background worker OS thread.
     ///
     /// Set via [`IngestorConfig::with_sink`] builder method.
     /// `None` (default) — no callbacks emitted; all existing code paths
     /// continue to compile and behave identically.
-    ///
-    /// Refs: ADR-052 Gap 1 + impl spec §3 Phase 2.
     pub sink: Option<Arc<dyn EnrichmentEventSink>>,
 }
 
@@ -334,8 +326,6 @@ impl IngestorConfig {
     /// stage of background Phase 1 + Phase 2 processing.  All callbacks fire
     /// **sync-inline** on the background worker OS thread — keep them fast
     /// (sub-millisecond ideal, sub-100 ms absolute ceiling).
-    ///
-    /// Per ADR-052 §Gap 1 D1; impl spec §3 Phase 2 `with_sink` builder.
     pub fn with_sink(mut self, sink: impl EnrichmentEventSink + Send + Sync + 'static) -> Self {
         self.sink = Some(Arc::new(sink));
         self

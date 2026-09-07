@@ -26,7 +26,7 @@ pub mod prompts;
 pub(crate) mod schemas;
 pub(crate) mod structured;
 
-// ─── New submodules (TD-001 E0-B split) ──────────────────────────────────────
+// ─── New submodules ───────────────────────────────────────────────────────────
 
 pub(crate) mod default_extractor;
 pub(crate) mod graphiti;
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_default_extractor_with_mock_llm() {
-        // TD-013 L1: mock LLM emits integer-ID format; registry resolves ids to labels.
+        // Mock LLM emits integer-ID format; registry resolves ids to labels.
         let stage1 = r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme Corp","entity_type_id":2}]}"#;
         let stage2 = r#"["works_at"]"#;
         let stage3 = r#"[{"subject":"Alice","predicate":"works_at","object":"Acme Corp","is_entity_ref":true,"confidence":0.9}]"#;
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_cascade_stage2_receives_stage1_entities() {
-        // TD-013 L1: stage1 mock emits integer-ID format; registry resolves id=2 → "Organisation".
+        // Stage1 mock emits integer-ID format; registry resolves id=2 → "Organisation".
         let stage1 = r#"{"entities":[{"name":"GlobalCorp","entity_type_id":2}]}"#;
         let stage2 = r#"["founded_by"]"#;
         let stage3 = r#"[]"#;
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_excluded_entities_filtered() {
-        // TD-013 L1: mock LLM emits integer-ID format; StopWord is id=3 and should
+        // Mock LLM emits integer-ID format; StopWord is id=3 and should
         // be filtered out by excluded_entity_types matching on the resolved label.
         let stage1 = r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"StopWordInc","entity_type_id":3}]}"#;
         let stage2 = r#"[]"#;
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(entities.len(), 1, "should handle Python-style booleans");
     }
 
-    // ─── Integer-ID parse path tests (TD-013 L1) ──────────────────────────────
+    // ─── Integer-ID parse path tests ──────────────────────────────────────────
 
     fn make_test_registry() -> crate::core::entity_types::EntityTypeRegistry {
         crate::core::entity_types::EntityTypeRegistry::from_specs(vec![
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn parse_entities_integer_rejects_json_fragment_in_name() {
-        // Lock the fix for the 2026-06-04 qwen2.5:14b benchmark failure: post-repair
+        // Regression guard for a qwen2.5:14b benchmark failure: post-repair
         // garbage where a truncated entity's tail bleeds into the next entity's
         // `name` field (e.g. `Boston", "entity_type_id": 3}, {`). Without the
         // shape-validator these used to silently collapse to label="Entity".
@@ -519,8 +519,7 @@ mod tests {
 
     /// Sum across all counter rows matching `name`, regardless of labels.
     ///
-    /// Per [[observability-first-class]] cardinal failure mode #9, post-TD-013
-    /// the extractor emits `rql.extraction.json_parse_ok` with `path=wrapped|
+    /// The extractor emits `rql.extraction.json_parse_ok` with `path=wrapped|
     /// bare_array|post_repair` labels alongside legacy unlabeled emission sites.
     /// Each path is its own counter row in the registry, so `find()` (returning
     /// the first match) would under-report. Tests asking "did N parses succeed?"
@@ -555,7 +554,7 @@ mod tests {
         let snapshotter = recorder.snapshotter();
 
         metrics::with_local_recorder(&recorder, || {
-            // TD-013 L1: integer-ID format; registry resolves id=1→Person, id=2→Organisation.
+            // Integer-ID format; registry resolves id=1→Person, id=2→Organisation.
             let stage1 = r#"{"entities":[{"name":"Alice","entity_type_id":1},{"name":"Acme Corp","entity_type_id":2}]}"#;
             let stage2 = r#"["works_at"]"#;
             let stage3 = r#"[{"subject":"Alice","predicate":"works_at","object":"Acme Corp","is_entity_ref":true,"confidence":0.9}]"#;
@@ -809,7 +808,7 @@ mod tests {
 
     // ── L1: Adversarial parse_json_lenient — placeholder-label inputs ────────
     //
-    // These tests catch the exact TD-012 failure mode: valid JSON that parses
+    // These tests catch the exact failure mode: valid JSON that parses
     // successfully but carries placeholder labels ("Entity", "UNKNOWN", "").
     // The parser itself accepts such inputs (it only checks syntax), so these
     // tests document and pin the parser's behaviour and drive the L2 validator
@@ -817,7 +816,7 @@ mod tests {
 
     #[test]
     fn parse_json_lenient_placeholder_entity_label_parses_but_is_flagged() {
-        // TD-012 exact shape: valid JSON with label="Entity" (placeholder).
+        // Exact shape: valid JSON with label="Entity" (placeholder).
         // parse_json_lenient MUST parse it — the syntax is correct.
         // is_canonical_entity_type MUST reject it — it's a placeholder.
         let json = r#"{"entities":[{"name":"Alice","label":"Entity"}]}"#;
@@ -975,7 +974,7 @@ mod tests {
         );
     }
 
-    // ─── TD-013 PR1-corrected: mechanism semantics changed (2026-06-03) ──────
+    // ─── Mechanism semantics changed ─────────────────────────────────────────
     //
     // is_canonical_entity_type previously required positive-allowlist match.
     // Now it requires structural validity + placeholder reject only — aligned
@@ -1048,7 +1047,6 @@ mod tests {
     #[test]
     fn normalize_label_handles_us_uk_spelling() {
         // qwen2.5:14b emits "Organization" (US); kremory's canonical is "Organisation" (UK).
-        // Same source of the original B3 mismatch documented in Vera review.
         assert_eq!(normalize_label("Organization"), "Organisation");
         assert_eq!(normalize_label("ORGANIZATION"), "Organisation");
         assert_eq!(normalize_label("Organisation"), "Organisation");

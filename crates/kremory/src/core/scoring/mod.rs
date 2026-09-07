@@ -1,22 +1,18 @@
-//! Post-RRF recall scoring axes (recall-v2-architecture-2026-07-03, Phase 2b).
+//! Post-RRF recall scoring axes.
 //!
 //! Read-side-pure staged boost pipeline consumed by
 //! [`crate::core::context::Engine::contextualize`]. This module and its
-//! submodules MUST NOT call `execute(` / issue graph queries (spec NFR /
-//! RISK-003): every axis operates only on data the expansion already fetched.
+//! submodules MUST NOT call `execute(` / issue graph queries: every axis
+//! operates only on data the expansion already fetched.
 //!
-//! # Composition model (Fork-1 hybrid)
+//! # Composition model
 //! All axes ship **additive + bounded + single-`.min(1.0)`-clamp**:
 //! graph-degree ([`crate::core::search::graph_degree_bonus`]), temporal
 //! ([`temporal::temporal_boost`]), and axis-C proximity
-//! ([`crate::core::proximity::proximity_bonus`], ADR-062, Phase 3) are all
-//! additive → no composition split, each measurable in isolation. ADR-062
-//! itself specified proximity as a "post-RRF multiplicative boost" — ADR-082
-//! **Amendment 1** (2026-07-20) supersedes that literal text: proximity's own
-//! landing IS the amendment's named migration trigger ("axis-C proximity
-//! lands and would coexist with the additive axes"), and the amendment
-//! already resolved that trigger to "stay additive" (scored 132/135,
-//! confidence HIGH) rather than migrate the whole chain to a normalized
+//! ([`crate::core::proximity::proximity_bonus`]) are all
+//! additive → no composition split, each measurable in isolation. Proximity
+//! was considered as a "post-RRF multiplicative boost" but the decision was
+//! to keep it additive rather than migrate the whole chain to a normalized
 //! multiplicative shape. No dead multiplicative plumbing ships.
 //!
 //! # Intent is consulted but neutral until Phase 7
@@ -43,7 +39,7 @@ pub(crate) struct ScoringWeights {
     pub(crate) graph_degree_weight: f32,
     /// Additive temporal-recency boost weight (default `0.0` = off).
     pub(crate) temporal_weight: f32,
-    /// Additive graph-proximity boost weight (ADR-062, Phase 3; default
+    /// Additive graph-proximity boost weight (default
     /// `0.0` = off — see [`crate::core::proximity`]).
     pub(crate) proximity_weight: f32,
 }
@@ -59,7 +55,7 @@ impl ScoringWeights {
     }
 }
 
-// ── Phase-7 calibration knobs (recall-v2 Phase 7) ────────────────────────────
+// ── Phase-7 calibration knobs ─────────────────────────────────────────────────
 //
 // Per-intent multipliers over the config base. ALL 1.0 for now → every intent
 // resolves to the config base (neutrality proof: `Broad == base`). Kept as
@@ -104,7 +100,7 @@ pub(crate) fn weight_overrides_for(intent: Intent, base: ScoringWeights) -> Scor
 
 /// One seed's per-axis boost contributions, captured during the expansion loop
 /// so [`axis_reorders`] can attribute output-order changes to each axis after
-/// the fact (recall-v2 Phase 2b measurement discipline).
+/// the fact.
 #[derive(Debug, Clone)]
 pub(crate) struct SeedAxisContribution {
     /// Entity id (used as the deterministic tie-break, matching the recall sort).
@@ -115,8 +111,7 @@ pub(crate) struct SeedAxisContribution {
     pub(crate) degree_delta: f32,
     /// Additive temporal boost applied to this seed this recall.
     pub(crate) temporal_delta: f32,
-    /// Additive graph-proximity boost applied to this seed this recall
-    /// (ADR-062, Phase 3).
+    /// Additive graph-proximity boost applied to this seed this recall.
     pub(crate) proximity_delta: f32,
 }
 
@@ -128,13 +123,12 @@ pub(crate) struct SeedAxisContribution {
 /// reordered nothing → the judge run measures nothing"). It compares real
 /// output orders under the SAME `[0, 1]` clamp the live pipeline applies, not
 /// raw sums, so a non-zero boost that does NOT actually move the order
-/// correctly reads as "no reorder" (a counter that would lie otherwise —
-/// observability Rule 19 #9):
+/// correctly reads as "no reorder" (a counter that would lie otherwise):
 ///
 /// - graph-degree: order by `base` vs order by `min(base + degree, 1)`
 /// - temporal (applied AFTER degree): order by `min(base + degree, 1)` vs
 ///   order by `min(base + degree + temporal, 1)`
-/// - proximity (applied AFTER temporal, ADR-062 Phase 3): order by
+/// - proximity (applied AFTER temporal): order by
 ///   `min(base + degree + temporal, 1)` vs
 ///   order by `min(base + degree + temporal + proximity, 1)`
 ///
@@ -145,7 +139,7 @@ pub(crate) struct SeedAxisContribution {
 /// from their connecting seed's score) are NOT counted here — a seed-score
 /// change could in principle reshuffle cross-seed neighbour ordering without
 /// changing seed-set order. This is a deliberate CONSERVATIVE under-count for
-/// the cheap pre-judge gate (Quinn MNT-001): a `changed=true` is always a real
+/// the cheap pre-judge gate: a `changed=true` is always a real
 /// reorder; a `changed=false` means the SEEDS did not reorder (neighbours may
 /// have shifted marginally). The gate reads it as "is this axis doing anything
 /// worth an llm-judge run", for which seed-set reorder is the load-bearing signal.
@@ -276,7 +270,7 @@ mod tests {
         );
     }
 
-    /// ADR-062 Phase 3: proximity is applied AFTER degree and temporal — a
+    /// Proximity is applied AFTER degree and temporal — a
     /// proximity boost that flips order must be attributed to `proximity`
     /// alone, not smeared across the earlier axes.
     #[test]

@@ -18,7 +18,7 @@
 //!
 //! # FallbackArm (§3.3)
 //!
-//! [`FallbackArm`] selects which arm of the Phase-4 fallback ladder is used
+//! [`FallbackArm`] selects which arm of the fallback ladder is used
 //! for a given schema. Schemas wrapping [`RawRelationship`] — which carries
 //! `deser_string_or_array` on its `subject`/`predicate`/`object` fields and
 //! therefore has those fields excluded from the JSON Schema — **must** bypass
@@ -56,10 +56,10 @@ pub(crate) struct TripletListWrapper {
 /// Wrapper for ContradictionVerdict — replaces Vec<usize> bare array.
 /// `parse_index_list` in `contradiction.rs` deserialises this wrapper.
 ///
-/// `reason` is the LLM's audit-trail justification for the verdict (ADR-049).
+/// `reason` is the LLM's audit-trail justification for the verdict.
 /// No `#[serde(default)]` on `reason` — a missing field from the LLM is a
 /// parse failure, forcing the fallback ladder to retry rather than silently
-/// accepting an incomplete response (per `llm-output-parse-loudly` rule).
+/// accepting an incomplete response.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct ContradictionVerdictWrapper {
     pub(crate) indices: Vec<u32>,
@@ -78,7 +78,7 @@ pub(crate) struct ContradictionVerdictWrapper {
 /// `verdict` carries `#[serde(default)]` so that an empty PromptOnly response
 /// (deserialised as `{}`) yields `verdict = ""`, which the resolver match arm
 /// maps conservatively to `ResolutionResult::Different` — same behaviour as
-/// the pre-Phase-4 raw text path.
+/// the prior raw-text response path.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub(crate) struct ResolutionVerdictWrapper {
     /// Resolution verdict: "same", "different", or "uncertain".
@@ -87,22 +87,22 @@ pub(crate) struct ResolutionVerdictWrapper {
     pub(crate) verdict: String,
 }
 
-/// One resolved entity in a **batched** entity-resolution response (TD-127).
+/// One resolved entity in a **batched** entity-resolution response.
 ///
 /// Mirrors Graphiti's `NodeDuplicate` (`graphiti_core/prompts/dedupe_nodes.py`).
 /// `id` indexes the window's ambiguous-entity worklist presented in the prompt
 /// (`0..K-1`); `duplicate_candidate_id` is the `candidate_id` of the matching
 /// EXISTING entity in the shared window candidate pool, or `-1` when novel.
 ///
-/// The INNER fields carry **no** `#[serde(default)]` (per `llm-output-parse-loudly`):
-/// a missing field is a parse error so the fallback ladder can retry rather than
-/// silently defaulting to a wrong resolution. `id` is `u32`; `duplicate_candidate_id`
+/// The INNER fields carry **no** `#[serde(default)]`: a missing field is a
+/// parse error so the fallback ladder can retry rather than silently
+/// defaulting to a wrong resolution. `id` is `u32`; `duplicate_candidate_id`
 /// is `i32` because `-1` (novel) is a valid, load-bearing value.
 ///
 /// `name` is a **verbatim echo** (the prompt instructs the model to copy the
-/// entity's name exactly). It is used ONLY as a reject-only misindex checksum at
-/// map-back (ADR-076 RISK-004): if `normalize_name(name)` ≠ the worklist entity's
-/// normalized name, the model misindexed → the row is rejected to conservative-NEW.
+/// entity's name exactly). It is used ONLY as a reject-only misindex checksum
+/// at map-back: if `normalize_name(name)` ≠ the worklist entity's normalized
+/// name, the model misindexed → the row is rejected to conservative-NEW.
 /// It is NOT used for naming (kremory keeps first-mention-wins).
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct BatchedNodeResolution {
@@ -114,21 +114,20 @@ pub(crate) struct BatchedNodeResolution {
     pub(crate) duplicate_candidate_id: i32,
 }
 
-/// Root wrapper for a batched entity-resolution response (TD-127).
+/// Root wrapper for a batched entity-resolution response.
 ///
 /// Mirrors Graphiti's `NodeResolutions` — a single `entity_resolutions` array,
 /// one entry per ambiguous extracted entity that survived the deterministic
-/// cheap tiers (exact + MinHash) and the ADR-075 cosine blocking pre-filter.
+/// cheap tiers (exact + MinHash) and the cosine blocking pre-filter.
 /// Replaces the O(extracted × candidates) pairwise `ResolutionVerdictWrapper`
 /// fan-out with one structured call per window.
 ///
-/// `#[serde(default)]` on `entity_resolutions` is intentional (ADR-076 RISK-001):
-/// a ladder-exhausted `PromptOnly` `{}` response deserialises to an EMPTY list,
+/// `#[serde(default)]` on `entity_resolutions` is intentional: a
+/// ladder-exhausted `PromptOnly` `{}` response deserialises to an EMPTY list,
 /// so every windowed entity degrades to conservative-NEW (graceful) rather than
-/// failing the whole ingest transaction. This is the wrapper-container carve-out
-/// in `llm-output-parse-loudly` (empty array = empty list, semantically valid) —
-/// the INNER `BatchedNodeResolution` fields stay required so a malformed *row*
-/// still drives the fallback ladder loudly.
+/// failing the whole ingest transaction. Empty array is a semantically valid
+/// empty list here — the INNER `BatchedNodeResolution` fields stay required
+/// so a malformed *row* still drives the fallback ladder loudly.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub(crate) struct BatchedNodeResolutions {
     #[serde(default)]
@@ -199,7 +198,7 @@ pub(crate) static SCHEMA_ENTITY_LIST: LazyLock<Value> = LazyLock::new(|| {
 });
 
 /// Build a per-call entity-list schema with `label` constrained to an enum of
-/// registry names (Phase 8 v3 — structural enforcement, CLAUDE.md Rule 15).
+/// registry names — structural enforcement.
 ///
 /// Returns a CLONED + mutated Value (not a static reference). The static
 /// `SCHEMA_ENTITY_LIST` declares only `name`; this fn inserts a `label`
@@ -354,21 +353,22 @@ pub(crate) static SCHEMA_RESOLUTION_VERDICT: LazyLock<Value> = LazyLock::new(|| 
     })
 });
 
-/// Schema for the TD-127 **batched** entity-resolution call.
+/// Schema for the **batched** entity-resolution call.
 /// Root object with `entity_resolutions: [BatchedNodeResolution]`.
 ///
 /// Replaces the O(extracted × candidates) pairwise `SCHEMA_RESOLUTION_VERDICT`
 /// fan-out with one structured call per chunk (Graphiti `NodeResolutions`
 /// pattern). Invoked via `StructuredCallBuilder` exactly like the pairwise
-/// schema; the deterministic exact/MinHash tiers and ADR-075 cosine blocking
-/// still run first so only the ambiguous remainder reaches this call.
+/// schema; the deterministic exact/MinHash tiers and the cosine blocking
+/// pre-filter still run first so only the ambiguous remainder reaches this
+/// call.
 pub(crate) static SCHEMA_BATCHED_RESOLUTION: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(BatchedNodeResolutions)).unwrap_or_else(|e| {
         panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
     })
 });
 
-/// Schema for the integer-ID entity list (TD-013 L1).
+/// Schema for the integer-ID entity list.
 ///
 /// Root object with `entities: [RawEntityIntegerId]`.  The `entity_type_id`
 /// field is a plain `u32` — `entity_list_schema_with_id_bounds` mutates this
@@ -385,7 +385,7 @@ pub(crate) static SCHEMA_ENTITY_LIST_INTEGER_ID: std::sync::LazyLock<Value> =
     });
 
 /// Build a per-call entity-list schema with `entity_type_id` constrained to an
-/// `enum` of registered integer IDs (TD-013 L1 — integer-ID backbone).
+/// `enum` of registered integer IDs.
 ///
 /// Returns a cloned + mutated `Value`.  The `entity_type_id` property in the
 /// `RawEntityIntegerId` definition is replaced with:
@@ -410,8 +410,8 @@ pub(crate) fn entity_list_schema_with_id_bounds(
         return schema;
     }
     // FILTER OUT id=0 catch-all from the enum: LLM must commit to a specific
-    // type. Diagnostic 2026-06-04 confirmed: with id=0 in enum, qwen2.5:14b
-    // picks it for 11/11 uncertain entities (then encodes the real type as
+    // type. Empirically, with id=0 present in the enum, qwen2.5:14b picks
+    // it for 11/11 uncertain entities (then encodes the real type as
     // parenthetical text in the NAME field). Server-side validate_or_fallback
     // still resolves out-of-enum emissions to id=0 if the grammar somehow
     // allows (defensive only — Ollama format_schema enforces the enum at
@@ -490,31 +490,32 @@ pub(crate) const SCHEMA_NUEXTRACT_RELATIONS_ONLY_FORCE_ARM: Option<FallbackArm> 
 pub(crate) const SCHEMA_REL_ONLY_FORCE_FALLBACK_FORCE_ARM: Option<FallbackArm> =
     Some(FallbackArm::LlmJsonRepair);
 
-// ─── TD-023 Hybrid typing schema (index-based) ───────────────────────────────
+// ─── Hybrid typing schema (index-based) ──────────────────────────────────────
 
-/// Base schema for the TD-023 hybrid typing response.
+/// Base schema for the hybrid typing response.
 ///
 /// Root: `{typings: [{idx: u32, entity_type_id: u32}]}`. Both fields are
 /// numerically bounded by `hybrid_typing_schema_with_bounds` at the call
 /// site — `idx` to `[0, num_candidates - 1]` and `entity_type_id` to the
-/// active namespace registry's enum. This is the [[load-bearing-invariants-
-/// at-emit-not-prompt]] enforcement: the LLM cannot drop or misalign
-/// candidates because both keys are integer-constrained at decode time.
+/// active namespace registry's enum. Enforced structurally at the schema
+/// level: the LLM cannot drop or misalign candidates because both keys
+/// are integer-constrained at decode time.
 pub(crate) static SCHEMA_HYBRID_TYPING: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(HybridTypingWrapper)).unwrap_or_else(|e| {
         panic!("invariant: schemars::schema_for! is infallible for derived structs — {e}")
     })
 });
 
-/// Inject runtime bounds for the TD-023 hybrid typing schema:
+/// Inject runtime bounds for the hybrid typing schema:
 ///   - `idx`: enum [0, 1, ..., num_candidates - 1]; minimum=0; maximum=N-1
 ///   - `entity_type_id`: enum of registered ids (excluding id=0 catch-all);
 ///     bounded by min/max registered id
 ///
 /// `num_candidates` MUST equal the input candidate list length so the LLM
 /// cannot emit an out-of-range idx. `specs` should be the active namespace
-/// registry. Both fields end up `required` so the parser fails loudly on
-/// missing field per [[llm-output-parse-loudly]].
+/// registry. Both fields end up `required` so a missing field is a parse
+/// error, forcing the fallback ladder to retry rather than silently
+/// accepting an incomplete response.
 pub(crate) fn hybrid_typing_schema_with_bounds(
     num_candidates: usize,
     specs: &[crate::core::entity_types::EntityTypeSpec],
@@ -775,8 +776,8 @@ mod tests {
 
     #[test]
     fn contradiction_verdict_carries_reason() {
-        // ADR-049: reason field is required — missing field must fail parse,
-        // not silently default to empty string (llm-output-parse-loudly rule).
+        // reason field is required — missing field must fail parse, not
+        // silently default to empty string.
         let with_reason =
             r#"{"indices": [1], "reason": "fact 1 is outdated by the new assertion"}"#;
         let w: ContradictionVerdictWrapper = serde_json::from_str(with_reason).unwrap();
@@ -842,7 +843,7 @@ mod tests {
         );
     }
 
-    // ── Integer-ID schema (TD-013 L1) ─────────────────────────────────────────
+    // ── Integer-ID schema ─────────────────────────────────────────────────────
 
     #[test]
     fn entity_list_schema_with_id_bounds_injects_enum_and_bounds() {
@@ -924,10 +925,10 @@ mod tests {
         assert_eq!(entities["type"], "array", "entities must be array");
     }
 
-    // ── TD-127 batched-resolution schema spike ───────────────────────────────
-    // Mechanical compile-spike (per mechanical-compile-spike-beats-paper-review):
-    // proves the Graphiti NodeResolutions-style schema derives, generates valid
-    // JSON Schema at runtime, and round-trips the load-bearing `-1` novel value.
+    // ── Batched-resolution schema spike ──────────────────────────────────────
+    // Mechanical compile-spike: proves the Graphiti NodeResolutions-style
+    // schema derives, generates valid JSON Schema at runtime, and
+    // round-trips the load-bearing `-1` novel value.
 
     #[test]
     fn schema_batched_resolution_is_object_with_entity_resolutions_array() {
@@ -939,8 +940,8 @@ mod tests {
 
     #[test]
     fn batched_resolution_parses_novel_and_duplicate_rows() {
-        // duplicate_candidate_id = -1 (novel) and >=0 (matched) must both parse;
-        // `name` is the verbatim-echo misindex checksum (ADR-076 RISK-004).
+        // duplicate_candidate_id = -1 (novel) and >=0 (matched) must both
+        // parse; `name` is the verbatim-echo misindex checksum.
         let raw = r#"{"entity_resolutions":[
             {"id":0,"name":"Boston","duplicate_candidate_id":-1},
             {"id":1,"name":"Alice","duplicate_candidate_id":3}
@@ -956,9 +957,10 @@ mod tests {
 
     #[test]
     fn batched_resolution_missing_inner_field_is_parse_error() {
-        // INNER fields have no #[serde(default)] — a row missing duplicate_candidate_id
-        // must be a loud parse error (llm-output-parse-loudly) so the fallback ladder
-        // retries rather than silently defaulting to a wrong resolution.
+        // INNER fields have no #[serde(default)] — a row missing
+        // duplicate_candidate_id must be a loud parse error so the fallback
+        // ladder retries rather than silently defaulting to a wrong
+        // resolution.
         let raw = r#"{"entity_resolutions":[{"id":0,"name":"Boston"}]}"#;
         let parsed: Result<BatchedNodeResolutions, _> = serde_json::from_str(raw);
         assert!(
@@ -969,9 +971,10 @@ mod tests {
 
     #[test]
     fn batched_resolution_empty_object_degrades_to_empty_list() {
-        // ADR-076 RISK-001: a ladder-exhausted PromptOnly `{}` must deserialise to
-        // an EMPTY list (every windowed entity → conservative-NEW), NOT fail the
-        // whole ingest. #[serde(default)] on the wrapper Vec makes this graceful.
+        // A ladder-exhausted PromptOnly `{}` must deserialise to an EMPTY
+        // list (every windowed entity → conservative-NEW), NOT fail the
+        // whole ingest. #[serde(default)] on the wrapper Vec makes this
+        // graceful.
         let parsed: BatchedNodeResolutions =
             serde_json::from_str("{}").expect("empty object must degrade to empty list, not error");
         assert!(

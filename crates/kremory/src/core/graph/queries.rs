@@ -9,13 +9,13 @@ use crate::core::schema::{Fact, TemporalGraph};
 use super::{row_to_fact, SubGraph};
 
 /// Bundled parameters for [`TemporalGraph::get_neighbours_at`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments; the receiver plus 3
+/// to satisfy a too-many-arguments lint (the receiver plus 3
 /// positional params trips the project's 3-arg threshold).
 pub struct GetNeighboursAtParams<'a> {
     pub entity_id: &'a str,
     pub hops: u32,
     pub as_of: Option<DateTime<Utc>>,
-    /// recall-v2 Phase 4 (TD-056, ADR-082 Amendment 2): in-BFS visited-entity
+    /// In-BFS visited-entity
     /// cap. `None` = unbounded (today's behaviour). `Some(cap)` early-exits the
     /// BFS once `visited_entities.len() >= cap`, bounding hub-explosion on the
     /// widened multi-hop path (spec R1). The caller-side per-seed neighbour cap
@@ -26,7 +26,7 @@ pub struct GetNeighboursAtParams<'a> {
     /// cap only fires on the NEXT iteration (after every hop-1 neighbour is
     /// already visited) — it bites only the hop>=2 expansion.
     ///
-    /// DETERMINISM CAVEAT (Quinn REL-001): at `hops >= 2`, WHICH entities are
+    /// DETERMINISM CAVEAT: at `hops >= 2`, WHICH entities are
     /// visited before the cap trips depends on the per-hop fact-query row order,
     /// and that query has no `ORDER BY` — so the surviving visited SET can vary
     /// run-to-run for an identical `hops >= 2` query. At the default `hops == 1`
@@ -115,10 +115,10 @@ impl TemporalGraph {
         })
     }
 
-    /// Temporal-bounded sibling of [`Self::get_neighbours`] (ADR-068 Decision
-    /// 2 / TD-079 implement fork). `as_of: None` runs the copy-identical
-    /// per-hop `WHERE (subject_id = ?1 OR object_id = ?1) AND expired_at IS
-    /// NULL` query `get_neighbours` runs today; `as_of: Some(t)` adds the SAME
+    /// Temporal-bounded sibling of [`Self::get_neighbours`]. `as_of: None` runs
+    /// the copy-identical per-hop `WHERE (subject_id = ?1 OR object_id = ?1)
+    /// AND expired_at IS NULL` query `get_neighbours` runs today;
+    /// `as_of: Some(t)` adds the SAME
     /// valid-time predicate `facts_at`/`entity_facts_at` already use:
     /// `valid_from <= ?t AND (valid_to IS NULL OR valid_to > ?t)`.
     /// `expired_at IS NULL` stays unconditional (system-time hard-retirement,
@@ -129,10 +129,10 @@ impl TemporalGraph {
     /// true at T, even after correction).
     ///
     /// [`Self::get_neighbours`] is intentionally left UNTOUCHED above — this
-    /// is a new sibling fn, not a modified shared primitive (ADR-068 Decision
-    /// 2: other call sites, e.g. `speculative_cache.rs`'s prefetch, have no
+    /// is a new sibling fn, not a modified shared primitive: other call sites,
+    /// e.g. `speculative_cache.rs`'s prefetch, have no
     /// reason to carry a now-mandatory `as_of` parameter through their
-    /// signatures).
+    /// signatures.
     pub async fn get_neighbours_at(&self, params: GetNeighboursAtParams<'_>) -> Result<SubGraph> {
         let GetNeighboursAtParams {
             entity_id,
@@ -151,7 +151,7 @@ impl TemporalGraph {
         let as_of_str = as_of.map(|t| t.to_rfc3339());
 
         while let Some((current_id, depth)) = queue.pop_front() {
-            // recall-v2 Phase 4 (TD-056, spec R1): in-BFS fan-out cap. Checked at
+            // In-BFS fan-out cap. Checked at
             // the TOP of the loop (after pop, before processing) so `hops == 1`
             // is byte-identical — a seed's direct neighbours are all enqueued in
             // the seed's OWN iteration, so this only trips on a later iteration,
@@ -352,9 +352,9 @@ impl TemporalGraph {
 
     /// Find all facts that have no embedding and return their IDs + object_value.
     ///
-    /// # SQLite-first ordering invariant (Story #214)
+    /// # SQLite-first ordering invariant
     ///
-    /// SQLite commit MUST precede vector write (Story #214). If a crash occurs
+    /// SQLite commit MUST precede vector write. If a crash occurs
     /// between SQLite commit and vector write, all facts with NULL embedding can
     /// be identified via this function and re-embedded by the caller. The reverse
     /// ordering (vector-first) has NO recovery path — this is the entire
@@ -366,7 +366,7 @@ impl TemporalGraph {
     /// Both `object_value` and `object_id` are included so callers can build the
     /// text-to-embed with the best available object representation:
     /// prefer `object_id` (entity reference) over `object_value` (literal string)
-    /// when constructing the embedding input. Story #214 (FU.8).
+    /// when constructing the embedding input.
     pub async fn facts_missing_embeddings(
         &self,
     ) -> Result<Vec<(i64, String, String, Option<String>, Option<String>)>> {
@@ -389,7 +389,7 @@ impl TemporalGraph {
         Ok(out)
     }
 
-    /// Delete an entity and ALL dependent rows atomically. Story #216.
+    /// Delete an entity and ALL dependent rows atomically.
     ///
     /// Deletes in dependency order within a single `BEGIN IMMEDIATE` transaction:
     /// 1. `entities_fts` — standalone FTS5 virtual table; no FK cascade.
@@ -463,14 +463,14 @@ impl TemporalGraph {
         }
     }
 
-    /// Delete up to 250 entities in transactional 100-item chunks. Story #217.
+    /// Delete up to 250 entities in transactional 100-item chunks.
     ///
     /// Each chunk of up to 100 IDs is wrapped in its own `BEGIN IMMEDIATE`
     /// transaction. Deletion order per chunk: entities_fts → episodic_edges →
-    /// facts_fts → facts → entities. The `facts_fts` step (ADR-072 §11
-    /// boy-scout) closes a pre-existing gap: this hard-delete path previously
-    /// cleaned `entities_fts` but not `facts_fts` — the shadow was only ever
-    /// purged by the dream archive path (`archive.rs::move_fact`, RISK-003).
+    /// facts_fts → facts → entities. The `facts_fts` step closes a
+    /// pre-existing gap: this hard-delete path previously cleaned
+    /// `entities_fts` but not `facts_fts` — the shadow was only ever
+    /// purged by the dream archive path (`archive.rs::move_fact`).
     /// It MUST run before the `facts` DELETE so the resolving subquery still
     /// sees the rows about to be removed.
     ///
@@ -513,11 +513,10 @@ impl TemporalGraph {
                 params.clone()
             );
 
-            // 2.5. Facts FTS shadow rows (ADR-072 §11 boy-scout — closes the
-            //      batch_forget↔facts_fts gap RISK-003 names: facts_fts was
-            //      previously cleaned ONLY by the dream archive path
-            //      (`core/dream/consolidation/archive.rs::move_fact`), never
-            //      by this hard-delete path). MUST run BEFORE step 3's
+            // 2.5. Facts FTS shadow rows — closes the batch_forget↔facts_fts
+            //      gap: facts_fts was previously cleaned ONLY by the dream
+            //      archive path (`core/dream/consolidation/archive.rs::move_fact`),
+            //      never by this hard-delete path. MUST run BEFORE step 3's
             //      `facts` DELETE below — the subquery needs the `facts` rows
             //      to still exist to resolve which fact ids are about to be
             //      purged. Two IN clauses (mirrors step 3) → params doubled.
@@ -556,9 +555,9 @@ impl TemporalGraph {
         Ok(total_deleted)
     }
 
-    // ── Namespace policy (ADR-029a, v0.1.4) ──────────────────────────────────
+    // ── Namespace policy (v0.1.4) ─────────────────────────────────────────────
     //
-    // All three methods are `pub(crate)` per Vera cycle-1 MED-6 — only the
+    // All three methods are `pub(crate)` — only the
     // `facade` layer (kremory::Memory::register_namespace) and the lazy-population
     // wiring should call them. External consumers go through the facade and get
     // validation + idempotency + tracing + race-safety.

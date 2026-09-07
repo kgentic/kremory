@@ -9,7 +9,7 @@ use crate::core::schema::{EpisodicEdge, TemporalGraph};
 use super::parse_dt;
 
 /// Bundled parameters for [`TemporalGraph::insert_episode_with_group`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments). Construct
+/// args-as-object to satisfy a too-many-arguments lint. Construct
 /// via [`EpisodeInsert::new`] + chainable setters. `group_id` is intentionally
 /// NOT a field: the `*_with_group` variant takes it as a sibling arg so the
 /// namespace capability stays explicit to that method (mirrors `FactInsert`).
@@ -84,8 +84,8 @@ impl<'a> EpisodeInsert<'a> {
     }
 }
 
-/// Bundled parameters for [`TemporalGraph::insert_episode`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). Distinct from [`EpisodeInsert`]
+/// Bundled parameters for [`TemporalGraph::insert_episode`] — args-as-object to
+/// satisfy a too-many-arguments lint. Distinct from [`EpisodeInsert`]
 /// (the builder for the `_with_group` variant) — this is the minimal four-column
 /// insert path.
 pub struct InsertEpisodeParams<'a> {
@@ -96,7 +96,7 @@ pub struct InsertEpisodeParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::prior_episodes_for_source`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to satisfy a too-many-arguments lint.
 ///
 /// The thread key is `episodes.source_id`, which the facade writes from
 /// [`SourceRef::id`](crate::memory::types::SourceRef) — i.e. exactly what
@@ -120,7 +120,7 @@ pub struct PriorEpisodesParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::insert_episodic_edge`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to satisfy a too-many-arguments lint.
 pub struct InsertEpisodicEdgeParams<'a> {
     pub episode_id: i64,
     pub entity_id: &'a str,
@@ -129,7 +129,7 @@ pub struct InsertEpisodicEdgeParams<'a> {
 }
 
 impl TemporalGraph {
-    /// ADR-072 seq1 impl-spec §1: index one episode's verbatim content into
+    /// Index one episode's verbatim content into
     /// `episodes_fts` (Migration 022, external-content FTS5 shadow of
     /// `episodes.content`, `content_rowid='id'`).
     ///
@@ -139,8 +139,8 @@ impl TemporalGraph {
     /// every `TemporalGraph::open*` call, so a crash between the two INSERTs
     /// self-heals on next open (see `migrations/defs_i.rs` module doc) — the
     /// same safety net every idempotent-backfill migration in this crate
-    /// already relies on. Errors are NOT swallowed (Rule 19/21 — no silent
-    /// `let _ = ...`): a real SQL failure here means the episode landed in the
+    /// already relies on. Errors are NOT swallowed — no silent
+    /// `let _ = ...`: a real SQL failure here means the episode landed in the
     /// graph but is unsearchable via content-search until next reopen, which
     /// is a real consistency signal worth propagating.
     #[cfg(feature = "content-search")]
@@ -219,7 +219,7 @@ impl TemporalGraph {
         // When the caller does not supply a value we default to Utc::now() so the
         // explicit column reference never sends NULL and bypasses the SQL DEFAULT.
         let recorded_at_str = recorded_at.unwrap_or_else(Utc::now).to_rfc3339();
-        // TD-003 Phase G (ADR-042): compute SHA-256 content hash at insert time.
+        // Compute SHA-256 content hash at insert time.
         // Migration 011 backfills existing rows; new rows are hashed here so the
         // column is always populated from v0.1.7 onwards.
         let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
@@ -260,14 +260,14 @@ impl TemporalGraph {
         Ok(episode_id)
     }
 
-    /// TD-136 (dense episode retrieval): set/update the embedding vector for
+    /// Set/update the embedding vector for
     /// one episode row, mirroring [`TemporalGraph::set_entity_embedding`] /
     /// `set_fact_embedding` exactly (JSON-array `vector()` UPDATE keyed by the
     /// episode's `INTEGER PRIMARY KEY`). Feature-gated behind `content-search`
     /// — the `episodes.embedding` column only exists in that build
     /// (Migration 026). Called at ingest (when the dense arm is enabled) and by
     /// the `Memory::{backfill_episode_embeddings, reembed_all_episode_embeddings}`
-    /// maintenance paths (TD-136 gap-fill and TD-143 full re-embed, respectively).
+    /// maintenance paths (gap-fill and full re-embed, respectively).
     #[cfg(feature = "content-search")]
     pub async fn set_episode_embedding(&self, episode_id: i64, embedding: &[f32]) -> Result<()> {
         let _db_start = Instant::now();
@@ -293,7 +293,7 @@ impl TemporalGraph {
         Ok(())
     }
 
-    /// TD-136: select up to `limit` episodes whose `embedding` is still NULL,
+    /// Select up to `limit` episodes whose `embedding` is still NULL,
     /// for the `Memory::backfill_episode_embeddings` maintenance loop. Returns
     /// `(episode_id, content)` pairs. Feature-gated behind `content-search`
     /// (the column only exists there).
@@ -325,8 +325,7 @@ impl TemporalGraph {
         Ok(out)
     }
 
-    /// TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): select up
-    /// to `limit` episodes with `id > after_id`, ordered by `id` ASC, for the
+    /// Select up to `limit` episodes with `id > after_id`, ordered by `id` ASC, for the
     /// `Memory::reembed_all_episode_embeddings` maintenance loop. Returns
     /// `(episode_id, content)` pairs.
     ///
@@ -337,8 +336,8 @@ impl TemporalGraph {
     /// NULL` predicate can only ever fill a gap, never overwrite an existing
     /// vector, so it cannot serve a full re-embed (e.g. after flipping
     /// [`SearchConfig::embed_task_prefix_enabled`](crate::core::config::SearchConfig::embed_task_prefix_enabled)
-    /// or swapping the embedder/dimension — see TD-112 for the sibling
-    /// entity-embedding staleness problem).
+    /// or swapping the embedder/dimension — the entity/fact siblings have
+    /// the same staleness problem).
     ///
     /// Because there is no filter for the caller's loop to self-consume, the
     /// caller MUST advance `after_id` to the last id in the returned page
@@ -376,14 +375,13 @@ impl TemporalGraph {
     /// Fetch the contents of the most recent episodes sharing `source_id`
     /// within `group_id`, strictly before `before_id`, in CHRONOLOGICAL order.
     ///
-    /// This is the read half of prior-turn replay (ADR-080): when ingesting turn
+    /// This is the read half of prior-turn replay: when ingesting turn
     /// N of a conversation, the extractor is shown the preceding turns so that
     /// references resolve ("I prefer that one" has nothing to resolve against on
     /// its own). Both live competitors do this and converged on N=10 —
     /// mem0 replays the last 10 rows of its `messages` table for the session
     /// (`mem0/memory/main.py:920`), Graphiti the last 10 episodes for the group
-    /// (`graphiti_core/graphiti.py:1086`). See
-    /// `.ai-docs/research/competitive-landscape/write-path-teardown-2026-09-06.md`.
+    /// (`graphiti_core/graphiti.py:1086`).
     ///
     /// # Ordering
     ///
@@ -456,7 +454,7 @@ impl TemporalGraph {
     /// `IngestDeferredParams` carries `episode_id` but not the source — see
     /// that struct's doc comment, which records the same plumbing gap for
     /// `declared_reference_time`. Resolving it here keeps prior-turn replay
-    /// (ADR-080) behaving IDENTICALLY inline and in background mode; a silent
+    /// behaving IDENTICALLY inline and in background mode; a silent
     /// difference between the two would be worse than the missing plumbing,
     /// because it would make extraction quality depend on which path a caller
     /// happened to take.
@@ -516,7 +514,7 @@ impl TemporalGraph {
         histogram!("rql.db.insert_episodic_edge_ms").record(_ms);
         if changed == 0 {
             // Duplicate presence edge suppressed by the UNIQUE constraint. Emit an
-            // observable signal (R19) — this counter should read ~zero on the
+            // observable signal — this counter should read ~zero on the
             // inline path; sustained increments mean a writer is re-asserting
             // presence that another writer already owns. Return the EXISTING edge
             // id (not a stale last_insert_rowid) so callers keep a valid handle.
@@ -573,7 +571,7 @@ impl TemporalGraph {
                 entity_id: eid,
                 role,
                 recorded_at,
-                // ADR-029b: composite FK field — absent on pre-migration-004 rows.
+                // Composite FK field — absent on pre-migration-004 rows.
                 entity_group_id: None,
             });
         }
