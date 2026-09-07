@@ -162,7 +162,7 @@ pub mod migrations;
 pub mod ner;
 pub mod obs;
 pub mod provider;
-/// ADR-062 / ADR-067 Phase 3 — graph-proximity boost axis: pure
+/// ADR-062 / ADR-082 Phase 3 — graph-proximity boost axis: pure
 /// `usize -> f32` bonus math, read-side-pure (no `execute(`).
 pub(crate) mod proximity;
 pub mod rates;

@@ -153,8 +153,9 @@ impl TemporalGraph {
     }
 
     /// Bound a fact's world-time `valid_to` window (ADR-071 §Item 3, TD-070;
-    /// mechanism corrected by `.ai-docs/adrs/adr-071-adr070-reconciliation-
-    /// amendment-2026-07-09.md` §Amendment C).
+    /// mechanism corrected by ADR-083,
+    /// `.ai-docs/adrs/adr-083-adr071-amendment-reconcile-shipped-adr070-
+    /// 2026-07-09.md` §Amendment C).
     ///
     /// Mirrors `invalidate_fact`'s exact shape (single `UPDATE` + the same
     /// histogram/trace instrumentation) but writes `valid_to` (world/valid-time

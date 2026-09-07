@@ -11,7 +11,7 @@
 //! ([`temporal::temporal_boost`]), and axis-C proximity
 //! ([`crate::core::proximity::proximity_bonus`], ADR-062, Phase 3) are all
 //! additive → no composition split, each measurable in isolation. ADR-062
-//! itself specified proximity as a "post-RRF multiplicative boost" — ADR-067
+//! itself specified proximity as a "post-RRF multiplicative boost" — ADR-082
 //! **Amendment 1** (2026-07-20) supersedes that literal text: proximity's own
 //! landing IS the amendment's named migration trigger ("axis-C proximity
 //! lands and would coexist with the additive axes"), and the amendment

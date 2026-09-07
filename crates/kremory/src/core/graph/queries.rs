@@ -15,7 +15,7 @@ pub struct GetNeighboursAtParams<'a> {
     pub entity_id: &'a str,
     pub hops: u32,
     pub as_of: Option<DateTime<Utc>>,
-    /// recall-v2 Phase 4 (TD-056, ADR-067 Amendment 2): in-BFS visited-entity
+    /// recall-v2 Phase 4 (TD-056, ADR-082 Amendment 2): in-BFS visited-entity
     /// cap. `None` = unbounded (today's behaviour). `Some(cap)` early-exits the
     /// BFS once `visited_entities.len() >= cap`, bounding hub-explosion on the
     /// widened multi-hop path (spec R1). The caller-side per-seed neighbour cap

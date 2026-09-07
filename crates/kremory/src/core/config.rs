@@ -264,11 +264,11 @@ pub struct SearchConfig {
 
     /// Weight of the additive graph-**proximity** boost — ADR-062 (axis C),
     /// build-entry spec `axis-c-read-time-relevance-spec-2026-07-01.md`,
-    /// ADR-067 Phase 3. **Default 0.0 = off** — new axis, behaviourally
+    /// ADR-082 Phase 3. **Default 0.0 = off** — new axis, behaviourally
     /// neutral until an eval-calibrated value is set (same shape as
     /// `temporal_weight`).
     ///
-    /// ADR-067 **Amendment 1** (2026-07-20) supersedes ADR-062's literal
+    /// ADR-082 **Amendment 1** (2026-07-20) supersedes ADR-062's literal
     /// "post-RRF multiplicative boost" text: this axis ships **additive +
     /// bounded `[0, weight]`**, composed into the SAME single `.min(1.0)`
     /// clamp as `graph_degree_weight`/`temporal_weight` — the amendment's own
@@ -297,7 +297,7 @@ pub struct SearchConfig {
 
     /// In-BFS visited-entity cap for the proximity walk (ADR-062 §8/ASMP-001,
     /// spike criterion 2a). **Default 8** — matches `expansion_fan_out_cap`'s
-    /// default. `get_neighbours_at`'s `max_visited` (ADR-067 Amendment 2)
+    /// default. `get_neighbours_at`'s `max_visited` (ADR-082 Amendment 2)
     /// early-exits the BFS once the cap is hit, bounding a high-degree hub
     /// seed's worst-case cost at `proximity_hop_bound >= 2` — the same
     /// mechanism TD-056's multi-hop expansion cap already uses, reused here
@@ -436,7 +436,7 @@ impl Default for SearchConfig {
             expansion_hop_bound: 1,
             expansion_fan_out_cap: 8,
             neighbour_score_decay: 0.5,
-            // ADR-062 / ADR-067 Phase 3 — proximity OFF by default: the
+            // ADR-062 / ADR-082 Phase 3 — proximity OFF by default: the
             // second bounded-hop graph query never fires until
             // KREMORY_PROXIMITY_WEIGHT / with_proximity_weight flips it on.
             proximity_weight: 0.0,
@@ -514,7 +514,7 @@ pub(crate) struct PipelineConfigOverrides {
     /// Explicit override for [`SearchConfig::embed_task_prefix_enabled`] (TD-143).
     pub embed_task_prefix_enabled: Option<bool>,
     /// Explicit override for [`SearchConfig::proximity_weight`] (ADR-062 /
-    /// ADR-067 Phase 3). `proximity_hop_bound` / `proximity_fan_out_cap` are
+    /// ADR-082 Phase 3). `proximity_hop_bound` / `proximity_fan_out_cap` are
     /// deliberately NOT exposed here — config-default-only, mirroring
     /// `expansion_hop_bound`/`expansion_fan_out_cap`'s own precedent (only
     /// the weight is the A/B lever that needs a restart-not-rebuild seam).
@@ -983,7 +983,7 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// ADR-062 / ADR-067 Phase 3 axis-C A/B knob: weight of the additive
+    /// ADR-062 / ADR-082 Phase 3 axis-C A/B knob: weight of the additive
     /// graph-proximity boost. Default `0.0` (off, byte-identical — the second
     /// bounded-hop query never fires). Wired from the
     /// `KREMORY_PROXIMITY_WEIGHT` env override at server boot
@@ -994,7 +994,7 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// ADR-067 temporal-recency axis weight (`SearchConfig::temporal_weight`),
+    /// ADR-082 temporal-recency axis weight (`SearchConfig::temporal_weight`),
     /// default `0.0` = axis off (byte-identical to pre-TD-157 behaviour).
     ///
     /// TD-157 (2026-07-28): this axis shipped with working compute
@@ -1273,7 +1273,7 @@ mod tests {
         assert_eq!(tuned.rerank_candidate_max_chars, 512);
     }
 
-    /// ADR-062 / ADR-067 Phase 3 — proximity ships OFF by default (byte-
+    /// ADR-062 / ADR-082 Phase 3 — proximity ships OFF by default (byte-
     /// identical): `proximity_weight <= 0.0` skips the second graph query
     /// entirely (see `core::context::Engine::contextualize`).
     #[test]

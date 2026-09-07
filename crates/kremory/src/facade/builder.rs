@@ -399,7 +399,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Explicit weight for the ADR-062 / ADR-067 Phase 3 graph-proximity
+    /// Explicit weight for the ADR-062 / ADR-082 Phase 3 graph-proximity
     /// boost (`SearchConfig::proximity_weight`). Default (unset): `0.0`
     /// (axis OFF — the second bounded-hop graph query never fires) unless
     /// overridden by `KREMORY_PROXIMITY_WEIGHT` at construction time. Calling
@@ -414,7 +414,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Explicit weight for the ADR-067 temporal-recency axis
+    /// Explicit weight for the ADR-082 temporal-recency axis
     /// (`SearchConfig::temporal_weight`). Default (unset): `0.0` (axis OFF,
     /// byte-identical to pre-TD-157) unless overridden by
     /// `KREMORY_TEMPORAL_WEIGHT` at construction time. Calling this setter wins

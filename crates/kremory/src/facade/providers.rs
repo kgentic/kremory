@@ -460,7 +460,7 @@ fn resolution_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuild
 ///
 /// - `KREMORY_CONTENT_WEIGHT` (f32)  → `SearchConfig::content_stream_weight`
 /// - `KREMORY_RRF_K` (usize)         → `SearchConfig::rrf_k`
-/// - `KREMORY_PROXIMITY_WEIGHT` (f32) → `SearchConfig::proximity_weight` (ADR-062 / ADR-067 Phase 3)
+/// - `KREMORY_PROXIMITY_WEIGHT` (f32) → `SearchConfig::proximity_weight` (ADR-062 / ADR-082 Phase 3)
 /// - `KREMORY_RERANK_CANDIDATE_MAX_CHARS` (usize) → `SearchConfig::rerank_candidate_max_chars` (reranker latency lever 1)
 ///
 /// Absent env → defaults preserved (byte-identical, DoD #1). **Fail-loud**
@@ -585,7 +585,7 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // ADR-062 / ADR-067 Phase 3 axis-C A/B knob. Same parse/fail-loud
+    // ADR-062 / ADR-082 Phase 3 axis-C A/B knob. Same parse/fail-loud
     // discipline as KREMORY_CONTENT_WEIGHT above (a float weight, not a
     // boolean). Absent/malformed → default 0.0 (axis OFF) retained.
     if let Ok(raw) = std::env::var("KREMORY_PROXIMITY_WEIGHT") {
@@ -604,7 +604,7 @@ fn search_env_overrides(mut b: PipelineConfigBuilder) -> PipelineConfigBuilder {
             ),
         }
     }
-    // TD-157 (2026-07-28): ADR-067's temporal-recency axis had working compute
+    // TD-157 (2026-07-28): ADR-082's temporal-recency axis had working compute
     // and NO way to enable it — no builder method, no env override, and
     // `SearchConfig` derives no `Deserialize`, so no config-file path either.
     // Its `0.0` default was therefore unreachable-by-construction and the axis

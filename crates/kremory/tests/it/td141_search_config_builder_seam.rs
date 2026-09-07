@@ -150,7 +150,7 @@ async fn with_episode_dense_enabled_reaches_live_search_config() {
     );
 }
 
-/// ADR-062 / ADR-067 Phase 3 — same builder seam, new axis-C knob. Mirrors
+/// ADR-062 / ADR-082 Phase 3 — same builder seam, new axis-C knob. Mirrors
 /// `with_content_stream_weight_reaches_live_search_config` exactly.
 #[tokio::test]
 async fn with_proximity_weight_reaches_live_search_config() {
@@ -231,7 +231,7 @@ async fn unset_knobs_match_documented_defaults() {
     );
 }
 
-/// ADR-062 / ADR-067 Phase 3 precedence test — mirrors
+/// ADR-062 / ADR-082 Phase 3 precedence test — mirrors
 /// `explicit_config_wins_over_env_override` for the new axis-C knob.
 #[tokio::test]
 async fn proximity_weight_explicit_wins_over_env_override() {

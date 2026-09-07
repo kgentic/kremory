@@ -628,7 +628,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // if given — this used to be silently dropped
                         // (`PrePinnedFact` carried `valid_from` only). Mirrors
                         // `SupersedeRequest`'s own `bound_valid_to` call
-                        // (Amendment C) — NOT `invalidate_fact`/
+                        // (ADR-083 Amendment C) — NOT `invalidate_fact`/
                         // `invalidate_fact_with_reason`, which write
                         // `expired_at`/`invalid_at` (a separate, later,
                         // system-time retirement act).

@@ -1,10 +1,10 @@
 //! Graph-proximity boost axis — ADR-062 (axis C), build-entry spec
-//! `axis-c-read-time-relevance-spec-2026-07-01.md`, ADR-067 Phase 3.
+//! `axis-c-read-time-relevance-spec-2026-07-01.md`, ADR-082 Phase 3.
 //!
 //! **Additive + bounded `[0, weight]`, matching [`crate::core::search::
 //! graph_degree_bonus`] and [`crate::core::scoring::temporal::temporal_boost`]**
 //! so a single `.min(1.0)` clamp covers all three axes at the insertion point
-//! — no second normalization pass. ADR-067 **Amendment 1** (2026-07-20)
+//! — no second normalization pass. ADR-082 **Amendment 1** (2026-07-20)
 //! supersedes ADR-062's literal "post-RRF multiplicative boost" text: this
 //! axis's own landing is the amendment's named migration trigger, and the
 //! amendment already resolved that trigger to "stay additive" (score 132/135,
@@ -37,7 +37,7 @@
 //!
 //! **Fan-out cap (ADR-062 §8/ASMP-001, spike criterion 2a):** the caller
 //! passes `max_visited: Some(SearchConfig::proximity_fan_out_cap)` to the
-//! SAME `get_neighbours_at`, reusing ADR-067 Amendment 2's in-BFS visited cap
+//! SAME `get_neighbours_at`, reusing ADR-082 Amendment 2's in-BFS visited cap
 //! (originally built for TD-056's multi-hop expansion) rather than adding a
 //! new capped traversal primitive — a high-degree hub seed's worst-case cost
 //! is bounded by construction, not merely spike-measured.

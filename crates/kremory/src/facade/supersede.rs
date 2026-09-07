@@ -14,8 +14,8 @@ use super::*;
 /// supersession (the system inferring a supersession from new input) is
 /// deliberately deferred (tracked as TD-P1-AUTO — not built here).
 ///
-/// # Mechanism (**Amendment C** —
-/// `.ai-docs/adrs/adr-071-adr070-reconciliation-amendment-2026-07-09.md`)
+/// # Mechanism (**ADR-083 Amendment C** —
+/// `.ai-docs/adrs/adr-083-adr071-amendment-reconcile-shipped-adr070-2026-07-09.md`)
 ///
 /// `.execute()` writes `facts.valid_to` via the NEW
 /// [`TemporalGraph::bound_valid_to`] primitive (`core/graph/facts.rs`) — **NOT**
@@ -101,7 +101,7 @@ impl<'a> SupersedeRequest<'a> {
     }
 
     /// Execute the supersession. Bounds `fact_id`'s world-time `valid_to` via
-    /// [`TemporalGraph::bound_valid_to`] (ADR-071 §Item 3, Amendment C) — NOT
+    /// [`TemporalGraph::bound_valid_to`] (ADR-071 §Item 3; ADR-083 Amendment C) — NOT
     /// `invalidate_fact`.
     ///
     /// # Errors

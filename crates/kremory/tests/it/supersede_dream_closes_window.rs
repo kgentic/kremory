@@ -12,7 +12,7 @@
 //! two-phase chain documented in `facade/supersede.rs`:
 //!
 //! 1. `mem.supersede(fact_id).at(valid_to).execute()` — PRODUCER, bounds
-//!    `facts.valid_to` (world-time) via `bound_valid_to` (Amendment C — NOT
+//!    `facts.valid_to` (world-time) via `bound_valid_to` (ADR-083 Amendment C — NOT
 //!    `invalidate_fact`).
 //! 2. `mem.dream().with_opts(DreamOpts { include_supersession_sweep: true, .. })` —
 //!    CONSUMER, `window_closeout` observes `valid_to IS NOT NULL AND valid_to <

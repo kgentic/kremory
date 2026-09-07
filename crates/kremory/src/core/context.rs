@@ -306,12 +306,12 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                     now,
                 },
             );
-            // ADR-062 / ADR-067 Phase 3: additive graph-proximity boost. Unlike
+            // ADR-062 / ADR-082 Phase 3: additive graph-proximity boost. Unlike
             // degree/temporal (which reuse data this loop already fetched),
             // proximity needs a WIDER, independently-bounded walk
             // (`proximity_hop_bound`, default 2, vs `expansion_hop_bound`'s
             // default 1) — so it issues its OWN `get_neighbours_at` call,
-            // reusing ADR-067 Amendment 2's `max_visited` in-BFS cap
+            // reusing ADR-082 Amendment 2's `max_visited` in-BFS cap
             // (ADR-062 §8/ASMP-001 spike criterion 2a: bounds a high-degree
             // hub seed's worst-case cost by construction, not just spike
             // measurement). Gated on `weight > 0.0` so the axis is not just a
@@ -976,7 +976,7 @@ mod tests {
         );
     }
 
-    // === ADR-062 / ADR-067 Phase 3: axis-C graph-proximity boost ===============
+    // === ADR-062 / ADR-082 Phase 3: axis-C graph-proximity boost ===============
 
     /// Default-off byte-identical guard: at `proximity_weight = 0.0` (the
     /// shipped default) the SECOND `get_neighbours_at` graph query must never
@@ -1159,7 +1159,7 @@ mod tests {
 
     /// ADR-062 §8/ASMP-001 spike criterion 2a: a synthetic high-degree hub
     /// (500+ facts) at `proximity_hop_bound=2` must not cliff — the in-BFS
-    /// `max_visited` cap (`proximity_fan_out_cap`, reusing ADR-067 Amendment
+    /// `max_visited` cap (`proximity_fan_out_cap`, reusing ADR-082 Amendment
     /// 2's mechanism) bounds worst-case cost by construction. Measures and
     /// reports real wall-clock time (not asserted against the DEFAULT cap of
     /// 8 kept in place — the fixture intentionally exceeds it by 60x+ to
