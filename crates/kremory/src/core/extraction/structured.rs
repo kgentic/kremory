@@ -53,7 +53,7 @@ pub(crate) struct StructuredCallBuilder<'a, L: ?Sized + ChatProvider> {
     /// support upstream and is not yet implemented.
     #[allow(dead_code)]
     ttft_budget_ms: Option<u64>,
-    /// TD-200 (a): TOTAL wall-clock budget for the whole ladder, not per arm.
+    /// TOTAL wall-clock budget for the whole ladder, not per arm.
     ///
     /// The per-arm budget above does NOT bound a request: each arm gets a FRESH
     /// budget, so a stalled request walks every arm and costs
@@ -62,7 +62,7 @@ pub(crate) struct StructuredCallBuilder<'a, L: ?Sized + ChatProvider> {
     ///
     /// That is not hypothetical — it aborted a 2-hour benchmark run
     /// (`ingest_aborted: POST /memories timed out after 90s`) because the ladder
-    /// crossed the client's deadline while still stepping down. See TD-200.
+    /// crossed the client's deadline while still stepping down.
     ///
     /// Bounding the total makes a stalled request fail FAST rather than
     /// exhausting the ladder past whatever deadline the caller is holding.
@@ -96,7 +96,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
             // PipelineConfig::extraction_arm_budget_ms via ExtractionContext.
             // Slow local LLMs (qwen2.5:14b ~80-130s) set 300_000 on the builder.
             ttft_budget_ms: Some(30_000),
-            // TD-200 (a). Expressed as a MULTIPLE of the per-arm budget rather
+            // Expressed as a MULTIPLE of the per-arm budget rather
             // than an absolute, so the call-sites that raise the arm budget for
             // slow local models (300_000) scale with it instead of silently
             // hitting a fixed ceiling meant for the 30s default.
@@ -146,7 +146,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
     #[allow(dead_code)]
     pub(crate) fn ttft_budget_ms(mut self, ms: u64) -> Self {
         self.ttft_budget_ms = Some(ms);
-        // TD-200 (a): keep the ladder bound proportional to the arm bound.
+        // Keep the ladder bound proportional to the arm bound.
         // A call-site raising the arm budget to 300_000 for a slow local model
         // means "arms are slow here" — not "spend 25 minutes on one request".
         // Raising one without the other is how the cumulative bound silently
@@ -212,7 +212,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
         // Track last provider error for FallbackExhausted raw_response field.
         let mut last_err_str = String::new();
         let arm_budget = self.ttft_budget_ms.map(std::time::Duration::from_millis);
-        // TD-200 (a): bound the WHOLE ladder, not just each arm.
+        // Bound the WHOLE ladder, not just each arm.
         let ladder_budget = self.ladder_budget_ms.map(std::time::Duration::from_millis);
         // `tokio::time::Instant`, NOT `std::time::Instant`: it tracks the runtime
         // clock, so this bound is observable under `#[tokio::test(start_paused)]`
@@ -220,8 +220,8 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
         // production; the difference is that the guard becomes TESTABLE.
         let ladder_start = tokio::time::Instant::now();
 
-        // TD-019 Gap 4: cache env-var check once before the ladder loop so each
-        // arm attempt doesn't pay a syscall-ish env::var read (Vera Finding 3).
+        // Cache the env-var check once before the ladder loop so each
+        // arm attempt doesn't pay a syscall-ish env::var read.
         let debug_enabled = std::env::var("KREMORY_DEBUG").is_ok();
 
         for (arm_idx, &arm) in ladder.iter().enumerate() {
@@ -236,10 +236,10 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
             // Wall-clock cap per arm. Prevents one stalled arm from burning
             // the entire fallback ladder (default 30s; configurable via builder).
             //
-            // TD-019 Gap 5: per-call timing — distinguishes "1 entity per call
+            // Per-call timing — distinguishes "1 entity per call
             // × 3 chunks" from "10 entities in 1 chunk". Wraps the arm invocation
             // (incl. timeout cap so timed-out arms still record their cost).
-            // TD-200 (a): stop BEFORE attempting an arm we cannot afford, and
+            // Stop BEFORE attempting an arm we cannot afford, and
             // cap this arm so it cannot overshoot the total. Without the cap the
             // last arm would still run a full `arm_budget` past the deadline,
             // which is the same defect one arm smaller.
@@ -295,7 +295,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                     {
                         Ok(r) => r,
                         Err(_) => {
-                            // TD-166 known gap (Quinn MNT-005): a timed-out arm emits
+                            // Known gap: a timed-out arm emits
                             // NO token usage, though the provider may already have
                             // spent tokens server-side before we gave up. So
                             // kremory_core_tokens_total UNDER-reports by whatever the
@@ -340,14 +340,14 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
 
             match result {
                 Ok(ArmOutcome { value, usage }) => {
-                    // TD-166: emit token cost as soon as the provider returned Ok —
+                    // Emit token cost as soon as the provider returned Ok —
                     // BEFORE the validation branch below. An arm whose output fails
                     // schema validation still cost tokens, and attributing cost only
                     // to validated calls would under-report precisely the failing arms
                     // a cost investigation is looking for.
                     emit_arm_usage(schema_name, arm, usage);
                     let (usage_in, usage_out, usage_reported) = usage_fields(usage);
-                    // Phase D iter 3 (2026-06-10): per Rule 19 — log which arm succeeded
+                    // Log which arm succeeded
                     // so we can verify NativeSchema fires for capable providers vs falling
                     // through to LlmJsonRepair (schema-not-enforced).
                     if debug_enabled {
@@ -367,8 +367,8 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                         matches!(arm, FallbackArm::NativeSchema | FallbackArm::FormatSchema);
 
                     if !should_validate {
-                        // Dual-emit (ADR D1 / R1.1): counter + fused OTel gen_ai.* per SPEC-001.
-                        // TD-166/TD-090 CLOSED: token counts are now real. `usage_reported`
+                        // Emits both a counter and fused OTel gen_ai.* attributes for this call.
+                        // Token counts are now real. `usage_reported`
                         // disambiguates a genuine 0 from "the backend never told us"
                         // (Ollama does not implement ChatResponse::usage).
                         counter!(
@@ -379,7 +379,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                         .increment(1);
                         tracing::info!(
                             "gen_ai.system" = "unknown",
-                            // TD-218: DERIVED, not hardcoded. This field read
+                            // DERIVED, not hardcoded. This field read
                             // `"extraction"` for every structured call in the
                             // crate — including dream's — while the token
                             // metric emitted from this same function labelled
@@ -402,8 +402,8 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
 
                     match validate_against_schema(&value, schema) {
                         Ok(()) => {
-                            // Dual-emit (ADR D1 / R1.1): counter + fused OTel gen_ai.* per SPEC-001.
-                            // TD-166/TD-090 CLOSED — see the `!should_validate` branch above.
+                            // Emits both a counter and fused OTel gen_ai.* attributes for this call
+                            // — see the `!should_validate` branch above.
                             counter!(
                                 "rql.extraction.structured_call_success",
                                 "schema" => schema_name,
@@ -412,7 +412,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                             .increment(1);
                             tracing::info!(
                                 "gen_ai.system" = "unknown",
-                                // TD-218: DERIVED, not hardcoded. This field read
+                                // DERIVED, not hardcoded. This field read
                             // `"extraction"` for every structured call in the
                             // crate — including dream's — while the token
                             // metric emitted from this same function labelled
@@ -468,7 +468,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                     usage: retry_usage,
                                 }) = retry_result
                                 {
-                                    // TD-166: the self-correction retry is a SECOND paid
+                                    // The self-correction retry is a SECOND paid
                                     // call. Emitted unconditionally — a retry that then
                                     // fails validation still cost tokens, and this arm is
                                     // exactly where a runaway retry ladder would hide.
@@ -476,7 +476,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                     let (retry_in, retry_out, retry_reported) =
                                         usage_fields(retry_usage);
                                     if validate_against_schema(&retry_value, schema).is_ok() {
-                                        // Dual-emit (ADR D1 / R1.1): retry success path, fused OTel gen_ai.* per SPEC-001.
+                                        // Retry success path: emits both a counter and fused OTel gen_ai.* attributes.
                                         counter!(
                                             "rql.extraction.structured_call_success",
                                             "schema" => schema_name,
@@ -485,7 +485,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                                         .increment(1);
                                         tracing::info!(
                                                         "gen_ai.system" = "unknown",
-                                                        // TD-218: DERIVED, not hardcoded. This field read
+                                                        // DERIVED, not hardcoded. This field read
                                         // `"extraction"` for every structured call in the
                                         // crate — including dream's — while the token
                                         // metric emitted from this same function labelled
@@ -529,7 +529,7 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
                 Err(llm_err) => {
                     // Provider-level error — capture for FallbackExhausted and step down.
                     last_err_str = llm_err.to_string();
-                    // Phase D iter 3 (2026-06-10): per Rule 19 — surface arm-failure
+                    // Surface the arm-failure
                     // reason at WARN level so silent NativeSchema 400s become visible.
                     // Anthropic's "maxItems not supported" 400 was hidden here for ~24h.
                     tracing::warn!(
@@ -566,7 +566,6 @@ impl<'a, L: ?Sized + ChatProvider> StructuredCallBuilder<'a, L> {
 
 /// Build the fallback ladder for a given provider capability.
 ///
-/// Per spec §6.2 K3 + TD-013 Phase 4 (L6 DelimitedTuple):
 /// - Anthropic/OpenAI NativeStructuredOutput: Native → LlmJsonRepair → DelimitedTuple → PromptOnly
 /// - Ollama FormatSchema: FormatSchema → LlmJsonRepair → DelimitedTuple → PromptOnly
 /// - Unknown PromptOnly: LlmJsonRepair → DelimitedTuple → PromptOnly
@@ -598,8 +597,8 @@ fn build_ladder(caps: ProviderCaps) -> Vec<FallbackArm> {
 
 // ─── Arm execution ───────────────────────────────────────────────────────────
 
-/// Bundled parameters for [`try_arm`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments). Holds borrows for the duration of a
+/// Bundled parameters for [`try_arm`] — args-as-object to avoid too many
+/// positional arguments. Holds borrows for the duration of a
 /// single arm attempt; the fallback ladder constructs a fresh value per call.
 struct TryArmParams<'a, L: ?Sized + ChatProvider> {
     llm: &'a L,
@@ -610,7 +609,7 @@ struct TryArmParams<'a, L: ?Sized + ChatProvider> {
     debug_enabled: bool,
 }
 
-/// Provider-reported token usage for a single arm attempt (TD-166).
+/// Provider-reported token usage for a single arm attempt.
 #[derive(Debug, Clone, Copy)]
 struct ArmUsage {
     input_tokens: u64,
@@ -618,7 +617,7 @@ struct ArmUsage {
 }
 
 /// One arm attempt's result: the parsed value **plus what the provider said the
-/// call cost** (TD-166 / TD-090).
+/// call cost**.
 ///
 /// Usage is carried OUT of `try_arm` rather than emitted inside it so there is a
 /// single emit point in the caller, alongside the existing `schema`/`arm`
@@ -630,7 +629,7 @@ struct ArmOutcome {
 
 /// Read usage off a response before it is consumed.
 ///
-/// This is the whole of TD-090: `try_arm` previously dropped the `ChatResponse`
+/// `try_arm` previously dropped the `ChatResponse`
 /// after `.text()`, so every extraction span reported a hard-coded
 /// `gen_ai.usage.*_tokens = 0`.
 fn arm_usage_of(response: &dyn autoagents_llm::chat::ChatResponse) -> Option<ArmUsage> {
@@ -649,7 +648,7 @@ fn arm_usage_of(response: &dyn autoagents_llm::chat::ChatResponse) -> Option<Arm
 /// call `operation="extraction"` would attribute reconciliation cost to ingest —
 /// an OVER-count presented as authoritative — and double-count against the dream
 /// phase's own `dream_pass_budget_usage` accounting (`core/ingest/mod.rs`).
-/// (Quinn ARCH-001, 2026-08-03: the first cut of TD-166 did exactly that.)
+/// An earlier version of this token-attribution logic did exactly that.
 ///
 /// The split is finer than ingest-vs-dream on purpose: `extraction` /
 /// `resolution` / `contradiction` are the three ingest cost centres, so a
@@ -671,7 +670,7 @@ fn operation_for_schema(schema_name: &str) -> &'static str {
         | "HybridTyping"
         | "EntityTyping"
         | "NuExtractBoth"
-        // Added 2026-08-05. Its two siblings were classified from the start; this
+        // Its two siblings were classified from the start; this
         // one sat UNCLASSIFIED because it reaches the builder through the
         // `&[(&SCHEMA_X, "Name")]` fallback-ladder table (`:997`) rather than a
         // literal call site, and the source gate below scanned only call sites.
@@ -716,8 +715,8 @@ static UNCLASSIFIED_SCHEMA_WARNED: std::sync::Once = std::sync::Once::new();
 ///
 /// The `reported` flag is load-bearing, not decoration: without it a span
 /// showing `input_tokens = 0` is ambiguous between a genuinely free call and a
-/// backend that never reported. That ambiguity is what TD-090 shipped for
-/// months as a hard-coded `0_u64`.
+/// backend that never reported. That ambiguity is what a prior version of this
+/// code shipped for months as a hard-coded `0_u64`.
 fn usage_fields(usage: Option<ArmUsage>) -> (u64, u64, bool) {
     match usage {
         Some(u) => (u.input_tokens, u.output_tokens, true),
@@ -728,7 +727,7 @@ fn usage_fields(usage: Option<ArmUsage>) -> (u64, u64, bool) {
 /// Warn once per process that the wired backend reports no token usage.
 static USAGE_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
 
-/// Emit token counters for one arm attempt (TD-166).
+/// Emit token counters for one arm attempt.
 ///
 /// Called as soon as the provider returns `Ok`, **before** schema validation —
 /// tokens spent on an arm whose output later fails validation were still spent,
@@ -739,9 +738,9 @@ static USAGE_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
 /// increment. Ollama's `ChatResponse` does not override `usage()` (the trait
 /// default returns `None`), so on a local build every call lands here — and a
 /// `tokens_total` of 0 would be indistinguishable from "ingest was free", which
-/// is the absence-read-as-measurement defect this TD exists to remove.
+/// is the absence-read-as-measurement defect this function exists to prevent.
 fn emit_arm_usage(schema_name: &'static str, arm: FallbackArm, usage: Option<ArmUsage>) {
-    // Derived, never hardcoded — the dream phase shares this funnel (ARCH-001).
+    // Derived, never hardcoded — the dream phase shares this funnel.
     let operation = operation_for_schema(schema_name);
     match usage {
         Some(u) => {
@@ -807,7 +806,7 @@ async fn try_arm<L: ?Sized + ChatProvider>(
             // and 400s on `null` (Ollama/OpenAI tolerate the omission). Emit a
             // deterministic description so the format_schema arm works across
             // every provider instead of silently falling through to
-            // LlmJsonRepair. (load-bearing-invariant-at-emit; spec §5.2.)
+            // LlmJsonRepair.
             let fmt = StructuredOutputFormat {
                 name: schema_name.to_string(),
                 description: Some(format!(
@@ -820,7 +819,7 @@ async fn try_arm<L: ?Sized + ChatProvider>(
                 .chat_with_tools(messages, None, Some(fmt))
                 .await
                 .map_err(|e| ExtractionError::Llm(e.to_string()))?;
-            // TD-166: read usage BEFORE the response is consumed by `.text()`.
+            // Read usage BEFORE the response is consumed by `.text()`.
             let usage = arm_usage_of(response.as_ref());
             (response.text().unwrap_or_default(), usage)
         }
@@ -837,7 +836,7 @@ async fn try_arm<L: ?Sized + ChatProvider>(
         FallbackArm::DelimitedTuple => unreachable!("DelimitedTuple handled above"),
     };
 
-    // TD-019 Gap 4: capture raw arm response (KREMORY_DEBUG-gated). Lets a
+    // Capture raw arm response (KREMORY_DEBUG-gated). Lets a
     // debug session see what FormatSchema actually emitted that triggered a
     // fallback, instead of inferring from "success-then-fail" counters.
     if debug_enabled {
@@ -889,7 +888,7 @@ async fn try_delimited_tuple_arm<L: ?Sized + ChatProvider>(
         .await
         .map_err(|e| ExtractionError::Llm(e.to_string()))?;
 
-    // TD-166: this is the second (and only other) `chat_with_tools` call in the
+    // This is the second (and only other) `chat_with_tools` call in the
     // extraction path — instrumented identically, else the DelimitedTuple arm
     // would be a silent hole in the token accounting.
     let usage = arm_usage_of(response.as_ref());
@@ -926,7 +925,7 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
         return Ok(v);
     }
 
-    // ── TD-192: recover the TOP-LEVEL VALUE before `llm_json` can flatten it ──
+    // ── Recover the TOP-LEVEL VALUE before `llm_json` can flatten it ──────────
     //
     // ## The actual defect (measured, not assumed)
     //
@@ -961,14 +960,14 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
     // (which would silently lose `reason`). This is also why `repair_to_array`
     // could not be reused: it wraps a bare `{...}` into `[{...}]`.
     //
-    // Found by the TD-187 real-LLM seam test — the cassette proved the model
+    // Found by a real-LLM seam test — the cassette proved the model
     // emitted two facts, `parse_facts` on that raw text returned two, and one
     // reached the database. 1,800 deterministic tests were green throughout,
     // because every one of them either hand-writes clean JSON or stubs this
     // layer out. Only a real model emits these shapes.
     let candidate = super::json_repair::strip_code_fences(trimmed);
     if let Some(v) = extract_first_balanced_value(candidate) {
-        // Rule 19: this path RESCUES a parse that would otherwise have been
+        // This path RESCUES a parse that would otherwise have been
         // silently truncated. A non-zero count is not an error — it is how many
         // responses needed structural recovery, which is worth knowing per
         // provider/model. `kind` distinguishes the array case (the data-loss
@@ -978,7 +977,7 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
         // Counter AND log. The counter alone was invisible in every text log, which
         // is precisely why the real-world FREQUENCY of this path could not be
         // established from a completed benchmark run — metrics die with the process,
-        // logs persist. Rule 19: a signal you cannot read after the fact is not
+        // logs persist. A signal you cannot read after the fact is not
         // observability.
         tracing::warn!(
             target: "kremory.extraction.structured",
@@ -1025,7 +1024,7 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
         // crash: the panic unwinds the tokio worker and takes kremory-http
         // down, on the shared path used by every structured call (extraction,
         // contradiction, resolution). Same defect class that crashed the
-        // server on 2026-07-28 via core/extraction_window.rs.
+        // server via core/extraction_window.rs.
         _ => Err(ExtractionError::Parse(format!(
             "failed to parse LLM response as JSON: {}",
             crate::core::text_utils::truncate_on_char_boundary(trimmed, 100)
@@ -1036,7 +1035,7 @@ fn parse_response_to_value(text: &str, arm: FallbackArm) -> Result<Value, Extrac
 /// Extract the first balanced top-level JSON value — object OR array — from
 /// `text`, dispatching on whichever delimiter appears FIRST.
 ///
-/// TD-192. This exists because `jsonrepair::repair_json` flattens an array to its
+/// This exists because `jsonrepair::repair_json` flattens an array to its
 /// first element whenever it has to *recover* rather than parse cleanly (see the
 /// measured table at its call site in `parse_response_to_value`), and the older
 /// `extract_json_object` only ever looked for `{`. Between them, a multi-item
@@ -1102,7 +1101,7 @@ fn extract_first_balanced_value(text: &str) -> Option<Value> {
 /// if necessary.  Returns `None` if no object is found.
 ///
 /// ⚠️ Object-only and NOT string-aware — superseded for the top-level-value case
-/// by [`extract_first_balanced_value`] (TD-192). Retained as the final fallback.
+/// by [`extract_first_balanced_value`]. Retained as the final fallback.
 fn extract_json_object(text: &str) -> Option<Value> {
     let start = text.find('{')?;
     // Find matching closing brace.
@@ -1285,7 +1284,7 @@ pub(crate) async fn warm_schema_caches<L: ?Sized + ChatProvider>(llm: &L, model:
 
 #[cfg(test)]
 mod tests {
-    /// TD-192: TRUNCATED arrays must keep every recoverable element.
+    /// TRUNCATED arrays must keep every recoverable element.
     ///
     /// This is the shape `extract_first_balanced_value` CANNOT cover — it needs a
     /// balanced span, and a truncated array has no closing `]`, so it returns
@@ -1315,10 +1314,10 @@ mod tests {
         }
     }
 
-    /// TD-192 (Quinn M2): every shape that reaches the RECOVERY path must keep
-    /// all its elements. `jsonrepair::repair_json` flattens an array to its first
-    /// element for ALL of these — measured directly — so fence-stripping alone
-    /// was not enough; the first two below were still broken after the first cut.
+    /// Every shape that reaches the RECOVERY path must keep all its elements.
+    /// `jsonrepair::repair_json` flattens an array to its first element for ALL
+    /// of these — measured directly — so fence-stripping alone was not enough;
+    /// the first two below were still broken after the first cut.
     #[test]
     fn recovery_path_preserves_every_array_element_across_shapes() {
         let cases: [(&str, &str); 5] = [
@@ -1396,7 +1395,7 @@ mod tests {
         assert_eq!(arr[0]["o"], "the [redacted] } file");
     }
 
-    // ─── TD-192: fenced multi-item ARRAY must not collapse to its first object ──
+    // ─── Fenced multi-item ARRAY must not collapse to its first object ─────────
 
     /// Regression: a markdown-fenced bare ARRAY of N items was silently reduced
     /// to its FIRST item, discarding the rest.
@@ -1408,7 +1407,7 @@ mod tests {
     /// counter and no log. Every extraction whose response needed brace-extraction
     /// therefore persisted exactly one fact regardless of how many the model found.
     ///
-    /// Found by the TD-187 real-LLM seam test: the model emitted two facts, the
+    /// Found by a real-LLM seam test: the model emitted two facts, the recorded
     /// cassette proved it, `parse_facts` on the raw text returned two — and one
     /// reached the database.
     #[test]
@@ -1585,11 +1584,12 @@ mod tests {
         assert_eq!(builder.ttft_budget_ms, Some(500));
     }
 
-    // ── TD-200 (a): the ladder's TOTAL wall-clock bound ───────────────────────
+    // ── The ladder's TOTAL wall-clock bound ───────────────────────────────────
 
-    /// A provider that never answers — the shape of the real TD-200 failure,
-    /// where the model is simply too slow for the request. Every observed arm
-    /// failure on 2026-08-13 was `exceeded 30000ms budget`, not a bad response.
+    /// A provider that never answers — the shape of the real production failure
+    /// this guards against, where the model is simply too slow for the request.
+    /// Every observed arm failure of this kind is `exceeded 30000ms budget`, not
+    /// a bad response.
     #[derive(Debug)]
     struct StallingChatProvider {
         calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -1616,8 +1616,8 @@ mod tests {
 
     /// A stalled request must fail at the TOTAL budget, not `arm_budget × arms`.
     ///
-    /// TD-200: a `POST /memories` whose ladder walks three ~30s arms is a >90s
-    /// request, and it aborted a 2-hour benchmark run outright
+    /// A `POST /memories` whose ladder walks three ~30s arms is a >90s request,
+    /// and an unbounded ladder aborted a 2-hour benchmark run outright
     /// (`ingest_aborted: timed out after 90s`). Stepping down cannot help,
     /// because a TIMEOUT is not a schema-capability failure — it retries the
     /// same too-slow request with a weaker arm.
@@ -1671,10 +1671,10 @@ mod tests {
             .model("qwen2.5:14b")
             .messages(vec![crate::core::provider::chat_msg_user("extract")])
             .ttft_budget_ms(1_000);
-        // Reach into the private field to restore pre-TD-200 behaviour. There is
-        // no setter on purpose (see the note at the builder) — this is the only
-        // caller that needs an unbounded ladder, and it needs it to PROVE the
-        // bound does something.
+        // Reach into the private field to restore the unbounded-ladder behaviour.
+        // There is no setter on purpose (see the note at the builder) — this is
+        // the only caller that needs an unbounded ladder, and it needs it to
+        // PROVE the bound does something.
         builder.ladder_budget_ms = None;
 
         let started = tokio::time::Instant::now();
@@ -1996,7 +1996,7 @@ mod tests {
 
     #[test]
     fn parse_response_to_value_accepts_placeholder_entity_label() {
-        // TD-012 shape: structurally valid JSON with label="Entity".
+        // Placeholder-label shape: structurally valid JSON with label="Entity".
         // parse_response_to_value must accept it — it's valid JSON.
         let json = r#"{"entities":[{"name":"Alice","label":"Entity"}]}"#;
         let result = parse_response_to_value(json, FallbackArm::LlmJsonRepair);
@@ -2137,9 +2137,7 @@ mod tests {
         });
     }
 
-    // ── TD-166 — ingest token attribution at the structured-call funnel ───────
-    //
-    // Spec: .ai-docs/specs/td-166-ingest-token-attribution-spec-2026-08-03.md
+    // ── Ingest token attribution at the structured-call funnel ─────────────────
     //
     // These drive the REAL ladder through `StructuredCallBuilder::call()`, not
     // `try_arm` directly — the emit site is in the caller, so a test that called
@@ -2249,7 +2247,7 @@ mod tests {
     }
 
     /// T1 — a provider that reports usage produces real, correctly-labelled
-    /// token counters. RED-verified: before TD-166 this emitted nothing.
+    /// token counters. RED-verified: before this fix, nothing was emitted here.
     #[test]
     fn reported_usage_emits_labelled_token_counters() {
         let recorder = DebuggingRecorder::new();
@@ -2307,8 +2305,8 @@ mod tests {
     /// shape: `ChatResponse::usage()` is not overridden, trait default `None`)
     /// must increment the missing-counter and emit NO zero-valued token
     /// increment. A `tokens_total` of 0 would be indistinguishable from a free
-    /// ingest, which is the exact absence-read-as-measurement defect TD-166
-    /// exists to remove.
+    /// ingest — exactly the absence-read-as-measurement defect this attribution
+    /// work exists to remove.
     #[test]
     fn unreported_usage_counts_as_missing_never_as_zero() {
         let recorder = DebuggingRecorder::new();
@@ -2343,7 +2341,7 @@ mod tests {
         );
     }
 
-    /// T4 (Quinn ARCH-001) — the dream phase shares this funnel. Its calls must NOT
+    /// T4 — the dream phase shares this funnel. Its calls must NOT
     /// be attributed to ingest extraction: doing so over-counts ingest cost AND
     /// double-counts against dream's own `dream_pass_budget_usage` accounting.
     #[test]

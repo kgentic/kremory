@@ -5,14 +5,14 @@
 //! cosine similarity on their embeddings.  Based on the similarity score one of
 //! three outcomes is selected:
 //!
-//! | Threshold + lexical gate (ADR-057 / TD-098)                            | Action |
+//! | Threshold + lexical gate                                               | Action |
 //! |------------------------------------------------------------------------|--------|
 //! | `sim >= L4_MERGE_THRESHOLD` (0.95) **AND** names lexically compatible   | **MERGE** — reuse existing entity_id |
 //! | `L4_POTENTIAL_ALIAS_THRESHOLD` ≤ sim < 0.95 (0.70–0.95) **AND** names lexically compatible | **ALIAS** — insert new entity + `potential_alias` fact |
-//! | cosine in the merge/alias band **but names lexically INCOMPATIBLE**     | **NEW** — anisotropy noise; no merge, no *persistent* false alias (TD-098: the alias arm was the missed 5th cosine-alone site of ADR-057's invariant) |
+//! | cosine in the merge/alias band **but names lexically INCOMPATIBLE**     | **NEW** — anisotropy noise; no merge, no *persistent* false alias |
 //! | `sim < L4_POTENTIAL_ALIAS_THRESHOLD`                                    | **NEW** — insert as completely new entity |
 //!
-//! The lexical gate (`lexical::names_lexically_compatible`, ADR-057 Jaccard 0.5) is
+//! The lexical gate (`lexical::names_lexically_compatible`, Jaccard 0.5) is
 //! the deterministic, embedder-independent signal that makes BOTH the destructive
 //! merge AND the (persistent) alias-creation robust to a weak/anisotropic consumer
 //! embedder (BYOM). Cosine alone can authorize neither.
@@ -38,13 +38,13 @@
 //! - Thresholds are empirically sourced from Cognee's research; adjustable via
 //!   the named constants below.
 //!
-//! ## ADR-063 Site #6 — confidence-aware third gate (spike S4, 2026-07-02)
+//! ## Confidence-aware third gate
 //!
 //! [`classify_pair`] additionally accepts each candidate's (possibly absent)
 //! `ner_confidence`. When BOTH are present, `min(conf_a, conf_b)` must clear
 //! [`crate::core::confidence::CONFIDENCE_REJECT_FLOOR`] for the `Merge`/alias
 //! arms to fire unchanged; when EITHER is absent, the floor is vacuously
-//! satisfied (S4 null-bypass policy — see `core::confidence` module docs for
+//! satisfied (null-bypass policy — see `core::confidence` module docs for
 //! the full measurement + rationale). `disambiguate()`'s production call site
 //! currently passes `(None, None)`: the query-time `Entity` struct
 //! (`core::schema::Entity`) does not yet expose `ner_confidence` as a field, so
@@ -52,7 +52,7 @@
 //! today — a follow-on (threading `Entity.ner_confidence` + a matching column
 //! on the disambiguated candidate) is required before this site's floor can
 //! ever downgrade a decision in production. This is a correct no-op today, not
-//! a broken one: S4 measured 100% null `ner_confidence` prevalence on the
+//! a broken one: measurements show 100% null `ner_confidence` prevalence on the
 //! default (no `ner` feature) LLM-only ingest path, so `(None, None)` matches
 //! the vast majority of real deployments exactly.
 
@@ -81,8 +81,8 @@ pub const L4_MERGE_THRESHOLD: f32 = 0.95;
 
 /// Cosine similarity at or above which a new entity is inserted but linked to
 /// the most similar existing entity via a `potential_alias` fact edge — **provided
-/// the two names are also lexically compatible** (`names_lexically_compatible`,
-/// TD-098 / Site #4 of ADR-063). A high-cosine but lexically-incompatible pair is
+/// the two names are also lexically compatible** (`names_lexically_compatible`).
+/// A high-cosine but lexically-incompatible pair is
 /// embedder anisotropy noise and is classified `New`, NOT a persistent alias.
 ///
 /// Source: Cognee `post_extraction_canonicalization` POC (empirically derived).
@@ -103,26 +103,23 @@ pub const L4_REVOKE_THRESHOLD: f32 = 0.50;
 /// consults. There is exactly one declaration site; a `RESERVED_PREDICATE_*`
 /// const that never reaches `RESERVED_PREDICATES` is not representable.
 ///
-/// ## TD-201 — replaces a false claim, not just a band-aid
+/// ## Single declaration site, not reflection
 ///
-/// The doc comment this macro replaces said: *"Rust has no reflection, so
+/// A prior version of this doc comment claimed: *"Rust has no reflection, so
 /// this list cannot be derived from the `RESERVED_PREDICATE_*` consts above
 /// automatically — when you add a new `RESERVED_PREDICATE_*` const, add it
 /// here too."* **That claim was false.** Reflection was never required —
 /// only a single declaration site was, and this macro is that site. Adding a
 /// reserved predicate is now a one-line addition to the `reserved_predicates!`
-/// invocation below. See `.ai-docs/tech-debt/tech-debt-register.md` TD-201
-/// for the fuller history: it named exactly this macro as the correct
-/// structural fix and deliberately deferred building it, in favour of a
-/// runtime detector (`scripts/audit-reserved-predicates.py`) pending a second
-/// reserved predicate ever existing. This change builds the deferred macro
-/// instead of adding a third layer of drift-detection on top of a false
-/// premise.
+/// invocation below. This macro replaces an earlier design that deferred the
+/// structural fix in favour of a separate runtime drift-detector script,
+/// which is no longer needed now that there is only one place a reserved
+/// predicate can be declared.
 ///
-/// ## 3p evaluation (CLAUDE.md Rule 33 — recorded, not skipped)
+/// ## Third-party crate evaluation
 ///
 /// Checked against live crates.io download/maintenance data before
-/// hand-rolling (2026-08-11):
+/// hand-rolling:
 /// - `strum` (~568M downloads, actively maintained) — `EnumIter` /
 ///   `IntoStaticStr` would require converting these from free `&str` consts
 ///   to enum variants. `is_reserved_predicate(predicate: &str)` is called
@@ -145,8 +142,7 @@ pub const L4_REVOKE_THRESHOLD: f32 = 0.50;
 /// `const`-evaluable, zero runtime cost). A `macro_rules!` is genuinely
 /// trivial (~15 lines) and stable — a closed, compile-time list of string
 /// literals has no edge-case tail to grow into — and needs zero new
-/// dependencies: justification (c) no-lib-fits-the-shape AND (d)
-/// genuinely-trivial-and-stable per the evaluate-3p-before-handrolling rule.
+/// dependencies.
 macro_rules! reserved_predicates {
     ($($(#[$meta:meta])* $konst:ident => $lit:literal),+ $(,)?) => {
         $(
@@ -158,7 +154,7 @@ macro_rules! reserved_predicates {
         ///
         /// GENERATED by the `reserved_predicates!` macro invocation below —
         /// this slice and each `RESERVED_PREDICATE_*` const above it come
-        /// from the same declaration and cannot drift apart (TD-201).
+        /// from the same declaration and cannot drift apart.
         pub const RESERVED_PREDICATES: &[&str] = &[$($konst),+];
     };
 }
@@ -183,12 +179,9 @@ reserved_predicates! {
 /// disambiguation bookkeeping (e.g. [`RESERVED_PREDICATE_POTENTIAL_ALIAS`]),
 /// never a domain fact.
 ///
-/// ## TD-197 — the boundary this function is FOR
+/// ## The boundary this function is FOR
 ///
-/// This function was specified in
-/// `.ai-docs/specs/unified-extraction-implementation-spec-2026-06-03.md` §3
-/// alongside the const above, but was never implemented — so no read path
-/// filtered reserved predicates, and consumers were handed lines like
+/// Without a filter here, consumers were handed lines like
 /// `adoption potential_alias adoption agencies (valid_at=...)` as if they
 /// were domain knowledge (measured: 71.4% of LoCoMo conv0 questions).
 ///
@@ -202,7 +195,7 @@ reserved_predicates! {
 /// never goes through this filter.
 ///
 /// Backed by [`RESERVED_PREDICATES`] — GENERATED by the
-/// `reserved_predicates!` macro above (TD-201), so there is no separate
+/// `reserved_predicates!` macro above, so there is no separate
 /// growth discipline to document here: adding a reserved predicate is a
 /// one-line addition to that macro invocation, full stop.
 pub fn is_reserved_predicate(predicate: &str) -> bool {
@@ -238,8 +231,8 @@ pub enum DisambiguationOutcome {
 
 // ─── Core disambiguation function ────────────────────────────────────────────
 
-/// Bundled non-generic parameters for `disambiguate`, args-as-object per TD-042
-/// (rust-conventions §too_many_arguments). The generic `embedder: &Emb` stays a
+/// Bundled non-generic parameters for `disambiguate`, args-as-object to avoid
+/// too many positional arguments. The generic `embedder: &Emb` stays a
 /// lead positional argument.
 #[derive(Clone, Copy)]
 pub struct DisambiguateParams<'a> {
@@ -288,7 +281,7 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
         return Ok(DisambiguationOutcome::New);
     }
 
-    // Step 1: embed the entity name. TD-143: this probes the SAME `entities`
+    // Step 1: embed the entity name. This probes the SAME `entities`
     // vector index that ingest-time writes document-prefix (`set_entity_embedding`
     // call sites in `ingest_with.rs`) — must use `query_embed_text` so a flipped
     // knob keeps both sides of the comparison in the same task space.
@@ -341,15 +334,15 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
     // remain counter-free (the corpus benchmark calls it thousands of times
     // and must not touch production counters).
     //
-    // ADR-057: `existing_id` is the existing entity's normalized name (entity ids
+    // `existing_id` is the existing entity's normalized name (entity ids
     // ARE normalized names — ingest_with.rs:1017), so it is the correct lexical
     // comparand AND the `existing_id` forwarded in Merge/PotentialAlias outcomes.
     //
-    // ADR-063 Site #6 (spike S4): confidences passed as `(None, None)` — neither
+    // Confidences passed as `(None, None)` — neither
     // the newly-extracted entity nor `top_hit.item` (`core::schema::Entity`) carry
     // `ner_confidence` at this call site today (`Entity` does not expose the
     // column; see module docs). This composes as a correct no-op (the floor gate
-    // is vacuously satisfied per S4's null-bypass policy) and matches the
+    // is vacuously satisfied per the null-bypass policy) and matches the
     // measured reality: 100% null `ner_confidence` prevalence on the default
     // (no `ner` feature) LLM-only ingest path this function is called from.
     let outcome = classify_pair(ClassifyPairParams {
@@ -372,7 +365,7 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
             );
         }
         DisambiguationOutcome::PotentialAlias { .. } => {
-            // Post-TD-098 (Site #4): the PotentialAlias arm now fires ONLY for
+            // The PotentialAlias arm now fires ONLY for
             // lexically-COMPATIBLE pairs in the [alias, merge) band. A high-cosine but
             // lexically-incompatible pair no longer downgrades to PotentialAlias — it
             // falls to `New` (see that arm's blocked-lexical attribution), so the old
@@ -388,13 +381,13 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
             );
         }
         DisambiguationOutcome::New => {
-            // TD-098: `New` is now reachable by THREE routes. Attribute the two
+            // `New` is now reachable by THREE routes. Attribute the two
             // lexically-blocked routes so a weak consumer embedder stays observable
-            // (observability-first-class, Rule 19). `classify_pair` is counter-free by
+            // via dedicated per-route counters and logs. `classify_pair` is counter-free by
             // design, so re-derive the band locally here (mirrors its thresholds).
             if similarity >= L4_MERGE_THRESHOLD {
-                // Was ADR-057's "≥0.95 + incompatible → PotentialAlias" downgrade cell;
-                // TD-098 discards it as `New` (no persistent false-alias fact). The
+                // This pair was previously classified PotentialAlias (a persistent
+                // false-alias fact); now discarded as `New` instead. The
                 // counter name is kept so existing merge-blocked observability + the
                 // l4_l5_real_embedding regression assertion still fire.
                 counter!("kremory.l4.merge_blocked_lexical_total").increment(1);
@@ -406,7 +399,7 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
                     "kremory.l4.merge_blocked_lexical"
                 );
             } else if similarity >= L4_POTENTIAL_ALIAS_THRESHOLD {
-                // TD-098 poisoning fix: a degenerate high-cosine alias-band pair whose
+                // A degenerate high-cosine alias-band pair whose
                 // names are lexically incompatible is NOT recorded as a persistent
                 // `potential_alias` fact — it becomes `New`. New counter distinguishes
                 // this blocked case from a genuine low-cosine New.
@@ -433,10 +426,11 @@ pub async fn disambiguate<Emb: EmbeddingProvider>(
     Ok(outcome)
 }
 
-/// Bundled parameters for [`classify_pair`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments; `crates/kremory/clippy.toml` sets the
-/// workspace threshold to 3, so a 3-signal decision function (cosine + names +
-/// confidence pair) is bundled rather than taking 5 positional args).
+/// Bundled parameters for [`classify_pair`] — args-as-object because
+/// `crates/kremory/clippy.toml` sets the
+/// workspace too-many-arguments threshold to 3, so a 3-signal decision function
+/// (cosine + names + confidence pair) is bundled rather than taking 5
+/// positional args.
 #[derive(Clone, Copy)]
 pub(crate) struct ClassifyPairParams<'a> {
     /// Pre-computed cosine similarity between the two candidates.
@@ -447,22 +441,22 @@ pub(crate) struct ClassifyPairParams<'a> {
     /// ingest_with.rs:1017). Used as both the lexical comparand and the
     /// `existing_id` forwarded in `Merge`/`PotentialAlias` outcomes.
     pub(crate) name_b: &'a str,
-    /// `name_a`'s (possibly absent) `ner_confidence` (ADR-063 Site #6, spike S4).
+    /// `name_a`'s (possibly absent) `ner_confidence`.
     pub(crate) conf_a: Option<f32>,
-    /// `name_b`'s (possibly absent) `ner_confidence` (ADR-063 Site #6, spike S4).
+    /// `name_b`'s (possibly absent) `ner_confidence`.
     pub(crate) conf_b: Option<f32>,
 }
 
 /// Classify a pre-computed cosine score through the L4 threshold ladder,
-/// ADR-057 lexical floor, and ADR-063 Site #6 confidence-reject-floor gate
-/// (spike S4). Pure: no metrics, no tracing, no I/O — so the B-on/off
+/// the lexical floor, and the confidence-reject-floor gate. Pure: no metrics,
+/// no tracing, no I/O — so the B-on/off
 /// benchmark exercises the identical decision path as production.
 ///
 /// `conf_a`/`conf_b` are each candidate's (possibly absent) `ner_confidence`.
-/// `min_confidence_floor_for_gate` (`core::confidence`) applies the S4
+/// `min_confidence_floor_for_gate` (`core::confidence`) applies the
 /// null-bypass policy: `None` unless BOTH are present, in which case the floor
 /// check activates. Existing callers passing `(None, None)` see byte-identical
-/// behaviour to pre-S4 `classify_pair` — the gate is a pure ADD, never a
+/// behaviour to the prior `classify_pair` — the gate is a pure ADD, never a
 /// silent behaviour change for the (today, near-universal) no-confidence case.
 ///
 /// Production `disambiguate` delegates its final decision to this function;
@@ -476,7 +470,7 @@ pub(crate) fn classify_pair(params: ClassifyPairParams<'_>) -> DisambiguationOut
         conf_b,
     } = params;
     let min_confidence_floor = min_confidence_floor_for_gate(conf_a, conf_b);
-    // ADR-063 Site #6 (spike S4): when both confidences are present and their
+    // When both confidences are present and their
     // minimum falls below the floor, downgrade what would otherwise be a
     // destructive `Merge` to a non-destructive `PotentialAlias` — mirrors
     // `identity_verdict::write_gate`'s row 5b composition semantics exactly
@@ -492,7 +486,7 @@ pub(crate) fn classify_pair(params: ClassifyPairParams<'_>) -> DisambiguationOut
                 similarity: cosine,
             }
         } else {
-            // Site #6 downgrade: cosine + lexical agree, but the entities' own
+            // Downgrade: cosine + lexical agree, but the entities' own
             // extraction confidence does not clear the floor — do not perform
             // a destructive merge on low-confidence evidence.
             DisambiguationOutcome::PotentialAlias {
@@ -501,23 +495,24 @@ pub(crate) fn classify_pair(params: ClassifyPairParams<'_>) -> DisambiguationOut
             }
         }
     } else if cosine >= L4_POTENTIAL_ALIAS_THRESHOLD && names_lexically_compatible(name_a, name_b) {
-        // TD-098 (Site #4 of ADR-063): the PotentialAlias arm was cosine-ALONE — the
-        // 5th, missed site of ADR-057's "cosine never authorizes an identity write
-        // alone" invariant. ADR-057 line 116 assumed non-destructive alias creation
-        // could stay permissive because L7 self-heals; TD-098 proved that assumption
+        // The PotentialAlias arm was previously cosine-ALONE — the
+        // missed site of the invariant that cosine alone must never authorize an
+        // identity write. The earlier design assumed non-destructive alias creation
+        // could stay permissive because L7 self-heals; that assumption proved
         // FALSE under embedder degeneracy: `nomic-embed-text` returns cosine ≈ 1.0 for
         // unrelated short names (`cos(Ria,Morocco)=1.0000`), so the cosine NEVER drops
         // below L4_REVOKE_THRESHOLD → L7 revocation never fires → a false alias fact
         // persists indefinitely, poisoning graph analyses. So a high-cosine but
         // lexically-incompatible pair is anisotropy noise and must NOT even become a
         // (persistent) PotentialAlias — it falls through to `New`. This supersedes
-        // ADR-057's "≥0.95 + incompatible → PotentialAlias" downgrade cell (that ADR's
-        // parenthetical about "preserving acronym-variant detection" is also superseded:
-        // R1/R3 show L4 cosine does not reliably elevate acronym pairs anyway, and
-        // ADR-063 Site #5 is the dedicated acronym/nickname mechanism). Uses the SAME
-        // `names_lexically_compatible` helper (ADR-057 Jaccard 0.5) as the 4 sibling
-        // sites — no new number (Phase 1 scope). The confidence reject-floor + forced
-        // re-confirmation deadline (TD-098 parts 2/3) are spike-gated (S4/S5) → Phase 2.
+        // the earlier "≥0.95 + incompatible → PotentialAlias" downgrade cell (that
+        // earlier rationale about "preserving acronym-variant detection" is also
+        // superseded: empirical measurements show L4 cosine does not reliably elevate
+        // acronym pairs anyway, and `core::dream::acronym_nickname_recall` is the
+        // dedicated acronym/nickname mechanism). Uses the SAME
+        // `names_lexically_compatible` helper (Jaccard 0.5) as the 4 sibling
+        // sites — no new number. The confidence reject-floor + forced
+        // re-confirmation deadline are handled separately, as deferred follow-on work.
         DisambiguationOutcome::PotentialAlias {
             existing_id: name_b.to_owned(),
             similarity: cosine,
@@ -551,8 +546,8 @@ pub struct AliasProvenance<'a> {
 /// Returns the new `fact_id` on success.  A `Duplicate` error from
 /// `insert_fact_with_group` is silently swallowed — the alias was already
 /// recorded in a prior ingest and does not need to be duplicated.
-/// Bundled parameters for [`insert_potential_alias_fact`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`insert_potential_alias_fact`] — args-as-object to
+/// avoid too many positional arguments.
 #[derive(Clone, Copy)]
 pub struct InsertPotentialAliasFactParams<'a> {
     /// The temporal graph to insert the alias fact into.
@@ -649,7 +644,7 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
 
     let now = Utc::now();
     let mut resolved = 0usize;
-    // TD-203 D3 — per-outcome tallies. Before these existed the pass returned
+    // Per-outcome tallies. Before these existed the pass returned
     // ONLY `merged + revoked`, and the three skip branches plus `kept` logged at
     // DEBUG, so a pass that examined N candidates and kept all N was
     // bit-identical to a pass that found ZERO candidates: no INFO line, a
@@ -679,7 +674,7 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
         // Re-compute cosine similarity between subject and object embeddings via SQL.
         // `vector_distance_cos` returns NULL when either vector has zero magnitude.
         //
-        // TD-203 D4 / ADR-029d — BOTH endpoints are scoped by `group_id`. The
+        // BOTH endpoints are scoped by `group_id`. The
         // `facts` FK is `(subject_id, subject_group_id) -> entities(id, group_id)`,
         // so `id` ALONE IS NOT THE KEY. The previous unscoped form
         // (`WHERE a.id = ?1 AND b.id = ?2`) cross-joined every namespace holding
@@ -690,8 +685,8 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
         // It happened to be HARMLESS there — entity ids are the raw name text and
         // `nomic-embed-text` is deterministic, so same-named entities across
         // namespaces carry identical vectors and all 42 pairs measured a 0.0000
-        // divergence between the scoped and unscoped forms. It is a LATENT bug, and
-        // TD-112 is its trigger: `re-embed keeper on merge` recomputes a keeper's
+        // divergence between the scoped and unscoped forms. It is a LATENT bug,
+        // triggered when `re-embed keeper on merge` recomputes a keeper's
         // embedding in ONE namespace, after which an unscoped read can silently
         // score against a DIFFERENT namespace's stale vector.
         //
@@ -713,7 +708,7 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
             // No row returned — at least one endpoint entity does not exist in
             // this namespace.
             //
-            // TD-203 D3: this branch used to `continue` in TOTAL SILENCE — no
+            // This branch used to `continue` in TOTAL SILENCE — no
             // log at any level, no counter. It is the only outcome of the six
             // that left no trace, which made it the prime suspect for the
             // corpus failure and unfalsifiable at the same time.
@@ -755,12 +750,12 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
 
         let similarity = (1.0_f32 - distance as f32).clamp(0.0, 1.0);
 
-        // ADR-057: L7 alias-confirmation is the THIRD destructive-merge path (it
+        // L7 alias-confirmation is the THIRD destructive-merge path (it
         // invalidates the alias fact so L5 performs the structural merge). It must
         // honour the SAME deterministic name gate as L4/L5: a high cosine between
         // lexically-incompatible names is embedder anisotropy, not a confirmed
         // identity. Without this, one dream cycle could re-merge `boston` into
-        // `amazon robotics` and re-introduce the TD-080 #2 corruption.
+        // `amazon robotics` — the exact false-merge this gate exists to prevent.
         let names_compatible = names_lexically_compatible(&fact.subject_id, object_id);
         if similarity >= L4_MERGE_THRESHOLD && names_compatible {
             // Confirmed alias — invalidate the fact; L5 will merge structurally.
@@ -807,15 +802,15 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
         }
     }
 
-    // TD-203 D3 — ONE always-on INFO line per pass, carrying the full outcome
+    // ONE always-on INFO line per pass, carrying the full outcome
     // breakdown. `resolved` alone (the return value, and the only thing
     // `DreamSummary.aliases_resolved` reports) cannot distinguish "examined 42
     // and kept them all" from "found nothing at all", and the corpus failure was
     // exactly the former reported as the latter.
     //
     // Emitted for a NON-EMPTY candidate set only — the empty case already
-    // early-returns above and a per-namespace "0 of 0" line on every dream would
-    // be noise (Rule 41: a signal that fires on ordinary work gets ignored).
+    // early-returns above, and a per-namespace "0 of 0" line on every dream
+    // would be noise: a signal that fires on ordinary work gets ignored.
     tracing::info!(
         target: "kremory.l7",
         group_id,
@@ -829,7 +824,7 @@ pub async fn resolve_pending_aliases(graph: &TemporalGraph, group_id: &str) -> R
     );
     counter!("kremory.l7.resolve_aliases_examined_total").increment(candidates_examined as u64);
 
-    // Tripwire (Rule 19, "silent in != out at a stage boundary"): candidates went
+    // Tripwire: candidates went
     // IN and every one of them fell through a skip branch — nothing was judged.
     // Distinct from "all kept", which is a legitimate mid-band outcome. Always
     // on, never DEBUG-gated: a DEBUG-gated alarm is invisible in exactly the
@@ -901,7 +896,7 @@ mod tests {
 
     #[test]
     fn is_reserved_predicate_rejects_domain_predicates() {
-        // TD-197: must not over-match — ordinary domain predicates (including
+        // Must not over-match — ordinary domain predicates (including
         // ones that merely CONTAIN the reserved string as a substring) must
         // pass through unfiltered.
         assert!(!is_reserved_predicate("works_at"));
@@ -911,12 +906,12 @@ mod tests {
         assert!(!is_reserved_predicate("POTENTIAL_ALIAS"));
     }
 
-    // TD-201 (2026-08-11): `reserved_predicates_slice_contains_every_
+    // `reserved_predicates_slice_contains_every_
     // reserved_predicate_const` REMOVED here, deliberately, not silently.
     //
     // The test existed to catch drift between `RESERVED_PREDICATES` and a
     // hand-typed `all_reserved_predicate_consts` mirror declared inside the
-    // test itself (TD-197 review Finding 4). Both lists were independently
+    // test itself. Both lists were independently
     // hand-maintained, so the test had real teeth: forgetting to update
     // either one made it fail.
     //
@@ -943,7 +938,7 @@ mod tests {
     // (`crates/kremory/tests/it/with_facts_integration.rs`), which iterates
     // `RESERVED_PREDICATES` directly rather than a second hand-typed copy.
 
-    // ── ADR-057: lexical-name compatibility gate ──────────────────────────────
+    // ── Lexical-name compatibility gate ───────────────────────────────────────
     //
     // Truth table anchored on the VERIFIED anisotropy data
     // (tests/spike_td080_embedder_cosine.rs): every observed false-merge pair
@@ -1140,9 +1135,8 @@ mod tests {
         Ok(())
     }
 
-    // ── D3: classify_pair boundary tests ─────────────────────────────────────
+    // ── classify_pair boundary tests ──────────────────────────────────────────
     //
-    // Spec: td080-b1-context-embedding-toggle-spec-2026-06-30.md §classify_pair
     // Four cases that must hold independent of embedder choice.
 
     #[test]
@@ -1167,10 +1161,9 @@ mod tests {
         );
     }
 
-    // ── ADR-063 Site #6 confidence-reject-floor gate boundary tests (spike S4) ──
+    // ── Confidence-reject-floor gate boundary tests ───────────────────────────
     //
-    // Spec: adr-063-embedding-identity-impl-spec-2026-07-02.md §2.2/§2.2.1/§8;
-    // R4-confidence-aware-merge.md §6.3. Mirrors the existing exactly-at-threshold
+    // Mirrors the existing exactly-at-threshold
     // boundary-test discipline above, for the third (confidence) gate.
 
     #[test]
@@ -1195,7 +1188,7 @@ mod tests {
     fn classify_pair_confidence_floor_below_downgrades_merge_to_potential_alias() {
         // cosine + lexical both agree (would be Merge with no confidence signal),
         // but min(conf_a, conf_b) is below the floor → downgrade to PotentialAlias,
-        // never a destructive Merge on low-confidence evidence (R4 §6.3).
+        // never a destructive Merge on low-confidence evidence.
         let outcome = classify_pair(ClassifyPairParams {
             cosine: L4_MERGE_THRESHOLD,
             name_a: "Alice Johnson",
@@ -1212,9 +1205,9 @@ mod tests {
 
     #[test]
     fn classify_pair_confidence_null_bypasses_floor_still_merges() {
-        // S4 null policy: EITHER confidence absent → floor is vacuously satisfied
+        // Null policy: EITHER confidence absent → floor is vacuously satisfied
         // (matches identity_verdict::write_gate's `min_confidence_floor: None`
-        // no-op composition, spec §2.2.1). This is the near-universal case on the
+        // no-op composition). This is the near-universal case on the
         // default (no `ner` feature) build — must NOT regress existing behaviour.
         let both_none = classify_pair(ClassifyPairParams {
             cosine: L4_MERGE_THRESHOLD,
@@ -1269,7 +1262,7 @@ mod tests {
     fn classify_pair_at_alias_threshold_is_potential_alias() {
         // Exactly at L4_POTENTIAL_ALIAS_THRESHOLD with lexically-COMPATIBLE names →
         // PotentialAlias (cosine < merge threshold so the merge arm cannot fire).
-        // Post-TD-098 the alias arm ALSO requires lexical compatibility, so this test
+        // The alias arm ALSO requires lexical compatibility, so this test
         // uses a compatible pair ("alice johnson" ⊆ "alice marie johnson", Jaccard
         // 2/3 ≥ 0.5) to exercise the threshold ladder.
         let outcome = classify_pair(ClassifyPairParams {
@@ -1293,10 +1286,10 @@ mod tests {
 
     #[test]
     fn classify_pair_cosine_above_merge_threshold_incompatible_names_is_new() {
-        // TD-098 (Site #4): cosine ≥ L4_MERGE_THRESHOLD but names lexically
-        // incompatible → NOT Merge (ADR-057) AND NOT a persistent PotentialAlias
-        // (TD-098) → New. "alice"/"bob" share zero tokens → incompatible. This
-        // SUPERSEDES ADR-057's "downgrade to PotentialAlias" cell: a degenerate
+        // cosine ≥ L4_MERGE_THRESHOLD but names lexically
+        // incompatible → NOT Merge AND NOT a persistent PotentialAlias
+        // → New. "alice"/"bob" share zero tokens → incompatible. This
+        // supersedes an earlier "downgrade to PotentialAlias" cell: a degenerate
         // high-cosine pair between unrelated names must not create a false alias fact
         // that L7 can never revoke (cosine stays ≈ 1.0 forever under a weak embedder).
         let cosine = (L4_MERGE_THRESHOLD + 0.01).min(1.0);
@@ -1316,10 +1309,10 @@ mod tests {
 
     #[test]
     fn classify_pair_alias_band_incompatible_names_is_new() {
-        // TD-098 core poisoning fix: a pair in the [alias, merge) band (0.70–0.95)
+        // A pair in the [alias, merge) band (0.70–0.95)
         // whose names are lexically incompatible is degenerate-embedding noise and
-        // must be `New`, NOT a persistent `potential_alias` fact. Pre-TD-098 this arm
-        // was cosine-alone and produced PotentialAlias. "alice"/"bob" → zero shared tokens.
+        // must be `New`, NOT a persistent `potential_alias` fact. This arm was
+        // previously cosine-alone and produced PotentialAlias. "alice"/"bob" → zero shared tokens.
         let mid_band = (L4_POTENTIAL_ALIAS_THRESHOLD + L4_MERGE_THRESHOLD) / 2.0;
         let outcome = classify_pair(ClassifyPairParams {
             cosine: mid_band,
@@ -1366,23 +1359,23 @@ mod tests {
     //               so the token sets never collide.
     //
     // These are NOT accepted failures — they are gaps that a pure token-matching approach
-    // cannot close without hardcoded lists. The correct fix is context-embedding (ADR-058
-    // B1), which routes these pairs through a semantic signal rather than a name-token
-    // heuristic. Adding a curated acronym blocklist here was explicitly rejected in ADR-058.
+    // cannot close without hardcoded lists. The correct fix is context-embedding,
+    // which routes these pairs through a semantic signal rather than a name-token
+    // heuristic. A curated acronym blocklist was considered here and rejected —
+    // it does not generalize to acronyms/nicknames outside the list.
     //
-    // Known FP (homonym — measured, documented, routes to B1 for resolution):
+    // Known FP (homonym — measured, documented, routes to context-embedding for resolution):
     //   Amazon / Amazon River: both names share the token "amazon" → Jaccard 1/2 = 0.5.
     //   Homonyms cannot be distinguished by name tokens alone; context-embedding resolves
     //   them by embedding `name + context`, where "Amazon River" context diverges from
     //   "Amazon" (company) context.
     //
-    // Hard assertions (ADR-057 §contract):
+    // Hard assertions:
     //   precision ≥ 0.95  — one false merge corrupts every fact with that subject
     //   trivial recall ≥ 0.90  — guards against a degenerate never-merge gate
-    //                            (ADR-058 RISK-006)
     //
     // Overall recall is RECORDED but not asserted — gap categories are capability limits
-    // of the token layer, addressed by the embedding layer (B1), not by this gate.
+    // of the token layer, addressed by the context-embedding layer, not by this gate.
     #[test]
     fn corpus_precision_recall() {
         let corpus_path = concat!(
@@ -1516,7 +1509,7 @@ mod tests {
             trivial_tp as f64 / trivial_pos as f64
         };
 
-        // Control-subset numbers (source="human") for ADR-058 ASMP-005.
+        // Control-subset numbers (source="human").
         let human_tp: usize = rows
             .iter()
             .zip(gate.iter())
@@ -1546,7 +1539,7 @@ mod tests {
         println!("    precision={human_prec:.4}  recall={human_rec:.4}");
         println!("────────────────────────────────────────────────────────────────────");
 
-        // ── Hard assertions (ADR-057 §contract) ──────────────────────────────
+        // ── Hard assertions ───────────────────────────────────────────────────
         assert!(
             precision >= 0.95,
             "lexical gate precision {precision:.4} < 0.95 — a false merge corrupts \
@@ -1560,10 +1553,10 @@ mod tests {
         );
     }
 
-    // ── ADR-063 Site #6 spike S4: reject-floor + null-policy sweep ──────────────
+    // ── Reject-floor + null-policy sweep ──────────────────────────────────────
     //
-    // R4 open item #2 asked for two numbers before the CONFIDENCE_REJECT_FLOOR gate
-    // could be wired: the floor value and the null-`ner_confidence` prevalence. The
+    // Wiring the CONFIDENCE_REJECT_FLOOR gate needs two numbers: the floor value
+    // and the null-`ner_confidence` prevalence. The
     // null prevalence is measured as a STRUCTURAL fact from source (see
     // `core::confidence` module docs — 100% null on the default, no-`ner`-feature,
     // LLM-only ingest path: `parse_entities_integer` never copies
@@ -1571,10 +1564,10 @@ mod tests {
     // real non-null `ner_confidence` sample anywhere in kremory's fixtures or tests
     // to sweep a numeric precision/recall curve against (the corpus below has no
     // confidence field at all) — inventing synthetic confidence values not anchored
-    // to any kremory data would violate `research.md`'s "verify before stating"
-    // discipline. What CAN be honestly measured: sweeping candidate floors + both
+    // to any kremory data would not be an honestly-measured result. What CAN be
+    // honestly measured: sweeping candidate floors + both
     // named null policies (bypass vs fail) against `entity_pairs.jsonl`'s
-    // `should_merge=true` pairs (the population Site #6's floor could ever affect —
+    // `should_merge=true` pairs (the population the floor could ever affect —
     // it only composes at the merge-eligible cosine+lexical band) shows the
     // DOWNSTREAM EFFECT of each choice on how many otherwise-correct merges would be
     // needlessly downgraded to `PotentialAlias` if the null policy were "fail"
@@ -1611,7 +1604,7 @@ mod tests {
         let measured_null_prevalence = 1.0_f64;
 
         // Candidate floors: the chosen value (reused MIN_VERIFY_CONFIDENCE=0.7) plus
-        // the two literature-anchored bracketing candidates from R4 §6.3/§7 (0.5
+        // two literature-anchored bracketing candidates (0.5
         // starting point) and identity_verdict's own value, to show the floor choice
         // is not sensitive to which of these three is picked GIVEN the null-bypass
         // policy — it is the null POLICY, not the exact floor number, that
@@ -1649,7 +1642,7 @@ mod tests {
                     // confidence is None on the default build.
                     let (conf_a, conf_b): (Option<f32>, Option<f32>) = (None, None);
                     let outcome = if policy == "null_bypasses_floor" {
-                        // S4 chosen policy: reuse min_confidence_floor_for_gate's
+                        // Chosen policy: reuse min_confidence_floor_for_gate's
                         // real null-bypass semantics (floor vacuously satisfied).
                         classify_pair(ClassifyPairParams {
                             cosine: L4_MERGE_THRESHOLD,
