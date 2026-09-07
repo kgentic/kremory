@@ -967,3 +967,55 @@ predominant doc convention for those two specific short names (distinct from
 `my_llm`/`my_embedder`, which correctly stay unwrapped). This single fix
 resolved 5 compile failures across `docs/api.md` §3/§5.2/§9/§6a and
 `README.md`, none of which required any doc-content change.
+
+---
+
+## Phase 3 (T3.1/T3.2) verification — first-run transcript, 2026-09-07
+
+Appended, not a Phase 1 finding — recorded here per this document's role as
+the SC-003/SC-004 table and per risk-register.md R5, which asks this run's
+result to be visible to whoever runs T3.3 (the required re-run immediately
+before Phase 5 content migration).
+
+**What was done**: a genuinely fresh directory *outside* this repo checkout
+(`/tmp/kremory-getting-started-spike-<timestamp>/`, no access to this repo's
+source), `cargo init` + `cargo add kremory` against the **published**
+crates.io registry (re-verified live: `max_version` = `0.7.0`), a `main.rs`
+written using only `cargo doc`'s rendered rustdoc for the crate root and
+`kremory::facade` (mirrors [docs.rs](https://docs.rs/kremory/0.7.0/kremory/)),
+then compiled and run against a real local Ollama server
+(`gemma4:e4b` + `nomic-embed-text`, both already pulled in this environment).
+
+**Result: zero new findings.** Everything attempted on the FIRST try:
+- `cargo add kremory` resolved to the real published `0.7.0`
+  (`Cargo.lock` source = `registry+https://github.com/rust-lang/crates.io-index`,
+  not a path/git override) and reported `+ content-search` as the sole active
+  default feature — confirms the ADR-078 default-features fix (already
+  reflected correctly in `docs/api.md` per this table's own entries) is what a
+  real `cargo add` gives a brand-new user today.
+- The rustdoc-derived `Memory::with_ollama("./agent.db").await?` →
+  `.remember(...).in_namespace(...).await?` →
+  `.recall(...).in_namespace(...).await?` chain compiled on the first attempt
+  and ran successfully against the real local model, no doc/code fix needed.
+- `Memory::auto(path)` was independently spot-checked both without and with
+  `$OLLAMA_HOST` set; both behaviours (a documented
+  `Error::NoProviderConfigured` message, and successful operation once the
+  env var is set) matched `docs/api.md` §1's own comment exactly.
+- Re-running the identical two-sentence input against the identical local
+  model produced observably different extracted-fact text run to run
+  (including, once, a generic `Entity` catch-all label) — this is expected
+  variance given `Memory::with_ollama`'s own doc-documented benchmark
+  (F1 84% / recall 90%, not 100%, per its doc comment), not a code or doc
+  defect, and is called out explicitly in `docs/getting-started.md` rather
+  than smoothed over.
+
+**Disposition**: no new SC-003 row. `docs/getting-started.md` created from
+this transcript (T3.2, SC-007) — see that file for the full walkthrough.
+**T3.3 still required**: per risk-register.md R5, this transcript must be
+re-run as the LAST step before Phase 5 migrates content, in case any Phase 2
+commit lands after this pass that touches a surface this transcript
+exercises (`Memory::with_ollama`, `Memory::auto`, `.remember`, `.recall`,
+`content-search` default). None of the 39 Phase 2 fixes above touch those
+surfaces as of this writing, so this transcript is current as of the last
+Phase 2 commit — but T3.3 is the gate that confirms that stays true, not this
+note.
