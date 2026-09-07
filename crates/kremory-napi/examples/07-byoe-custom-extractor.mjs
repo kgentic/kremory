@@ -6,29 +6,39 @@
 // ⚠️ `@kgentic-ai/kremory-node` is UNPUBLISHED (v0.4.1) — this imports the
 // LOCALLY BUILT native module, not a published npm package.
 //
-// ── Finding F46 (logged in phase1-findings.md) ───────────────────────────
+// ── Finding F46 (logged in phase1-findings.md) — FIXED, with a residual gap ──
 //
 // `index.d.ts`'s doc comment on `OpenOptions` documents `{ embedder,
 // extractor }` as selecting the Rust `ExtractorKind::Custom` "NoLlm
-// typestate" — i.e. no chat/LLM provider should be required at all. THIS IS
-// NOT WHAT HAPPENS: running this example with no LLM env var set rejects
-// with "kremory open with embedder: no LLM provider configured — set
-// OLLAMA_HOST, OPENAI_API_KEY, or ANTHROPIC_API_KEY", even though only the
-// BYOE extractor + BYOM embedder are supplied, no `llm` knob at all. Traced
-// to `crates/kremory-napi/src/lib.rs`'s `open_with_js_embedder`: "Step 1:
-// env-detect LLM" calls `bridge::resolve_env_llm().await?` UNCONDITIONALLY,
-// before ever checking whether an `extractor_handle` (BYOE) was supplied —
-// there is no branch that skips LLM resolution for the documented NoLlm
-// path. The surrounding comment block even says "an LLM (optional for NoLlm
-// path)" — the code doesn't implement that optionality. Net effect: the
-// entire point of BYOE (skipping the need for ANY LLM) is broken at the
-// binding layer for the BYOM-embedder path. Confirmed this is a real,
-// enforced requirement (not a false alarm) — this example only runs with
-// OLLAMA_HOST set below, contradicting its own "NoLlm" doc comment.
+// typestate" — i.e. no chat/LLM provider should be required to OPEN a
+// Memory this way. Previously `open_with_js_embedder` called
+// `bridge::resolve_env_llm().await?` UNCONDITIONALLY before ever checking
+// `extractor_handle`, so opening rejected with "kremory open with embedder:
+// no LLM provider configured — set OLLAMA_HOST, OPENAI_API_KEY, or
+// ANTHROPIC_API_KEY" even with only `withEmbedder` + `extractor` supplied.
+// FIXED: `open_with_js_embedder` now routes through
+// `MemoryBuilder<NoLlm, WithEmb>` when an extractor is supplied, skipping
+// `resolve_env_llm()` entirely — verified live: `Memory.open(...)` below now
+// succeeds with ZERO LLM env vars set.
 //
-// REQUIRES: native module built (`pnpm build:debug`); AND, due to Finding
-// F46 above, OLLAMA_HOST (or OPENAI_API_KEY / ANTHROPIC_API_KEY) set even
-// though the documented "NoLlm typestate" implies it shouldn't be needed.
+// RESIDUAL GAP found while verifying the fix above, NOT part of F46's
+// original scope, NOT fixed here: the SUBSEQUENT `remember()` call below
+// still requires an LLM — `ingest_with`'s entity-RESOLUTION step
+// (`crates/kremory/src/core/ingest/pipeline/ingest_with.rs`, the
+// `CascadeResolver` construction) unconditionally requires `self.llm`,
+// regardless of whether a BYOE extractor supplied the entities and
+// regardless of whether there is anything to resolve against (a fresh,
+// empty namespace still hits this). So "NoLlm typestate" is accurate for
+// OPENING a Memory, but overclaims for INGESTING through it once any
+// entities are involved — `remember()` on a NoLlm-typestate Memory only
+// works today via `.with_facts(…)` (pinned triples, extraction skipped
+// entirely) per the error's own hint. Deciding a resolution-skipping (or
+// simplified-resolution) fallback for the NoLlm path is a real substrate
+// design decision, not a local bug fix — flagged, not attempted.
+//
+// REQUIRES: native module built (`pnpm build:debug`); OLLAMA_HOST (or
+// OPENAI_API_KEY / ANTHROPIC_API_KEY) set — needed for the `remember()` call
+// below (the residual gap above), NOT for `Memory.open()` itself anymore.
 //
 // Run: `OLLAMA_HOST=http://localhost:11434 node examples/07-byoe-custom-extractor.mjs`
 

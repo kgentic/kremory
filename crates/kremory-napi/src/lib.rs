@@ -356,10 +356,9 @@ impl JsMemory {
     /// Memory handle's default namespace is used; when the handle has no default,
     /// results span all namespaces.
     ///
-    /// # Known gap
-    /// The `sourceUri` field on each returned `JsEpisode` is always `null` —
-    /// the substrate `recall_by_source_id` query does not select that column.
-    /// Use `updateSourceUri` to write and the value is persisted in the DB.
+    /// `sourceUri` on each returned `JsEpisode` reflects the current DB value
+    /// (round-trips correctly, incl. after `updateSourceUri`) — the substrate
+    /// `recall_by_source_id` query projects `source_uri` (TD-003 Phase G).
     #[napi]
     pub async fn recall_by_source_id(
         &self,
@@ -1220,6 +1219,19 @@ impl JsMemory {
     /// Wraps `Memory::await_dream`. `timeoutMs` is mandatory.
     /// Returns `DreamStatusResult` with `status` one of:
     /// `"pending"` | `"processing"` | `"complete"` | `"failed"`.
+    ///
+    /// # Currently unreachable (F41, public-docs-and-api-surface-audit
+    /// phase1-findings.md)
+    ///
+    /// No public JS (or Rust facade) call currently PRODUCES a `handleId` —
+    /// `Memory.dream()` always blocks inline and returns a `DreamSummary`
+    /// directly (see `parity-skip.toml`'s `DreamRequest::fire_and_forget`
+    /// entry: "Async fire-and-forget dream; `Memory.dream` always blocks
+    /// inline"). Calling this method with any UUID today will time out or
+    /// error — there is no way to obtain a live `handleId` first. A
+    /// fire-and-forget dream entry point that returns a real handle is a
+    /// separate, larger change (mirroring the entry point, not just this
+    /// wrapper); tracked, not implemented here.
     #[napi]
     pub async fn await_dream(
         &self,
@@ -1300,6 +1312,13 @@ impl JsMemory {
     ///
     /// Wraps `Memory::cancel_dream`. `handleId` is the RFC-4122 UUID string of
     /// the dream run. Returns `CancelOutcome`.
+    ///
+    /// # Currently unreachable (F41, public-docs-and-api-surface-audit
+    /// phase1-findings.md)
+    ///
+    /// Same gap as `awaitDream` above: no public call produces a `handleId`
+    /// to cancel, because `Memory.dream()` always blocks inline. See that
+    /// method's doc comment for the full explanation.
     #[napi]
     pub async fn cancel_dream(&self, handle_id: String) -> napi::Result<JsCancelOutcome> {
         let run_id = uuid::Uuid::parse_str(&handle_id)
@@ -1450,28 +1469,78 @@ async fn open_with_js_embedder(
 ) -> napi::Result<JsMemory> {
     use std::sync::Arc;
 
-    // Step 1: env-detect LLM.
-    let llm = bridge::resolve_env_llm().await?;
-
-    // Step 2: wrap the JS embedder callback.
+    // Wrap the JS embedder callback (needed on both typestate paths below).
     let emb: Arc<dyn kremory::DynEmbeddingProvider> =
         bridge::into_arc(bridge::JsEmbedderBridge::new(tsfn, expected_dim));
 
-    // Step 3: build Memory — LLM + embedder + optional extractor knobs.
-    // Builder is now `WithLlm, WithEmb` after with_llm + with_embedder.
-    let mut builder = Memory::open(&path).with_llm(llm).with_embedder(emb);
-
-    // Apply BYOE extractor knobs (mutually-exclusive guard already checked in open()).
+    // F46 cause-fix: a BYOE extractor is exactly the documented "NoLlm
+    // typestate" case (`{ embedder, extractor }` → `ExtractorKind::Custom`,
+    // per this fn's own doc comment above). Env-detecting an LLM here was
+    // unconditional — forcing `MemoryBuilder<WithLlm, _>` regardless of
+    // `extractor_handle` — which required OLLAMA_HOST/OPENAI_API_KEY/
+    // ANTHROPIC_API_KEY for a path whose entire point is not needing one.
+    //
+    // FIRST DRAFT of this fix unconditionally skipped `resolve_env_llm()`
+    // whenever an extractor was supplied — WRONG, caught by re-running this
+    // fn's own doc-cited example (`07-byoe-custom-extractor.mjs`) WITH
+    // OLLAMA_HOST set: it regressed the substrate's own compat-matrix Row 5
+    // (`memory_builder_compat_matrix.rs::row5_llm_and_custom_extractor_builds_memory`
+    // — "LLM + custom extractor → Ok(Memory), custom wins") by NEVER wiring
+    // an available LLM once an extractor was present, even though the LLM
+    // stays needed for entity-RESOLUTION (`ingest_with`'s `CascadeResolver`)
+    // and Category B ops, independent of which extractor produced the
+    // entities. Corrected: check env-var PRESENCE directly (not swallow
+    // every `resolve_env_llm()` error) so a genuine misconfiguration (e.g.
+    // `OLLAMA_HOST` set to a malformed URL) still surfaces loudly instead of
+    // silently downgrading to the NoLlm path.
     if let Some(handle) = extractor_handle {
-        builder =
-            builder.with_extractor(Arc::new(bridge::ExternalExtractorJs::from_handle(handle)));
-    } else if gliner_cfg.is_some() {
-        // GLiNER requires ner feature; already checked in open().
-        // F2: with_gliner() takes no arg (GlinerConfig had no public fields) — the
-        // presence of opts.gliner is the enable signal; its contents are unused.
+        let extractor = Arc::new(bridge::ExternalExtractorJs::from_handle(handle));
+
+        let has_env_llm = std::env::var("OLLAMA_HOST").is_ok()
+            || std::env::var("OPENAI_API_KEY").is_ok()
+            || std::env::var("ANTHROPIC_API_KEY").is_ok();
+
+        let build_result = if has_env_llm {
+            let llm = bridge::resolve_env_llm().await?;
+            Memory::open(&path)
+                .with_llm(llm)
+                .with_embedder(emb)
+                .with_extractor(extractor)
+                .await
+        } else {
+            Memory::open(&path)
+                .with_embedder(emb)
+                .with_extractor(extractor)
+                .await
+        };
+
+        let mem = build_result.map_err(|e| {
+            napi::Error::from_reason(format!("kremory open with embedder failed: {e}"))
+        })?;
+        return Ok(JsMemory {
+            inner: mem,
+            default_namespace,
+        });
+    }
+
+    // No BYOE extractor: GLiNER (still LLM-dependent for entity-type
+    // classification, per `.with_gliner()`'s own doc comment) or a plain
+    // BYOM-embedder-only open — both need a real LLM.
+    let llm = bridge::resolve_env_llm().await?;
+    let builder = Memory::open(&path).with_llm(llm).with_embedder(emb);
+
+    // Shadowed (not `mut`-reassigned): under a build without the `ner`
+    // feature, the `gliner_cfg.is_some()` arm always diverges (`return
+    // Err(..)`), so `builder` would otherwise never be reassigned and `mut`
+    // would trip `-D unused-mut` (real regression hit while building this
+    // fix — `napi build` denies warnings). GLiNER requires ner feature;
+    // already checked in open(). F2: with_gliner() takes no arg (GlinerConfig
+    // had no public fields) — the presence of opts.gliner is the enable
+    // signal; its contents are unused.
+    let builder = if gliner_cfg.is_some() {
         #[cfg(feature = "ner")]
         {
-            builder = builder.with_gliner();
+            builder.with_gliner()
         }
         #[cfg(not(feature = "ner"))]
         {
@@ -1479,7 +1548,9 @@ async fn open_with_js_embedder(
                 "KremoryError::FeatureDisabled('ner'): opts.gliner requires --features ner",
             ));
         }
-    }
+    } else {
+        builder
+    };
 
     let mem = builder
         .await

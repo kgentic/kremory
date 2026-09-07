@@ -864,13 +864,27 @@ async fn restore_archived_fact_roundtrip() {
     };
     assert_eq!(in_archive, 0, "archive row removed after restore");
 
-    // Idempotent: a second restore observes the fact already live.
-    let again = restore_archived_fact(&graph, 9001).await;
-    // The archive row is gone now → a second restore is a hard error (not_found),
-    // which is the parse-loudly contract. Re-plant + restore proves already_live.
+    // Idempotent (F44): a second restore on the SAME id — the natural
+    // double-call a consumer would try first — observes the fact already
+    // live and returns `already_live: true` rather than erroring. Before the
+    // F44 fix, `facts_archive` presence was checked BEFORE the already-live
+    // check, so this second call (archive row already deleted by the first,
+    // above) hit the presence check and threw a hard "no facts_archive row"
+    // error, never reaching the idempotent branch the doc comment promises.
+    let again = restore_archived_fact(&graph, 9001)
+        .await
+        .expect("second restore of a live fact is idempotent, not an error");
+    assert_eq!(again.restored_fact_id, 9001);
     assert!(
-        again.is_err(),
-        "second restore of an already-consumed archive id errors loudly"
+        again.already_live,
+        "second restore on the same id must observe already_live == true"
+    );
+
+    // A genuinely bogus id (never archived, not live either) still errors loudly.
+    let bogus = restore_archived_fact(&graph, 424242).await;
+    assert!(
+        bogus.is_err(),
+        "restoring a never-archived, non-live id errors loudly"
     );
 }
 

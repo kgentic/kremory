@@ -582,7 +582,46 @@ async fn restore_archived_txn(
 ) -> Result<RestoreArchivedOutcome> {
     let conn = &graph.conn;
 
-    // Absent archive row → loud error (§2.1 parse-loudly extended to reversal input).
+    // F44 cause-fix: check `facts` (already-live, idempotent) FIRST, before
+    // checking `facts_archive` presence. A successful restore's LAST step
+    // deletes the `facts_archive` row (below) — so the NATURAL double-call a
+    // consumer would try first (`restore_archived_fact(id)` twice) used to
+    // hit the (then-first) `facts_archive` presence check on the SECOND
+    // call, find nothing (the first call already deleted it), and throw a
+    // hard error, never reaching this idempotent branch at all. Checking
+    // `facts` first makes the double-call return `already_live: true` as
+    // documented; a genuinely bogus id (never archived, not live either)
+    // still falls through to the `facts_archive` presence check below and
+    // errors loudly.
+    let already_live = {
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM facts WHERE id = ?1",
+                libsql::params![archived_fact_id],
+            )
+            .await?;
+        rows.next().await?.is_some()
+    };
+    if already_live {
+        // Idempotent cleanup (L2): the fact is already live (the source of truth).
+        // DELETE is a no-op if no `facts_archive` row exists (the natural
+        // double-call case, post F44); it clears a REAL row when some other
+        // reversal path re-inserted the live row without cleaning up the
+        // archive. Safe either way: the live `facts` row already carries the
+        // data.
+        conn.execute(
+            "DELETE FROM facts_archive WHERE id = ?1",
+            libsql::params![archived_fact_id],
+        )
+        .await?;
+        return Ok(RestoreArchivedOutcome {
+            restored_fact_id: archived_fact_id,
+            already_live: true,
+        });
+    }
+
+    // Not live AND no archive row → loud error (§2.1 parse-loudly extended to
+    // reversal input) — a genuinely never-archived-or-live id is a caller bug.
     let in_archive = {
         let mut rows = conn
             .query(
@@ -602,32 +641,6 @@ async fn restore_archived_txn(
         return Err(Error::Other(anyhow::anyhow!(
             "restore_archived_fact: no facts_archive row with id {archived_fact_id}"
         )));
-    }
-
-    // Already live (idempotent) — the archive preserves the original `facts.id`.
-    let already_live = {
-        let mut rows = conn
-            .query(
-                "SELECT 1 FROM facts WHERE id = ?1",
-                libsql::params![archived_fact_id],
-            )
-            .await?;
-        rows.next().await?.is_some()
-    };
-    if already_live {
-        // Idempotent cleanup (L2): the fact is already live (the source of truth),
-        // so the lingering `facts_archive` row is stale — DELETE it so a later
-        // restore of the same id doesn't resurrect a duplicate archive row. Safe:
-        // the live `facts` row already carries the data.
-        conn.execute(
-            "DELETE FROM facts_archive WHERE id = ?1",
-            libsql::params![archived_fact_id],
-        )
-        .await?;
-        return Ok(RestoreArchivedOutcome {
-            restored_fact_id: archived_fact_id,
-            already_live: true,
-        });
     }
 
     conn.execute(RESTORE_INSERT_SQL, libsql::params![archived_fact_id])

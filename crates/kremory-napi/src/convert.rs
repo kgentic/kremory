@@ -93,10 +93,14 @@ pub struct JsOpenOptions {
     /// When set, selects `ExtractorKind::Custom`. Mutually exclusive with
     /// `gliner` — setting both returns an error.
     ///
-    /// JS shape: `{ extract(text: string, ctx: object): Promise<ExtractionResult>, name(): string }`.
-    /// See `ExternalExtractorJs` in bridge.rs for the full interface.
+    /// JS shape: `{ name: string, extract: (err: null, text: string) => Promise<ExtractionResult> }`.
+    /// `name` is a plain string property, NOT a method — and `extract` is
+    /// called with the raw napi-rs error-first convention (`err` always
+    /// `null`, real text is the second argument). See `ExternalExtractorJs`
+    /// / `ExternalExtractorHandle` in bridge.rs for the full interface and
+    /// why (F45, public-docs-and-api-surface-audit phase1-findings.md).
     #[napi(
-        ts_type = "{ extract(text: string, ctx: object): Promise<{ entities: Array<{ name: string, label: string }>, facts: Array<{ subject: string, predicate: string, object: string }> }>, name(): string } | undefined | null"
+        ts_type = "{ name: string, extract: (err: null, text: string) => Promise<{ entities: Array<{ name: string, label: string }>, facts: Array<{ subject: string, predicate: string, object: string }> }> } | undefined | null"
     )]
     pub extractor: Option<crate::bridge::ExternalExtractorHandle>,
 }

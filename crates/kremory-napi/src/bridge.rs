@@ -88,8 +88,20 @@ use kremory::ChatProvider;
 // # JS interface
 //
 // The consumer passes an object with:
-//   - `name: string`               — short identifier for metrics / logging
-//   - `extract: (text: string) => Promise<ExtractionResult>` — extraction fn
+//   - `name: string`                                       — short identifier for metrics / logging
+//   - `extract: (err: null, text: string) => Promise<ExtractionResult>` — extraction fn
+//
+// F45 (public-docs-and-api-surface-audit phase1-findings.md): `extract` is
+// stored as a `ThreadsafeFunction<String, ErrorStrategy::CalleeHandled>`, and
+// `ErrorStrategy::CalleeHandled` means napi-rs invokes the JS callback with
+// the raw Node error-first convention `(err, value)` — the callback itself
+// receives the error slot, napi-rs does not unwrap it first. Argument 1
+// (`err`) is ALWAYS `null` on this bridge's success path (`call_async(Ok(..))`
+// only ever passes `Ok`); the real extraction text is argument 2. This is a
+// property of `ErrorStrategy::CalleeHandled`, not something this bridge
+// chose — documented here (previously this doc + the `ts_type` below both
+// wrongly declared a single `(text: string)` argument, which does not match
+// what napi-rs actually calls the JS function with).
 //
 // `ExtractionContext` is not forwarded to JS: its fields are `&'a [T]` slices
 // with lifetimes that cannot cross FFI. The simplified contract (text only) is
@@ -112,7 +124,7 @@ use kremory::ChatProvider;
 
 /// Live (napi/cdylib) BYOE extractor handle received from JS at `Memory.open` time.
 ///
-/// JS consumers pass `{ name: string, extract: (text: string) => Promise<{entities,facts}> }`.
+/// JS consumers pass `{ name: string, extract: (err: null, text: string) => Promise<{entities,facts}> }`.
 /// `object_to_js = false` suppresses `ToNapiValue` generation — `ExternalExtractorHandle`
 /// is only ever constructed from JS → Rust, never returned to JS.
 #[cfg(not(test))]
@@ -122,10 +134,14 @@ pub struct ExternalExtractorHandle {
     pub name: String,
     /// The JS extraction callback.
     ///
-    /// Receives `text: string`. Returns a `Promise` resolving to:
+    /// Called with TWO arguments, `(err, text)` — the raw napi-rs
+    /// `ErrorStrategy::CalleeHandled` calling convention (see the module-level
+    /// doc comment above). `err` is always `null` on this bridge's success
+    /// path; the real extraction input is `text`. Returns a `Promise`
+    /// resolving to:
     /// `{ entities: Array<{name: string, label: string}>, facts: Array<{subject: string, predicate: string, object: string}> }`
     #[napi(
-        ts_type = "(text: string) => Promise<{ entities: Array<{ name: string, label: string }>, facts: Array<{ subject: string, predicate: string, object: string }> }>"
+        ts_type = "(err: null, text: string) => Promise<{ entities: Array<{ name: string, label: string }>, facts: Array<{ subject: string, predicate: string, object: string }> }>"
     )]
     pub extract: napi::threadsafe_function::ThreadsafeFunction<
         String,

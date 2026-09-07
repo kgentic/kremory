@@ -1029,12 +1029,34 @@ document's earlier "Additional findings" (F34–F39) either. All ten were
 discovered by actually WRITING AND RUNNING new example content against the
 locally built `kremory-napi` native module for T4.1/T4.2 (RULE-011's
 strengthened requirement — an example must execute, not merely exist),
-following `.mjs` files at `crates/kremory-napi/examples/`. All are
-**NOT FIXED** — Phase 4's scope was writing/running examples against the
+following `.mjs` files at `crates/kremory-napi/examples/`. At the time these
+were logged, Phase 4's own scope was writing/running examples against the
 existing build, explicitly excluding changes to `crates/kremory/src` or
-`crates/kremory-napi/src` (several of these require exactly that kind of
-change, or a product decision, to fix). Logged here per this task's own
-instructions, rather than silently worked around.
+`crates/kremory-napi/src` — so all ten were recorded **NOT FIXED** here.
+
+**Follow-up fix pass, 2026-09-07 (separate from Phase 4, per this spec's own
+Non-goals disambiguation — a Phase-1 finding is in scope to fix regardless of
+its original Phase's stated exclusions, provided the fix is small/local):**
+**7 of 10 FIXED** (F41, F42, F43, F44, F45, F46, F49 — see each row's updated
+Disposition above for the code/doc change, verification method, and for F43/
+F44/F46/F49 a real test observed RED before GREEN against actual pre-fix
+behaviour). **3 of 10 remain NOT FIXED**, each re-assessed rather than
+carried over unchanged (F40: genuinely larger, cross-crate public-surface
+decision; F47: root cause not locatable within a bounded investigation,
+independently reconfirmed still-reproducing; F48: pre-existing tracked bug,
+a real fix or even a defensive timeout is itself a separate decision, status
+update only). Quality gate for every code-side change:
+`cargo build --workspace` ✅ · `cargo clippy -p kremory -p kremory-napi
+--all-targets --all-features` ✅ zero warnings ·
+`cargo nextest run -p kremory -p kremory-mcp --features content-search,test-utils`
+✅ **1796/1796 passed, 6 skipped** (grew from this pass's own starting
+baseline of 1795 by exactly the one new test added for F43 —
+`remember_batch_of_three_reports_done_not_timeout`). No napi parity-skip-list
+change was needed — none of these fixes touched a symbol the napi↔Rust
+parity gate tracks (cap unchanged at 91/91). One breaking-shaped but
+purely-additive/behavioral change (F43, F44, F46) was implemented and
+committed locally per RULE-006/RULE-012, consistent with the standing
+`cargo publish` HITL gate — none of these were published.
 
 ### F40 — `factId` (required by `supersede`/`deleteFact`/`restoreArchivedFact`/`unsupersede`) is undiscoverable from any public read path
 
@@ -1068,7 +1090,24 @@ instructions, rather than silently worked around.
   the methods anyway, relying EXPLICITLY on an unsupported implementation
   detail (SQLite auto-increment ids are sequential from 1 in a fresh db) —
   called out in the file's own header comment as not a pattern to copy.
-- **Disposition**: **NOT FIXED** (logged; requires a code-level public-surface decision, out of Phase 4 scope).
+- **Disposition**: **NOT FIXED** (re-assessed in the F40-F49 fix pass, 2026-09-07).
+  Investigated adding an `id: i64` field to `RetrievedFact` (the data is
+  already in scope at its one construction site,
+  `crates/kremory/src/memory/engine_handle.rs:876`, via `f.id` — so this
+  would be a cheap, additive substrate change in isolation). Kept NOT-FIXED
+  because the finding's own framing is correct that this is "a genuine new
+  public-surface decision," and unlike F43/F44 it is NOT confined to one
+  file: `RetrievedFact`/`RetrievedFactNewParams` are consumed cross-crate
+  (`crates/kremory-mcp/src/bin/kremory-http.rs`'s own drift-guard test
+  constructs one), so the fix would also need `kremory-mcp`'s parallel MCP
+  wire format updated for the same field to avoid creating a NEW
+  napi-vs-MCP parity gap in the process of closing the napi-vs-Rust one
+  (`web-app-ui-parity-for-agents` — MCP is also a "UI" surface here) —
+  plus a real design call on the wire type for an `i64` fact id (JS `number`
+  truncates above 2^53; `JsEpisode.id` already accepts this trade-off as
+  `f64`, but that precedent still needs to be consciously extended here,
+  not silently copied). That is materially larger than TD-231's
+  single-file accessor addition. Deferred to a dedicated pass.
 
 ### F41 — `awaitDream` / `cancelDream` require a dream `handleId` that no public JS (or Rust facade) call can produce
 
@@ -1084,7 +1123,17 @@ instructions, rather than silently worked around.
 - **Fix layer**: code (mirror a fire-and-forget dream entry point, or
   document these two methods as currently unreachable / v0.2.0-scoped). Out
   of scope for Phase 4.
-- **Disposition**: **NOT FIXED** (logged; requires a code-level decision, out of Phase 4 scope).
+- **Disposition**: Fixed (doc), 2026-09-07. A real fire-and-forget dream
+  entry point is a genuine, larger substrate addition (out of scope here,
+  per the finding's own framing) — but leaving the existing `awaitDream`/
+  `cancelDream` doc comments silent about the gap reconciles nothing, so
+  RULE-006's "never reconcile a doc to broken behaviour" cuts the other way
+  here: the honest doc fix is stating the current limitation, not
+  implementing the feature. Added a "Currently unreachable" section to both
+  methods' doc comments (`crates/kremory-napi/src/lib.rs`) explaining that
+  no public call produces a `handleId` today because `Memory.dream()`
+  always blocks inline, citing the `parity-skip.toml` entry that already
+  names this. Behaviour unchanged — no test needed (doc-only).
 
 ### F42 — `recallBySourceId`'s "Known gap" doc comment (sourceUri always null) is STALE — sourceUri actually round-trips correctly
 
@@ -1110,7 +1159,15 @@ instructions, rather than silently worked around.
   wrapper — a doc-only fix, but the source of that comment lives in
   `crates/kremory-napi/src/lib.rs`, so "doc-only" here still means editing
   a file under `src/`, out of scope for Phase 4).
-- **Disposition**: **NOT FIXED** (logged; the doc-comment source lives under `crates/kremory-napi/src/`, out of Phase 4 scope).
+- **Disposition**: Fixed (doc), 2026-09-07. Re-verified `recall_by_source_id`
+  (`crates/kremory/src/facade/update.rs:450-508`) genuinely projects
+  `source_uri` (TD-003 Phase G) before touching anything. Deleted the stale
+  "Known gap" note on `Memory.recallBySourceId` in
+  `crates/kremory-napi/src/lib.rs` (the doc comment `index.d.ts` is
+  generated from) and replaced it with an accurate one-line description.
+  `index.d.ts` itself is gitignored (build artifact, not tracked) — the fix
+  lives entirely in the Rust doc comment. No behaviour change; no test
+  needed.
 
 ### F43 — `awaitBatch` can never report done for a batch of 2+ episodes sharing one `batchId` — always times out
 
@@ -1152,7 +1209,38 @@ instructions, rather than silently worked around.
   `crates/kremory-napi/examples/03-ingest-batch-and-async-status.mjs`
   demonstrates the working 1-episode case AND the broken 2+-episode case
   explicitly, rather than only the happy path.
-- **Disposition**: **NOT FIXED** (logged; requires a `crates/kremory/src` fix, out of Phase 4 scope).
+- **Disposition**: Fixed (code), 2026-09-07. **Root cause CONFIRMED exactly as
+  stated in this finding** — traced the real call path
+  (`Memory::remember_batch()` → `RememberBatchBuilder::execute()`
+  (`facade/remember.rs:325`) → `memory::submit_episode` →
+  `EngineGraphHandle::graph_ingest_episode` (`engine_handle.rs:183`)) and
+  confirmed `RememberBatchBuilder::execute()` hardcodes
+  `opts: SubmitOpts { enrich_per_episode: true, run_in_background: false }`
+  for every episode, unconditionally — meaning `remember_batch()` ALWAYS
+  takes the INLINE branch (`run_in_background: false`) inside
+  `graph_ingest_episode`, which calls
+  `batch_status_increment_completed`/`_skipped` (lines 443-450, now
+  1148-1155). Those two functions' `or_insert` fallback set `total: 1` only
+  on the FIRST episode; the `.and_modify` branch every subsequent episode
+  takes never bumped `total`, so `BatchStatus::is_done()`
+  (`completed+skipped+failed==total`) could never hold once `completed > 1`.
+  **The orchestrator's spot-check (lines 288-297, the pre-registered
+  `total += 1` on the BACKGROUND-spawn path) was a genuine, correct read of
+  real code — but that code path is dead for `remember_batch()`/`awaitBatch()`
+  specifically**, because it only fires when `run_in_background: true`, which
+  `RememberBatchBuilder::execute()` never sets. Fixed:
+  `batch_status_increment_completed`/`_skipped`
+  (`crates/kremory/src/memory/engine_handle.rs`) now increment `total` on
+  BOTH the `.and_modify` and `or_insert` arms — a 2-line change, no new
+  mechanism. Added the missing real integration test the finding itself
+  noted was absent: `remember_batch_of_three_reports_done_not_timeout`
+  (`crates/kremory/tests/it/facade_remember.rs`), driving a REAL
+  `EngineGraphHandle` (in-memory libSQL graph, null LLM/embedder — the same
+  real-substrate pattern this file already uses, not a stub) through a real
+  3-episode `remember_batch()` + `await_batch()`. Verified RED before GREEN
+  by reverting the fix and re-running: the test reliably reproduced the
+  exact timeout the finding describes (`Timeout` error at ~3s), then passed
+  in 0.18s once the fix was applied.
 
 ### F44 — `restoreArchivedFact`'s documented idempotency (`alreadyLive: true`) is unreachable via the natural double-call sequence
 
@@ -1183,9 +1271,26 @@ instructions, rather than silently worked around.
 - **Fix layer**: code — either check `facts` for a live row BEFORE checking
   `facts_archive` presence, or treat a missing archive row + a live `facts`
   row as `already_live` rather than a hard error. Out of scope for Phase 4.
-- **Disposition**: **NOT FIXED** (logged; requires a `crates/kremory/src` fix, out of Phase 4 scope).
-
-### F45 — BYOE `extractor.extract` callback signature: neither documented shape matches the real calling convention
+- **Disposition**: Fixed (code), 2026-09-07. Reordered
+  `restore_archived_txn` (`crates/kremory/src/core/dream/provenance/reversal.rs`)
+  to check `facts` (already-live, idempotent) BEFORE checking
+  `facts_archive` presence — the reverse of the original order, which is
+  exactly what made the natural double-call throw instead of returning
+  `already_live: true` (the first call's own last step deletes the archive
+  row, so the second call's presence check found nothing and errored,
+  before ever reaching the idempotent branch). The `already_live` branch's
+  archive-row DELETE is now a best-effort no-op-safe cleanup (harmless
+  whether or not a row exists) rather than a precondition. A genuinely
+  bogus id (never archived, not live) still falls through to the
+  `facts_archive` check and errors loudly — parse-loudly semantics
+  preserved for that case. The existing test
+  `restore_archived_fact_roundtrip` (`crates/kremory/tests/it/reversible_unmerge.rs`)
+  had encoded the BUG as the expected contract (`assert!(again.is_err(), …)`
+  with a comment literally calling the hard error "the parse-loudly
+  contract") — corrected to assert `already_live: true` on the second call,
+  plus a new assertion that a truly bogus id still errors. Verified RED
+  before GREEN: reverting the fix reproduces the exact error the finding
+  describes (`no facts_archive row with id 9001`); the fix makes it pass. — BYOE `extractor.extract` callback signature: neither documented shape matches the real calling convention
 
 - **Axis**: Wrong (two independent sub-findings on the same callback)
 - **Doc side**: `crates/kremory-napi/index.d.ts` — TWO different documented
@@ -1226,7 +1331,24 @@ instructions, rather than silently worked around.
   `crates/kremory-napi/examples/07-byoe-custom-extractor.mjs` demonstrates
   and comments on the real convention rather than silently working around
   it.
-- **Disposition**: **NOT FIXED** (logged; either fix requires editing `crates/kremory-napi/src/`, out of Phase 4 scope — flagged as a maintainer judgment call between doc-fix and code-fix).
+- **Disposition**: Fixed (doc), 2026-09-07 — took the doc-fix branch of the
+  finding's own named maintainer judgment call (code-fix would mean
+  unwrapping napi-rs's error-first `ThreadsafeFunction<_,
+  ErrorStrategy::CalleeHandled>` convention into a single-arg shape,
+  itself a real behaviour change to the calling convention; doc-fix
+  corrects the contract to match verified reality). Corrected BOTH
+  documented shapes at their source
+  (`crates/kremory-napi/src/bridge.rs`'s `ExternalExtractorHandle` /
+  `ExternalExtractorJs` module doc + `ts_type` attribute, and
+  `crates/kremory-napi/src/convert.rs`'s `JsOpenOptions.extractor` inline
+  `ts_type`) to the real two-argument `(err: null, text: string)`
+  convention, and fixed `name(): string` → `name: string` (a plain
+  property, not a method) in the `convert.rs` copy — the standalone
+  `ExternalExtractor` interface already had this right; only the inline
+  `JsOpenOptions.extractor` copy had the method-shaped bug. Verified via a
+  real `napi build --platform` (not just `cargo build`): compiles clean,
+  and the regenerated (gitignored, not tracked) `index.d.ts` carries the
+  corrected signatures through end-to-end. Doc-only; no behaviour change.
 
 ### F46 — `{ embedder, extractor }`'s documented "NoLlm typestate" is not honoured — an LLM env var is still required
 
@@ -1252,7 +1374,65 @@ instructions, rather than silently worked around.
 - **Fix layer**: code — `open_with_js_embedder` needs an early branch that
   skips `resolve_env_llm()` when `extractor_handle.is_some()`. Out of scope
   for Phase 4.
-- **Disposition**: **NOT FIXED** (logged; requires a `crates/kremory-napi/src` fix, out of Phase 4 scope).
+- **Disposition**: Fixed (code), 2026-09-07 — with a real regression caught
+  and corrected during verification, and a residual gap found and
+  documented (not fixed, separate from this finding). `open_with_js_embedder`
+  (`crates/kremory-napi/src/lib.rs`) now checks `extractor_handle` BEFORE
+  ever calling `resolve_env_llm()`, per the finding's own fix-layer
+  suggestion. **First draft of the fix unconditionally skipped LLM
+  detection whenever an extractor was present — this was WRONG**, caught
+  by re-running this fn's own doc-cited example
+  (`crates/kremory-napi/examples/07-byoe-custom-extractor.mjs`) WITH
+  `OLLAMA_HOST` set: it silently regressed the substrate's own
+  `memory_builder_compat_matrix.rs::row5_llm_and_custom_extractor_builds_memory`
+  ("LLM + custom extractor → Ok(Memory), custom wins") by never wiring an
+  available LLM once an extractor was present — but an available LLM is
+  still needed for entity RESOLUTION (`ingest_with`'s `CascadeResolver`),
+  independent of which extractor produced the entities. Corrected: checks
+  `OLLAMA_HOST`/`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` PRESENCE directly (not
+  swallowing every `resolve_env_llm()` error) — no env var present → NoLlm
+  path (`MemoryBuilder<NoLlm, WithEmb>.with_extractor(...)`, F46's fix); an
+  env var present → still calls `resolve_env_llm()` and wires it alongside
+  the extractor (Row 5 preserved), so a genuine misconfiguration still
+  surfaces loudly rather than being silently downgraded. A second, smaller
+  bug surfaced during the same fix and was fixed in the same commit: the
+  `gliner_cfg` branch's `let mut builder` tripped `-D unused-mut` under a
+  build WITHOUT the `ner` feature once the extractor branch's mutation was
+  removed from that variable's scope (caught by `napi build`, which denies
+  warnings) — restructured to a shadowed `let builder = if … { } else { }`
+  so no `mut`/no `#[allow]` is needed either way.
+
+  **Verified against the REAL native module**, not by inspection: ran a
+  real `napi build --platform` (compiles clean, default features — no
+  `ner`), then drove the built `.node` binary directly (`node --test` +
+  ad-hoc scripts) three ways, all confirmed live against a real Ollama
+  instance: (1) `Memory.open({ withEmbedder, extractor })` with ALL THREE
+  LLM env vars unset now succeeds (previously rejected); (2) the same open,
+  followed by `remember()`, still fails with "requires an LLM provider" —
+  a genuinely SEPARATE, NOT-part-of-F46, NOT-fixed substrate behaviour
+  (below); (3) with `OLLAMA_HOST` set, `remember()` now succeeds again,
+  confirming Row 5 was restored, not just re-guessed. Added a permanent
+  regression suite, `crates/kremory-napi/__test__/byoe-nollm-open.test.mjs`,
+  covering all three cases — verified RED against the pre-fix code (all 3
+  failed) before GREEN against the fix (all 3 passed).
+
+  **Residual gap found while verifying this fix, explicitly NOT part of
+  F46's original scope and NOT fixed here**: even after this fix, a
+  `remember()` call on a Memory opened via the NoLlm typestate still fails
+  once any entities are involved — `ingest_with`'s entity-resolution step
+  (`crates/kremory/src/core/ingest/pipeline/ingest_with.rs:1197-1204`, the
+  `CascadeResolver` construction) unconditionally requires `self.llm`,
+  regardless of whether a BYOE extractor supplied the entities and
+  regardless of whether `existing_entities` is even non-empty (a fresh,
+  empty namespace still hits this). So "NoLlm typestate" is now accurate
+  for OPENING a Memory (this finding), but still overclaims for INGESTING
+  through it once entities are involved — `.with_facts(…)` (pinned triples,
+  extraction skipped) is the only NoLlm-compatible `remember()` path today,
+  per the error's own hint. Deciding a resolution-skipping (or
+  simplified-resolution) fallback for the NoLlm path is a real substrate
+  design decision, materially larger than this fix — documented inline at
+  the top of `07-byoe-custom-extractor.mjs` and in the new test file above,
+  not attempted.
 
 ### F47 — BYOE-created entities fail to embed unless `embeddingDim` equals 384, regardless of the configured custom dimension
 
@@ -1286,7 +1466,22 @@ instructions, rather than silently worked around.
   `crates/kremory-napi/examples/07-byoe-custom-extractor.mjs` uses
   `embeddingDim: 384` with an inline comment documenting this finding,
   rather than silently choosing 384 with no explanation.
-- **Disposition**: **NOT FIXED** (logged; needs further root-cause investigation under `crates/kremory/src`, out of Phase 4 scope).
+- **Disposition**: **NOT FIXED** (re-assessed in the F40-F49 fix pass,
+  2026-09-07 — bounded ~15-minute investigation, no fix attempted per the
+  finding's own honest self-assessment that this needs deeper tracing).
+  Confirmed the migrations parameterize `dim` correctly (`F32_BLOB({dim})`
+  in `crates/kremory/src/core/migrations/defs_h.rs` / `defs_j.rs`, not a
+  literal `384` in the schema text) — the bug is NOT in schema/migration
+  code. `TemporalGraph::open` (`schema.rs:442`) defaults to `open_with_dim`
+  at 384; `MemoryBuilder`'s `embedding_dim` field threads into several
+  `EngineNewParams`/config sites (`facade/builder.rs`) but the exact site
+  where a BYOE-extractor entity's embedding write resolves its target `dim`
+  was not located within this pass's budget — genuinely requires deeper
+  tracing of the entity-embedding write path, exactly as the finding itself
+  said. **Independently reconfirmed the bug is real and unchanged** while
+  verifying the F46 fix above: the same "32 != 384" SQLite error reproduced
+  live against the current build when a BYOE extractor's real entity was
+  embedded at a non-384 dim.
 
 ### F48 — the already-tracked BYOM-embedder ingest bug now HANGS instead of failing fast
 
@@ -1314,7 +1509,19 @@ instructions, rather than silently worked around.
   a hang instead of a fast error). Out of scope for Phase 4 — this finding
   updates the ALREADY-TRACKED bug's status, it does not introduce a new
   one.
-- **Disposition**: **NOT FIXED** (pre-existing, tracked bug; this finding updates its failure-mode status only — logged, no fix attempted, out of Phase 4 scope).
+- **Disposition**: **NOT FIXED** (re-confirmed in the F40-F49 fix pass,
+  2026-09-07). This is a pre-existing tracked bug
+  (`__test__/smoke-embedder.test.mjs`'s skipped T2) whose root cause lives
+  in `bridge.rs`'s BYOM-embedder `ThreadsafeFunction` marshalling — deep
+  napi-rs-interaction tracing, already deferred as tech debt before this
+  pass. Considered, and rejected, a narrower defensive fix (wrap the
+  marshalling call in a bounded timeout so the failure mode is a fast error
+  again rather than an indefinite hang) — rejected because a timeout value
+  is itself a new public-surface / behaviour decision (should it be
+  configurable? what's the right default? does it apply to every BYOM
+  callback or just this failure class?) that needs its own design pass, not
+  a silent addition folded into this one. No fix attempted; status update
+  only, matching the finding's own framing.
 
 ### F49 — `episode-parity.test.mjs` is stale and currently fails against the real API surface
 
@@ -1340,4 +1547,24 @@ instructions, rather than silently worked around.
   not a `src/` change, but out of the scope actually assigned for this
   change (writing/running NEW example content, not repairing pre-existing
   tests) — flagged rather than silently fixed alongside unrelated new work.
-- **Disposition**: **NOT FIXED** (logged; a real fix is low-risk but was out of this task's assigned scope).
+- **Disposition**: Fixed (test), 2026-09-07. Renamed both stale calls to the
+  current API in `crates/kremory-napi/__test__/episode-parity.test.mjs`:
+  `getBySourceId(slug, { namespace })` → `recallBySourceId(slug, namespace)`
+  (3 call sites), and dropped `sourceKind: 'Document'` from the three
+  `remember()` calls (`JsRememberOptions` has no such field). Test titles
+  and in-body messages renamed to match. **A second, real bug surfaced
+  while re-running the file for real** (not assumed fixed from the rename
+  alone): the third test's own shape-completeness check used
+  `'sourceUri' in ep` to assert presence — but `sourceUri` is
+  `Option<String>` on the substrate (`JsEpisode.source_uri`, `convert.rs`),
+  and napi-rs's `#[napi(object)]` derive OMITS a `None` `Option<T>` field
+  from the object's own keys entirely when unset, so `in` is the wrong
+  check for an optional field — this codebase's own established idiom
+  (`smoke.test.mjs:395`, `ep.sourceUri == null`) uses nullish-tolerant
+  equality instead. Fixed the assertion to match that convention. Verified
+  against the REAL native module + a real Ollama instance (not assumed):
+  ran `node --test __test__/episode-parity.test.mjs` before any fix
+  (reproduced `mem.getBySourceId is not a function`, exactly as the
+  finding describes), then after the rename alone (2/3 pass, 1 fails on
+  the `sourceUri` assertion bug above), then after both fixes
+  (**3/3 pass**).
