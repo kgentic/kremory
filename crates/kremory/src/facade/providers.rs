@@ -1144,7 +1144,7 @@ mod search_env_override_tests {
             .build()
             .expect("default config builds");
         assert_eq!(default_cfg.search.content_stream_weight, 1.0);
-        assert_eq!(default_cfg.search.rrf_k, 60);
+        assert_eq!(default_cfg.search.rrf_k, 1);
 
         // Present + valid → applied.
         std::env::set_var("KREMORY_CONTENT_WEIGHT", "2.0");
@@ -1172,8 +1172,8 @@ mod search_env_override_tests {
             "garbage KREMORY_CONTENT_WEIGHT must be ignored, default 1.0 retained"
         );
         assert_eq!(
-            bad_cfg.search.rrf_k, 60,
-            "garbage KREMORY_RRF_K must be ignored, default 60 retained"
+            bad_cfg.search.rrf_k, 1,
+            "garbage KREMORY_RRF_K must be ignored, default 1 retained (flipped 2026-09-07)"
         );
 
         std::env::remove_var("KREMORY_CONTENT_WEIGHT");

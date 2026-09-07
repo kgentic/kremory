@@ -207,8 +207,10 @@ async fn unset_knobs_match_documented_defaults() {
         "default content_stream_weight must stay 1.0 (equal-weight fusion) — byte-identical to pre-TD-141"
     );
     assert_eq!(
-        cfg.rrf_k, 60,
-        "default rrf_k must stay 60 (Cormack et al.) — byte-identical to pre-TD-141"
+        cfg.rrf_k, 1,
+        "default rrf_k must be 1 (flipped 2026-09-07 — measured win over Cormack et al.'s \
+         general-purpose 60 on the full LoCoMo corpus, tech-debt-register.md \
+         'steal-matrix-rescore item 7 RESULT')"
     );
     // ADR-078 (2026-07-28): flipped from false. The "byte-identical" framing
     // this assertion carried was the bug, not the guarantee — the arm sat OFF

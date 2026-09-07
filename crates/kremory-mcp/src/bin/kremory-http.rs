@@ -1641,8 +1641,13 @@ async fn main() -> Result<()> {
     // content fusion) read the SAME env at Memory construction via
     // `facade::providers::search_env_overrides`. `KREMORY_CONTENT_WEIGHT` is
     // consumed by the library — read here only for the authoritative boot
-    // banner. Fail-loud: a malformed `KREMORY_RRF_K` WARNs + falls back to 60
-    // (never silently accepted as garbage).
+    // banner. Fail-loud: a malformed `KREMORY_RRF_K` WARNs + falls back to 1
+    // (never silently accepted as garbage). Default flipped 60 -> 1 on
+    // 2026-09-07 alongside `SearchConfig::default().rrf_k` — measured win on
+    // the full LoCoMo corpus (tech-debt-register.md "steal-matrix-rescore
+    // item 7 RESULT"); kept in sync here so this bin-local hybrid-fusion
+    // sweep site still tracks the library default, per this fn's own doc
+    // comment below ("tracks the same k as the library fusion sites").
     let rrf_k: usize = match std::env::var("KREMORY_RRF_K") {
         Ok(raw) => match raw.trim().parse::<usize>() {
             Ok(v) => v,
@@ -1650,12 +1655,12 @@ async fn main() -> Result<()> {
                 tracing::warn!(
                     value = %raw,
                     error = %e,
-                    "KREMORY_RRF_K is not a valid usize — falling back to default 60"
+                    "KREMORY_RRF_K is not a valid usize — falling back to default 1"
                 );
-                60
+                1
             }
         },
-        Err(_) => 60,
+        Err(_) => 1,
     };
     let content_weight_display =
         std::env::var("KREMORY_CONTENT_WEIGHT").unwrap_or_else(|_| "1.0 (default)".to_string());

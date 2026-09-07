@@ -200,9 +200,17 @@ pub struct SearchConfig {
     /// `bm25_weight`.
     pub vector_weight: f64,
 
-    /// Default: 60. Rationale: the standard RRF constant from Cormack et al.
-    /// (2009); k=60 was shown to be near-optimal across a wide range of
-    /// retrieval tasks.
+    /// Default: 1, flipped from 60 (Cormack et al.'s 2009 general-purpose
+    /// constant) on 2026-09-07 after a measured LoCoMo A/B: `k=1` beat `k=60`
+    /// on every category and every metric (recall@10 +3.5, nDCG@10 +1.8, MRR
+    /// +1.6, hit-rate +3.2 — `.ai-docs/tech-debt/tech-debt-register.md`,
+    /// "steal-matrix-rescore item 7 RESULT"). Smaller `k` sharpens RRF's
+    /// `1/(k+rank+1)` weighting, so a confident top candidate from either the
+    /// entity-graph or content stream dominates the fused ranking more; `k=60`
+    /// spreads influence toward parity across ranks. kremory's two streams
+    /// evidently produce strong top candidates often enough that sharpening
+    /// helps. Single-corpus, single-run result — tunable via `with_rrf_k` /
+    /// `KREMORY_RRF_K` if a consumer's own corpus disagrees.
     pub rrf_k: usize,
 
     /// Default: 10. Rationale: top-10 is the conventional precision@k cut-off
@@ -425,7 +433,7 @@ impl Default for SearchConfig {
         Self {
             bm25_weight: 0.5,
             vector_weight: 0.5,
-            rrf_k: 60,
+            rrf_k: 1,
             top_k: 10,
             // recall-v2 axes — every default preserves today's behaviour
             // (0.05 graph-degree live; all new axes at their no-op value).
@@ -1226,21 +1234,24 @@ mod tests {
     }
 
     /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (R4c): the S0-infra
-    /// sweep knobs' defaults are unchanged — no-env recall output is
-    /// byte-identical (DoD #1). `rrf_k=60` (Cormack et al.),
-    /// `content_stream_weight=1.0` (equal-weight fusion). Guards against a
-    /// default drift silently changing the baseline sweep point.
+    /// sweep knobs' defaults must match whatever the CURRENT deliberate
+    /// default is (not "byte-identical to pre-TD-141" — that framing died
+    /// with the 2026-09-07 `rrf_k` flip; see the field's own doc comment for
+    /// the measured justification). `rrf_k=1` (flipped 2026-09-07, measured
+    /// win over Cormack et al.'s general-purpose 60), `content_stream_weight
+    /// =1.0` (equal-weight fusion, unchanged). Guards against a default drift
+    /// silently changing the baseline sweep point.
     #[test]
     fn search_sweep_knob_defaults_unchanged() {
         let search = SearchConfig::default();
-        assert_eq!(search.rrf_k, 60, "default RRF k must stay 60");
+        assert_eq!(search.rrf_k, 1, "default RRF k must stay 1 (flipped 2026-09-07)");
         assert_eq!(
             search.content_stream_weight, 1.0,
             "default content_stream_weight must stay 1.0 (equal-weight fusion)"
         );
         // The builder path (used by open_graph before env overrides) must agree.
         let built = PipelineConfig::builder().build().unwrap().search;
-        assert_eq!(built.rrf_k, 60);
+        assert_eq!(built.rrf_k, 1);
         assert_eq!(built.content_stream_weight, 1.0);
         // The new builder setter threads the value.
         let tuned = PipelineConfig::builder()
@@ -1439,7 +1450,7 @@ mod tests {
         assert!((cfg.entropy.entropy_threshold - 1.5).abs() < 1e-12);
         assert!((cfg.search.bm25_weight - 0.5).abs() < 1e-12);
         assert!((cfg.search.vector_weight - 0.5).abs() < 1e-12);
-        assert_eq!(cfg.search.rrf_k, 60);
+        assert_eq!(cfg.search.rrf_k, 1);
         assert_eq!(cfg.search.top_k, 10);
         assert_eq!(cfg.cache_ttl, Duration::from_secs(300));
         assert_eq!(cfg.cache_max_entries, 1000);
