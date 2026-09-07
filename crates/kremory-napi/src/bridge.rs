@@ -7,7 +7,7 @@
 //! consumer passes a callback `(text: string) => Promise<number[]>` via
 //! `JsOpenOptions.withEmbedder` at `Memory.open` time. This module wraps that
 //! callback in a struct that implements `kremory::DynEmbeddingProvider`, fulfilling
-//! the Tier-2 BYOM contract from ADR-030.
+//! the Tier-2 BYOM contract.
 //!
 //! # API shape
 //!
@@ -91,7 +91,7 @@ use kremory::ChatProvider;
 //   - `name: string`                                       — short identifier for metrics / logging
 //   - `extract: (err: null, text: string) => Promise<ExtractionResult>` — extraction fn
 //
-// F45 (public-docs-and-api-surface-audit phase1-findings.md): `extract` is
+// `extract` is
 // stored as a `ThreadsafeFunction<String, ErrorStrategy::CalleeHandled>`, and
 // `ErrorStrategy::CalleeHandled` means napi-rs invokes the JS callback with
 // the raw Node error-first convention `(err, value)` — the callback itself
@@ -105,7 +105,7 @@ use kremory::ChatProvider;
 //
 // `ExtractionContext` is not forwarded to JS: its fields are `&'a [T]` slices
 // with lifetimes that cannot cross FFI. The simplified contract (text only) is
-// sufficient for v0.2.0 BYOE (ADR-039 §6). Full context forwarding is deferred
+// sufficient for the current BYOE surface. Full context forwarding is deferred
 // to a future release when a serialised ContextSnapshot type is designed.
 //
 // # Threading model
@@ -253,7 +253,7 @@ impl kremory::core::intelligence::EntityExtractor for ExternalExtractorJs {
                     object: f.object,
                     is_entity_ref: false,
                     confidence: 1.0,
-                    // TD-187 round 2. `JsExtractedFact` is subject/predicate/object
+                    // `JsExtractedFact` is subject/predicate/object
                     // ONLY — this bridge already hardcodes `is_entity_ref: false`
                     // and `confidence: 1.0` because the JS surface never carried
                     // them. `valid_at` is the THIRD field in that same pre-existing
@@ -602,11 +602,11 @@ pub(crate) async fn resolve_env_llm() -> napi::Result<Arc<dyn ChatProvider>> {
     };
 
     if let Ok(host) = std::env::var("OLLAMA_HOST") {
-        // Default: gemma4:e4b — ALIGNED with the Rust `Memory::with_ollama` default
-        // (facade/mod.rs) and the validated-best default (F1 85.7 @ 11.6s per
-        // `project_kremory_validated_model_findings_2026-06-24`). This closes the
-        // N4 binding-parity gap where the napi default (`qwen2.5:14b`) differed from
-        // Rust's, giving the SAME library two default brains depending on binding.
+        // Default: gemma4:e4b — matches the Rust `Memory::with_ollama` default
+        // (facade/mod.rs) and is the empirically validated-best default (F1
+        // 85.7 @ 11.6s). Previously the napi default was `qwen2.5:14b`, giving
+        // the SAME library two different default models depending on which
+        // binding you used; this aligns the two.
         // Override via OLLAMA_CHAT_MODEL env var. Avoid `-mlx` variants pending
         // upstream autoagents-llm structured-output patches.
         let model = std::env::var("OLLAMA_CHAT_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
