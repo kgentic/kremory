@@ -573,3 +573,8 @@ revisit = "never"
 symbol = "MemoryBuilder::prior_turn_replay_depth"
 reason = "ADR-030 Form B: the whole MemoryBuilder knob surface is deferred to JS together, since Memory.open is the single JS construction entry point. Same deferral as its ten siblings (rrf_k / temporal_weight / extraction_arm_budget_ms / ...). ADR-080."
 revisit = "when the JS surface gains a construction-time knob object"
+
+[[skip]]
+symbol = "MemoryBuilder::with_graph_degree_weight"
+reason = "public-docs-and-api-surface-audit Phase 2 (F17, 2026-09-07): the TWELFTH per-knob SearchConfig override setter, added to close the one weight axis (graph_degree_weight) that had a public field and live compute but no public setter at all — the mirror image of TD-231, which found the same gap for extraction_arm_budget_ms. Deferred per ADR-030 Form B for the SAME reason as its eleven siblings (with_content_stream_weight / with_rrf_k / with_episode_dense_enabled / with_fact_dense_enabled / with_embed_task_prefix_enabled / with_proximity_weight / with_temporal_weight / with_rerank_candidate_max_chars / with_contradiction_detection_enabled / extraction_arm_budget_ms / prior_turn_replay_depth): the whole Tier-2 builder surface goes to JS together, since Memory.open is the single JS construction entry point."
+revisit = "TD-159 parity sweep (with the rest of the Tier-2 builder-knob cluster, not piecemeal)"

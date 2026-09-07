@@ -337,6 +337,27 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
+    /// Explicit weight for the additive graph-degree bonus
+    /// (`SearchConfig::graph_degree_weight`, recall-v2 Phase 2a; formerly the
+    /// `search::GRAPH_DEGREE_WEIGHT` const, TD-066 Change 2). Default (unset):
+    /// `0.05` — this axis is already LIVE, not a no-op like its newer siblings,
+    /// so leaving it unset preserves today's shipped behaviour exactly. Calling
+    /// this setter wins over the default, for this `Memory` only.
+    ///
+    /// public-docs-and-api-surface-audit Phase 2 (finding F17, 2026-09-07):
+    /// added because this was the one weight axis on `SearchConfig` reachable
+    /// only for *reading* (via [`Memory::search_config`]), never for *writing*
+    /// — no builder method and no env override existed, unlike every sibling
+    /// axis (`content_stream_weight`, `proximity_weight`, `temporal_weight`).
+    /// The mirror image of TD-231, which found the same "documented as
+    /// tunable, actually unreachable" gap for `extraction_arm_budget_ms`.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::graph_degree_weight`](crate::core::config::PipelineConfigBuilder::graph_degree_weight).
+    pub fn with_graph_degree_weight(mut self, v: f32) -> Self {
+        self.config_overrides.graph_degree_weight = Some(v);
+        self
+    }
+
     /// Explicit RRF fusion constant `k` (Cormack et al. 2009; `SearchConfig::rrf_k`).
     /// Default (unset): `60` unless overridden by `KREMORY_RRF_K` at
     /// construction time. Calling this setter wins over BOTH the default and

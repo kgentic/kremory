@@ -190,6 +190,27 @@ async fn with_rerank_candidate_max_chars_reaches_live_search_config() {
     );
 }
 
+/// public-docs-and-api-surface-audit Phase 2 (finding F17) — same builder seam,
+/// the one axis with a public field + live compute but no builder setter at
+/// all. No env override exists for this knob (unlike its siblings above), so
+/// no `clear_search_env`/`remove_var` call is needed. Mirrors
+/// `with_proximity_weight_reaches_live_search_config`'s shape.
+#[tokio::test]
+async fn with_graph_degree_weight_reaches_live_search_config() {
+    let mem = Memory::open(unique_db("graph_degree_weight"))
+        .with_llm(null_llm())
+        .with_embedder(null_embedder())
+        .with_graph_degree_weight(0.2)
+        .await
+        .expect("build with with_graph_degree_weight");
+
+    assert_eq!(
+        mem.search_config().graph_degree_weight,
+        0.2,
+        "programmatic with_graph_degree_weight(0.2) must reach the live SearchConfig"
+    );
+}
+
 // ── 2. Unset knobs reproduce today's byte-identical defaults ────────────────
 
 #[tokio::test]
@@ -230,6 +251,12 @@ async fn unset_knobs_match_documented_defaults() {
     assert_eq!(
         cfg.rerank_candidate_max_chars, 0,
         "default rerank_candidate_max_chars must stay 0 (unlimited) — byte-identical pre-lever"
+    );
+    assert_eq!(
+        cfg.graph_degree_weight, 0.05,
+        "default graph_degree_weight must stay 0.05 (TD-066 Change 2, already-live) — \
+         unlike the other new axes above, 0.0 here would silently DISABLE a shipped, \
+         tested boost, not preserve it"
     );
 }
 

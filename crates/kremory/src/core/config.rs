@@ -513,6 +513,14 @@ impl Default for SearchConfig {
 pub(crate) struct PipelineConfigOverrides {
     /// Explicit override for [`SearchConfig::content_stream_weight`].
     pub content_stream_weight: Option<f32>,
+    /// Explicit override for [`SearchConfig::graph_degree_weight`] (public-docs-
+    /// and-api-surface-audit Phase 2, finding F17). `graph_degree_weight` is
+    /// the one recall-v2 scoring axis that shipped LIVE (default `0.05`, not a
+    /// no-op) but, unlike every sibling axis on this struct, had no builder
+    /// setter and no env override — reachable only for *reading* (via
+    /// `Memory::search_config()`), never for *writing*. `None` leaves the
+    /// compiled-in default of `0.05` unchanged.
+    pub graph_degree_weight: Option<f32>,
     /// Explicit override for [`SearchConfig::rrf_k`].
     pub rrf_k: Option<usize>,
     /// Explicit override for [`SearchConfig::episode_dense_enabled`].
@@ -588,6 +596,9 @@ impl PipelineConfigOverrides {
     pub(crate) fn apply(&self, mut builder: PipelineConfigBuilder) -> PipelineConfigBuilder {
         if let Some(v) = self.content_stream_weight {
             builder = builder.content_stream_weight(v);
+        }
+        if let Some(v) = self.graph_degree_weight {
+            builder = builder.graph_degree_weight(v);
         }
         if let Some(v) = self.rrf_k {
             builder = builder.rrf_k(v);
@@ -954,6 +965,17 @@ impl PipelineConfigBuilder {
     /// restart, not a rebuild.
     pub fn content_stream_weight(mut self, v: f32) -> Self {
         self.inner.search.content_stream_weight = v;
+        self
+    }
+
+    /// public-docs-and-api-surface-audit Phase 2 (F17): weight of the additive
+    /// graph-degree bonus (`SearchConfig::graph_degree_weight`). Default `0.05`
+    /// (the already-live TD-066 Change 2 boost, byte-identical) — unlike every
+    /// sibling axis on `SearchConfig`, this field previously had NO builder
+    /// method and no env override, so it was reachable for reading (via
+    /// `Memory::search_config()`) but never for writing.
+    pub fn graph_degree_weight(mut self, v: f32) -> Self {
+        self.inner.search.graph_degree_weight = v;
         self
     }
 

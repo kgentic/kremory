@@ -432,11 +432,11 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 90 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 91 (sanity cap — over-finding guard).
     // ⚠️ THIS NOTE ROTTED TWICE before 2026-08-12 (see the history below for the
     // exact sequence). Kept in sync again on 2026-09-02 (88 → 89, TD-231).
-    // The enforced value is the assert, and only the assert: `skip_count <= 90`.
-    // The lead line above and this note are now both 90. If you raise the assert
+    // The enforced value is the assert, and only the assert: `skip_count <= 91`.
+    // The lead line above and this note are now both 91. If you raise the assert
     // again, grep this file for the OLD number before you finish — this note has
     // already rotted twice from someone skipping that step.
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
@@ -494,13 +494,23 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // ten siblings. The register was sitting exactly at the prior cap (89)
     // before this addition, so this is register growth, not walker
     // over-finding; raised on the record rather than by pruning a legitimate
-    // entry to make room. NOTE TO THE NEXT PERSON: this file's lead comment and
-    // the assert must BOTH say 90 now — grep for the old number before you
-    // finish, because this note has already rotted twice.
+    // entry to make room.
+    // Raised 90 -> 91 (public-docs-and-api-surface-audit Phase 2, F17,
+    // 2026-09-07) for exactly ONE entry — `MemoryBuilder::with_graph_degree_weight`
+    // — the TWELFTH per-knob `SearchConfig` override setter, added to close the
+    // one axis (`graph_degree_weight`) that had no public setter at all (the
+    // mirror image of TD-231, which found the missing knob for
+    // `extraction_arm_budget_ms`). Deferred to JS under the identical ADR-030
+    // Form B reason as its eleven siblings. The register was sitting exactly at
+    // the prior cap (90) before this addition, so this is register growth, not
+    // walker over-finding; raised on the record rather than by pruning a
+    // legitimate entry to make room. NOTE TO THE NEXT PERSON: this file's lead
+    // comment and the assert must BOTH say 91 now — grep for the old number
+    // before you finish, because this note has already rotted twice.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 90,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 90. \
+        skip_count <= 91,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 91. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."
