@@ -1,7 +1,9 @@
 ---
 title: "Public docs + API-surface audit — spec"
 type: spec
-status: approved-for-implementation
+status: implemented
+implemented: 2026-09-07 (commits e1fd21cb..1986dc17, all local, unpushed)
+conformance: docs/specs/public-docs-and-api-surface-audit/conformance.md
 created: 2026-09-06
 updated: 2026-09-07
 tier: high-stakes
