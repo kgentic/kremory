@@ -5,6 +5,11 @@ members = [
     "crates/kremory-eval",
     "crates/kremory-admin",
     "crates/kremory-napi",
+    # Test-only, publish = false: Phase 0 doc-compile audit harness for
+    # docs/specs/public-docs-and-api-surface-audit/. Compiles every fenced
+    # ```rust block in docs/*.md + README.md against the real crate. See
+    # crates/kremory-doc-examples/README.md.
+    "crates/kremory-doc-examples",
     # MUST stay a member — excluding it rots the crate against facade drift
     # (10 compile errors accrued invisibly while excluded, 2026-07-13). Workspace
     # membership is the structural anti-rot fix — same failure class as the ner

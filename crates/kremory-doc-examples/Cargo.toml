@@ -1,0 +1,35 @@
+[package]
+name = "kremory-doc-examples"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = """
+Internal, unpublished Phase-0 doc-compile audit harness for
+docs/specs/public-docs-and-api-surface-audit/. NOT part of the public API
+surface, NOT shipped anywhere. Its only job is to compile every fenced
+```rust block in docs/*.md + README.md against the real kremory crate.
+See README.md in this directory for the design + how to run it.
+"""
+
+# Never publish. This crate's only reason to exist is CI-local doc auditing.
+[lints.rust]
+warnings = "deny"
+
+[dependencies]
+# `path` dependency, all features whose surface any doc snippet actually
+# exercises with a real ```rust fence (checked via grep before adding —
+# `ner`/`embeddings`/`rerank` pull heavy ONNX deps and are NOT referenced by
+# any fenced rust block today, only in prose, so they are deliberately
+# excluded to keep this harness's build fast).
+kremory = { path = "../kremory", features = ["content-search", "test-utils", "otel"] }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+# Only for README's Quickstart snippet, which constructs a real
+# autoagents_llm::backends::ollama::Ollama client (never connected to —
+# Phase 0 is compile-only).
+autoagents-llm = { version = "0.3", features = ["ollama"] }
+# For docs/observability.md's "Reading metrics in your app" snippets.
+metrics = "0.24"
+metrics-util = "0.18"
