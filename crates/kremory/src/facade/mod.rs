@@ -175,17 +175,13 @@ pub struct ConsolidationOpsRan {
 /// - `duration_ms` — wall-clock time of the dream call.
 /// - `warnings` — non-fatal notices from any pass.
 ///
-/// **Consolidation fields (ADR-066 — populated by the CONSOLIDATION sub-phase):**
+/// **Consolidation fields (populated by the CONSOLIDATION sub-phase):**
 /// - `communities_updated`, `cross_episode_would_merge`, `cross_episode_merged`,
 ///   `supersessions_recorded`, `facts_archived` — filled by `run_consolidation`
 ///   when the corresponding `DreamOpts.include_*` op is enabled (all default `true`
-///   since consumer-API hardening D1 — made safe by ADR-073 Tier-1 reversibility).
+///   since consumer-API hardening D1 — made safe by Tier-1 reversibility).
 ///   Zero when the op is off OR ran and found nothing to do — use
 ///   `consolidation_ops_ran` (D1b) to tell the two apart.
-///
-/// Fields wired across ADR-037 §3 D6 (types_discovered/warnings), ADR-046 Option E
-/// E8 (entities_reclassified), and dream-phase-reconciliation-v2 §D3
-/// (aliases_resolved, canonicalization_merges, consistency_check_corrected).
 ///
 /// # Observability — metrics stack version lock
 ///
@@ -239,21 +235,21 @@ pub struct DreamSummary {
     /// Near-duplicate entities merged by the canonicalize pass (§D3). Zero when the
     /// pass was not run or found no merges above `L5_CANONICALIZATION_THRESHOLD`.
     pub canonicalization_merges: usize,
-    /// Entity-instance pairs merged by the Site #5 acronym/nickname recall pass
-    /// (ADR-063 §3). Zero when opted out (`include_acronym_nickname_recall = false`)
+    /// Entity-instance pairs merged by the Site #5 acronym/nickname recall pass.
+    /// Zero when opted out (`include_acronym_nickname_recall = false`)
     /// or no acronym/nickname pairs were adjudicated as the same entity.
     pub acronym_nickname_merges: usize,
     /// Near-duplicate `entity_types` rows merged by the Site #3 type-registry
-    /// collapse pass (ADR-063 §4). Zero when opted out
+    /// collapse pass. Zero when opted out
     /// (`include_type_registry_collapse = false`) or no type pairs were collapsed.
     pub type_registry_merges: usize,
-    /// Entity types corrected by the consistency_check pass (ADR-047, §D3). Zero
+    /// Entity types corrected by the consistency_check pass. Zero
     /// when opted out (`include_consistency_check = false`) or nothing to correct.
     pub consistency_check_corrected: usize,
     /// Warnings emitted during the dream phase.
     /// Includes degraded-mode notices (e.g. anti-redundancy gate skipped).
     pub warnings: Vec<String>,
-    /// TD-060 (ADR-071 §Item 4a step 6) — `true` when the consolidation
+    /// `true` when the consolidation
     /// sub-phase's `ConsolidationBudget` (token or USD ceiling) was exhausted this
     /// run, skipping at least one op. Set from the fold site in `facade/dream.rs`
     /// (`consolidation.budget_exhausted`) — inert (`false`) unless a consolidation
@@ -284,8 +280,8 @@ impl From<DreamPhaseResult> for DreamSummary {
             consistency_check_corrected: 0,
             warnings: r.dream_warnings,
             // Carried through structurally (not hardcoded false) — DreamPhaseResult
-            // gained this field for exactly this propagation (ADR-071 §Item 4a step
-            // 6). In the live `facade/dream.rs` call path `r` is always freshly
+            // gained this field for exactly this propagation. In the live
+            // `facade/dream.rs` call path `r` is always freshly
             // `DreamPhaseResult::default()`-constructed BEFORE consolidation runs, so
             // this is `false` here and is overwritten by the fold site immediately
             // after with the real `consolidation.budget_exhausted` value.
@@ -323,7 +319,7 @@ impl From<crate::core::ingest::DreamPassSummary> for DreamSummary {
 
 #[cfg(test)]
 mod dream_summary_budget_exhausted_tests {
-    //! TD-060 (ADR-071 §Item 4a step 6, Vera HIGH-1) — consumer-observability
+    //! Consumer-observability
     //! coverage for `budget_exhausted` propagation. `run_consolidation`'s real op
     //! projections are all 0 at this stage (§Item 4a DoD note), so a true
     //! budget-capped skip cannot be triggered end-to-end through `mem.dream()`
@@ -353,7 +349,7 @@ mod dream_summary_budget_exhausted_tests {
     #[test]
     fn dream_summary_from_dream_phase_result_carries_budget_exhausted() {
         // Proves the `From<DreamPhaseResult>` impl above threads the flag through
-        // rather than hardcoding `false` — the propagation half of Vera HIGH-1.
+        // rather than hardcoding `false`.
         let r = DreamPhaseResult {
             budget_exhausted: true,
             ..Default::default()
@@ -370,7 +366,7 @@ mod dream_summary_budget_exhausted_tests {
         // Proves the exact assignment shape used at the `facade/dream.rs` fold site
         // (`summary.budget_exhausted = consolidation.budget_exhausted;`) correctly
         // reads a `true` ConsolidationSummary.budget_exhausted through to the
-        // consumer-facing DreamSummary — the other half of Vera HIGH-1 (a live
+        // consumer-facing DreamSummary (a live
         // budget-capped run cannot yet drive this end-to-end per the module doc
         // above, so this test exercises the fold assignment directly).
         let consolidation = ConsolidationSummary {
@@ -450,15 +446,15 @@ impl From<RecallTemplate> for ContextTemplate {
 /// Advanced users requiring raw substrate access can use `kremory::memory::*`
 /// free functions directly — they remain public and unchanged.
 ///
-/// TD-136 (dense episode retrieval): tally returned by
-/// [`Memory::backfill_episode_embeddings`] and, since TD-143/TD-112, also by
+/// Tally returned by
+/// [`Memory::backfill_episode_embeddings`] and, also by
 /// [`Memory::reembed_all_episode_embeddings`],
 /// [`Memory::reembed_all_entity_embeddings`], and
 /// [`Memory::reembed_all_fact_embeddings`] — all four drive the same
 /// embed+store shape (embed a page item's text, persist the vector, count
 /// success/failure) over a different table/page-source, so they share this
 /// tally shape rather than each declaring an identical `{embedded, failed}`
-/// struct (Rule 37 — reuse an existing shape before declaring a new one).
+/// struct.
 /// Field names stay table-agnostic ("items", not "episodes") accordingly.
 /// Feature-gated behind `content-search` (the whole embedding path only
 /// exists there).
@@ -473,7 +469,7 @@ pub struct EpisodeEmbeddingBackfill {
     pub failed: u64,
 }
 
-/// Args-as-object for [`Memory::embed_and_store_episode_page`] per TD-042
+/// Args-as-object for [`Memory::embed_and_store_episode_page`] per
 /// (`clippy.toml` `too-many-arguments-threshold = 3`, `self` counts).
 /// Private — an internal seam shared by
 /// [`Memory::backfill_episode_embeddings`] and
@@ -486,7 +482,7 @@ struct EmbedEpisodePageParams<'a> {
     op: &'static str,
 }
 
-/// Args-as-object for [`Memory::embed_and_store_entity_page`] — TD-112
+/// Args-as-object for [`Memory::embed_and_store_entity_page`] —
 /// sibling of [`EmbedEpisodePageParams`], same rationale.
 #[cfg(feature = "content-search")]
 struct EmbedEntityPageParams<'a> {
@@ -496,7 +492,7 @@ struct EmbedEntityPageParams<'a> {
     op: &'static str,
 }
 
-/// Args-as-object for [`Memory::embed_and_store_fact_page`] — TD-112 sibling
+/// Args-as-object for [`Memory::embed_and_store_fact_page`] — sibling
 /// of [`EmbedEpisodePageParams`], same rationale.
 #[cfg(feature = "content-search")]
 struct EmbedFactPageParams<'a> {
@@ -513,14 +509,14 @@ pub struct Memory {
     /// Category B methods (dream, recall_with_disambiguation, detect_contradictions) call
     /// `.llm_or_err("method_name")` which returns `Error::LlmRequired` at call time.
     pub(crate) llm: Option<Arc<dyn ChatProvider>>,
-    /// Optional dedicated dream-phase LLM (TD-052b). `Some` → `dream()` uses it;
+    /// Optional dedicated dream-phase LLM. `Some` → `dream()` uses it;
     /// `None` → dream falls back to `self.llm` via `dream_llm_or_main`.
     pub(crate) dream_llm: Option<Arc<dyn ChatProvider>>,
     /// Concrete model id for the MAIN chat provider (`with_model_id` / Tier-1
     /// shortcut). Threaded into the dream LLM passes for capability detection
     /// (empty → `PromptOnly` degrade). `None` when the provider was wired via
     /// raw `with_llm` without a model id — dream then degrades exactly as the
-    /// interactive path does. TD-094: previously baked only into the ingest
+    /// interactive path does. Previously baked only into the ingest
     /// pipeline, never reaching the dream facade — the root cause of the
     /// silent empty-model → zero-output degrade in the LLM dream passes.
     pub(crate) model_id: Option<String>,
@@ -528,16 +524,16 @@ pub struct Memory {
     /// with `dream_llm` the way `model_id` pairs with `llm`: when a dedicated
     /// dream *provider* is set, its model *string* usually differs from the
     /// interactive model, so capability detection needs its own id. `None` →
-    /// dream falls back to `model_id` via `dream_model_id_or_main` (TD-094).
+    /// dream falls back to `model_id` via `dream_model_id_or_main`.
     pub(crate) dream_model_id: Option<String>,
     /// Embedding provider — read by the dream/disambiguation paths
     /// (`facade/dream.rs` passes `self.memory.embedder.as_ref()` into the
-    /// dream pass). TD-043: field is live, `#[allow(dead_code)]` removed.
+    /// dream pass). Field is live, `#[allow(dead_code)]` removed.
     pub(crate) embedder: Arc<dyn DynEmbeddingProvider>,
     pub(crate) default_sink: Option<Arc<dyn EnrichmentEventSink>>,
     pub(crate) default_namespace: Option<Namespace>,
     /// Direct handle to the underlying `TemporalGraph` for namespace-policy
-    /// substrate calls (ADR-029a `register_namespace` + lazy population).
+    /// substrate calls (`register_namespace` + lazy population).
     /// `None` only when `Memory` is constructed by a test path that bypasses
     /// `providers::open_graph` (e.g. with a stub `GraphHandle`). In that case
     /// `register_namespace` returns `MemoryError::Other("…")`.
@@ -554,20 +550,20 @@ pub struct Memory {
     pub(crate) dream_scheduler:
         std::sync::Arc<std::sync::Mutex<Option<crate::memory::scheduler::DreamSchedulerHandle>>>,
     /// When `true`, `Memory::remember(...).await` blocks until background
-    /// extraction (GLiNER/LLM via the ADR-051 worker) has transitioned the
+    /// extraction (GLiNER/LLM via the background worker) has transitioned the
     /// episode to `Verified` (or returns `Err` on `Failed` / timeout).
     ///
-    /// Opt-in: default is `false` (fire-and-forget, per ADR-051 design).
+    /// Opt-in: default is `false` (fire-and-forget by design).
     /// Per D1 peer pattern: equivalent to Cognee's `run_in_background=False`.
     ///
     /// ⚠ Cost: enables synchronous-extraction ergonomics at the expense of the
-    /// latency benefit ADR-051 provides. Document this trade-off in consumer
+    /// latency benefit the background path provides. Document this trade-off in consumer
     /// code. Prefer `Memory::wait_for_processing` directly for fine-grained
-    /// control. See spec §Risk R-06.
+    /// control.
     pub(crate) await_extraction: bool,
     /// Timeout applied when `await_extraction = true`.
     ///
-    /// Default: 60 seconds (per spec §Risk R-12 mitigation). Configurable via
+    /// Default: 60 seconds. Configurable via
     /// `MemoryBuilder::with_await_extraction_timeout`.
     pub(crate) await_extraction_timeout: Duration,
 }
@@ -686,7 +682,7 @@ impl Memory {
     /// `providers::search_env_overrides`). Read-only; cheap (a clone of an
     /// in-memory struct — no I/O, hence not `async`).
     ///
-    /// Exposed (TD-135) so a transport/consumer — e.g. the `kremory-http` bench
+    /// Exposed so a transport/consumer — e.g. the `kremory-http` bench
     /// server's `GET /health` endpoint — can report the ACTUAL active scoring
     /// config as a single source of truth, rather than re-reading env
     /// independently (which can silently drift from what the search path
@@ -696,15 +692,15 @@ impl Memory {
         self.graph.search_config()
     }
 
-    /// Whether ingest-time contradiction detection is live on this `Memory`
-    /// (TD-172 / TD-167 / ADR-079 rev.2) — reflecting the compiled-in default,
+    /// Whether ingest-time contradiction detection is live on this `Memory` —
+    /// reflecting the compiled-in default,
     /// any `KREMORY_CONTRADICTION_DETECTION` boot override, and any
     /// [`MemoryBuilder::with_contradiction_detection_enabled`](crate::facade::builder::MemoryBuilder::with_contradiction_detection_enabled)
     /// call, resolved by that same precedence. Read-only; cheap (a `bool` copy
     /// — no I/O, hence not `async`).
     ///
-    /// Exposed for the same reason as its sibling [`Memory::search_config`]
-    /// (TD-135): a consumer or transport must be able to report the config the
+    /// Exposed for the same reason as its sibling [`Memory::search_config`]:
+    /// a consumer or transport must be able to report the config the
     /// pipeline ACTUALLY runs, rather than re-reading env — and since the
     /// builder seam can now override env, env is no longer a reliable proxy
     /// for this flag at all. It matters more than the sibling because it gates
@@ -792,9 +788,6 @@ impl Memory {
     /// episodes in the batch reach Phase 2 terminal state,
     /// `on_batch_phase2_complete` fires on the configured sink (if any).
     ///
-    /// Per ADR-052 Gap 1 §3.2 + Phase 7 DoD + v0.2.3 follow-up closure
-    /// (`BackgroundIngestorGraphHandle` dual-path consolidation, 2026-06-15).
-    ///
     /// # Namespace resolution
     ///
     /// Requires a `default_namespace` on the builder.  Per-call namespace
@@ -806,7 +799,7 @@ impl Memory {
     /// When `.with_sink()` is configured on the builder, `MemoryBuilder::build()`
     /// constructs a `BackgroundIngestorGraphHandle` (arch spec §3.2 Option A).
     /// `send_batched` then routes through `BackgroundIngestor.send_batched` —
-    /// the ADR-051 OS-thread pipeline — and `on_batch_phase2_complete` fires
+    /// the OS-thread pipeline — and `on_batch_phase2_complete` fires
     /// via the configured sink when the batch reaches terminal state.
     ///
     /// When no sink is configured, `send_batched` routes through the
@@ -830,7 +823,7 @@ impl Memory {
         let ns = self.resolve_namespace(None)?;
         let sink = self.default_sink.clone();
 
-        // ADR-029a lazy population.
+        // Lazy population.
         self.ensure_namespace_policy(&ns).await?;
 
         let source_ref = memory::types::SourceRef {
@@ -896,8 +889,8 @@ impl Memory {
         }
     }
 
-    /// Bound a fact's world-time `valid_to` window explicitly (ADR-071 §Item
-    /// 3, TD-070) — the consumer-facing, consumer-EXPLICIT half of the
+    /// Bound a fact's world-time `valid_to` window explicitly — the
+    /// consumer-facing, consumer-EXPLICIT half of the
     /// supersession gap (auto-detected supersession is deferred, TD-P1-AUTO).
     ///
     /// Requires `.at(valid_to)` before `.execute()`. The dream supersession
@@ -918,7 +911,7 @@ impl Memory {
     }
 
     /// Reverse ANY logged, reversible mutation by its `mutation_id` — the unified
-    /// undo umbrella (ADR-073 DX R1/R2, ADR-038 "one recommended entry point").
+    /// undo umbrella, and the one recommended entry point.
     ///
     /// Reads the `graph_mutation_log` row for `mutation_id`, matches on its kind,
     /// and dispatches to the correct per-kind undo, returning the honest
@@ -1204,7 +1197,7 @@ impl Memory {
     /// states for itself.
     ///
     /// Default: blocks until done (returns [`DreamSummary`]). All consolidation ops
-    /// default ON and are REVERSIBLE (ADR-073) — inspect what changed with
+    /// default ON and are REVERSIBLE — inspect what changed with
     /// [`mutation_history`](Self::mutation_history) / [`list_mutations`](Self::list_mutations),
     /// reverse anything with [`undo`](Self::undo). Use `.fire_and_forget()` to
     /// return a `DreamHandle` without blocking, or `.cross_episode(mode)` /
@@ -1271,7 +1264,7 @@ impl Memory {
         .await
     }
 
-    // ── ADR-051 async extraction wait API (v0.2.2, Phase 4) ──────────────────
+    // ── Async extraction wait API ─────────────────────────────────────────────
 
     /// Poll `episodes.episode_processing_status` for `episode_id` until the
     /// episode reaches a terminal state or `timeout` is exceeded.
@@ -1441,7 +1434,7 @@ impl Memory {
         }
     }
 
-    /// TD-136 (dense episode retrieval): backfill `episodes.embedding` for every
+    /// Backfill `episodes.embedding` for every
     /// episode that has none, over the existing corpus — NO re-ingest, NO LLM.
     ///
     /// Selects NULL-embedding episodes in pages of `batch_size`, embeds each
@@ -1512,7 +1505,7 @@ impl Memory {
         Ok(stats)
     }
 
-    /// TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): re-embed
+    /// Re-embed
     /// **every** episode's `content`, overwriting any embedding already
     /// stored — the remedy for an embedding-CONFIG change (flipping
     /// [`SearchConfig::embed_task_prefix_enabled`](crate::core::config::SearchConfig::embed_task_prefix_enabled),
@@ -1526,7 +1519,7 @@ impl Memory {
     /// `embed_task_prefix_enabled` doc for the full safe sequence (flip the
     /// knob on a fresh copy, re-embed in full, THEN measure). Entity/fact
     /// embeddings are NOT touched by this method (they need a full re-ingest,
-    /// or — for entities specifically — TD-112's merge-time re-embed covers
+    /// or — for entities specifically — the merge-time re-embed covers
     /// only the alias-merge path, not a bulk config-change re-embed).
     ///
     /// Pages via an id-cursor over ALL episode rows
@@ -1584,7 +1577,7 @@ impl Memory {
         Ok(stats)
     }
 
-    /// TD-112/TD-143 shared embed step: document-prefix `text` (WRITE side —
+    /// Shared embed step: document-prefix `text` (WRITE side —
     /// always [`document_embed_text`](crate::core::embed_prefix::document_embed_text),
     /// never the query-side prefix) and hand it to the configured embedder.
     ///
@@ -1616,7 +1609,7 @@ impl Memory {
     /// same per-episode failure handling; the two callers differ only in
     /// which paging query selected `batch`. `op` labels the WARN log lines so
     /// a failure can be attributed to the caller that hit it. Args-as-object
-    /// per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`).
+    /// Args-as-object (`clippy.toml` `too-many-arguments-threshold = 3`).
     #[cfg(feature = "content-search")]
     async fn embed_and_store_episode_page(&self, params: EmbedEpisodePageParams<'_>) {
         let EmbedEpisodePageParams {
@@ -1647,10 +1640,10 @@ impl Memory {
         }
     }
 
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): re-embed
+    /// Re-embed
     /// **every** entity's display name, overwriting any embedding already
     /// stored. Sibling of [`reembed_all_episode_embeddings`](Self::reembed_all_episode_embeddings)
-    /// — same shape, same TD-143 document-prefix routing, different page
+    /// — same shape, same document-prefix routing, different page
     /// source ([`TemporalGraph::entities_after_id`], composite-`(id,
     /// group_id)`-cursored — see that fn's doc for why).
     ///
@@ -1734,7 +1727,7 @@ impl Memory {
     /// [`reembed_all_entity_embeddings`](Self::reembed_all_entity_embeddings)
     /// — mirrors [`embed_and_store_episode_page`](Self::embed_and_store_episode_page);
     /// differs only in the id type (`&str` slug, not `i64`) and setter
-    /// ([`TemporalGraph::set_entity_embedding`]). Args-as-object per TD-042.
+    /// ([`TemporalGraph::set_entity_embedding`]). Args-as-object.
     #[cfg(feature = "content-search")]
     async fn embed_and_store_entity_page(&self, params: EmbedEntityPageParams<'_>) {
         let EmbedEntityPageParams {
@@ -1745,7 +1738,7 @@ impl Memory {
         } = params;
         for row in batch {
             match self.embed_document_text(&row.embed_text).await {
-                // TD-206 / ADR-029d: scoped by the row's OWN `group_id`.
+                // Scoped by the row's OWN `group_id`.
                 // `EntityReembedRow` carries it precisely because `id` alone is
                 // not the entity key — `entities_after_id` documents the same
                 // composite-cursor reason. Unscoped, a full re-embed wrote each
@@ -1778,11 +1771,11 @@ impl Memory {
         }
     }
 
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): re-embed
+    /// Re-embed
     /// **every** fact's `subject predicate object` triple text, overwriting
     /// any embedding already stored. Sibling of
     /// [`reembed_all_episode_embeddings`](Self::reembed_all_episode_embeddings)
-    /// — same shape, same TD-143 document-prefix routing, different page
+    /// — same shape, same document-prefix routing, different page
     /// source ([`TemporalGraph::facts_after_id`] — see that fn's doc for how
     /// the subject/object text is reconstructed from stored entity rows,
     /// since the raw extraction strings themselves are not persisted).
@@ -1843,7 +1836,7 @@ impl Memory {
     /// [`reembed_all_fact_embeddings`](Self::reembed_all_fact_embeddings) —
     /// mirrors [`embed_and_store_episode_page`](Self::embed_and_store_episode_page);
     /// differs only in the setter ([`TemporalGraph::set_fact_embedding`]).
-    /// Args-as-object per TD-042.
+    /// Args-as-object.
     #[cfg(feature = "content-search")]
     async fn embed_and_store_fact_page(&self, params: EmbedFactPageParams<'_>) {
         let EmbedFactPageParams {
@@ -1869,14 +1862,14 @@ impl Memory {
         }
     }
 
-    /// TD-211 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-211): fill the
+    /// Fill the
     /// entity embedding gap — the entity sibling of
     /// [`backfill_episode_embeddings`](Self::backfill_episode_embeddings),
     /// same shape exactly: same constructed-via-builder guard, same `op:`
     /// naming convention on WARN logs, same [`EpisodeEmbeddingBackfill`]
     /// return/tally shape, same namespace-scoping discipline (via
     /// [`TemporalGraph::backfill_entity_embedding`]'s composite `(id,
-    /// group_id)` key, TD-206).
+    /// group_id)` key).
     ///
     /// Pages via [`TemporalGraph::entities_missing_embeddings`]'s `WHERE
     /// embedding IS NULL` predicate — unlike
@@ -1940,8 +1933,8 @@ impl Memory {
     /// Shared per-page embed+store body for
     /// [`backfill_entity_embeddings`](Self::backfill_entity_embeddings) —
     /// mirrors [`embed_and_store_entity_page`](Self::embed_and_store_entity_page)
-    /// exactly (including the TD-206 namespace-scoped write), except the
-    /// write-back calls [`TemporalGraph::backfill_entity_embedding`] (TD-211's
+    /// exactly (including the namespace-scoped write), except the
+    /// write-back calls [`TemporalGraph::backfill_entity_embedding`] (the
     /// new NULL-only setter) rather than
     /// [`TemporalGraph::set_entity_embedding_in_group`] — mirrors the
     /// `set_fact_embedding` / `backfill_fact_embedding` split already present
@@ -1984,12 +1977,12 @@ impl Memory {
         }
     }
 
-    /// TD-211: fill the fact embedding gap by driving the pre-existing Story
+    /// Fill the fact embedding gap by driving the pre-existing Story
     /// #214 crash-recovery primitives
     /// ([`TemporalGraph::facts_missing_embeddings`],
     /// [`TemporalGraph::backfill_fact_embedding`]) for the first time from a
     /// production code path — both were previously reachable only from their
-    /// own definitions and from `graph/tests.rs` (register §TD-211).
+    /// own definitions and from `graph/tests.rs`.
     ///
     /// `facts_missing_embeddings` has no `LIMIT`/cursor of its own (it
     /// already returns every missing-embedding fact in one query), so
@@ -2031,7 +2024,7 @@ impl Memory {
                 .iter()
                 .map(
                     |(fact_id, subject_id, predicate, object_value, object_id)| {
-                        // TD-211: text built from the raw subject_id/object_id
+                        // Text built from the raw subject_id/object_id
                         // (entity slugs), NOT a properties.name lookup — unlike
                         // `facts_after_id`'s reconstruction (used by
                         // `reembed_all_fact_embeddings`), `facts_missing_embeddings`
@@ -2039,7 +2032,7 @@ impl Memory {
                         // method must not rewrite that primitive. The unscoped
                         // `TemporalGraph::get_entity` could supply a display
                         // name, but it matches on `id` alone (no `group_id`) —
-                        // exactly the TD-206 cross-namespace bug this codebase
+                        // exactly the cross-namespace bug this codebase
                         // already fixed elsewhere. Falling back to the raw
                         // id/slug is safe (it IS `entity_display_name`'s own
                         // fallback value) at the cost of missing a
@@ -2085,7 +2078,7 @@ impl Memory {
     /// [`embed_and_store_fact_page`](Self::embed_and_store_fact_page) exactly,
     /// except the write-back calls [`TemporalGraph::backfill_fact_embedding`]
     /// (Story #214's crash-recovery setter) rather than
-    /// [`TemporalGraph::set_fact_embedding`] — TD-211 is what gives that
+    /// [`TemporalGraph::set_fact_embedding`] — this backfill path is what gives that
     /// primitive its first production caller. Reuses [`EmbedFactPageParams`]
     /// since the two bodies differ only in which setter they call, not in
     /// their data shape.
@@ -2170,7 +2163,7 @@ impl Memory {
         Ok(())
     }
 
-    // ── Namespace policy (ADR-029a, v0.1.4) ───────────────────────────────────
+    // ── Namespace policy (v0.1.4) ──────────────────────────────────────────────
 
     /// Register a namespace + its policy explicitly, ahead of any writes.
     ///
@@ -2193,20 +2186,20 @@ impl Memory {
     ///
     /// The policy is PERSISTED but not yet enforced on
     /// `dream()` / `forget()` / mutation operations. Enforcement lands in
-    /// v0.1.5+ per ADR-029b. Every non-default policy registration emits
+    /// v0.1.5+. Every non-default policy registration emits
     /// a `tracing::warn!` on target `kremory.namespace` to make the
     /// declaration vs enforcement gap visible.
     ///
     /// # Race semantics — atomic via `BEGIN IMMEDIATE`
     ///
     /// `register_namespace` wraps the SELECT + INSERT pair in a
-    /// `BEGIN IMMEDIATE` transaction (per ADR-022 write_lock invariant). This
+    /// `BEGIN IMMEDIATE` transaction (the write_lock invariant). This
     /// acquires SQLite's RESERVED write lock before reading, serializing
     /// against concurrent `remember(...)` calls that would implicitly create
     /// the namespace with default policy.
     ///
     /// The recommended pattern is `register_namespace` AT STARTUP before any
-    /// `remember(...)`. See ADR-029a Decision 6 for the three race outcomes.
+    /// `remember(...)`. See the match arms below for the three race outcomes.
     pub async fn register_namespace(&self, namespace: Namespace) -> Result<()> {
         let tg = self.temporal_graph.as_ref().ok_or_else(|| {
             MemoryError::Other(
@@ -2255,7 +2248,7 @@ impl Memory {
         }
 
         // Operational visibility: every non-default policy DECLARATION emits
-        // warn (NOT info) — closes Vera cycle-1 HIGH-1 footgun. Default
+        // warn (NOT info). Default
         // policies are silent (they would be the existing behaviour).
         if outcome.is_ok() && is_non_default {
             tracing::warn!(
@@ -2263,7 +2256,7 @@ impl Memory {
                 group_id = %group_id,
                 policy = ?policy,
                 "kremory.namespace.policy_declared: POLICY DECLARED BUT NOT \
-                 ENFORCED at v0.1.4 — enforcement lands v0.1.5+ per ADR-029b. \
+                 ENFORCED at v0.1.4 — enforcement lands v0.1.5+. \
                  See https://docs.rs/kremory/0.1.4/kremory/#adr-029a"
             );
         }
@@ -2383,7 +2376,7 @@ impl Memory {
                 group_id = %group_id,
                 policy = ?policy,
                 "kremory.namespace.policy_declared: POLICY DECLARED BUT NOT \
-                 ENFORCED at v0.1.4 — enforcement lands v0.1.5+ per ADR-029b."
+                 ENFORCED at v0.1.4 — enforcement lands v0.1.5+."
             );
         }
 
@@ -2391,7 +2384,7 @@ impl Memory {
     }
 
     /// Monotonically upgrade a namespace's immutability from `Mutable` to
-    /// `AppendOnly` (ADR-029b Decision 5).
+    /// `AppendOnly`.
     ///
     /// This is a **one-way ratchet**: `Mutable → AppendOnly` is the only
     /// allowed direction. Attempting to downgrade (`AppendOnly → Mutable`)
@@ -2483,8 +2476,7 @@ impl Memory {
 
     /// Lazy-population helper: ensure a default-policy row exists for the
     /// `namespace` if it has not been observed yet. Invoked from the first-
-    /// encounter paths (`remember`, `recall`, `forget`, `dream`) per ADR-029a
-    /// Decision 8.
+    /// encounter paths (`remember`, `recall`, `forget`, `dream`).
     ///
     /// Best-effort: when `Memory` is constructed without a direct
     /// `Arc<TemporalGraph>` (e.g. test-only stub-handle path) this is a no-op.
@@ -2542,12 +2534,12 @@ impl Memory {
     /// set, else delegate to [`llm_or_err`](Self::llm_or_err) (the `with_llm`
     /// provider, or `Err(LlmRequired)` when neither is wired).
     ///
-    /// Backward-compat is **structural** (load-bearing-invariants-at-emit, TD-052b
-    /// §3.3): when `dream_llm` is `None`, this is byte-for-byte the prior
+    /// Backward-compat is **structural**: when `dream_llm` is `None`, this is
+    /// byte-for-byte the prior
     /// `llm_or_err("dream", …)` behaviour — same provider, same error, same metric.
     ///
-    /// Emits `kremory.dream.llm_role_selected_total{model_role}` on **every** call
-    /// (TD-052b §6). The counter measures role-selection *attempts*, not realised
+    /// Emits `kremory.dream.llm_role_selected_total{model_role}` on **every** call.
+    /// The counter measures role-selection *attempts*, not realised
     /// successes — the `interactive` arm increments before `llm_or_err`, so on the
     /// no-provider row it counts an attempt that then errors `LlmRequired`. The
     /// authoritative dream-failure signal remains
@@ -2562,7 +2554,7 @@ impl Memory {
                 tracing::debug!(
                     target: "kremory.facade.dream",
                     model_role = "dream",
-                    "dream phase using dedicated dream_llm provider (TD-052b)"
+                    "dream phase using dedicated dream_llm provider"
                 );
                 metrics::counter!(
                     "kremory.dream.llm_role_selected_total",
@@ -2595,7 +2587,7 @@ impl Memory {
     /// passes degrade to `PromptOnly` exactly as the interactive path does —
     /// no worse than before, and the correct behaviour when the model is unknown.
     ///
-    /// TD-094: before this resolver, the facade dream path hardcoded an empty
+    /// Before this resolver, the facade dream path hardcoded an empty
     /// model string in every LLM pass, silently degrading every configuration
     /// (even a fully-specified `with_model_id`) to zero structured output.
     pub(crate) fn dream_model_id_or_main(&self) -> Option<&str> {
@@ -2624,10 +2616,6 @@ impl Memory {
     ///
     /// Pass 0 (type discovery) and Pass 2 (ghost episode retry) are **stubbed**
     /// in Phase C — they return empty/zero counts. Real logic lands in Phase D/E.
-    ///
-    /// # ADR reference
-    ///
-    /// Phase C DoD C1 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
     pub async fn run_dream_pass_sync(
         &self,
         opts: crate::core::ingest::DreamPassOpts,
@@ -2640,10 +2628,6 @@ impl Memory {
     ///
     /// An optional `group_id` restricts the query to one namespace/thread.
     /// `None` returns ghost episodes across all namespaces.
-    ///
-    /// # ADR reference
-    ///
-    /// Phase C DoD C4 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
     pub async fn ghost_episodes(&self, group_id: Option<&str>) -> Result<Vec<i64>> {
         self.graph.graph_ghost_episodes(group_id).await
     }
@@ -2651,10 +2635,6 @@ impl Memory {
     /// Pin an entity as `ConsumerPinned`, protecting it from dream reclassification.
     ///
     /// Writes `entity_type_source = 'ConsumerPinned'` on the entity row.
-    ///
-    /// # ADR reference
-    ///
-    /// Phase C DoD C5 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
     pub async fn assert_entity_type(&self, params: GraphAssertEntityTypeParams<'_>) -> Result<()> {
         self.graph.graph_assert_entity_type(params).await
     }
@@ -2669,10 +2649,6 @@ impl Memory {
     /// time, calling this method starts an ADDITIONAL independent scheduler.
     /// Stop the build-time one via [`Memory::stop_dream_scheduler`] first if
     /// you want to replace it.
-    ///
-    /// # ADR reference
-    ///
-    /// Phase C DoD C11 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
     pub fn start_dream_scheduler(
         &self,
         schedule: crate::memory::scheduler::DreamSchedule,
@@ -2709,12 +2685,11 @@ pub use builder::{MemoryBuilder, WithLlmTrackedParams};
 
 #[cfg(test)]
 mod dream_llm_slot_tests {
-    //! TD-052b — per-phase dream model slot (`with_dream_llm`).
+    //! Per-phase dream model slot (`with_dream_llm`).
     //!
-    //! Governing spec: `.ai-docs/specs/td-052b-dream-llm-slot-spec-2026-06-22.md`.
     //! These in-crate tests exercise the `pub(crate)` `dream_llm_or_main`
     //! accessor + the `kremory.dream.llm_role_selected_total{model_role}`
-    //! counter (§3.3 / §6) — surfaces unreachable from an integration test.
+    //! counter — surfaces unreachable from an integration test.
     //! Public-surface build tests live in `tests/memory_builder_compat_matrix.rs`.
 
     use super::*;
@@ -2850,7 +2825,7 @@ mod dream_llm_slot_tests {
         );
     }
 
-    /// TD-094 — `dream_model_id_or_main` resolves the model id the dream LLM
+    /// `dream_model_id_or_main` resolves the model id the dream LLM
     /// passes use for capability detection. Mirrors `dream_llm_or_main` at the
     /// model-id layer: dedicated `with_dream_model_id` wins; else `with_model_id`;
     /// else `None` (→ `PromptOnly` degrade). Regression guard for the empty-model
@@ -2927,7 +2902,7 @@ mod dream_llm_slot_tests {
     /// dream provider and emitting `model_role="dream"`. Pass-0 and Pass-2 execute
     /// if a TemporalGraph is present; on an empty graph they return Ok with zero work.
     /// Phase-3 consolidation fields (communities/merges/supersessions/archival) are
-    /// always 0 — honest zeros per ADR-007 retirement. The role counter is the
+    /// always 0 — honest zeros (consolidation is not yet implemented). The role counter is the
     /// **authoritative routing proof**; `MAIN.calls == 0` proves the main slot is
     /// never used for the dream phase.
     #[test]
@@ -3038,13 +3013,13 @@ mod dream_llm_slot_tests {
     /// NT-1 — blocking `dream()` invokes the DREAM LLM slot and discovers types
     /// from catch-all entities seeded into the TemporalGraph.
     ///
-    /// Closes the TD-052b decorative gap: before the `run_dream_phase`
+    /// Closes a decorative gap: before the `run_dream_phase`
     /// short-circuit was removed, `dream_llm` flowed only into unreachable code.
     /// Verifies `dream_calls >= 1`, `main_calls == 0`, and `types_discovered`
     /// reflects the scripted proposal — the assertion T5 could not make.
     ///
     /// NT-2 (honest-zeros lock) is folded in: Phase-3 consolidation fields must
-    /// always be 0 pending consolidation implementation (ADR-007 retirement).
+    /// always be 0 pending consolidation implementation.
     #[tokio::test]
     async fn nt1_dream_invokes_dream_llm_discovers_types_and_zeroes_consolidation() {
         use crate::core::entity_types::ensure_default_types_seeded;
@@ -3150,12 +3125,12 @@ mod dream_llm_slot_tests {
         // NT-1: types_discovered count is not asserted > 0 — anti-redundancy can correctly
         // reject proposals that overlap existing types in the test embedder's metric space
         // (stochastic, mirrors the plan's "do NOT assert > 0" stance). The load-bearing
-        // signal is dream_calls >= 1 above: that proves TD-052b is live and Pass-0 ran.
+        // signal is dream_calls >= 1 above: that proves the dream-phase LLM slot is live and Pass-0 ran.
         let _ = summary.types_discovered;
         // NT-2 (honest-zeros lock): Phase-3 consolidation fields always 0.
         assert_eq!(
             summary.communities_updated, 0,
-            "communities_updated must be 0 — consolidation pinned OFF here (ADR-071)"
+            "communities_updated must be 0 — consolidation pinned OFF here"
         );
         assert_eq!(
             summary.cross_episode_would_merge, 0,
@@ -3167,18 +3142,17 @@ mod dream_llm_slot_tests {
         );
         assert_eq!(
             summary.supersessions_recorded, 0,
-            "supersessions_recorded must be 0 — consolidation pinned OFF here (ADR-071)"
+            "supersessions_recorded must be 0 — consolidation pinned OFF here"
         );
         assert_eq!(
             summary.facts_archived, 0,
-            "facts_archived must be 0 — consolidation pinned OFF here (ADR-071)"
+            "facts_archived must be 0 — consolidation pinned OFF here"
         );
     }
 }
 
 #[cfg(all(test, feature = "content-search"))]
 mod reembed_all_episode_embeddings_tests {
-    //! TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143) —
     //! `Memory::reembed_all_episode_embeddings` overwrite proof. Lives
     //! in-crate (not `tests/`) because proving the STORED vector actually
     //! changed requires `pub(crate)` `TemporalGraph::vector_search_episodes`
@@ -3286,7 +3260,7 @@ mod reembed_all_episode_embeddings_tests {
         );
         let dist_before_at_seed1 = hits_before[0].score;
 
-        // Simulate a config/embedder change (TD-143's flip-the-knob, or a
+        // Simulate a config/embedder change (a flip-the-knob, or a
         // model swap): re-embed the WHOLE corpus, now producing seed-5.0
         // vectors.
         embedder.switch_to_second_seed();

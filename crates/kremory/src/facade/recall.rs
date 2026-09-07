@@ -8,38 +8,38 @@ pub struct RecallRequest<'a> {
     pub(super) query: String,
     /// Single-namespace selector. Mutually exclusive with `namespaces`.
     pub(super) namespace: Option<Namespace>,
-    /// Multi-namespace selector (ADR-029c Decision 6). Mutually exclusive with
+    /// Multi-namespace selector. Mutually exclusive with
     /// `namespace`. When set, fan-out via `tokio::join_all` executes one
     /// sub-query per namespace (each internally RRF-fused) and merges the
     /// per-namespace results by concatenating them and sorting by score —
     /// NOT a second cross-namespace RRF pass over the combined list.
     pub(super) namespaces: Option<Vec<Namespace>>,
-    /// Per-namespace top-K cap before the cross-namespace score-sort merge
-    /// (ADR-029c Decision 4). Default: effective `k`. Raising this value
+    /// Per-namespace top-K cap before the cross-namespace score-sort merge.
+    /// Default: effective `k`. Raising this value
     /// improves recall diversity for low-coverage namespaces at the cost of
     /// extra sub-query work.
     pub(super) per_namespace_top_k: Option<usize>,
     /// When `true`, sub-query errors emit `tracing::warn!` and the failing
-    /// namespace is skipped rather than propagating `Err` to the caller
-    /// (ADR-029c Decision 4 sub-decision M1). Default `false` (fail-all).
+    /// namespace is skipped rather than propagating `Err` to the caller.
+    /// Default `false` (fail-all).
     pub(super) best_effort: bool,
     /// Stable id for correlating tracing spans across multi-namespace fan-out.
     /// Auto-generated at `RecallRequest` construction; override via
-    /// `with_recall_id`. (ADR-029c Decision 5).
+    /// `with_recall_id`.
     pub(super) recall_id: Uuid,
     pub(super) k: Option<usize>,
     pub(super) as_of: Option<DateTime<Utc>>,
-    /// TD-062 (spec §3 Increment 3): rerank the top-`n` post-fusion
+    /// Rerank the top-`n` post-fusion
     /// candidates via a cross-encoder. `None` (default) = no rerank.
     pub(super) rerank_k: Option<usize>,
     pub(super) template: Option<RecallTemplate>,
     pub(super) raw_mode: bool,
     pub(super) opts: Option<SearchOpts>,
-    /// G6 — single-value AND filters: `metadata[key] == value` (Vera F6).
+    /// G6 — single-value AND filters: `metadata[key] == value`.
     /// Multiple calls AND together. Keys validated via [`validate_metadata_key`].
     pub(super) metadata_filters: Vec<(String, serde_json::Value)>,
-    /// G6.b — multi-value OR-within-key filters: `metadata[key] IN values`
-    /// (Vera F6). Multiple calls AND across keys. Empty `values` slice causes
+    /// G6.b — multi-value OR-within-key filters: `metadata[key] IN values`.
+    /// Multiple calls AND across keys. Empty `values` slice causes
     /// .await to return `Err` via [`Self::pending_error`].
     pub(super) metadata_filters_in: Vec<(String, Vec<serde_json::Value>)>,
     /// G6 — deferred-error slot. Set by validating builders (filter_metadata,
@@ -63,7 +63,7 @@ pub struct RecallRequest<'a> {
 /// extending the substrate trait + an index opportunity is scheduled for
 /// v0.1.7. Post-filter is correct + traceable here.
 /// Bundled parameters for [`apply_metadata_post_filter`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// rust-conventions §too_many_arguments.
 struct MetadataPostFilterParams<'a> {
     memory: &'a Memory,
     namespace: &'a Namespace,
@@ -111,7 +111,7 @@ async fn apply_metadata_post_filter(
                 Some(t) => match serde_json::from_str(&t) {
                     Ok(v) => Some(v),
                     Err(e) => {
-                        // Quinn C2 — surface parse failures via tracing rather
+                        // Surface parse failures via tracing rather
                         // than silently dropping the episode. Schema corruption
                         // or encoding bugs would otherwise be invisible.
                         tracing::warn!(
@@ -163,7 +163,7 @@ fn metadata_matches(
     true
 }
 
-/// G6 — Vera F6 validation for metadata filter keys. Rejects path-injection
+/// G6 — validation for metadata filter keys. Rejects path-injection
 /// metachars + length + empty + digit-prefix. Returns `Err` describing the
 /// reject reason (caller stores in `pending_error` for deferred surface).
 fn validate_metadata_key(key: &str) -> Result<()> {
@@ -185,11 +185,11 @@ fn validate_metadata_key(key: &str) -> Result<()> {
             )));
         }
     }
-    // Vera F6 path-injection guard. Bracket / quote / dollar / star / backslash
+    // Path-injection guard. Bracket / quote / dollar / star / backslash
     // / dot are all interpreted by SQLite's json_extract path grammar; rejecting
     // here prevents consumer-controlled keys from escaping `'$.{key}'`.
     for ch in key.chars() {
-        // Quinn C3: `{` and `}` added for defence-in-depth. They have no valid
+        // `{` and `}` added for defence-in-depth. They have no valid
         // top-level metadata key use, and could enable template-string escape
         // in any future code path that wraps the path in `{...}`.
         if matches!(
@@ -205,9 +205,8 @@ fn validate_metadata_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-// ── TD-066 Increment 1: content-fusion parity fix ────────────────────────────
+// ── Content-fusion parity: entity/fact stream fused with content search ──────
 //
-// `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md` §3.
 // Wires the `core::search::rrf_fuse_with_content` fusion fn (ported from the
 // REST layer's proven `kremory-mcp/src/bin/kremory-http.rs::hybrid_mode_results`)
 // into the canonical single-namespace recall terminals so `Memory::recall()`
@@ -216,8 +215,8 @@ fn validate_metadata_key(key: &str) -> Result<()> {
 // reach the same fused surface the REST `/search?mode=hybrid` endpoint
 // already proves.
 
-/// Bundled parameters for [`fuse_content_stream`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`fuse_content_stream`] — args-as-object per
+/// rust-conventions §too_many_arguments.
 #[cfg(feature = "content-search")]
 struct FuseContentStreamParams<'a> {
     memory: &'a Memory,
@@ -225,14 +224,14 @@ struct FuseContentStreamParams<'a> {
     query: &'a str,
     limit: Option<usize>,
     entity_results: Vec<RetrievedContext>,
-    /// ADR-068 extension — see `core::search::build_as_of_clause`. Scopes the
+    /// See `core::search::build_as_of_clause`. Scopes the
     /// content/episode streams to the same point-in-time as the fact stream
     /// already respects.
     as_of: Option<DateTime<Utc>>,
 }
 
 /// RRF-fuses `entity_results` (the entity/fact recall stream, already
-/// score-sorted by the caller) with the ADR-072 `content_search` BM25 stream
+/// score-sorted by the caller) with the `content_search` BM25 stream
 /// for the SAME namespace + query. Returns `entity_results` unchanged (no
 /// error) when `Memory` has no attached `TemporalGraph` — the stub-graph
 /// test-construction path (`.content()` errors loudly on this absence, but a
@@ -275,8 +274,8 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
         .await
         .map_err(MemoryError::Core)?;
 
-    // recall-improvement-e2e-spec-2026-07-22 §S0-infra: read the LIVE
-    // `SearchConfig` through the new `GraphHandle::search_config()` accessor
+    // Read the LIVE `SearchConfig` through the new
+    // `GraphHandle::search_config()` accessor
     // (EngineGraphHandle returns the Engine's `self.config.search`), NOT
     // `SearchConfig::default()`. This is what carries the `KREMORY_CONTENT_WEIGHT`
     // / `KREMORY_RRF_K` / `KREMORY_EPISODE_DENSE` boot overrides (applied at
@@ -286,16 +285,16 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
     // preserving byte-identical behaviour where no Engine config exists.
     let search_config = memory.graph.search_config();
 
-    // TD-136 dense episode arm — DEFAULT OFF (byte-identical: `content_results`
+    // Dense episode arm — DEFAULT OFF (byte-identical: `content_results`
     // is the BM25 stream unchanged). When enabled, embed the query, run the
     // dense cosine arm over `episodes.embedding`, and RRF-fuse it WITH the BM25
     // episode arm into a single content stream BEFORE it enters
     // `rrf_fuse_with_content` below (which stays a two-stream entity↔content
     // fuse). An embedder/search failure DEGRADES to BM25-only (never fails an
-    // otherwise-working recall) with a loud warn + counter (Rule 19). This whole
+    // otherwise-working recall) with a loud warn + counter. This whole
     // fn is already `content-search`-gated, so no inner feature-cfg is needed.
     let content_results = if search_config.episode_dense_enabled {
-        // TD-143: QUERY against the document-prefixed `episodes` vector index.
+        // QUERY against the document-prefixed `episodes` vector index.
         let prefixed_query = crate::core::embed_prefix::query_embed_text(
             query,
             search_config.embed_task_prefix_enabled,
@@ -362,18 +361,18 @@ async fn fuse_content_stream(params: FuseContentStreamParams<'_>) -> Result<Vec<
             rrf_k: search_config.rrf_k,
         });
 
-    // TD-139 DoD item 2 — dense fact arm, DEFAULT OFF (byte-identical: `fused`
-    // is the entity+content stream unchanged). Mirrors the TD-136 dense
+    // Dense fact arm, DEFAULT OFF (byte-identical: `fused`
+    // is the entity+content stream unchanged). Mirrors the dense
     // episode arm immediately above: embed the query, run the dense cosine
     // arm over `facts.embedding`, and RRF-fuse each hit in as its OWN entry
     // (`core::search::rrf_fuse_with_facts` — NOT `rrf_fuse_content_streams`,
     // which fuses same-identity episode passages; a fact and its source
     // episode are different rows, see that fn's doc comment). An
     // embedder/search failure DEGRADES to the entity+content fusion unchanged
-    // (never fails an otherwise-working recall) with a loud warn + counter
-    // (Rule 19), same degrade discipline as the episode arm above.
+    // (never fails an otherwise-working recall) with a loud warn + counter,
+    // same degrade discipline as the episode arm above.
     let fused = if search_config.fact_dense_enabled {
-        // TD-143: QUERY against the document-prefixed `facts` vector index.
+        // QUERY against the document-prefixed `facts` vector index.
         let prefixed_query = crate::core::embed_prefix::query_embed_text(
             query,
             search_config.embed_task_prefix_enabled,
@@ -452,17 +451,15 @@ async fn fuse_content_stream(
     Ok(entity_results)
 }
 
-// ── TD-066 Increment 3 (TD-062 reranker) ──────────────────────────────────────
+// ── Reranker: optional final stage over the fused candidates ─────────────────
 //
-// `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md` §3
-// Increment 3. Optional FINAL stage after Increment 1/2's fusion
-// (`fuse_content_stream`, above) — reranks the top-`rerank_k` fused
-// candidates with a cross-encoder for precision. `SearchOpts.rerank_k: None`
-// (the default) is a total no-op, with or without the `rerank` feature
-// compiled in.
+// Optional FINAL stage after content fusion (`fuse_content_stream`, above) —
+// reranks the top-`rerank_k` fused candidates with a cross-encoder for
+// precision. `SearchOpts.rerank_k: None` (the default) is a total no-op, with
+// or without the `rerank` feature compiled in.
 
-/// Bundled parameters for [`apply_rerank`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`apply_rerank`] — args-as-object per
+/// rust-conventions §too_many_arguments.
 struct ApplyRerankParams<'a> {
     query: &'a str,
     rerank_k: Option<usize>,
@@ -506,8 +503,8 @@ async fn apply_rerank(params: ApplyRerankParams<'_>) -> Result<Vec<RetrievedCont
     .await
 }
 
-/// Bundled parameters for [`apply_rerank_with`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`apply_rerank_with`] — args-as-object per
+/// rust-conventions §too_many_arguments.
 #[cfg(feature = "rerank")]
 struct ApplyRerankWithParams<'a> {
     reranker: &'a dyn crate::core::rerank::Reranker,
@@ -636,8 +633,8 @@ async fn apply_rerank_with(params: ApplyRerankWithParams<'_>) -> Result<Vec<Retr
     // Latency lever 1 — `rerank_candidate_max_chars` caps the `summary`
     // portion (see `build_rerank_candidate_text`); `0` is a total no-op
     // (byte-identical `format!` above). Always-on char-length histogram
-    // (Rule 19 / observability-first-class) records what actually reaches
-    // the cross-encoder BEFORE any truncation, so `p50`/`p95`/`max` are
+    // records what actually reaches the cross-encoder BEFORE any
+    // truncation, so `p50`/`p95`/`max` are
     // observable from a live server's `/metrics` regardless of whether this
     // knob is enabled — the measurement this knob's own tuning depends on.
     let candidates: Vec<(String, String)> = head
@@ -719,7 +716,7 @@ async fn apply_rerank_with(params: ApplyRerankWithParams<'_>) -> Result<Vec<Retr
 /// requested `rerank_k` becomes a no-op (rather than silently succeeding
 /// with zero observability) — `kremory.rerank.feature_off_total` only fires
 /// when a caller actually asked for reranking a binary without the feature
-/// can't perform (Rule 19: never silently no-op a consumer-requested knob).
+/// can't perform.
 #[cfg(not(feature = "rerank"))]
 async fn apply_rerank(params: ApplyRerankParams<'_>) -> Result<Vec<RetrievedContext>> {
     let ApplyRerankParams {
@@ -784,8 +781,7 @@ impl<'a> RecallRequest<'a> {
     /// Each namespace may trigger a DB policy lookup on first call if the
     /// `NamespacePolicyCache` is cold. For N > 4 namespaces at server startup,
     /// consider pre-warming via `register_namespace` on each namespace before
-    /// the first `in_namespaces` call to avoid the cold-cache thundering-herd
-    /// (see ADR-029c Decision 4 for details).
+    /// the first `in_namespaces` call to avoid the cold-cache thundering-herd.
     pub fn in_namespaces(mut self, namespaces: &[Namespace]) -> Self {
         self.namespaces = Some(namespaces.to_vec());
         self
@@ -826,7 +822,7 @@ impl<'a> RecallRequest<'a> {
         self
     }
 
-    /// Point-in-time (valid-time) filter (ADR-068) — "what was TRUE in the
+    /// Point-in-time (valid-time) filter — "what was TRUE in the
     /// world at `ts`," not "what did kremory KNOW at `ts`." Filters which
     /// FACTS the 1-hop expansion surfaces (`TemporalGraph::get_neighbours_at`);
     /// entity search itself is unaffected (entities carry no temporal
@@ -842,7 +838,7 @@ impl<'a> RecallRequest<'a> {
         self
     }
 
-    /// TD-062 (spec §3 Increment 3): rerank the top-`n` post-fusion
+    /// Rerank the top-`n` post-fusion
     /// candidates with a cross-encoder before returning. A no-op unless the
     /// `rerank` Cargo feature is compiled in (see `apply_rerank`'s two
     /// cfg-gated bodies).
@@ -872,10 +868,10 @@ impl<'a> RecallRequest<'a> {
         RecallRawRequest { inner: self }
     }
 
-    /// Return BM25-ranked content passages over raw `episodes.content`
-    /// (ADR-072 seq1) — sibling of `.raw()`. Does **NOT** extend the
+    /// Return BM25-ranked content passages over raw `episodes.content` —
+    /// sibling of `.raw()`. Does **NOT** extend the
     /// entity-shaped `RetrievedContext` contract; `ContentPassage` is a
-    /// distinct projection (ADR-072 §6b) returned as a separate, unfused
+    /// distinct projection returned as a separate, unfused
     /// BM25-only stream (kremory's RRF is pairwise per-type, not a generic
     /// N-list fuser — `core::search::rrf_fuse_entities`/`rrf_fuse_facts`).
     ///
@@ -900,7 +896,7 @@ impl<'a> RecallRequest<'a> {
     /// at `.await` time via the deferred-error pattern (matches
     /// `ConflictingNamespaceSelectors` at facade/mod.rs:1373).
     ///
-    /// # Key validation (Vera F6 — JSON-path injection)
+    /// # Key validation (JSON-path injection)
     ///
     /// `key` MUST be a top-level metadata field name only. Rejected at
     /// `.await` time when the key:
@@ -947,7 +943,7 @@ impl<'a> RecallRequest<'a> {
     /// # Limits
     ///
     /// libsql ≥ 3.32.0 enforces `SQLITE_MAX_VARIABLE_NUMBER = 32766` total
-    /// bound parameters across a single statement (Vera cycle-2 RISK-004).
+    /// bound parameters across a single statement.
     /// Caller-side cap: keep `values.len()` under a few thousand per call
     /// to leave room for the query's other parameters.
     pub fn filter_metadata_in(mut self, key: &str, values: &[serde_json::Value]) -> Self {
@@ -965,7 +961,7 @@ impl<'a> RecallRequest<'a> {
             }
             return self;
         }
-        // Quinn C7 / Vera RISK-004 — cap values per call to leave room for
+        // Cap values per call to leave room for
         // other bound params in the v0.1.7 SQL pre-filter promotion. The cap
         // already lands at v0.1.6 (post-filter) so behaviour stays stable when
         // the SQL plumbing arrives.
@@ -985,8 +981,7 @@ impl<'a> RecallRequest<'a> {
     }
 
     /// Check that `in_namespace` and `in_namespaces` were not both set on this
-    /// request. Called from both `execute()` and `RecallRawRequest::into_future`
-    /// (ADR-029c Decision 6, closes M3).
+    /// request. Called from both `execute()` and `RecallRawRequest::into_future`.
     fn check_selectors(&self) -> Result<()> {
         if self.namespace.is_some() && self.namespaces.is_some() {
             return Err(MemoryError::Core(
@@ -1008,7 +1003,7 @@ impl<'a> RecallRequest<'a> {
 
         let template = self.template.unwrap_or(RecallTemplate::TemporalFacts);
 
-        // Multi-namespace fan-out path (ADR-029c Decision 4 + 6).
+        // Multi-namespace fan-out path.
         if self.namespaces.is_some() {
             if self.namespaces.as_ref().is_none_or(|v| v.is_empty()) {
                 return Err(MemoryError::MissingNamespace {
@@ -1028,10 +1023,10 @@ impl<'a> RecallRequest<'a> {
             source_kind: None,
             rerank_k: self.rerank_k,
         });
-        // TD-066 Increment 3: captured before `opts` moves into `memory::search`
+        // Captured before `opts` moves into `memory::search`
         // below — `apply_rerank` runs as the LAST pipeline stage, after fusion.
         let rerank_k = opts.rerank_k;
-        // ADR-029a lazy population.
+        // Lazy population.
         self.memory.ensure_namespace_policy(&ns).await?;
         let recall_id = self.recall_id;
         let span = tracing::info_span!(
@@ -1059,19 +1054,19 @@ impl<'a> RecallRequest<'a> {
             metadata_filters_in: &self.metadata_filters_in,
         })
         .await?;
-        // Phase 0 (recall-v2-architecture-2026-07-03 Decision 8): sort by score
+        // Sort by score
         // DESC before render. `context_block` renders in input order, and
         // `contextualize` hands entities back in `HashSet`-insert order (seeds in
         // score order, then 1-hop neighbours interleaved out of order) — NOT
         // score order. Without this sort EVERY post-RRF scoring signal (the
-        // RRF-normalised seed score, TD-066's neighbour-decay + graph-degree
+        // RRF-normalised seed score, neighbour-decay + graph-degree
         // bonus) was dormant at the output: the boost mutated `scores` but never
         // re-ordered what the LLM consuming `context_block` actually saw. The
         // multi-namespace path already sorted (below); this closes the
         // single-namespace gap so downstream axes are measurable.
         sort_by_score_desc(&mut results);
-        // TD-066 Increment 1 (content-fusion parity fix, spec §3) — fuse in
-        // the ADR-072 `content_search` BM25 stream so `mem.recall(q).await`
+        // Fuse in
+        // the `content_search` BM25 stream so `mem.recall(q).await`
         // reaches the same surface `.raw()` does (below) and the REST
         // `/search?mode=hybrid` endpoint already proves. Feature-gated;
         // feature-off passes `results` through unchanged (see
@@ -1088,7 +1083,7 @@ impl<'a> RecallRequest<'a> {
         .await?;
         #[cfg(not(feature = "content-search"))]
         let results = fuse_content_stream(results).await?;
-        // TD-066 Increment 3 (TD-062 reranker, spec §3) — optional final
+        // Optional final
         // stage, after fusion. `rerank_k: None` (default) is a no-op.
         let results = apply_rerank(ApplyRerankParams {
             query: &self.query,
@@ -1122,7 +1117,7 @@ impl<'a> RecallRequest<'a> {
         let as_of = self.as_of;
         let best_effort = self.best_effort;
         let recall_id = self.recall_id;
-        // G6 — Quinn C1 fix: filters MUST apply per-namespace inside the sub-
+        // G6 — filters MUST apply per-namespace inside the sub-
         // future, otherwise multi-namespace recall silently drops them. Wrap in
         // Arc so the closures (one per namespace) can share without cloning the
         // Vecs N times.
@@ -1140,7 +1135,7 @@ impl<'a> RecallRequest<'a> {
         let mut sub_futures = Vec::with_capacity(namespaces.len());
         for ns in namespaces {
             let query = query.clone();
-            // TD-066 Increment 3: multi-namespace fan-out does not wire
+            // Multi-namespace fan-out does not wire
             // `apply_rerank` (each sub-query is independent; a cross-
             // namespace top-k rerank is a follow-up, not this increment's
             // scope) — `rerank_k` still threads through if the caller set it
@@ -1173,7 +1168,7 @@ impl<'a> RecallRequest<'a> {
                     .into_iter()
                     .map(|r| r.with_namespace(ns.clone()))
                     .collect();
-                // G6 — Quinn C1: filters must apply per-namespace (entity_id
+                // G6 — filters must apply per-namespace (entity_id
                 // scoping requires the namespace's own conn lookup).
                 let filtered = apply_metadata_post_filter(MetadataPostFilterParams {
                     memory,
@@ -1223,7 +1218,7 @@ impl<'a> RecallRequest<'a> {
         // own sub-query — this is a score-sort merge, NOT a second cross-
         // namespace RRF pass over the combined list). Shares the single
         // `sort_by_score_desc` comparator with the single-namespace path so the
-        // two never drift (recall-v2-architecture-2026-07-03 Decision 8 / R2).
+        // two never drift.
         sort_by_score_desc(&mut all_results);
 
         // Trim to final_k if set.
@@ -1242,8 +1237,7 @@ impl<'a> RecallRequest<'a> {
 ///
 /// Extracted as ONE free fn used by BOTH the single-namespace ([`RecallRequest::
 /// execute`]) and multi-namespace ([`RecallRequest::execute_multi_namespace`])
-/// paths so the two comparators never drift (recall-v2-architecture-2026-07-03
-/// Decision 8 / risk R2). `sort_by` is stable, so score ties preserve the input
+/// paths so the two comparators never drift. `sort_by` is stable, so score ties preserve the input
 /// order (for single-namespace that's `contextualize`'s already-score-ordered
 /// seed sequence; for multi-namespace it's the per-namespace concat order).
 fn sort_by_score_desc(results: &mut [RetrievedContext]) {
@@ -1277,7 +1271,7 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
     fn into_future(self) -> Self::IntoFuture {
         let mut inner = self.inner;
         Box::pin(async move {
-            // ADR-029c Decision 6 / M3: check_selectors fires on the raw path too.
+            // check_selectors fires on the raw path too.
             inner.check_selectors()?;
             // G6 — surface deferred validation error from filter_metadata /
             // filter_metadata_in setters.
@@ -1304,10 +1298,10 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
                 source_kind: None,
                 rerank_k: rerank_k_from_field,
             });
-            // TD-066 Increment 3: captured before `opts` moves into
+            // Captured before `opts` moves into
             // `memory::search` below.
             let rerank_k = opts.rerank_k;
-            // ADR-029a lazy population.
+            // Lazy population.
             inner.memory.ensure_namespace_policy(&ns).await?;
             let recall_id = inner.recall_id;
             let span = tracing::info_span!(
@@ -1335,7 +1329,7 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
                 metadata_filters_in: &inner.metadata_filters_in,
             })
             .await?;
-            // Phase 0 (recall-v2-architecture-2026-07-03 Decision 8): sort by
+            // Sort by
             // score DESC. `raw()` is the terminal the HTTP `/search` benchmark
             // path uses (`do_recall` → `req.raw()`), and its consumers rank
             // by result order — but `memory::search` returns entities in
@@ -1343,11 +1337,11 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             // 1-hop neighbours interleaved out of order), NOT score order. The
             // sibling `execute()` (String) terminal sorts identically; both
             // single-namespace terminals must, so every post-RRF scoring signal
-            // (RRF-normalised score, TD-066 neighbour-decay + graph-degree bonus)
+            // (RRF-normalised score, neighbour-decay + graph-degree bonus)
             // actually re-orders output rather than staying dormant.
             sort_by_score_desc(&mut filtered);
-            // TD-066 Increment 1 (content-fusion parity fix, spec §3) — fuse
-            // in the ADR-072 `content_search` BM25 stream so `.raw()` (and,
+            // Fuse
+            // in the `content_search` BM25 stream so `.raw()` (and,
             // transitively, `kremory_recall`'s `Structured` format, which
             // calls `.raw()` — `kremory-mcp/src/handlers.rs::do_recall`)
             // reaches the same fused surface the REST `/search?mode=hybrid`
@@ -1365,7 +1359,7 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
             .await?;
             #[cfg(not(feature = "content-search"))]
             let filtered = fuse_content_stream(filtered).await?;
-            // TD-066 Increment 3 (TD-062 reranker, spec §3) — optional final
+            // Optional final
             // stage, after fusion. `rerank_k: None` (default) is a no-op.
             // This is the terminal `kremory_recall`'s `Structured` format
             // uses, so wiring here reaches the MCP tool surface too.
@@ -1381,10 +1375,10 @@ impl<'a> IntoFuture for RecallRawRequest<'a> {
     }
 }
 
-// ── RecallContentRequest (ADR-072 seq1) ───────────────────────────────────────
+// ── RecallContentRequest ──────────────────────────────────────────────────────
 
 /// Content-search recall variant — returns `Vec<ContentPassage>` via
-/// BM25-only full-text search over `episodes.content` (ADR-072 seq1). Obtain
+/// BM25-only full-text search over `episodes.content`. Obtain
 /// via `mem.recall(query).content()` — sibling of `.raw()`. Feature-gated
 /// behind `content-search`.
 #[cfg(feature = "content-search")]
@@ -1406,7 +1400,7 @@ impl<'a> IntoFuture for RecallContentRequest<'a> {
                 return Err(err);
             }
 
-            // ADR-072 seq1: content-search is single-namespace-only for now.
+            // Content-search is single-namespace-only for now.
             // Multi-namespace fan-out (`.in_namespaces()`) would mirror the
             // entity/fact path's `execute_multi_namespace` merge (concatenate
             // per-namespace results + sort by score) — content passages have
@@ -1415,17 +1409,17 @@ impl<'a> IntoFuture for RecallContentRequest<'a> {
             if inner.namespaces.is_some() {
                 return Err(MemoryError::Other(
                     "`.content()` recall does not yet support multi-namespace fan-out \
-                     (in_namespaces); use `.in_namespace()` for content-search (ADR-072 seq1)."
+                     (in_namespaces); use `.in_namespace()` for content-search."
                         .to_string(),
                 ));
             }
 
             let ns = inner.memory.resolve_namespace(inner.namespace.clone())?;
-            // ADR-029a lazy population — same precondition every other recall
+            // Lazy population — same precondition every other recall
             // terminal enforces before touching the namespace's rows.
             inner.memory.ensure_namespace_policy(&ns).await?;
 
-            // ADR-072 seq1 bypasses `GraphHandle::graph_search` entirely (that
+            // Bypasses `GraphHandle::graph_search` entirely (that
             // trait has NO content-search method — adding one would be a
             // required, breaking addition across every implementor per D.6.4
             // "no defaults"). Mirrors the existing `apply_metadata_post_filter`
@@ -1463,7 +1457,7 @@ impl<'a> IntoFuture for RecallContentRequest<'a> {
 // ── G5 tests — recall_by_source_id ───────────────────────────────────────────
 //
 // Spec AC.6 — direct lookup of episodes matching source_id, ordered
-// recorded_at DESC, optional namespace scope (Vera F11 fold-in).
+// recorded_at DESC, optional namespace scope.
 
 #[cfg(test)]
 mod recall_by_source_id_tests {
@@ -1488,7 +1482,7 @@ mod recall_by_source_id_tests {
     /// only exercises recall_by_source_id. `recorded_at` is set to control
     /// ORDER BY ordering directly.
     // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // documented too_many_arguments allow); args-as-object targets `src/`
     // production fns, not `#[cfg(test)]` seeders.
     #[allow(clippy::too_many_arguments)]
     async fn seed_episode(
@@ -1538,14 +1532,14 @@ mod recall_by_source_id_tests {
         assert_eq!(eps[0].recorded_at.as_deref(), Some("2026-05-29T10:00:00Z"));
         assert_eq!(eps[1].recorded_at.as_deref(), Some("2026-05-28T10:00:00Z"));
         assert_eq!(eps[2].recorded_at.as_deref(), Some("2026-05-27T10:00:00Z"));
-        // Quinn C6 — proves column-ordinal mapping is live, not a silent zero.
+        // Proves column-ordinal mapping is live, not a silent zero.
         assert!(
             eps[0].id > 0,
             "Episode.id must be populated (column-ordinal mapping check)"
         );
     }
 
-    /// AC.6 / Quinn C4 — placeholder anchor (do not remove).
+    /// AC.6 — placeholder anchor (do not remove).
     #[allow(dead_code)]
     fn _g5_anchor() {}
 }
@@ -1553,7 +1547,7 @@ mod recall_by_source_id_tests {
 // ── G6 + G6.b tests — filter_metadata + filter_metadata_in ───────────────────
 //
 // Spec G6 (key validation + AND-across-filters) + G6.b (OR-within-key +
-// multi-value). Covers the Vera F6 path-injection guard and the deferred-
+// multi-value). Covers the path-injection guard and the deferred-
 // error pattern surfacing at `.await` time.
 
 #[cfg(test)]
@@ -1580,12 +1574,12 @@ mod filter_metadata_tests {
         })
     }
 
-    // ── Phase 0 (recall-v2-architecture-2026-07-03 Decision 8) ───────────────
+    // ── Score-descending sort — gate for the extracted comparator ────────────
     //
     // `context_block` renders in input order, so recall output must be
     // score-DESCENDING before render or every post-RRF scoring signal is
-    // dormant at the output (the exact "effect-never-reaches-output" gap the
-    // spec Decision 8 closes). These gate the extracted comparator both paths
+    // dormant at the output (the exact "effect-never-reaches-output" gap this
+    // sort closes). These gate the extracted comparator both paths
     // now share.
 
     #[test]
@@ -1596,7 +1590,7 @@ mod filter_metadata_tests {
         assert_eq!(
             ids,
             vec!["high", "mid", "low"],
-            "results must render score-descending (Phase 0 sort-order fix)"
+            "results must render score-descending"
         );
     }
 
@@ -1624,7 +1618,7 @@ mod filter_metadata_tests {
             .expect("Memory must build")
     }
 
-    // ── validate_metadata_key — Vera F6 path-injection guard ─────────────────
+    // ── validate_metadata_key — path-injection guard ─────────────────────────
 
     #[test]
     fn validate_key_accepts_simple_alphanumeric() {
@@ -1653,7 +1647,9 @@ mod filter_metadata_tests {
 
     #[test]
     fn validate_key_rejects_path_metachars() {
-        // Vera F6 reject list + Quinn C3 defence-in-depth (`{` and `}`).
+        // Path-metachar reject list, including `{`/`}` for defence-in-depth
+        // against template-string escape in any future code path that wraps
+        // the path in `{...}`.
         for ch in ['.', '[', ']', '\'', '"', '\\', '$', '*', '{', '}'] {
             let bad = format!("foo{ch}bar");
             assert!(
@@ -1805,7 +1801,7 @@ mod recall_by_source_id_tests_part2 {
     }
 
     // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // documented too_many_arguments allow); args-as-object targets `src/`
     // production fns, not `#[cfg(test)]` seeders.
     #[allow(clippy::too_many_arguments)]
     async fn seed_episode(
@@ -1835,7 +1831,7 @@ mod recall_by_source_id_tests_part2 {
         .expect("seed insert must succeed");
     }
 
-    /// AC.6 / Quinn C4 — when no `namespace` is passed and Memory has a default
+    /// AC.6 — when no `namespace` is passed and Memory has a default
     /// namespace set, results must be scoped to that default (not span all NS).
     #[tokio::test]
     async fn no_namespace_with_memory_default_scopes_to_default() {
@@ -1885,7 +1881,7 @@ mod recall_by_source_id_tests_part2 {
         assert!(eps.is_empty(), "no matches must return empty Vec, not Err");
     }
 
-    /// AC.6 — Vera F11: namespace filter restricts results when Some.
+    /// AC.6 — namespace filter restricts results when Some.
     #[tokio::test]
     async fn namespace_filter_restricts_results() {
         let mem = make_memory().await;
@@ -1912,7 +1908,7 @@ mod recall_by_source_id_tests_part2 {
         assert_eq!(eps_b[0].group_id.as_deref(), Some("test-g5-ns-b"));
     }
 
-    /// AC.6 — Vera F11: when namespace=None and no Memory default, returns
+    /// AC.6 — when namespace=None and no Memory default, returns
     /// episodes across ALL namespaces (the only opt-in cross-namespace leak path).
     #[tokio::test]
     async fn no_namespace_and_no_default_spans_all_namespaces() {
@@ -1969,9 +1965,9 @@ mod recall_by_source_id_tests_part2 {
     }
 }
 
-/// TD-066 Increment 1 — `fuse_content_stream`'s "no attached `TemporalGraph`"
-/// degrade path (spec §3 Increment 1 step 6: a DEFAULT-behaviour change must
-/// degrade silently for any caller bypassing the builder path, never error).
+/// `fuse_content_stream`'s "no attached `TemporalGraph`"
+/// degrade path — a DEFAULT-behaviour change must
+/// degrade silently for any caller bypassing the builder path, never error.
 /// Feature-gated because `fuse_content_stream`'s `content-search` arm (the
 /// one with the guard this test exercises) only exists under that feature.
 #[cfg(all(test, feature = "content-search"))]
@@ -2043,10 +2039,10 @@ mod fuse_content_stream_tests {
     }
 }
 
-/// TD-066 Increment 3 (TD-062 reranker) — fast tier: `apply_rerank_with`'s
+/// Fast tier: `apply_rerank_with`'s
 /// wiring logic (head/tail split, id→context reassembly, score overwrite,
 /// rank-delta bookkeeping) exercised via a deterministic mock `Reranker` —
-/// zero model load, zero I/O (spec §3 Increment 3 test pyramid).
+/// zero model load, zero I/O.
 #[cfg(all(test, feature = "rerank"))]
 mod apply_rerank_tests {
     use super::*;
@@ -2237,15 +2233,15 @@ mod apply_rerank_tests {
     // content-fused passages carry the STRINGIFIED numeric episode id
     // (`core/search.rs::content_passage_into_retrieved_context`:
     // `entity_id: passage.episode_id.to_string()`). Nothing in the type
-    // system pins that disjointness — ADR-064 explicitly rejected migrating
-    // entities to an integer primary key, which is exactly the change that
+    // system pins that disjointness — entities were deliberately NOT
+    // migrated to an integer primary key, which is exactly the change that
     // would activate a collision. These two tests make the invariant an
     // explicit, executable fact instead of an implicit assumption.
 
     /// No candidate is lost when entity-style (name-slug) and episode-style
     /// (stringified integer) ids are mixed in the same rerank batch — the
     /// realistic shape once `fuse_content_stream` merges the entity-arm
-    /// stream with the ADR-072 content-search stream before `apply_rerank`
+    /// stream with the content-search stream before `apply_rerank`
     /// runs as the final pipeline stage.
     #[tokio::test]
     async fn candidate_count_is_conserved_across_entity_and_episode_style_ids() {
@@ -2301,7 +2297,7 @@ mod apply_rerank_tests {
     /// This collision cannot happen in production TODAY (entity slugs and
     /// stringified episode ids are disjoint — see the module doc above), so
     /// this test is a TRIPWIRE for a future entity-id scheme change (e.g.
-    /// the integer entity primary key ADR-064 rejected), not a desired
+    /// the integer entity primary key that was deliberately rejected), not a desired
     /// behaviour to defend. If this assertion ever fails, the collapse
     /// mechanics changed — update the pin, don't just delete the test, and
     /// re-check whether the new behaviour is still safe.
@@ -2337,13 +2333,11 @@ mod apply_rerank_tests {
     }
 }
 
-// ── TD-066 Increment 3 (TD-062 reranker) — real recall-path coverage ────────
+// ── Real recall-path coverage for the reranker ──────────────────────────────
 //
 // `apply_rerank_tests` (above) proves the WIRING via a deterministic mock
-// `Reranker` and hand-built `RetrievedContext`s — required, but per the
-// TD-140 CORRECTION (`.ai-docs/tech-debt/tech-debt-register.md`,
-// `instrument-real-data-flow-before-hypothesizing` §3 "test the real system,
-// not a model of it") that same shape of test cannot distinguish "the code
+// `Reranker` and hand-built `RetrievedContext`s — required, but that same
+// shape of test cannot distinguish "the code
 // is wired correctly" from "the code is wired to a layer that never actually
 // runs in production" — it never drives `Memory::recall()` end to end, so it
 // can't see whether the REAL production reranker singleton

@@ -9,7 +9,7 @@ pub struct ForgetRequest<'a> {
     pub(super) memory: &'a Memory,
     pub(super) namespace: Option<Namespace>,
     /// G8 — narrow forget to entities derived from episodes with this
-    /// `source_id`. Composes with `in_namespace`. Vera F17 shared-entity
+    /// `source_id`. Composes with `in_namespace`. Shared-entity
     /// preservation applies: an entity is deleted only when all of its
     /// `episodic_edges` resolve to episodes matching the filter.
     pub(super) source_id: Option<String>,
@@ -25,7 +25,7 @@ impl<'a> ForgetRequest<'a> {
     /// G8 — narrow forget to entities derived from episodes matching this
     /// `source_id` (the column added in G1). Composes with `in_namespace`.
     ///
-    /// # Shared-entity preservation (Vera F17)
+    /// # Shared-entity preservation
     ///
     /// Entities referenced by ANY episode outside this `source_id` are NOT
     /// deleted. Only entities whose entire `episodic_edges` set falls within
@@ -35,9 +35,8 @@ impl<'a> ForgetRequest<'a> {
     ///
     /// # AppendOnly enforcement
     ///
-    /// Per ADR-029b §3.1, AppendOnly enforcement applies regardless of
-    /// `by_source_id` scope — narrowing the forget set does not weaken the
-    /// policy gate.
+    /// AppendOnly enforcement applies regardless of `by_source_id` scope —
+    /// narrowing the forget set does not weaken the policy gate.
     pub fn by_source_id(mut self, source_id: impl Into<String>) -> Self {
         self.source_id = Some(source_id.into());
         self
@@ -48,16 +47,16 @@ impl<'a> ForgetRequest<'a> {
     /// This is the only terminal for `ForgetRequest` — there is no implicit
     /// `.await` to prevent accidental destructive operations.
     ///
-    /// # AppendOnly enforcement (ADR-029b §3.1)
+    /// # AppendOnly enforcement
     ///
     /// If the namespace has `AppendOnly` policy, returns
     /// `Err(MemoryError::Core(CoreError::NamespacePolicyViolation))`.
     pub async fn execute(self) -> Result<u64> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
-        // ADR-029a lazy population: ensure namespace row exists before read.
+        // Lazy population: ensure namespace row exists before read.
         self.memory.ensure_namespace_policy(&ns).await?;
 
-        // ADR-029b §3.1: AppendOnly enforcement — forget is a mutation.
+        // AppendOnly enforcement — forget is a mutation.
         let tg = self.memory.temporal_graph.as_ref().ok_or_else(|| {
             MemoryError::Other(
                 "Memory::forget requires a Memory constructed via the builder/providers path \
@@ -72,7 +71,7 @@ impl<'a> ForgetRequest<'a> {
             .map_err(MemoryError::Core)?;
         if let Some(p) = &policy {
             if p.immutability == crate::memory::types::ImmutabilityLevel::AppendOnly {
-                // ADR-029b §3.1 enforcement — v0.1.5 closure of the v0.1.4
+                // AppendOnly enforcement — v0.1.5 closure of the v0.1.4
                 // declare-but-don't-enforce contract. ForgetRequest is a
                 // mutating operation and is prohibited on AppendOnly
                 // namespaces. Returns the canonical CoreError variant so
@@ -89,7 +88,7 @@ impl<'a> ForgetRequest<'a> {
 
         // G8 — narrowed source_id forget path. Walks the
         // episodes(source_id) → episodic_edges(episode_id, entity_id) chain to
-        // collect candidate entities, then applies Vera F17 shared-entity
+        // collect candidate entities, then applies shared-entity
         // preservation: an entity is deleted only when EVERY one of its
         // episodic_edges row falls inside the matched episode set. Entities
         // with edges to any episode outside the filter are pinned.
@@ -111,7 +110,7 @@ impl<'a> ForgetRequest<'a> {
             while let Some(row) = cand_rows.next().await.map_err(CoreError::Database)? {
                 candidates.push(row.get::<String>(0).map_err(CoreError::Database)?);
             }
-            // Quinn C2 — N+1 visibility: log candidate count so a regression
+            // N+1 visibility: log candidate count so a regression
             // (e.g. document with 200+ entities) surfaces in tracing before
             // the v0.1.7 SQL pre-filter promotion lands.
             tracing::debug!(
@@ -121,7 +120,7 @@ impl<'a> ForgetRequest<'a> {
                 "forget by_source_id: candidate entities collected"
             );
             // Step 2: pin any candidate that has ANY edge to an episode
-            // OUTSIDE the matched set (Vera F17 shared-entity preservation).
+            // OUTSIDE the matched set (shared-entity preservation).
             let mut to_delete: Vec<String> = Vec::with_capacity(candidates.len());
             for entity_id in candidates {
                 let mut count_rows = conn
@@ -131,8 +130,8 @@ impl<'a> ForgetRequest<'a> {
                         // group_id != ?3). NULL guard is load-bearing —
                         // episodes seeded before G1 land with source_id=NULL
                         // and must count as "outside" the filter. DO NOT
-                        // "simplify" this clause without re-running the Vera
-                        // F17 shared-entity preservation tests.
+                        // "simplify" this clause without re-running the
+                        // shared-entity preservation tests.
                         "SELECT COUNT(*) FROM episodic_edges ee \
                          JOIN episodes e ON e.id = ee.episode_id \
                          WHERE ee.entity_id = ?1 \
@@ -156,7 +155,7 @@ impl<'a> ForgetRequest<'a> {
                     to_delete.push(entity_id);
                 }
             }
-            // ── DUR-4 cause-fix (V1-CANONICAL §4.2, 2026-08-04) ─────────────────
+            // ── Transaction wrapping for the forget cascade ──────────────────────
             // This cascade issues up to four destructive statements. Until now they
             // ran with NO enclosing transaction — each auto-committed independently,
             // so a failure partway through left the database permanently inconsistent
@@ -189,22 +188,19 @@ impl<'a> ForgetRequest<'a> {
                         .map_err(MemoryError::Core)?
                 };
 
-                // ADR-072 §11 (RISK-003 boy-scout): drop this source_id's
-                // `episodes_fts` shadow rows BEFORE the `episodes` rows
-                // themselves are deleted below — `episodes_fts` is an
-                // external-content FTS5 table keyed on `episodes.id`
-                // (Migration 022); once the episode row is gone, `rowid IN
-                // (SELECT id FROM episodes WHERE ...)` can no longer resolve
-                // which ids to purge. This is the ONLY code path in the crate
-                // that issues `DELETE FROM episodes` (`by_source_id` is 1:1 with
-                // source_id, never shared) — `core/graph/queries.rs::batch_forget`
-                // never touches the `episodes` table itself, so it cannot host
-                // this cascade (contrary to the seq1 impl-spec's citation of
-                // `queries.rs:306`; verified against current HEAD — see commit
-                // message / session report). Mirrors the sole existing purge
-                // precedent (`facts_fts` cleanup in dream `archive.rs::move_fact`,
-                // RISK-003) — that gap does NOT auto-generalize to shadow FTS
-                // tables (ADR-072 §11).
+                // Drop this source_id's `episodes_fts` shadow rows BEFORE the
+                // `episodes` rows themselves are deleted below —
+                // `episodes_fts` is an external-content FTS5 table keyed on
+                // `episodes.id` (Migration 022); once the episode row is
+                // gone, `rowid IN (SELECT id FROM episodes WHERE ...)` can no
+                // longer resolve which ids to purge. This is the ONLY code
+                // path in the crate that issues `DELETE FROM episodes`
+                // (`by_source_id` is 1:1 with source_id, never shared) —
+                // `core/graph/queries.rs::batch_forget` never touches the
+                // `episodes` table itself, so it cannot host this cascade.
+                // Mirrors the sole existing purge precedent (`facts_fts`
+                // cleanup in dream `archive.rs::move_fact`) — that gap does
+                // NOT auto-generalize to shadow FTS tables.
                 #[cfg(feature = "content-search")]
                 let episodes_fts_purged: u64 = conn
                     .execute(
@@ -215,7 +211,7 @@ impl<'a> ForgetRequest<'a> {
                     .await
                     .map_err(CoreError::Database)?;
 
-                // Quinn C3 — spec §G8 says "only the episode row(s) AND edges
+                // Spec §G8 says "only the episode row(s) AND edges
                 // exclusively owned by this source_id are removed". Episode rows
                 // are 1:1 with source_id (not shared across consumers), so
                 // delete the matched episode rows after entity cleanup. The
@@ -258,12 +254,12 @@ impl<'a> ForgetRequest<'a> {
                 }
             };
 
-            // Rule 19 + DUR-4: this counter is now emitted strictly POST-COMMIT.
-            // Previously "post-commit" meant "after the statement returned Ok" because
-            // there was no transaction to commit; a metric increment cannot be rolled
-            // back, so had the cascade been wrapped without moving this, a rolled-back
-            // purge would still have incremented it. Same class as the
-            // `supersession.rs::window_closeout` fix (ADR-070 Phase B).
+            // This counter is now emitted strictly POST-COMMIT. Previously
+            // "post-commit" meant "after the statement returned Ok" because
+            // there was no transaction to commit; a metric increment cannot
+            // be rolled back, so had the cascade been wrapped without moving
+            // this, a rolled-back purge would still have incremented it.
+            // Same class as the `supersession.rs::window_closeout` fix.
             // Original note retained: emitted after the DELETE that actually removes the
             // `episodes_fts` rows (this sequence has no enclosing explicit
             // transaction today — each statement auto-commits — so "post-
@@ -314,7 +310,7 @@ mod forget_by_source_id_tests {
     /// Seed: episode + entity + episodic_edge. Returns the inserted
     /// episode_id (SQLite AUTOINCREMENT).
     // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // documented too_many_arguments allow); args-as-object targets `src/`
     // production fns, not `#[cfg(test)]` seeders.
     #[allow(clippy::too_many_arguments)]
     async fn seed_link(mem: &Memory, source_id: &str, ns: &Namespace, entity_id: &str) -> i64 {
@@ -371,10 +367,10 @@ mod forget_by_source_id_tests {
             .get::<i64>(0)
             .expect("episode id column");
 
-        // ADR-072 seq1: this raw-SQL seed bypasses `insert_episode_with_group`
+        // This raw-SQL seed bypasses `insert_episode_with_group`
         // (the only production path that populates `episodes_fts`), so restore
         // the "episode row ⟹ episodes_fts row" invariant explicitly here.
-        // Mechanically verified (2026-07-11): `DELETE`/the `'delete'` special
+        // Mechanically verified: `DELETE`/the `'delete'` special
         // command against an EXTERNAL CONTENT fts5 table for a rowid that was
         // NEVER inserted raises `SQLITE_CORRUPT_VTAB` ("database disk image is
         // malformed") — not a no-op. Without this sync, the `episodes_fts`
@@ -447,7 +443,7 @@ mod forget_by_source_id_tests {
         assert!(entity_exists(&mem, "entity-beta").await, "beta must remain");
     }
 
-    /// AC.8 / Vera F17 — shared-entity preservation: entity referenced by
+    /// AC.8 — shared-entity preservation: entity referenced by
     /// BOTH source_A and source_B must NOT be deleted when only source_A is
     /// forgotten.
     #[tokio::test]
@@ -468,7 +464,7 @@ mod forget_by_source_id_tests {
 
         assert_eq!(
             deleted, 0,
-            "shared entity must NOT be deleted (Vera F17 preservation)"
+            "shared entity must NOT be deleted (shared-entity preservation)"
         );
         assert!(
             entity_exists(&mem, "entity-shared").await,
@@ -494,7 +490,7 @@ mod forget_by_source_id_tests {
             .expect("count column")
     }
 
-    /// AC.8 / Quinn C3 — episode rows for the matched source_id are
+    /// AC.8 — episode rows for the matched source_id are
     /// removed (not just entities). Spec: "only the episode row(s) and
     /// edges exclusively owned by this source_id are removed."
     #[tokio::test]
@@ -517,7 +513,7 @@ mod forget_by_source_id_tests {
         assert_eq!(
             episode_count_for(&mem, "doc-A", &ns).await,
             0,
-            "doc-A episodes must be deleted (Quinn C3)"
+            "doc-A episodes must be deleted"
         );
         assert_eq!(
             episode_count_for(&mem, "doc-B", &ns).await,
@@ -526,7 +522,7 @@ mod forget_by_source_id_tests {
         );
     }
 
-    /// AC.8 / Quinn C4 — AppendOnly policy gate still fires when
+    /// AC.8 — AppendOnly policy gate still fires when
     /// `by_source_id` is set. Narrowing scope does not weaken the gate.
     #[tokio::test]
     async fn by_source_id_appendonly_blocks_forget() {

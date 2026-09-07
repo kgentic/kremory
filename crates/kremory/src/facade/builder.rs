@@ -1,6 +1,6 @@
 //! `MemoryBuilder` — type-state builder for `Memory`.
 //!
-//! Extracted from `facade/mod.rs` (TD-015 LoC reduction).  All types, impls,
+//! Extracted from `facade/mod.rs` (LoC reduction).  All types, impls,
 //! and `IntoFuture` implementations are verbatim moves — no logic changes.
 
 use std::future::IntoFuture;
@@ -30,17 +30,17 @@ use crate::memory::{
 pub struct MemoryBuilder<L, E> {
     path: std::path::PathBuf,
     llm: Option<Arc<dyn ChatProvider>>,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Set by Tier-1
+    /// Consumer-supplied model identifier (Option-1). Set by Tier-1
     /// shortcuts, `with_llm_tracked` (from the metric label), and the explicit
     /// `.with_model_id(…)` escape hatch. Left `None` by raw `with_llm` →
     /// capability detection falls to `PromptOnly`. Threaded unchanged across
     /// every type-state transition; does NOT change type-state.
     model_id: Option<String>,
-    /// Optional dedicated dream-phase LLM (TD-052b). `None` (default) → dream
+    /// Optional dedicated dream-phase LLM. `None` (default) → dream
     /// re-uses the `with_llm` provider. Threaded unchanged across every
     /// type-state transition. Does NOT change type-state.
     dream_llm: Option<Arc<dyn ChatProvider>>,
-    /// Optional dedicated dream-phase model id (TD-094). Pairs with `dream_llm`
+    /// Optional dedicated dream-phase model id. Pairs with `dream_llm`
     /// as `model_id` pairs with `llm`: a dedicated dream provider usually reports
     /// a different model string, and capability detection needs the right one.
     /// `None` (default) → dream falls back to `model_id`. Threaded unchanged
@@ -72,9 +72,9 @@ pub struct MemoryBuilder<L, E> {
     /// `GlinerExtractor` rejects all entities — callers that activate the `ner`
     /// feature MUST supply this via [`MemoryBuilder::allowed_entity_types`].
     allowed_entity_types: Vec<String>,
-    /// TD-141 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-141): explicit
+    /// Explicit
     /// per-knob `SearchConfig` overrides set via `.with_content_stream_weight()`
-    /// / `.with_rrf_k()` / `.with_episode_dense_enabled()` / TD-139's
+    /// / `.with_rrf_k()` / `.with_episode_dense_enabled()` /
     /// `.with_fact_dense_enabled()`. All-`None` by
     /// default — env-only behaviour is unchanged for consumers who never call
     /// these setters. Threaded unchanged across every type-state transition;
@@ -92,7 +92,7 @@ pub struct MemoryBuilder<L, E> {
     /// When `true`, `Memory::remember(...).await` blocks until the background
     /// extraction pipeline transitions the episode to `Verified` (or returns
     /// `Err` on `Failed` / timeout). Default: `false`.
-    /// Per spec §Phase 4 / ADR-051 D1 peer pattern (Cognee `run_in_background=False`).
+    /// Mirrors Cognee's `run_in_background=False` peer pattern.
     await_extraction: bool,
     /// Timeout applied when `await_extraction = true`.
     /// Default: 60 s (spec §Risk R-12 mitigation).
@@ -161,16 +161,14 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Equivalent to `.with_event_sink(Arc::new(sink))`.  Prefer this form when
     /// the caller does not need to share the `Arc` with other owners.
     ///
-    /// # Sink callback contract (ADR-052 D4)
+    /// # Sink callback contract
     ///
     /// All callbacks fire **sync-inline** on the background worker OS thread.
     /// Keep callbacks fast (sub-millisecond ideal, sub-100 ms absolute ceiling).
-    ///
-    /// Refs: ADR-052 Gap 1; impl spec §3 Phase 2 `Memory::with_sink` DoD item.
     #[deprecated(
         since = "0.2.5",
-        note = "use `.with_event_sink(Arc::new(sink))` — one stem for sink wiring \
-                per F7 / spec memory-builder-dx-hardening-2026-06-20. Removed in a later breaking release."
+        note = "use `.with_event_sink(Arc::new(sink))` — one stem for sink wiring. \
+                Removed in a later breaking release."
     )]
     pub fn with_sink(mut self, sink: impl EnrichmentEventSink + Send + Sync + 'static) -> Self {
         self.default_sink = Some(Arc::new(sink));
@@ -210,7 +208,7 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 
     /// Supply the model identifier kremory should use for capability detection
-    /// and metric labels (Option-1, 2026-06-23).
+    /// and metric labels (Option-1).
     ///
     /// kremory does **not** read the model back off the provider — the consumer
     /// owns this string. Set it when you wire a provider via the raw
@@ -267,15 +265,14 @@ impl<L, E> MemoryBuilder<L, E> {
     /// drives `tracing::warn!` + a `kremory_episode_oversize_total` counter
     /// at ingest time so callers can spot extraction-quality risk early.
     ///
-    /// **This threshold does NOT protect the dense/embedding search arm**
-    /// (TD-234's sibling, TD-232). Extraction sub-chunks internally
+    /// **This threshold does NOT protect the dense/embedding search arm**.
+    /// Extraction sub-chunks internally
     /// (`ExtractionWindowSplitter`); embedding does not — a single episode
     /// over the embedder's own context window (commonly ~2048 tokens, ≈8-10k
     /// chars for `nomic-embed-text`) silently loses dense-arm coverage on
     /// that episode, staying BM25-only. Kremory does not currently chunk
     /// content for the embedder (a deliberate, separately-decided
-    /// architectural boundary — see TD-232 in the tech-debt register for
-    /// why). Detect it via `EpisodeCommit::dense_embedded` /
+    /// architectural boundary). Detect it via `EpisodeCommit::dense_embedded` /
     /// `IngestionResult::dense_embedded` (`Some(false)` = this happened), and
     /// pre-chunk with [`crate::split_for_embedding`] before calling
     /// `remember()` (once per chunk) if it matters for your corpus.
@@ -313,7 +310,7 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Takes no argument (F2): `GlinerConfig` had no public fields, so requiring
     /// it was a do-nothing parameter that forced consumers to construct a useless
     /// value. When real tuning knobs are added later (threshold, model path,
-    /// batch size per ADR-039 §A6), a separate `with_gliner_config(GlinerConfig)`
+    /// batch size), a separate `with_gliner_config(GlinerConfig)`
     /// knob will be added non-breakingly.
     #[cfg(feature = "ner")]
     pub fn with_gliner(mut self) -> Self {
@@ -345,7 +342,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    // ── SearchConfig overrides (TD-141) ─────────────────────────────────────
+    // ── SearchConfig overrides ───────────────────────────────────────────────
     //
     // Per-knob setters, not a single `.with_search_config(SearchConfig)` —
     // per `composable-knobs-over-strategy-enum`: the consumer thinks in
@@ -355,14 +352,14 @@ impl<L, E> MemoryBuilder<L, E> {
     // (`KREMORY_CONTENT_WEIGHT` / `KREMORY_RRF_K` / `KREMORY_EPISODE_DENSE`)
     // if one is present at `Memory` construction time.
     //
-    // Precedence (TD-141 design decision (a)): explicit programmatic config
+    // Precedence: explicit programmatic config
     // set here ALWAYS wins over the matching env override, which wins over
     // the `SearchConfig` default. See `PipelineConfigOverrides::apply` for the
     // mechanism and `facade::providers::search_env_overrides` for the env
     // layer these compose on top of. Verify the live, in-effect value via
     // `Memory::search_config()`.
 
-    /// Explicit per-stream weight applied to the ADR-072 `content_search` BM25
+    /// Explicit per-stream weight applied to the `content_search` BM25
     /// stream's RRF contribution (`SearchConfig::content_stream_weight`).
     /// Default (unset): `1.0` — equal-weight fusion — unless overridden by
     /// `KREMORY_CONTENT_WEIGHT` at construction time. Calling this setter wins
@@ -375,19 +372,18 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 
     /// Explicit weight for the additive graph-degree bonus
-    /// (`SearchConfig::graph_degree_weight`, recall-v2 Phase 2a; formerly the
-    /// `search::GRAPH_DEGREE_WEIGHT` const, TD-066 Change 2). Default (unset):
+    /// (`SearchConfig::graph_degree_weight`; formerly the
+    /// `search::GRAPH_DEGREE_WEIGHT` const). Default (unset):
     /// `0.05` — this axis is already LIVE, not a no-op like its newer siblings,
     /// so leaving it unset preserves today's shipped behaviour exactly. Calling
     /// this setter wins over the default, for this `Memory` only.
     ///
-    /// public-docs-and-api-surface-audit Phase 2 (finding F17, 2026-09-07):
-    /// added because this was the one weight axis on `SearchConfig` reachable
-    /// only for *reading* (via [`Memory::search_config`]), never for *writing*
-    /// — no builder method and no env override existed, unlike every sibling
-    /// axis (`content_stream_weight`, `proximity_weight`, `temporal_weight`).
-    /// The mirror image of TD-231, which found the same "documented as
-    /// tunable, actually unreachable" gap for `extraction_arm_budget_ms`.
+    /// This is the one weight axis on `SearchConfig` that was previously
+    /// reachable only for *reading* (via [`Memory::search_config`]), never
+    /// for *writing* — no builder method and no env override existed, unlike
+    /// every sibling axis (`content_stream_weight`, `proximity_weight`,
+    /// `temporal_weight`). Same shape as the read/write gap that was closed
+    /// for `extraction_arm_budget_ms`.
     ///
     /// Mirrors [`PipelineConfigBuilder::graph_degree_weight`](crate::core::config::PipelineConfigBuilder::graph_degree_weight).
     pub fn with_graph_degree_weight(mut self, v: f32) -> Self {
@@ -406,7 +402,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Explicitly enable/disable the TD-136 dense (embedding) episode
+    /// Explicitly enable/disable the dense (embedding) episode
     /// retrieval arm (`SearchConfig::episode_dense_enabled`). Default
     /// (unset): `false` (BM25-only) unless overridden by
     /// `KREMORY_EPISODE_DENSE` at construction time. Calling this setter wins
@@ -421,7 +417,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Explicitly enable/disable the TD-139 dense (embedding) fact
+    /// Explicitly enable/disable the dense (embedding) fact
     /// retrieval arm (`SearchConfig::fact_dense_enabled`). Default (unset):
     /// `false` (facts reachable only via 1-hop entity expansion) unless
     /// overridden by `KREMORY_FACT_DENSE` at construction time. Calling this
@@ -437,7 +433,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Explicitly enable/disable the TD-143 nomic `search_document:` /
+    /// Explicitly enable/disable the nomic `search_document:` /
     /// `search_query:` task-prefix on every embed call site
     /// (`SearchConfig::embed_task_prefix_enabled`). Default (unset): `false`
     /// (bare-text embedding) unless overridden by `KREMORY_EMBED_TASK_PREFIX`
@@ -457,7 +453,7 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Explicit weight for the ADR-062 / ADR-082 Phase 3 graph-proximity
+    /// Explicit weight for the graph-proximity
     /// boost (`SearchConfig::proximity_weight`). Default (unset): `0.0`
     /// (axis OFF — the second bounded-hop graph query never fires) unless
     /// overridden by `KREMORY_PROXIMITY_WEIGHT` at construction time. Calling
@@ -472,13 +468,13 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Explicit weight for the ADR-082 temporal-recency axis
+    /// Explicit weight for the temporal-recency axis
     /// (`SearchConfig::temporal_weight`). Default (unset): `0.0` (axis OFF,
-    /// byte-identical to pre-TD-157) unless overridden by
+    /// byte-identical to the pre-existing default) unless overridden by
     /// `KREMORY_TEMPORAL_WEIGHT` at construction time. Calling this setter wins
     /// over BOTH the default and any env override, for this `Memory` only.
     ///
-    /// TD-157 (2026-07-28): until this existed the axis was **unreachable** —
+    /// Until this existed the axis was **unreachable** —
     /// real compute (`core/context.rs`, `core/scoring/temporal.rs`)
     /// permanently multiplied by a `0.0` that no builder method, env override
     /// or config file could change. It has therefore never been measured.
@@ -504,8 +500,7 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 
     /// Explicitly enable/disable ingest-time contradiction detection
-    /// (`PipelineConfig::contradiction_detection_enabled`, TD-167 /
-    /// ADR-079 rev.2). Default (unset): **`true`** unless overridden by
+    /// (`PipelineConfig::contradiction_detection_enabled`). Default (unset): **`true`** unless overridden by
     /// `KREMORY_CONTRADICTION_DETECTION` at construction time. Calling this
     /// setter wins over BOTH the default and any env override, for this
     /// `Memory` only.
@@ -517,16 +512,16 @@ impl<L, E> MemoryBuilder<L, E> {
     /// removes the prior fact from live recall. That is correct for a genuine
     /// update (`works_at Acme` → `works_at Globex`) and wrong for a
     /// SET-VALUED predicate, where every member but the last is destroyed
-    /// (TD-167 measured 7/8 destroyed pre-fix, 0/8 post-fix; corpus
+    /// (7/8 destroyed pre-fix, 0/8 post-fix; corpus
     /// contradiction rate 38.8% → 11.3%). Two of six real updates are still
-    /// missed, so TD-167 remains open.
+    /// missed, so this gap remains open.
     ///
     /// Turn it **off** when your corpus is list-heavy (tags, attendees,
     /// preferences, playlist members) and append-only is the safer default;
     /// leave it **on** for profile-shaped data where later statements should
     /// replace earlier ones.
     ///
-    /// Added by TD-172: this knob mirrors eight sibling `with_*` setters and
+    /// This knob mirrors eight sibling `with_*` setters and
     /// was the only one missing, so opting OUT of a default-ON destructive
     /// path was reachable only through a process-wide env var — which cannot
     /// express two `Memory` instances with different settings.
@@ -547,7 +542,7 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// Added because `Memory::with_ollama()` and this builder previously had
     /// NO reachable path to this knob at all (found via the aidocs-trial fit
-    /// check, 2026-08-24/09-02) — despite the field's own doc comment
+    /// check) — despite the field's own doc comment
     /// pointing at "the builder" as if one already existed. This setter
     /// mirrors that doc comment's promise.
     ///
@@ -558,7 +553,7 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 
     /// How many preceding episodes of the SAME conversation thread are
-    /// replayed into the extraction prompt so references resolve (ADR-080).
+    /// replayed into the extraction prompt so references resolve.
     ///
     /// Default (unset): **10**, the value mem0 and Graphiti independently
     /// converged on. `0` disables replay entirely.
@@ -602,10 +597,6 @@ impl<L, E> MemoryBuilder<L, E> {
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// # ADR reference
-    ///
-    /// Phase C DoD C10 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
     pub fn with_dream_schedule(
         mut self,
         schedule: crate::memory::scheduler::DreamSchedule,
@@ -619,19 +610,18 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Dream Pass 0 (type discovery) benefits from a deferred-*quality* model
     /// (e.g. `gemma4:e4b`) even when the interactive ingest path uses a fast
     /// model (e.g. `qwen2.5:7b`) wired via [`with_llm`](Self::with_llm).
-    /// See TD-052b: the interactive model proposes the placeholder `"..."` in
+    /// The interactive model proposes the placeholder `"..."` in
     /// Pass 0 → silent zero-discovery; the deferred model proposes → accepts →
     /// retypes.
     ///
     /// **Additive + backward-compatible**: when unset, dream falls back to the
     /// [`with_llm`](Self::with_llm) provider — behaviour is unchanged for every
     /// existing consumer. Available in any type-state (mirrors
-    /// [`with_dream_schedule`](Self::with_dream_schedule)). BYOM (ADR-002): the
+    /// [`with_dream_schedule`](Self::with_dream_schedule)). BYOM: the
     /// provider is supplied by the consumer; kremory bundles none.
     ///
     /// Composable-knob (not a strategy enum): dream-time selection picks
-    /// behaviour from which provider knobs are set — see TD-052b §4 compat
-    /// matrix.
+    /// behaviour from which provider knobs are set.
     ///
     /// ```no_run
     /// # use std::sync::Arc;
@@ -655,7 +645,7 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 
     /// Set the concrete model id used by the dream phase's LLM passes for
-    /// capability detection (TD-094). Pairs with [`with_dream_llm`](Self::with_dream_llm):
+    /// capability detection. Pairs with [`with_dream_llm`](Self::with_dream_llm):
     /// when a dedicated dream provider is wired, its model string usually
     /// differs from the interactive model, so the dream passes need their own
     /// id to select the right structured-output strategy.
@@ -713,18 +703,18 @@ impl<L, E> MemoryBuilder<L, E> {
     }
 
     /// Opt-in to synchronous-extraction ergonomics: when `true`,
-    /// `Memory::remember(...).await` blocks until the ADR-051 background worker
+    /// `Memory::remember(...).await` blocks until the background worker
     /// has transitioned the episode to `Verified` (returns `Ok(())`) or
     /// `Failed` / timeout (returns `Err`).
     ///
-    /// Default: `false` (fire-and-forget — the ADR-051 design intent).
+    /// Default: `false` (fire-and-forget by design).
     ///
     /// Use [`with_await_extraction_timeout`](Self::with_await_extraction_timeout)
-    /// to configure the maximum wait duration (default 60 s, see spec §Risk R-12).
+    /// to configure the maximum wait duration (default 60 s).
     ///
     /// ⚠ **Cost**: enables sync semantics at the expense of the hot-path latency
-    /// benefit that ADR-051 provides. Prefer `Memory::wait_for_processing` for
-    /// fine-grained per-episode control (spec §Phase 4, Risk R-06).
+    /// benefit that the background path provides. Prefer `Memory::wait_for_processing` for
+    /// fine-grained per-episode control.
     ///
     /// Per D1 peer pattern: equivalent to Cognee's `run_in_background=False`.
     pub fn with_await_extraction(mut self, await_extraction: bool) -> Self {
@@ -799,7 +789,7 @@ impl<E> MemoryBuilder<WithLlm, E> {
 }
 
 /// Bundled parameters for [`MemoryBuilder::with_llm_tracked`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). The generic `llm: L`
+/// (rust-conventions §too_many_arguments). The generic `llm: L`
 /// stays a lead positional param; the two label strings are bundled here.
 pub struct WithLlmTrackedParams {
     /// Provider label (e.g. `"openai"`, `"ollama"`) for metric/cost attribution.
@@ -1137,7 +1127,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
             // → PromptOnly.
             let model_id = self.model_id.clone();
 
-            // TD-141 — captured up-front (mirrors `model_id` above) because it
+            // Captured up-front (mirrors `model_id` above) because it
             // is needed at up to three separate `GraphOpenParams` /
             // `OpenGraphParams` / `OpenEngineHandleParams` construction sites
             // below (the compat-matrix open_graph* branch, then — when
@@ -1145,7 +1135,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
             // calls for the `BackgroundIngestorGraphHandle` path).
             let config_overrides = self.config_overrides.clone();
 
-            // ── Compat matrix (ADR-039, 7-row table) ────────────────────────
+            // ── Compat matrix (7-row table) ─────────────────────────────────
             // Row 6: .with_extractor conflicts with .with_gliner → Err
             #[cfg(feature = "ner")]
             if self.custom_extractor.is_some() && self.use_gliner {
@@ -1279,7 +1269,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
                 });
             }
 
-            // ── BackgroundIngestorGraphHandle (ADR-052 Gap 1 / Quinn MED-3 fix) ─
+            // ── BackgroundIngestorGraphHandle ───────────────────────────────────
             //
             // When `.with_sink()` is configured, replace the `Arc<dyn GraphHandle>`
             // produced by `open_graph` with a `BackgroundIngestorGraphHandle` that
@@ -1298,9 +1288,8 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
             //   - Engine 2 (EngineGraphHandle delegate): opened here via
             //     `providers::open_engine_handle`. Handles search/dream/inline-ingest.
             //   Both engines open their own libSQL WAL connection; write serialisation
-            //   is enforced by the background OS thread (ADR-051 invariant).
-            //   WAL concurrency safety: empirically verified by Spike B + C in
-            //   `.ai-docs/specs/v0-2-3-followup-dual-path-consolidation-arch-spec-2026-06-15.md §6`.
+            //   is enforced by the background OS thread.
+            //   WAL concurrency safety: empirically verified via dedicated spike tests.
             //
             // When no sink is configured: `graph` stays as-is (EngineGraphHandle path,
             // unchanged semantics for all existing callers).
@@ -1325,7 +1314,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
                 // Construct BackgroundIngestor from a THIRD engine connection.
                 // open_graph above type-erases the engine into Arc<dyn GraphHandle>
                 // so we cannot extract it; open a fresh connection for the
-                // BackgroundIngestor's exclusive Engine ownership (ADR-051 invariant).
+                // BackgroundIngestor's exclusive Engine ownership.
                 //
                 // Three-connection shape: BG ingestor Engine + EGH delegate Engine
                 // + TemporalGraph (facade). All open their own libSQL WAL connection.
@@ -1344,8 +1333,8 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
                 .await?;
 
                 // Unwrap the engine from the EngineGraphHandle to pass to BackgroundIngestor.
-                // BackgroundIngestor takes exclusive ownership per ADR-051 serialisation
-                // invariant (ingestor.rs:62-74).
+                // BackgroundIngestor takes exclusive ownership per the engine's
+                // serialisation invariant (ingestor.rs:62-74).
                 //
                 // `Arc::try_unwrap` succeeds here because `open_engine_handle` wraps
                 // the engine in a fresh `Arc` with exactly one owner. The panic branch
@@ -1369,8 +1358,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
 
                 tracing::debug!(
                     target: "kremory.facade",
-                    "MemoryBuilder::build: sink configured — constructing BackgroundIngestorGraphHandle \
-                     (ADR-052 Gap 1 fix, arch spec §3.2 Option A)"
+                    "MemoryBuilder::build: sink configured — constructing BackgroundIngestorGraphHandle"
                 );
                 metrics::counter!(
                     "kremory.facade.build_path",
