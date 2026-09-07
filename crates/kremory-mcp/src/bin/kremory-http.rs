@@ -40,7 +40,7 @@
 //!
 //! `results[].kind` (`"entity" \| "episode" \| "fact"`) and
 //! `results[].source_episode_id` (populated ONLY for `kind == "fact"`) are
-//! TD-139 measurement-prerequisite fields, additive over the pre-existing
+//! additive fields, layered over the pre-existing
 //! `{id, content, score}` contract — see [`SearchResultKindWire`] and
 //! [`SearchResultWire::source_episode_id`].
 //!
@@ -48,30 +48,29 @@
 //! which is DEFAULT-OFF** (see the note at `SearchResultKindWire` below, and
 //! RECALL-LEDGER §4.3 — the fact-dense arm measured −0.7 nDCG / −1.3 MRR, hence
 //! off by default). This line previously read "No live arm emits `fact` yet",
-//! which was stale after TD-139 wired the arm and actively misleading: it reads
-//! as "facts can never reach a consumer" when the truth is "not on the shipped
-//! default".
+//! which was stale once the dense-fact arm was wired in and actively
+//! misleading: it reads as "facts can never reach a consumer" when the truth
+//! is "not on the shipped default".
 //!
 //! **Consequence worth knowing before designing any benchmark**: under the
 //! default config the harness receives ZERO `kind == "fact"` rows, so facts —
 //! and everything carried on them, including `valid_at` — are invisible to
 //! EVERY bench scorer (substring, `evidence_eval`, and `qa_eval --structured`
-//! alike). Measured 2026-08-07 on a full conv0 run: 25 `episode` + 25 `entity`
+//! alike). Measured on a full conv0 run: 25 `episode` + 25 `entity`
 //! provenance rows per question, 0 `fact`. A lever whose effect lives on a fact
 //! cannot be measured without turning this knob on first.
 //!
-//! `mode` (benchmark-completion-roadmap W0.1) selects which of kremory's
+//! `mode` selects which of kremory's
 //! retrieval surfaces `/search` reaches: `recall` is the existing entity/fact
-//! hybrid keyword+semantic+graph path; `content` is ADR-072 seq1's BM25-only
+//! hybrid keyword+semantic+graph path; `content` is the BM25-only
 //! full-text search over raw `episodes.content` (requires this bin built with
 //! `--features content-search`; otherwise `mode=content`/`mode=hybrid` HARD-FAIL
 //! 422 rather than silently degrading — B1 fail-loud, see `content_mode_results`);
 //! `hybrid` runs both and RRF-fuses them (see `rrf_merge` below). `hybrid` is
-//! the DEFAULT since the 2026-07-21 LoCoMo diagnostic (entity-graph `recall`
+//! the DEFAULT since a LoCoMo diagnostic run (entity-graph `recall`
 //! alone judged 40.2% vs 70.4% hybrid).
 //!
-//! TD-066 Increment 1 (`.ai-docs/specs/td-066-recall-scoring-foundation-
-//! spec-2026-07-21.md` §3): the fusion this file pioneered has been ported
+//! The fusion this file pioneered has been ported
 //! into `core::search::rrf_fuse_with_content` and wired into
 //! `Memory::recall()`'s `.raw()`/`execute()` terminals by default whenever
 //! `content-search` is compiled in — so `recall_mode_results` below (which
@@ -79,7 +78,7 @@
 //! in a `content-search`-enabled build; it now collaterally receives the
 //! SAME fusion `mode=hybrid` does.
 //!
-//! ⚠️ **CORRECTED 2026-07-28 (ADR-078 / TD-153).** The sentence that used to
+//! ⚠️ **CORRECTION.** The sentence that used to
 //! stand here — *"`mode=recall` vs `mode=hybrid` therefore no longer differ
 //! when this bin is built with `content-search` — both reach the fused
 //! surface"* — is **FALSE, and was measured false**: conv0, same server, same
@@ -97,9 +96,9 @@
 //! the content arm and adds a REST-depth BM25 pass the library never issues.
 //! Net effect: **the LIBRARY under-performs its own HTTP wrapper by 4.9
 //! recall@10** — and since the library is the product, that is backwards.
-//! Tracked as TD-153; do not treat the two modes as interchangeable, and note
+//! Do not treat the two modes as interchangeable, and note
 //! that any benchmark which omits `?mode=` is measuring HYBRID, not the
-//! library path (the LoCoMo harness did exactly this until 2026-07-28).
+//! library path (an early LoCoMo harness run made exactly this mistake).
 //!
 //! This is a known, deliberate consequence of
 //! wiring fusion into the canonical facade terminal (the spec explicitly
@@ -145,7 +144,7 @@ const DEFAULT_PORT: u16 = 3179;
 #[derive(Clone)]
 struct AppState {
     mem: Arc<Memory>,
-    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): RRF `k` for the
+    /// RRF `k` for the
     /// bin-local `rrf_merge` hybrid fusion, read once from `KREMORY_RRF_K` at
     /// boot (default 60). The library fusion sites read their own `k` from the
     /// Engine's `SearchConfig` (via `search_env_overrides`); this bin-local
@@ -165,9 +164,9 @@ struct AppState {
 /// via `.ok()`, matching the pre-extraction `Err(_) => None` arm exactly).
 /// `Some("")` for a present-but-empty value. Malformed/negative/empty values
 /// WARN and disable the reranker (`None`) rather than silently defaulting —
-/// Rule 21 (parse loudly, never silently default) applies to boot config the
-/// same as it does to LLM output: a benchmark run that silently disabled
-/// reranking would misreport its own configuration (the exact TD-134
+/// config must be parsed loudly, never silently defaulted, the same as it
+/// applies to LLM output: a benchmark run that silently disabled
+/// reranking would misreport its own configuration (exactly the
 /// provenance-stamp failure mode `/health`'s `rerank_k` field exists to
 /// prevent).
 fn parse_rerank_k(raw: Option<&str>) -> Option<usize> {
@@ -185,14 +184,14 @@ fn parse_rerank_k(raw: Option<&str>) -> Option<usize> {
     }
 }
 
-/// `KREMORY_RERANK_K` boot override — enables the TD-062 cross-encoder reranker
-/// on this REST route for the TD-134 LoCoMo A/B. Unlike `rrf_k` (an `AppState`
+/// `KREMORY_RERANK_K` boot override — enables the cross-encoder reranker
+/// on this REST route for offline A/B sweeps. Unlike `rrf_k` (an `AppState`
 /// field, threaded into `rrf_merge`), `rerank_k` is a per-recall param consumed
 /// only in the `search` handler and carried on `RecallParams`, NOT in
 /// `SearchConfig` — so it lives in a process-wide `LazyLock` (read once at first
 /// request) rather than `AppState`, keeping every `AppState` literal untouched.
 /// Mirrors the `KREMORY_RRF_K` sweep design: an A/B costs a restart, not a
-/// rebuild. `None`/malformed ⇒ rerank off (pre-TD-134 behaviour). Fail-loud: a
+/// rebuild. `None`/malformed ⇒ rerank off by default. Fail-loud: a
 /// malformed value WARNs and disables rerank rather than silently accepting it.
 ///
 /// The actual parsing/validation lives in [`parse_rerank_k`] (unit-tested
@@ -232,8 +231,7 @@ impl IntoResponse for ApiError {
 // ────────────────────────────────────────────────────────────────────────
 
 /// `GET /health` — liveness (still 200) PLUS the server's build-feature flags
-/// and its ACTIVE scoring config (TD-135 / recall-improvement-e2e-spec-2026-07-22
-/// §S0-infra). The bench harness's `provenance.build_provenance()` stamps the
+/// and its ACTIVE scoring config. The bench harness's `provenance.build_provenance()` stamps the
 /// recall-run JSON from THIS response so the provenance record is faithful to
 /// what the search path actually used — rather than re-reading the harness
 /// process's env, which can silently differ from the server's env and is exactly
@@ -242,14 +240,14 @@ impl IntoResponse for ApiError {
 /// - `content_search` / `rerank` / `prometheus` are compile-time
 ///   `cfg!(feature = "…")` booleans — an orchestrator can now detect a degraded
 ///   recall-only build programmatically instead of scraping the boot banner
-///   (closes the Stage-0 Quinn LOW).
+///   (closing a gap where an operator previously had no programmatic signal).
 /// - `scoring` is read from the LIVE [`kremory::Memory::search_config`] (the
 ///   Engine's `SearchConfig`, carrying any `KREMORY_CONTENT_WEIGHT` /
 ///   `KREMORY_RRF_K` boot overrides), NOT re-read from env here.
 ///
 /// Additive: the response is still `200 OK`; the JSON body is new (the prior
 /// handler returned an empty 200), so no existing field is removed.
-/// TD-202 — identity of the running binary, read from its OWN executable.
+/// Identity of the running binary, read from its OWN executable.
 ///
 /// Every field is observed at runtime, so a stale or mismatched value is not
 /// representable: `current_exe()` is the artefact actually executing, and its
@@ -260,8 +258,7 @@ impl IntoResponse for ApiError {
 /// would then assert what the builder BELIEVED, whereas mtime+size are properties
 /// of the file that is running — the observe-over-declare split. The harness pairs
 /// this with its own `harness_git_sha` so a mismatch between the two is visible
-/// rather than silently collapsed into one number, which is exactly what TD-202
-/// was.
+/// rather than silently collapsed into one number.
 ///
 /// Every field is best-effort: a filesystem that refuses to stat the executable
 /// must degrade to an explicit `"unknown"`, never to a silently-absent key that a
@@ -298,7 +295,7 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
             "status": "ok",
             "content_search": cfg!(feature = "content-search"),
             "rerank": cfg!(feature = "rerank"),
-            // TD-134: the ACTIVE rerank_k (KREMORY_RERANK_K boot override) — so the
+            // The ACTIVE rerank_k (KREMORY_RERANK_K boot override) — so the
             // bench provenance stamp records whether reranking was on + at what
             // depth. null ⇒ off. Distinct from the `rerank` compile-flag above
             // (compiled-in ≠ enabled): a build can ship the reranker yet run it off.
@@ -308,17 +305,17 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
             // `_requested`, not `_active`: resolution lives in `kremory`'s
             // `parse_reranker_model`, and an unrecognised alias there falls back
             // to bge-base with a WARN. Echoing the raw value as "active" could
-            // therefore stamp a model that never loaded — the provenance-lie
-            // class TD-135 exists to close. The authoritative record of what
+            // therefore stamp a model that never loaded — exactly the
+            // provenance-lie this field exists to avoid. The authoritative record of what
             // actually loaded is the `kremory.rerank.model_selected` INFO log.
             // Exposing the resolved name instead would mean new public API on
-            // `kremory` (with ADR-031 napi-parity obligations) for a bench-only
+            // `kremory` (with napi-parity obligations) for a bench-only
             // sweep knob — not worth it; revisit if the knob outgrows benching.
             "rerank_model_requested": std::env::var("KREMORY_RERANK_MODEL")
                 .ok()
                 .unwrap_or_else(|| "bge-base (default)".to_string()),
             "prometheus": cfg!(feature = "prometheus"),
-            // TD-202: the identity of THE BINARY THAT IS SERVING, observed by the
+            // The identity of THE BINARY THAT IS SERVING, observed by the
             // process from its own executable file.
             //
             // The bench provenance stamp previously recorded only
@@ -346,7 +343,7 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
                 "rrf_k": scoring.rrf_k,
                 "graph_degree_weight": scoring.graph_degree_weight,
                 "temporal_weight": scoring.temporal_weight,
-                // TD-136 dense episode arm — surfaced so the bench provenance
+                // Dense episode arm — surfaced so the bench provenance
                 // stamp records whether KREMORY_EPISODE_DENSE was active (the
                 // dense-vs-BM25 A/B is otherwise invisible in the recall-run JSON).
                 "episode_dense_enabled": scoring.episode_dense_enabled,
@@ -365,12 +362,12 @@ struct CreateMemoryBody {
     namespace: String,
     #[serde(default)]
     published_at: Option<String>,
-    /// Conversation/thread key (ADR-080). Forwarded to `RememberRequest`, which
+    /// Conversation/thread key. Forwarded to `RememberRequest`, which
     /// maps a bare source id to `SourceKind::Chat` — i.e. `.from_chat(id)`.
     ///
     /// Two episodes posted with the SAME `source_id` are two turns of one
     /// conversation, which is what makes prior-turn replay reachable over this
-    /// transport. Omitted (the pre-ADR-080 behaviour) means every episode gets a
+    /// transport. Omitted (the previous behaviour) means every episode gets a
     /// fresh uuid and nothing can replay, so this is strictly additive.
     #[serde(default)]
     source_id: Option<String>,
@@ -413,8 +410,8 @@ enum SearchMode {
     Recall,
     Content,
     // Default is `hybrid` (RRF fusion of the entity/fact recall stream + the BM25
-    // content stream), NOT the entity-graph `recall` surface. The 2026-07-21 LoCoMo
-    // diagnostic (memory `project_kremory_locomo_recall_root_cause_retrieval_surface`)
+    // content stream), NOT the entity-graph `recall` surface. A LoCoMo
+    // diagnostic run (memory `project_kremory_locomo_recall_root_cause_retrieval_surface`)
     // showed the entity-graph `recall` surface judged only 40.2% vs 71.4% once the
     // content stream is RRF-fused in — a consumer hitting `/search` with no `?mode=`
     // must get the surface that actually answers, not the net-negative-on-LoCoMo
@@ -437,7 +434,7 @@ struct SearchQuery {
     /// rows; `text` returns kremory's prompt-ready rendering of the same
     /// recall, chosen by [`SearchQuery::template`].
     ///
-    /// Added 2026-07-28 (ADR-078 / TD-155). This endpoint previously HARDCODED
+    /// This endpoint previously HARDCODED
     /// `RecallFormat::Structured` and discarded the template, so a REST caller
     /// could not reach the prompt-ready rendering at all — even though the MCP
     /// tool surface has always exposed both and **defaults to `Text` +
@@ -467,13 +464,12 @@ struct SearchQuery {
     template: RecallTemplateWire,
 }
 
-/// What a `/search` result item IS — TD-139 measurement prerequisite
-/// (`.ai-docs/tech-debt/tech-debt-register.md` "TD-139", the "⚠️ MEASUREMENT
-/// PREREQUISITE" block). Additive wire metadata: existing consumers (the
-/// LoCoMo harness) read only `id`/`content`/`score` and are unaffected by
-/// this enum's presence. `Fact` is emitted by `recall_mode_results` (below)
+/// What a `/search` result item IS. Additive wire metadata: existing
+/// consumers (the LoCoMo harness) read only `id`/`content`/`score` and are
+/// unaffected by this enum's presence. `Fact` is emitted by
+/// `recall_mode_results` (below)
 /// once the entity+content fusion `handlers::do_recall` → `.raw()` reaches
-/// includes a dense-fact-arm entry (TD-139 DoD item 2,
+/// includes a dense-fact-arm entry (
 /// `core::search::rrf_fuse_with_facts`, feature-gated + default-OFF via
 /// `SearchConfig::fact_dense_enabled` — absent that knob, no `Fact` item ever
 /// appears, so this variant is dormant-but-wired on a default build, not
@@ -490,7 +486,7 @@ enum SearchResultKindWire {
     /// `mode=content` / the content arm of `mode=hybrid` — a BM25-matched
     /// episode passage (`ContentPassage`).
     Episode,
-    /// TD-139 DoD item 2: a dense-fact-arm hit
+    /// A dense-fact-arm hit
     /// (`core::search::vector_search_facts`, fused via `rrf_fuse_with_facts`)
     /// — `entity_type_name == "Fact"` on the underlying `RetrievedContext`
     /// is `recall_mode_results`'s discriminator for this variant.
@@ -502,7 +498,7 @@ struct SearchResultWire {
     id: String,
     content: String,
     score: f32,
-    /// TD-139 measurement prerequisite: what this item IS. See
+    /// What this item IS. See
     /// [`SearchResultKindWire`].
     kind: SearchResultKindWire,
     /// Populated ONLY when `kind == Fact`: the episode this fact was
@@ -538,11 +534,11 @@ async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // TD-155 (fixed further by TD-196): `format=text` returns kremory's OWN
+    // `format=text` returns kremory's OWN
     // prompt-ready rendering instead of the flattened rows. It is the
     // rendering the MCP tool surface has always defaulted to.
     //
-    // TD-196: `format=text` previously read `query.mode` ONLY to gate
+    // `format=text` previously read `query.mode` ONLY to gate
     // `mode=content` (422) below, and otherwise ALWAYS retrieved via a
     // single `handlers::do_recall(format: Text)` call regardless of whether
     // the caller asked for `mode=recall` or `mode=hybrid` — i.e. `mode` was
@@ -550,7 +546,7 @@ async fn search(
     // `format=text` under the default `mode=hybrid` therefore silently got
     // `mode=recall`-quality retrieval (measured on conv0: 77.2 vs 82.1
     // recall@10, 63.9 vs 69.6 nDCG@10 — hybrid is the better arm on every
-    // metric, see TD-196).
+    // metric).
     //
     // Retrieval and rendering are now separated by construction: `mode` is
     // matched HERE, exactly as it is below for `format=structured`, to fetch
@@ -604,14 +600,15 @@ async fn search(
         as_of: None,
         format: RecallFormat::Structured,
         template: query.template,
-        // TD-134 measurement: the TD-062 reranker is exposed on this bench/eval
+        // The cross-encoder reranker is exposed on this bench/eval
         // REST route via the `KREMORY_RERANK_K` boot override (read once into the
         // `RERANK_K` static above), mirroring the `KREMORY_RRF_K` sweep pattern so
-        // the LoCoMo A/B costs a server restart, not a rebuild. `None` ⇒ rerank off
-        // (pre-TD-134 behaviour). Deep-pool discipline: the reranker sees exactly
+        // an A/B costs a server restart, not a rebuild. `None` ⇒ rerank off
+        // by default. Deep-pool discipline: the reranker sees exactly
         // the caller's `k` items (harness `--recall-limit 50`), reordered then
-        // scored at top-10 downstream by evidence_eval.py (rank-aware, order-blind
-        // substring scorer would read 0 — CLAUDE.md Rule 36).
+        // scored at top-10 downstream by evidence_eval.py — a rank-aware scorer
+        // is required here, since an order-blind substring scorer cannot
+        // detect a reordering-only change at all.
         rerank_k: *RERANK_K,
     };
     let results = match query.mode {
@@ -635,7 +632,7 @@ async fn search(
 /// Fetch the entity/fact recall arm's item SET (`handlers::do_recall`,
 /// structured format) WITHOUT flattening it into the `format=structured`
 /// wire shape — the retrieval half of `recall_mode_results`, extracted so
-/// TD-196's `format=text` path can consume the same full-fidelity items
+/// the `format=text` path can consume the same full-fidelity items
 /// [`retrieved_context_wire_to_search_result`] flattens for `mode=recall`.
 /// `RecallStructuredOutput.results: Vec<RetrievedContextWire>` already IS
 /// this full-fidelity shape — see `params.rs`.
@@ -654,10 +651,10 @@ async fn fetch_recall_items(
 
 /// Flatten one entity/fact recall-arm item into the `format=structured`
 /// wire shape. Extracted verbatim from `recall_mode_results`'s former
-/// inline closure (TD-196) — same logic, same output, now also reusable by
+/// inline closure — same logic, same output, now also reusable by
 /// [`fetch_recall_items`]'s other consumer.
 fn retrieved_context_wire_to_search_result(r: &RetrievedContextWire) -> SearchResultWire {
-    // TD-139 DoD item 2: a dense-fact-arm hit is lifted into the
+    // A dense-fact-arm hit is lifted into the
     // entity+content fusion as a synthetic `RetrievedContext` with
     // `entity_type_name == "Fact"`
     // (`core::search::fact_hit_into_retrieved_context`'s
@@ -666,7 +663,7 @@ fn retrieved_context_wire_to_search_result(r: &RetrievedContextWire) -> SearchRe
     // defaults `false`, so no live result carries this tag unless
     // the knob is on.
     //
-    // ADR-078 Phase A FIX (2026-07-28): `"ContentPassage"` was NOT
+    // FIXED: `"ContentPassage"` was previously NOT
     // mapped, so every content-arm hit on this path was reported as
     // `kind: Entity` — i.e. a consumer was told that VERBATIM EPISODE
     // TEXT is a derived entity summary. Measured on conv0: 3980 of 3980
@@ -695,7 +692,7 @@ fn retrieved_context_wire_to_search_result(r: &RetrievedContextWire) -> SearchRe
         // `source_episode_ids` (`RetrievedFactWire`, params.rs) but
         // that provenance is discarded by `flatten_result_content`'s
         // join — an entity item is not itself a fact, so no single
-        // episode id applies here. TD-139 leaves this loss in place
+        // episode id applies here. This loss is left in place
         // deliberately: splitting facts out of `flatten_result_content`
         // would change this arm's result count/content, which the
         // DoD requires to stay byte-identical. A `Fact`-kind item is
@@ -721,10 +718,10 @@ fn retrieved_context_wire_to_search_result(r: &RetrievedContextWire) -> SearchRe
 /// behaviour ONLY when this bin is built WITHOUT `content-search`. When
 /// `content-search` IS compiled in, `handlers::do_recall`'s `Structured`
 /// format calls `.raw()`, and `.raw()` now fuses in the content stream by
-/// default (TD-066 Increment 1, `core::search::rrf_fuse_with_content`) — see
+/// default (`core::search::rrf_fuse_with_content`) — see
 /// this module's top-level doc comment.
 ///
-/// TD-196: retrieval (`fetch_recall_items`) and flattening
+/// Retrieval (`fetch_recall_items`) and flattening
 /// (`retrieved_context_wire_to_search_result`) are now two named steps —
 /// this fn's OUTPUT is unchanged, but the retrieval step is shared with the
 /// `format=text` rendering path so `mode` genuinely selects the item set
@@ -740,7 +737,7 @@ async fn recall_mode_results(
         .collect())
 }
 
-/// `mode=content` — ADR-072 seq1 BM25-only full-text search over raw
+/// `mode=content` — BM25-only full-text search over raw
 /// `episodes.content` (`handlers::do_recall_content`), adapted into the SAME
 /// `{id, content, score}` wire contract `mode=recall` uses:
 /// `ContentPassage::episode_id` (stringified) -> `id`,
@@ -770,7 +767,7 @@ async fn content_mode_results(
 
 /// Feature-off HARD-FAIL for `mode=content`: this bin was not built with
 /// `--features content-search`, so there is no BM25 stream to serve. B1
-/// fail-loud (2026-07-22): a silent fallback to `mode=recall` here served a
+/// fail-loud: a silent fallback to `mode=recall` here served a
 /// ~40%-surface entity-only result under an explicit content/hybrid request —
 /// exactly the LoCoMo 13.9% disaster class (a fabricated garbage baseline that
 /// LOOKED like a real answer). We now REFUSE the request (`InvalidParams`/422)
@@ -795,7 +792,7 @@ async fn content_mode_results(
 }
 
 /// Lift one BM25 `ContentPassage` (`mode=content`'s raw arm) into this
-/// crate's `RetrievedContextWire` DTO shape (TD-196) — so the `format=text`
+/// crate's `RetrievedContextWire` DTO shape — so the `format=text`
 /// rendering path can carry a content-arm item with the SAME full-fidelity
 /// type the entity/fact arm's [`fetch_recall_items`] already returns, and
 /// fuse both through one [`rrf_merge`] + one renderer.
@@ -808,7 +805,7 @@ async fn content_mode_results(
 /// (the SAME discriminator `retrieved_context_wire_to_search_result` already
 /// keys its `kind` mapping off of).
 ///
-/// **TD-198 — deliberately NOT folded into the [`kremory::memory::RenderableContext`]
+/// **Deliberately NOT folded into the [`kremory::memory::RenderableContext`]
 /// trait that replaced `render_entities_wire`/`render_edge_summary_wire`/
 /// `render_temporal_facts_wire`.** That trait is READ-ONLY (accessors over an
 /// already-built value); this fn is a CONSTRUCTOR, a different shape of
@@ -822,8 +819,8 @@ async fn content_mode_results(
 /// construction; this fn's caller does no such fusion step, so it must bake
 /// in the real `passage.score` at construction time or the score would ship
 /// as a permanent `0.0`. Sharing one body would require threading that
-/// call-site difference through — out of scope here. Recorded as
-/// knowingly-remaining duplication in TD-198's register entry rather than
+/// call-site difference through — out of scope here. This is recorded as
+/// knowingly-remaining duplication rather than
 /// silently left as-is.
 #[cfg(feature = "content-search")]
 fn content_passage_into_context_wire(
@@ -844,7 +841,7 @@ fn content_passage_into_context_wire(
 }
 
 /// Fetch the BM25 content arm's item SET in the SAME full-fidelity
-/// `RetrievedContextWire` shape [`fetch_recall_items`] returns (TD-196) —
+/// `RetrievedContextWire` shape [`fetch_recall_items`] returns —
 /// the retrieval half of `content_mode_results`, lifted via
 /// [`content_passage_into_context_wire`] instead of flattened into
 /// [`SearchResultWire`]. `content_mode_results` itself is UNCHANGED and
@@ -866,16 +863,15 @@ async fn fetch_content_items(
 }
 
 /// `mode=hybrid` (the DEFAULT) — runs BOTH `mode=recall` and `mode=content`
-/// and RRF-fuses them via [`rrf_merge`]. The Arch-1a fusion/fairness decision
-/// (benchmark-completion-roadmap) was resolved by the 2026-07-21 LoCoMo
-/// diagnostic: RRF fusion over the entity/fact recall stream + the BM25 content
+/// and RRF-fuses them via [`rrf_merge`]. The fusion/fairness decision
+/// was resolved by an earlier LoCoMo
+/// diagnostic run: RRF fusion over the entity/fact recall stream + the BM25 content
 /// stream. Note (measured): the two streams have disjoint id-spaces
 /// (entity-ids vs episode-ids), so RRF ≈ the prior `naive_merge` on this
 /// benchmark (both 70.4%); the lift over `recall`-only (40.2%) is from ADDING
 /// the content stream.
 ///
-/// DONE (TD-066 Increment 1, `.ai-docs/specs/td-066-recall-scoring-
-/// foundation-spec-2026-07-21.md` §3): this fusion has been ported into
+/// This fusion has been ported into
 /// `core::search::rrf_fuse_with_content` and wired into `Memory::recall()`'s
 /// `.raw()`/`execute()` terminals — the library `recall()` + MCP
 /// `kremory_recall` now reach it too. This fn + [`rrf_merge`] are kept as
@@ -901,18 +897,17 @@ async fn hybrid_mode_results(
     // WITHOUT dropping surfaced answers (the answer ranks near the top). Honour
     // `k` when given; absent it, bound hybrid to at most its largest single arm
     // so the union never floods past what either mode alone would return.
-    // TD-173: absent an explicit `k`, the bound is the FULL deduped union,
-    // matching the library's `core::search::rrf_fuse_with_content` (TD-138
-    // regression fix). It previously read `recall.len().max(content.len())` —
+    // Absent an explicit `k`, the bound is the FULL deduped union,
+    // matching the library's `core::search::rrf_fuse_with_content`. It
+    // previously read `recall.len().max(content.len())` —
     // an expression that assumes the two arms OVERLAP so `union ≈ max`. They
     // do not: `rrf_merge`'s own doc records the streams as having DISJOINT
     // id-spaces (entity-ids vs episode-ids), so `.max()` silently dropped
     // `min(recall, content)` distinct results with no error and no warning.
     //
     // Note the direction of travel: `.max()` ORIGINATED here and was specified
-    // INTO the library (`specs/td-066-recall-scoring-foundation-spec-
-    // 2026-07-21.md` Increment 1 step 2 — "matching the REST fix's fallback").
-    // TD-138 then fixed the library and nothing propagated back to the source.
+    // INTO the library ("matching the REST fix's fallback"). The library was
+    // later fixed and nothing propagated back to the source.
     //
     // The bench never hit this (`bench/common/kremory_client.py:145` always
     // sends `k`); consumers of `GET /search?mode=hybrid` — the DEFAULT mode —
@@ -945,7 +940,7 @@ async fn hybrid_mode_results(
     )))
 }
 
-/// `format=text`'s `mode=hybrid` item set (TD-196) — the retrieval-only
+/// `format=text`'s `mode=hybrid` item set — the retrieval-only
 /// twin of [`hybrid_mode_results`], operating on the full-fidelity
 /// `RetrievedContextWire` shape ([`fetch_recall_items`] +
 /// [`fetch_content_items`]) instead of the flattened `format=structured`
@@ -1000,7 +995,7 @@ async fn hybrid_items_for_render(
 /// kremory's answer to hybrid ranking").
 ///
 /// Rationale (`.ai-docs/research/v011-recall-redesign/W2-hybrid-scoring.md` +
-/// the 2026-07-21 LoCoMo diagnostic, memory
+/// a LoCoMo diagnostic run, memory
 /// `project_kremory_locomo_recall_root_cause_retrieval_surface`): RRF is the
 /// tune-free dominant fusion across Elastic/Weaviate/Graphiti; kremory already
 /// uses RRF_K=60 in `search.rs`. The naive 1:1 interleave DILUTED the content
@@ -1010,7 +1005,7 @@ async fn hybrid_items_for_render(
 /// 1/(RRF_K + rank_list(d))`, rank 1-based; dedup by id (a result present in
 /// both streams accrues both contributions). Deterministic: fused-score desc,
 /// then id asc on ties.
-/// Truncation bound for the fused hybrid result set (TD-173).
+/// Truncation bound for the fused hybrid result set.
 ///
 /// Extracted from [`hybrid_mode_results`] so the invariant it encodes is
 /// nameable and testable. The invariant is an EQUIVALENCE, not an arithmetic
@@ -1026,8 +1021,8 @@ async fn hybrid_items_for_render(
 /// It previously read `recall_len.max(content_len)` — an expression that is
 /// only correct if the two arms OVERLAP. They do not: see [`rrf_merge`]'s doc
 /// on the disjoint entity-id/episode-id spaces. For disjoint arms `.max()`
-/// silently discards `min(recall_len, content_len)` distinct results, the same
-/// defect TD-138 fixed on the library side and did not fix here.
+/// silently discards `min(recall_len, content_len)` distinct results — the same
+/// defect that was fixed on the library side but not here.
 fn fused_cap(k: Option<usize>, recall_len: usize, content_len: usize) -> usize {
     k.unwrap_or(recall_len + content_len)
 }
@@ -1036,7 +1031,7 @@ fn fused_cap(k: Option<usize>, recall_len: usize, content_len: usize) -> usize {
 /// mutable score. Implemented for both [`SearchResultWire`] (the
 /// `format=structured` shape `hybrid_mode_results` fuses) and
 /// [`RetrievedContextWire`] (the full-fidelity shape
-/// [`hybrid_items_for_render`] fuses for `format=text`, TD-196) so ONE
+/// [`hybrid_items_for_render`] fuses for `format=text`) so ONE
 /// fusion function serves both — the alternative (a second, hand-rolled
 /// merge over the rich shape) would be exactly the "duplicated merge logic"
 /// this trait exists to avoid.
@@ -1071,7 +1066,7 @@ impl RrfItem for RetrievedContextWire {
 }
 
 fn rrf_merge<T: RrfItem>(a: Vec<T>, b: Vec<T>, rrf_k: usize) -> Vec<T> {
-    // recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): `k` is now the
+    // `k` is now the
     // boot-read `KREMORY_RRF_K` value (AppState.rrf_k), NOT a hardcoded
     // `const RRF_K = 60.0`, so this bin-local hybrid-fusion sweep site tracks
     // the same k as the library fusion sites.
@@ -1106,7 +1101,7 @@ fn rrf_merge<T: RrfItem>(a: Vec<T>, b: Vec<T>, rrf_k: usize) -> Vec<T> {
 }
 
 /// Render an already-computed `format=text` item set into kremory's
-/// prompt-ready text block (TD-196) — the `format=text` twin of
+/// prompt-ready text block — the `format=text` twin of
 /// [`SearchResponseWire`]'s JSON serialization for `format=structured`.
 /// Retrieval and rendering are two SEPARATE steps by construction: this fn
 /// takes the item set `mode` already selected ([`fetch_recall_items`] /
@@ -1115,7 +1110,7 @@ fn rrf_merge<T: RrfItem>(a: Vec<T>, b: Vec<T>, rrf_k: usize) -> Vec<T> {
 /// could silently substitute a different item set.
 ///
 /// Calls `kremory::memory::render_entities` / `render_edge_summary` /
-/// `render_temporal_facts` directly (TD-198) — these are generic over
+/// `render_temporal_facts` directly — these are generic over
 /// `kremory::memory::RenderableContext`, which [`RetrievedContextWire`]
 /// implements (`conversions.rs`), so this crate no longer needs its own
 /// hand-mirrored copies of the three renderer bodies. Only the multi-
@@ -1165,16 +1160,16 @@ struct ConsolidationQuery {
     /// FRICTION (flagged per task instructions): codemem's own harness posts
     /// `/consolidation/{cycle}` with NO namespace at all (global consolidation
     /// in codemem's data model) — but `kremory::Memory::dream()` is always
-    /// namespace-scoped (ADR-048 three-signal local-first consistency check
+    /// namespace-scoped (the three-signal local-first consistency check
     /// operates per-namespace). There is no lossless mapping from codemem's
     /// global-consolidation semantics to kremory's namespace-scoped `dream()`.
     ///
-    /// FAIL-LOUD (Quinn HIGH): this param is REQUIRED, not defaulted. An
+    /// FAIL-LOUD: this param is REQUIRED, not defaulted. An
     /// earlier draft fell back to a single `"default"` namespace when omitted,
     /// which would have pointed every benchmark conversation at one shared
     /// scope. Missing `?namespace=` is a loud 422 (see `run_consolidation`).
     ///
-    /// ⚠️ **CORRECTED 2026-08-06 — the original rationale here was WRONG.** It
+    /// ⚠️ **CORRECTION — the original rationale here was WRONG.** It
     /// argued the 422 was needed because *"dream idempotency is keyed on
     /// `(namespace, batch_id)`, so every benchmark consolidation call would
     /// share `(default, <cycle>)` and only the FIRST would execute; the rest
@@ -1183,7 +1178,7 @@ struct ConsolidationQuery {
     /// so repeated calls re-run in full — they do not no-op. The 422 remains
     /// CORRECT, but for the simpler reason stated above (namespace scoping),
     /// not for the mechanism the old comment invoked. Left in place because
-    /// requiring the namespace is right either way; see TD-188.
+    /// requiring the namespace is right either way.
     namespace: Option<String>,
 }
 
@@ -1218,8 +1213,8 @@ async fn run_consolidation(
 
 /// Collapse a request path to its top-level route group (`/namespaces/conv0` →
 /// `/namespaces`) so the latency metric's `route` label has bounded cardinality
-/// (recall-v2 o11y / TD-132 — the per-conversation namespace is a cardinality
-/// bomb if used raw).
+/// — the per-conversation namespace is a cardinality
+/// bomb if used raw.
 fn route_label(path: &str) -> String {
     match path.split('/').nth(1) {
         Some(seg) if !seg.is_empty() => format!("/{seg}"),
@@ -1227,7 +1222,7 @@ fn route_label(path: &str) -> String {
     }
 }
 
-/// Per-request latency + TTFB observability (TD-132). For these non-streaming
+/// Per-request latency + TTFB observability. For these non-streaming
 /// JSON handlers request-duration IS the TTFB. Dual-emit per ratified ADR-D1:
 /// a `metrics` histogram (rendered at `/metrics` when the `prometheus` feature
 /// installs a recorder; a no-op otherwise) AND an always-on `tracing::info` so
@@ -1267,7 +1262,7 @@ fn build_router(state: AppState) -> Router {
         .route("/search", get(search))
         .route("/namespaces/{ns}", delete(delete_namespace))
         .route("/consolidation/{cycle}", post(run_consolidation))
-        // Outermost app layer — times the WHOLE request (TD-132).
+        // Outermost app layer — times the WHOLE request.
         .layer(middleware::from_fn(track_request_latency))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -1284,8 +1279,8 @@ async fn main() -> Result<()> {
     // KREMORY_DEBUG=1: surface the raw-payload `tracing::debug!` dumps the
     // extraction parsers already emit (parsers.rs) — without this directive
     // the default `info` filter (or a `RUST_LOG` that doesn't mention this
-    // target) silently drops them, which is exactly the gap that made the
-    // 2026-07-20 empty-fact-graph bug hard to diagnose. This only adds
+    // target) silently drops them, which is exactly the gap that made an
+    // empty-fact-graph bug hard to diagnose. This only adds
     // VERBOSITY; it never gates the always-on `rql.extraction.*` C2 alarm
     // metrics/warnings, which fire regardless of KREMORY_DEBUG.
     if std::env::var("KREMORY_DEBUG").is_ok() {
@@ -1303,7 +1298,7 @@ async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|e| anyhow!("failed to install tracing subscriber: {e}"))?;
 
-    // B1 fail-loud (2026-07-22): announce the content-search capability at boot so
+    // B1 fail-loud: announce the content-search capability at boot so
     // an operator can NEVER unknowingly run a degraded (recall-only) server behind
     // the default `mode=hybrid`. Without the feature, content/hybrid requests now
     // hard-fail (422) rather than silently degrading — this banner is the paired
@@ -1386,7 +1381,7 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to open kremory Memory at {db_path}"))?,
     };
 
-    // TD-136 (dense episode retrieval): one-shot maintenance subcommand
+    // Dense episode retrieval: one-shot maintenance subcommand
     // `kremory-http backfill-episode-embeddings [batch_size]` — embed + store
     // `episodes.embedding` for the existing corpus (populating `episodes_vec_idx`
     // from Migration 026), then exit WITHOUT starting the HTTP server. Run this
@@ -1401,7 +1396,7 @@ async fn main() -> Result<()> {
                 .unwrap_or(256);
             tracing::info!(
                 batch_size,
-                "kremory-http: running episode-embedding backfill (TD-136), then exiting"
+                "kremory-http: running episode-embedding backfill, then exiting"
             );
             let stats = mem
                 .backfill_episode_embeddings(batch_size)
@@ -1428,7 +1423,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): one-shot
+    // One-shot
     // maintenance subcommand `kremory-http reembed-episode-embeddings
     // [batch_size]` — re-embed EVERY episode's `content` (overwriting any
     // vector already stored), then exit WITHOUT starting the HTTP server.
@@ -1448,7 +1443,7 @@ async fn main() -> Result<()> {
                 .unwrap_or(256);
             tracing::info!(
                 batch_size,
-                "kremory-http: running full episode-embedding re-embed (TD-143), then exiting"
+                "kremory-http: running full episode-embedding re-embed, then exiting"
             );
             let stats = mem
                 .reembed_all_episode_embeddings(batch_size)
@@ -1475,15 +1470,15 @@ async fn main() -> Result<()> {
         }
     }
 
-    // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112): one-shot
+    // One-shot
     // maintenance subcommand `kremory-http reembed-entity-embeddings
     // [batch_size]` — re-embed EVERY entity's display name (overwriting any
     // vector already stored), then exit WITHOUT starting the HTTP server.
     // Sibling of `reembed-episode-embeddings` above — remedies BOTH a live
     // correctness bug (entity embeddings go stale after a dream-phase
-    // merge/alias) and de-confounds a clean TD-143 A/B (that A/B previously
+    // merge/alias) and de-confounds a clean episode-re-embed A/B (that A/B previously
     // only re-embedded episodes, leaving entity/fact arms in a mismatched
-    // task space — see TD-112's register entry). Requires the
+    // task space). Requires the
     // `content-search` feature.
     if std::env::args().nth(1).as_deref() == Some("reembed-entity-embeddings") {
         #[cfg(feature = "content-search")]
@@ -1494,7 +1489,7 @@ async fn main() -> Result<()> {
                 .unwrap_or(256);
             tracing::info!(
                 batch_size,
-                "kremory-http: running full entity-embedding re-embed (TD-112), then exiting"
+                "kremory-http: running full entity-embedding re-embed, then exiting"
             );
             let stats = mem
                 .reembed_all_entity_embeddings(batch_size)
@@ -1520,7 +1515,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // TD-112: one-shot maintenance subcommand `kremory-http
+    // One-shot maintenance subcommand `kremory-http
     // reembed-fact-embeddings [batch_size]` — re-embed EVERY fact's `subject
     // predicate object` triple text (overwriting any vector already stored),
     // then exit WITHOUT starting the HTTP server. Run entity re-embed FIRST
@@ -1536,7 +1531,7 @@ async fn main() -> Result<()> {
                 .unwrap_or(256);
             tracing::info!(
                 batch_size,
-                "kremory-http: running full fact-embedding re-embed (TD-112), then exiting"
+                "kremory-http: running full fact-embedding re-embed, then exiting"
             );
             let stats = mem
                 .reembed_all_fact_embeddings(batch_size)
@@ -1562,13 +1557,13 @@ async fn main() -> Result<()> {
         }
     }
 
-    // TD-112: convenience subcommand `kremory-http reembed-all-embeddings
+    // Convenience subcommand `kremory-http reembed-all-embeddings
     // [batch_size]` — runs all three bulk re-embeds (episode, entity, fact)
     // in sequence, in the dependency-correct order (entities BEFORE facts,
     // since fact text is resolved from entity rows), then exits. This is
-    // what a clean full-corpus TD-143 A/B actually needs — re-embedding
-    // episodes alone leaves entity/fact arms in a mismatched task space (the
-    // exact confound TD-112 was filed to close). Requires `content-search`.
+    // what a clean full-corpus re-embed A/B actually needs — re-embedding
+    // episodes alone leaves entity/fact arms in a mismatched task space.
+    // Requires `content-search`.
     if std::env::args().nth(1).as_deref() == Some("reembed-all-embeddings") {
         #[cfg(feature = "content-search")]
         {
@@ -1578,7 +1573,7 @@ async fn main() -> Result<()> {
                 .unwrap_or(256);
             tracing::info!(
                 batch_size,
-                "kremory-http: running full episode+entity+fact re-embed (TD-112/TD-143), \
+                "kremory-http: running full episode+entity+fact re-embed, \
                  then exiting"
             );
             let episodes = mem
@@ -1623,7 +1618,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // TD-132 / ratified ADR-D2: the CONSUMER binary installs the recorder (the
+    // The CONSUMER binary installs the recorder (the
     // `kremory` lib never does). A Prometheus PULL exporter (HTTP is scrapeable;
     // the sibling stdio bin uses a different channel — hence the `prometheus`
     // feature gate). This makes the already-emitted `kremory_core_*` metrics
@@ -1634,7 +1629,7 @@ async fn main() -> Result<()> {
         .install_recorder()
         .context("failed to install Prometheus recorder")?;
 
-    // recall-improvement-e2e-spec-2026-07-22 §S0-infra (R2): read the
+    // Read the
     // search-fusion SWEEP knobs at boot so weight/`k` sweeps cost a restart, not
     // a rebuild. `KREMORY_RRF_K` feeds the bin-local `rrf_merge` (hybrid arm);
     // the library fusion sites (`context.rs` entity RRF + `rrf_fuse_with_content`
@@ -1642,10 +1637,9 @@ async fn main() -> Result<()> {
     // `facade::providers::search_env_overrides`. `KREMORY_CONTENT_WEIGHT` is
     // consumed by the library — read here only for the authoritative boot
     // banner. Fail-loud: a malformed `KREMORY_RRF_K` WARNs + falls back to 1
-    // (never silently accepted as garbage). Default flipped 60 -> 1 on
-    // 2026-09-07 alongside `SearchConfig::default().rrf_k` — measured win on
-    // the full LoCoMo corpus (tech-debt-register.md "steal-matrix-rescore
-    // item 7 RESULT"); kept in sync here so this bin-local hybrid-fusion
+    // (never silently accepted as garbage). Default flipped 60 -> 1
+    // alongside `SearchConfig::default().rrf_k` — measured win on
+    // the full LoCoMo corpus; kept in sync here so this bin-local hybrid-fusion
     // sweep site still tracks the library default, per this fn's own doc
     // comment below ("tracks the same k as the library fusion sites").
     let rrf_k: usize = match std::env::var("KREMORY_RRF_K") {
@@ -1795,9 +1789,9 @@ mod tests {
         assert_eq!(content, "Grace Hopper: a computer scientist");
     }
 
-    // ─── TD-198: HTTP-path render_prompt_block vs library-path context_block
-    // must be byte-identical for the same logical item — the guard the
-    // register recorded as "currently unguardable by test" before the
+    // ─── HTTP-path render_prompt_block vs library-path context_block
+    // must be byte-identical for the same logical item — this was previously
+    // unguardable by test, before the
     // `RenderableContext` trait made both paths call the SAME generic fn. ──
 
     /// The item is built ONCE as a real `kremory::RetrievedContext` (using
@@ -1811,11 +1805,11 @@ mod tests {
     /// NOT `#[non_exhaustive]` (`memory/types.rs:311`), so this test's item
     /// genuinely exercises the source_refs render path on both sides.
     ///
-    /// SUPERSEDED (TD-199, 2026-08-11): this doc comment previously said
+    /// SUPERSEDED: this doc comment previously said
     /// `RetrievedFact` had "NO public constructor anywhere in the crate" and
     /// so this fixture "exercises the facts=empty fallback branch, not the
-    /// facts-populated branch". That claim was the root cause Quinn's LOW-1
-    /// named on the TD-198 review: the constructor gap was real, but the
+    /// facts-populated branch". That claim was itself the root cause: the
+    /// constructor gap was real, but the
     /// fix was to ADD the constructor (`RetrievedFact::new` +
     /// `RetrievedContext::with_facts`/`with_entity_type`), not to accept the
     /// coverage gap as permanent. The fixture below now carries one fact and
@@ -1840,7 +1834,7 @@ mod tests {
             .expect("valid fixed RFC-3339 fixture timestamp")
             .with_timezone(&chrono::Utc);
 
-        // TD-199: built via the new public constructor + fluent setter — the
+        // Built via the new public constructor + fluent setter — the
         // fixture this test needed all along, and previously impossible from
         // outside the `kremory` crate.
         let fact = RetrievedFact::new(RetrievedFactNewParams {
@@ -1878,10 +1872,10 @@ mod tests {
         // NON-VACUITY precondition — a test that could pass by rendering
         // nothing proves nothing. Measured baseline (recorded so a future
         // reader doesn't have to re-derive it): 1 item, 1 source_ref, 1 fact
-        // (with `invalid_at` set — TD-199 closes the facts=empty gap Quinn
-        // found on TD-198's original fixture).
+        // (with `invalid_at` set — this closes the facts=empty gap in the
+        // original fixture).
         assert_eq!(core_ctx.source_refs.len(), 1, "fixture must carry a source_ref");
-        assert_eq!(core_ctx.facts.len(), 1, "fixture must carry a fact — see TD-199");
+        assert_eq!(core_ctx.facts.len(), 1, "fixture must carry a fact");
 
         let wire_ctx: RetrievedContextWire = core_ctx.clone().into();
 
@@ -1906,13 +1900,13 @@ mod tests {
             assert_eq!(
                 library_out, http_out,
                 "{core_template:?}: HTTP-path render_prompt_block and library-path \
-                 context_block diverged for the same logical item — TD-198's guard failed"
+                 context_block diverged for the same logical item"
             );
         }
     }
 
-    // ─── SearchResultWire::kind / source_episode_id (TD-139 measurement
-    // prerequisite) — pure serialization, no live arm emits `Fact` yet ────
+    // ─── SearchResultWire::kind / source_episode_id
+    // — pure serialization, no live arm emits `Fact` yet ────
 
     /// Entity and Episode items (the two kinds every live arm emits today)
     /// serialize `source_episode_id` as `null` — proves the ADDITIVE fields
@@ -1942,8 +1936,8 @@ mod tests {
         assert!(pj["source_episode_id"].is_null(), "episode: {pj}");
     }
 
-    /// A Fact-kind item — not yet emitted by any live path (TD-139 DoD item
-    /// 2 is a later, separately-measured change) — carries its source
+    /// A Fact-kind item — not yet emitted by any live path (a later,
+    /// separately-measured change wires the arm that would emit it) — carries its source
     /// episode id on the wire. This is the shape `bench/locomo/
     /// evidence_eval.py`'s fact-resolution path (Part B) depends on: proves
     /// the wire CAN carry the provenance before the arm that would populate
@@ -1979,7 +1973,7 @@ mod tests {
     }
 
     /// Pin a mode-(c) fact directly through the shared handler so the entity
-    /// is recall-findable with mock providers (TD-113 stamps the FTS name +
+    /// is recall-findable with mock providers (the pin path stamps the FTS name +
     /// embedding at PIN time — no live LLM / enrichment seam needed, same as
     /// `handler_roundtrip.rs::recall_structured_surfaces_pinned_fact...`).
     async fn pin_fact(mem: &Memory, namespace: &str, subject: &str) {
@@ -2084,12 +2078,12 @@ mod tests {
                 r["score"].as_f64().is_some(),
                 "result.score must be numeric: {r}"
             );
-            // TD-139: `mode=recall` items carry no per-fact episode provenance
+            // `mode=recall` items carry no per-fact episode provenance
             // (the connected facts' own `source_episode_ids` are discarded by
             // `flatten_result_content`'s join — see the doc comment on
             // `SearchResultWire::source_episode_id`).
             //
-            // ⚠️ AMENDED 2026-07-28 (ADR-078 / TD-154). This previously asserted
+            // ⚠️ AMENDED. This previously asserted
             // `kind == "entity"` for EVERY `mode=recall` item — which **encoded
             // the bug as the contract**. In a `content-search` build the fused
             // recall path also returns content passages, and one of them
@@ -2110,7 +2104,7 @@ mod tests {
             );
         }
 
-        // POST /consolidation/{cycle} WITHOUT ?namespace= → 422 (Quinn HIGH).
+        // POST /consolidation/{cycle} WITHOUT ?namespace= → 422.
         let no_ns = Request::builder()
             .method("POST")
             .uri("/consolidation/creative")
@@ -2167,7 +2161,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    /// TD-135 / recall-improvement-e2e-spec-2026-07-22 §S0-infra: `GET /health`
+    /// `GET /health`
     /// must report the server's ACTIVE scoring config + build-feature flags so
     /// the bench harness (`provenance.build_provenance`) stamps a FAITHFUL
     /// provenance record instead of re-reading the harness process's env (which
@@ -2219,7 +2213,7 @@ mod tests {
         );
 
         // Scoring block reflects the LIVE (env-overridden) SearchConfig — NOT a
-        // hardcoded default. This is the faithfulness guarantee TD-135 hinges on.
+        // hardcoded default. This is the faithfulness guarantee this test exists to prove.
         let scoring = &json["scoring"];
         assert_eq!(
             scoring["content_stream_weight"].as_f64(),
@@ -2243,7 +2237,7 @@ mod tests {
         );
     }
 
-    /// B1 fail-loud invariant (2026-07-22): on a build WITHOUT `content-search`,
+    /// B1 fail-loud invariant: on a build WITHOUT `content-search`,
     /// an explicit `mode=hybrid`/`mode=content` request MUST hard-fail (422),
     /// never silently degrade to recall-only. Silent degradation here served a
     /// ~40%-surface answer under the DEFAULT `hybrid` mode and produced the
@@ -2281,12 +2275,12 @@ mod tests {
 
     // ─── mode=content / mode=hybrid (benchmark-completion-roadmap W0.1) ──
 
-    /// `GET /search?mode=content` reaches ADR-072 seq1's BM25 FTS5 stream
+    /// `GET /search?mode=content` reaches the BM25 FTS5 stream
     /// (`handlers::do_recall_content`) rather than the entity/fact path —
     /// asserts a passage carrying the pinned subject's snippet comes back
     /// through the SAME `{id, content, score}` wire contract `mode=recall`
     /// uses.
-    /// TD-155: `GET /search?format=text` must return kremory's OWN prompt-ready
+    /// `GET /search?format=text` must return kremory's OWN prompt-ready
     /// rendering, and `format=structured` (the default) must stay byte-identical.
     ///
     /// This endpoint hardcoded `RecallFormat::Structured` and discarded
@@ -2353,7 +2347,7 @@ mod tests {
         );
     }
 
-    /// ADR-078 Phase A regression: on the FUSED recall path, a content-derived
+    /// Regression guard: on the FUSED recall path, a content-derived
     /// item must be reported as `kind: episode`, not `entity`.
     ///
     /// `recall_mode_results` matched only `entity_type_name == "Fact"` and
@@ -2367,7 +2361,7 @@ mod tests {
     /// This drives the real HTTP path end-to-end rather than calling the mapper
     /// with a hand-built `RetrievedContext` — a pure-function test would assert
     /// the arithmetic of a mapping while remaining blind to whether the fused
-    /// path reaches it at all (the TD-140 failure mode).
+    /// path reaches it at all.
     #[cfg(feature = "content-search")]
     #[tokio::test]
     async fn http_search_recall_mode_labels_content_items_as_episode() {
@@ -2447,7 +2441,7 @@ mod tests {
                 r["score"].as_f64().is_some(),
                 "result.score must be numeric: {r}"
             );
-            // TD-139 measurement prerequisite: `mode=content` items are
+            // `mode=content` items are
             // EPISODE-kind (a BM25-matched passage), never Fact.
             assert_eq!(
                 r["kind"].as_str(),
@@ -2524,7 +2518,7 @@ mod tests {
         );
     }
 
-    // ─── TD-139 DoD item 3: dense fact arm end-to-end (real recall path) ──
+    // ─── Dense fact arm end-to-end (real recall path) ──
     //
     // `pin_fact`'s caller-supplied `structured_facts` + `skip_extraction`
     // path does NOT populate `facts.embedding` — only the LLM-extraction
@@ -2533,7 +2527,7 @@ mod tests {
     // mirrors `crates/kremory/tests/facade_fact_persistence_mock.rs::
     // staged_mock`) — the ONLY way to get a real, embedded fact through the
     // real `remember()` → deferred Phase 2 → `ingest_with` path, then queries
-    // it back through the real `/search` REST route. Per the TD-140 lesson
+    // it back through the real `/search` REST route. Per the lesson that
     // (`instrument-real-data-flow-before-hypothesizing` §3), a hand-fed pure
     // function cannot prove the arm is actually WIRED — only a real
     // end-to-end run can.
@@ -2621,7 +2615,7 @@ mod tests {
         (Arc::new(mem), episode_id)
     }
 
-    /// TD-139 DoD item 3: with `fact_dense_enabled = true`, the fact
+    /// With `fact_dense_enabled = true`, the fact
     /// surfaces through the REAL `/search?mode=recall` route as
     /// `kind: "fact"` with the CORRECT `source_episode_id` — driven through
     /// the real `Memory` → `fuse_content_stream` → `rrf_fuse_with_facts` →
@@ -2659,7 +2653,7 @@ mod tests {
         );
     }
 
-    /// TD-139 DoD item 3, the gate half: with `fact_dense_enabled = false`
+    /// The gate half: with `fact_dense_enabled = false`
     /// (the default), the SAME fact — embedded identically, same query — is
     /// NEVER surfaced as `kind: "fact"`. Proves the knob gates the arm rather
     /// than the arm always firing regardless of config.
@@ -2689,7 +2683,7 @@ mod tests {
 
     /// `GET /search` with no `?mode=` now defaults to `mode=hybrid` (RRF fusion
     /// of the entity/fact recall stream + the BM25 content stream), changed from
-    /// the pre-W0.1 `recall` default per the 2026-07-21 LoCoMo diagnostic
+    /// the pre-W0.1 `recall` default per an earlier LoCoMo diagnostic run
     /// (entity-graph `recall` judged 40.2% vs 71.4% hybrid). Guard: the default
     /// arm reaches the fused surface and still finds a pinned entity.
     #[cfg(feature = "content-search")]
@@ -2723,7 +2717,7 @@ mod tests {
 
     /// Test-only `SearchResultWire` builder for the `rrf_merge` tests below,
     /// which exercise fusion arithmetic and are indifferent to `kind`/
-    /// `source_episode_id` — both new TD-139 fields default to the values an
+    /// `source_episode_id` — both new fields default to the values an
     /// `Entity`-arm result would carry (`rrf_merge`'s `..r` spread passes
     /// them through unchanged regardless).
     #[cfg(feature = "content-search")]
@@ -2737,13 +2731,13 @@ mod tests {
         }
     }
 
-    /// TD-173 regression — with NO explicit `k`, hybrid must return the full
+    /// Regression guard — with NO explicit `k`, hybrid must return the full
     /// deduped union of both arms, never `max(recall, content)`.
     ///
     /// This drives the same composition [`hybrid_mode_results`] performs — the
     /// real [`rrf_merge`] followed by the real [`fused_cap`], in that order —
     /// rather than asserting the cap arithmetic in isolation. Isolated
-    /// arithmetic is what TD-140 taught us not to trust: a test over
+    /// arithmetic hides exactly this class of bug: a test over
     /// hand-shaped inputs to one pure function passed while the knob it
     /// claimed to verify reached only one of two call sites.
     ///
@@ -2767,7 +2761,7 @@ mod tests {
             ids,
             vec!["e1", "e2", "ep7", "ep9"],
             "disjoint arms must all survive when the caller sets no limit; \
-             the pre-TD-138 `max(2, 2) = 2` bound silently dropped two of these"
+             the old `max(2, 2) = 2` bound silently dropped two of these"
         );
     }
 
@@ -2792,7 +2786,7 @@ mod tests {
     /// its *behaviour* — it catches a future edit to this bin, not a future
     /// edit to the library. Closing that gap means either making the library fn
     /// reachable for test, or collapsing this bin into a thin caller of it;
-    /// both are the open half of TD-173.
+    /// both remain open.
     #[cfg(feature = "content-search")]
     #[test]
     fn fused_cap_matches_library_no_limit_rule() {
@@ -2835,7 +2829,7 @@ mod tests {
         );
     }
 
-    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3/R4a): the bin-local
+    /// The bin-local
     /// `rrf_merge` (fusion site 3 of 3) reads its RRF `k` from the argument
     /// (boot `KREMORY_RRF_K` → `AppState.rrf_k`), NOT a hardcoded const. A
     /// different `k` must produce different fused scores on identical input,
@@ -2867,7 +2861,7 @@ mod tests {
 
     // ── parse_rerank_k (KREMORY_RERANK_K boot override) ───────────────────
     //
-    // Gap named in the TD-066/TD-062 reranker hardening pass: the boot
+    // The boot
     // override was previously inline in the `RERANK_K` `LazyLock`, which is
     // read exactly once per process and therefore untestable by
     // construction — a malformed `KREMORY_RERANK_K` would silently disable
@@ -2912,10 +2906,11 @@ mod tests {
     }
 
     /// Malformed, negative, and empty values must all disable reranking
-    /// (`None`) with a WARN, never silently accept garbage or panic. Rule 21
-    /// (parse LLM/config output loudly, never silently default) — a
+    /// (`None`) with a WARN, never silently accept garbage or panic —
+    /// config, like LLM output, must be parsed loudly, never silently
+    /// defaulted. A
     /// misconfigured boot override must fail toward "reranking off"
-    /// (pre-TD-134 behaviour), the same safe default as the var being
+    /// by default, the same safe default as the var being
     /// entirely absent.
     #[test]
     fn parse_rerank_k_rejects_malformed_negative_and_empty_values() {
@@ -2937,7 +2932,7 @@ mod tests {
         );
     }
 
-    /// TD-196: `format=text` must retrieve the SAME item set, in the SAME
+    /// `format=text` must retrieve the SAME item set, in the SAME
     /// relative ORDER, `format=structured` does for the same `mode` —
     /// proven via a scenario engineered so `mode=recall`'s single-pass
     /// internal fusion (`.raw()`) and `mode=hybrid`'s union with a SEPARATE
@@ -2949,7 +2944,7 @@ mod tests {
     ///   content fusion has to rank against)
     /// - ONE genuinely relevant content-only passage
     ///
-    /// Empirically (see TD-196 investigation), `mode=recall` ranks the
+    /// Empirically, `mode=recall` ranks the
     /// relevant passage LAST (rank 3 of 3, out-competed by the decoy +
     /// entity within its single fusion pass); `mode=hybrid` ranks it FIRST
     /// (its RRF contribution is SUMMED across both the recall arm AND the
@@ -3081,7 +3076,7 @@ mod tests {
             (Some(r), Some(d)) => assert!(
                 r < d,
                 "format=text&mode=hybrid must render the SAME item set in the SAME \
-                 order format=structured&mode=hybrid retrieves (TD-196) — the \
+                 order format=structured&mode=hybrid retrieves — the \
                  relevant passage must appear BEFORE the irrelevant decoy, not \
                  after (i.e. format=text must not silently fall back to \
                  mode=recall's ordering). Got block:\n{block}"

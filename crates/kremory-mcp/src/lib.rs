@@ -36,8 +36,8 @@
 //! Both are unified internally as [`handlers::ToolError`] so each handler can
 //! record an `outcome` label (`ok` | `invalid_params` | `internal_error`) for
 //! the `kremory_mcp.tool.calls` counter before converting to the final
-//! `ErrorData` (Critical Rule 19 — observability built in at emit, not
-//! bolted on after). `handlers::do_remember` / `do_recall` / `do_dream` are
+//! `ErrorData` — observability built in at emit, not
+//! bolted on after. `handlers::do_remember` / `do_recall` / `do_dream` are
 //! the transport-agnostic bodies, shared with the `kremory-http` REST bin
 //! (`bin/kremory-http.rs`) — see `handlers.rs` module docs.
 
@@ -102,7 +102,7 @@ impl KremoryMcpServer {
 }
 
 /// `KREMORY_MCP_DEBUG=1` — dump raw request/response JSON bodies to stderr
-/// via `tracing::debug!` (Critical Rule 19 runtime-toggle debug switch).
+/// via `tracing::debug!` — a runtime-toggle debug switch.
 /// Read once per call (cheap env lookup; the switch is not on any hot path).
 fn debug_enabled() -> bool {
     std::env::var("KREMORY_MCP_DEBUG")
@@ -120,7 +120,7 @@ fn debug_enabled() -> bool {
 /// `structured_facts` were supplied. Gating the label on
 /// `!structured_facts.is_empty()` as well would mislabel a
 /// `skip_extraction=true` + no-facts call as "extracted" even though no LLM
-/// call happened — a lying o11y counter (Critical Rule 19 #9).
+/// call happened — a lying o11y counter.
 fn remember_path_label(p: &RememberParams) -> &'static str {
     if p.skip_extraction {
         "pinned"
@@ -185,8 +185,8 @@ impl KremoryMcpServer {
         // Serialize BEFORE computing the outcome label so a serialization
         // failure (however unlikely for these output types) is reflected in
         // the `outcome` counter rather than recorded as "ok" while an error
-        // is actually returned to the caller (Critical Rule 19 #9 — the
-        // counter must reflect the FINAL result, not an intermediate one).
+        // is actually returned to the caller — the
+        // counter must reflect the FINAL result, not an intermediate one.
         let final_result: Result<CallToolResult, ErrorData> = result
             .map_err(ErrorData::from)
             .and_then(|wire| wire_to_call_result(&wire, "kremory_remember"));
@@ -309,7 +309,7 @@ impl KremoryMcpServer {
         }
 
         // Serialize BEFORE computing the outcome label — see the matching
-        // comment in `kremory_remember` above (Critical Rule 19 #9).
+        // comment in `kremory_remember` above.
         let final_result: Result<CallToolResult, ErrorData> = result
             .map_err(ErrorData::from)
             .and_then(|wire| wire_to_call_result(&wire, "kremory_dream"));
@@ -332,7 +332,7 @@ impl KremoryMcpServer {
 
     #[tool(
         name = "kremory_list_mutations",
-        description = "SEE the logged graph mutations in a namespace — the read-only inspect half of the reversible-mutations story. Lists the four LOGGED mutation kinds (entity merges, entity edits, entity deletes, fact deletes) newest-first, each carrying a mutation_id you can pass to kremory_undo. Set entity_id to scope to one entity's history (includes already-undone mutations); otherwise lists namespace-wide LIVE (still-reversible) mutations by default. Read-only — never mutates. NOTE (TD-119): this is NOT a complete 'everything dream() changed' view — dream's fact supersession, fact archival, community assignment and canonical-form writes are reversed via their own domain APIs (e.g. unsupersede / restore_archived_fact), are NOT written to the mutation log, and therefore do NOT appear here. For dream, expect only its entity merges/edits/deletes and fact deletes."
+        description = "SEE the logged graph mutations in a namespace — the read-only inspect half of the reversible-mutations story. Lists the four LOGGED mutation kinds (entity merges, entity edits, entity deletes, fact deletes) newest-first, each carrying a mutation_id you can pass to kremory_undo. Set entity_id to scope to one entity's history (includes already-undone mutations); otherwise lists namespace-wide LIVE (still-reversible) mutations by default. Read-only — never mutates. NOTE: this is NOT a complete 'everything dream() changed' view — dream's fact supersession, fact archival, community assignment and canonical-form writes are reversed via their own domain APIs (e.g. unsupersede / restore_archived_fact), are NOT written to the mutation log, and therefore do NOT appear here. For dream, expect only its entity merges/edits/deletes and fact deletes."
     )]
     pub async fn kremory_list_mutations(
         &self,
@@ -367,7 +367,7 @@ impl KremoryMcpServer {
         }
 
         // Serialize BEFORE computing the outcome label — see the matching
-        // comment in `kremory_remember` above (Critical Rule 19 #9).
+        // comment in `kremory_remember` above.
         let final_result: Result<CallToolResult, ErrorData> = result
             .map_err(ErrorData::from)
             .and_then(|wire| wire_to_call_result(&wire, "kremory_list_mutations"));
@@ -427,7 +427,7 @@ impl KremoryMcpServer {
         }
 
         // Serialize BEFORE computing the outcome label — see the matching
-        // comment in `kremory_remember` above (Critical Rule 19 #9).
+        // comment in `kremory_remember` above.
         let final_result: Result<CallToolResult, ErrorData> = result
             .map_err(ErrorData::from)
             .and_then(|wire| wire_to_call_result(&wire, "kremory_undo"));

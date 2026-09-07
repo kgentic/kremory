@@ -100,7 +100,7 @@ pub async fn do_recall(mem: &Memory, params: RecallParams) -> Result<serde_json:
     if let Some(as_of) = resolved.as_of {
         req = req.as_of(as_of);
     }
-    // TD-062 (spec §3 Increment 3) — Rule 16 web-app-ui-parity: the MCP
+    // The MCP
     // tool surface reaches the same rerank knob the Rust
     // `RecallRequest::rerank_k` builder method exposes.
     if let Some(rerank_k) = resolved.rerank_k {
@@ -128,9 +128,8 @@ pub async fn do_recall(mem: &Memory, params: RecallParams) -> Result<serde_json:
     }
 }
 
-/// Content-search sibling of [`do_recall`] (benchmark-completion-roadmap
-/// W0.1) — reaches past the entity-shaped `RetrievedContext` contract to
-/// ADR-072 seq1's BM25-only `.content()` recall terminal
+/// Content-search sibling of [`do_recall`] — reaches past the entity-shaped
+/// `RetrievedContext` contract to the BM25-only `.content()` recall terminal
 /// (`mem.recall(q).in_namespace(ns).k(k).content()`), returning the RAW,
 /// UNFUSED `kremory::memory::ContentPassage` passages directly (full
 /// matched-episode content) — a distinct wire shape from `do_recall`'s
@@ -139,16 +138,15 @@ pub async fn do_recall(mem: &Memory, params: RecallParams) -> Result<serde_json:
 /// Feature-gated behind `content-search` (mirrors kremory's own gating) —
 /// only reachable from `kremory-http`'s `/search?mode=content` (the
 /// `mode=content` arm specifically; `mode=hybrid`'s fusion now lives in
-/// `core::search::rrf_fuse_with_content`, TD-066 Increment 1). This fn is
+/// `core::search::rrf_fuse_with_content`). This fn is
 /// NEVER called by `do_recall` — but `do_recall`'s OWN wire shape is no
 /// longer content-fusion-blind: `do_recall`'s `Structured` format calls
 /// `.raw()`, and `.raw()` itself now fuses in the content stream by default
-/// when `content-search` is on (`facade/recall.rs::fuse_content_stream`,
-/// TD-066 Increment 1). This closes the exact gap this comment used to
+/// when `content-search` is on (`facade/recall.rs::fuse_content_stream`).
+/// This closes the gap this comment used to
 /// describe ("the MCP `kremory_recall` tool ... never calls this fn" —
 /// still true of THIS fn, but no longer evidence that `kremory_recall` can't
-/// reach content — see `.ai-docs/specs/td-066-recall-scoring-foundation-
-/// spec-2026-07-21.md` §1.2/§3).
+/// reach content).
 #[cfg(feature = "content-search")]
 pub async fn do_recall_content(
     mem: &Memory,
@@ -176,8 +174,8 @@ pub async fn do_dream(mem: &Memory, params: DreamParams) -> Result<DreamOutput, 
         req = req.for_batch(id);
     }
 
-    // TD-132: total dream-phase wall-clock (the bench runs a full dream() per
-    // conversation via POST /consolidation). Dual-emit (ADR-D1): a canonical
+    // Total dream-phase wall-clock (the bench runs a full dream() per
+    // conversation via POST /consolidation). Dual-emit: a canonical
     // `kremory_core_*` `_seconds` histogram (renders at /metrics when a recorder
     // is installed) + an always-on tracing log (the live sink otherwise).
     let dream_start = std::time::Instant::now();

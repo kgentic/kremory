@@ -81,7 +81,7 @@ pub struct SourceRefWire {
     pub published_at: Option<String>,
 }
 
-/// Wire form of `kremory::RetrievedFact` (ADR-074 / TD-116) for `kremory_recall`'s
+/// Wire form of `kremory::RetrievedFact` for `kremory_recall`'s
 /// structured output — the LLM-consumable knowledge. Timestamps are RFC-3339
 /// strings.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -129,7 +129,7 @@ pub struct RetrievedContextWire {
     /// Namespace group-id this result was retrieved from.
     pub namespace: Option<String>,
     pub source_refs: Vec<SourceRefWire>,
-    /// Connected facts anchored on this entity (ADR-074 / TD-116) — the
+    /// Connected facts anchored on this entity — the
     /// LLM-consumable knowledge. Empty for entities with no connected facts.
     pub facts: Vec<RetrievedFactWire>,
 }
@@ -198,7 +198,7 @@ pub struct RecallParams {
     pub query: String,
     /// Top-k results to return.
     pub k: Option<usize>,
-    /// RFC 3339 UTC point-in-time (valid-time) filter (ADR-068). Filters
+    /// RFC 3339 UTC point-in-time (valid-time) filter. Filters
     /// which facts the recall's 1-hop expansion surfaces to what was TRUE in
     /// the world at this timestamp — entity search itself is unaffected.
     /// `None` (the default) returns present-day results.
@@ -211,12 +211,11 @@ pub struct RecallParams {
     /// `format` is `structured`.
     #[serde(default)]
     pub template: RecallTemplateWire,
-    /// TD-062 (`.ai-docs/specs/td-066-recall-scoring-foundation-
-    /// spec-2026-07-21.md` §3 Increment 3): rerank the top-`n` post-fusion
+    /// Rerank the top-`n` post-fusion
     /// candidates with a local cross-encoder before returning, for
     /// precision beyond BM25/vector/RRF-rank proxies. `None` (default) = no
     /// rerank. A no-op unless the server was built with kremory's `rerank`
-    /// Cargo feature. Per CLAUDE.md Rule 16 (web-app-ui-parity): exposed
+    /// Cargo feature. Exposed
     /// here so the MCP tool surface can reach the same knob the Rust
     /// `RecallRequest::rerank_k` builder method exposes.
     #[serde(default)]
@@ -249,7 +248,7 @@ pub struct DreamParams {
     /// starting a new one"* — FALSE, and never implemented. The awaited path
     /// (`kremory::facade::dream::DreamRequest::execute_blocking`, the one
     /// `do_dream` selects) never reads `batch_id` at all, so every call re-runs
-    /// the full pass chain. Corrected 2026-08-06; see TD-188.
+    /// the full pass chain.
     pub batch_id: Option<String>,
 }
 
@@ -267,7 +266,8 @@ pub struct ConsolidationOpsRanWire {
 /// Wire form of `kremory::TypeProposal` — an entity type proposed AND accepted
 /// by Dream Pass 0 type discovery. Carries the full proposal detail (not just a
 /// count) so an MCP consumer can see WHAT dream learned, mirroring the napi
-/// `JsTypeProposal` surface and the ADR-074 recall→facts detail-carry pattern.
+/// `JsTypeProposal` surface and the recall→facts detail-carry pattern used
+/// elsewhere in this crate.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TypeProposalWire {
     /// Proposed entity-type name (e.g. `"Firm"`).
@@ -301,9 +301,9 @@ pub struct DreamOutput {
     /// Entity types proposed AND accepted by Dream Pass 0 type discovery, with
     /// full proposal detail (name/description/justification). Empty when Pass 0
     /// did not run or accepted nothing. The count is `types_discovered.len()`.
-    /// (G2 fix — previously a bare `types_discovered_count: usize`, which dropped
+    /// (Previously a bare `types_discovered_count: usize`, which dropped
     /// the `TypeProposal` detail on the wire; same parity-drop class as the
-    /// ADR-074 recall→facts bug.)
+    /// recall→facts bug fixed elsewhere in this crate.)
     pub types_discovered: Vec<TypeProposalWire>,
     pub consolidation_ops_ran: ConsolidationOpsRanWire,
     pub duration_ms: u64,
@@ -452,7 +452,7 @@ pub struct DeleteFactOutcomeWire {
 /// Wire mirror of `kremory::UndoOutcome` (§3.1) — what `kremory_undo`
 /// ACTUALLY reversed. Internally tagged on `reversed_kind` so every per-kind
 /// count survives to the wire (no flattening to a string — the exact class
-/// of parity-drop bug ADR-074 / G2 fixed elsewhere in this crate).
+/// of parity-drop bug fixed elsewhere in this crate).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "reversed_kind", rename_all = "snake_case")]
 pub enum UndoOutcomeWire {

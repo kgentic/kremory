@@ -252,7 +252,7 @@ pub(crate) struct ResolvedRecall {
     pub as_of: Option<DateTime<Utc>>,
     pub format: RecallFormat,
     pub template: RecallTemplate,
-    /// TD-062 (spec §3 Increment 3) — see `RecallParams::rerank_k`.
+    /// Mirrors `RecallParams::rerank_k`.
     pub rerank_k: Option<usize>,
 }
 
@@ -323,15 +323,15 @@ impl From<SourceRef> for SourceRefWire {
     }
 }
 
-// ─── kremory::memory::Renderable{Context,Fact,SourceRef} (TD-198) ─────────
+// ─── kremory::memory::Renderable{Context,Fact,SourceRef} ─────────
 //
 // Wire-side halves of the ONE prompt-block renderer implementation in
 // `kremory::memory` (`render_entities` / `render_edge_summary` /
 // `render_temporal_facts`). Previously `kremory-mcp/src/bin/kremory-http.rs`
 // hand-mirrored those three functions field-for-field against this crate's
 // own `RetrievedContextWire` DTO — the exact two-implementations-must-agree
-// shape that caused TD-173's silent `.max()` fusion regression, re-created
-// for rendering by TD-196. These impls let `kremory-http.rs` call the real
+// shape that caused a silent `.max()` fusion regression to reappear here for
+// rendering. These impls let `kremory-http.rs` call the real
 // `kremory::memory::render_*` functions directly instead.
 
 impl kremory::memory::RenderableFact for RetrievedFactWire {
