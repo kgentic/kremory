@@ -234,6 +234,11 @@ revisit = "never"
 # NOTE (TD-053 boy-scout): Memory::dream skip removed — mirror `dream` exists.
 
 [[skip]]
+symbol = "DreamRequest::execute"
+reason = "Implementation detail of Memory.dream (public-docs-and-api-surface-audit B2 fix — dream() now requires an explicit .execute() terminal to match forget()/undo()/etc.); execute() is called internally by the napi binding, same shape as ForgetRequest::execute above"
+revisit = "never"
+
+[[skip]]
 symbol = "DreamRequest::in_namespace"
 reason = "Implementation detail of Memory.dream; namespace routed via JsDreamOpts.namespace"
 revisit = "never"

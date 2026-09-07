@@ -101,6 +101,43 @@ pub struct MemoryBuilder<L, E> {
     _emb_state: std::marker::PhantomData<E>,
 }
 
+// Hand-written `Debug` (C-DEBUG), mirroring `impl Debug for Memory`
+// (`facade/mod.rs`) for the same reason: `llm` / `dream_llm` / `embedder` /
+// `default_sink` / `custom_extractor` are `Option<Arc<dyn Trait>>` and the
+// trait objects don't implement `Debug`. No `L: Debug` / `E: Debug` bound is
+// needed — the phantom type-state markers are never printed. Presence-only
+// for the opaque fields, verbatim for everything else.
+impl<L, E> std::fmt::Debug for MemoryBuilder<L, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut ds = f.debug_struct("MemoryBuilder");
+        ds.field("path", &self.path)
+            .field("llm_configured", &self.llm.is_some())
+            .field("model_id", &self.model_id)
+            .field("dream_llm_configured", &self.dream_llm.is_some())
+            .field("dream_model_id", &self.dream_model_id)
+            .field("embedder_configured", &self.embedder.is_some())
+            .field("event_sink_configured", &self.default_sink.is_some())
+            .field("default_namespace", &self.default_namespace)
+            .field("embedding_dim", &self.embedding_dim)
+            .field("provider_rates_path", &self.provider_rates_path)
+            .field(
+                "episode_content_warn_threshold",
+                &self.episode_content_warn_threshold,
+            )
+            .field(
+                "custom_extractor_configured",
+                &self.custom_extractor.is_some(),
+            )
+            .field("allowed_entity_types", &self.allowed_entity_types)
+            .field("dream_schedule", &self.dream_schedule)
+            .field("await_extraction", &self.await_extraction)
+            .field("await_extraction_timeout", &self.await_extraction_timeout);
+        #[cfg(feature = "ner")]
+        ds.field("gliner_enabled", &self.use_gliner);
+        ds.finish_non_exhaustive()
+    }
+}
+
 impl<L, E> MemoryBuilder<L, E> {
     /// Set the default event sink for all subsequent operations.
     /// Per-call sinks (via `.with_event_sink()` on request builders) override this.
@@ -771,7 +808,7 @@ pub struct WithLlmTrackedParams {
     pub model: String,
 }
 
-impl MemoryBuilder<NoLlm, NoEmb> {
+impl MemoryBuilder<NoLlm, NoEmbedder> {
     /// Construct the initial builder state for `Memory::open`.
     ///
     /// `pub(super)` so only `facade/mod.rs` (i.e. `Memory::open`) can call this;
@@ -807,7 +844,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     ///
     /// The provider is used as-is, without token or cost instrumentation. For
     /// automatic observability, prefer [`with_llm_tracked`](Self::with_llm_tracked).
-    pub fn with_llm(self, llm: Arc<dyn ChatProvider>) -> MemoryBuilder<WithLlm, NoEmb> {
+    pub fn with_llm(self, llm: Arc<dyn ChatProvider>) -> MemoryBuilder<WithLlm, NoEmbedder> {
         MemoryBuilder {
             path: self.path,
             llm: Some(llm),
@@ -882,7 +919,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
         self,
         params: WithLlmTrackedParams,
         llm: L,
-    ) -> MemoryBuilder<WithLlm, NoEmb> {
+    ) -> MemoryBuilder<WithLlm, NoEmbedder> {
         let WithLlmTrackedParams { provider, model } = params;
         // Capture the tracked model id as kremory-owned data (Option-1) before
         // `model` is moved into the tracking wrapper.
@@ -915,12 +952,12 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     }
 }
 
-impl MemoryBuilder<WithLlm, NoEmb> {
+impl MemoryBuilder<WithLlm, NoEmbedder> {
     /// Configure the embedding provider (required).
     pub fn with_embedder(
         self,
         emb: Arc<dyn DynEmbeddingProvider>,
-    ) -> MemoryBuilder<WithLlm, WithEmb> {
+    ) -> MemoryBuilder<WithLlm, WithEmbedder> {
         MemoryBuilder {
             path: self.path,
             llm: self.llm,
@@ -948,7 +985,7 @@ impl MemoryBuilder<WithLlm, NoEmb> {
     }
 }
 
-impl MemoryBuilder<NoLlm, NoEmb> {
+impl MemoryBuilder<NoLlm, NoEmbedder> {
     /// Configure the embedding provider for the no-LLM path.
     ///
     /// Use this when you supply a custom extractor via `.with_extractor(…)` but
@@ -958,7 +995,7 @@ impl MemoryBuilder<NoLlm, NoEmb> {
     pub fn with_embedder(
         self,
         emb: Arc<dyn DynEmbeddingProvider>,
-    ) -> MemoryBuilder<NoLlm, WithEmb> {
+    ) -> MemoryBuilder<NoLlm, WithEmbedder> {
         MemoryBuilder {
             path: self.path,
             llm: self.llm,
@@ -1060,7 +1097,7 @@ async fn apply_builder_seed(
     })
 }
 
-impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
+impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
     type Output = Result<Memory>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
 
@@ -1400,7 +1437,7 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmb> {
     }
 }
 
-impl IntoFuture for MemoryBuilder<NoLlm, WithEmb> {
+impl IntoFuture for MemoryBuilder<NoLlm, WithEmbedder> {
     type Output = Result<Memory>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
 
@@ -1514,7 +1551,7 @@ mod ner_seed_derivation_tests {
         }
     }
 
-    fn base_builder() -> MemoryBuilder<NoLlm, NoEmb> {
+    fn base_builder() -> MemoryBuilder<NoLlm, NoEmbedder> {
         MemoryBuilder::new_open(std::path::PathBuf::from(":memory:"))
     }
 

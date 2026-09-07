@@ -91,7 +91,11 @@ async fn byoe_dream_returns_llm_required_when_no_llm() {
         .await
         .expect("build should succeed");
 
-    let result = mem.dream().in_namespace(Namespace::new("test")).await;
+    let result = mem
+        .dream()
+        .in_namespace(Namespace::new("test"))
+        .execute()
+        .await;
 
     let Err(err) = result else {
         panic!("dream without LLM must return LlmRequired");
@@ -167,7 +171,11 @@ async fn llm_required_error_carries_method_and_hint() {
         .await
         .expect("build should succeed");
 
-    let result = mem.dream().in_namespace(Namespace::new("test")).await;
+    let result = mem
+        .dream()
+        .in_namespace(Namespace::new("test"))
+        .execute()
+        .await;
 
     let Err(err) = result else {
         panic!("dream without LLM must return LlmRequired");

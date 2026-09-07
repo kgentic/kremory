@@ -163,7 +163,7 @@ async fn dream_resolves_planted_potential_alias() {
     .expect("plant potential_alias fact");
 
     // Run the full dream pass chain.
-    let summary = mem.dream().await.expect("dream must succeed");
+    let summary = mem.dream().execute().await.expect("dream must succeed");
 
     // Phase 4: the DreamSummary surfaces the resolved count (accumulator → fold).
     assert!(
@@ -243,7 +243,7 @@ async fn dream_merges_near_duplicate_entities() {
     .await;
     plant_entity(&graph, "alice j", &gid, "Alice.").await;
 
-    let summary = mem.dream().await.expect("dream must succeed");
+    let summary = mem.dream().execute().await.expect("dream must succeed");
 
     // Phase 4: the DreamSummary surfaces the merge count (accumulator → fold).
     assert!(
@@ -568,7 +568,7 @@ async fn dream_leaves_no_resolvable_pending_alias() {
          else the invariant below is vacuously true"
     );
 
-    mem.dream().await.expect("dream must succeed");
+    mem.dream().execute().await.expect("dream must succeed");
 
     // (1) THE INVARIANT.
     let pending_after = count_live_aliases(&graph, &gid).await;

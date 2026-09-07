@@ -721,6 +721,7 @@ async fn happy_path() {
     let summary = mem
         .dream()
         .with_opts(all_consolidation_on())
+        .execute()
         .await
         .expect("mem.dream() with all consolidation ops ON must succeed end-to-end");
 
@@ -914,6 +915,7 @@ async fn happy_path() {
     let summary2 = mem
         .dream()
         .with_opts(all_consolidation_on())
+        .execute()
         .await
         .expect("second mem.dream() call must also succeed");
     let community_count2 = persisted_community_count(&tg, &group_id).await;
@@ -996,10 +998,12 @@ async fn homonym_trap_no_wrong_merge() {
 
     // ONE full mem.dream() call, ALL consolidation ops ON — the homonym pair rides
     // through supersession → archive → cross_episode → communities in one pass.
-    let summary =
-        mem.dream().with_opts(all_consolidation_on()).await.expect(
-            "mem.dream() with all consolidation ops ON must succeed over the homonym fixture",
-        );
+    let summary = mem
+        .dream()
+        .with_opts(all_consolidation_on())
+        .execute()
+        .await
+        .expect("mem.dream() with all consolidation ops ON must succeed over the homonym fixture");
 
     eprintln!(
         "[full-consolidation-homonym] cross_episode_merges={} communities_updated={}",
@@ -1068,6 +1072,7 @@ async fn idempotency() {
     let summary1 = mem
         .dream()
         .with_opts(all_consolidation_on())
+        .execute()
         .await
         .expect("first mem.dream() call must succeed");
     let community_count1 = persisted_community_count(&tg, &group_id).await;
@@ -1087,6 +1092,7 @@ async fn idempotency() {
     let summary2 = mem
         .dream()
         .with_opts(all_consolidation_on())
+        .execute()
         .await
         .expect("second mem.dream() call must succeed");
     let community_count2 = persisted_community_count(&tg, &group_id).await;

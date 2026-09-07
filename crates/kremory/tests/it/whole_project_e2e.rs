@@ -428,6 +428,7 @@ async fn whole_project_ingest_to_dream() {
     //    recall). This is the integration seam under test.
     let summary = mem
         .dream()
+        .execute()
         .await
         .expect("mem.dream() must succeed end-to-end on ingest-produced entities");
 

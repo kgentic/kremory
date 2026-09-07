@@ -45,6 +45,7 @@ auto            = { deferred = "server-owned: the process constructs Memory befo
 open            = { deferred = "server-owned construction" }
 with_ollama     = { deferred = "server-owned construction" }
 with_ollama_at  = { deferred = "server-owned construction" }
+with_ollama_at_model = { deferred = "server-owned construction — new inherent Memory:: shortcut added by public-docs-and-api-surface-audit quality-review B5 (previously only reachable via the kremory::facade::providers free function); same construction-time-only reasoning as its with_ollama_at sibling immediately above" }
 with_openai     = { deferred = "server-owned construction" }
 with_anthropic  = { deferred = "server-owned construction" }
 close           = { deferred = "server-owned lifecycle — an agent closing the shared handle would break every other client" }

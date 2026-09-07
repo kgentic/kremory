@@ -31,6 +31,37 @@ async fn with_ollama_at_accepts_custom_url() {
     .expect("with_ollama_at should succeed");
 }
 
+/// `Memory::with_ollama_at_model` — the inherent counterpart added by
+/// public-docs-and-api-surface-audit quality-review B5 (previously only
+/// reachable via the `kremory::facade::providers::with_ollama_at_model` free
+/// function). Accepts a custom URL AND a custom model, same
+/// no-network-at-construction-time shape as its `with_ollama_at` sibling above.
+#[tokio::test]
+async fn with_ollama_at_model_accepts_custom_url_and_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _mem = Memory::with_ollama_at_model(
+        "http://my-ollama:11434",
+        Some("qwen2.5:7b".to_string()),
+        tmp.path().join("kremory-tier1-model.db"),
+    )
+    .await
+    .expect("with_ollama_at_model should succeed");
+}
+
+/// `Memory::with_ollama_at_model` with `model: None` falls back to the same
+/// default (`gemma4:e4b`) as `with_ollama_at` / `with_ollama`.
+#[tokio::test]
+async fn with_ollama_at_model_defaults_when_model_is_none() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _mem = Memory::with_ollama_at_model(
+        "http://my-ollama:11434",
+        None,
+        tmp.path().join("kremory-tier1-model-default.db"),
+    )
+    .await
+    .expect("with_ollama_at_model with model=None should succeed");
+}
+
 /// `Memory::with_openai` fails when `OPENAI_API_KEY` is not set.
 #[tokio::test]
 async fn with_openai_without_api_key_errors() {

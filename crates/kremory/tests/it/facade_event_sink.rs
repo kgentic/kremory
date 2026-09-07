@@ -125,7 +125,7 @@ fn remember_with_event_sink_chain_compiles() {
 fn builder_sink_before_llm_compiles() {
     let (sink, _counter) = make_counting_sink();
     // NoLlm + with_event_sink → still NoLlm (no state transition).
-    // We can't .await here (needs WithLlm + WithEmb) — just verify it compiles.
+    // We can't .await here (needs WithLlm + WithEmbedder) — just verify it compiles.
     let _b = Memory::open("/tmp/test.db").with_event_sink(sink);
 }
 

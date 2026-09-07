@@ -530,6 +530,7 @@ async fn g_v015b_30_appendonly_wiring_dream_and_forget_reject() {
     let dream_err = mem
         .dream()
         .in_namespace(ns.clone())
+        .execute()
         .await
         .expect_err("DreamRequest on AppendOnly namespace MUST return Err");
     match dream_err {
@@ -570,7 +571,7 @@ async fn g_v015b_30b_mutable_namespace_forget_and_dream_succeed() {
     // Dream on Mutable namespace must NOT return NamespacePolicyViolation.
     // The substrate may fail dream for other reasons (empty episodes, etc.)
     // — we explicitly check that the failure mode is NOT the policy variant.
-    match mem.dream().in_namespace(ns).await {
+    match mem.dream().in_namespace(ns).execute().await {
         Ok(_) => {}
         Err(MemoryError::Core(CoreError::NamespacePolicyViolation { .. })) => {
             panic!("DreamRequest on Mutable namespace must NEVER return NamespacePolicyViolation");

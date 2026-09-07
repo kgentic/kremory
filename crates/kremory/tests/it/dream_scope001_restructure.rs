@@ -56,6 +56,7 @@ async fn dream_control_flow_continues_past_reclassify_on_success() {
     // used to early-return). The pass chain must run to completion regardless.
     let summary = mem
         .dream()
+        .execute()
         .await
         .expect("dream must succeed on an empty graph");
 

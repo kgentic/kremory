@@ -79,6 +79,13 @@ async fn dream_pass<F: std::future::Future>(
 // ── DreamRequest ──────────────────────────────────────────────────────────────
 
 /// Dream phase (batch consolidation) request builder. Obtain via `mem.dream()`.
+///
+/// Must call `.execute()` explicitly — this is arguably the single most
+/// consequential mutating call in the API (entity merges, fact archival, and
+/// a supersession sweep all commit by default), so it gets the same explicit
+/// terminal as the rest of the destructive surface (`forget()`, `undo()`, …)
+/// rather than a bare `.await`.
+#[must_use = "DreamRequest must call .execute() to run"]
 pub struct DreamRequest<'a> {
     pub(super) memory: &'a Memory,
     pub(super) namespace: Option<Namespace>,
@@ -182,7 +189,14 @@ impl<'a> DreamRequest<'a> {
         self
     }
 
-    async fn execute_blocking(self) -> Result<DreamSummary> {
+    /// Execute the dream (consolidation) phase. Blocks until done.
+    ///
+    /// This is the only terminal for the default (non-fire-and-forget) path —
+    /// there is no implicit `.await` on `DreamRequest` itself, matching the
+    /// rest of the mutating surface (`forget()`, `undo()`, …). Use
+    /// `.fire_and_forget()` instead of `.execute()` to get a `DreamHandle`
+    /// without blocking.
+    pub async fn execute(self) -> Result<DreamSummary> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
         let sink = self.memory.resolve_sink(self.sink);
         let opts = self.opts.unwrap_or_default();
@@ -835,16 +849,6 @@ impl<'a> DreamRequest<'a> {
         summary.budget_exhausted = consolidation.budget_exhausted;
         summary.duration_ms = dream_start.elapsed().as_millis() as u64;
         Ok(summary)
-    }
-}
-
-impl<'a> IntoFuture for DreamRequest<'a> {
-    type Output = Result<DreamSummary>;
-    type IntoFuture =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send + 'a>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.execute_blocking())
     }
 }
 

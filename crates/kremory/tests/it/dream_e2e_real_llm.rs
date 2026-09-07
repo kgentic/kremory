@@ -532,6 +532,7 @@ async fn dream_e2e_real_llm_five_pass_chain() {
     // Run the FULL 5-pass chain via ONE real mem.dream() call.
     let summary = mem
         .dream()
+        .execute()
         .await
         .expect("mem.dream() must succeed end-to-end with a real LLM");
 

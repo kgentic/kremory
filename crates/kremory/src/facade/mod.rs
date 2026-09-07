@@ -134,9 +134,9 @@ pub struct NoLlm;
 /// Type-state marker: LLM configured.
 pub struct WithLlm;
 /// Type-state marker: Embedder not yet configured.
-pub struct NoEmb;
+pub struct NoEmbedder;
 /// Type-state marker: Embedder configured.
-pub struct WithEmb;
+pub struct WithEmbedder;
 
 // ── ConsolidationOpsRan (D1b) ─────────────────────────────────────────────────
 
@@ -572,6 +572,34 @@ pub struct Memory {
     pub(crate) await_extraction_timeout: Duration,
 }
 
+// Hand-written `Debug` (C-DEBUG): `Memory` holds `Arc<dyn ChatProvider>` /
+// `Arc<dyn GraphHandle>` / `Arc<dyn DynEmbeddingProvider>` trait objects that
+// don't themselves implement `Debug`, so a `#[derive(Debug)]` wouldn't
+// compile. Print what CAN be shown (presence of a provider, the resolved
+// model ids, the default namespace, the tunables) and elide the rest via
+// `finish_non_exhaustive()` — the same shape `tokio::runtime::Runtime` and
+// `reqwest::Client` use for the same reason. Without this, `println!("{:?}",
+// mem)` / `dbg!(mem)` — the first thing most Rust developers reach for —
+// does not compile for the type consumers interact with most.
+impl std::fmt::Debug for Memory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Memory")
+            .field("llm_configured", &self.llm.is_some())
+            .field("dream_llm_configured", &self.dream_llm.is_some())
+            .field("model_id", &self.model_id)
+            .field("dream_model_id", &self.dream_model_id)
+            .field("event_sink_configured", &self.default_sink.is_some())
+            .field("default_namespace", &self.default_namespace)
+            .field(
+                "episode_content_warn_threshold",
+                &self.episode_content_warn_threshold,
+            )
+            .field("await_extraction", &self.await_extraction)
+            .field("await_extraction_timeout", &self.await_extraction_timeout)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Memory {
     /// Open a database at `path` and start the type-state builder.
     ///
@@ -592,7 +620,7 @@ impl Memory {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn open(path: impl AsRef<Path>) -> MemoryBuilder<NoLlm, NoEmb> {
+    pub fn open(path: impl AsRef<Path>) -> MemoryBuilder<NoLlm, NoEmbedder> {
         MemoryBuilder::new_open(path.as_ref().to_path_buf())
     }
 
@@ -616,6 +644,23 @@ impl Memory {
     /// Open with Ollama at a custom URL.
     pub async fn with_ollama_at(url: impl Into<String>, path: impl AsRef<Path>) -> Result<Self> {
         providers::with_ollama_at(url, path).await
+    }
+
+    /// Open with Ollama at a custom URL and an optional custom chat model.
+    ///
+    /// When `model` is `None`, the default `gemma4:e4b` (reasoning disabled) is
+    /// used. Pass e.g. `Some("qwen2.5:7b".into())` for a lighter footprint.
+    /// This is the inherent, discoverable counterpart to
+    /// [`providers::with_ollama_at_model`] — previously that free function was
+    /// the only way to reach this path, inconsistent with every other Tier-1
+    /// shortcut being an inherent `Memory::` associated function. Both remain
+    /// callable; this one just shows up in `Memory::<tab>` completion.
+    pub async fn with_ollama_at_model(
+        url: impl Into<String>,
+        model: Option<String>,
+        path: impl AsRef<Path>,
+    ) -> Result<Self> {
+        providers::with_ollama_at_model(url, model, path).await
     }
 
     /// Open with OpenAI. Requires `$OPENAI_API_KEY`.
@@ -643,10 +688,10 @@ impl Memory {
     ///
     /// Exposed (TD-135) so a transport/consumer — e.g. the `kremory-http` bench
     /// server's `GET /health` endpoint — can report the ACTUAL active scoring
-    /// config as a single source of truth, rather than re-reading env (which can
-    /// drift from what the search path actually uses and is exactly how a
-    /// config-mismatch produced a bogus benchmark number). Stub/test graph
-    /// handles that carry no `Engine` return `SearchConfig::default()`.
+    /// config as a single source of truth, rather than re-reading env
+    /// independently (which can silently drift from what the search path
+    /// actually uses, reporting a wrong config to whoever asks). Stub/test
+    /// graph handles that carry no `Engine` return `SearchConfig::default()`.
     pub fn search_config(&self) -> crate::core::config::SearchConfig {
         self.graph.search_config()
     }
@@ -1149,6 +1194,15 @@ impl Memory {
 
     /// Run batch consolidation (dream phase).
     ///
+    /// Must call `.execute()` explicitly — like [`forget`](Self::forget) /
+    /// [`undo`](Self::undo) / the rest of the mutating surface, this is a
+    /// destructive-terminal builder, not a bare-`.await` one. `dream()` is
+    /// arguably the single most consequential call in the whole API — by
+    /// default it commits entity merges, fact archival, and a supersession
+    /// sweep across the namespace — so the explicit terminal makes that
+    /// intent visible in code review, the same rationale `forget()` already
+    /// states for itself.
+    ///
     /// Default: blocks until done (returns [`DreamSummary`]). All consolidation ops
     /// default ON and are REVERSIBLE (ADR-073) — inspect what changed with
     /// [`mutation_history`](Self::mutation_history) / [`list_mutations`](Self::list_mutations),
@@ -1161,7 +1215,7 @@ impl Memory {
     /// ```rust,no_run
     /// # use kremory::Memory;
     /// # async fn ex(mem: Memory) -> kremory::memory::Result<()> {
-    /// let summary = mem.dream().await?;
+    /// let summary = mem.dream().execute().await?;
     /// println!(
     ///     "communities updated: {}, entities reclassified: {}",
     ///     summary.communities_updated, summary.entities_reclassified,
@@ -1169,7 +1223,7 @@ impl Memory {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use = "DreamRequest must be .await-ed or have a terminal called"]
+    #[must_use = "DreamRequest must call .execute() to run"]
     pub fn dream(&self) -> DreamRequest<'_> {
         DreamRequest {
             memory: self,
@@ -1975,27 +2029,29 @@ impl Memory {
         for chunk in missing.chunks(batch_size) {
             let batch: Vec<(i64, String)> = chunk
                 .iter()
-                .map(|(fact_id, subject_id, predicate, object_value, object_id)| {
-                    // TD-211: text built from the raw subject_id/object_id
-                    // (entity slugs), NOT a properties.name lookup — unlike
-                    // `facts_after_id`'s reconstruction (used by
-                    // `reembed_all_fact_embeddings`), `facts_missing_embeddings`
-                    // does not JOIN `entities` for display names, and this
-                    // method must not rewrite that primitive. The unscoped
-                    // `TemporalGraph::get_entity` could supply a display
-                    // name, but it matches on `id` alone (no `group_id`) —
-                    // exactly the TD-206 cross-namespace bug this codebase
-                    // already fixed elsewhere. Falling back to the raw
-                    // id/slug is safe (it IS `entity_display_name`'s own
-                    // fallback value) at the cost of missing a
-                    // `properties.name` override — proven by
-                    // `backfill_fact_embeddings_builds_text_from_raw_entity_ids`.
-                    let object_text = object_id
-                        .clone()
-                        .or_else(|| object_value.clone())
-                        .unwrap_or_default();
-                    (*fact_id, format!("{subject_id} {predicate} {object_text}"))
-                })
+                .map(
+                    |(fact_id, subject_id, predicate, object_value, object_id)| {
+                        // TD-211: text built from the raw subject_id/object_id
+                        // (entity slugs), NOT a properties.name lookup — unlike
+                        // `facts_after_id`'s reconstruction (used by
+                        // `reembed_all_fact_embeddings`), `facts_missing_embeddings`
+                        // does not JOIN `entities` for display names, and this
+                        // method must not rewrite that primitive. The unscoped
+                        // `TemporalGraph::get_entity` could supply a display
+                        // name, but it matches on `id` alone (no `group_id`) —
+                        // exactly the TD-206 cross-namespace bug this codebase
+                        // already fixed elsewhere. Falling back to the raw
+                        // id/slug is safe (it IS `entity_display_name`'s own
+                        // fallback value) at the cost of missing a
+                        // `properties.name` override — proven by
+                        // `backfill_fact_embeddings_builds_text_from_raw_entity_ids`.
+                        let object_text = object_id
+                            .clone()
+                            .or_else(|| object_value.clone())
+                            .unwrap_or_default();
+                        (*fact_id, format!("{subject_id} {predicate} {object_text}"))
+                    },
+                )
                 .collect();
             self.backfill_and_store_fact_page(EmbedFactPageParams {
                 tg,
@@ -2898,6 +2954,7 @@ mod dream_llm_slot_tests {
                 // empty graph (Pass-0/Pass-2 find no work; honest-zero summary).
                 mem.dream()
                     .in_namespace(Namespace::new("default"))
+                    .execute()
                     .await
                     .expect("dream on empty graph must return Ok");
             });
@@ -3076,6 +3133,7 @@ mod dream_llm_slot_tests {
                 include_supersession_sweep: false,
                 ..Default::default()
             })
+            .execute()
             .await
             .expect("dream with seeded catch-all entities must return Ok");
 

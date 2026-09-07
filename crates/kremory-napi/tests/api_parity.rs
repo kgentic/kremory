@@ -247,8 +247,7 @@ fn extract_substrate_symbols(sources: &[&str]) -> Vec<String> {
                         // Skip genuinely test-only items (`#[cfg(test)]`) and deprecated
                         // ones. PAR-G2: this used to skip EVERY `#[cfg(...)]`, which made
                         // the gate blind on the feature axis — see `is_cfg_test_gated`.
-                        if is_cfg_test_gated(&method.attrs)
-                            || has_attr(&method.attrs, "deprecated")
+                        if is_cfg_test_gated(&method.attrs) || has_attr(&method.attrs, "deprecated")
                         {
                             continue;
                         }
@@ -432,11 +431,11 @@ fn napi_surface_matches_substrate_or_skip_list() {
         }
     }
 
-    // Enforce: skip-list count must not exceed 91 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 92 (sanity cap — over-finding guard).
     // ⚠️ THIS NOTE ROTTED TWICE before 2026-08-12 (see the history below for the
     // exact sequence). Kept in sync again on 2026-09-02 (88 → 89, TD-231).
-    // The enforced value is the assert, and only the assert: `skip_count <= 91`.
-    // The lead line above and this note are now both 91. If you raise the assert
+    // The enforced value is the assert, and only the assert: `skip_count <= 92`.
+    // The lead line above and this note are now both 92. If you raise the assert
     // again, grep this file for the OLD number before you finish — this note has
     // already rotted twice from someone skipping that step.
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
@@ -504,13 +503,23 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // Form B reason as its eleven siblings. The register was sitting exactly at
     // the prior cap (90) before this addition, so this is register growth, not
     // walker over-finding; raised on the record rather than by pruning a
-    // legitimate entry to make room. NOTE TO THE NEXT PERSON: this file's lead
-    // comment and the assert must BOTH say 91 now — grep for the old number
+    // legitimate entry to make room.
+    // Raised 91 -> 92 (public-docs-and-api-surface-audit quality-review B2,
+    // 2026-09-07) for exactly ONE entry — `DreamRequest::execute` — a new
+    // method added because `dream()` now requires an explicit `.execute()`
+    // terminal (matching `forget()`/`undo()`/etc.'s existing destructive-op
+    // convention, per the quality-review B2 finding). Same shape as the
+    // already-skipped `ForgetRequest::execute` sibling immediately above in
+    // parity-skip.toml — an implementation detail the napi binding calls
+    // internally, not a JS-visible gap. The register was sitting exactly at
+    // the prior cap (91) before this addition, so this is register growth,
+    // not walker over-finding. NOTE TO THE NEXT PERSON: this file's lead
+    // comment and the assert must BOTH say 92 now — grep for the old number
     // before you finish, because this note has already rotted twice.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 91,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 91. \
+        skip_count <= 92,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 92. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."

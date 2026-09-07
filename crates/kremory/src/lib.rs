@@ -62,9 +62,9 @@ pub use core::engine::{engine, engine_init};
 // ── Facade re-exports (Tier 1 / Tier 2 public surface — Story A.8) ───────────
 pub use facade::{
     ConsolidationOpsRan, DreamFireAndForget, DreamRequest, DreamSummary, EpisodeEntryBuilder,
-    ForgetRequest, Memory, MemoryBuilder, NoEmb, NoLlm, RecallRawRequest, RecallRequest,
+    ForgetRequest, Memory, MemoryBuilder, NoEmbedder, NoLlm, RecallRawRequest, RecallRequest,
     RecallTemplate, RememberBatchBuilder, RememberRequest, SupersedeOutcome, SupersedeRequest,
-    WithEmb, WithLlm, WithLlmTrackedParams,
+    WithEmbedder, WithLlm, WithLlmTrackedParams,
 };
 // Reversible-graph-mutations (ADR-073 Tier-1) consumer surface — the honest
 // reversal outcome types + the inspect view. Re-exported at the crate root so

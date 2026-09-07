@@ -408,6 +408,7 @@ impl JsMemory {
         }
 
         let summary = req
+            .execute()
             .await
             .map_err(|e| napi::Error::from_reason(format!("kremory dream failed: {e}")))?;
 
@@ -1442,8 +1443,8 @@ impl JsMemory {
 //
 // # Typestate note
 //
-// `MemoryBuilder::IntoFuture` is only implemented for `<WithLlm, WithEmb>` and
-// `<NoLlm, WithEmb>`. Therefore every builder path that ends in `.await` must have
+// `MemoryBuilder::IntoFuture` is only implemented for `<WithLlm, WithEmbedder>` and
+// `<NoLlm, WithEmbedder>`. Therefore every builder path that ends in `.await` must have
 // both an LLM (optional for NoLlm path) AND an embedder set. The `withEmbedder`
 // callback is required when extractor knobs are used — the ADR-039 §6 compat matrix
 // lists no row where an extractor is set without a BYOM embedder.
@@ -1453,8 +1454,8 @@ impl JsMemory {
 /// Also applies any BYOE extractor / GLiNER knobs from the options object.
 /// Called when `opts.withEmbedder` is present.
 ///
-/// Builder typestate path: `NoLlm,NoEmb` → `with_llm` → `WithLlm,NoEmb`
-///   → `with_embedder` → `WithLlm,WithEmb` → `.await`.
+/// Builder typestate path: `NoLlm,NoEmbedder` → `with_llm` → `WithLlm,NoEmbedder`
+///   → `with_embedder` → `WithLlm,WithEmbedder` → `.await`.
 #[cfg(not(test))]
 async fn open_with_js_embedder(
     path: String,

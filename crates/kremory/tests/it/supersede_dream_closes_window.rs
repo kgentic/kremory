@@ -159,6 +159,7 @@ async fn supersede_then_dream_closes_window() {
         .dream()
         .in_namespace(ns)
         .with_opts(opts)
+        .execute()
         .await
         .expect("mem.dream() with include_supersession_sweep must succeed");
 

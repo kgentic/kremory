@@ -597,6 +597,7 @@ async fn dream_phase_returns_ok_summary() {
     let summary = mem
         .dream()
         .with_opts(dream_opts)
+        .execute()
         .await
         .expect("dream() must return Ok after F-01 retirement");
 

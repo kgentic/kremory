@@ -45,7 +45,7 @@ async fn dream_dispatches_consistency_check() {
     // Empty graph → consistency_check loads zero candidates and returns early,
     // but it still emits scanned_total on invocation (ADR-047). No LLM call is
     // made (no flagged candidates), so the null mock LLM is never exercised.
-    mem.dream().await.expect("dream must succeed");
+    mem.dream().execute().await.expect("dream must succeed");
 
     let names: Vec<String> = snapshotter
         .snapshot()
@@ -96,6 +96,7 @@ async fn dream_skips_consistency_check_when_opted_out() {
     opts.include_consistency_check = false;
     mem.dream()
         .with_opts(opts)
+        .execute()
         .await
         .expect("dream must succeed with consistency_check opted out");
 

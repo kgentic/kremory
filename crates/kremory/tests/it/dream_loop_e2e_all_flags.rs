@@ -567,6 +567,7 @@ async fn all_sites_fire_together_zero_false_merge() {
     let summary = mem
         .dream()
         .with_opts(all_flags_dream_opts())
+        .execute()
         .await
         .expect("mem.dream() must succeed with all flags on");
 
@@ -856,6 +857,7 @@ async fn e2_multi_site_ordering_merge_before_reclassify() {
     let summary = mem
         .dream()
         .with_opts(all_flags_dream_opts())
+        .execute()
         .await
         .expect("mem.dream() must succeed with all flags on");
 

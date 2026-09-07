@@ -4,7 +4,7 @@
 //! Verifies the type-state builder pipeline compiles and returns `Memory`
 //! without calling into the graph substrate.
 
-use kremory::{DynEmbeddingProvider, Memory, MemoryBuilder, Namespace, NoEmb, NoLlm, WithLlm};
+use kremory::{DynEmbeddingProvider, Memory, MemoryBuilder, Namespace, NoEmbedder, NoLlm, WithLlm};
 use std::sync::Arc;
 
 /// Unique per-call DB path. Tests run in parallel; sharing a single path
@@ -30,22 +30,22 @@ async fn open_test_memory(tag: &str) -> Memory {
         .expect("Memory::with_ollama should succeed in test-utils builds")
 }
 
-/// Builder type-state: `Memory::open` returns `MemoryBuilder<NoLlm, NoEmb>`.
+/// Builder type-state: `Memory::open` returns `MemoryBuilder<NoLlm, NoEmbedder>`.
 /// This test asserts the type-state signature by binding to that type.
 #[test]
 fn builder_initial_state_is_nollm_noemb() {
-    let _b: MemoryBuilder<NoLlm, NoEmb> = Memory::open("/tmp/test.db");
+    let _b: MemoryBuilder<NoLlm, NoEmbedder> = Memory::open("/tmp/test.db");
 }
 
-/// After `.with_llm()`, state advances to `MemoryBuilder<WithLlm, NoEmb>`.
+/// After `.with_llm()`, state advances to `MemoryBuilder<WithLlm, NoEmbedder>`.
 #[test]
 fn builder_after_with_llm_is_withlm_noemb() {
     // The type assertion happens at compile time; runtime just verifies no panic.
-    let b0: MemoryBuilder<NoLlm, NoEmb> = Memory::open("/tmp/test.db");
-    let _b1: MemoryBuilder<WithLlm, NoEmb> = b0.with_llm(make_null_llm());
+    let b0: MemoryBuilder<NoLlm, NoEmbedder> = Memory::open("/tmp/test.db");
+    let _b1: MemoryBuilder<WithLlm, NoEmbedder> = b0.with_llm(make_null_llm());
 }
 
-/// Full builder pipeline: NoLlm → WithLlm → WithEmb → Memory.
+/// Full builder pipeline: NoLlm → WithLlm → WithEmbedder → Memory.
 #[tokio::test]
 async fn builder_full_pipeline_returns_memory() {
     let _mem: Memory = Memory::open(unique_db_path("full_pipeline"))
@@ -83,6 +83,51 @@ async fn builder_default_namespace_flows_to_forget() {
     // ForgetRequest stub returns Ok(0) — no graph call — namespace present = no error.
     let count = mem.forget().execute().await.expect("forget should succeed");
     assert_eq!(count, 0, "stub forget returns 0 deleted");
+}
+
+/// B1 (public-docs-and-api-surface-audit quality-review) — `Memory` must
+/// implement `Debug` (C-DEBUG). Before the fix, `println!("{:?}", mem)` /
+/// `dbg!(mem)` did not compile at all for the type consumers interact with
+/// most; this test proves it now compiles AND reports sensible,
+/// presence-only info for the opaque trait-object fields.
+#[tokio::test]
+async fn memory_debug_reports_configured_state() {
+    let mem = Memory::open(unique_db_path("debug_memory"))
+        .with_llm(make_null_llm())
+        .with_embedder(make_null_embedder())
+        .default_namespace(Namespace::new("debug-ns"))
+        .await
+        .expect("builder should succeed");
+
+    let rendered = format!("{mem:?}");
+    assert!(rendered.contains("Memory"), "got: {rendered}");
+    assert!(
+        rendered.contains("llm_configured: true"),
+        "expected llm presence to be reported; got: {rendered}"
+    );
+    assert!(
+        rendered.contains("debug-ns") || rendered.contains("Namespace"),
+        "expected default_namespace to be visible; got: {rendered}"
+    );
+}
+
+/// B1 — `MemoryBuilder<L, E>` must implement `Debug` too (same guideline,
+/// same trait-object-field constraint), for any type-state combination —
+/// including the initial `<NoLlm, NoEmbedder>` state before any provider is
+/// wired, which is exactly when a confused consumer reaches for `dbg!`.
+#[test]
+fn memory_builder_debug_reports_unconfigured_state() {
+    let b: MemoryBuilder<NoLlm, NoEmbedder> = Memory::open("/tmp/kremory-debug-builder-test.db");
+    let rendered = format!("{b:?}");
+    assert!(rendered.contains("MemoryBuilder"), "got: {rendered}");
+    assert!(
+        rendered.contains("llm_configured: false"),
+        "expected unconfigured llm to be reported; got: {rendered}"
+    );
+    assert!(
+        rendered.contains("embedder_configured: false"),
+        "expected unconfigured embedder to be reported; got: {rendered}"
+    );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
